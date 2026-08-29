@@ -6,6 +6,8 @@ Date: 2026-08-27. Reviewed: `pygeoinf2/` at commit `5d4e0e4` against `pygeoinf/`
 
 This file is the synthesis. The detail — method-by-method tables, measurements, `file:line` references and per-area Must/Should/Consider lists — is in `pygeoinf2/review/`:
 
+> **Second round (2026-08-29):** the check on the work done against this review, with an optimisation lens, is `REVIEW2.md`, with appendices `review/r2_*.md`.
+
 | appendix | file |
 |---|---|
 | A | `review/algebra.md` — spaces, operators, nodes, direct sums, traits, testing |
@@ -17,6 +19,7 @@ This file is the synthesis. The detail — method-by-method tables, measurements
 | G | `review/geometry_plotting.md` — sets, convex sets, subspaces, plotting |
 | K | `review/packaging_tests_docs.md` — public API, MFEM backend, tests, examples, Sphinx, packaging |
 | U | `review/pyslfp_usage.md` — every pygeoinf API pyslfp touches, its v2 equivalent, and the port blockers |
+| R | `review/parallel.md` — D-6 follow-up (2026-08-29): what v2 parallelises, measured behaviour of joblib/loky/threads on this machine, and recommendations R1–R10 |
 
 Everything below marked **[verified]** was executed against the code, not inferred from reading. The fast v2 suite passes as of this review (`pytest pygeoinf2`: 1316 passed, 25 slow deselected, 82 s).
 

@@ -1,0 +1,44 @@
+##### prof6_plot
+lmax 128: transforms in plotting.plot: A=0 S=0
+  v2 plot(coasts, colorbar)                           1480.94 ms
+  v2 plot(no colorbar)                                1462.69 ms
+  v2 plot + canvas.draw                               1501.78 ms
+  v1 plot(coasts, colorbar, gridlines)                 231.57 ms
+  v1 plot + canvas.draw (no gridlines)                 271.75 ms
+  subplots(space) only                                   4.19 ms
+  plain pcolormesh, no cartopy                           5.69 ms
+lmax 256: transforms in plotting.plot: A=0 S=0
+  v2 plot(coasts, colorbar)                           2950.62 ms
+  v2 plot(no colorbar)                                2934.25 ms
+  v2 plot + canvas.draw                               2971.44 ms
+  v1 plot(coasts, colorbar, gridlines)                 493.71 ms
+  v1 plot + canvas.draw (no gridlines)                 579.33 ms
+  subplots(space) only                                   4.23 ms
+  plain pcolormesh, no cartopy                          12.96 ms
+         10118147 function calls (9916804 primitive calls) in 5.572 seconds
+
+   Ordered by: cumulative time
+   List reduced from 1558 to 18 due to restriction <18>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+      2/1    0.000    0.000    5.368    5.368 /usr/lib/python3.12/functools.py:904(wrapper)
+        1    0.000    0.000    5.368    5.368 /home/david/dev/pygeoinf/pygeoinf2/plotting/sphere.py:52(_)
+      2/1    0.000    0.000    5.343    5.343 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:274(wrapper)
+        1    0.000    0.000    5.343    5.343 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:1748(pcolormesh)
+        1    0.004    0.004    5.277    5.277 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:1823(_wrap_quadmesh)
+        1    0.000    0.000    5.245    5.245 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:1976(pcolor)
+        6    0.001    0.000    5.199    0.866 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/collections.py:242(get_datalim)
+     2070    0.004    0.000    5.198    0.003 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/transforms.py:2422(transform_path_non_affine)
+     2057    0.012    0.000    5.191    0.003 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:133(transform_path_non_affine)
+     1028    0.006    0.000    4.773    0.005 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:804(project_geometry)
+     1028    0.039    0.000    4.762    0.005 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:954(_project_polygon)
+     1028    0.246    0.000    3.934    0.004 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:987(_attach_lines_to_boundary)
+628351/433725    0.275    0.000    2.754    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/decorators.py:171(wrapper)
+   516571    0.627    0.000    2.524    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/decorators.py:73(wrapped)
+   193264    0.086    0.000    1.649    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/geometry/base.py:913(project)
+   193264    0.255    0.000    1.443    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/geometry/point.py:54(__new__)
+   193264    1.020    0.000    1.020    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/linear.py:76(line_locate_point)
+     1028    0.125    0.000    0.642    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:841(_project_linear_ring)
+
+
+EXIT 0

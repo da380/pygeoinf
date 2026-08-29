@@ -1,0 +1,11 @@
+lmax 64 dim 4225: one inner_product 1.42 ms; axpy 0.008 ms
+lmax 128 dim 16641: one inner_product 10.88 ms; axpy 0.042 ms
+lmax 256 dim 66049: one inner_product 72.82 ms; axpy 0.179 ms
+apply_operator_function lmax 64, 30 steps: 1.10s counts {'MakeGridDH': 31, 'SHExpandDH': 1047, 'apply': 29}
+  30 bare applications: 0.35s counts {'SHExpandDH': 60, 'MakeGridDH': 30}  -> reorth/bookkeeping share 68%
+operator_quadratic_form 30 steps: 0.69s counts {'SHExpandDH': 640, 'apply': 22, 'MakeGridDH': 22}
+orthonormal_basis(50) lmax 64: 1.91s counts {'SHExpandDH': 2650}
+  prototype component MGS: 0.10s counts {'SHExpandDH': 50, 'MakeGridDH': 50}
+from_vectors(50).adjoint: 0.075s counts {'SHExpandDH': 100}
+random_eig rank 20 lmax 64: 4.63s counts {'MakeGridDH': 170, 'apply': 120, 'SHExpandDH': 5794}
+log_determinant stochastic 10 probes: 1.74s counts {'MakeGridDH': 140, 'SHExpandDH': 2320} -> Estimate(165.334 +/- 5.96, n=10)

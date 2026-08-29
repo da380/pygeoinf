@@ -1,0 +1,74 @@
+##### prof5_box
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+FINUFFT_PLAN_T warning: using opts.nthreads=4, more than the 1 physically cores available; note large nthreads can be slower.
+
+-- torus (256, 256) (dim 65536), n=10000; build 0.1 ms --
+  v2 fwd (operator)                                     10.95 ms
+  v2 adj (operator)                                     13.84 ms
+    to_components (rfftn)                                0.42 ms
+    spectrum assembly (np.add.at)                        0.41 ms
+    spectrum assembly (assign)                           0.35 ms
+    _angles (point conversion)                           3.50 ms
+    nufft2d2 alone, nthreads=1                           6.57 ms
+    nufft2d2 alone, nthreads=4                           5.33 ms
+    nufft2d2 eps=1e-8                                    3.21 ms
+  assign == add.at: True
+
+-- torus (256, 256) (dim 65536), n=100000; build 1.0 ms --
+  v2 fwd (operator)                                     60.58 ms
+  v2 adj (operator)                                     56.48 ms
+    to_components (rfftn)                                0.52 ms
+    spectrum assembly (np.add.at)                        0.62 ms
+    spectrum assembly (assign)                           0.45 ms
+    _angles (point conversion)                          31.85 ms
+    nufft2d2 alone, nthreads=1                          25.39 ms
+    nufft2d2 alone, nthreads=4                          11.94 ms
+    nufft2d2 eps=1e-8                                   22.11 ms
+  assign == add.at: True
+
+-- torus (512, 512) (dim 262144), n=100000; build 0.9 ms --
+  v2 fwd (operator)                                     78.72 ms
+  v2 adj (operator)                                     80.22 ms
+    to_components (rfftn)                                2.20 ms
+    spectrum assembly (np.add.at)                        2.20 ms
+    spectrum assembly (assign)                           2.25 ms
+    _angles (point conversion)                          32.83 ms
+    nufft2d2 alone, nthreads=1                          41.44 ms
+    nufft2d2 alone, nthreads=4                          26.13 ms
+    nufft2d2 eps=1e-8                                   25.77 ms
+  assign == add.at: True
+
+v1 torus construct failed: Sobolev.__init__() takes 4 positional arguments but 5 were given
+(self, kmax: 'int', order: 'float', scale: 'float', /, *, radius_x: 'float' = 1.0, radius_y: 'float' = 1.0, safe: 'bool' = True)
+
+-- plane/Box 256x256, n=100000 --
+  Box fwd                                              253.64 ms
+  Box adj                                              253.59 ms
+    Box._angles                                        230.24 ms
+         1500183 function calls in 0.481 seconds
+
+   Ordered by: internal time
+   List reduced from 88 to 8 due to restriction <8>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+   100000    0.196    0.000    0.330    0.000 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/box.py:125(_to_enclosing)
+   300004    0.064    0.000    0.064    0.000 {built-in method numpy.asarray}
+   200001    0.045    0.000    0.067    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/_core/shape_base.py:19(atleast_1d)
+        1    0.039    0.039    0.097    0.097 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/fourier.py:409(_angles)
+   100007    0.031    0.000    0.031    0.000 {built-in method numpy.array}
+        1    0.026    0.026    0.453    0.453 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/box.py:154(_angles)
+        1    0.025    0.025    0.025    0.025 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/finufft/_interfaces.py:247(execute)
+   300013    0.015    0.000    0.015    0.000 {built-in method builtins.len}
+
+
+EXIT 0

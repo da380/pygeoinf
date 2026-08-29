@@ -1,0 +1,4 @@
+lmax 64 rep 0: v2 0.68s {'SHExpandDH': 1115, 'MakeGridDH': 31}  proto 0.22s {'SHExpandDH': 91, 'MakeGridDH': 61}  ratio 3.1  diff 7.0e-15
+lmax 64 rep 1: v2 0.68s {'SHExpandDH': 1114, 'MakeGridDH': 31}  proto 0.21s {'SHExpandDH': 91, 'MakeGridDH': 61}  ratio 3.2  diff 7.0e-15
+lmax 128 rep 0: v2 4.10s {'SHExpandDH': 1115, 'MakeGridDH': 31}  proto 1.09s {'SHExpandDH': 91, 'MakeGridDH': 61}  ratio 3.7  diff 1.5e-14
+lmax 128 rep 1: v2 4.04s {'SHExpandDH': 1114, 'MakeGridDH': 31}  proto 1.09s {'SHExpandDH': 91, 'MakeGridDH': 61}  ratio 3.7  diff 1.5e-14

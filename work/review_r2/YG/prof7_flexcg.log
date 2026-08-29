@@ -1,0 +1,20 @@
+##### prof7_flexcg
+sphere lmax 24, H^2: (Fx,y)=238.353 (x,F*y)=238.353 (x,Fy)=-1.16052  -> self-adjoint in H^s? rel diff 1.00e+00
+   inverse_flexural FAILED: CGSolver did not converge in 1250 iterations; the residual norm is 230.
+   lifted-L2-inverse residual in H^s: 1.10e-07
+   lifted inverse adjoint identity: -0.358340695 vs -0.358340695 (CG rtol 1e-8)
+   traits claimed on the operator CG sees: Traits.SELF_ADJOINT|POSITIVE_SEMIDEFINITE|POSITIVE_DEFINITE|INVERTIBLE
+   check_traits: FAILED: Axiom failed: the claimed SELF_ADJOINT operator is symmetric. 8981684555.950407 != 9223866104.371273
+   L2 route residual: 2.49e-08
+   transforms per inverse_flexural apply (L2): A=996 S=807
+circle 64, H^2: (Fx,y)=128.129 (x,F*y)=128.129 (x,Fy)=128.064  -> self-adjoint in H^s? rel diff 5.10e-04
+   inverse_flexural: ||F Finv y - y||/||y|| = 1.24e-04
+   lifted-L2-inverse residual in H^s: 8.43e-05
+   lifted inverse adjoint identity: 0.251379452 vs 0.251379452 (CG rtol 1e-8)
+   traits claimed on the operator CG sees: Traits.SELF_ADJOINT|POSITIVE_SEMIDEFINITE|POSITIVE_DEFINITE|INVERTIBLE
+   check_traits: FAILED: Axiom failed: the claimed SELF_ADJOINT operator is symmetric. 165922305608327.62 != 165219700101716.8
+   L2 route residual: 2.76e-07
+   transforms per inverse_flexural apply (L2): A=0 S=0
+v1 sphere: (Fx,y)=1231.22 (x,Fy)=1609.92
+v1 inverse FAILED: CG numerical breakdown: non-positive p.T A p. The operator must be positive definite.
+EXIT 0

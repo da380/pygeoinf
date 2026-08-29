@@ -1,0 +1,10 @@
+data 60 fista: support_values(6) 3.86s  max rel dev from kkt 8.38e-09  single run: its 61 conv True evals 61
+data 60 osqp: support_values(6) 2.68s  max rel dev from kkt 1.16e-09  single run: its 42 conv True evals 42
+data 60 fista: support_values(6) 3.84s  max rel dev from kkt 8.38e-09  single run: its 61 conv True evals 61
+data 60 osqp: support_values(6) 2.72s  max rel dev from kkt 1.16e-09  single run: its 42 conv True evals 42
+data 60 level bundle: 74.18s its 300 conv False evals 301 value 43.230848 (kkt 43.230846) msg iteration limit reached
+data 2000 fista: support_values(6) 6.97s  max rel dev from kkt 9.29e+00  single run: its 300 conv False evals 301
+data 2000 osqp: support_values(6) 2.46s  max rel dev from kkt 9.29e+00  single run: its 140 conv True evals 140
+data 2000 fista: support_values(6) 6.90s  max rel dev from kkt 9.29e+00  single run: its 300 conv False evals 301
+data 2000 osqp: support_values(6) 2.42s  max rel dev from kkt 9.29e+00  single run: its 140 conv True evals 140
+data 2000 level bundle: 159.96s its 300 conv False evals 301 value 1.927735 (kkt -0.043662) msg iteration limit reached

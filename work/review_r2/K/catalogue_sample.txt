@@ -1,0 +1,26 @@
+Ported rows: 225
+L99: | `DenseMatrixLinearOperator` | Ported | as above, plus `assembled()` | |
+L100: | `SparseMatrixLinearOperator` | Ported | No sparse-backed operator in v2. `_weight_operator` in `symmetric_space/base.py` does it privately for one case; it probably wants to be public | Yes, this form is useful in practice. |
+L108: | `NonLinearForm` | Ported | `Functional` | |
+L117: | `BlockLinearOperator` | Ported | `BlockLinearOperator` / `BlockOperator` | |
+L119: | `ColumnLinearOperator` | Ported | `ColumnLinearOperator` / `ColumnOperator` | |
+L120: | `RowLinearOperator` | Ported | `RowLinearOperator` / `RowOperator` | |
+L152: | `IterativePreconditioningMethod` | Ported | Subsumed: pass an `IterativeSolver(strict=False)` as the `preconditioner=`. `FlexibleCGSolver` is the outer solver to use when that inner solve is inexact, since the preconditioner is then not quite symmetric | |
+L158: | `LanczosOperatorFunction` | Ported | `OperatorFunction` | |
+L169: | `LowRankEig`, `LowRankSVD`, `LowRankCholesky` | Ported | same names | |
+L170: | `random_range` | Ported | same name; no longer routes mass-weighted spaces through the broken white-noise measure (§9) | |
+L218: | `solve_support_values` | Ported | **D-13**. `DualFeasibleProperty.support_values(directions, data)`, with the warm start across directions -- 1.08 to 1.23x as they get closer together, and the same answers. `n_jobs` runs them in parallel instead, which gives the warm start up | |
+L262: | `ConstrainedLinearLeastSquaresInversion` | Ported | `ConstrainedLeastSquares`, with the same entry points on the reduced problem | |
+L302: | `load_gsn_stations` | Ported | `Sphere.stations()`, reading the shipped table | |
+L360: | `ax` | Ported | `scale_inplace` | |
+L398: | `expectation`, `covariance`, `sample`, `samples`, `sample_expectation`, `domain` | Ported | same names, mostly on `ProbabilityMeasure` | |
+L410: | `as_multivariate_normal` | Ported | M5. The bridge to `scipy.stats` | |
+L416: | `deflated_pointwise_variance`, `deflated_pointwise_std` | Ported | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
+L438: | `kmax`, `lmax`, `degree`, `points`, `angles`, `point_spacing` | Ported | `lmax`, `grid_shape`, `colatitudes`, `longitudes`, `grid_axes` | |
+L443: | `laplacian_eigenvectors_at_point` | Ported | `basis_at` | |
+L463: | `CorrelatedInvariantGaussianMeasure.marginal`, `.cross_covariance`, `.spectral_correlations` | Ported | `measure.marginal(i)`, `measure.cross_covariance(i, j)` and `space.spectral_correlations(measure)`. The first two are general -- any Gaussian on a direct sum has them -- and read the block straight off, so a diagonal marginal keeps its eigenvalues and its sampling factor. The only route before was slicing the covariance's dense component matrix | |
+L464: | `from_sobolev_parameters` | Ported | `Sphere.truncation_degree_for(order, length_scale, radius=, rtol=, power_of_two=)`, static so it can be called before there is a space -- the answer is what you pass to the constructor. v1's rule, so v1's numbers (354 at order 2, scale 0.2, rtol 1e-8). Per-mode, not weighted by multiplicity; `estimate_truncation_degree` answers the weighted question and the two diverge where the spectrum decays slowly | |
+L481: | `heat_kernel_gaussian_measure` | Ported | `heat_measure` | |
+L498: | `iris_stations`, `random_earthquakes` | Ported | `stations`, `earthquakes` | |
+L526: | `is_element` | Ported | `contains` on `Subset` | |
+L542: | `low_rank_surrogate` | Ported | `LinearGaussianInversion.low_rank_surrogate`, on top of the new `GaussianMeasure.low_rank_approximation` (DESIGN §23.7) | |

@@ -1,0 +1,517 @@
+........................................................................ [  3%]
+........................................................................ [  7%]
+........................................................................ [ 10%]
+........................................................................ [ 14%]
+........................................................................ [ 17%]
+........................................................................ [ 21%]
+........................................................................ [ 24%]
+........................................................................ [ 28%]
+........................................................................ [ 32%]
+........................................................................ [ 35%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+........................................................................ [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 67%]
+........................................................................ [ 71%]
+........................................................................ [ 74%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 85%]
+........................................................................ [ 88%]
+........................................................................ [ 92%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00114 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00205 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000521 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000391 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000139 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000601 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000198 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000155 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000425 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00102 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000923 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00267 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00127 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000293 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000693 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000329 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000358 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000346 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000182 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000998 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.0016 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000353 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000212 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000247 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000422 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000296 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00014 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000101 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000156 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.255 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.0465 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000791 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00154 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000302 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000255 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000126 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000142 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000129 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000562 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000153 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000619 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000222 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000638 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00119 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000238 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000163 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000328 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000185 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000304 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000119 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000366 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000558 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000311 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000643 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00031 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000184 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000256 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00026 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000168 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000591 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000221 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000762 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000837 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00173 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000371 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000252 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000404 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000259 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000152 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00147 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000348 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000134 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000149 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00132 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000172 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000131 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000125 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000576 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00106 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00038 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000326 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000288 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000338 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_convex.py::TestTheBundleLearnsFromNullSteps::test_it_converges_in_far_fewer_iterations
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.000132 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_examples.py::test_the_example_runs[20_flexure]
+  /home/david/dev/pygeoinf/pygeoinf2/examples/20_flexure.py:133: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+    plt.show()
+
+pygeoinf2/tests/test_examples.py::test_the_example_runs[21_tomography]
+  /home/david/dev/pygeoinf/pygeoinf2/examples/21_tomography.py:168: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+    plt.show()
+
+pygeoinf2/tests/test_examples.py::test_the_example_runs[23_feasible_set]
+  /home/david/dev/pygeoinf/pygeoinf2/examples/23_feasible_set.py:205: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+    plt.show()
+
+pygeoinf2/tests/test_examples.py::test_the_example_runs[25_distributions]
+  /home/david/dev/pygeoinf/pygeoinf2/examples/25_distributions.py:148: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+    plt.show()
+
+pygeoinf2/tests/test_examples.py::test_the_example_runs[26_mixture]
+  /home/david/dev/pygeoinf/pygeoinf2/examples/26_mixture.py:157: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+    plt.show()
+
+pygeoinf2/tests/test_examples.py::test_the_example_runs[28_nonlinear_map]
+  /home/david/dev/pygeoinf/pygeoinf2/examples/28_nonlinear_map.py:183: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+    plt.show()
+
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_finds_a_stationary_point
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_recovers_the_truth
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_covariance_is_positive_definite
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_gaussian_can_be_placed_anywhere
+pygeoinf2/tests/test_laplace.py::TestTheSamplerHooksAreThere::test_the_density_peaks_at_the_mode
+  /home/david/dev/pygeoinf/pygeoinf2/tests/test_laplace.py:37: RuntimeWarning: overflow encountered in exp
+    return np.exp(matrix @ components)
+
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_finds_a_stationary_point
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_recovers_the_truth
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_covariance_is_positive_definite
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_gaussian_can_be_placed_anywhere
+pygeoinf2/tests/test_laplace.py::TestTheSamplerHooksAreThere::test_the_density_peaks_at_the_mode
+  /home/david/dev/pygeoinf/pygeoinf2/tests/test_laplace.py:43: RuntimeWarning: overflow encountered in exp
+    np.diag(np.exp(matrix @ components)) @ matrix,
+
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_finds_a_stationary_point
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_recovers_the_truth
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_covariance_is_positive_definite
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_gaussian_can_be_placed_anywhere
+pygeoinf2/tests/test_laplace.py::TestTheSamplerHooksAreThere::test_the_density_peaks_at_the_mode
+  /home/david/dev/pygeoinf/pygeoinf2/tests/test_laplace.py:43: RuntimeWarning: invalid value encountered in matmul
+    np.diag(np.exp(matrix @ components)) @ matrix,
+
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_finds_a_stationary_point
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_recovers_the_truth
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_covariance_is_positive_definite
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_gaussian_can_be_placed_anywhere
+pygeoinf2/tests/test_laplace.py::TestTheSamplerHooksAreThere::test_the_density_peaks_at_the_mode
+  /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1444: RuntimeWarning: invalid value encountered in matmul
+    self.domain.solve_gram(self._stored.T @ components)
+
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_finds_a_stationary_point
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_recovers_the_truth
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_covariance_is_positive_definite
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_gaussian_can_be_placed_anywhere
+pygeoinf2/tests/test_laplace.py::TestTheSamplerHooksAreThere::test_the_density_peaks_at_the_mode
+  /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:802: RuntimeWarning: overflow encountered in dot
+    return float(np.dot(self.to_components(x), self.to_components(y)))
+
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_finds_a_stationary_point
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_it_recovers_the_truth
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_covariance_is_positive_definite
+pygeoinf2/tests/test_laplace.py::TestOnANonlinearProblem::test_the_gaussian_can_be_placed_anywhere
+pygeoinf2/tests/test_laplace.py::TestTheSamplerHooksAreThere::test_the_density_peaks_at_the_mode
+  /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1444: RuntimeWarning: overflow encountered in matmul
+    self.domain.solve_gram(self._stored.T @ components)
+
+pygeoinf2/tests/test_phase_four.py::TestFlexibleCG::test_it_converges_with_a_changing_preconditioner
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:280: RuntimeWarning: CGSolver did not converge in 1 iterations; the residual norm is 5.31.
+    return self._solve_fn(y, None).solution
+
+pygeoinf2/tests/test_phase_four.py::TestFlexibleCG::test_it_converges_with_a_changing_preconditioner
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:280: RuntimeWarning: CGSolver did not converge in 1 iterations; the residual norm is 1.11.
+    return self._solve_fn(y, None).solution
+
+pygeoinf2/tests/test_phase_four.py::TestFlexibleCG::test_it_converges_with_a_changing_preconditioner
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:280: RuntimeWarning: CGSolver did not converge in 1 iterations; the residual norm is 0.634.
+    return self._solve_fn(y, None).solution
+
+pygeoinf2/tests/test_phase_four.py::TestSolverDiagnostics::test_a_stalled_solve_says_where_it_stalled
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:277: RuntimeWarning: CGSolver did not converge in 2 iterations; the residual norm is 1.51.
+    return self._solve_fn(y, x0)
+
+pygeoinf2/tests/test_phase_four.py::TestPreconditioners::test_it_can_make_matters_worse_on_a_dense_operator
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:277: RuntimeWarning: CGSolver did not converge in 162 iterations; the residual norm is 38.3.
+    return self._solve_fn(y, x0)
+
+pygeoinf2/tests/test_plotting.py::TestDistributions::test_the_corner_is_lower_triangular[weighted]
+  /home/david/dev/pygeoinf/pygeoinf2/plotting/distributions.py:462: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+    _, axes = plt.subplots(size, size, figsize=figsize, squeeze=False)
+
+pygeoinf2/tests/test_quadratic_programming.py: 517 warnings
+  /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/osqp/interface.py:405: PendingDeprecationWarning: The default value of raise_error will change to True in the future.
+    warnings.warn(
+
+pygeoinf2/tests/test_quadratic_programming.py::TestTheKKTRouteAgreesWhereItApplies::test_all_three_routes_agree
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00165 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_quadratic_programming.py::TestTheKKTRouteAgreesWhereItApplies::test_all_three_routes_agree
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/convex.py:1071: RuntimeWarning: The bundle subproblem did not converge in 1000 iterations; the KKT residual is 0.00036 relative. The outer method will still make progress, but its gap is only as good as this solve.
+    weights = _minimise_on_simplex(step_size * gram, -errors)
+
+pygeoinf2/tests/test_solvers.py::TestPreconditionedMinRes::test_it_is_what_makes_a_dense_metric_solvable
+  /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:277: RuntimeWarning: MinResSolver did not converge in 3000 iterations; the residual norm is 29.7.
+    return self._solve_fn(y, x0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+6.38s call     pygeoinf2/tests/test_examples.py::test_the_example_runs[21_tomography]
+6.14s call     pygeoinf2/tests/test_examples.py::test_the_example_runs[26_mixture]
+6.07s call     pygeoinf2/tests/test_backus.py::TestDualRoute::test_a_ball_written_as_an_ellipsoid_gives_the_same_answer
+5.47s call     pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_agrees_with_the_primal_route
+4.20s call     pygeoinf2/tests/test_examples.py::test_the_example_runs[25_distributions]
+3.18s call     pygeoinf2/tests/test_examples.py::test_the_example_runs[20_flexure]
+3.14s call     pygeoinf2/tests/test_examples.py::test_the_example_runs[23_feasible_set]
+2.58s call     pygeoinf2/tests/test_backus.py::TestDualRoute::test_it_accepts_a_prior_the_other_routes_cannot
+2.39s call     pygeoinf2/tests/test_compat.py::TestSphere::test_white_noise_is_white
+2.30s call     pygeoinf2/tests/test_inference.py::TestEvidenceWithoutAssembling::test_the_stochastic_route_agrees_with_the_dense_one[model_space]
+2.08s call     pygeoinf2/tests/test_inference.py::TestFeasibilityIsAskable::test_a_tight_prior_is_infeasible_and_a_roomy_one_is_not
+1.80s call     pygeoinf2/tests/test_compat.py::TestWhiteNoiseIsFixed::test_adapted_white_noise_is_white
+1.55s call     pygeoinf2/tests/test_quadratic_programming.py::TestTheKKTRouteAgreesWhereItApplies::test_all_three_routes_agree
+1.54s call     pygeoinf2/tests/test_phase_four.py::TestPreconditioners::test_the_spectral_one_helps_a_decaying_spectrum
+1.35s call     pygeoinf2/tests/test_fourier_spaces.py::TestSpaceAxioms::test_white_noise_is_white_on_a_sobolev_space
+1.32s call     pygeoinf2/tests/test_inference.py::TestEvidenceWithoutAssembling::test_the_stochastic_route_agrees_with_the_dense_one[data_space]
+0.98s call     pygeoinf2/tests/test_quadratic_programming.py::TestTheLevelBundleBoundIsABound::test_it_agrees_with_the_proximal_method_on_a_nonsmooth_problem
+0.97s call     pygeoinf2/tests/test_phase_four.py::TestCorrelatedMeasures::test_the_requested_correlation_appears_in_samples[-0.9]
+0.95s call     pygeoinf2/tests/test_phase_four.py::TestCorrelatedMeasures::test_the_requested_correlation_appears_in_samples[0.7]
+0.93s call     pygeoinf2/tests/test_phase_four.py::TestCorrelatedMeasures::test_the_requested_correlation_appears_in_samples[0.0]
+0.75s call     pygeoinf2/tests/test_fourier_spaces.py::TestInvariantMeasures::test_the_moments_match
+0.73s call     pygeoinf2/tests/test_backus.py::TestDualRoute::test_an_empty_feasible_set_is_reported
+0.72s call     pygeoinf2/tests/test_plotting.py::TestPyslfpNeeds::test_the_legend_names_only_what_was_drawn
+0.69s call     pygeoinf2/tests/test_backus.py::TestDualRoute::test_the_certificate_is_a_weighting_of_the_data
+0.67s call     pygeoinf2/tests/test_backus.py::TestSupportValuesSweep::test_an_empty_feasible_set_is_still_reported
+2023 passed, 32 deselected, 655 warnings in 87.54s (0:01:27)
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+EXIT 0

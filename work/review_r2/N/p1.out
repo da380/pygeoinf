@@ -1,0 +1,17 @@
+densemetric3000 rep0: v2 45.907s  proto 1.548s  ratio 29.6
+densemetric3000 rep1: v2 38.078s  proto 1.680s  ratio 22.7
+  counts v2: {'from_components': 700, 'apply': 480, 'to_components': 52296, 'inner_product': 25908, 'copy': 360, 'scale_inplace': 360, 'axpy': 23779}
+  v2 err top10: 1.49836791785378e-13  proto err top10: 3.499257486386822e-14
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.011    0.011   41.993   41.993 /home/david/dev/pygeoinf/pygeoinf2/numerics/randomised.py:347(random_eig)
+    12831    0.152    0.000   40.926    0.003 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:409(inner_product)
+    12831   40.742    0.003   40.742    0.003 /home/david/dev/pygeoinf/pygeoinf2/tests/conftest.py:72(apply_gram)
+        1    0.000    0.000   27.441   27.441 /home/david/dev/pygeoinf/pygeoinf2/numerics/randomised.py:104(random_range)
+        3    0.001    0.000   26.723    8.908 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:215(orthonormal_basis)
+      180    0.025    0.000   26.721    0.148 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:241(_orthogonalise_against)
+        1    0.000    0.000   16.369   16.369 /home/david/dev/pygeoinf/pygeoinf2/numerics/randomised.py:83(_power_iterate)
+      462    0.002    0.000    1.328    0.003 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:162(norm)
+      462    0.001    0.000    1.326    0.003 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:158(squared_norm)
+  480/240    0.001    0.000    0.647    0.003 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:235(__call__)
+      240    0.000    0.000    0.647    0.003 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1350(_value)
+      240    0.645    0.003    0.646    0.003 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1432(_value)

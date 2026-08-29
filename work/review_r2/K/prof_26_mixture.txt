@@ -1,0 +1,86 @@
+pygeoinf2/examples/26_mixture.py:157: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+  plt.show()
+WALL 12.228263751999748
+         6339211 function calls (6183422 primitive calls) in 12.208 seconds
+
+   Ordered by: cumulative time
+   List reduced from 6712 to 45 due to restriction <45>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   12.228   12.228 <frozen runpy>:262(run_path)
+   1334/2    0.033    0.000   12.227    6.113 {built-in method builtins.exec}
+        1    0.000    0.000   12.227   12.227 <frozen runpy>:91(_run_module_code)
+        1    0.000    0.000   12.227   12.227 <frozen runpy>:65(_run_code)
+        1    0.000    0.000   12.227   12.227 pygeoinf2/examples/26_mixture.py:1(<module>)
+        1    0.000    0.000   10.579   10.579 /home/david/dev/pygeoinf/pygeoinf2/plotting/distributions.py:371(plot_corner)
+        3    8.905    2.968    8.907    2.969 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/stats/_kde.py:247(evaluate)
+   1176/8    0.005    0.000    1.645    0.206 <frozen importlib._bootstrap>:1349(_find_and_load)
+   1134/8    0.004    0.000    1.644    0.206 <frozen importlib._bootstrap>:1304(_find_and_load_unlocked)
+   1103/9    0.003    0.000    1.643    0.183 <frozen importlib._bootstrap>:911(_load_unlocked)
+    956/9    0.002    0.000    1.643    0.183 <frozen importlib._bootstrap_external>:989(exec_module)
+  2650/17    0.002    0.000    1.640    0.096 <frozen importlib._bootstrap>:480(_call_with_frames_removed)
+        1    0.012    0.012    1.592    1.592 /home/david/dev/pygeoinf/pygeoinf2/plotting/distributions.py:58(moments)
+   669/21    0.001    0.000    1.587    0.076 {built-in method builtins.__import__}
+    20000    0.160    0.000    1.574    0.000 /home/david/dev/pygeoinf/pygeoinf2/probability/mixture.py:215(sample)
+60001/20001    0.057    0.000    1.358    0.000 /home/david/dev/pygeoinf/pygeoinf2/probability/gaussian.py:437(sample)
+    20000    0.094    0.000    1.303    0.000 /home/david/dev/pygeoinf/pygeoinf2/inference/gaussian.py:565(_draw_fluctuation)
+        1    0.000    0.000    1.040    1.040 /home/david/dev/pygeoinf/pygeoinf2/__init__.py:1(<module>)
+  944/435    0.002    0.000    0.928    0.002 <frozen importlib._bootstrap>:1390(_handle_fromlist)
+        1    0.000    0.000    0.837    0.837 /home/david/dev/pygeoinf/pygeoinf2/geometry/__init__.py:1(<module>)
+        1    0.000    0.000    0.836    0.836 /home/david/dev/pygeoinf/pygeoinf2/geometry/convex.py:1(<module>)
+        1    0.000    0.000    0.835    0.835 /home/david/dev/pygeoinf/pygeoinf2/numerics/__init__.py:1(<module>)
+        1    0.000    0.000    0.795    0.795 /home/david/dev/pygeoinf/pygeoinf2/numerics/quadratic_forms.py:1(<module>)
+140062/80024    0.048    0.000    0.740    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:235(__call__)
+    20008    0.025    0.000    0.577    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/nodes.py:301(_value)
+        1    0.000    0.000    0.535    0.535 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/stats/__init__.py:1(<module>)
+      625    0.001    0.000    0.491    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_docscrape.py:579(__init__)
+      633    0.002    0.000    0.444    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_docscrape.py:140(__init__)
+      474    0.003    0.000    0.441    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_array_api.py:840(decorator)
+    20010    0.008    0.000    0.411    0.000 /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:279(_value)
+    20010    0.028    0.000    0.403    0.000 /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:400(solve_fn)
+        1    0.000    0.000    0.375    0.375 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/pyplot.py:1(<module>)
+      633    0.008    0.000    0.356    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_docscrape.py:388(_parse)
+    20010    0.006    0.000    0.355    0.000 /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:478(<lambda>)
+    20010    0.012    0.000    0.349    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/linalg/_decomp_cholesky.py:188(cho_solve)
+2768/2674    0.027    0.000    0.344    0.000 {built-in method builtins.__build_class__}
+    20023    0.074    0.000    0.339    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_util.py:1149(wrapper)
+        1    0.000    0.000    0.259    0.259 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/integrate/__init__.py:1(<module>)
+        1    0.001    0.001    0.254    0.254 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/stats/_stats_py.py:1(<module>)
+        1    0.000    0.000    0.210    0.210 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/figure.py:1(<module>)
+      106    0.003    0.000    0.203    0.002 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/artist.py:158(_update_set_signature_and_docstring)
+   119/93    0.000    0.000    0.202    0.002 <frozen importlib._bootstrap_external>:1295(exec_module)
+   119/93    0.023    0.000    0.201    0.002 {built-in method _imp.exec_dynamic}
+      105    0.001    0.000    0.200    0.002 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/artist.py:125(__init_subclass__)
+        1    0.000    0.000    0.199    0.199 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/projections/__init__.py:1(<module>)
+
+
+
+         6339211 function calls (6183422 primitive calls) in 12.208 seconds
+
+   Ordered by: internal time
+   List reduced from 6712 to 20 due to restriction <20>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        3    8.905    2.968    8.907    2.969 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/stats/_kde.py:247(evaluate)
+    20000    0.160    0.000    1.574    0.000 /home/david/dev/pygeoinf/pygeoinf2/probability/mixture.py:215(sample)
+   120027    0.148    0.000    0.148    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:318(axpy)
+    60021    0.127    0.000    0.161    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1432(_value)
+      956    0.107    0.000    0.107    0.000 {built-in method marshal.loads}
+    20000    0.094    0.000    1.303    0.000 /home/david/dev/pygeoinf/pygeoinf2/inference/gaussian.py:565(_draw_fluctuation)
+     8682    0.081    0.000    0.149    0.000 /usr/lib/python3.12/inspect.py:875(cleandoc)
+    20023    0.074    0.000    0.339    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_util.py:1149(wrapper)
+      380    0.068    0.000    0.075    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_docscrape.py:290(_parse_see_also)
+60001/20001    0.057    0.000    1.358    0.000 /home/david/dev/pygeoinf/pygeoinf2/probability/gaussian.py:437(sample)
+    40001    0.049    0.000    0.057    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:792(white_noise_components)
+140062/80024    0.048    0.000    0.740    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:235(__call__)
+    20008    0.047    0.000    0.059    0.000 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1439(_adjoint_value)
+    20010    0.046    0.000    0.172    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/linalg/_decomp_cholesky.py:233(_cho_solve)
+   140460    0.044    0.000    0.044    0.000 {method 'copy' of 'numpy.ndarray' objects}
+    40039    0.041    0.000    0.106    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/_function_base_impl.py:603(asarray_chkfinite)
+    13806    0.039    0.000    0.085    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/scipy/_lib/_docscrape.py:67(read_to_condition)
+578202/575586    0.038    0.000    0.038    0.000 {built-in method builtins.len}
+    40250    0.038    0.000    0.038    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+  119/117    0.036    0.000    0.040    0.000 {built-in method _imp.create_dynamic}
+
+
+

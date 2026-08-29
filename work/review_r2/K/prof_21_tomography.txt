@@ -1,0 +1,86 @@
+pygeoinf2/examples/21_tomography.py:168: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+  plt.show()
+WALL 17.017767566000202
+         16300577 function calls (16034657 primitive calls) in 17.010 seconds
+
+   Ordered by: cumulative time
+   List reduced from 10413 to 45 due to restriction <45>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   17.018   17.018 <frozen runpy>:262(run_path)
+   2202/2    0.045    0.000   17.016    8.508 {built-in method builtins.exec}
+        1    0.000    0.000   17.016   17.016 <frozen runpy>:91(_run_module_code)
+        1    0.000    0.000   17.016   17.016 <frozen runpy>:65(_run_code)
+        1    0.002    0.002   17.016   17.016 pygeoinf2/examples/21_tomography.py:1(<module>)
+     2078    0.008    0.000    6.977    0.003 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/transforms.py:2422(transform_path_non_affine)
+     2082    0.030    0.000    6.965    0.003 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:133(transform_path_non_affine)
+        9    0.000    0.000    6.217    0.691 /usr/lib/python3.12/functools.py:904(wrapper)
+        4    0.000    0.000    6.166    1.541 /home/david/dev/pygeoinf/pygeoinf2/plotting/sphere.py:52(_)
+      9/5    0.000    0.000    6.085    1.217 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:274(wrapper)
+        4    0.000    0.000    6.083    1.521 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:1748(pcolormesh)
+     2078    0.011    0.000    5.959    0.003 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:804(project_geometry)
+        4    0.002    0.000    5.932    1.483 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:1823(_wrap_quadmesh)
+        4    0.000    0.000    5.917    1.479 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/mpl/geoaxes.py:1976(pcolor)
+       13    0.002    0.000    5.872    0.452 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/collections.py:242(get_datalim)
+      784    0.038    0.000    5.361    0.007 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:954(_project_polygon)
+      784    0.264    0.000    4.398    0.006 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:987(_attach_lines_to_boundary)
+        1    0.039    0.039    3.946    3.946 /home/david/dev/pygeoinf/pygeoinf2/plotting/sphere.py:245(plot_paths)
+   415202    0.706    0.000    3.185    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/decorators.py:73(wrapped)
+486329/338481    0.294    0.000    3.089    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/decorators.py:171(wrapper)
+        1    0.003    0.003    2.794    2.794 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/base.py:1917(path_average_operator)
+        1    1.555    1.555    2.791    2.791 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/base.py:1965(_path_operator)
+  2048/10    0.012    0.000    2.537    0.254 <frozen importlib._bootstrap>:1349(_find_and_load)
+   2003/9    0.007    0.000    2.536    0.282 <frozen importlib._bootstrap>:1304(_find_and_load_unlocked)
+  1933/10    0.006    0.000    2.535    0.254 <frozen importlib._bootstrap>:911(_load_unlocked)
+  1721/10    0.003    0.000    2.535    0.253 <frozen importlib._bootstrap_external>:989(exec_module)
+  4629/19    0.004    0.000    2.532    0.133 <frozen importlib._bootstrap>:480(_call_with_frames_removed)
+   896/26    0.001    0.000    2.485    0.096 {built-in method builtins.__import__}
+     1294    0.015    0.000    2.324    0.002 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/axes/_axes.py:1532(plot)
+6324/3853    0.006    0.000    1.825    0.000 <frozen importlib._bootstrap>:1390(_handle_fromlist)
+     1294    0.016    0.000    1.799    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/axes/_base.py:2408(add_line)
+   147392    0.091    0.000    1.785    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/geometry/base.py:913(project)
+     1920    0.152    0.000    1.720    0.001 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1107(geodesic_quadrature)
+     1294    0.026    0.000    1.677    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/axes/_base.py:2436(_update_line_limits)
+ 4817/980    0.005    0.000    1.543    0.002 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:235(__call__)
+   147392    0.267    0.000    1.522    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/geometry/point.py:54(__new__)
+    551/9    0.003    0.000    1.486    0.165 /home/david/dev/pygeoinf/pygeoinf2/algebra/nodes.py:301(_value)
+  542/256    0.002    0.000    1.464    0.006 /home/david/dev/pygeoinf/pygeoinf2/algebra/nodes.py:220(_value)
+        8    0.000    0.000    1.459    0.182 /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:279(_value)
+        8    0.000    0.000    1.459    0.182 /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:674(solve_fn)
+        8    0.005    0.001    1.459    0.182 /home/david/dev/pygeoinf/pygeoinf2/numerics/solvers.py:715(_solve)
+      538    0.001    0.000    1.439    0.003 /home/david/dev/pygeoinf/pygeoinf2/inference/normal.py:279(_value)
+     1294    0.003    0.000    1.349    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/transforms.py:2791(get_transformed_path_and_affine)
+     1294    0.006    0.000    1.296    0.001 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/matplotlib/transforms.py:2767(_revalidate)
+   147392    1.114    0.000    1.114    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/linear.py:76(line_locate_point)
+
+
+
+         16300577 function calls (16034657 primitive calls) in 17.010 seconds
+
+   Ordered by: internal time
+   List reduced from 10413 to 20 due to restriction <20>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    1.555    1.555    2.791    2.791 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/base.py:1965(_path_operator)
+   147392    1.114    0.000    1.114    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/linear.py:76(line_locate_point)
+   415202    0.706    0.000    3.185    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/decorators.py:73(wrapped)
+    17612    0.628    0.000    0.629    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyshtools/backends/shtools.py:212(wrapped_func)
+   147392    0.438    0.000    0.476    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/creation.py:52(points)
+      555    0.421    0.001    0.558    0.001 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1432(_value)
+      550    0.356    0.001    0.545    0.001 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1439(_adjoint_value)
+        1    0.340    0.340    0.376    0.376 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:621(basis_matrix)
+     5760    0.318    0.000    0.327    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/polynomial/legendre.py:828(legval)
+    45073    0.305    0.000    0.352    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/_shape_base_impl.py:625(column_stack)
+486329/338481    0.294    0.000    3.089    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/decorators.py:171(wrapper)
+     1315    0.274    0.000    0.340    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyproj/crs/crs.py:185(__init__)
+   147392    0.267    0.000    1.522    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/shapely/geometry/point.py:54(__new__)
+      784    0.264    0.000    4.398    0.006 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:987(_attach_lines_to_boundary)
+   164494    0.245    0.000    0.344    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyproj/transformer.py:712(transform)
+     5779    0.219    0.000    0.233    0.000 /usr/lib/python3.12/warnings.py:182(_add_filter)
+  1662655    0.213    0.000    0.239    0.000 {built-in method builtins.isinstance}
+     1721    0.209    0.000    0.209    0.000 {built-in method marshal.loads}
+     1294    0.190    0.000    0.567    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/cartopy/crs.py:838(_project_line_string)
+    38400    0.183    0.000    0.388    0.000 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1020(to_latitude_degrees)
+
+
+

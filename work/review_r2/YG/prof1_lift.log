@@ -1,0 +1,56 @@
+##### prof1_lift
+=== transform counts per application (lmax 32) ===
+  v2 multiplication_operator fwd                A=1 S=1          total=2
+  v2 multiplication_operator adj                A=3 S=3          total=6
+  v1 spatial_multiplication_operator fwd        A=0 S=0          total=0
+  v1 spatial_multiplication_operator adj        A=2 S=2          total=4
+  v2 order_inclusion fwd                        A=0 S=0          total=0
+  v2 order_inclusion adj                        A=3 S=3          total=6
+  v1 order_inclusion fwd                        A=1 S=1          total=2
+  v1 order_inclusion adj                        A=4 S=4          total=8
+  v2 laplacian fwd                              A=1 S=1          total=2
+  v2 gradient_dot_product                       A=6 S=6          total=12
+  v1 gradient_dot_product                       A=3 S=3          total=6
+  v2 flexural (Sobolev) fwd                     A=25 S=25        total=50
+  v2 flexural (Sobolev) adj                     A=27 S=27        total=54
+  v1 flexural (Sobolev) fwd                     A=12 S=12        total=24
+  v1 flexural (Sobolev) adj                     A=14 S=14        total=28
+  v2 flexural (L2) fwd                          A=25 S=25        total=50
+  v1 flexural (L2) fwd                          A=12 S=12        total=24
+
+=== timings ===
+
+-- lmax 64 (dim 4225) --
+  v2 to_components                                       0.41 ms
+  v2 from_components                                     0.81 ms
+  v1 to_components                                       0.45 ms
+  v2 multiplication fwd                                  0.84 ms
+  v1 multiplication fwd                                  0.03 ms
+  v2 multiplication adj                                  2.52 ms
+  v1 multiplication adj                                  1.78 ms
+  v2 flexural fwd                                       21.05 ms
+  v1 flexural fwd                                       14.51 ms
+  v2 flexural adj                                       22.72 ms
+  v1 flexural adj                                       16.27 ms
+  v2 multiply                                            0.88 ms
+  v2 grid product only                                   0.01 ms
+
+-- lmax 128 (dim 16641) --
+  v2 to_components                                       3.13 ms
+  v2 from_components                                     6.39 ms
+  v1 to_components                                       3.20 ms
+  v2 multiplication fwd                                  6.57 ms
+  v1 multiplication fwd                                  0.13 ms
+  v2 multiplication adj                                 19.65 ms
+  v1 multiplication adj                                 13.39 ms
+  v2 flexural fwd                                      165.72 ms
+  v1 flexural fwd                                       96.23 ms
+  v2 flexural adj                                      179.46 ms
+  v1 flexural adj                                      112.96 ms
+  v2 multiply                                            6.79 ms
+  v2 grid product only                                   0.06 ms
+
+=== construction costs ===
+  lmax 128: Sphere() 0.2 ms, with_order 0.1 ms, first _quadrature 4.4 ms, second (cached) 0.1 ms, multiplication_operator() 0.1 ms
+  lmax 256: Sphere() 1.1 ms, with_order 0.5 ms, first _quadrature 297.1 ms, second (cached) 0.7 ms, multiplication_operator() 0.5 ms
+EXIT 0

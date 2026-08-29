@@ -1,0 +1,69 @@
+##### prof4_path
+
+-- lmax 64, 200 paths, 5940 nodes; build v2 173 ms, v1 109 ms, v2 dense 555 ms --
+  v2 path_integral fwd                                   5.02 ms
+  v2 path_integral adj                                   6.10 ms
+  v1 path_average(matrix_free) fwd                     118.87 ms
+  v1 path_average(matrix_free) adj                     146.19 ms
+  v2 dense=True fwd                                      0.88 ms
+  v2 dense=True adj                                      0.78 ms
+
+-- lmax 128, 200 paths, 6304 nodes; build v2 179 ms, v1 108 ms, v2 dense nan ms --
+  v2 path_integral fwd                                  19.41 ms
+  v2 path_integral adj                                  23.11 ms
+  v1 path_average(matrix_free) fwd                     326.57 ms
+  v1 path_average(matrix_free) adj                     507.62 ms
+
+-- lmax 128, 2000 paths, 64183 nodes; build v2 1761 ms, v1 1235 ms, v2 dense nan ms --
+  v2 path_integral fwd                                  44.86 ms
+  v2 path_integral adj                                  50.71 ms
+  v1 path_average(matrix_free) fwd                    3550.10 ms
+  v1 path_average(matrix_free) adj                    5081.92 ms
+=== cProfile construction ===
+         3083362 function calls in 2.689 seconds
+
+   Ordered by: cumulative time
+   List reduced from 184 to 12 due to restriction <12>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.003    0.003    2.689    2.689 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/base.py:1857(path_integral_operator)
+        1    0.009    0.009    2.686    2.686 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/base.py:1965(_path_operator)
+     2000    0.006    0.000    2.654    0.001 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/base.py:1842(_path_nodes)
+     2000    0.219    0.000    2.501    0.001 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1107(geodesic_quadrature)
+    64183    0.274    0.000    1.323    0.000 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1063(_to_point)
+     2000    0.030    0.000    0.832    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/polynomial/legendre.py:1470(leggauss)
+    64183    0.304    0.000    0.639    0.000 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1020(to_latitude_degrees)
+     6000    0.547    0.000    0.556    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/polynomial/legendre.py:828(legval)
+    72183    0.159    0.000    0.221    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/_shape_base_impl.py:625(column_stack)
+    64183    0.041    0.000    0.188    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:2207(clip)
+    68183    0.095    0.000    0.182    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/linalg/_linalg.py:2598(norm)
+     4000    0.049    0.000    0.149    0.000 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/_core/numeric.py:1567(cross)
+
+
+
+=== geodesic ball averages (lmax 128, 100 centres) ===
+  build: exact 1509 ms, quadrature 142 ms, quadrature dense 2681 ms
+  exact fwd                                              4.23 ms
+  exact adj                                              4.31 ms
+  quadrature fwd                                        20.91 ms
+  quadrature adj                                        26.61 ms
+  quadrature dense fwd                                   4.19 ms
+  quadrature dense adj                                   4.31 ms
+  exact vs quadrature: max diff 4.71e-06 of 1.77
+         22902 function calls in 1.616 seconds
+
+   Ordered by: cumulative time
+   List reduced from 82 to 8 due to restriction <8>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.001    0.001    1.616    1.616 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1298(geodesic_ball_average_operator)
+      500    1.493    0.003    1.493    0.003 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyshtools/backends/shtools.py:212(wrapped_func)
+      100    0.014    0.000    1.267    0.013 /home/david/dev/pygeoinf/pygeoinf2/symmetric_space/sphere.py:1222(spherical_cap_integral)
+      100    0.003    0.000    0.872    0.009 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyshtools/shclasses/shcoeffs.py:821(from_cap)
+      100    0.001    0.000    0.849    0.008 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyshtools/shclasses/shcoeffs.py:1995(rotate)
+      100    0.002    0.000    0.848    0.008 /home/david/.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/pyshtools/shclasses/shcoeffs.py:4295(_rotate)
+      100    0.001    0.000    0.376    0.004 /home/david/dev/pygeoinf/pygeoinf2/algebra/operators.py:1935(from_derivative_components)
+      100    0.001    0.000    0.367    0.004 /home/david/dev/pygeoinf/pygeoinf2/algebra/spaces.py:497(representer)
+
+
+EXIT 0

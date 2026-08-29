@@ -1,0 +1,39 @@
+##### prof3_measure
+=== transforms per sample draw (lmax 32) ===
+  v2 sobolev_measure.sample: A=1 S=2
+  v1 sobolev_kernel_gaussian_measure.sample: A=0 S=1
+  v2 samples(4): A=4 S=8
+  v2 with expectation: A=1 S=2
+  v2 pointwise_variance: A=0 S=0
+  v2 two_point_covariance: A=1 S=2
+  v2 covariance_function (50 distances): A=2 S=2
+  v2 pointwise_variance_at exact, 5 points: A=15 S=10
+  v2 pointwise_variance_at samples=20, 300 points: A=61 S=40
+  v2 directional_variance(dirac representer): A=3 S=2
+  pointwise_variance_at exact [0.69054727 0.69054727 0.69054727] vs pointwise_variance 0.690547
+  proposed components formula [0.69054727 0.69054727 0.69054727]
+  covariance_function on a Lebesgue space RAISES: A Dirac functional needs a Sobolev order above 1 on a 2-dimensional domain, and 
+  covariance_function (Sobolev) vs closed form: max diff 1.14e-14 of 0.691
+
+=== timings ===
+
+-- lmax 128 (dim 16641) --
+  v2 sample                                             10.28 ms
+  v1 sample                                              3.76 ms
+  proposed: one synthesis                                3.55 ms
+  v2 pointwise_variance_at exact (10 pts)              169.83 ms
+  proposed diag formula (10 pts)                         1.55 ms
+  v2 covariance_function (50 d)                         23.03 ms
+  closed form Legendre (50 d)                            0.53 ms
+  v2 two_point_covariance                               10.54 ms
+
+-- lmax 256 (dim 66049) --
+  v2 sample                                             68.16 ms
+  v1 sample                                             24.31 ms
+  proposed: one synthesis                               23.97 ms
+  v2 pointwise_variance_at exact (10 pts)             1158.02 ms
+  proposed diag formula (10 pts)                         7.63 ms
+  v2 covariance_function (50 d)                        122.98 ms
+  closed form Legendre (50 d)                            1.21 ms
+  v2 two_point_covariance                               71.83 ms
+EXIT 0
