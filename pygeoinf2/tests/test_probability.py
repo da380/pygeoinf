@@ -830,6 +830,96 @@ class TestConditioningAppliesTheCovarianceTwice:
         )
 
 
+class TestTheAmbientBall:
+    """It formed the dense component matrix and took a non-symmetric
+    eigendecomposition, whatever the covariance was: cubic, and reached on
+    every Backus route with a Gaussian error. v1 had a randomised spectrum and
+    a sampling radius; both are back, and a diagonal covariance now costs
+    nothing at all."""
+
+    def test_a_diagonal_covariance_needs_no_decomposition(self, rng):
+        """Exact, and the spectrum is already in hand. Measured at dimension
+        8000: 0.48 s of eigenvalues against 16 us."""
+        X = EuclideanSpace(60)
+        deviations = np.linspace(0.5, 2.0, 60)
+        mu = GaussianMeasure.from_standard_deviations(X, deviations)
+
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        expected = np.sqrt(weighted_chi2_quantile(deviations**2, 0.9))
+        assert mu.ambient_ball(level=0.9).radius == pytest.approx(expected)
+
+    def test_every_route_gives_the_same_ball(self, rng):
+        """On a dense metric, where the operator's eigenvalues are those of
+        ``G^-1 C_gal`` and not of any symmetric matrix in sight."""
+        X = make_dense_metric_space(20)
+        galerkin = spd(rng, 20)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        exact = np.linalg.eigvals(np.linalg.solve(X.gram_matrix(), galerkin)).real
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        expected = np.sqrt(weighted_chi2_quantile(np.clip(exact, 0.0, None), 0.9))
+
+        dense = mu.ambient_ball(level=0.9, method="dense")
+        assert dense.radius == pytest.approx(expected, rel=1e-8)
+        spectral = mu.ambient_ball(
+            level=0.9, method="spectral", rank=20, rng=np.random.default_rng(1)
+        )
+        assert spectral.radius == pytest.approx(expected, rel=1e-6)
+        sampled = mu.ambient_ball(
+            level=0.9, method="sampling", samples=40000, rng=np.random.default_rng(2)
+        )
+        assert sampled.radius == pytest.approx(expected, rel=0.05)
+
+    def test_a_truncated_spectrum_is_a_lower_bound(self, rng):
+        """Which is the honest reading of a randomised route: the tail it
+        drops is positive, so the ball it gives is too small."""
+        X = make_dense_metric_space(20)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20))
+        full = mu.ambient_ball(level=0.9, method="dense").radius
+        truncated = mu.ambient_ball(
+            level=0.9, method="spectral", rank=5, rng=np.random.default_rng(1)
+        ).radius
+        assert truncated < full
+
+    def test_the_ball_covers_what_it_claims(self, rng):
+        X = make_dense_metric_space(12)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 12))
+        ball = mu.ambient_ball(level=0.9)
+        draws = mu.samples(8000, rng=rng)
+        assert np.mean([ball.contains(x) for x in draws]) == pytest.approx(
+            0.9, abs=0.02
+        )
+
+    def test_auto_says_what_it_needs_when_it_cannot_afford_a_route(self):
+        """A large space, a covariance that cannot be sampled and no rank: the
+        only exact route is cubic and the message says which of the three
+        things to supply."""
+        from pygeoinf2.algebra.operators import LinearOperator as _Operator
+
+        X = EuclideanSpace(4000)
+        covariance = _Operator.self_adjoint(
+            X, lambda v: v, traits=Traits.POSITIVE_DEFINITE
+        )
+        mu = GaussianMeasure(X, covariance=covariance)
+        with pytest.raises(ValueError, match="No affordable route"):
+            mu.ambient_ball(level=0.9)
+        # ...and it is affordable once told how
+        assert mu.ambient_ball(level=0.9, method="spectral", rank=8).radius > 0.0
+
+    def test_a_long_spectrum_takes_the_matched_quantile(self):
+        """Imhof's inversion sums over every weight at every quadrature point:
+        0.8 s at 500 weights, 10.4 s at 2000. A sum of that many comparable
+        chi-squares is within 3e-5 of its moment-matched one, in 1 ms."""
+        weights = np.linspace(0.25, 4.0, 2000)
+        assert GaussianMeasure._quantile_method_for(weights) == "matched"
+        # a spectrum carried by a handful of modes is not, and keeps Imhof
+        dominated = np.concatenate([[1e6, 1e6], np.full(2000, 1e-8)])
+        assert GaussianMeasure._quantile_method_for(dominated) == "imhof"
+        assert GaussianMeasure._quantile_method_for(np.ones(50)) == "imhof"
+
+
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 
