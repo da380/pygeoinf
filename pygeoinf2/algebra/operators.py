@@ -832,6 +832,32 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         return parallel_map(self.adjoint, list(vectors), n_jobs=n_jobs)
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        """The action on components, ``c_x -> c_{Ax}``, when the operator can
+        give it without leaving coordinates; ``None`` otherwise.
+
+        The hook behind the fused application of products and sums. On a
+        spectral space every operator that goes through the vectors costs a
+        transform in and a transform out; a matrix-backed forward operator,
+        a diagonal covariance and a matrix-backed adjoint applied in turn
+        cost four transforms where the arithmetic needs none. With this,
+        :class:`~pygeoinf2.algebra.nodes._Composition` converts once at each
+        end of a run of operators that have it, and ``A Q A* + R`` on a
+        sphere is a matrix product, a broadcast and a matrix product.
+
+        The returned callable maps the domain's components to the codomain's,
+        with the metric handled inside -- a Galerkin-stored matrix applies
+        ``solve_gram`` itself -- so the results agree with :meth:`__call__` to
+        rounding.
+        """
+        return None
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        """:meth:`_components_action` for the adjoint: ``c_y -> c_{A* y}``."""
+        return None
+
     def diagonals(
         self,
         /,
@@ -1520,6 +1546,16 @@ class _ColumnOperator[Y](LinearOperator[np.ndarray, Y]):
             return np.array(self.columns, dtype=float)
         return self.codomain.apply_gram_to_columns(self.columns)
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        columns = self.columns
+        return lambda c: columns @ c
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        columns, codomain = self.columns, self.codomain
+        return lambda c: columns.T @ codomain.apply_gram(c)
+
     def apply_block(
         self, vectors: Sequence[np.ndarray], /, *, n_jobs: int | None = None
     ) -> list[Y]:
@@ -1679,6 +1715,20 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         return self._in_form(form)
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        stored, codomain = self._stored, self.codomain
+        if self._form == "galerkin":
+            return lambda c: codomain.solve_gram(np.asarray(stored @ c))
+        return lambda c: np.asarray(stored @ c)
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        stored, domain, codomain = self._stored, self.domain, self.codomain
+        if self._form == "components":
+            return lambda c: domain.solve_gram(np.asarray(stored.T @ codomain.apply_gram(c)))
+        return lambda c: domain.solve_gram(np.asarray(stored.T @ c))
 
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str

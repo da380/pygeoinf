@@ -222,6 +222,8 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         traits: Traits | None = None,
         adjoint_solve_fn: Callable[[X, Y | None], SolveResult[Y]] | None = None,
         known_matrix: Callable[[str], np.ndarray] | None = None,
+        components_action: Callable[[np.ndarray], np.ndarray] | None = None,
+        components_adjoint_action: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> None:
         """
         Args:
@@ -244,6 +246,12 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
                 ``inverse.matrix()`` and everything built on it (a
                 preconditioner reading it, a composition assembling) skip
                 ``dim`` solves.
+            components_action: the inverse's action on components,
+                ``c_y -> c_x``, for a solver that can give it -- a direct
+                solver's factors applied to a component vector. Lets a
+                product containing the inverse stay in coordinates across
+                it; see ``LinearOperator._components_action``.
+            components_adjoint_action: the same for the adjoint inverse.
         """
         if traits is None:
             # A pseudo-inverse of a rectangular operator is not an inverse, and
@@ -259,6 +267,8 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         self._solve_fn = solve_fn
         self._adjoint_solve_fn = adjoint_solve_fn
         self._known_matrix_fn = known_matrix
+        self._components_action_fn = components_action
+        self._components_adjoint_action_fn = components_adjoint_action
 
     @property
     def operator(self) -> LinearOperator[X, Y]:
@@ -295,6 +305,14 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
             return None
         return self._known_matrix_fn(form)
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._components_action_fn
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._components_adjoint_action_fn
+
     def adjoint_inverse(self, x: X) -> Y:
         """Apply ``(A^-1)* == (A*)^-1``.
 
@@ -329,6 +347,8 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
                 self._adjoint_solve_fn,
                 traits=adjoint_traits(self.traits),
                 known_matrix=known_adjoint,
+                components_action=self._components_adjoint_action_fn,
+                components_adjoint_action=self._components_action_fn,
             )
         else:
             result = self._solver(self._operator.adjoint)
@@ -460,8 +480,20 @@ class DirectSolver(LinearSolver):
                 return inverse
             return domain.apply_gram_to_columns(inverse)
 
+        def components_action(cy: np.ndarray) -> np.ndarray:
+            if self.form == "galerkin":
+                cy = codomain.apply_gram(cy)
+            return apply_inverse(cy)
+
         adjoint_solve_fn = None
+        components_adjoint_action = None
         if apply_transposed is not None:
+
+            def components_adjoint_action(cx: np.ndarray) -> np.ndarray:
+                cw = apply_transposed(domain.apply_gram(cx))
+                if self.form == "components":
+                    cw = codomain.solve_gram(cw)
+                return cw
 
             def adjoint_solve_fn(x, w0):
                 # Solve A* w == x for w in the codomain. With M the components
@@ -474,12 +506,17 @@ class DirectSolver(LinearSolver):
                     cw = codomain.solve_gram(cw)
                 return SolveResult(codomain.from_components(cw), 0, 0.0, True)
 
+        if components_adjoint_action is None and Traits.SELF_ADJOINT & operator.traits:
+            # A self-adjoint operator's inverse is its own adjoint.
+            components_adjoint_action = components_action
         return InverseOperator(
             operator,
             self,
             solve_fn,
             adjoint_solve_fn=adjoint_solve_fn,
             known_matrix=known_matrix,
+            components_action=components_action,
+            components_adjoint_action=components_adjoint_action,
         )
 
     @abstractmethod

@@ -39,6 +39,20 @@ OFFSETS = (-3, -1, 0, 1, 2)
 FORMS = ("components", "galerkin")
 
 
+def spd(space, rng):
+    """A genuinely self-adjoint positive definite operator on a dense metric.
+
+    Self-adjointness is symmetry of the *Galerkin* matrix, so ``G P G`` with
+    ``P`` symmetric positive definite; its components matrix is ``P G``.
+    """
+    root = rng.normal(size=(space.dim, space.dim))
+    P = root @ root.T + np.identity(space.dim)
+    G = space.gram_matrix()
+    return LinearOperator.from_matrix(
+        space, space, G @ P @ G, form="galerkin"
+    ).with_traits(Traits.POSITIVE_DEFINITE)
+
+
 def probed(operator):
     """The same operator with every hook hidden, so ``matrix`` probes."""
     return LinearOperator.from_callables(
@@ -78,10 +92,7 @@ def family(rng):
     B = LinearOperator.from_matrix(
         space, space, rng.normal(size=(5, 5)), form="galerkin"
     )
-    root = rng.normal(size=(5, 5))
-    S = LinearOperator.from_matrix(
-        space, space, space.apply_gram_to_columns(root @ root.T), form="galerkin"
-    ).with_traits(Traits.POSITIVE_DEFINITE)
+    S = spd(space, rng)
     D = DiagonalLinearOperator(space, np.array([1.0, 2.0, -0.5, 3.0, 0.25]))
     R = LinearOperator.from_matrix(
         space, other, rng.normal(size=(4, 5)), form="components"
@@ -347,3 +358,104 @@ class TestBlockOperators:
         operator = BlockLinearOperator([[A, B], [probed(C), D]])
         assert operator._known_matrix("components") is None
         assert operator.matrix() == pytest.approx(probed(operator).matrix())
+
+
+class CountingSpace(type(make_dense_metric_space(3))):
+    """A dense-metric space that counts its coordinate conversions."""
+
+    def __init__(self, gram):
+        super().__init__(gram)
+        self.analyses = 0
+        self.syntheses = 0
+
+    def to_components(self, x):
+        self.analyses += 1
+        return super().to_components(x)
+
+    def from_components(self, c):
+        self.syntheses += 1
+        return super().from_components(c)
+
+    def reset(self):
+        self.analyses = self.syntheses = 0
+
+
+class TestComponentsAction:
+    """Products and sums of operators that act on components stay in
+    components: one conversion in, one out, whatever the length of the run."""
+
+    @pytest.fixture
+    def counted(self, rng):
+        model = CountingSpace(make_dense_metric_space(6).gram_matrix())
+        data = CountingSpace(make_dense_metric_space(4).gram_matrix())
+        A = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(4, 6)), form="components"
+        )
+        return model, data, A, spd(model, rng), spd(data, rng)
+
+    def test_the_normal_operator_converts_once_each_way(self, counted, rng):
+        model, data, A, Q, R = counted
+        normal = A @ Q @ A.adjoint + R
+        y = data.random(rng=rng)
+        expected = data.add(A(Q(A.adjoint(y))), R(y))
+        model.reset(), data.reset()
+        result = normal(y)
+        assert np.allclose(result, expected)
+        assert (data.analyses, data.syntheses) == (1, 1)
+        assert (model.analyses, model.syntheses) == (0, 0)
+
+    def test_every_expression_agrees_when_chained(self, family, rng):
+        space, expressions = family
+        for name, operator in expressions.items():
+            action = operator._components_action()
+            assert action is not None, name
+            x = operator.domain.random(rng=rng)
+            fused = operator.codomain.from_components(
+                action(operator.domain.to_components(x))
+            )
+            assert np.allclose(fused, probed(operator)(x)), name
+            adjoint = operator._components_adjoint_action()
+            assert adjoint is not None, name
+            y = operator.codomain.random(rng=rng)
+            fused = operator.domain.from_components(
+                adjoint(operator.codomain.to_components(y))
+            )
+            assert np.allclose(fused, probed(operator).adjoint(y)), name
+
+    def test_a_run_stops_at_an_operator_without_the_action(self, counted, rng):
+        """``Q A* N^-1 A Q`` with an opaque middle: two conversions on each
+        side of it, not two per factor."""
+        model, data, A, Q, R = counted
+        middle = probed(R)
+        product = Q @ A.adjoint @ middle @ A @ Q
+        x = model.random(rng=rng)
+        expected = Q(A.adjoint(middle(A(Q(x)))))
+        model.reset(), data.reset()
+        result = product(x)
+        assert np.allclose(result, expected)
+        # One conversion into the run ``A Q`` and one out of ``Q A*`` on the
+        # model side; on the data side one out of the first run and one into
+        # the second, plus the pair the opaque middle spends on its own --
+        # against five of each per side when every factor converted.
+        assert (model.analyses, model.syntheses) == (1, 1)
+        assert (data.analyses, data.syntheses) == (2, 2)
+        model.reset(), data.reset()
+        pulled = product.adjoint(x)
+        assert np.allclose(pulled, Q(A.adjoint(middle.adjoint(A(Q(x))))))
+        assert (model.analyses, model.syntheses) == (1, 1)
+        assert (data.analyses, data.syntheses) == (2, 2)
+
+    def test_a_direct_inverse_acts_on_components(self, counted, rng):
+        model, data, A, Q, R = counted
+        normal = A @ Q @ A.adjoint + R
+        normal = normal.with_traits(Traits.POSITIVE_DEFINITE)
+        for solver in (CholeskySolver(), LUSolver()):
+            inverse = solver(normal)
+            gain = Q @ A.adjoint @ inverse
+            y = data.random(rng=rng)
+            expected = Q(A.adjoint(probed(inverse)(y)))
+            model.reset(), data.reset()
+            result = gain(y)
+            assert np.allclose(result, expected)
+            assert (data.analyses, model.syntheses) == (1, 1)
+            check_operator(gain, rng=rng)

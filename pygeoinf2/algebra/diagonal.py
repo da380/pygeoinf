@@ -241,6 +241,18 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         self._require(Traits.POSITIVE_DEFINITE, "a logarithm")
         return self.apply_function(np.log)
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        eigenvalues = self._eigenvalues
+        return lambda c: eigenvalues * c
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        if Traits.SELF_ADJOINT & self.traits:
+            return self._components_action()
+        eigenvalues, space = self._eigenvalues, self.domain
+        return lambda c: space.solve_gram(eigenvalues * space.apply_gram(c))
+
     def _known_matrix(self, form: str) -> np.ndarray | None:
         matrix = np.diag(self._eigenvalues)
         if form == "components":

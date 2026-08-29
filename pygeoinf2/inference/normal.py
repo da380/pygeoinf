@@ -29,8 +29,10 @@ factories. See DESIGN.md section 23.
 
 from __future__ import annotations
 
+import numpy as np
+
 from abc import abstractmethod
-from typing import Any, Literal
+from typing import Sequence, Callable, Any, Literal
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
@@ -144,6 +146,37 @@ class FactoredNormalOperator(LinearOperator):
     def has_error(self) -> bool:
         """Whether the problem carries a data error measure."""
         return self.error_covariance is not None
+
+    # Both subclasses hold the assembled expression as ``_assembled`` and
+    # apply it; the structural hooks pass through to it, so a normal operator
+    # is read, blocked and fused exactly as the sum it stands for.
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        return self._assembled._known_matrix(form)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        return self._assembled._known_diagonals(offsets, form)
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """The assembled operator's block application."""
+        return self._assembled.apply_block(vectors, n_jobs=n_jobs)
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        return self._assembled._adjoint_apply_block(vectors, n_jobs=n_jobs)
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._assembled._components_action()
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._assembled._components_adjoint_action()
 
 
 class NormalOperator(FactoredNormalOperator):

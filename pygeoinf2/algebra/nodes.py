@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from typing import Any, Sequence
+from typing import Callable, Any, Sequence
 
 from ..traits import (
     Traits,
@@ -106,6 +106,18 @@ class _Identity[X](LinearOperator[X, X]):
         self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
     ) -> list[Any]:
         return list(vectors)
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        from .spaces import CoordinateSpace
+
+        if not isinstance(self.domain, CoordinateSpace):
+            return None
+        return lambda c: c
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._components_action()
 
     def _combine_compose(self, other: Operator) -> Operator | None:
         return other
@@ -204,6 +216,24 @@ class _Zero[X, Y](LinearOperator[X, Y]):
     ) -> list[Any]:
         return [self.domain.zero() for _ in vectors]
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        from .spaces import CoordinateSpace
+
+        if not isinstance(self.domain, CoordinateSpace) or not isinstance(
+            self.codomain, CoordinateSpace
+        ):
+            return None
+        size = self.codomain.dim
+        return lambda c: np.zeros(size)
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        if self._components_action() is None:
+            return None
+        size = self.domain.dim
+        return lambda c: np.zeros(size)
+
     def _combine_add(self, other: Operator) -> Operator | None:
         return other
 
@@ -290,6 +320,14 @@ class _Adjoint[X, Y](LinearOperator[Y, X]):
     ) -> list[Any]:
         return self._base.apply_block(vectors, n_jobs=n_jobs)
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._base._components_adjoint_action()
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._base._components_action()
+
     def __repr__(self) -> str:
         return f"Adjoint({self._base!r})"
 
@@ -359,6 +397,22 @@ class _Scaled[X, Y](LinearOperator[X, Y]):
             for x in self._base._adjoint_apply_block(vectors, n_jobs=n_jobs)
         ]
 
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        action = self._base._components_action()
+        if action is None:
+            return None
+        alpha = self._alpha
+        return lambda c: alpha * action(c)
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        action = self._base._components_adjoint_action()
+        if action is None:
+            return None
+        alpha = self._alpha
+        return lambda c: alpha * action(c)
+
     def _combine_scale(self, alpha: float) -> Operator | None:
         """Fold nested scalings rather than nesting nodes."""
         product = self._alpha * alpha
@@ -392,16 +446,50 @@ class _Sum[X, Y](LinearOperator[X, Y]):
         return self._terms
 
     def _value(self, x: X) -> Y:
+        action = self._components_action()
+        if action is not None:
+            return self.codomain.from_components(action(self.domain.to_components(x)))
         result = self._terms[0](x)
         for term in self._terms[1:]:
             result = self.codomain.add(result, term(x))
         return result
 
     def _adjoint_value(self, y: Y) -> X:
+        action = self._components_adjoint_action()
+        if action is not None:
+            return self.domain.from_components(action(self.codomain.to_components(y)))
         result = self._terms[0].adjoint(y)
         for term in self._terms[1:]:
             result = self.domain.add(result, term.adjoint(y))
         return result
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        actions = [term._components_action() for term in self._terms]
+        if any(action is None for action in actions):
+            return None
+
+        def combined(c: np.ndarray) -> np.ndarray:
+            total = actions[0](c)
+            for action in actions[1:]:
+                total = total + action(c)
+            return total
+
+        return combined
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        actions = [term._components_adjoint_action() for term in self._terms]
+        if any(action is None for action in actions):
+            return None
+
+        def combined(c: np.ndarray) -> np.ndarray:
+            total = actions[0](c)
+            for action in actions[1:]:
+                total = total + action(c)
+            return total
+
+        return combined
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         total = None
@@ -470,6 +558,44 @@ class _Sum[X, Y](LinearOperator[X, Y]):
         return f"Sum({', '.join(repr(t) for t in self._terms)})"
 
 
+def _apply_chain(
+    vector: Any,
+    factors: Sequence[LinearOperator],
+    action_of: Callable[[LinearOperator], Callable[[np.ndarray], np.ndarray] | None],
+    source_of: Callable[[LinearOperator], HilbertSpace],
+    target_of: Callable[[LinearOperator], HilbertSpace],
+    apply: Callable[[LinearOperator, Any], Any],
+) -> Any:
+    """Apply factors in order, staying in components across each run that
+    can.
+
+    A run of consecutive factors with a components action costs one
+    ``to_components`` at its start and one ``from_components`` at its end,
+    whatever its length; a factor without one is applied to the vector as it
+    is. So ``Q A* N^-1 A Q`` with an iterative ``N^-1`` in the middle pays
+    two conversions on each side of it rather than two per factor.
+    """
+    result = vector
+    index, count = 0, len(factors)
+    while index < count:
+        action = action_of(factors[index])
+        if action is None:
+            result = apply(factors[index], result)
+            index += 1
+            continue
+        components = source_of(factors[index]).to_components(result)
+        last = factors[index]
+        while index < count:
+            action = action_of(factors[index])
+            if action is None:
+                break
+            components = action(components)
+            last = factors[index]
+            index += 1
+        result = target_of(last).from_components(components)
+    return result
+
+
 class _Composition[X, Y](LinearOperator[X, Y]):
     """A composition of operators, flattened, with structural trait recovery.
 
@@ -528,16 +654,50 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         return self._factors
 
     def _value(self, x: X) -> Y:
-        result = x
-        for factor in reversed(self._factors):
-            result = factor(result)
-        return result
+        return _apply_chain(
+            x,
+            list(reversed(self._factors)),
+            lambda factor: factor._components_action(),
+            lambda factor: factor.domain,
+            lambda factor: factor.codomain,
+            lambda factor, v: factor(v),
+        )
 
     def _adjoint_value(self, y: Y) -> X:
-        result = y
-        for factor in self._factors:
-            result = factor.adjoint(result)
-        return result
+        return _apply_chain(
+            y,
+            list(self._factors),
+            lambda factor: factor._components_adjoint_action(),
+            lambda factor: factor.codomain,
+            lambda factor: factor.domain,
+            lambda factor, v: factor.adjoint(v),
+        )
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        actions = [factor._components_action() for factor in reversed(self._factors)]
+        if any(action is None for action in actions):
+            return None
+
+        def chained(c: np.ndarray) -> np.ndarray:
+            for action in actions:
+                c = action(c)
+            return c
+
+        return chained
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        actions = [factor._components_adjoint_action() for factor in self._factors]
+        if any(action is None for action in actions):
+            return None
+
+        def chained(c: np.ndarray) -> np.ndarray:
+            for action in actions:
+                c = action(c)
+            return c
+
+        return chained
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         # Components matrices compose by multiplication; the Galerkin form of
