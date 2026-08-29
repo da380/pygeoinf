@@ -270,9 +270,23 @@ class GaussianEstimator(MeasureEstimator):
         since ``T C T*`` on a small property space is cheaper than forming
         ``C`` on the model space at all.
 
+        **Which of the two to reach for.** This pushes the *estimator*, and is
+        what to use for a property of data not yet seen -- one estimator, many
+        datasets, one property. For a property of a posterior already in hand,
+        push the *measure*: ``estimator(data).push_forward(T)`` gives the
+        identical measure -- same mean, same ``T C T*``, same sampler -- for no
+        solve at all, where ``estimator.push_forward(T)(data)`` solves the
+        normal equations again for data that have already been inverted.
+
         The sampler travels with it: a draw of ``T m`` is ``T`` applied to a
         draw of ``m``. So a property posterior can be sampled exactly when the
         model posterior can, which is what a non-linear property of it needs.
+
+        Args:
+            operator: the property map ``T``.
+
+        Returns:
+            The estimator of ``T m``.
         """
         pushed = None
         if self._centred_sample is not None:
