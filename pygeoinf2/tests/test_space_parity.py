@@ -179,6 +179,35 @@ class TestChangingTheMetricKeepsTheSubclass:
         assert lebesgue.with_order(0.0) == lebesgue
 
 
+class TestAdoptingAnArray:
+    """REVIEW2, the smaller list: ``from_grid_values`` aliased the caller's
+    array, so a later in-place operation rewrote it. v1's ``from_array``
+    copies."""
+
+    def test_the_caller_keeps_their_array(self, geometry, rng):
+        _, space = geometry
+        shape = space.grid_values(space.random(rng=rng)).shape
+        original = rng.normal(size=shape)
+        kept = original.copy()
+
+        field = space.from_grid_values(original)
+        space.axpy(1.0, field, field)
+        space.scale_inplace(3.0, field)
+
+        assert np.allclose(original, kept)
+        assert np.allclose(space.grid_values(field), 6.0 * kept)
+
+    def test_a_field_this_space_made_is_not_copied_again(self, geometry, rng):
+        """The other half: the internal form wraps without copying, because
+        the array is one the space has just allocated and holds alone."""
+        _, space = geometry
+        shape = space.grid_values(space.random(rng=rng)).shape
+        values = rng.normal(size=shape)
+        field = space._own_grid_values(values)
+        space.scale_inplace(2.0, field)
+        assert np.allclose(values, space.grid_values(field))
+
+
 class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 

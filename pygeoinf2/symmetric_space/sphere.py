@@ -357,10 +357,23 @@ class Sphere(SymmetricSpace[Any]):
             values: an array of shape :attr:`grid_shape`.
 
         Returns:
-            An ``SHGrid`` over those values.
+            An ``SHGrid`` over a copy of those values -- the caller's array is
+            not adopted, and a later in-place operation on the field does not
+            reach back into it.
 
         Raises:
             ValueError: if the shape is wrong.
+        """
+        return self._own_grid_values(np.array(values, dtype=float))
+
+    def _own_grid_values(self, values: np.ndarray, /) -> Any:
+        """An ``SHGrid`` over an array this space has just allocated.
+
+        ``SHGrid.from_array(..., copy=False)``, which is what
+        :meth:`from_grid_values` used to do with the *caller's* array: `axpy`
+        then wrote through the wrapper into it. Here the array is one this
+        module made and holds the only reference to, so the wrap is free and
+        safe. The copy it saves is 2 MB at ``lmax`` 256, on every synthesis.
         """
         from pyshtools import SHGrid
 
@@ -371,7 +384,7 @@ class Sphere(SymmetricSpace[Any]):
 
     def copy(self, x: Any) -> Any:
         """An independent copy of the field."""
-        return self.from_grid_values(self.grid_values(x).copy())
+        return self._own_grid_values(self.grid_values(x).copy())
 
     def axpy(self, a: float, x: Any, y: Any) -> Any:
         """``y += a x``, in place on the grid's own array."""
@@ -430,7 +443,7 @@ class Sphere(SymmetricSpace[Any]):
         coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
         parts, degrees, orders = self._packing
         coefficients[parts, degrees, orders] = components / self._radius
-        return self.from_grid_values(
+        return self._own_grid_values(
             MakeGridDH(
                 coefficients,
                 norm=_ORTHONORMAL,
@@ -752,7 +765,7 @@ class Sphere(SymmetricSpace[Any]):
         live = weights > 0.0
         scaled = np.zeros(self.grid_shape)
         scaled[live] = values[live] / weights[live, None]
-        total = self.to_components(self.from_grid_values(scaled))
+        total = self.to_components(self._own_grid_values(scaled))
         for row in np.flatnonzero(~live):
             total = total + values[row].sum() * self.basis_at(
                 np.array([90.0 - np.degrees(float(self.colatitudes[row])), 0.0])
@@ -937,7 +950,7 @@ class Sphere(SymmetricSpace[Any]):
                 for latitude, azimuth in zip(latitudes, azimuths)
             ]
         )
-        return self.from_grid_values(values.reshape(self.grid_shape))
+        return self._own_grid_values(values.reshape(self.grid_shape))
 
     @property
     def reference_point(self) -> np.ndarray:

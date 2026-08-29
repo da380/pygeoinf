@@ -1479,11 +1479,27 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         the values are taken as they are, and it is :meth:`truncate` that
         settles them into the span of the basis.
 
+        **The array is copied**, as v1's ``from_array`` copies. This is the
+        boundary at which an array from somewhere else becomes a vector of this
+        space, and the caller goes on holding their array: aliasing it meant a
+        later ``axpy`` -- which is in-place by contract -- silently rewrote it.
+
         Args:
             values: an array of shape :attr:`grid_shape`.
 
         Returns:
-            A vector of this space.
+            A vector of this space, over its own copy of the values.
+        """
+        return self._own_grid_values(np.array(values, dtype=float))
+
+    def _own_grid_values(self, values: np.ndarray, /) -> V:
+        """A vector wrapping an array this space has just allocated.
+
+        :meth:`from_grid_values` without the copy, for the many places that
+        build the array themselves and hand over the only reference to it --
+        a product, a synthesis, a sampled function. Copying those would be
+        pure cost: 2 MB per call at ``lmax`` 256, on paths that run once per
+        transform.
         """
         return values
 
@@ -1534,7 +1550,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             The product, as a vector of this space holding the grid values of
             the product.
         """
-        return self.from_grid_values(self.grid_values(x) * self.grid_values(y))
+        return self._own_grid_values(self.grid_values(x) * self.grid_values(y))
 
     def sqrt(self, x: np.ndarray) -> np.ndarray:
         """The pointwise square root, left on the grid.
@@ -1548,7 +1564,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Returns:
             Its pointwise square root, on the grid.
         """
-        return self.from_grid_values(np.sqrt(self.grid_values(x)))
+        return self._own_grid_values(np.sqrt(self.grid_values(x)))
 
     def multiplication_operator(self, f: np.ndarray, /) -> LinearOperator:
         """The operator ``u -> f u``, with the metric handled.
@@ -2376,7 +2392,7 @@ class _FlexureOperator(LinearOperator):
 
     def _analyse(self, grid: np.ndarray) -> np.ndarray:
         space = self._space
-        return space.to_components(space.from_grid_values(grid))
+        return space.to_components(space._own_grid_values(grid))
 
     def _synthesise(self, components: np.ndarray) -> np.ndarray:
         space = self._space
