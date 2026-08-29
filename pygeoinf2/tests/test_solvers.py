@@ -910,3 +910,95 @@ class TestSparsePreconditionerTraits:
         inverse = self.preconditioners("components")[index](operator)
         assert Traits.SELF_ADJOINT & inverse.traits
         check_traits(inverse, rng=rng)
+
+
+class TestDampedSolvesExtractsItsMatricesOnce:
+    """A direct solver factorises a matrix, and it gets one by asking the
+    member of the family for it. Where the member cannot write its own matrix
+    down that costs ``dim`` applications, and the sweep used to pay it again
+    at every multiplier although only the scalar had changed: measured, a
+    nine-multiplier sweep at dimension 200 spent 1800 applications where 200
+    do.
+    """
+
+    @staticmethod
+    def family(space, solver, *, counter=None, stored=False):
+        from pygeoinf2.numerics import DampedSolves
+
+        rng = np.random.default_rng(20260830)
+        matrix = rng.standard_normal((space.dim, space.dim))
+        matrix = matrix @ matrix.T + space.dim * np.identity(space.dim)
+
+        if stored:
+            base = LinearOperator.from_matrix(
+                space,
+                space,
+                matrix,
+                form="galerkin",
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            )
+        else:
+            # Matrix-free, so nothing can read its matrix: the case the
+            # caching exists for. The action is the Galerkin matrix's, so the
+            # operator is self-adjoint on whatever metric the space carries.
+            def apply(x):
+                if counter is not None:
+                    counter.append(1)
+                return space.from_components(
+                    space.solve_gram(matrix @ space.to_components(x))
+                )
+
+            base = LinearOperator.self_adjoint(
+                space, apply, traits=Traits.POSITIVE_SEMIDEFINITE
+            )
+        return matrix, DampedSolves(
+            base,
+            LinearOperator.identity(space),
+            solver,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    def test_the_sweep_costs_one_extraction_not_one_per_multiplier(self, rng):
+        space = EuclideanSpace(20)
+        counter: list[int] = []
+        matrix, solves = self.family(space, CholeskySolver(), counter=counter)
+        vector = space.random(rng=rng)
+
+        for damping in (0.25, 0.5, 1.0, 2.0, 4.0, 8.0):
+            solution = solves.solve(damping, vector).solution
+            expected = np.linalg.solve(
+                matrix + damping * np.identity(space.dim), vector
+            )
+            assert solution == pytest.approx(expected, rel=1e-9)
+
+        # One extraction of the base, and none of the identity, which reads
+        # its own matrix. Six multipliers used to cost six.
+        assert len(counter) == space.dim
+
+    def test_it_is_right_on_a_metric_that_is_not_diagonal(self, rng):
+        """The two matrices are added in the solver's own form, so the metric
+        has to be carried by the extraction rather than by the sum. Checked
+        against the member built the old way."""
+        space = make_dense_metric_space(12)
+        _, solves = self.family(space, CholeskySolver())
+        vector = space.random(rng=rng)
+
+        for damping in (0.5, 3.0):
+            solution = solves.solve(damping, vector).solution
+            member = solves.base + damping * solves.shift
+            residual = space.subtract(member(solution), vector)
+            assert space.norm(residual) < 1e-9 * space.norm(vector)
+
+    def test_a_member_that_knows_its_matrix_is_left_alone(self):
+        """The sum of two matrix-backed operators reads its own matrix, keeps
+        a sparse array sparse, and there is nothing here to improve on."""
+        space = EuclideanSpace(20)
+        _, solves = self.family(space, CholeskySolver(), stored=True)
+        assert solves._matrices() is None
+
+    def test_an_iterative_solver_is_left_alone(self):
+        """Nothing to factorise, so nothing to extract: an iterative solver
+        must keep the member it can precondition against."""
+        space = EuclideanSpace(20)
+        _, solves = self.family(space, CGSolver())
+        assert solves._matrices() is None
