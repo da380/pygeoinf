@@ -827,32 +827,9 @@ def matern_measure(
     from ..probability.gaussian import GaussianMeasure
 
     dimension = space.finite_element_space.GetMesh().Dimension()
-    lengths = np.atleast_1d(np.asarray(correlation_length, dtype=float))
-    if lengths.size == 1:
-        lengths = np.full(dimension, float(lengths[0]))
-    if lengths.size != dimension:
-        raise ValueError(
-            f"{lengths.size} correlation lengths for a {dimension}-dimensional "
-            f"mesh."
-        )
-    if np.any(lengths <= 0.0):
-        raise ValueError("Every correlation length must be positive.")
-    if smoothness <= 0.0:
-        raise ValueError(f"The smoothness must be positive, got {smoothness}.")
-
-    exponent = (smoothness + dimension / 2.0) / 2.0
-    order = int(round(exponent))
-    if abs(exponent - order) > 1e-9 or order < 1:
-        raise ValueError(
-            f"(nu + d/2)/2 == {exponent:.4g} is not a positive integer. MFEM "
-            f"reaches the fractional case with a rational approximation that "
-            f"its Python bindings do not expose, so only the integer case is "
-            f"available here. In {dimension} dimensions, try nu = "
-            f"{', '.join(str(2 * k - dimension / 2) for k in (1, 2, 3))}."
-        )
-
-    theta = _anisotropy(lengths, rotation, smoothness, dimension)
-    normalisation = _matern_normalisation(smoothness, lengths, dimension)
+    theta, normalisation, order = _matern_parameters(
+        dimension, smoothness, correlation_length, rotation
+    )
 
     form = mfem.BilinearForm(space.finite_element_space)
     form.AddDomainIntegrator(
@@ -881,6 +858,47 @@ def matern_measure(
         covariance_factor=scale * factor,
         precision=((1.0 / scale**2) * (powered @ powered)).with_traits(definite),
     )
+
+
+def _matern_parameters(
+    dimension: int, smoothness: float, correlation_length: Any, rotation: float
+) -> tuple[np.ndarray, float, int]:
+    """Validate the Matern parameters and turn them into the SPDE's.
+
+    Shared by :func:`matern_measure` and its counterpart in
+    :mod:`pygeoinf2.backends.mfem_hilbert`, which pose the same SPDE on the
+    two kinds of space.
+
+    Returns:
+        MFEM's anisotropy matrix ``Theta``, the normalisation ``eta``, and the
+        integer exponent ``(nu + d/2) / 2``.
+    """
+    lengths = np.atleast_1d(np.asarray(correlation_length, dtype=float))
+    if lengths.size == 1:
+        lengths = np.full(dimension, float(lengths[0]))
+    if lengths.size != dimension:
+        raise ValueError(
+            f"{lengths.size} correlation lengths for a {dimension}-dimensional "
+            f"mesh."
+        )
+    if np.any(lengths <= 0.0):
+        raise ValueError("Every correlation length must be positive.")
+    if smoothness <= 0.0:
+        raise ValueError(f"The smoothness must be positive, got {smoothness}.")
+
+    exponent = (smoothness + dimension / 2.0) / 2.0
+    order = int(round(exponent))
+    if abs(exponent - order) > 1e-9 or order < 1:
+        raise ValueError(
+            f"(nu + d/2)/2 == {exponent:.4g} is not a positive integer. MFEM "
+            f"reaches the fractional case with a rational approximation that "
+            f"its Python bindings do not expose, so only the integer case is "
+            f"available here. In {dimension} dimensions, try nu = "
+            f"{', '.join(str(2 * k - dimension / 2) for k in (1, 2, 3))}."
+        )
+    theta = _anisotropy(lengths, rotation, smoothness, dimension)
+    normalisation = _matern_normalisation(smoothness, lengths, dimension)
+    return theta, normalisation, order
 
 
 def _anisotropy(

@@ -38,7 +38,7 @@ what most of the rest follows from:
 | `symmetric_space` | sphere, periodic box, bounded box, circle, torus, line, plane |
 | `inference` | forward problems, Gaussian inversion, point estimators, Backus–Gilbert, the Laplace/MAP route, preconditioners |
 | `plotting` | field maps, marginals, corner plots, error bounds |
-| `backends` | MFEM |
+| `backends` | MFEM, two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps it a plain `HilbertSpace` and lets MFEM do every computation (DESIGN §15.3) |
 | `testing` | `check_space`, `check_coordinates`, `check_operator`, `check_traits`, `check_white_noise` |
 | `compat` | a v1 parity shim, to be deleted at the rename (DESIGN §11.3) |
 
@@ -144,6 +144,14 @@ The lessons MFEM taught, which apply to any backend over foreign memory:
 - **The mass matrix *is* the Gram matrix.** That is the whole reason a finite
   element space fits without adaptation, and the case the design was built for.
 - **Never densify to slice.** Take CSR rows and columns.
+- **The form owns what `FormSystemMatrix` returns.** Under full assembly it
+  eliminates in place; under partial assembly the constrained operator refers
+  back to it. Operator, handle and form live and die together, or the next
+  `Mult` segfaults (`mfem_hilbert._System`).
+- **Partial assembly of a matrix coefficient is broken in PyMFEM 4.8.** A
+  `DiffusionIntegrator(MatrixConstantCoefficient)` at `AssemblyLevel_PARTIAL`
+  returns 1e290s. Scalar coefficients are fine; `mfem_hilbert.matern_measure`
+  uses one when the field is isotropic and refuses otherwise.
 
 ## 7. Open questions
 

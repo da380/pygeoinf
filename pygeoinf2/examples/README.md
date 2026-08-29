@@ -42,6 +42,7 @@ failing test rather than a surprise later.
 | 26 | `mixture` | a prior that cannot make up its mind, and a bimodal posterior |
 | 27 | `mfem_inverse` | an inverse problem on a finite element space, with boundary conditions |
 | 28 | `nonlinear_map` | when the forward map is not linear: the mode, and a Gaussian on it |
+| 29 | `mfem_hilbert` | the same finite element inverse problem with no coordinates: MFEM computes, this library conducts |
 
 ## The ones with optional dependencies
 
@@ -50,7 +51,7 @@ enforces, so it cannot drift from what actually runs.
 
 | needs | examples |
 |---|---|
-| `mfem` | 16, 27 |
+| `mfem` | 16, 27, 29 |
 | `pyshtools` | 19, 24, 25 |
 | `cartopy` | 20, 21, 22, 23 |
 
@@ -69,6 +70,12 @@ coordinate-free design really holds up when the vectors belong to somebody
 else. A finite element space is the case the design was built for -- the mass
 matrix *is* the Gram matrix, an assembled bilinear form *is* a Galerkin matrix,
 and an assembled linear form *is* a derivative rather than a gradient.
+
+Number 29 takes the claim to its end. There the space has no coordinates at
+all: the mass operator, every solve and the white noise are MFEM's, applied
+through its `Operator` interface, and this library never sees a matrix. It is
+the arrangement an MPI-distributed space would use, written so that nothing
+would change.
 
 ## If you read only one
 

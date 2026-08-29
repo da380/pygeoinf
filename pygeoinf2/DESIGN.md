@@ -2092,6 +2092,38 @@ opaque, possibly distributed vectors, `check_space`, `check_coordinates` and
 a residual of `2e-16`, and the adjoint on a weighted space was confirmed to be
 `M^-1 A^T M` and confirmed **not** to be `A^T`.
 
+### 15.3 MFEM as a plain Hilbert space
+
+`backends/mfem_hilbert.py` is the other way to hold the same space, added
+2026-08-29. `MfemHilbertSpace` is a `MassWeightedSpace` (§3.5) over
+`MfemDofSpace`, a bare dot-product space of true-dof vectors; the mass
+operator is MFEM's, applied by `Mult`, and `M^-1` is MFEM's conjugate
+gradients on it. Nothing reads a CSR array: forms become operators through
+`FormSystemMatrix` — MFEM's own way of imposing essential conditions, which
+hands back a sparse matrix under full assembly and a matrix-free
+`ConstrainedOperator` under partial — and their adjoints are `M^-1 K^T` with
+the transpose MFEM's `MultTranspose`. Linear forms are true-dof vectors whose
+representers are mass solves; white noise is MFEM's integrator followed by
+one. `matrix()` refuses, every solver here is a Krylov one, and the whole of
+example 27 runs unchanged (example 29), agreeing with the coordinate backend
+to 1e-10.
+
+The point is the MPI path. Over a `ParFiniteElementSpace` the same code is
+the distributed version: the two rank-local things — the dot product and the
+free-dof count — are constructor arguments of `MfemDofSpace`, and everything
+else is already an MFEM `Operator` call. That path is untested; there is no
+`mpi4py` in the environment. What it costs in serial is honesty about
+adjoints, each of which is an iterative mass solve rather than a
+factorisation reused.
+
+Two hazards found, both pinned by tests. `FormSystemMatrix` leaves its result
+owned by the *form* (full assembly eliminates in place; partial assembly's
+operator refers back to it), so operator, handle and form are retained
+together — dropping the form segfaults on the next `Mult`. And a partially
+assembled `DiffusionIntegrator` with a `MatrixConstantCoefficient` returns
+values of order 1e290 in PyMFEM 4.8, so an isotropic Matérn field uses a
+scalar coefficient and an anisotropic one refuses partial assembly.
+
 ## 16. Subsets and subspaces
 
 `pygeoinf2/geometry/` replaces v1's `subsets.py` (1713 lines) and
