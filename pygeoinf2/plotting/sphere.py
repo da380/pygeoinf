@@ -125,30 +125,45 @@ def _(
         )
 
     latitudes = 90.0 - np.degrees(space.colatitudes)
-    longitudes = np.degrees(space.longitudes)
-    # Close the seam: the grid stops one step short of 360 degrees, and without
-    # the wrap a blank wedge appears down the dateline.
-    longitudes = np.append(longitudes, 360.0)
-    values = np.concatenate([values, values[:, :1]], axis=1)
+    longitudes, values = _rolled_to_the_dateline(np.degrees(space.longitudes), values)
 
     low, high = colour_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
     common = dict(transform=crs.PlateCarree(), cmap=cmap, vmin=low, vmax=high)
 
+    if contour or contour_lines:
+        # Contours are drawn through points rather than over cells, so the seam
+        # is closed there by repeating the first column at +180.
+        closed_longitudes = np.append(longitudes, longitudes[0] + 360.0)
+        closed_values = np.concatenate([values, values[:, :1]], axis=1)
+
     if contour:
         mappable = ax.contourf(
-            longitudes, latitudes, values, levels=levels, **common, **kwargs
+            closed_longitudes,
+            latitudes,
+            closed_values,
+            levels=levels,
+            **common,
+            **kwargs,
         )
     else:
+        edge_longitudes, edge_values = _cell_edges_across_the_dateline(
+            longitudes, values
+        )
         mappable = ax.pcolormesh(
-            longitudes, latitudes, values, shading="auto", **common, **kwargs
+            edge_longitudes,
+            np.clip(_cell_edges(latitudes), -90.0, 90.0),
+            edge_values,
+            shading="flat",
+            **common,
+            **kwargs,
         )
     if contour_lines:
         # Left on the axes rather than returned, since the mappable a caller
         # wants for a colourbar is the filled one.
         ax.contour_set = ax.contour(
-            longitudes,
+            closed_longitudes,
             latitudes,
-            values,
+            closed_values,
             levels=levels,
             transform=crs.PlateCarree(),
             colors="black",
@@ -181,6 +196,79 @@ def _(
     if title is not None:
         ax.set_title(title)
     return ax, mappable
+
+
+def _rolled_to_the_dateline(
+    longitudes: np.ndarray, values: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The same grid, with its columns rolled from ``[0, 360)`` to ``[-180, 180)``.
+
+    The grid a sphere hands over starts at Greenwich; cartopy's projections are
+    cut at the antimeridian. Handing them a mesh in ``[0, 360)`` puts the cut
+    through the middle of the data, and every cell that straddles it sends
+    cartopy down its per-polygon wrapping path -- 1028 cells at lmax 128, and
+    with them 1.2 s of the 1.3 s a map used to cost. Rolling costs a copy.
+
+    Args:
+        longitudes: the grid longitudes in degrees, increasing over ``[0, 360)``.
+        values: the grid values, longitude along the second axis.
+
+    Returns:
+        The rolled ``(longitudes, values)`` pair, longitudes increasing over
+        ``[-180, 180)``.
+    """
+    crossing = int(np.searchsorted(longitudes, 180.0))
+    rolled = np.concatenate([longitudes[crossing:] - 360.0, longitudes[:crossing]])
+    return rolled, np.roll(values, -crossing, axis=1)
+
+
+def _cell_edges(centres: np.ndarray, /) -> np.ndarray:
+    """The edges of the cells centred on given points.
+
+    What ``shading="auto"`` computes internally when it is handed as many
+    values as coordinates, made explicit so that the longitude edges can be
+    placed by hand at the antimeridian.
+
+    Args:
+        centres: the cell centres, monotonic.
+
+    Returns:
+        One more edge than there were centres.
+    """
+    centres = np.asarray(centres, dtype=float)
+    middle = 0.5 * (centres[:-1] + centres[1:])
+    return np.concatenate(
+        [[2.0 * centres[0] - middle[0]], middle, [2.0 * centres[-1] - middle[-1]]]
+    )
+
+
+def _cell_edges_across_the_dateline(
+    longitudes: np.ndarray, values: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Longitude cell edges that close the seam without straddling it.
+
+    The first column's cell is centred on the antimeridian, so it lies half on
+    each side of the map. Drawn as one cell it straddles the cut and costs the
+    whole mesh its fast path; dropped, it leaves the blank wedge down the
+    dateline that the wrap was there to close. So it is drawn as its two
+    halves, one at each edge of the map, which is the same picture and stays on
+    the fast path.
+
+    Args:
+        longitudes: the rolled grid longitudes, increasing over ``[-180, 180)``.
+        values: the rolled grid values.
+
+    Returns:
+        The ``(edges, values)`` pair to hand ``pcolormesh`` with
+        ``shading="flat"``: one more edge than there are columns of values, the
+        first column repeated at the far edge.
+    """
+    inner = 0.5 * (longitudes[:-1] + longitudes[1:])
+    seam = 0.5 * (longitudes[-1] + longitudes[0]) + 180.0
+    edges = np.clip(
+        np.concatenate([[-180.0], inner, [seam, 180.0]]), -180.0, 180.0
+    )
+    return edges, np.concatenate([values, values[:, :1]], axis=1)
 
 
 def _gridline_options(given: dict | None, /) -> dict:

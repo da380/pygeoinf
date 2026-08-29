@@ -79,16 +79,51 @@ class TestSphereRenderer:
             plotting.plot(EuclideanSpace(3), np.zeros(3))
 
     def test_a_map_is_drawn_with_a_closed_seam(self):
-        """Without the wrap a blank wedge appears down the dateline."""
+        """Without the wrap a blank wedge appears down the dateline.
+
+        The mesh is given explicit cell edges rather than centres, and they run
+        from -180 to +180 with the antimeridian cell drawn as its two halves.
+        That is what closes the seam *and* keeps every cell on one side of
+        cartopy's cut: a cell straddling the cut sends the whole mesh down a
+        per-polygon path, which cost 1.16 s a map at lmax 128 against 30 ms.
+        """
         pytest.importorskip("cartopy")
         from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
 
         X = SphereLebesgue(12)
+        rows, columns = X.grid_shape
         field = X.project_function(lambda p: np.cos(p[1]))
         ax, mappable = plotting.plot(X, field, colorbar=True)
-        # pcolormesh was handed one more longitude than the grid holds
-        assert mappable.get_array().size == X.grid_shape[0] * (X.grid_shape[1] + 1)
+        assert mappable.get_array().size == rows * (columns + 1)
+        corners = mappable.get_coordinates()
+        assert corners.shape == (rows + 1, columns + 2, 2)
+        longitudes = corners[0, :, 0]
+        assert longitudes[0] == pytest.approx(-180.0)
+        assert longitudes[-1] == pytest.approx(180.0)
+        assert np.all(np.diff(longitudes) >= 0.0)
+        # Latitude edges stay on the sphere: an edge past the pole is not a
+        # point any projection can place.
+        latitudes = corners[:, 0, 1]
+        assert latitudes.max() == pytest.approx(90.0)
+        assert latitudes.min() >= -90.0
         assert mappable.colorbar is not None
+
+    def test_the_seam_column_is_the_one_it_wraps(self):
+        """The two half-cells at the edges of the map are the same column of
+        the grid, so the picture is periodic across the join rather than merely
+        continuous-looking."""
+        pytest.importorskip("cartopy")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8)
+        field = X.project_function(lambda p: np.cos(np.radians(p[1])))
+        ax, mappable = plotting.plot(X, field)
+        drawn = mappable.get_array().reshape(X.grid_shape[0], -1)
+        assert np.allclose(drawn[:, 0], drawn[:, -1])
+        # and it is the column at longitude 180, the one the roll brought to
+        # the front.
+        values = X.grid_values(field)
+        assert np.allclose(drawn[:, 0], values[:, X.grid_shape[1] // 2])
 
     def test_symmetric_limits_reach_the_mappable(self):
         pytest.importorskip("cartopy")
