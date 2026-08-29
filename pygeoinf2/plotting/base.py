@@ -17,7 +17,39 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["plot", "subplots", "colour_limits"]
+__all__ = ["plot", "subplots", "colour_limits", "show"]
+
+
+def show() -> bool:
+    """Show the figures, if the backend can.
+
+    Under a non-interactive backend -- Agg, which is what the test suite runs
+    the examples under -- this is a no-op, so an example can end with it
+    unconditionally. ``pyplot.show()`` itself is not: on Agg it warns once per
+    call that the canvas is non-interactive, which is six warnings in a suite
+    run and no figures either way.
+
+    Returns:
+        Whether the figures were shown.
+    """
+    import matplotlib
+    import matplotlib.pyplot as pyplot
+
+    try:
+        from matplotlib.backends import BackendFilter, backend_registry
+
+        blind = backend_registry.list_builtin(BackendFilter.NON_INTERACTIVE)
+    except ImportError:  # pragma: no cover - matplotlib below 3.9
+        from matplotlib import rcsetup
+
+        blind = rcsetup.non_interactive_bk
+    # Not "does the name end in agg": TkAgg and QtAgg do, and both have a
+    # window. An unrecognised backend -- somebody's module:// -- is assumed to
+    # be able to show, which is the way round that fails visibly.
+    if matplotlib.get_backend().lower() in {name.lower() for name in blind}:
+        return False
+    pyplot.show()
+    return True
 
 
 @singledispatch

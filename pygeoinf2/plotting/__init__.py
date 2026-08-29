@@ -10,11 +10,12 @@ actually made.
 
     ax, im = plotting.plot(space, field, symmetric=True, coasts=True)
     ax.set_title("Flexure")
+    plotting.show()
 
 See DESIGN.md section 20.5, O8.
 """
 
-from .base import colour_limits, plot, subplots
+from .base import colour_limits, plot, show, subplots
 from .distributions import moments, plot_corner, plot_densities
 from . import fourier as _fourier  # noqa: F401  (registers the box renderer)
 from .fourier import plot_error_bounds
@@ -25,6 +26,7 @@ __all__ = [
     "plot",
     "subplots",
     "colour_limits",
+    "show",
     "plot_points",
     "plot_paths",
     "plot_densities",

@@ -39,11 +39,26 @@ def _(
     projection: Any = None,
     **kwargs: Any,
 ) -> Any:
-    """Axes carrying a map projection, defaulting to Robinson."""
+    """Axes carrying a map projection.
+
+    Args:
+        space: the sphere whose fields will be drawn.
+        rows: number of panel rows.
+        columns: number of panel columns.
+        projection: a cartopy projection. Defaults to ``PlateCarree``, which is
+            v1's default: it is the projection in which the grid is stored, so
+            it is the one that shows the data rather than an opinion about it.
+            A downstream wrapper is free to prefer another -- pyslfp defaults
+            to Robinson -- and that is its business.
+        **kwargs: passed through to ``matplotlib.pyplot.subplots``.
+
+    Returns:
+        The ``(figure, axes)`` pair ``plt.subplots`` returns.
+    """
     import matplotlib.pyplot as pyplot
 
     crs = _require_cartopy()
-    chosen = crs.Robinson() if projection is None else projection
+    chosen = crs.PlateCarree() if projection is None else projection
     kwargs.setdefault("figsize", (6.0 * columns, 3.2 * rows))
     kwargs.setdefault("layout", "constrained")
     return pyplot.subplots(rows, columns, subplot_kw={"projection": chosen}, **kwargs)
@@ -56,16 +71,16 @@ def _(
     /,
     *,
     ax: Any = None,
-    cmap: str = "viridis",
+    cmap: str = "RdBu",
     symmetric: bool = False,
     vmin: float | None = None,
     vmax: float | None = None,
-    colorbar: bool = True,
+    colorbar: bool | None = None,
     colorbar_label: str | None = None,
     coasts: bool = False,
     borders: bool = False,
     rivers: bool = False,
-    gridlines: bool = False,
+    gridlines: bool = True,
     gridlines_kwargs: dict | None = None,
     colorbar_kwargs: dict | None = None,
     map_extent: Sequence[float] | None = None,
@@ -81,20 +96,27 @@ def _(
         space: the sphere.
         field: a field of the space, as an ``SHGrid`` or a bare array of its
             grid values.
-        ax: axes to draw on. A new figure is made if omitted.
-        cmap: colour map.
+        ax: axes to draw on. A new figure is made if omitted, on a
+            ``PlateCarree`` projection.
+        cmap: colour map. ``RdBu`` by default, as in v1: most fields drawn
+            here are signed anomalies, and a diverging map is what those want.
         symmetric: put zero at the middle of the colour scale. Use it for
-            anything signed.
+            anything signed. Off by default.
         vmin: lower colour limit; the field's minimum if omitted.
         vmax: upper colour limit; the field's maximum if omitted.
-        colorbar: attach a colourbar. It is left on the returned mappable as
-            ``.colorbar``, so it can be restyled afterwards.
-        colorbar_label: label for the colourbar.
-        coasts: draw coastlines.
-        borders: draw national borders.
-        rivers: draw rivers.
+        colorbar: attach a colourbar. Off by default, as in v1 -- a bar takes
+            room from the map, and a panel in a grid usually shares one --
+            unless a *colorbar_label* is given, since asking for a label is
+            asking for the bar it goes on. Pass ``False`` to override that. The
+            bar is left on the returned mappable as ``.colorbar``, so it can be
+            restyled afterwards.
+        colorbar_label: label for the colourbar, which turns one on.
+        coasts: draw coastlines. Off by default.
+        borders: draw national borders. Off by default.
+        rivers: draw rivers. Off by default.
         gridlines: draw a latitude and longitude graticule, left on the axes as
-            ``.gridliner``.
+            ``.gridliner``. On by default, as in v1: a map without a graticule
+            leaves the reader to guess where anything is.
         gridlines_kwargs: passed to ``gridlines``. ``lat_interval`` and
             ``lon_interval`` are translated into the locators cartopy wants,
             since those are what a caller actually has in mind.
@@ -125,30 +147,45 @@ def _(
         )
 
     latitudes = 90.0 - np.degrees(space.colatitudes)
-    longitudes = np.degrees(space.longitudes)
-    # Close the seam: the grid stops one step short of 360 degrees, and without
-    # the wrap a blank wedge appears down the dateline.
-    longitudes = np.append(longitudes, 360.0)
-    values = np.concatenate([values, values[:, :1]], axis=1)
+    longitudes, values = _rolled_to_the_dateline(np.degrees(space.longitudes), values)
 
     low, high = colour_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
     common = dict(transform=crs.PlateCarree(), cmap=cmap, vmin=low, vmax=high)
 
+    if contour or contour_lines:
+        # Contours are drawn through points rather than over cells, so the seam
+        # is closed there by repeating the first column at +180.
+        closed_longitudes = np.append(longitudes, longitudes[0] + 360.0)
+        closed_values = np.concatenate([values, values[:, :1]], axis=1)
+
     if contour:
         mappable = ax.contourf(
-            longitudes, latitudes, values, levels=levels, **common, **kwargs
+            closed_longitudes,
+            latitudes,
+            closed_values,
+            levels=levels,
+            **common,
+            **kwargs,
         )
     else:
+        edge_longitudes, edge_values = _cell_edges_across_the_dateline(
+            longitudes, values
+        )
         mappable = ax.pcolormesh(
-            longitudes, latitudes, values, shading="auto", **common, **kwargs
+            edge_longitudes,
+            np.clip(_cell_edges(latitudes), -90.0, 90.0),
+            edge_values,
+            shading="flat",
+            **common,
+            **kwargs,
         )
     if contour_lines:
         # Left on the axes rather than returned, since the mappable a caller
         # wants for a colourbar is the filled one.
         ax.contour_set = ax.contour(
-            longitudes,
+            closed_longitudes,
             latitudes,
-            values,
+            closed_values,
             levels=levels,
             transform=crs.PlateCarree(),
             colors="black",
@@ -172,7 +209,7 @@ def _(
             ax.add_feature(feature.RIVERS, linewidth=0.3)
     if gridlines:
         ax.gridliner = ax.gridlines(**_gridline_options(gridlines_kwargs))
-    if colorbar:
+    if colorbar or (colorbar is None and colorbar_label is not None):
         options = dict(shrink=0.7, pad=0.03)
         options.update(colorbar_kwargs or {})
         bar = ax.figure.colorbar(mappable, ax=ax, **options)
@@ -181,6 +218,77 @@ def _(
     if title is not None:
         ax.set_title(title)
     return ax, mappable
+
+
+def _rolled_to_the_dateline(
+    longitudes: np.ndarray, values: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The same grid, with its columns rolled from ``[0, 360)`` to ``[-180, 180)``.
+
+    The grid a sphere hands over starts at Greenwich; cartopy's projections are
+    cut at the antimeridian. Handing them a mesh in ``[0, 360)`` puts the cut
+    through the middle of the data, and every cell that straddles it sends
+    cartopy down its per-polygon wrapping path -- 1028 cells at lmax 128, and
+    with them 1.2 s of the 1.3 s a map used to cost. Rolling costs a copy.
+
+    Args:
+        longitudes: the grid longitudes in degrees, increasing over ``[0, 360)``.
+        values: the grid values, longitude along the second axis.
+
+    Returns:
+        The rolled ``(longitudes, values)`` pair, longitudes increasing over
+        ``[-180, 180)``.
+    """
+    crossing = int(np.searchsorted(longitudes, 180.0))
+    rolled = np.concatenate([longitudes[crossing:] - 360.0, longitudes[:crossing]])
+    return rolled, np.roll(values, -crossing, axis=1)
+
+
+def _cell_edges(centres: np.ndarray, /) -> np.ndarray:
+    """The edges of the cells centred on given points.
+
+    What ``shading="auto"`` computes internally when it is handed as many
+    values as coordinates, made explicit so that the longitude edges can be
+    placed by hand at the antimeridian.
+
+    Args:
+        centres: the cell centres, monotonic.
+
+    Returns:
+        One more edge than there were centres.
+    """
+    centres = np.asarray(centres, dtype=float)
+    middle = 0.5 * (centres[:-1] + centres[1:])
+    return np.concatenate(
+        [[2.0 * centres[0] - middle[0]], middle, [2.0 * centres[-1] - middle[-1]]]
+    )
+
+
+def _cell_edges_across_the_dateline(
+    longitudes: np.ndarray, values: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Longitude cell edges that close the seam without straddling it.
+
+    The first column's cell is centred on the antimeridian, so it lies half on
+    each side of the map. Drawn as one cell it straddles the cut and costs the
+    whole mesh its fast path; dropped, it leaves the blank wedge down the
+    dateline that the wrap was there to close. So it is drawn as its two
+    halves, one at each edge of the map, which is the same picture and stays on
+    the fast path.
+
+    Args:
+        longitudes: the rolled grid longitudes, increasing over ``[-180, 180)``.
+        values: the rolled grid values.
+
+    Returns:
+        The ``(edges, values)`` pair to hand ``pcolormesh`` with
+        ``shading="flat"``: one more edge than there are columns of values, the
+        first column repeated at the far edge.
+    """
+    inner = 0.5 * (longitudes[:-1] + longitudes[1:])
+    seam = 0.5 * (longitudes[-1] + longitudes[0]) + 180.0
+    edges = np.clip(np.concatenate([[-180.0], inner, [seam, 180.0]]), -180.0, 180.0)
+    return edges, np.concatenate([values, values[:, :1]], axis=1)
 
 
 def _gridline_options(given: dict | None, /) -> dict:
@@ -206,39 +314,91 @@ def plot_points(
     points: Any,
     /,
     *,
+    data: Any = None,
     ax: Any = None,
     marker: str = "^",
     size: float = 20.0,
     color: str = "black",
+    cmap: str = "RdBu",
+    symmetric: bool = False,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    colorbar: bool | None = None,
+    colorbar_label: str | None = None,
+    colorbar_kwargs: dict | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Scatter a set of points on a map.
+    """Scatter a set of points on a map, optionally coloured by a value.
+
+    A scatter of stations is one thing; a scatter of *measurements* is the
+    other, and it is the one an altimetry or gravity figure is made of. Passing
+    the values as *data* colours the markers by them and gives them a bar to be
+    read against, which is v1's ``plot_points(points, data=...)``. Without it
+    every marker is the one flat *color*.
 
     Args:
         space: the sphere.
         points: ``(latitude, longitude)`` pairs in degrees.
+        data: one value per point, to colour the markers by. Without it they
+            are all *color*.
         ax: axes to draw on. A new map is made if omitted.
         marker: matplotlib marker.
         size: marker area.
-        color: marker colour.
+        color: marker colour, used when there is no *data*.
+        cmap: colour map for *data*. ``RdBu`` by default, as in v1.
+        symmetric: put zero at the middle of the colour scale. Use it for
+            anything signed. Off by default.
+        vmin: lower colour limit; the data's minimum if omitted.
+        vmax: upper colour limit; the data's maximum if omitted.
+        colorbar: attach a colourbar, which needs *data* to mean anything. Off
+            by default unless a *colorbar_label* is given; pass ``False`` to
+            override that. Left on the returned collection as ``.colorbar``.
+        colorbar_label: label for the colourbar, which turns one on.
+        colorbar_kwargs: passed to ``figure.colorbar``, over the defaults.
         **kwargs: passed to ``scatter``.
 
     Returns:
         The ``(axes, collection)`` pair.
+
+    Raises:
+        ValueError: if *data* is given with a value per point missing or
+            spare. Silently colouring the first few would be worse.
     """
     crs = _require_cartopy()
     if ax is None:
         _, ax = subplots(space)
     positions = np.atleast_2d(np.asarray(list(points), dtype=float))
+
+    if data is None:
+        colours: Any = color
+    else:
+        colours = np.asarray(data, dtype=float).ravel()
+        if colours.size != positions.shape[0]:
+            raise ValueError(
+                f"There are {positions.shape[0]} points and {colours.size} "
+                "values to colour them by."
+            )
+        low, high = colour_limits(colours, vmin=vmin, vmax=vmax, symmetric=symmetric)
+        kwargs.setdefault("cmap", cmap)
+        kwargs.setdefault("vmin", low)
+        kwargs.setdefault("vmax", high)
+
     collection = ax.scatter(
         positions[:, 1],
         positions[:, 0],
         transform=crs.PlateCarree(),
         marker=marker,
         s=size,
-        c=color,
+        c=colours,
         **kwargs,
     )
+    wanted = colorbar or (colorbar is None and colorbar_label is not None)
+    if wanted and data is not None:
+        options = dict(shrink=0.7, pad=0.03)
+        options.update(colorbar_kwargs or {})
+        bar = ax.figure.colorbar(collection, ax=ax, **options)
+        if colorbar_label is not None:
+            bar.set_label(colorbar_label)
     return ax, collection
 
 
@@ -260,6 +420,12 @@ def plot_paths(
     two endpoints, so it follows the great circle rather than a straight line
     in the projection — which for a global network is most of them.
 
+    All of them go on as one ``LineCollection`` rather than one ``plot`` call
+    each. A ray network is thousands of paths, and cartopy re-projects every
+    line it is given separately: at 960 paths (1178 pieces once the dateline
+    crossings are split) the per-line route cost 528 ms of drawing against
+    36 ms for the collection on ``PlateCarree``, 838 against 303 on Robinson.
+
     Args:
         space: the sphere.
         paths: ``(start, end)`` pairs of points.
@@ -268,16 +434,20 @@ def plot_paths(
         color: line colour.
         linewidth: line width.
         alpha: opacity, low by default because these overlap heavily.
-        **kwargs: passed to ``plot``.
+        **kwargs: passed to ``LineCollection``.
 
     Returns:
-        The ``(axes, lines)`` pair.
+        The ``(axes, collection)`` pair. The second is the one
+        ``LineCollection`` holding every path, not a list of lines: restyling
+        the network is one call on it.
     """
+    from matplotlib.collections import LineCollection
+
     crs = _require_cartopy()
     if ax is None:
         _, ax = subplots(space)
 
-    lines = []
+    segments = []
     for start, end in paths:
         nodes, _ = space.geodesic_quadrature(start, end, count=count)
         positions = np.atleast_2d(np.asarray(nodes, dtype=float))
@@ -288,14 +458,15 @@ def plot_paths(
         for piece in np.split(np.arange(longitudes.size), breaks):
             if piece.size < 2:
                 continue
-            (line,) = ax.plot(
-                longitudes[piece],
-                latitudes[piece],
-                transform=crs.PlateCarree(),
-                color=color,
-                linewidth=linewidth,
-                alpha=alpha,
-                **kwargs,
-            )
-            lines.append(line)
-    return ax, lines
+            segments.append(np.column_stack([longitudes[piece], latitudes[piece]]))
+
+    collection = LineCollection(
+        segments,
+        transform=crs.PlateCarree(),
+        colors=color,
+        linewidths=linewidth,
+        alpha=alpha,
+        **kwargs,
+    )
+    ax.add_collection(collection)
+    return ax, collection

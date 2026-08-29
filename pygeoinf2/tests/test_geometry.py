@@ -19,6 +19,7 @@ from pygeoinf2.geometry import (
     UniversalSet,
 )
 from pygeoinf2.numerics.convex import ProximalGradient, SquaredDistance, SupportFunction
+from pygeoinf2.numerics.solvers import CholeskySolver, LinearSolver
 from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import (
     check_operator,
@@ -295,6 +296,61 @@ class TestEllipsoid:
             Ellipsoid(X, precision).support_function()
 
 
+class TestBoundaries:
+    """A solid set knows its surface. v1's ``Ball.boundary`` and
+    ``Ellipsoid.boundary`` were not restored with the rest of the set algebra,
+    and the surfaces they return are what an *equality* constraint is -- the
+    ball surface projects onto it and samples uniformly over it, which the
+    solid ball does not."""
+
+    def test_a_balls_boundary_is_its_surface(self, X, rng):
+        from pygeoinf2.geometry.convex import BallSurface
+
+        centre = X.random(rng=rng)
+        ball = Ball(X, radius=1.3, centre=centre)
+        surface = ball.boundary
+        assert isinstance(surface, BallSurface)
+        assert surface.radius == ball.radius
+        assert X.norm(X.subtract(surface.centre, centre)) < 1e-14
+
+        # It is the boundary in the sense that matters: on it, not in it.
+        outside = X.add(centre, X.scale(4.0, X.random(rng=rng)))
+        landed = surface.project(outside)
+        assert surface.contains(landed)
+        assert ball.contains(landed, rtol=1e-9)
+        assert surface.contains(surface.sample(rng=rng))
+        # and the centre is in the ball but not on its boundary.
+        assert ball.contains(centre) and not surface.contains(centre)
+
+    def test_a_point_has_no_surface(self, X, rng):
+        """A ball of zero radius is the single point at its centre. Its
+        boundary in the ambient space is itself, which is not a surface, so
+        this refuses rather than returning a radius of zero."""
+        with pytest.raises(ValueError, match="must be positive"):
+            Ball(X, radius=0.0, centre=X.random(rng=rng)).boundary
+
+    def test_an_ellipsoids_boundary_is_its_surface(self, X, rng):
+        from pygeoinf2.geometry.convex import EllipsoidSurface
+
+        precision = X.invariant_operator(lambda values: 1.0 + values)
+        ellipsoid = Ellipsoid(X, precision, covariance=precision.inverse)
+        surface = ellipsoid.boundary
+        assert isinstance(surface, EllipsoidSurface)
+        assert surface.precision is ellipsoid.precision
+
+        point = X.random(rng=rng)
+        landed = ellipsoid.project(X.scale(4.0, point))
+        assert surface.contains(landed, rtol=1e-8)
+        assert not surface.contains(ellipsoid.centre)
+
+    def test_it_needs_no_covariance(self, X):
+        """The surface is defined by the precision, so an ellipsoid built
+        without a covariance -- which cannot give its support function -- can
+        still give its boundary."""
+        precision = X.invariant_operator(lambda values: 1.0 + values)
+        assert Ellipsoid(X, precision).boundary is not None
+
+
 class TestProjectors:
     def test_a_projector_carries_its_structure(self, X, rng):
         projector = OrthogonalProjector.from_basis(
@@ -416,6 +472,239 @@ class TestSubspaces:
             nonsmooth=subspace.indicator(),
         )
         assert np.allclose(A(result.minimiser), value, atol=1e-7)
+
+
+class TestOneNormalInverse:
+    """``(A A*)^-1`` is built once and shared.
+
+    Three constructions need it -- the kernel projector, the minimum-norm
+    translation and the pseudo-inverse -- and each used to build its own. With
+    an iterative solver that is a wasted object; with a direct one it is the
+    matrix of ``A A*`` extracted and factorised again each time, and a subspace
+    built from an equation did that twice in one constructor call.
+    """
+
+    class Counting(LinearSolver):
+        """A solver that records how often it was asked to invert."""
+
+        def __init__(self):
+            self.inner = CholeskySolver()
+            self.count = 0
+
+        def _invert(self, operator):
+            self.count += 1
+            return self.inner(operator)
+
+    @pytest.fixture
+    def problem(self, rng):
+        space = EuclideanSpace(40)
+        codomain = EuclideanSpace(6)
+        operator = LinearOperator.from_matrix(
+            space, codomain, rng.normal(size=(6, 40)), form="components"
+        )
+        return space, codomain, operator
+
+    def test_an_affine_subspace_builds_it_once(self, problem, rng):
+        space, codomain, operator = problem
+        solver = self.Counting()
+        subspace = AffineSubspace.from_linear_equation(
+            operator, codomain.random(rng=rng), solver=solver
+        )
+        assert solver.count == 1
+        subspace.pseudo_inverse()
+        assert solver.count == 1
+        subspace.with_constraint_value(codomain.random(rng=rng))
+        assert solver.count == 1
+        subspace.with_translation(space.random(rng=rng)).pseudo_inverse()
+        assert solver.count == 1
+
+    def test_a_kernel_builds_it_once(self, problem):
+        _, _, operator = problem
+        solver = self.Counting()
+        subspace = LinearSubspace.from_kernel(operator, solver=solver)
+        assert solver.count == 1
+        subspace.pseudo_inverse()
+        assert solver.count == 1
+
+    def test_sharing_it_does_not_change_the_answers(self, problem, rng):
+        """The projector is the same object in `with_constraint_value` because
+        the kernel does not move; the translation does."""
+        space, codomain, operator = problem
+        first = codomain.random(rng=rng)
+        second = codomain.random(rng=rng)
+        subspace = AffineSubspace.from_linear_equation(
+            operator, first, solver=CholeskySolver()
+        )
+        moved = subspace.with_constraint_value(second)
+        assert np.allclose(operator(moved.translation), second, atol=1e-9)
+        assert np.allclose(
+            operator(moved.project(space.random(rng=rng))), second, atol=1e-9
+        )
+        check_projection(moved, rng=rng)
+        # and the pseudo-inverse is still the minimum-norm right inverse.
+        recovered = subspace.pseudo_inverse()(second)
+        assert np.allclose(operator(recovered), second, atol=1e-9)
+        assert space.norm(recovered) <= space.norm(moved.translation) + 1e-9
+
+
+class TestTheMetricEntersEveryProjection:
+    """The metric rule, applied to the sets.
+
+    Everything in this module -- a projection, a support function, a support
+    maximiser, a subspace's dimension -- is written with ``inner_product``,
+    ``norm`` and adjoints, and every one of those expressions is also correct
+    on components when the Gram matrix is the identity. Only a non-diagonal
+    Gram tells the two apart, and the rest of this file runs on a Sobolev
+    space over a box, whose metric is diagonal in the basis it uses.
+
+    So these repeat the substance of the checks above on
+    ``make_dense_metric_space``, and against closed forms rather than by
+    sampling wherever there is one.
+    """
+
+    @pytest.fixture
+    def space(self):
+        return make_dense_metric_space(6)
+
+    @pytest.fixture
+    def normal(self, space, rng):
+        return space.random(rng=rng)
+
+    def test_the_ball(self, space, rng):
+        """``h(y) = r ||y|| + (c, y)`` in the *space's* norm, and the point
+        attaining it is on the sphere of that norm."""
+        centre = space.random(rng=rng)
+        ball = Ball(space, radius=1.4, centre=centre)
+        check_projection(ball, rng=rng)
+
+        direction = space.random(rng=rng)
+        support = ball.support_function()
+        expected = 1.4 * space.norm(direction) + space.inner_product(centre, direction)
+        assert support(direction) == pytest.approx(expected)
+
+        maximiser = ball.support_maximiser(direction)
+        assert space.inner_product(maximiser, direction) == pytest.approx(expected)
+        assert space.norm(space.subtract(maximiser, centre)) == pytest.approx(1.4)
+
+        # And the projection is the closed form, not the component one: on a
+        # dense Gram those differ.
+        far = space.add(centre, space.scale(9.0, direction))
+        offset = space.subtract(far, centre)
+        landed = space.axpy(1.4 / space.norm(offset), offset, space.copy(centre))
+        assert space.norm(space.subtract(ball.project(far), landed)) < 1e-12
+
+    def test_the_half_space_and_the_hyperplane(self, space, normal, rng):
+        half = HalfSpace(space, normal, offset=0.4)
+        plane = Hyperplane(space, normal, offset=0.4)
+        check_projection(half, rng=rng)
+        check_projection(plane, rng=rng)
+
+        x = space.random(rng=rng)
+        excess = space.inner_product(normal, x) - 0.4
+        # The step is the residual over ||n||^2 in the space's inner product.
+        step = excess / space.squared_norm(normal)
+        expected = space.axpy(-step, normal, space.copy(x))
+        assert space.norm(space.subtract(plane.project(x), expected)) < 1e-12
+        if excess > 0.0:
+            assert space.norm(space.subtract(half.project(x), expected)) < 1e-12
+        else:
+            assert space.norm(space.subtract(half.project(x), x)) < 1e-12
+
+    def test_the_ball_surface(self, space, rng):
+        """Its ``sample`` is white noise projected outward, and white noise is
+        the only isotropic draw on a space with a metric."""
+        from pygeoinf2.geometry.convex import BallSurface
+
+        surface = BallSurface(space, radius=2.0, centre=space.random(rng=rng))
+        for _ in range(5):
+            assert surface.contains(surface.sample(rng=rng))
+            assert surface.contains(surface.project(space.random(rng=rng)))
+
+    def test_the_ellipsoid(self, space, rng):
+        """The precision is self-adjoint on this space -- which is symmetry of
+        its *Galerkin* matrix, not of its components -- and the support
+        function is the covariance norm in the space's inner product."""
+        root = rng.normal(size=(space.dim, space.dim))
+        precision = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T + space.dim * np.identity(space.dim),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        check_traits(precision, rng=rng)
+        covariance = CholeskySolver()(precision)
+        ellipsoid = Ellipsoid(space, precision, covariance=covariance)
+
+        direction = space.random(rng=rng)
+        support = ellipsoid.support_function()
+        expected = np.sqrt(space.inner_product(covariance(direction), direction))
+        assert support(direction) == pytest.approx(expected)
+
+        maximiser = ellipsoid.support_maximiser(direction)
+        assert space.inner_product(maximiser, direction) == pytest.approx(expected)
+        assert ellipsoid.contains(maximiser, rtol=1e-8)
+
+        # Newton on the secular equation, with a solve per step, on a dense
+        # Gram: the projection lands on the boundary and is the nearest point.
+        point = space.scale(6.0, space.random(rng=rng))
+        projected = ellipsoid.project(point)
+        assert ellipsoid.mahalanobis_squared(projected) == pytest.approx(1.0, abs=1e-9)
+        for _ in range(30):
+            other = ellipsoid.project(
+                space.add(projected, space.scale(0.05, space.random(rng=rng)))
+            )
+            assert (
+                space.norm(space.subtract(other, point))
+                >= space.norm(space.subtract(projected, point)) - 1e-9
+            )
+
+    def test_the_projector_and_the_dimension(self, space, rng):
+        """``P`` is self-adjoint *in the space's inner product*, and the
+        dimension is the trace of its component matrix -- not the sum of
+        ``(P e_i, e_i)``, which on this space is the Galerkin diagonal and
+        means nothing."""
+        vectors = [space.random(rng=rng) for _ in range(3)]
+        projector = OrthogonalProjector.from_basis(space, vectors)
+        check_operator(projector, rng=rng)
+        check_traits(projector, rng=rng)
+
+        subspace = LinearSubspace(projector)
+        assert subspace.dimension() == 3
+        assert subspace.complement().dimension() == space.dim - 3
+        for vector in vectors:
+            assert space.norm(space.subtract(subspace.project(vector), vector)) < 1e-9
+
+        galerkin = sum(
+            space.inner_product(projector(space.basis_vector(i)), space.basis_vector(i))
+            for i in range(space.dim)
+        )
+        assert abs(galerkin - 3.0) > 0.1, "the fixture no longer distinguishes them"
+
+    def test_the_affine_subspace(self, space, rng):
+        """The translation is the minimum-norm solution in the space's norm,
+        which is where the adjoint -- and so the metric -- enters."""
+        codomain = EuclideanSpace(2)
+        operator = LinearOperator.from_matrix(
+            space, codomain, rng.normal(size=(2, space.dim)), form="components"
+        )
+        value = codomain.random(rng=rng)
+        subspace = AffineSubspace.from_linear_equation(operator, value)
+        check_projection(subspace, rng=rng)
+
+        assert np.allclose(operator(subspace.translation), value, atol=1e-8)
+        for _ in range(20):
+            other = subspace.project(space.random(rng=rng))
+            assert space.norm(subspace.translation) <= space.norm(other) + 1e-8
+        assert subspace.tangent.dimension() == space.dim - 2
+
+    def test_the_intersection(self, space, rng):
+        """Dykstra's corrections are vectors of the space, so the whole loop
+        is in its metric."""
+        combined = Ball(space, radius=1.0) & HalfSpace(
+            space, space.basis_vector(0), offset=-0.2
+        )
+        check_projection(combined, rng=rng)
 
 
 class TestPolytopeProjection:

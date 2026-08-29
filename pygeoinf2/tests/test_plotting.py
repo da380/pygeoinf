@@ -79,16 +79,51 @@ class TestSphereRenderer:
             plotting.plot(EuclideanSpace(3), np.zeros(3))
 
     def test_a_map_is_drawn_with_a_closed_seam(self):
-        """Without the wrap a blank wedge appears down the dateline."""
+        """Without the wrap a blank wedge appears down the dateline.
+
+        The mesh is given explicit cell edges rather than centres, and they run
+        from -180 to +180 with the antimeridian cell drawn as its two halves.
+        That is what closes the seam *and* keeps every cell on one side of
+        cartopy's cut: a cell straddling the cut sends the whole mesh down a
+        per-polygon path, which cost 1.16 s a map at lmax 128 against 30 ms.
+        """
         pytest.importorskip("cartopy")
         from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
 
         X = SphereLebesgue(12)
+        rows, columns = X.grid_shape
         field = X.project_function(lambda p: np.cos(p[1]))
         ax, mappable = plotting.plot(X, field, colorbar=True)
-        # pcolormesh was handed one more longitude than the grid holds
-        assert mappable.get_array().size == X.grid_shape[0] * (X.grid_shape[1] + 1)
+        assert mappable.get_array().size == rows * (columns + 1)
+        corners = mappable.get_coordinates()
+        assert corners.shape == (rows + 1, columns + 2, 2)
+        longitudes = corners[0, :, 0]
+        assert longitudes[0] == pytest.approx(-180.0)
+        assert longitudes[-1] == pytest.approx(180.0)
+        assert np.all(np.diff(longitudes) >= 0.0)
+        # Latitude edges stay on the sphere: an edge past the pole is not a
+        # point any projection can place.
+        latitudes = corners[:, 0, 1]
+        assert latitudes.max() == pytest.approx(90.0)
+        assert latitudes.min() >= -90.0
         assert mappable.colorbar is not None
+
+    def test_the_seam_column_is_the_one_it_wraps(self):
+        """The two half-cells at the edges of the map are the same column of
+        the grid, so the picture is periodic across the join rather than merely
+        continuous-looking."""
+        pytest.importorskip("cartopy")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8)
+        field = X.project_function(lambda p: np.cos(np.radians(p[1])))
+        ax, mappable = plotting.plot(X, field)
+        drawn = mappable.get_array().reshape(X.grid_shape[0], -1)
+        assert np.allclose(drawn[:, 0], drawn[:, -1])
+        # and it is the column at longitude 180, the one the roll brought to
+        # the front.
+        values = X.grid_values(field)
+        assert np.allclose(drawn[:, 0], values[:, X.grid_shape[1] // 2])
 
     def test_symmetric_limits_reach_the_mappable(self):
         pytest.importorskip("cartopy")
@@ -107,6 +142,29 @@ class TestSphereRenderer:
         X = SphereLebesgue(12)
         with pytest.raises(ValueError, match="has shape"):
             plotting.plot(X, np.zeros((3, 3)))
+
+
+class TestShow:
+    """``show()``: what an example script ends with.
+
+    A bare ``pyplot.show()`` warns once per call under Agg, which is the
+    backend the suite runs the examples under, and shows nothing either way.
+    """
+
+    def test_it_does_nothing_under_a_blind_backend(self, recwarn):
+        assert matplotlib.get_backend().lower() == "agg"
+        assert plotting.show() is False
+        assert not [w for w in recwarn if "non-interactive" in str(w.message)]
+
+    def test_it_shows_when_the_backend_has_a_window(self, monkeypatch):
+        """And it is not "the name ends in agg": TkAgg has a window."""
+        import matplotlib.pyplot as plt
+
+        shown = []
+        monkeypatch.setattr(matplotlib, "get_backend", lambda: "TkAgg")
+        monkeypatch.setattr(plt, "show", lambda *a, **k: shown.append(True))
+        assert plotting.show() is True
+        assert shown == [True]
 
 
 class TestDistributions:
@@ -338,6 +396,120 @@ class TestDensityResolution:
         assert (exact > 0.0) == (sampled > 0.0)
 
 
+class TestSampledDensity:
+    """The kernel density estimate behind a sampled corner plot.
+
+    ``gaussian_kde`` evaluates a kernel at every draw for every point asked
+    for. On the default 20 000 draws over a 160 x 160 panel that is 5e8
+    kernels, 8.9 of example 26's 12.2 seconds. Binning the draws first and
+    convolving once with the same kernel is the same estimate to within the
+    bin width, so these tests are about *how much* the binning costs.
+    """
+
+    @staticmethod
+    def cloud(rng, count=20000):
+        """Correlated and bent, so an axis-aligned smoothing would show."""
+        root = np.array([[1.0, 0.0], [0.8, 0.6]])
+        draws = (root @ rng.standard_normal((2, count))).T
+        draws[:, 1] += 0.3 * draws[:, 0] ** 2
+        return draws
+
+    def test_the_marginal_agrees_with_the_exact_estimate(self, rng):
+        from scipy.stats import gaussian_kde
+
+        from pygeoinf2.plotting.distributions import _binned_density
+
+        draws = self.cloud(rng)[:, 0]
+        values = np.linspace(draws.min(), draws.max(), 400)
+        exact = gaussian_kde(draws)(values)
+        assert (
+            np.abs(_binned_density(draws, values) - exact).max() < 0.005 * exact.max()
+        )
+
+    def test_the_panel_agrees_with_the_exact_estimate(self, rng):
+        """Within 1.5% of the peak, and the contour levels within 1%. The
+        kernel is the data covariance scaled, so it is anisotropic; smoothing
+        with an axis-aligned filter instead costs 8% and 6%."""
+        from scipy.stats import chi2, gaussian_kde
+
+        from pygeoinf2.plotting.distributions import _binned_density_2d
+
+        draws = self.cloud(rng)
+        mean, deviation = draws.mean(axis=0), draws.std(axis=0)
+        horizontal = np.linspace(
+            mean[0] - 3.75 * deviation[0], mean[0] + 3.75 * deviation[0], 160
+        )
+        vertical = np.linspace(
+            mean[1] - 3.75 * deviation[1], mean[1] + 3.75 * deviation[1], 160
+        )
+        mesh_x, mesh_y = np.meshgrid(horizontal, vertical)
+        exact = gaussian_kde(draws.T)(
+            np.vstack([mesh_x.ravel(), mesh_y.ravel()])
+        ).reshape(mesh_x.shape)
+        binned = _binned_density_2d(draws, horizontal, vertical)
+
+        assert binned.shape == exact.shape
+        assert np.abs(binned - exact).max() < 0.015 * exact.max()
+
+        def levels(density):
+            """The levels the corner plot would draw: each encloses the mass
+            the corresponding sigma contour of a Gaussian would."""
+            order = np.sort(density.ravel())[::-1]
+            mass = np.cumsum(order) / order.sum()
+            wanted = chi2.cdf(np.arange(1, 4) ** 2.0, df=2)
+            return np.array([order[np.searchsorted(mass, m)] for m in wanted])
+
+        drawn, truth = levels(binned), levels(exact)
+        assert np.abs(drawn - truth).max() < 0.01 * truth.max()
+
+    def test_both_routes_draw_the_same_corner(self, rng):
+        """End to end, since the levels are what a reader takes off the
+        figure."""
+        from pygeoinf2.algebra.operators import Operator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = EuclideanSpace(3)
+        root = rng.standard_normal((3, 3))
+        measure = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + np.identity(3), form="components"
+        )
+        pushed = measure.push_forward(
+            Operator.from_callables(
+                space,
+                EuclideanSpace(3),
+                lambda x: np.array([np.tanh(x[0]), x[1] ** 2, x[2] - x[0]]),
+            )
+        )
+
+        def panel_levels(choice):
+            axes = plotting.plot_corner(
+                pushed,
+                samples=8000,
+                rng=np.random.default_rng(6),
+                density=choice,
+            )
+            drawn = np.asarray(sorted(axes[1, 0].collections[0].levels))
+            import matplotlib.pyplot as plt
+
+            plt.close("all")
+            return drawn
+
+        binned, exact = panel_levels("binned"), panel_levels("kde")
+        assert np.allclose(binned, exact, rtol=0.05)
+
+    def test_an_unknown_route_is_refused(self, rng):
+        """Silently falling back would leave the picture looking right."""
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        measure = GaussianMeasure.from_standard_deviation(EuclideanSpace(2), 1.0)
+        with pytest.raises(ValueError, match="binned"):
+            plotting.plot_corner(measure, density="gaussian_kde")
+        with pytest.raises(ValueError, match="binned"):
+            plotting.plot_densities(measure, density="gaussian_kde")
+
+
 class TestPyslfpNeeds:
     """The keywords the review found every pyslfp call passing, and v2 not
     accepting. A caller who cannot title a plot has to reach past the return
@@ -370,9 +542,7 @@ class TestPyslfpNeeds:
         from pygeoinf2.plotting.distributions import plot_corner
 
         posterior, prior = measure
-        axes = plot_corner(
-            posterior, prior=prior, truth=np.array([0.1, -0.2, 0.3])
-        )
+        axes = plot_corner(posterior, prior=prior, truth=np.array([0.1, -0.2, 0.3]))
         legend = axes[0, 2].get_legend()
         assert legend is not None
         assert [text.get_text() for text in legend.get_texts()] == [
@@ -386,9 +556,9 @@ class TestPyslfpNeeds:
 
         posterior, _ = measure
         axes = plot_corner(posterior)
-        assert [
-            text.get_text() for text in axes[0, 2].get_legend().get_texts()
-        ] == ["posterior"]
+        assert [text.get_text() for text in axes[0, 2].get_legend().get_texts()] == [
+            "posterior"
+        ]
 
     def test_it_can_be_turned_off(self, measure):
         from pygeoinf2.plotting.distributions import plot_corner
@@ -416,9 +586,7 @@ class TestSphereMapOptions:
         from pygeoinf2.symmetric_space.sphere import Lebesgue
 
         space = Lebesgue(16)
-        return space, space.project_function(
-            lambda point: np.sin(np.radians(point[0]))
-        )
+        return space, space.project_function(lambda point: np.sin(np.radians(point[0])))
 
     def test_a_map_extent_replaces_the_global_view(self, field):
         """Not both: ``set_global`` would undo the extent that was asked for,
@@ -435,9 +603,7 @@ class TestSphereMapOptions:
         from pygeoinf2.plotting import plot
 
         space, values = field
-        axis, mappable = plot(
-            space, values, contour=True, contour_lines=True, levels=8
-        )
+        axis, mappable = plot(space, values, contour=True, contour_lines=True, levels=8)
         assert hasattr(axis, "contour_set")
         assert mappable is not None
 
@@ -459,9 +625,43 @@ class TestSphereMapOptions:
 
         space, values = field
         axis, mappable = plot(
-            space, values, colorbar_kwargs={"orientation": "horizontal"}
+            space,
+            values,
+            colorbar=True,
+            colorbar_kwargs={"orientation": "horizontal"},
         )
         assert mappable.colorbar.orientation == "horizontal"
+
+    def test_the_defaults_are_v1s(self, field):
+        """v2 had flipped four of them with no reason recorded: the colour map
+        from RdBu to viridis, the colourbar on, the graticule off, and the
+        projection from PlateCarree to Robinson. A signed field on a
+        sequential map reads as though it had a sign it does not have, so this
+        is not only a matter of taste."""
+        from pygeoinf2.plotting import plot, subplots
+
+        space, values = field
+        axis, mappable = plot(space, values)
+        assert mappable.get_cmap().name == "RdBu"
+        assert mappable.colorbar is None
+        assert axis.gridliner is not None
+
+        figure, fresh = subplots(space)
+        import cartopy.crs as ccrs
+
+        assert isinstance(fresh.projection, ccrs.PlateCarree)
+
+    def test_a_label_asks_for_the_bar_it_goes_on(self, field):
+        """The bar is off by default, so a label with no bar would be a
+        silently dropped argument. An explicit ``colorbar=False`` still wins."""
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        _, labelled = plot(space, values, colorbar_label="metres")
+        assert labelled.colorbar is not None
+        assert labelled.colorbar.ax.get_ylabel() == "metres"
+        _, refused = plot(space, values, colorbar=False, colorbar_label="metres")
+        assert refused.colorbar is None
 
     def test_a_title(self, field):
         from pygeoinf2.plotting import plot
@@ -469,6 +669,136 @@ class TestSphereMapOptions:
         space, values = field
         axis, _ = plot(space, values, title="a map")
         assert axis.get_title() == "a map"
+
+
+class TestScatteringPoints:
+    """``plot_points``, which pyslfp's altimetry figures colour by value.
+
+    v2 hard-coded ``c=color``, so ``c=values`` was a duplicate keyword and
+    ``data=values`` was not a keyword at all: there was no way to draw the
+    figure the function exists for.
+    """
+
+    @pytest.fixture
+    def sphere(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("pyshtools")
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.symmetric_space.sphere import Lebesgue
+
+        yield Lebesgue(16)
+        plt.close("all")
+
+    @staticmethod
+    def points():
+        return [(10.0, -30.0), (-45.0, 100.0), (60.0, 170.0), (0.0, 0.0)]
+
+    def test_a_flat_colour_by_default(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        _, collection = plot_points(sphere, self.points())
+        assert collection.get_array() is None
+        assert collection.get_offsets().shape == (4, 2)
+
+    def test_it_colours_by_data(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        values = np.array([-2.0, 0.5, 1.0, 3.0])
+        _, collection = plot_points(sphere, self.points(), data=values)
+        assert np.allclose(collection.get_array(), values)
+        assert collection.get_clim() == (-2.0, 3.0)
+        assert collection.get_cmap().name == "RdBu"
+
+    def test_symmetric_limits_and_a_labelled_bar(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        values = np.array([-2.0, 0.5, 1.0, 3.0])
+        _, collection = plot_points(
+            sphere,
+            self.points(),
+            data=values,
+            symmetric=True,
+            colorbar_label="metres",
+        )
+        assert collection.get_clim() == (-3.0, 3.0)
+        assert collection.colorbar is not None
+        assert collection.colorbar.ax.get_ylabel() == "metres"
+
+    def test_the_longitudes_and_latitudes_are_not_swapped(self, sphere):
+        """Points are ``(latitude, longitude)``; scatter takes ``(x, y)``."""
+        from pygeoinf2.plotting import plot_points
+
+        _, collection = plot_points(sphere, [(10.0, -30.0)])
+        assert np.asarray(collection.get_offsets()[0]) == pytest.approx(
+            np.array([-30.0, 10.0])
+        )
+
+    def test_a_value_per_point_is_required(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        with pytest.raises(ValueError, match="4 points and 3 values"):
+            plot_points(sphere, self.points(), data=np.zeros(3))
+
+
+class TestDrawingPaths:
+    """``plot_paths``. One collection, not one line per path: cartopy
+    re-projects each line it is handed, and a ray network is thousands."""
+
+    @pytest.fixture
+    def sphere(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("pyshtools")
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.symmetric_space.sphere import Lebesgue
+
+        yield Lebesgue(16)
+        plt.close("all")
+
+    def test_every_path_is_in_one_collection(self, sphere):
+        from matplotlib.collections import LineCollection
+
+        from pygeoinf2.plotting import plot_paths
+
+        paths = [((10.0, -30.0), (-20.0, 40.0)), ((0.0, 0.0), (45.0, 90.0))]
+        _, collection = plot_paths(sphere, paths, count=12)
+        assert isinstance(collection, LineCollection)
+        assert len(collection.get_segments()) == 2
+        assert all(piece.shape == (12, 2) for piece in collection.get_segments())
+
+    def test_the_path_follows_the_great_circle(self, sphere):
+        """Not the straight line between the endpoints, which is the whole
+        reason the path is sampled rather than handed over as two points."""
+        from pygeoinf2.plotting import plot_paths
+
+        _, collection = plot_paths(sphere, [((0.0, 0.0), (0.0, 160.0))], count=9)
+        (piece,) = collection.get_segments()
+        # The nodes are a quadrature rule, so they lie inside the path rather
+        # than at its ends; along the equator they stay on it.
+        assert np.all(np.abs(piece[:, 1]) < 1e-8)
+        assert np.all(np.diff(piece[:, 0]) > 0.0)
+        assert 0.0 < piece[0, 0] < piece[-1, 0] < 160.0
+        # The equator is itself a great circle, so that one is straight; a
+        # pair of points on a parallel is not.
+        _, collection = plot_paths(sphere, [((45.0, 0.0), (45.0, 160.0))], count=9)
+        (piece,) = collection.get_segments()
+        assert piece[:, 1].max() > 46.0
+
+    def test_a_dateline_crossing_is_split(self, sphere):
+        """Undivided it would be drawn straight back across the whole map."""
+        from pygeoinf2.plotting import plot_paths
+
+        _, collection = plot_paths(sphere, [((0.0, 170.0), (0.0, -170.0))], count=8)
+        segments = collection.get_segments()
+        assert len(segments) == 2
+        assert sum(piece.shape[0] for piece in segments) == 8
+
+    def test_no_paths_draw_nothing(self, sphere):
+        from pygeoinf2.plotting import plot_paths
+
+        _, collection = plot_paths(sphere, [])
+        assert collection.get_segments() == []
 
 
 class TestErrorBounds:

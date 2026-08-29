@@ -156,6 +156,138 @@ def _grid(
     return np.unique(np.concatenate([coarse, fine]))
 
 
+def _bandwidth(draws: np.ndarray, /) -> np.ndarray:
+    """Scott's rule, as ``scipy.stats.gaussian_kde`` applies it.
+
+    The kernel is the data covariance scaled by ``n ** (-2 / (d + 4))``, so
+    this returns that covariance -- the same kernel the exact route uses, which
+    is what lets the binned route be an approximation of *it* rather than of
+    something else with a similar name.
+
+    Args:
+        draws: the sample, ``(n,)`` or ``(n, d)``.
+
+    Returns:
+        The kernel covariance: a scalar variance in one dimension, a ``(d, d)``
+        matrix otherwise.
+    """
+    draws = np.atleast_2d(np.asarray(draws, dtype=float).T)
+    count, dimension = draws.shape[1], draws.shape[0]
+    factor = float(count) ** (-2.0 / (dimension + 4.0))
+    covariance = np.atleast_2d(np.cov(draws))
+    return factor * (covariance[0, 0] if dimension == 1 else covariance)
+
+
+def _binned_density(draws: np.ndarray, values: np.ndarray, /) -> np.ndarray:
+    """A kernel density estimate by histogram and convolution.
+
+    ``gaussian_kde`` evaluates a kernel at every draw for every point asked
+    for: 20 000 draws over a 160 x 160 panel is 5e8 kernels and about five
+    seconds. Binning the draws onto the grid first and convolving once with
+    the same kernel gives the same estimate to within the bin width, and the
+    convolution is over the grid rather than over the draws.
+
+    Args:
+        draws: the sample, one value per draw.
+        values: where the density is wanted. Uniformly spaced.
+
+    Returns:
+        The density at those points.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    spacing = float(values[1] - values[0])
+    deviation = float(np.sqrt(_bandwidth(draws)))
+    # Bins beyond the window, so that draws just outside it still contribute
+    # their tail to the edge of the picture, as the exact estimate would.
+    pad = int(np.ceil(4.0 * deviation / spacing))
+    edges = (
+        values[0]
+        - spacing / 2.0
+        + spacing * np.arange(-pad, values.size + pad + 1, dtype=float)
+    )
+    counts, _ = np.histogram(draws, bins=edges)
+    density = gaussian_filter1d(
+        counts / (draws.size * spacing), deviation / spacing, mode="constant"
+    )
+    return density[pad : pad + values.size]
+
+
+def _binned_density_2d(
+    draws: np.ndarray, horizontal: np.ndarray, vertical: np.ndarray, /
+) -> np.ndarray:
+    """The two-dimensional counterpart, on the mesh the contours use.
+
+    The kernel is anisotropic -- it is the data covariance, scaled -- so this
+    convolves with that kernel rather than with an axis-aligned filter. On a
+    correlated cloud the axis-aligned version is wrong by 8% of the peak and
+    moves the contour levels by 6%; the full kernel costs the same and is
+    wrong by 1.5% and 0.7%.
+
+    Args:
+        draws: the sample, ``(n, 2)``, in ``(horizontal, vertical)`` order.
+        horizontal: the mesh's first coordinate, uniformly spaced.
+        vertical: its second, uniformly spaced.
+
+    Returns:
+        The density, indexed ``[vertical, horizontal]`` as ``meshgrid`` leaves
+        it.
+    """
+    from scipy.signal import fftconvolve
+
+    spacing = np.array(
+        [horizontal[1] - horizontal[0], vertical[1] - vertical[0]], dtype=float
+    )
+    covariance = _bandwidth(draws) / np.outer(spacing, spacing)
+    radius = int(np.ceil(4.0 * np.sqrt(max(covariance[0, 0], covariance[1, 1]))))
+    offsets = np.arange(-radius, radius + 1)
+    first, second = np.meshgrid(offsets, offsets, indexing="ij")
+    inverse = np.linalg.inv(covariance)
+    kernel = np.exp(
+        -0.5
+        * (
+            inverse[0, 0] * first**2
+            + 2.0 * inverse[0, 1] * first * second
+            + inverse[1, 1] * second**2
+        )
+    )
+    kernel /= kernel.sum()
+
+    def padded(axis: np.ndarray, step: float) -> np.ndarray:
+        return step * np.arange(-radius, axis.size + radius + 1) + (
+            axis[0] - step / 2.0
+        )
+
+    counts, _, _ = np.histogram2d(
+        draws[:, 0],
+        draws[:, 1],
+        bins=(padded(horizontal, spacing[0]), padded(vertical, spacing[1])),
+    )
+    smoothed = fftconvolve(counts, kernel, mode="same")
+    interior = smoothed[
+        radius : radius + horizontal.size, radius : radius + vertical.size
+    ]
+    return interior.T / (draws.shape[0] * spacing[0] * spacing[1])
+
+
+def _exact_density(choice: str, /) -> bool:
+    """Whether the caller asked for the exact kernel estimate.
+
+    Args:
+        choice: ``"binned"`` or ``"kde"``.
+
+    Returns:
+        True for ``"kde"``.
+
+    Raises:
+        ValueError: for anything else. A misspelling would otherwise silently
+            select the default and the picture would look right.
+    """
+    if choice not in ("binned", "kde"):
+        raise ValueError(f"density must be 'binned' or 'kde', got {choice!r}.")
+    return choice == "kde"
+
+
 def _density(
     axis: Any,
     limits: tuple[float, float],
@@ -169,6 +301,7 @@ def _density(
     fill: bool,
     width: float,
     points: int = 2000,
+    exact: bool = False,
 ) -> None:
     """One marginal, exactly or from draws, on a grid that resolves it."""
     values = _grid(limits, mean, deviation, width, points=points)
@@ -176,10 +309,15 @@ def _density(
         from scipy.stats import norm
 
         density = norm.pdf(values, loc=mean, scale=deviation)
-    else:
+    elif exact:
         from scipy.stats import gaussian_kde
 
         density = gaussian_kde(draws)(values)
+    else:
+        # _grid is deliberately not uniform, so the estimate is made on a
+        # uniform one and read off it.
+        uniform = np.linspace(values[0], values[-1], max(values.size, 512))
+        density = np.interp(values, uniform, _binned_density(draws, uniform))
     axis.plot(values, density, color=colour, lw=2, linestyle=style, label=label)
     if fill:
         axis.fill_between(values, density, color=colour, alpha=0.15)
@@ -199,6 +337,7 @@ def plot_densities(
     fill: bool = False,
     samples: int = 20000,
     rng: Any = None,
+    density: str = "binned",
     xlabel: str = "property value",
     title: str | None = None,
 ) -> Any:
@@ -220,6 +359,12 @@ def plot_densities(
         fill: shade under the curves.
         samples: draws to take when the measure has no covariance to read.
         rng: the generator for those draws.
+        density: how a *sampled* measure's marginal is estimated: ``"binned"``,
+            the default, by histogram and one convolution with the kernel
+            Scott's rule gives; ``"kde"`` by evaluating
+            ``scipy.stats.gaussian_kde`` at every point of the grid. They agree
+            to within 0.1% of the peak on a marginal, and the first is some
+            three orders of magnitude cheaper. See :func:`plot_corner`.
         xlabel: label for the shared x-axis.
         title: a title for the axes. Every pyslfp call passes one, and without
             it a caller has to reach past the return value to set it.
@@ -229,11 +374,13 @@ def plot_densities(
         given and a second axis was made.
 
     Raises:
-        ValueError: if *index* is outside the measure's dimension, or a
-            measure can be neither read nor sampled.
+        ValueError: if *index* is outside the measure's dimension, a measure
+            can be neither read nor sampled, or *density* is neither
+            ``"binned"`` nor ``"kde"``.
     """
     import matplotlib.pyplot as plt
 
+    exact = _exact_density(density)
     posteriors = (
         list(posterior) if isinstance(posterior, (list, tuple)) else [posterior]
     )
@@ -306,6 +453,7 @@ def plot_densities(
                 style=":",
                 fill=fill,
                 width=width,
+                exact=exact,
             )
 
     axis.set_ylabel("posterior density")
@@ -326,6 +474,7 @@ def plot_densities(
             style="-",
             fill=fill,
             width=width,
+            exact=exact,
         )
 
     if truth is not None:
@@ -384,6 +533,7 @@ def plot_corner(
     colour: str = "darkblue",
     samples: int = 20000,
     rng: Any = None,
+    density: str = "binned",
     title: str | None = None,
     legend: bool = True,
     posterior_label: str = "posterior",
@@ -412,6 +562,17 @@ def plot_corner(
         colour: the unfilled case's line colour, and the mean marker's.
         samples: draws to take when the measure has no covariance to read.
         rng: the generator for those draws.
+        density: how a *sampled* measure's density is estimated, which is what
+            the panels of a non-Gaussian corner plot are drawn from.
+            ``"binned"``, the default, bins the draws onto the panel's own grid
+            and convolves once with the kernel Scott's rule gives -- the same
+            kernel ``"kde"`` uses, evaluated ~2000 times faster (5.0 s to
+            2.2 ms per panel at 20 000 draws on a 160 x 160 grid; 8.9 s of
+            example 26's 12.2 s). The cost is the binning: on a strongly
+            correlated cloud the density is within 1.5% of the peak and the
+            contour levels within 0.7%. ``"kde"`` evaluates
+            ``scipy.stats.gaussian_kde`` at every grid point, which is exact
+            and is what to use if a level matters to three digits.
         title: a title for the figure. Every pyslfp call passes one.
         legend: draw a key in the empty upper triangle, which is otherwise
             wasted space -- and without it the dotted prior, the solid
@@ -426,10 +587,13 @@ def plot_corner(
 
     Raises:
         ValueError: if the measure has fewer than two components -- a corner
-            plot of one is a marginal, and :func:`plot_densities` draws that.
+            plot of one is a marginal, and :func:`plot_densities` draws that;
+            or if *density* is neither ``"binned"`` nor ``"kde"``.
     """
     import matplotlib.pyplot as plt
     from scipy.stats import chi2
+
+    exact = _exact_density(density)
 
     mean, covariance, draws = moments(posterior, samples=samples, rng=rng)
     size = mean.size
@@ -486,6 +650,7 @@ def plot_corner(
                     fill=fill,
                     width=width,
                     points=500,
+                    exact=exact,
                 )
                 if prior_summary is not None:
                     prior_mean, prior_deviation, prior_draws = prior_summary
@@ -504,6 +669,7 @@ def plot_corner(
                             fill=False,
                             width=width,
                             points=500,
+                            exact=exact,
                         )
                 axis.set_yticks([])
                 if truth_values is not None:
@@ -529,11 +695,15 @@ def plot_corner(
                     )
                     contour_levels = levels
                 else:
-                    from scipy.stats import gaussian_kde
+                    pair = draws[:, [column, row]]
+                    if exact:
+                        from scipy.stats import gaussian_kde
 
-                    density = gaussian_kde(draws[:, [column, row]].T)(
-                        np.vstack([mesh_x.ravel(), mesh_y.ravel()])
-                    ).reshape(mesh_x.shape)
+                        density = gaussian_kde(pair.T)(
+                            np.vstack([mesh_x.ravel(), mesh_y.ravel()])
+                        ).reshape(mesh_x.shape)
+                    else:
+                        density = _binned_density_2d(pair, horizontal, vertical)
                     # Levels chosen so each encloses the same probability the
                     # corresponding sigma contour would, which is what makes a
                     # sampled panel readable beside a Gaussian one.

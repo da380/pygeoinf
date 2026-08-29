@@ -36,6 +36,30 @@ from .convex import ConvexSet
 __all__ = ["OrthogonalProjector", "LinearSubspace", "AffineSubspace"]
 
 
+def _normal_inverse(
+    operator: LinearOperator, solver: LinearSolver | None, /
+) -> LinearOperator:
+    """``(A A*)^-1``, the one solve every construction here needs.
+
+    The kernel projector, the minimum-norm solution of ``A x == b`` and the
+    pseudo-inverse are three uses of the same operator, and each used to build
+    its own. With an iterative solver that is only a wasted object; with a
+    direct one it is the matrix of ``A A*`` extracted and factorised again,
+    three times over, and for a subspace built from an equation two of those
+    happen in the one constructor call.
+
+    Args:
+        operator: the ``A``. Must have full row rank; see
+            :meth:`OrthogonalProjector.onto_kernel`.
+        solver: how to invert ``A A*``. Conjugate gradients if omitted.
+
+    Returns:
+        The inverse of ``A A*`` as an operator on the codomain.
+    """
+    normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
+    return (solver or CGSolver(rtol=1e-12))(normal)
+
+
 class OrthogonalProjector(LinearOperator):
     """An orthogonal projection: ``P == P* == P^2``.
 
@@ -175,9 +199,19 @@ class OrthogonalProjector(LinearOperator):
         Returns:
             The orthogonal projector onto the kernel.
         """
+        return cls._onto_kernel(operator, _normal_inverse(operator, solver))
+
+    @classmethod
+    def _onto_kernel(
+        cls, operator: LinearOperator, inverse: LinearOperator, /
+    ) -> OrthogonalProjector:
+        """The projector, given an already-built ``(A A*)^-1``.
+
+        Split out so that a caller which needed that inverse for its own sake
+        -- the minimum-norm translation of an affine subspace -- can hand the
+        one it has over rather than pay for a second.
+        """
         domain = operator.domain
-        normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
-        inverse = (solver or CGSolver(rtol=1e-12))(normal)
 
         def project(x: Any) -> Any:
             correction = operator.adjoint(inverse(operator(x)))
@@ -213,6 +247,9 @@ class AffineSubspace(ConvexSet):
         )
         self._equation: tuple[LinearOperator, Any] | None = None
         self._solver: LinearSolver | None = None
+        # (A A*)^-1, when the subspace was built from an equation and so
+        # already had to form it. See _normal_inverse.
+        self._inverse: LinearOperator | None = None
 
     @property
     def projector(self) -> OrthogonalProjector:
@@ -280,15 +317,15 @@ class AffineSubspace(ConvexSet):
                 gradients if omitted, which needs ``A A*`` to be definite --
                 pass a least-squares solver for a rank-deficient constraint.
         """
-        normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
-        inverse = (solver or CGSolver(rtol=1e-12))(normal)
+        inverse = _normal_inverse(operator, solver)
         translation = operator.adjoint(inverse(value))
         subspace = cls(
-            OrthogonalProjector.onto_kernel(operator, solver=solver),
+            OrthogonalProjector._onto_kernel(operator, inverse),
             translation=translation,
         )
         subspace._equation = (operator, value)
         subspace._solver = solver
+        subspace._inverse = inverse
         return subspace
 
     @classmethod
@@ -457,6 +494,7 @@ class AffineSubspace(ConvexSet):
             operator, _ = self._equation
             moved._equation = (operator, operator(translation))
             moved._solver = self._solver
+            moved._inverse = self._inverse
         return moved
 
     def with_constraint_value(self, value: Any, /) -> AffineSubspace:
@@ -464,10 +502,25 @@ class AffineSubspace(ConvexSet):
 
         Needs the equation, since it is the equation that is being changed.
         The translation moves to the new minimum-norm solution and the tangent
-        space, being the kernel, does not move at all.
+        space, being the kernel, does not move at all -- so the projector and
+        the ``(A A*)^-1`` behind it are carried over rather than rebuilt, which
+        with a direct solver is a factorisation saved.
+
+        Args:
+            value: the new right-hand side.
+
+        Returns:
+            The affine subspace ``A x == value``.
         """
         operator = self.constraint_operator
-        return AffineSubspace.from_linear_equation(operator, value, solver=self._solver)
+        inverse = self._inverse or _normal_inverse(operator, self._solver)
+        moved = AffineSubspace(
+            self._projector, translation=operator.adjoint(inverse(value))
+        )
+        moved._equation = (operator, value)
+        moved._solver = self._solver
+        moved._inverse = inverse
+        return moved
 
     def pseudo_inverse(self) -> LinearOperator:
         """``A* (A A*)^-1``: the map from a constraint value to its subspace.
@@ -478,8 +531,8 @@ class AffineSubspace(ConvexSet):
         the orthogonal complement of the kernel.
         """
         operator = self.constraint_operator
-        normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
-        return operator.adjoint @ (self._solver or CGSolver(rtol=1e-12))(normal)
+        inverse = self._inverse or _normal_inverse(operator, self._solver)
+        return operator.adjoint @ inverse
 
     def projection_operator(self) -> Any:
         """The projection onto the subspace, as an affine operator.
@@ -577,9 +630,11 @@ class LinearSubspace(AffineSubspace):
         Returns:
             The kernel, which remembers that it is ``A x == 0``.
         """
-        subspace = cls(OrthogonalProjector.onto_kernel(operator, solver=solver))
+        inverse = _normal_inverse(operator, solver)
+        subspace = cls(OrthogonalProjector._onto_kernel(operator, inverse))
         subspace._equation = (operator, operator.codomain.zero())
         subspace._solver = solver
+        subspace._inverse = inverse
         return subspace
 
     def __repr__(self) -> str:
