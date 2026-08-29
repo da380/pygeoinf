@@ -373,6 +373,120 @@ class TestDensityResolution:
         assert (exact > 0.0) == (sampled > 0.0)
 
 
+class TestSampledDensity:
+    """The kernel density estimate behind a sampled corner plot.
+
+    ``gaussian_kde`` evaluates a kernel at every draw for every point asked
+    for. On the default 20 000 draws over a 160 x 160 panel that is 5e8
+    kernels, 8.9 of example 26's 12.2 seconds. Binning the draws first and
+    convolving once with the same kernel is the same estimate to within the
+    bin width, so these tests are about *how much* the binning costs.
+    """
+
+    @staticmethod
+    def cloud(rng, count=20000):
+        """Correlated and bent, so an axis-aligned smoothing would show."""
+        root = np.array([[1.0, 0.0], [0.8, 0.6]])
+        draws = (root @ rng.standard_normal((2, count))).T
+        draws[:, 1] += 0.3 * draws[:, 0] ** 2
+        return draws
+
+    def test_the_marginal_agrees_with_the_exact_estimate(self, rng):
+        from scipy.stats import gaussian_kde
+
+        from pygeoinf2.plotting.distributions import _binned_density
+
+        draws = self.cloud(rng)[:, 0]
+        values = np.linspace(draws.min(), draws.max(), 400)
+        exact = gaussian_kde(draws)(values)
+        assert (
+            np.abs(_binned_density(draws, values) - exact).max() < 0.005 * exact.max()
+        )
+
+    def test_the_panel_agrees_with_the_exact_estimate(self, rng):
+        """Within 1.5% of the peak, and the contour levels within 1%. The
+        kernel is the data covariance scaled, so it is anisotropic; smoothing
+        with an axis-aligned filter instead costs 8% and 6%."""
+        from scipy.stats import chi2, gaussian_kde
+
+        from pygeoinf2.plotting.distributions import _binned_density_2d
+
+        draws = self.cloud(rng)
+        mean, deviation = draws.mean(axis=0), draws.std(axis=0)
+        horizontal = np.linspace(
+            mean[0] - 3.75 * deviation[0], mean[0] + 3.75 * deviation[0], 160
+        )
+        vertical = np.linspace(
+            mean[1] - 3.75 * deviation[1], mean[1] + 3.75 * deviation[1], 160
+        )
+        mesh_x, mesh_y = np.meshgrid(horizontal, vertical)
+        exact = gaussian_kde(draws.T)(
+            np.vstack([mesh_x.ravel(), mesh_y.ravel()])
+        ).reshape(mesh_x.shape)
+        binned = _binned_density_2d(draws, horizontal, vertical)
+
+        assert binned.shape == exact.shape
+        assert np.abs(binned - exact).max() < 0.015 * exact.max()
+
+        def levels(density):
+            """The levels the corner plot would draw: each encloses the mass
+            the corresponding sigma contour of a Gaussian would."""
+            order = np.sort(density.ravel())[::-1]
+            mass = np.cumsum(order) / order.sum()
+            wanted = chi2.cdf(np.arange(1, 4) ** 2.0, df=2)
+            return np.array([order[np.searchsorted(mass, m)] for m in wanted])
+
+        drawn, truth = levels(binned), levels(exact)
+        assert np.abs(drawn - truth).max() < 0.01 * truth.max()
+
+    def test_both_routes_draw_the_same_corner(self, rng):
+        """End to end, since the levels are what a reader takes off the
+        figure."""
+        from pygeoinf2.algebra.operators import Operator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = EuclideanSpace(3)
+        root = rng.standard_normal((3, 3))
+        measure = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + np.identity(3), form="components"
+        )
+        pushed = measure.push_forward(
+            Operator.from_callables(
+                space,
+                EuclideanSpace(3),
+                lambda x: np.array([np.tanh(x[0]), x[1] ** 2, x[2] - x[0]]),
+            )
+        )
+
+        def panel_levels(choice):
+            axes = plotting.plot_corner(
+                pushed,
+                samples=8000,
+                rng=np.random.default_rng(6),
+                density=choice,
+            )
+            drawn = np.asarray(sorted(axes[1, 0].collections[0].levels))
+            import matplotlib.pyplot as plt
+
+            plt.close("all")
+            return drawn
+
+        binned, exact = panel_levels("binned"), panel_levels("kde")
+        assert np.allclose(binned, exact, rtol=0.05)
+
+    def test_an_unknown_route_is_refused(self, rng):
+        """Silently falling back would leave the picture looking right."""
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        measure = GaussianMeasure.from_standard_deviation(EuclideanSpace(2), 1.0)
+        with pytest.raises(ValueError, match="binned"):
+            plotting.plot_corner(measure, density="gaussian_kde")
+        with pytest.raises(ValueError, match="binned"):
+            plotting.plot_densities(measure, density="gaussian_kde")
+
+
 class TestPyslfpNeeds:
     """The keywords the review found every pyslfp call passing, and v2 not
     accepting. A caller who cannot title a plot has to reach past the return
@@ -405,9 +519,7 @@ class TestPyslfpNeeds:
         from pygeoinf2.plotting.distributions import plot_corner
 
         posterior, prior = measure
-        axes = plot_corner(
-            posterior, prior=prior, truth=np.array([0.1, -0.2, 0.3])
-        )
+        axes = plot_corner(posterior, prior=prior, truth=np.array([0.1, -0.2, 0.3]))
         legend = axes[0, 2].get_legend()
         assert legend is not None
         assert [text.get_text() for text in legend.get_texts()] == [
@@ -421,9 +533,9 @@ class TestPyslfpNeeds:
 
         posterior, _ = measure
         axes = plot_corner(posterior)
-        assert [
-            text.get_text() for text in axes[0, 2].get_legend().get_texts()
-        ] == ["posterior"]
+        assert [text.get_text() for text in axes[0, 2].get_legend().get_texts()] == [
+            "posterior"
+        ]
 
     def test_it_can_be_turned_off(self, measure):
         from pygeoinf2.plotting.distributions import plot_corner
@@ -451,9 +563,7 @@ class TestSphereMapOptions:
         from pygeoinf2.symmetric_space.sphere import Lebesgue
 
         space = Lebesgue(16)
-        return space, space.project_function(
-            lambda point: np.sin(np.radians(point[0]))
-        )
+        return space, space.project_function(lambda point: np.sin(np.radians(point[0])))
 
     def test_a_map_extent_replaces_the_global_view(self, field):
         """Not both: ``set_global`` would undo the extent that was asked for,
@@ -470,9 +580,7 @@ class TestSphereMapOptions:
         from pygeoinf2.plotting import plot
 
         space, values = field
-        axis, mappable = plot(
-            space, values, contour=True, contour_lines=True, levels=8
-        )
+        axis, mappable = plot(space, values, contour=True, contour_lines=True, levels=8)
         assert hasattr(axis, "contour_set")
         assert mappable is not None
 

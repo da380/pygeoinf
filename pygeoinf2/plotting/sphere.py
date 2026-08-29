@@ -287,9 +287,7 @@ def _cell_edges_across_the_dateline(
     """
     inner = 0.5 * (longitudes[:-1] + longitudes[1:])
     seam = 0.5 * (longitudes[-1] + longitudes[0]) + 180.0
-    edges = np.clip(
-        np.concatenate([[-180.0], inner, [seam, 180.0]]), -180.0, 180.0
-    )
+    edges = np.clip(np.concatenate([[-180.0], inner, [seam, 180.0]]), -180.0, 180.0)
     return edges, np.concatenate([values, values[:, :1]], axis=1)
 
 
