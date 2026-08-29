@@ -639,6 +639,25 @@ class Ball(ConvexSet):
             return space.copy(x)
         return space.axpy(self._radius / distance, offset, space.copy(self._centre))
 
+    @property
+    def boundary(self) -> "BallSurface":
+        """The sphere bounding it, as a set in its own right.
+
+        v1 had this, and it is what an equality constraint ``||x - c|| == r``
+        is: :class:`BallSurface` projects onto it and samples uniformly over
+        it, neither of which the solid ball does.
+
+        Returns:
+            The bounding surface.
+
+        Raises:
+            ValueError: for a ball of zero radius. That set is the single
+                point at the centre, and its boundary in the ambient space is
+                itself -- not a surface, which is why this refuses rather than
+                returning something with a radius of zero.
+        """
+        return BallSurface(self._domain, radius=self._radius, centre=self._centre)
+
     def support_function(self) -> SupportFunction:
         """``radius ||y|| + (centre, y)``."""
         return SupportFunction.of_ball(
@@ -884,6 +903,19 @@ class Ellipsoid(ConvexSet):
     def centre(self) -> Any:
         """The centre."""
         return self._centre
+
+    @property
+    def boundary(self) -> "EllipsoidSurface":
+        """The surface ``(P (x - c), x - c) == 1``, as a set in its own right.
+
+        v1 had this. The surface carries the same precision and centre, so it
+        needs no covariance and exists whether or not this ellipsoid was given
+        one.
+
+        Returns:
+            The bounding surface.
+        """
+        return EllipsoidSurface(self._domain, self._precision, centre=self._centre)
 
     def mahalanobis_squared(self, x: Any, /) -> float:
         """``(x - centre, P (x - centre))``."""

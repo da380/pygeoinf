@@ -296,6 +296,61 @@ class TestEllipsoid:
             Ellipsoid(X, precision).support_function()
 
 
+class TestBoundaries:
+    """A solid set knows its surface. v1's ``Ball.boundary`` and
+    ``Ellipsoid.boundary`` were not restored with the rest of the set algebra,
+    and the surfaces they return are what an *equality* constraint is -- the
+    ball surface projects onto it and samples uniformly over it, which the
+    solid ball does not."""
+
+    def test_a_balls_boundary_is_its_surface(self, X, rng):
+        from pygeoinf2.geometry.convex import BallSurface
+
+        centre = X.random(rng=rng)
+        ball = Ball(X, radius=1.3, centre=centre)
+        surface = ball.boundary
+        assert isinstance(surface, BallSurface)
+        assert surface.radius == ball.radius
+        assert X.norm(X.subtract(surface.centre, centre)) < 1e-14
+
+        # It is the boundary in the sense that matters: on it, not in it.
+        outside = X.add(centre, X.scale(4.0, X.random(rng=rng)))
+        landed = surface.project(outside)
+        assert surface.contains(landed)
+        assert ball.contains(landed, rtol=1e-9)
+        assert surface.contains(surface.sample(rng=rng))
+        # and the centre is in the ball but not on its boundary.
+        assert ball.contains(centre) and not surface.contains(centre)
+
+    def test_a_point_has_no_surface(self, X, rng):
+        """A ball of zero radius is the single point at its centre. Its
+        boundary in the ambient space is itself, which is not a surface, so
+        this refuses rather than returning a radius of zero."""
+        with pytest.raises(ValueError, match="must be positive"):
+            Ball(X, radius=0.0, centre=X.random(rng=rng)).boundary
+
+    def test_an_ellipsoids_boundary_is_its_surface(self, X, rng):
+        from pygeoinf2.geometry.convex import EllipsoidSurface
+
+        precision = X.invariant_operator(lambda values: 1.0 + values)
+        ellipsoid = Ellipsoid(X, precision, covariance=precision.inverse)
+        surface = ellipsoid.boundary
+        assert isinstance(surface, EllipsoidSurface)
+        assert surface.precision is ellipsoid.precision
+
+        point = X.random(rng=rng)
+        landed = ellipsoid.project(X.scale(4.0, point))
+        assert surface.contains(landed, rtol=1e-8)
+        assert not surface.contains(ellipsoid.centre)
+
+    def test_it_needs_no_covariance(self, X):
+        """The surface is defined by the precision, so an ellipsoid built
+        without a covariance -- which cannot give its support function -- can
+        still give its boundary."""
+        precision = X.invariant_operator(lambda values: 1.0 + values)
+        assert Ellipsoid(X, precision).boundary is not None
+
+
 class TestProjectors:
     def test_a_projector_carries_its_structure(self, X, rng):
         projector = OrthogonalProjector.from_basis(
