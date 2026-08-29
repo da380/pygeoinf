@@ -91,6 +91,14 @@ def make_dense_metric_space(dim: int = 3) -> DenseMetricSpace:
     Built from a lower-triangular root with a strong diagonal, so the Gram is
     positive definite and well conditioned: the point of the fixture is that
     the metric is not diagonal, not that floating point is hard.
+
+    The off-diagonal is scaled by ``1 / sqrt(dim)``. Without that the root's
+    strict lower triangle grows like ``sqrt(dim)`` against a unit diagonal and
+    the Gram stops being positive definite in floating point: measured
+    condition numbers were 6e5 at dim 100 and 6e13 at dim 300, and
+    ``cholesky`` failed at 500 -- so every dense-metric test above a few
+    hundred dimensions was testing roundoff. With the scaling the condition
+    number is about 3 at every size up to 3000.
     """
     if dim == 3:
         # The original, kept exactly so tests written against it do not move.
@@ -99,7 +107,9 @@ def make_dense_metric_space(dim: int = 3) -> DenseMetricSpace:
         )
         return DenseMetricSpace(root @ root.T)
     generator = np.random.default_rng(20260828)
-    root = np.eye(dim) + 0.3 * np.tril(generator.standard_normal((dim, dim)), -1)
+    root = np.eye(dim) + (0.3 / np.sqrt(dim)) * np.tril(
+        generator.standard_normal((dim, dim)), -1
+    )
     return DenseMetricSpace(root @ root.T)
 
 
