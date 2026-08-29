@@ -28,7 +28,17 @@ from pygeoinf2.numerics.randomised import (
     random_diagonal,
     random_eig,
 )
-from pygeoinf2.numerics.solvers import CholeskySolver, EigenSolver, LUSolver
+from pygeoinf2.numerics.solvers import (
+    BiCGStabSolver,
+    CGSolver,
+    CholeskySolver,
+    EigenSolver,
+    FlexibleCGSolver,
+    GMRESSolver,
+    IterativeSolver,
+    LUSolver,
+    MinResSolver,
+)
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import check_operator
 from pygeoinf2.traits import Traits
@@ -439,9 +449,10 @@ class TestComponentsAction:
         # against five of each per side when every factor converted.
         assert (model.analyses, model.syntheses) == (1, 1)
         assert (data.analyses, data.syntheses) == (2, 2)
+        expected = Q(A.adjoint(middle.adjoint(A(Q(x)))))
         model.reset(), data.reset()
         pulled = product.adjoint(x)
-        assert np.allclose(pulled, Q(A.adjoint(middle.adjoint(A(Q(x))))))
+        assert np.allclose(pulled, expected)
         assert (model.analyses, model.syntheses) == (1, 1)
         assert (data.analyses, data.syntheses) == (2, 2)
 
@@ -459,3 +470,77 @@ class TestComponentsAction:
             assert np.allclose(result, expected)
             assert (data.analyses, model.syntheses) == (1, 1)
             check_operator(gain, rng=rng)
+
+
+class TestKrylovInComponents:
+    """The iterative solvers run their vector algebra on the components."""
+
+    @pytest.fixture
+    def system(self, rng):
+        space = CountingSpace(make_dense_metric_space(7).gram_matrix())
+        operator = spd(space, rng)
+        b = space.random(rng=rng)
+        return space, operator, b
+
+    def test_a_norm_converts_once(self, system):
+        space, operator, b = system
+        space.reset()
+        space.norm(b)
+        assert (space.analyses, space.syntheses) == (1, 0)
+
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            CGSolver(rtol=1e-12),
+            CGSolver(rtol=1e-12, preconditioner=JacobiPreconditioner()),
+            FlexibleCGSolver(rtol=1e-12, preconditioner=JacobiPreconditioner()),
+            MinResSolver(rtol=1e-12),
+            GMRESSolver(rtol=1e-12),
+            BiCGStabSolver(rtol=1e-12),
+        ],
+        ids=["cg", "pcg", "fcg", "minres", "gmres", "bicgstab"],
+    )
+    def test_the_view_changes_nothing_but_the_cost(self, system, solver, monkeypatch):
+        """Same solution, same residual history to rounding: the view's inner
+        product is the space's own."""
+        space, operator, b = system
+        viewed = solver(operator).solve(b)
+        monkeypatch.setattr(IterativeSolver, "_use_component_view", False)
+        plain = solver(operator).solve(b)
+        assert np.allclose(viewed.solution, plain.solution, rtol=1e-8, atol=1e-10)
+        assert viewed.iterations == plain.iterations
+        assert np.allclose(viewed.history, plain.history, rtol=1e-8)
+
+    def test_a_native_operator_solves_with_one_conversion_each_way(self, system):
+        space, operator, b = system
+        inverse = CGSolver(rtol=1e-12)(operator)
+        space.reset()
+        result = inverse.solve(b)
+        assert result.converged and result.iterations > 1
+        assert (space.analyses, space.syntheses) == (1, 1)
+
+    def test_an_opaque_operator_costs_only_its_own_conversions(self, system):
+        space, operator, b = system
+        opaque = probed(operator).with_traits(Traits.POSITIVE_DEFINITE)
+        inverse = CGSolver(rtol=1e-12)(opaque)
+        space.reset()
+        result = inverse.solve(b)
+        # Per application: the view synthesises the iterate for the opaque
+        # operator and analyses its image, and the probed operator converts
+        # once each way inside -- two of each; plus the right-hand side in and
+        # the solution out. Nothing for the norms and inner products, which
+        # on the plain route were another three analyses per iteration.
+        assert space.analyses == 2 * result.iterations + 1
+        assert space.syntheses == 2 * result.iterations + 1
+
+    def test_a_space_without_fast_paths_keeps_the_old_route(self, rng):
+        from .conftest import make_weighted_space
+        from .doubles import StrictSpace
+
+        space = StrictSpace(make_weighted_space())
+        operator = LinearOperator.self_adjoint(
+            space, lambda x: space.scale(2.0, x)
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        b = space.random(rng=rng)
+        result = CGSolver()(operator).solve(b)
+        assert result.converged

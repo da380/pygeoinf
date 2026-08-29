@@ -604,6 +604,53 @@ class EigenSolver(DirectSolver):
 # --------------------------------------------------------------------- #
 
 
+class _ComponentOperator(LinearOperator):
+    """An operator seen on the component views of its spaces.
+
+    Acts on component arrays. Where the operator can act on components
+    directly it does, and a product of such operators stays in components
+    end to end; otherwise the array is synthesised, the operator applied,
+    and the image analysed -- which is what the operator would have cost
+    anyway. Traits carry over: they are statements about the metric, and the
+    view has the same one.
+    """
+
+    def __init__(
+        self, operator: LinearOperator, domain: Any, codomain: Any, /
+    ) -> None:
+        super().__init__(domain, codomain, traits=operator.traits)
+        self._operator = operator
+        self._action = operator._components_action()
+        self._adjoint_action = operator._components_adjoint_action()
+
+    def _value(self, c: np.ndarray) -> np.ndarray:
+        if self._action is not None:
+            return np.asarray(self._action(c), dtype=float)
+        operator = self._operator
+        return operator.codomain.to_components(
+            operator(operator.domain.from_components(c))
+        )
+
+    def _adjoint_value(self, c: np.ndarray) -> np.ndarray:
+        if self._adjoint_action is not None:
+            return np.asarray(self._adjoint_action(c), dtype=float)
+        operator = self._operator
+        return operator.domain.to_components(
+            operator.adjoint(operator.codomain.from_components(c))
+        )
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        return self._operator._known_matrix(form)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        return self._operator._known_diagonals(offsets, form)
+
+    def __repr__(self) -> str:
+        return f"OnComponents({self._operator!r})"
+
+
 class IterativeSolver(LinearSolver):
     """A Krylov solver, written against the space's own inner product.
 
@@ -612,9 +659,22 @@ class IterativeSolver(LinearSolver):
     coordinate map. That is not incidental: measuring the residual in the
     space's norm rather than in a component norm is what makes the stopping
     criterion mean the same thing under refinement.
+
+    **On a space with coordinates the loop runs on the components.** The
+    right-hand side is converted in once and the solution out once; between
+    them the operator, the preconditioner and the vector algebra act on
+    arrays through a :class:`~pygeoinf2.algebra.spaces.ComponentView`, whose
+    inner product is the space's own, so the residual history is unchanged
+    to rounding. On a sphere the vector algebra alone was seven transforms
+    per iteration; an operator that can act on components then costs none,
+    and one that cannot costs what it cost before.
     """
 
     requires_coordinates: ClassVar[bool] = False
+
+    # Run the loop on the space's ComponentView when it has one. Off only for
+    # the tests that pin the two routes against each other.
+    _use_component_view: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -773,11 +833,59 @@ class IterativeSolver(LinearSolver):
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         preconditioner = self._resolve_preconditioner(operator)
+        viewed = self._viewed(operator, preconditioner)
 
         def solve_fn(y, x0):
-            return self._finish(self._solve(operator, preconditioner, y, x0))
+            if viewed is None:
+                return self._finish(self._solve(operator, preconditioner, y, x0))
+            # In components: the right-hand side and the start converted in
+            # once, the solution out once, and every inner product, norm and
+            # update in between an array operation with the same metric --
+            # so the residual history is the one the space's norm gives.
+            viewed_operator, viewed_preconditioner = viewed
+            domain, codomain = operator.domain, operator.codomain
+            result = self._solve(
+                viewed_operator,
+                viewed_preconditioner,
+                codomain.to_components(y),
+                None if x0 is None else domain.to_components(x0),
+            )
+            return self._finish(
+                SolveResult(
+                    domain.from_components(result.solution),
+                    result.iterations,
+                    result.residual_norm,
+                    result.converged,
+                    result.history,
+                )
+            )
 
         return InverseOperator(operator, self, solve_fn)
+
+    def _viewed(
+        self, operator: LinearOperator, preconditioner: LinearOperator | None
+    ) -> tuple[LinearOperator, LinearOperator | None] | None:
+        """The operator and preconditioner on the component views of their
+        spaces, or ``None`` when the spaces have no components to view."""
+        from ..algebra.spaces import ComponentView, CoordinateSpace
+
+        domain, codomain = operator.domain, operator.codomain
+        if not self._use_component_view:
+            return None
+        if not all(
+            isinstance(space, CoordinateSpace) and space.uses_component_fast_paths
+            for space in (domain, codomain)
+        ):
+            return None
+        views = {domain: ComponentView(domain)}
+        views.setdefault(codomain, ComponentView(codomain))
+        viewed_operator = _ComponentOperator(operator, views[domain], views[codomain])
+        viewed_preconditioner = (
+            None
+            if preconditioner is None
+            else _ComponentOperator(preconditioner, views[codomain], views[domain])
+        )
+        return viewed_operator, viewed_preconditioner
 
     @abstractmethod
     def _solve(
@@ -834,7 +942,8 @@ class CGSolver(IterativeSolver):
 
         z = r if preconditioner is None else preconditioner(r)
         p = space.copy(z)
-        rz = space.inner_product(r, z)
+        # Without a preconditioner (r, z) is (r, r), which the norm just gave.
+        rz = residual**2 if preconditioner is None else space.inner_product(r, z)
 
         for iteration in range(1, self._limit(operator) + 1):
             ap = operator(p)
@@ -856,7 +965,9 @@ class CGSolver(IterativeSolver):
                 return SolveResult(x, iteration, residual, True, tuple(history))
 
             z = r if preconditioner is None else preconditioner(r)
-            rz_next = space.inner_product(r, z)
+            rz_next = (
+                residual**2 if preconditioner is None else space.inner_product(r, z)
+            )
             beta = rz_next / rz
             rz = rz_next
             # p <- z + beta p

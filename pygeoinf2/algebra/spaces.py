@@ -412,6 +412,18 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
             np.dot(self.to_components(x), self.apply_gram(self.to_components(y)))
         )
 
+    def squared_norm(self, x: V) -> float:
+        """``c_x . G c_x``, converting ``x`` once rather than twice.
+
+        The base class takes ``inner_product(x, x)``, which on a spectral
+        space is two analyses of the same field; a Krylov loop takes a norm
+        every iteration.
+        """
+        if not self.uses_component_fast_paths:
+            return self.inner_product(x, x)
+        c = self.to_components(x)
+        return float(np.dot(c, self.apply_gram(c)))
+
     # ----------------------------------------------------------------- #
     #                Arithmetic on component arrays (fast paths)         #
     # ----------------------------------------------------------------- #
@@ -995,6 +1007,98 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
         cy = self.to_components(y)
         return float(np.dot(cx, self._metric_values * cy))
 
+    def squared_norm(self, x: V) -> float:
+        """``c_x . (g * c_x)``, one conversion."""
+        c = self.to_components(x)
+        return float(np.dot(c, self._metric_values * c))
+
+
+class ComponentView(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
+    """A coordinate space seen through its components.
+
+    The vectors are the component arrays themselves and the metric is the
+    viewed space's, so the inner product, norms and every axiom agree with
+    the original exactly -- ``(c_x, c_y)`` here *is* ``(x, y)`` there -- while
+    ``to_components`` and ``from_components`` are the identity. Arithmetic on
+    this space costs no transforms.
+
+    This is what the iterative solvers run on when the operator's space has
+    coordinates: the right-hand side is converted in once, the solution out
+    once, and the Krylov loop's inner products, norms and updates -- which on
+    a sphere were seven transforms per iteration against the operator's two
+    -- are array arithmetic. See :class:`~pygeoinf2.numerics.solvers.IterativeSolver`.
+    """
+
+    def __init__(self, space: CoordinateSpace) -> None:
+        """
+        Args:
+            space: the coordinate space to view. Kept, and consulted for the
+                metric and for white noise.
+        """
+        self._space = space
+
+    @property
+    def space(self) -> CoordinateSpace:
+        """The space being viewed."""
+        return self._space
+
+    @property
+    def dim(self) -> int:
+        """The viewed space's dimension."""
+        return self._space.dim
+
+    def _key(self) -> Hashable:
+        return ("components of", self._space)
+
+    def to_components(self, x: np.ndarray) -> np.ndarray:
+        """The array itself: a vector here is its components."""
+        return x
+
+    def from_components(self, c: np.ndarray) -> np.ndarray:
+        """The array itself."""
+        return c
+
+    def apply_gram(self, c: np.ndarray) -> np.ndarray:
+        """The viewed space's metric."""
+        return self._space.apply_gram(c)
+
+    def solve_gram(self, c: np.ndarray) -> np.ndarray:
+        """The viewed space's inverse metric."""
+        return self._space.solve_gram(c)
+
+    def apply_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """The viewed space's metric on every column."""
+        return self._space.apply_gram_to_columns(columns)
+
+    def solve_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """The viewed space's inverse metric on every column."""
+        return self._space.solve_gram_to_columns(columns)
+
+    def gram_matrix(self) -> np.ndarray:
+        """The viewed space's Gram matrix."""
+        return self._space.gram_matrix()
+
+    def gram_diagonal(self) -> np.ndarray:
+        """The viewed space's Gram diagonal."""
+        return self._space.gram_diagonal()
+
+    def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
+        """White noise as the viewed space draws it."""
+        return self._space.white_noise_components(rng=rng)
+
+    @property
+    def is_orthonormal(self) -> bool:
+        """Whether the viewed space's basis is orthonormal."""
+        return self._space.is_orthonormal
+
+    @property
+    def has_diagonal_metric(self) -> bool:
+        """Whether the viewed space's metric is diagonal."""
+        return self._space.has_diagonal_metric
+
+    def __repr__(self) -> str:
+        return f"ComponentView({self._space!r})"
+
 
 class OrthonormalSpace[V](CoordinateSpace[V], ABC):
     """A coordinate space with an orthonormal basis, so ``G`` is the identity."""
@@ -1032,6 +1136,11 @@ class OrthonormalSpace[V](CoordinateSpace[V], ABC):
     def inner_product(self, x: V, y: V) -> float:
         """The plain component dot product."""
         return float(np.dot(self.to_components(x), self.to_components(y)))
+
+    def squared_norm(self, x: V) -> float:
+        """The squared component norm, one conversion."""
+        c = self.to_components(x)
+        return float(np.dot(c, c))
 
 
 class EuclideanSpace(ArrayVectorMixin, OrthonormalSpace[np.ndarray]):
