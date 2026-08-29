@@ -105,6 +105,68 @@ class TestQuadratureWeights:
         assert not np.allclose(without_pole, X._synthesis_adjoint(values))
 
 
+class TestTheLebesgueInnerProductIsTheQuadrature:
+    """REVIEW2 4.1.g. Analysis on this grid *is* the quadrature, so the L2
+    inner product of two band-limited fields is a weighted sum over the grid
+    and costs no transform at all."""
+
+    @pytest.mark.parametrize("lmax", [4, 8, 17])
+    @pytest.mark.parametrize("radius,sampling", [(1.0, 1), (2.5, 1), (1.7, 2)])
+    def test_it_agrees_with_the_component_route(self, lmax, radius, sampling, rng):
+        from pygeoinf2.algebra.spaces import DiagonalMetricSpace
+
+        X = Lebesgue(lmax, radius=radius, sampling=sampling)
+        for _ in range(3):
+            x, y = X.random(rng=rng), X.random(rng=rng)
+            components = DiagonalMetricSpace.inner_product(X, x, y)
+            assert X.inner_product(x, y) == pytest.approx(components, rel=1e-12)
+            assert X.squared_norm(x) == pytest.approx(
+                DiagonalMetricSpace.squared_norm(X, x), rel=1e-12
+            )
+
+    def test_it_costs_no_transform(self, rng, monkeypatch):
+        X = Lebesgue(12)
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        X._quadrature  # the weights probe the transform once, then are cached
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("the inner product analysed a field")
+
+        monkeypatch.setattr(type(X), "to_components", refuse)
+        assert X.inner_product(x, y) != 0.0
+        assert X.norm(x) > 0.0
+
+    def test_one_raw_product_still_agrees(self, rng):
+        """The case that matters after DESIGN.md 35: a pointwise product is
+        left on the grid, and pairing one with a field of the space gives the
+        same number either way -- exactly, not nearly."""
+        from pygeoinf2.algebra.spaces import DiagonalMetricSpace
+
+        X = Lebesgue(10)
+        f = X.project_function(lambda p: 1.5 + np.cos(np.radians(p[0])))
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        product = X.multiply(f, x)
+        assert X.inner_product(product, y) == pytest.approx(
+            DiagonalMetricSpace.inner_product(X, product, y), rel=1e-11
+        )
+
+    def test_a_sobolev_space_keeps_the_component_route(self, rng):
+        """There is no grid form of a weighted inner product."""
+        from pygeoinf2.algebra.spaces import DiagonalMetricSpace
+
+        X = Sobolev(10, 2.0, 0.2)
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        assert X.inner_product(x, y) == pytest.approx(
+            DiagonalMetricSpace.inner_product(X, x, y)
+        )
+        quadrature = float(
+            np.einsum(
+                "j,ji,ji->", X._quadrature, X.grid_values(x), X.grid_values(y)
+            )
+        )
+        assert not np.isclose(X.inner_product(x, y), quadrature)
+
+
 class TestDoubling:
     def test_the_extension_agrees_with_the_field_it_extends(self, rng):
         X = Lebesgue(8)

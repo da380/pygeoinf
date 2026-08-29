@@ -5258,3 +5258,31 @@ and the library's job is to not quietly make it.
 itself is untouched and is the identity on a periodic box, where `rfftn` gives
 one component per grid point and there is nothing above the truncation to
 remove — so on every box this whole entry is a no-op.
+
+### 35.1 The one place it is visible, and the same decision again
+
+"Nothing downstream can tell" holds while everything downstream analyses. One
+thing no longer does: on a sphere's `Lebesgue` space the inner product is now
+the grid's own quadrature rather than a pair of analyses (REVIEW2 4.1.g), and
+that costs two transforms less — 5.44 ms against 0.055 ms at `lmax` 128.
+
+The identity behind it is the same one that settles the self-adjointness above.
+Analysis *is* the quadrature, so with `S` synthesis and `W` the cell weights,
+`A == S^T W` and `A S == I`, hence `S^T W S == I` and
+
+```
+(x, y) == (A x) . (A y) == sum_j w_j sum_i x_ji y_ji
+```
+
+for `x`, `y` in the span of the basis. Exact, to 6e-15 at every truncation,
+radius and sampling measured — and still exact when *one* argument is a raw
+pointwise product, which covers every inner product this package takes.
+
+Where both arguments have left the span the two routes differ, by 0.05% to 2%
+on the cases measured: the quadrature integrates the product of what the grid
+holds, the component route the product of the two projections. That is the
+same choice as this section's, made once more and in the same direction. The
+grid is the representation; what it holds is not thrown away on the way past.
+
+There is no such form on a Sobolev space — the metric weights the modes and
+the grid knows nothing of that — so those keep the component route.

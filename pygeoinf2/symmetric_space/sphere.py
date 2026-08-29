@@ -401,6 +401,69 @@ class Sphere(SymmetricSpace[Any]):
         x.data *= a
         return x
 
+    def inner_product(self, x: Any, y: Any) -> float:
+        r"""``(x, y)``, by the grid's own quadrature on a Lebesgue space.
+
+        The ``L2`` inner product is an integral, and the Driscoll-Healy grid
+        comes with a quadrature that integrates it exactly. Analysis on this
+        grid *is* that quadrature -- coefficient ``k`` is
+        ``sum_j w_j sum_i phi_k(p_ji) v_ji`` -- so with ``S`` synthesis and
+        ``W`` the cell weights, ``A == S^T W`` and ``A S == I``, whence
+        ``S^T W S == I`` and
+
+        .. code-block:: text
+
+            (x, y) == (A x) . (A y) == sum_j w_j sum_i x_ji y_ji
+
+        for fields in the span of the basis. Two transforms become none:
+        5.44 ms against 0.055 ms at ``lmax`` 128 (REVIEW2 4.1.g). Agrees with
+        the component route to 6e-15 at every truncation, radius and sampling
+        tested, and to 2e-14 when one argument is a raw pointwise product.
+
+        **Where the two routes part, and why this one is right.** Since
+        DESIGN.md 35 a pointwise product is left on the grid, and a grid array
+        outside the span has a projection but no equal in the span. If *both*
+        arguments are such arrays the quadrature integrates the product of what
+        the grid holds, while the component route integrates the product of the
+        two projections -- 0.05% to 2% apart on the cases measured. The
+        quadrature is the more accurate of the two, and it is the same
+        decision as 35's: the grid is the representation, and what it holds is
+        not thrown away on the way past. With either argument in the span the
+        two agree exactly, which covers every inner product this package takes.
+
+        On a Sobolev space there is no such form -- the metric weights the
+        modes and the grid knows nothing of that -- so the base class's
+        component route is used.
+
+        Args:
+            x: one field.
+            y: the other.
+
+        Returns:
+            The inner product.
+        """
+        if self._order != 0.0:
+            return super().inner_product(x, y)
+        return float(
+            np.einsum(
+                "j,ji,ji->", self._quadrature, self.grid_values(x), self.grid_values(y)
+            )
+        )
+
+    def squared_norm(self, x: Any) -> float:
+        """``(x, x)``, by the same quadrature as :meth:`inner_product`.
+
+        Args:
+            x: a field.
+
+        Returns:
+            The squared norm.
+        """
+        if self._order != 0.0:
+            return super().squared_norm(x)
+        values = self.grid_values(x)
+        return float(np.einsum("j,ji,ji->", self._quadrature, values, values))
+
     def to_components(self, x: Any) -> np.ndarray:
         """Harmonic coefficients of a field, orthonormal in ``L2``.
 
