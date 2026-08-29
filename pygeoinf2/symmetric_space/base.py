@@ -512,9 +512,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def reference_point(self) -> Any:
         """Any point of the domain. The space is homogeneous, so any will do.
 
-        Used where a quantity is provably the same everywhere and one place has
-        to be picked to evaluate it — the pointwise variance of an invariant
-        measure being the case that matters.
+        Used where a quantity is the same at every point of the grid and one
+        place has to be picked to evaluate it — the pointwise variance of an
+        invariant measure being the case that matters. Every geometry here
+        returns a *grid* point, which :meth:`pointwise_variance` relies on.
 
         Returns:
             A point of the domain, the same one every time.
@@ -543,6 +544,38 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         eigenvalues, while a sample's components carry the ``1/sqrt(g)`` of
         white noise. Dropping it is the error of DESIGN.md section 5.6 once
         more, and it is invisible on a Lebesgue space where ``g == 1``.
+
+        **Which ``p``, and how far the homogeneity reaches.** It is evaluated
+        at :attr:`reference_point`, and the sum above is the same at *every
+        grid point* of every geometry here: the basis is orthonormal with
+        respect to the grid's own quadrature, so ``sum_k phi_k(p_j)^2`` is the
+        reciprocal of the cell weight, the same at each ``j``. That is the
+        sense in which the discrete measure is homogeneous, and the sense that
+        matters, since the grid is where a field is represented.
+
+        Between grid points it is exact on a sphere and on any box whose axes
+        all have an odd number of points, and it is **not** exact on a box with
+        an even axis. There the highest wavenumber the grid holds has no
+        partner — a Nyquist cosine's sine is invisible on the grid — so the
+        basis, orthonormal on the grid, is not isotropic off it, and the
+        interpolated variance dips between the samples. On a coarse grid with a
+        spectrum that has not decayed by the Nyquist wavenumber the dip is
+        several per cent: a flat spectrum on a ``(6, 4)`` grid gives 12.0 at
+        every grid point and as little as 10.9 between them. It shrinks with
+        the spectrum's own value at the Nyquist wavenumber, so it is negligible
+        exactly when the grid is fine enough to represent the prior in the
+        first place — and where it is not negligible, the grid is the thing to
+        change.
+
+        Args:
+            spectral_variances: one per component, or a callable on the
+                Laplacian eigenvalues.
+
+        Returns:
+            The variance, in the units of the field squared.
+
+        Raises:
+            ValueError: for the wrong number of variances, or a negative one.
         """
         variances = self._resolve_variances(spectral_variances)
         basis = self.basis_at(self.reference_point)

@@ -354,6 +354,58 @@ class TestPointwiseVariance:
         )
         assert space.pointwise_variance(variances) == pytest.approx(direct)
 
+    @pytest.mark.parametrize("shape", [(6, 4), (7, 5)])
+    def test_it_is_the_same_at_every_grid_point_of_a_box(self, shape):
+        """The homogeneity the docstring now claims, and the one that holds:
+        the basis is orthonormal against the grid's own quadrature, so the sum
+        of its squares is the reciprocal of the cell weight at every sample.
+
+        A flat spectrum on a coarse grid, which is the worst case there is.
+        """
+        import itertools
+
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as PeriodicLebesgue
+
+        X = PeriodicLebesgue(shape, lengths=(1.0, 2.0))
+        variances = np.ones(X.dim)
+        expected = X.pointwise_variance(variances)
+        for point in itertools.product(*X.grid_axes):
+            basis = X.basis_at(np.array(point))
+            assert np.isclose(
+                float(np.sum(variances * basis**2 / X.metric_values)), expected
+            )
+
+    def test_between_the_grid_points_an_even_axis_is_the_exception(self, rng):
+        """The claim the docstring used to make and could not keep, pinned
+        both ways round. An even axis holds a Nyquist cosine whose sine the
+        grid cannot see, so the basis is orthonormal on the grid and not
+        isotropic off it, and the interpolated variance dips between samples.
+        With every axis odd there is no such mode and the value is constant
+        everywhere.
+        """
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as PeriodicLebesgue
+
+        def spread(shape):
+            X = PeriodicLebesgue(shape, lengths=(1.0, 2.0))
+            variances = np.ones(X.dim)
+            between = [
+                float(
+                    np.sum(
+                        variances
+                        * X.basis_at(X.random_point(rng=rng)) ** 2
+                        / X.metric_values
+                    )
+                )
+                for _ in range(50)
+            ]
+            return X.pointwise_variance(variances), min(between)
+
+        odd_value, odd_lowest = spread((7, 5))
+        assert odd_lowest == pytest.approx(odd_value)
+
+        even_value, even_lowest = spread((6, 4))
+        assert even_lowest < 0.95 * even_value
+
     def test_dropping_the_metric_would_give_a_different_answer(self, space):
         """The negative control for the 1/g factor in pointwise_variance.
 
