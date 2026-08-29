@@ -967,15 +967,37 @@ class Sphere(SymmetricSpace[Any]):
 
         Any direction would do, the sphere being homogeneous *and* isotropic;
         a meridian is the one that needs no tangent frame.
+
+        **The walk continues past the pole**, which is where this used to go
+        wrong: adding the angle to the colatitude and stopping there returned
+        latitudes below -90 -- a distance of ``3 pi R / 2`` from the equator
+        gave latitude -250 -- and the two evaluation routes then read that as
+        two different points. The direct sum takes the colatitude at face value
+        and lands at ``(2 pi - theta, phi)``; the non-uniform FFT sees the
+        doubled grid, on which the same colatitude is ``(2 pi - theta,
+        phi + pi)``. On a non-zonal field they disagreed by 1.02 on a field of
+        maximum 0.47. Passing the pole reflects the meridian to the far side,
+        which is what walking over a pole does, and both routes then agree.
+
+        Args:
+            point: where to start, ``(latitude, longitude)`` in degrees.
+            distances: how far to walk, as *physical* distances. Negative
+                distances walk the other way, over the north pole.
+
+        Returns:
+            One ``(latitude, longitude)`` point per distance.
         """
         position = self._radians(point)
         angles = np.asarray(distances, dtype=float) / self._radius
-        return [
-            self.to_latitude_degrees(
-                np.array([float(position[0] + angle), float(position[1])])
-            )[0]
-            for angle in angles
-        ]
+        colatitudes = (position[0] + angles) % (2.0 * np.pi)
+        # Past a pole the meridian continues down the far side: reflect the
+        # colatitude back into [0, pi] and turn the longitude through pi.
+        beyond = colatitudes > np.pi
+        colatitudes = np.where(beyond, 2.0 * np.pi - colatitudes, colatitudes)
+        longitudes = np.where(beyond, position[1] + np.pi, position[1])
+        return list(
+            self.to_latitude_degrees(np.column_stack([colatitudes, longitudes]))
+        )
 
     # ----------------------------------------------------------------- #
     #                              Geometry                             #
@@ -1010,9 +1032,24 @@ class Sphere(SymmetricSpace[Any]):
                 f"Points are (latitude, longitude) pairs in degrees, got an "
                 f"array of shape {np.shape(points)}."
             )
+        latitudes = positions[:, 0]
+        # The check the docstring has always promised and never performed. It
+        # is what catches colatitudes passed in by mistake, and it is what
+        # would have caught walk_from returning -250 (§3.4). The tolerance is
+        # for a latitude that came back from an arcsine as 90 + 1e-14; a
+        # genuine error is degrees out, not nanodegrees.
+        outside = np.abs(latitudes) > 90.0 + 1.0e-9
+        if np.any(outside):
+            worst = float(latitudes[np.argmax(np.abs(latitudes))])
+            raise ValueError(
+                f"A latitude lies in [-90, 90] degrees, got {worst}. Points "
+                f"are (latitude, longitude) pairs in degrees; this is the "
+                f"usual sign that colatitudes, or radians, have been passed "
+                f"in instead."
+            )
         return np.column_stack(
             [
-                np.radians(90.0 - positions[:, 0]),
+                np.radians(90.0 - np.clip(latitudes, -90.0, 90.0)),
                 np.radians(positions[:, 1]) % (2.0 * np.pi),
             ]
         )

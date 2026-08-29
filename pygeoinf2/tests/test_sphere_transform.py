@@ -207,6 +207,59 @@ class TestBothRoutesAgree:
             X.accumulate(np.ones(3), X.random_points(4, rng=rng))
 
 
+class TestWalkingOverThePole:
+    """REVIEW2 3.4. A walk longer than a quarter circumference used to run the
+    colatitude past ``pi`` and return a latitude below -90, which the two
+    evaluation routes then read as two different points."""
+
+    def test_it_stays_on_the_sphere(self):
+        X = Lebesgue(8)
+        distances = np.linspace(0.0, 2.0 * np.pi, 41)
+        points = np.stack(X.walk_from([20.0, 40.0], distances))
+        assert np.all(np.abs(points[:, 0]) <= 90.0)
+
+    def test_it_reflects_through_the_pole(self):
+        """Half a circumference from a point is its antipode, and the meridian
+        continues down the far side rather than off the end of the sphere."""
+        X = Lebesgue(8)
+        (antipode,) = X.walk_from([20.0, 40.0], np.array([np.pi]))
+        assert np.allclose(antipode, [-20.0, -140.0])
+        (past,) = X.walk_from([20.0, 40.0], np.array([1.5 * np.pi]))
+        assert np.allclose(past, [70.0, -140.0])
+
+    def test_the_distance_walked_is_the_distance_asked_for(self):
+        X = Lebesgue(8)
+        start = np.array([20.0, 40.0])
+        distances = np.linspace(0.0, 2.0 * np.pi, 41)
+        expected = np.minimum(distances, 2.0 * np.pi - distances)
+        walked = [X.geodesic_distance(start, p) for p in X.walk_from(start, distances)]
+        assert np.allclose(walked, expected)
+
+    def test_both_evaluation_routes_agree_past_the_pole(self, rng):
+        """The symptom. On a non-zonal field the two routes differed by 1.02
+        on a field of maximum 0.47, because the direct sum read the bad
+        colatitude as ``(2 pi - theta, phi)`` and the doubled grid read it as
+        ``(2 pi - theta, phi + pi)``."""
+        X = Sobolev(16, 2.0, 0.2)
+        field = X.random(rng=rng)
+        points = X.walk_from([20.0, 40.0], np.linspace(0.0, 2.0 * np.pi, 400))
+        reference = SymmetricSpace.evaluate(X, field, points)
+        scale = np.abs(reference).max()
+        with forced(transform=True):
+            assert np.allclose(X.evaluate(field, points), reference, atol=1e-8 * scale)
+
+    def test_a_latitude_out_of_range_is_refused(self):
+        """The check the docstring promised and the code never made, and the
+        one that would have caught the bug above."""
+        X = Lebesgue(4)
+        with pytest.raises(ValueError, match=r"\[-90, 90\]"):
+            X.to_colatitude_radians([[-126.0, 0.0]])
+        with pytest.raises(ValueError, match=r"\[-90, 90\]"):
+            X.to_colatitude_radians([[10.0, 0.0], [91.0, 0.0]])
+        # A pole that arrived from an arcsine is not an error.
+        assert X.to_colatitude_radians([[90.0 + 1e-13, 0.0]])[0, 0] == 0.0
+
+
 class TestQuadratureFromDriscollHealy:
     """The weights come from pyshtools' closed form, not from probing the
     transform. This is the check that the two are the same thing."""
