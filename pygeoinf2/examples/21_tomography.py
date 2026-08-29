@@ -98,7 +98,11 @@ print()
 # ---------------------------------------------------------------------------
 
 caps = X.geodesic_ball_average_operator(sources[:4], 0.15, dense=True)
-property_posterior = estimator.push_forward(caps)(data)
+# The *measure* is pushed forward, not the estimator. Both give the same
+# answer, but `estimator.push_forward(caps)(data)` solves the normal equations
+# again for data that have already been inverted, while the posterior above is
+# already the answer and only needs T C T*.
+property_posterior = posterior.push_forward(caps)
 truth_values = caps(truth)
 means = property_posterior.expectation
 deviations = np.sqrt(np.diag(property_posterior.covariance.matrix(form="components")))

@@ -25,7 +25,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace
-from ..traits import Traits
+from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
@@ -37,6 +37,127 @@ __all__ = ["GaussianMeasure"]
 
 
 _REQUIRED = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+
+
+def _semidefinite_factors(
+    symmetric: np.ndarray, /, *, rtol: float
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """A square root of a symmetric PSD matrix, and its inverse when it exists.
+
+    Cholesky first, because it is the cheaper factorisation and because
+    succeeding is a proof that the matrix is numerically definite. When it
+    fails the matrix is singular or has drifted slightly negative, and a
+    symmetric eigendecomposition decides which: eigenvalues below
+    ``-rtol * max|lambda|`` mean the caller's matrix is not a covariance, and
+    smaller negative ones are floating-point noise and are clipped, with a
+    warning, exactly as v1 did.
+
+    Args:
+        symmetric: the matrix, already symmetrised.
+        rtol: how negative an eigenvalue may be, relative to the largest in
+            magnitude, before the matrix is refused rather than clipped.
+
+    Returns:
+        ``(R, Rinv)`` with ``R R^T == symmetric``. ``Rinv`` is ``None`` when
+        the matrix is singular, there being no inverse to report.
+
+    Raises:
+        ValueError: if the matrix has a significantly negative eigenvalue.
+    """
+    import warnings
+
+    from scipy.linalg import solve_triangular
+
+    dimension = symmetric.shape[0]
+    try:
+        root = np.linalg.cholesky(symmetric)
+    except np.linalg.LinAlgError:
+        pass
+    else:
+        return root, solve_triangular(root, np.eye(dimension), lower=True)
+
+    eigenvalues, vectors = np.linalg.eigh(symmetric)
+    largest = float(np.max(np.abs(eigenvalues))) if dimension else 0.0
+    smallest = float(np.min(eigenvalues)) if dimension else 0.0
+    if smallest < -rtol * largest:
+        raise ValueError(
+            f"The covariance matrix has an eigenvalue {smallest:.3e} against a "
+            f"largest magnitude {largest:.3e}, so it is not positive "
+            f"semidefinite in this representation."
+        )
+    if smallest < 0.0:
+        warnings.warn(
+            "The covariance matrix has small negative eigenvalues, which is "
+            "what a positive semidefinite matrix assembled in floating point "
+            "looks like. Clipping them to zero.",
+            UserWarning,
+            stacklevel=3,
+        )
+        eigenvalues = np.clip(eigenvalues, 0.0, None)
+
+    deviations = np.sqrt(eigenvalues)
+    root = vectors * deviations
+    if dimension and np.min(deviations) > np.sqrt(rtol) * np.max(deviations):
+        return root, (vectors / deviations).T
+    return root, None
+
+
+def _kl_kernel(values: np.ndarray) -> np.ndarray:
+    """``t - 1 - log t``, the whole of a Gaussian divergence bar the mean shift.
+
+    Non-negative, with a double zero at ``t == 1``: the two properties that
+    make a stochastic divergence built on it come out positive and vanish
+    identically when the two measures agree.
+
+    Args:
+        values: Ritz values from a Lanczos run, all positive in exact
+            arithmetic.
+
+    Returns:
+        ``g`` at each of them.
+    """
+    values = np.asarray(values, dtype=float)
+    # A Ritz value lies inside the spectrum, so it is positive; rounding can
+    # still hand back a zero on a reference that is singular in the direction
+    # the probe found. A floor makes that a very large divergence rather than
+    # a nan, which is the honest reading of a singular reference.
+    safe = np.clip(values, np.finfo(float).tiny, None)
+    return safe - 1.0 - np.log(safe)
+
+
+def _check_round_trip(
+    operator: LinearOperator, inverse: LinearOperator, /, *, rtol: float = 1e-4
+) -> None:
+    """Refuse a solver that does not actually invert the operator.
+
+    A Krylov solver stops on the *residual*, and on an ill-conditioned
+    covariance the residual says almost nothing about the error: conjugate
+    gradients at ``rtol=1e-8`` on a covariance of condition 4e10 returned a
+    trace of 217 where the truth was 289, without complaint. Two applications
+    and one solve buy an honest refusal instead.
+
+    Args:
+        operator: the operator being inverted.
+        inverse: the solver's inverse of it.
+        rtol: how far ``A^-1 A x`` may sit from ``x``, relatively.
+
+    Raises:
+        ValueError: when it sits further than that.
+    """
+    space = operator.domain
+    probe = space.white_noise()
+    error = space.norm(space.subtract(inverse(operator(probe)), probe))
+    reference = space.norm(probe)
+    if error > rtol * reference:
+        raise ValueError(
+            f"The solver does not invert the reference covariance accurately "
+            f"enough for this: a round trip moves a test vector by "
+            f"{error / reference:.2e}, against a tolerance of {rtol:.0e}. On "
+            f"an ill-conditioned covariance a small residual is not a small "
+            f"error. Pass solver= with a preconditioner or a tighter "
+            f"tolerance, or supply the reference measure's precision, which "
+            f"removes the solve entirely."
+        )
 
 
 class GaussianMeasure[X](ProbabilityMeasure[X]):
@@ -109,6 +230,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         self._precision_factor = precision_factor
         self._sample_fn = sample
         self._log_normalisation: float | None = None
+        self._dense: GaussianMeasure[X] | None = None
 
     # ----------------------------------------------------------------- #
     #                            Constructors                           #
@@ -339,13 +461,40 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *,
         form: Literal["galerkin", "components"] = "galerkin",
         expectation: X | None = None,
+        rtol: float = 1e-10,
     ) -> GaussianMeasure[X]:
         """From an explicit covariance matrix.
 
         ``form`` says which representation the array is in, because no trait
         implies it (DESIGN.md 5.3). The Galerkin form is the natural one here:
         a covariance is self-adjoint, so that is the representation in which it
-        is symmetric, and the one a Cholesky factorisation wants.
+        is symmetric.
+
+        A covariance is required to be positive *semi*definite, so a Cholesky
+        factorisation alone is not enough: it refuses every singular
+        covariance — a measure supported on a subspace, an empirical
+        covariance from fewer samples than dimensions, a pushforward through a
+        rank-deficient map — and it refuses a matrix that is semidefinite in
+        exact arithmetic but has eigenvalues of size ``-1e-17`` after being
+        assembled in floating point. v1 took a symmetric eigendecomposition,
+        clipped small negative eigenvalues to zero with a warning, and built
+        both factors from it; this does the same. A strictly definite matrix
+        still takes the Cholesky route, which is the cheaper one and which
+        proves definiteness by succeeding.
+
+        The measure carries a precision factor whenever the covariance is
+        nonsingular, so that it has a density — v1 attached one and v2 had
+        stopped doing so, leaving :meth:`mahalanobis_squared`,
+        :meth:`log_density` and :meth:`grad_log_density` refusing on every
+        measure built this way. A *singular* covariance gets none: the measure
+        is degenerate, its density with respect to the space's own volume
+        measure does not exist, and a pseudo-inverse in the precision slot
+        would answer those three methods with a finite number that is not the
+        thing they name.
+
+        Cost is cubic in ``domain.dim`` and the result holds two dense
+        matrices (three when a precision is attached, the Gram matrix being
+        the third).
 
         Args:
             domain: the space.
@@ -353,6 +502,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             form: which representation *matrix* is in. No default: guessing
                 wrong is a silent error of one factor of the Gram matrix.
             expectation: the mean. Zero if omitted.
+            rtol: how negative an eigenvalue may be, relative to the largest in
+                magnitude, before the matrix is refused rather than clipped.
 
         Returns:
             The measure.
@@ -377,13 +528,44 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             raise ValueError(f"Unknown form {form!r}.")
 
         symmetric = 0.5 * (matrix + matrix.T)
-        root = np.linalg.cholesky(symmetric)
+        root, inverse_root = _semidefinite_factors(symmetric, rtol=rtol)
+
         # from_matrix(E, X, R, form="galerkin") has component matrix G^-1 R, and
         # (G^-1 R)(G^-1 R)* has Galerkin matrix R R^T == the covariance.
+        coefficients = EuclideanSpace(domain.dim)
         factor = LinearOperator.from_matrix(
-            EuclideanSpace(domain.dim), domain, root, form="galerkin"
+            coefficients, domain, root, form="galerkin"
         )
-        return cls(domain, expectation=expectation, covariance_factor=factor)
+
+        precision = None
+        precision_factor = None
+        if inverse_root is not None:
+            # Li: X -> E with component matrix M has (Li* Li)_c == G^-1 M^T M,
+            # and the precision's component matrix is C_c^-1 == C_gal^-1 G. So
+            # M^T M must be G C_gal^-1 G, which M == R^-1 G delivers. The Gram
+            # matrix appears twice because the precision is a form on the
+            # space, not on its components; dropping it is right only for an
+            # orthonormal basis, which is v1's version of this line.
+            precision_factor = LinearOperator.from_matrix(
+                domain,
+                coefficients,
+                inverse_root @ domain.gram_matrix(),
+                form="components",
+            )
+            # The palindrome rule gives Li* Li only semidefiniteness, but the
+            # factorisation earned more than that: it returned an inverse
+            # root, which it does only for a covariance that is numerically
+            # nonsingular. Definiteness is what a credible set asks for.
+            precision = (precision_factor.adjoint @ precision_factor).with_traits(
+                Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            )
+        return cls(
+            domain,
+            expectation=expectation,
+            covariance_factor=factor,
+            precision=precision,
+            precision_factor=precision_factor,
+        )
 
     # ----------------------------------------------------------------- #
     #                              Moments                              #
@@ -481,27 +663,115 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return covariance.eigenvalues
         return None
 
-    def hilbert_schmidt_norm(self, /, *, method: str = "auto") -> float:
-        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``.
+    def _stochastic_trace(
+        self,
+        operator: LinearOperator,
+        /,
+        *,
+        samples: int,
+        rtol: float | None,
+        rng: Generator | None,
+        n_jobs: int | None,
+    ) -> float:
+        """A Hutchinson trace, matrix-free.
+
+        ``random_trace`` draws its probes as white noise *on the space*, so the
+        expectation is the trace of the operator -- the component matrix's
+        trace -- and not ``tr(G A)``, which is what probes with standard normal
+        components would give on any space whose Gram matrix is not the
+        identity.
 
         Args:
-            method: ``"dense"`` forms the matrix, ``"stochastic"`` estimates
-                the trace, ``"auto"`` picks by dimension.
+            operator: the endomorphism whose trace is wanted.
+            samples: how many probes, or the first block when *rtol* is given.
+            rtol: stop when the standard error falls to this fraction of the
+                estimate, instead of at a fixed count.
+            rng: the generator.
+            n_jobs: workers for the probes.
+
+        Returns:
+            The estimated trace.
+        """
+        from ..numerics.randomised import random_trace
+
+        return float(
+            random_trace(
+                operator, samples=samples, rtol=rtol, rng=rng, n_jobs=n_jobs
+            ).value
+        )
+
+    def hilbert_schmidt_norm(
+        self,
+        /,
+        *,
+        method: str = "auto",
+        samples: int = 100,
+        rtol: float | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> float:
+        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``.
+
+        ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``, which is what
+        v1 did and what this docstring has always claimed; it used to form the
+        dense component matrix and return the exact answer, quietly, which is
+        the opposite of the promise and impossible at the sizes the option
+        exists for. The estimator is a trace of ``C^2``, so its relative error
+        is worse than a trace of ``C``: ask for more probes here than for
+        :meth:`nuclear_norm`, or pass *rtol* and let it decide.
+
+        Args:
+            method: ``"dense"`` forms the component matrix, ``"stochastic"``
+                estimates the trace with :func:`random_trace`, ``"diagonal"``
+                reads the spectrum of a diagonal covariance, and ``"auto"``
+                takes the diagonal route when it can and the dense one
+                otherwise. ``"auto"`` is always exact; a sampled norm has to be
+                asked for by name.
+            samples: probes for the stochastic route.
+            rtol: draw further blocks of probes until the standard error is
+                this fraction of the estimate.
+            rng: the generator for the probes.
+            n_jobs: workers for the probes.
 
         Returns:
             The norm.
+
+        Raises:
+            ValueError: for an unknown method, or a measure with no covariance.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
             return float(np.sqrt(np.sum(eigenvalues**2)))
+        covariance = self._require_covariance("A Hilbert-Schmidt norm")
+        if method == "stochastic":
+            # tr(C* C) == tr(C C), the covariance being self-adjoint. The max
+            # is against an estimate that has come out slightly negative on a
+            # near-singular covariance, where the truth is a very small number.
+            squared = self._stochastic_trace(
+                covariance @ covariance,
+                samples=samples,
+                rtol=rtol,
+                rng=rng,
+                n_jobs=n_jobs,
+            )
+            return float(np.sqrt(max(squared, 0.0)))
+        if method not in ("auto", "dense", "diagonal"):
+            raise ValueError(f"Unknown method {method!r}.")
         # tr(C* C) is basis-independent, so it comes from the *component*
         # matrix. The Galerkin one is G C_c, whose trace is a different number.
-        matrix = self._require_covariance("A Hilbert-Schmidt norm").matrix(
-            form="components"
-        )
+        matrix = covariance.matrix(form="components")
         return float(np.sqrt(np.sum(matrix * matrix.T)))
 
-    def nuclear_norm(self, /, *, method: str = "auto") -> float:
+    def nuclear_norm(
+        self,
+        /,
+        *,
+        method: str = "auto",
+        samples: int = 100,
+        rtol: float | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> float:
         """The trace norm of the covariance, ``tr|C|``.
 
         For a covariance this is the trace, since it is positive semidefinite —
@@ -509,21 +779,31 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             method: as for :meth:`hilbert_schmidt_norm`.
+            samples: probes for the stochastic route.
+            rtol: target relative standard error for the stochastic route.
+            rng: the generator for the probes.
+            n_jobs: workers for the probes.
 
         Returns:
             The norm.
+
+        Raises:
+            ValueError: for an unknown method, or a measure with no covariance.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
             return float(np.sum(np.abs(eigenvalues)))
+        covariance = self._require_covariance("A nuclear norm")
+        if method == "stochastic":
+            return self._stochastic_trace(
+                covariance, samples=samples, rtol=rtol, rng=rng, n_jobs=n_jobs
+            )
+        if method not in ("auto", "dense", "diagonal"):
+            raise ValueError(f"Unknown method {method!r}.")
         # A covariance is positive semidefinite, so its trace norm is its
         # trace -- and a trace is the component matrix's, not the Galerkin
         # matrix's, which carries an extra factor of the metric.
-        return float(
-            np.trace(
-                self._require_covariance("A nuclear norm").matrix(form="components")
-            )
-        )
+        return float(np.trace(covariance.matrix(form="components")))
 
     def _weighted_squared(self, vector: X, /) -> float:
         """``(C^-1 v, v)``, from the precision if there is one, else densely.
@@ -577,8 +857,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         method: str = "auto",
         solver: Any = None,
         samples: int = 100,
+        sample_rtol: float | None = None,
+        max_samples: int | None = None,
+        n_jobs: int | None = None,
         rng: Generator | None = None,
-        dense_limit: int = 512,
+        dense_limit: int = 4000,
         **kwargs: Any,
     ) -> float:
         """``D(self || other)`` between two Gaussians on the same space.
@@ -594,7 +877,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 way this quantity misleads.
             solver: how to invert the other's covariance, where needed.
             samples: probes for the stochastic route.
+            sample_rtol: target relative standard error for that route.
+            max_samples: a ceiling on the probes it may draw.
+            n_jobs: workers for the probes.
+            rng: the generator for the probes.
             dense_limit: the dimension below which the dense route is taken.
+                Four thousand, matching
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`:
+                measured at dimension 4000, the dense divergence is exact in
+                4.4 s where a hundred probes take 37 s to reach +/- 1.5.
+            kwargs: passed to the Lanczos functional calculus.
 
         Returns:
             The divergence.
@@ -604,6 +896,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             method=method,
             solver=solver,
             samples=samples,
+            sample_rtol=sample_rtol,
+            max_samples=max_samples,
+            n_jobs=n_jobs,
             rng=rng,
             dense_limit=dense_limit,
             **kwargs,
@@ -617,8 +912,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         method: str = "auto",
         solver: Any = None,
         samples: int = 100,
+        sample_rtol: float | None = None,
+        max_samples: int | None = None,
+        n_jobs: int | None = None,
         rng: Generator | None = None,
-        dense_limit: int = 512,
+        dense_limit: int = 4000,
         **kwargs: Any,
     ) -> "Estimate":
         r"""``D(self || other)``, with the uncertainty of however it was got.
@@ -640,14 +938,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             Form both matrices and factorise. Exact, and confined to a space
             small enough to hold two of them.
         ``"stochastic"``
-            Hutchinson for the trace and stochastic Lanczos for the
-            determinants, so nothing is ever formed. The route for a space too
-            large to assemble, at the cost of an answer with an error bar.
+            One Hutchinson estimate of ``tr(g(M))`` with ``M`` similar to
+            ``C_o^-1 C_s`` and ``g(t) == t - 1 - log t``, so nothing is ever
+            formed. The route for a space too large to assemble, at the cost
+            of an answer with an error bar. ``g`` is non-negative, so the
+            estimate is too, and it vanishes probe by probe when the two
+            measures agree; see :meth:`_kl_similarity` for why that matters
+            and for what this replaced.
 
-            **It has to be asked for by name.** On the ill-conditioned spectra
-            this library produces it is currently unreliable — measured at
-            -88.6 +/- 21.7 for a divergence of zero on a correlated measure of
-            dimension 578 — so ``"auto"`` raises rather than reaching for it.
+            **It still has to be asked for by name.** Not because it is
+            unreliable — on a dense reference of dimension 400 and condition
+            1e6 it gives 15.14 +/- 0.30 against an exact 15.67, where the old
+            route gave -7.0 +/- 22.8 — but because a divergence reported as a
+            bare number, with the error bar dropped, is the one way this
+            quantity misleads. ``"auto"`` raises and says so.
 
         Args:
             other: the reference measure. The divergence is not symmetric.
@@ -657,14 +961,25 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 is no larger than *dense_limit*, and raises otherwise rather
                 than reaching for the stochastic route unasked.
             solver: how to invert the reference covariance, for the stochastic
-                route. Conjugate gradients by default; a factory taking the
-                operator is also accepted.
-            samples: Hutchinson probes for the trace and each determinant.
+                route -- needed only when the reference has neither a precision
+                nor a precision factor. Conjugate gradients by default; a
+                factory taking the operator is also accepted.
+            samples: Hutchinson probes.
+            sample_rtol: draw further blocks of probes until the standard error
+                is this fraction of the estimate.
+            max_samples: a ceiling on that.
+            n_jobs: workers for the probes.
             rng: the generator for those probes.
             dense_limit: the dimension above which ``"auto"`` stops forming
-                matrices.
+                matrices. Four thousand, matching
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`:
+                the dense route stays both exact and *faster* well past the
+                512 this used to be, measured at 0.09 / 0.63 / 4.4 s against a
+                hundred probes' 1.4 / 9.3 / 37 s at dimensions 960 / 2000 /
+                4000.
             kwargs: passed to
-                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`.
+                :func:`~pygeoinf2.numerics.functional_calculus.operator_function`,
+                which is where *max_iterations* and the Lanczos *rtol* live.
 
         Returns:
             An :class:`~pygeoinf2.numerics.randomised.Estimate`. The exact
@@ -672,13 +987,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Raises:
             ValueError: for an unknown method; if the two measures live on
-                different spaces; or, under ``"auto"``, when only the
-                stochastic route is available -- which is refused rather than
-                taken silently.
+                different spaces; under ``"auto"``, when only the stochastic
+                route is available -- which is refused rather than taken
+                silently; or if the stochastic route has no square root to
+                work with, or cannot invert the reference accurately. An
+                estimate whose standard error exceeds it is refused too,
+                though the non-negativity of ``g`` makes that unreachable.
         """
-        from ..numerics.functional_calculus import log_determinant
         from ..numerics.randomised import Estimate, random_trace
-        from ..numerics.solvers import resolve_solver
 
         if other.domain != self._domain:
             raise ValueError("Both measures must live on the same space.")
@@ -751,46 +1067,128 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 0,
             )
 
-        # Stochastic: nothing is formed. The trace operator C_o^-1 C_s is not
-        # self-adjoint, which costs nothing here -- Hutchinson estimates the
-        # trace of any endomorphism, self-adjoint or not.
-        definite = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
-        if self._covariance is None or other._covariance is None:
-            raise ValueError(
-                "The stochastic route needs both covariances as operators, and "
-                "at least one of these measures was given only a precision."
-            )
-        reference = other._covariance.with_traits(definite)
-        inverse = (
-            other._precision
-            if other._precision is not None
-            else resolve_solver(solver, reference)(reference)
-        )
-        trace = random_trace(inverse @ self._covariance, samples=samples, rng=rng)
-        quadratic = self._domain.inner_product(inverse(shift), shift)
-        log_theirs = log_determinant(
-            reference, method="stochastic", samples=samples, rng=rng, **kwargs
-        )
-        log_mine = log_determinant(
-            self._covariance.with_traits(definite),
-            method="stochastic",
+        # Stochastic: nothing is formed, and the three separately-estimated
+        # terms are folded into one. See _kl_similarity for why.
+        from ..numerics.functional_calculus import operator_function
+
+        similar, inverse = self._kl_similarity(other, solver=solver)
+        estimate = random_trace(
+            operator_function(similar, _kl_kernel, **kwargs),
             samples=samples,
+            rtol=sample_rtol,
+            max_samples=max_samples,
             rng=rng,
-            **kwargs,
+            n_jobs=n_jobs,
         )
-        value = 0.5 * (
-            trace.value + quadratic - dimension + log_theirs.value - log_mine.value
-        )
-        # Three independent estimates, so the errors add in quadrature and the
-        # halving outside carries through.
-        error = 0.5 * float(
-            np.sqrt(
-                trace.standard_error**2
-                + log_theirs.standard_error**2
-                + log_mine.standard_error**2
+        quadratic = self._domain.inner_product(inverse(shift), shift)
+        value = 0.5 * (estimate.value + quadratic)
+        error = 0.5 * estimate.standard_error
+        # An estimate whose error bar exceeds it says nothing, and the old
+        # route returned such numbers routinely. This one cannot: every probe
+        # returns ``(x, g(M) x) >= 0`` because ``g >= 0``, and for a
+        # non-negative sample ``sum x_i^2 <= (sum x_i)^2``, which is exactly
+        # the statement that the standard error is at most the mean. The check
+        # stays as the tripwire for that property rather than as a filter.
+        if error > abs(value):
+            raise ValueError(
+                f"The estimate is {value:.3g} with a standard error of "
+                f"{error:.3g}, which says nothing about the divergence. Draw "
+                f"more probes (samples=), or pass sample_rtol= and let the "
+                f"estimator decide when to stop."
             )
+        return Estimate(float(value), float(error), estimate.samples)
+
+    def _kl_similarity(
+        self, other: "GaussianMeasure", /, *, solver: Any
+    ) -> tuple[LinearOperator, LinearOperator]:
+        r"""An operator with the spectrum of ``C_o^-1 C_s``, and ``C_o^-1``.
+
+        The stochastic divergence used to estimate three things separately —
+        ``tr(C_o^-1 C_s)`` by Hutchinson and each log-determinant by its own
+        stochastic Lanczos run — and then combine them. Two of those estimates
+        are large and nearly equal whenever the measures are close, so the
+        answer was a small difference of large noisy numbers: ``KL(mu || mu)``
+        at dimension 289 came out as ``369 +/- 35``, and the same calculation
+        with the reference's precision to hand as ``-351 +/- 33``. A divergence
+        cannot be negative, and this one could not even get the sign right.
+
+        The cure is to fold the whole thing into one trace. With
+        ``M == C_o^-1 C_s``,
+
+        .. code-block:: text
+
+            2 D == tr(M) - dim - log det M + (m_o - m_s, C_o^-1 (m_o - m_s))
+                == tr(g(M)) + quadratic,   g(t) == t - 1 - log t
+
+        and ``g`` is non-negative with a double zero at ``t == 1``. So the
+        estimate is a trace of a positive operator and cannot come out
+        negative; and for two equal measures ``M`` is the identity, ``g(M)``
+        is exactly zero, and *every probe returns zero* — the cancellation
+        happens inside each probe instead of between three estimates.
+
+        ``M`` itself is not self-adjoint, but it is similar to something that
+        is, and a trace only sees the spectrum. Two such:
+        ``L_s* C_o^-1 L_s`` from this measure's covariance factor, and
+        ``Li_o C_s Li_o*`` from the reference's precision factor. Both are
+        palindromes, so they *earn* self-adjointness from the algebra rather
+        than claiming it — which is what the old route did to the two
+        covariances, on operators that had not been checked.
+
+        A solve is needed only when the reference has neither a precision nor
+        a precision factor. Then the accuracy of the answer is the accuracy of
+        that solve, which on an ill-conditioned covariance is much worse than
+        its residual suggests: conjugate gradients at ``rtol=1e-8`` on a
+        covariance of condition 4e10 returned a trace of 217 where the truth
+        was 289. So the solver is tested on a round trip before it is trusted.
+
+        Args:
+            other: the reference measure.
+            solver: how to invert the reference covariance, if it comes to
+                that.
+
+        Returns:
+            ``(M', C_o^-1)`` with ``M'`` self-adjoint and similar to
+            ``C_o^-1 C_s``.
+
+        Raises:
+            ValueError: if neither similarity is available; if the reference
+                covariance must be inverted but does not claim positive
+                definiteness; or if the solver does not invert it accurately.
+        """
+        from ..numerics.solvers import resolve_solver
+
+        if other._precision is not None:
+            inverse = other._precision
+        elif other._precision_factor is not None:
+            inverse = other._precision_factor.adjoint @ other._precision_factor
+        else:
+            reference = other._require_covariance("A stochastic divergence")
+            if Traits.POSITIVE_DEFINITE not in reference.traits:
+                raise ValueError(
+                    "The reference covariance has to be inverted, and it does "
+                    "not claim POSITIVE_DEFINITE. Attach the trait with "
+                    "with_traits() once testing.check_traits() has confirmed "
+                    "it, or supply the measure's precision -- which is the "
+                    "cheaper route anyway, since it removes the solve."
+                )
+            inverse = resolve_solver(solver, reference)(reference)
+            _check_round_trip(reference, inverse)
+
+        if self._covariance_factor is not None:
+            factor = self._covariance_factor
+            return factor.adjoint @ inverse @ factor, inverse
+        if other._precision_factor is not None:
+            root = other._precision_factor
+            covariance = self._require_covariance("A stochastic divergence")
+            return root @ covariance @ root.adjoint, inverse
+        raise ValueError(
+            "The stochastic route needs a square root of one of the two "
+            "covariances -- this measure's covariance factor, or the "
+            "reference's precision factor -- because the operator whose "
+            "spectrum it needs is only self-adjoint when written around one. "
+            "Supply covariance_factor here, or precision_factor there, or use "
+            "an exact route."
         )
-        return Estimate(float(value), error, samples)
 
     def rescale_directional_variance(
         self, direction: X, standard_deviation: float, /
@@ -873,6 +1271,73 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation=self._expectation,
             covariance_factor=factorised.factor,
         )
+
+    def with_dense_covariance(
+        self, /, *, n_jobs: int | None = None
+    ) -> "GaussianMeasure[X]":
+        """The same measure with its covariance assembled as a dense matrix.
+
+        The covariance of a measure built by the algebra -- a pushforward, a
+        posterior, a sum -- is a graph of operators, and applying it costs
+        whatever that graph costs. Once it is going to be applied many times,
+        or once something wants to look at it, assembling it once is cheaper:
+        this is what a plotting script does before drawing a variance field,
+        and it is v1's ``with_dense_covariance(parallel=, n_jobs=)``, which had
+        no successor here.
+
+        The assembly is ``dim`` applications of the covariance, run in
+        parallel when *n_jobs* asks. The result carries a matrix-backed
+        covariance, and the factor and precision factor that come out of
+        factorising it -- so the returned measure can be sampled and has a
+        density even when this one could do neither.
+
+        The dense measure is kept, so a second call is free and a later
+        *n_jobs* is ignored. That is the point: the assembly is the expensive
+        thing and nobody wants it twice.
+
+        Args:
+            n_jobs: workers for the ``dim`` applications.
+
+        Returns:
+            A measure with the same law and a matrix-backed covariance.
+
+        Raises:
+            ValueError: if this measure has no covariance operator, or the
+                space has no coordinates to assemble one in.
+        """
+        if self._dense is not None:
+            return self._dense
+
+        require_coordinates(self._domain)
+        covariance = self._require_covariance("A dense covariance")
+        galerkin = covariance.matrix(form="galerkin", n_jobs=n_jobs)
+        symmetric = 0.5 * (galerkin + galerkin.T)
+
+        # The factors come from the same construction as
+        # from_covariance_matrix, which accepts a semidefinite matrix and
+        # attaches a precision when there is one to attach. The covariance
+        # itself is then replaced by the matrix rather than left as ``L L*``:
+        # one product instead of two, and a matrix the operator algebra can
+        # read straight off. That is v1's move here too.
+        factored = GaussianMeasure.from_covariance_matrix(
+            self._domain, symmetric, expectation=self._expectation
+        )
+        dense = LinearOperator.from_matrix(
+            self._domain,
+            self._domain,
+            symmetric,
+            traits=_REQUIRED,
+            form="galerkin",
+        )
+        self._dense = self._rebuild(
+            self._domain,
+            expectation=self._expectation,
+            covariance=dense,
+            covariance_factor=factored.covariance_factor,
+            precision=factored.precision,
+            precision_factor=factored.precision_factor,
+        )
+        return self._dense
 
     def with_regularized_inverse(
         self,
@@ -1035,7 +1500,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             covariance=covariance,
         )
 
-    def ambient_ball(self, /, *, level: float = 0.95, method: str = "auto") -> Any:
+    def ambient_ball(
+        self,
+        /,
+        *,
+        level: float = 0.95,
+        method: str = "auto",
+        quantile_method: str = "auto",
+        rank: int | None = None,
+        samples: int = 10_000,
+        dense_limit: int = 1024,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> Any:
         """The smallest ball about the mean carrying a given probability.
 
         A different hardening from :meth:`credible_set`, and a cruder one: that
@@ -1045,28 +1522,197 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         It is worth having because a norm bound is what a set-theoretic prior
         is, so this is the bridge from a Gaussian belief to one — §18.1's
-        conversion, done in the geometry the constraint will be used in.
+        conversion, done in the geometry the constraint will be used in. It is
+        also what :func:`~pygeoinf2.inference.backus.harden_error` calls on
+        every Backus route whose error is a Gaussian, which is why the route
+        taken here matters.
 
         The radius is a quantile of ``sum_i lambda_i Z_i^2`` with the
         covariance's eigenvalues as weights, which is not a chi-square unless
-        the measure is isotropic.
+        the measure is isotropic. Four ways to reach it, three of them from
+        v1:
+
+        ``"diagonal"``
+            The spectrum is already the covariance's eigenvalues. Exact,
+            ``O(dim)``, no applications at all. This is the common case — an
+            isotropic error, a measure from :meth:`from_standard_deviations`,
+            any invariant measure on a symmetric space — and it used to go the
+            long way round like everything else.
+        ``"dense"``
+            The generalised symmetric eigenproblem ``C_gal v == lambda G v``,
+            whose eigenvalues are the operator's. Exact, ``O(dim^3)``, and it
+            holds two dense matrices.
+        ``"spectral"``
+            A randomised eigendecomposition truncated to *rank*, as v1's
+            ``LowRankEig`` route. The dropped tail is positive, so the radius
+            comes out **too small**: this is a lower bound on the true one, and
+            a rank has to be large enough that what it leaves out is
+            negligible.
+        ``"sampling"``
+            The empirical quantile of ``||x - m||^2`` over draws, which is v1's
+            ``radius_method="sampling"``. No spectrum at all, and the accuracy
+            is that of an order statistic on *samples* draws.
 
         Args:
             level: the probability the ball carries, in ``(0, 1)``.
-            method: how to invert that weighted chi-squared -- see
+            method: ``"auto"``, ``"diagonal"``, ``"dense"``, ``"spectral"`` or
+                ``"sampling"``. ``"auto"`` reads a diagonal spectrum if there
+                is one, then goes dense if the space has coordinates and is no
+                larger than *dense_limit*, then samples if the measure can be
+                sampled, then takes the randomised spectrum if a *rank* was
+                given, and otherwise says which of those to supply.
+            quantile_method: how to invert the weighted chi-squared -- see
                 :func:`~pygeoinf2.numerics.quadratic_forms.weighted_chi2_quantile`.
+            rank: eigenpairs to keep on the randomised route.
+            samples: draws for the sampling route.
+            dense_limit: the dimension above which ``"auto"`` stops forming
+                matrices.
+            rng: the generator for the probes or the draws.
+            n_jobs: workers for them.
 
         Returns:
             A ball containing the credible region.
+
+        Raises:
+            ValueError: for an unknown method, a method whose ingredients this
+                measure does not have, or a measure with no covariance.
+        """
+        from ..geometry.convex import Ball
+
+        eigenvalues = self._diagonal_eigenvalues()
+        if eigenvalues is not None and method in ("auto", "diagonal"):
+            return self._ambient_ball_from_spectrum(
+                eigenvalues, level, quantile_method
+            )
+        if method == "diagonal":
+            raise ValueError(
+                "The diagonal route needs a covariance diagonal in the space's "
+                "own basis, and this one is not."
+            )
+
+        if method == "auto":
+            affordable = (
+                isinstance(self._domain, CoordinateSpace)
+                and self._domain.dim <= dense_limit
+            )
+            if affordable:
+                method = "dense"
+            elif self.can_sample:
+                method = "sampling"
+            elif rank is not None:
+                method = "spectral"
+            else:
+                raise ValueError(
+                    f"No affordable route to an ambient ball on a space of "
+                    f"dimension {self._domain.dim}: forming the covariance "
+                    f"and taking its eigenvalues is cubic, and the two "
+                    f"matrix-free routes need something this measure does not "
+                    f"have. Give it a covariance factor so it can be sampled, "
+                    f"pass rank= for a randomised spectrum, or raise "
+                    f"dense_limit if the space can afford two dense matrices."
+                )
+
+        if method == "sampling":
+            if not self.can_sample:
+                raise ValueError(
+                    "The sampling route needs a measure that can be drawn "
+                    "from; supply a covariance factor or a sample callable."
+                )
+            centre = self.expectation
+            draws = self.samples(samples, rng=rng, n_jobs=n_jobs)
+            squared = np.array(
+                [self._domain.squared_norm(self._domain.subtract(x, centre))
+                 for x in draws]
+            )
+            radius = float(np.sqrt(max(float(np.quantile(squared, level)), 0.0)))
+            return Ball(self._domain, radius=radius, centre=centre)
+
+        covariance = self._require_covariance("An ambient ball")
+        if method == "spectral":
+            from ..numerics.randomised import random_eig
+
+            decomposition = random_eig(covariance, rank=rank, rng=rng, n_jobs=n_jobs)
+            return self._ambient_ball_from_spectrum(
+                np.asarray(decomposition.eigenvalues, dtype=float),
+                level,
+                quantile_method,
+            )
+        if method != "dense":
+            raise ValueError(f"Unknown method {method!r}.")
+
+        from scipy.linalg import eigh
+
+        require_coordinates(self._domain)
+        # The eigenvalues of the *operator* are those of C_c == G^-1 C_gal,
+        # which is not symmetric on a space whose basis is not orthonormal.
+        # They are the generalised eigenvalues of the symmetric pair
+        # (C_gal, G), which is both cheaper and better conditioned than a
+        # non-symmetric decomposition of C_c: 0.05 s against 0.26 s at
+        # dimension 1000, 4.0 s against 15.2 s at 4000.
+        galerkin = covariance.matrix(form="galerkin")
+        spectrum = eigh(
+            0.5 * (galerkin + galerkin.T),
+            self._domain.gram_matrix(),
+            eigvals_only=True,
+        )
+        return self._ambient_ball_from_spectrum(
+            np.asarray(spectrum, dtype=float), level, quantile_method
+        )
+
+    def _ambient_ball_from_spectrum(
+        self, eigenvalues: np.ndarray, level: float, quantile_method: str, /
+    ) -> Any:
+        """The ball whose radius is the *level* quantile of ``sum lambda_i Z_i^2``.
+
+        Args:
+            eigenvalues: the covariance's spectrum, or as much of it as is
+                known.
+            level: the probability the ball carries.
+            quantile_method: how to invert the weighted chi-squared.
+
+        Returns:
+            The ball.
         """
         from ..geometry.convex import Ball
         from ..numerics.quadratic_forms import weighted_chi2_quantile
 
-        require_coordinates(self._domain)
-        matrix = self._require_covariance("An ambient ball").matrix(form="components")
-        eigenvalues = np.clip(np.linalg.eigvals(matrix).real, 0.0, None)
-        radius = np.sqrt(weighted_chi2_quantile(eigenvalues, level, method=method))
+        weights = np.clip(np.asarray(eigenvalues, dtype=float), 0.0, None)
+        if quantile_method == "auto":
+            quantile_method = self._quantile_method_for(weights)
+        radius = np.sqrt(
+            weighted_chi2_quantile(weights, level, method=quantile_method)
+        )
         return Ball(self._domain, radius=float(radius), centre=self.expectation)
+
+    @staticmethod
+    def _quantile_method_for(weights: np.ndarray, /) -> str:
+        """Imhof or the moment-matched chi-square, decided by the spectrum.
+
+        Imhof's integrand sums over every weight at every quadrature point, so
+        inverting it costs time linear in the length of the spectrum *and* in
+        the root find: 0.8 s at 500 weights, 10.4 s at 2000, and hopeless at
+        the 10^5 a global inverse problem produces. That is what made an
+        ambient ball unaffordable at scale once the spectrum itself was cheap.
+
+        A sum of many comparable weighted chi-squares is close to its
+        moment-matched chi-square, by the same argument that makes it close to
+        a normal, and the agreement improves as the sum lengthens: measured at
+        9e-5 relative on 500 weights and 3e-5 on 2000, in 0.001 s. A spectrum
+        dominated by a few modes is a different object -- one chi-square with
+        one degree of freedom is not well matched by its own moments -- so the
+        effective rank decides, not the length alone.
+
+        Args:
+            weights: the non-negative spectrum.
+
+        Returns:
+            ``"matched"`` or ``"imhof"``.
+        """
+        live = weights[weights > 0.0]
+        if live.size <= 1000:
+            return "imhof"
+        effective = float(np.sum(live) ** 2 / np.sum(live**2))
+        return "matched" if effective > 100.0 else "imhof"
 
     def as_multivariate_normal(self) -> Any:
         """The measure as a ``scipy.stats`` object, in components.
@@ -1167,7 +1813,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if noise is not None:
             predicted = codomain.add(predicted, noise.expectation)
         shift = gain(codomain.subtract(value, predicted))
-        updated = covariance - cross @ inverse @ cross.adjoint
+        # (I - C A* N^-1 A) C, not C - C A* N^-1 A C: the same operator, with
+        # C applied twice per action instead of three times. Invisible for a
+        # diagonal covariance and a third of the cost for any other.
+        identity = LinearOperator.identity(self._domain)
+        updated = (identity - cross @ inverse @ operator) @ covariance
 
         sample = None
         if self.can_sample and (noise is None or noise.can_sample):
@@ -1241,10 +1891,29 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             else domain.component(self._expectation, key)
         )
         # A diagonal block carries its own factor -- the square root of its
-        # eigenvalues -- so the marginal can still be sampled. The general
-        # route cannot say that: if C = L L*, the (i, i) block of C is a sum
-        # over the whole i-th row of L, not L_ii L_ii*.
-        factor = block.sqrt if isinstance(block, DiagonalLinearOperator) else None
+        # eigenvalues -- so the marginal can still be sampled. Two conditions,
+        # not one.
+        #
+        # The general route cannot supply a factor at all: if C == L L*, the
+        # (i, i) block of C is a sum over the whole i-th row of L, not
+        # L_ii L_ii*.
+        #
+        # And a diagonal square root is a square root only when the summand's
+        # metric is diagonal. ``L`` with component matrix ``diag(r)`` has
+        # adjoint ``G^-1 diag(r) G``, so ``L L*`` has component matrix
+        # ``diag(r) G^-1 diag(r) G``, which is ``diag(r^2)`` exactly when the
+        # two commute -- that is, when ``G`` is itself diagonal. Without this
+        # test the marginal comes back with a factor that does not match its
+        # covariance, and it is the *sampler* that is wrong, silently. The
+        # trait deduction used to refuse the square root here for its own
+        # reasons; it no longer does, so the condition is stated where it
+        # belongs.
+        factor = None
+        if (
+            isinstance(block, DiagonalLinearOperator)
+            and block.domain.has_diagonal_metric
+        ):
+            factor = block.sqrt
         return GaussianMeasure(
             block.domain,
             covariance=block,
@@ -1492,11 +2161,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             if self._covariance_factor is None
             else operator @ self._covariance_factor
         )
-        covariance = (
-            None
-            if factor is not None or self._covariance is None
-            else operator @ self._covariance @ operator.adjoint
-        )
+        covariance = None
+        if factor is None and self._covariance is not None:
+            # The congruence rule, claimed here rather than left to the
+            # composition: the palindrome is visible to the trait algebra only
+            # when the covariance is a single factor, and a covariance written
+            # as a product -- ``(I - K A) Q``, the posterior's -- is not.
+            covariance = (
+                operator @ self._covariance @ operator.adjoint
+            ).with_traits(
+                congruence_traits(self._covariance.traits, outer_invertible=False)
+            )
         # With no factor to map there is still a sampler: push each draw
         # through the operator. Losing samplability under a linear map would
         # be a gratuitous restriction.

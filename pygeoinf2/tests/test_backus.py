@@ -764,3 +764,62 @@ class TestSupportValuesSweep:
         )
         with pytest.raises(ValueError, match="no model lies"):
             tight.support_values(self.directions(space, 3), data)
+
+
+class TestTheDualOracleMemo:
+    """The oracle fuses value and subgradient behind a one-entry memo.
+
+    The memo was keyed on ``id(certificate)``, which is only unique among
+    *live* objects: free a certificate array and the next one may be handed the
+    same address, at which point the memo answers with the previous
+    certificate's residual. The cure is to keep the certificate itself in the
+    cache, so the reference that makes the identity test meaningful is the same
+    reference that keeps the address from being recycled.
+    """
+
+    @pytest.fixture
+    def oracle(self, rng):
+        from pygeoinf2.inference import DualFeasibleProperty
+
+        model = EuclideanSpace(8)
+        data_space = EuclideanSpace(3)
+        target_space = EuclideanSpace(1)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((3, 8)), form="components"
+        )
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.standard_normal((1, 8)), form="components"
+        )
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=0.1))
+        dual = DualFeasibleProperty(problem, target, Ball(model, radius=1.0))
+        data = forward(model.random(rng=rng))
+        return dual, target_space.basis_vector(0), data
+
+    def test_the_cache_keeps_the_certificate_alive(self, oracle):
+        import gc
+        import weakref
+
+        dual, direction, data = oracle
+        cost = dual.dual_cost(direction, data)
+        certificate = data.copy()
+        cost(certificate)
+        watch = weakref.ref(certificate)
+        del certificate
+        gc.collect()
+        assert watch() is not None
+
+    def test_a_recycled_address_gives_no_stale_gradient(self, oracle, rng):
+        """The reproduction: a fresh oracle is the reference at every point."""
+        import gc
+
+        dual, direction, data = oracle
+        cached = dual.dual_cost(direction, data)
+        for _ in range(200):
+            certificate = rng.standard_normal(3)
+            fresh = dual.dual_cost(direction, data)
+            assert np.allclose(
+                cached.gradient(certificate), fresh.gradient(certificate)
+            )
+            assert cached(certificate) == pytest.approx(fresh(certificate))
+            del certificate
+            gc.collect()

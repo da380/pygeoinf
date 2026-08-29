@@ -248,13 +248,19 @@ class TestSolverDiagnostics:
 class TestMeasureAdjustments:
     @pytest.fixture
     def measure(self, rng):
+        """A measure with a covariance and deliberately no precision.
+
+        Built from the factor rather than from ``from_covariance_matrix``,
+        which now attaches a precision of its own whenever the matrix it is
+        given is nonsingular -- and this class is about what happens when one
+        is missing.
+        """
         X = EuclideanSpace(6)
         root = rng.normal(size=(6, 6))
-        return (
-            X,
-            root @ root.T,
-            GaussianMeasure.from_covariance_matrix(X, root @ root.T),
+        factor = LinearOperator.from_matrix(
+            EuclideanSpace(6), X, root, form="galerkin"
         )
+        return (X, root @ root.T, GaussianMeasure(X, covariance_factor=factor))
 
     def test_a_regularised_inverse_supplies_a_precision(self, measure, rng):
         space, matrix, without = measure

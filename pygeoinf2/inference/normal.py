@@ -498,16 +498,31 @@ class NormalOperator(FactoredNormalOperator):
     def posterior_covariance(
         self, inverse: LinearOperator, gain: LinearOperator, /
     ) -> LinearOperator:
-        """``Q - K A Q``, which in the model-space formalism is just ``N^-1``."""
+        """``(I - K A) Q``, which in the model-space formalism is just ``N^-1``.
+
+        Written with ``Q`` factored out rather than as ``Q - K A Q``, which is
+        the same operator and applies ``Q`` three times per action instead of
+        twice -- once for each term, and the gain contains a third. For a
+        diagonal prior that is invisible; for a Matern prior on a mesh or a
+        correlated field it is a third of the cost of every posterior variance,
+        every credible interval and every pushed-forward property.
+
+        Args:
+            inverse: an inverse of this operator.
+            gain: the Kalman gain built from it.
+
+        Returns:
+            The posterior covariance.
+        """
         if self._formalism == "model_space":
             return inverse
-        prior_covariance = self.prior_covariance
+        identity = LinearOperator.identity(self.prior_covariance.domain)
         # A Schur complement, so positive semidefinite -- a posterior
         # covariance always is. The trait algebra cannot see that through a
         # difference, so the claim is made where the reason is known.
-        return (prior_covariance - gain @ self._forward @ prior_covariance).with_traits(
-            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
-        )
+        return (
+            (identity - gain @ self._forward) @ self.prior_covariance
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE)
 
     def right_hand_side(self, residual: Any, /) -> Any:
         """The right-hand side of ``N w = v`` for a shifted data residual.
@@ -518,3 +533,23 @@ class NormalOperator(FactoredNormalOperator):
         if self._formalism == "data_space":
             return residual
         return self.weighted_adjoint()(residual)
+
+    def model_update(self, solved: Any, /) -> Any:
+        """``K v``, finished from ``w == N^-1 right_hand_side(v)``.
+
+        The gain applied to a residual is ``Q A* N^-1 v`` in the data-space
+        formalism and ``N^-1 A* R^-1 v`` in the model-space one. Both begin
+        with the same solve, which :meth:`right_hand_side` sets up and this
+        finishes -- and that solve is also the one the data misfit needs, so
+        splitting the gain here is what lets the posterior mean and the
+        evidence share it instead of computing it twice.
+
+        Args:
+            solved: the solution ``w`` of the normal equations.
+
+        Returns:
+            The model-space update.
+        """
+        if self._formalism == "data_space":
+            return self.prior_covariance(self._forward.adjoint(solved))
+        return solved

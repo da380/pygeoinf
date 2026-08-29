@@ -1,5 +1,7 @@
 """Measures: sampling, moments, pushforward, and the white-noise correction."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -100,6 +102,104 @@ class TestConstruction:
         _, logdet = np.linalg.slogdet(components)
         expected = -0.5 * X.dim * np.log(2.0 * np.pi) - 0.5 * logdet
         assert mu.log_normalising_constant() == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "build",
+        [lambda: EuclideanSpace(3), make_weighted_space, make_dense_metric_space],
+    )
+    def test_a_covariance_matrix_brings_its_precision(self, build, rng):
+        """v1 attached the inverse factor and v2 had stopped, which left every
+        measure built this way without a density.
+
+        The closed form carries the metric twice: the precision's component
+        matrix is ``C_c^-1``, so the factor's is ``R^-1 G`` and not ``R^-1``.
+        """
+        X = build()
+        galerkin = spd(rng, X.dim)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        components = np.column_stack([X.solve_gram(c) for c in galerkin.T])
+
+        assert mu.precision is not None
+        assert mu.precision.matrix(form="components") == pytest.approx(
+            np.linalg.inv(components)
+        )
+        x = X.random(rng=rng)
+        coordinates = X.to_components(x)
+        expected = coordinates @ X.gram_matrix() @ np.linalg.inv(components) @ coordinates
+        assert mu.mahalanobis_squared(x) == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "build",
+        [lambda: EuclideanSpace(4), make_weighted_space, make_dense_metric_space],
+    )
+    def test_a_singular_covariance_is_accepted(self, build, rng):
+        """A covariance is positive *semi*definite, and the Cholesky route
+        refused every degenerate one. v1 took an eigendecomposition and so
+        accepted them; the measure is still samplable, and still has no
+        density, which is the truth about a degenerate Gaussian."""
+        X = build()
+        rotation, _ = np.linalg.qr(rng.standard_normal((X.dim, X.dim)))
+        spectrum = np.zeros(X.dim)
+        spectrum[: X.dim - 2] = np.arange(1, X.dim - 1, dtype=float)
+        galerkin = rotation @ np.diag(spectrum) @ rotation.T
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        assert mu.covariance.matrix(form="galerkin") == pytest.approx(
+            galerkin, abs=1e-12
+        )
+        assert mu.can_sample
+        assert mu.precision is None
+        with pytest.raises(NotImplementedError, match="no precision"):
+            mu.mahalanobis_squared(X.random(rng=rng))
+
+    def test_a_slightly_negative_eigenvalue_is_clipped_with_a_warning(self, rng):
+        """What a semidefinite matrix assembled in floating point looks like."""
+        X = make_dense_metric_space(5)
+        rotation, _ = np.linalg.qr(rng.standard_normal((5, 5)))
+        spectrum = np.array([3.0, 2.0, 1.0, -1e-17, -2e-17])
+        galerkin = rotation @ np.diag(spectrum) @ rotation.T
+
+        with pytest.warns(UserWarning, match="small negative eigenvalues"):
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        assert mu.covariance.matrix(form="galerkin") == pytest.approx(
+            galerkin, abs=1e-12
+        )
+
+    def test_a_genuinely_indefinite_matrix_is_still_refused(self, rng):
+        X = make_weighted_space()
+        rotation, _ = np.linalg.qr(rng.standard_normal((X.dim, X.dim)))
+        spectrum = np.ones(X.dim)
+        spectrum[-1] = -1.0
+        galerkin = rotation @ np.diag(spectrum) @ rotation.T
+
+        with pytest.raises(ValueError, match="not positive"):
+            GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+    def test_the_singular_sample_stays_in_the_range(self, rng):
+        """The check that the accepted factor is the right one: every draw
+        lies in the covariance's range, and the sample covariance of the
+        components is ``G^-1 C_gal G^-1``."""
+        X = make_dense_metric_space(4)
+        gram = X.gram_matrix()
+        rotation, _ = np.linalg.qr(rng.standard_normal((4, 4)))
+        galerkin = rotation @ np.diag([4.0, 2.0, 0.0, 0.0]) @ rotation.T
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        draws = np.array([X.to_components(mu.sample(rng=rng)) for _ in range(4000)])
+        inverse = np.linalg.inv(gram)
+        expected = inverse @ galerkin @ inverse
+        assert np.cov(draws.T) == pytest.approx(expected, abs=0.2)
+        # every draw is in the range: the two null directions carry nothing.
+        # The residue is the square root of eigh's own error on a zero
+        # eigenvalue, so 1e-16 in the spectrum is 1e-8 in the factor.
+        null = rotation[:, 2:]
+        assert np.max(np.abs(draws @ gram @ null)) < 1e-6
 
     def test_the_normalising_constant_is_exact_for_a_diagonal_covariance(self):
         """The diagonal route is taken before any retraiting, so it stays exact."""
@@ -473,6 +573,433 @@ class TestPrecisionSurvivesTheAlgebra:
         assert product.domain.norm(residual) < 1e-10 * product.domain.norm(probe)
 
 
+class TestStochasticNorms:
+    """The ``"stochastic"`` option used to form the dense component matrix and
+    return the exact answer, which is the one thing a matrix-free estimator is
+    supposed not to do. It is now a Hutchinson trace, as v1's was."""
+
+    @pytest.fixture
+    def measure(self, rng):
+        X = make_dense_metric_space(20)
+        matrix = rng.standard_normal((20, 20))
+        galerkin = matrix @ matrix.T + 0.5 * np.identity(20)
+        components = np.linalg.solve(X.gram_matrix(), galerkin)
+        return GaussianMeasure.from_covariance_matrix(X, galerkin), components
+
+    def test_the_nuclear_norm_is_a_trace_of_the_component_matrix(self, measure, rng):
+        """Not of the Galerkin one, which carries an extra factor of ``G``.
+        The probes are white noise *on the space*, which is what makes the
+        expectation the operator's own trace."""
+        mu, components = measure
+        exact = np.trace(components)
+        estimate = mu.nuclear_norm(method="stochastic", samples=4000, rng=rng)
+        assert estimate == pytest.approx(exact, rel=0.05)
+        assert mu.nuclear_norm(method="dense") == pytest.approx(exact)
+
+    def test_the_hilbert_schmidt_norm_estimates_the_trace_of_the_square(
+        self, measure, rng
+    ):
+        mu, components = measure
+        exact = np.sqrt(np.sum(components * components.T))
+        estimate = mu.hilbert_schmidt_norm(method="stochastic", samples=4000, rng=rng)
+        assert estimate == pytest.approx(exact, rel=0.05)
+
+    def test_it_does_not_form_the_matrix(self, measure, rng):
+        """The point of the option. A covariance that refuses to be assembled
+        still has an estimable trace."""
+        mu, components = measure
+        space = mu.domain
+        applications = []
+
+        def apply(x):
+            applications.append(x)
+            return mu.covariance(x)
+
+        refuses = LinearOperator.self_adjoint(
+            space, apply, traits=Traits.POSITIVE_DEFINITE
+        )
+        opaque = GaussianMeasure(space, covariance=refuses)
+        estimate = opaque.nuclear_norm(method="stochastic", samples=200, rng=rng)
+        assert estimate == pytest.approx(np.trace(components), rel=0.2)
+        assert len(applications) == 200
+
+    def test_a_tolerance_stops_when_it_is_met(self, measure, rng):
+        mu, components = measure
+        estimate = mu.nuclear_norm(method="stochastic", samples=50, rtol=0.02, rng=rng)
+        assert estimate == pytest.approx(np.trace(components), rel=0.1)
+
+    def test_an_unknown_method_is_refused(self, measure):
+        mu, _ = measure
+        with pytest.raises(ValueError, match="Unknown method"):
+            mu.nuclear_norm(method="magic")
+        with pytest.raises(ValueError, match="Unknown method"):
+            mu.hilbert_schmidt_norm(method="magic")
+
+
+class TestStochasticDivergence:
+    """Bug 3.9. The route estimated three things and combined them: the trace
+    of ``C_o^-1 C_s`` and two log-determinants, each with its own probes. Two
+    of those are large and nearly equal whenever the measures are close, so the
+    answer was a small difference of large noisy numbers -- ``KL(mu || mu)``
+    came back as ``369 +/- 35``, and the other way round as ``-351 +/- 33``.
+
+    It is now one trace of ``g(M) == M - 1 - log M`` with ``M`` similar to
+    ``C_o^-1 C_s``, which is non-negative and vanishes at ``M == I``.
+    """
+
+    @staticmethod
+    def build(space, seed, /, *, shift=0.0):
+        matrix = np.random.default_rng(seed).standard_normal((space.dim, space.dim))
+        galerkin = matrix @ matrix.T + 0.5 * np.identity(space.dim)
+        expectation = None
+        if shift:
+            expectation = space.from_components(shift * np.ones(space.dim))
+        return GaussianMeasure.from_covariance_matrix(
+            space, galerkin, expectation=expectation
+        )
+
+    @pytest.fixture(
+        params=[lambda: EuclideanSpace(8), make_weighted_space, make_dense_metric_space],
+        ids=["euclidean", "weighted", "dense-metric"],
+    )
+    def space(self, request):
+        return request.param()
+
+    def test_a_measure_from_itself_is_zero_probe_by_probe(self, space):
+        """Not zero on average: zero in every probe, because ``M`` is the
+        identity and ``g`` has a double zero there. The old route needed the
+        cancellation to happen between three separate estimates and it did
+        not."""
+        mu = self.build(space, 1)
+        estimate = mu.kl_divergence_estimate(
+            mu, method="stochastic", samples=8, rng=np.random.default_rng(0)
+        )
+        assert abs(estimate.value) < 1e-8
+        assert estimate.standard_error < 1e-8
+
+    def test_it_agrees_with_the_dense_route(self, space):
+        mu = self.build(space, 1)
+        nu = self.build(space, 2, shift=0.3)
+        exact = mu.kl_divergence(nu, method="dense")
+        estimate = mu.kl_divergence_estimate(
+            nu, method="stochastic", samples=4000, rng=np.random.default_rng(5)
+        )
+        assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
+
+    def test_it_is_never_negative_and_never_less_certain_than_it_is_large(
+        self, space
+    ):
+        """A divergence cannot be negative, and this estimator cannot report
+        one: every probe returns ``(x, g(M) x) >= 0``. The same
+        non-negativity bounds the standard error by the mean, since
+        ``sum x_i^2 <= (sum x_i)^2`` for non-negative ``x``."""
+        mu = self.build(space, 1)
+        for seed in range(3, 9):
+            nu = self.build(space, seed)
+            estimate = mu.kl_divergence_estimate(
+                nu, method="stochastic", samples=4, rng=np.random.default_rng(seed)
+            )
+            assert estimate.value >= 0.0
+            assert estimate.standard_error <= estimate.value + 1e-12
+
+    def test_a_solver_that_does_not_invert_is_refused(self, rng):
+        """A Krylov solver stops on the residual, which on an ill-conditioned
+        covariance says almost nothing about the error. The old route trusted
+        it: CG at ``rtol=1e-8`` on a covariance of condition 4e10 gave a trace
+        of 217 where the truth was 289."""
+        from pygeoinf2.numerics.solvers import CGSolver
+
+        X = EuclideanSpace(60)
+        spectrum = np.geomspace(1.0, 1e-12, 60)
+        rotation, _ = np.linalg.qr(rng.standard_normal((60, 60)))
+        covariance = LinearOperator.from_matrix(
+            X,
+            X,
+            rotation @ np.diag(spectrum) @ rotation.T,
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        factor = LinearOperator.from_matrix(
+            EuclideanSpace(60), X, rotation @ np.diag(np.sqrt(spectrum)),
+            form="components",
+        )
+        reference = GaussianMeasure(X, covariance=covariance)
+        mine = GaussianMeasure(X, covariance_factor=factor)
+
+        with pytest.raises(ValueError, match="round trip"):
+            mine.kl_divergence_estimate(
+                reference,
+                method="stochastic",
+                samples=4,
+                solver=CGSolver(rtol=1e-6, strict=False),
+                rng=rng,
+            )
+
+    def test_an_unearned_definiteness_claim_is_not_made_for_the_caller(self, rng):
+        """The old route wrote ``with_traits(POSITIVE_DEFINITE)`` on both
+        covariances so that CG and Lanczos would accept them. That is the
+        caller's claim to make."""
+        X = EuclideanSpace(6)
+        matrix = rng.standard_normal((6, 6))
+        semidefinite = LinearOperator.from_matrix(
+            X,
+            X,
+            matrix @ matrix.T,
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        reference = GaussianMeasure(X, covariance=semidefinite)
+        mine = self.build(X, 1)
+
+        with pytest.raises(ValueError, match="POSITIVE_DEFINITE"):
+            mine.kl_divergence_estimate(reference, method="stochastic", samples=4)
+
+    def test_it_says_so_when_it_has_no_square_root(self, rng):
+        """``C_o^-1 C_s`` is not self-adjoint; the estimator needs it written
+        around a factor of one side or the other."""
+        X = EuclideanSpace(6)
+        matrix = rng.standard_normal((6, 6))
+        definite = LinearOperator.from_matrix(
+            X,
+            X,
+            matrix @ matrix.T + np.identity(6),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        bare = GaussianMeasure(X, covariance=definite)
+        reference = GaussianMeasure(
+            X,
+            covariance=definite,
+            precision=LinearOperator.from_matrix(
+                X,
+                X,
+                np.linalg.inv(matrix @ matrix.T + np.identity(6)),
+                form="components",
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="square root"):
+            bare.kl_divergence_estimate(reference, method="stochastic", samples=4)
+
+
+class TestConditioningAppliesTheCovarianceTwice:
+    """``(I - C A* N^-1 A) C`` rather than ``C - C A* N^-1 A C``: the same
+    operator, one fewer application of ``C`` per action."""
+
+    def test_two_applications_and_the_same_answer(self, rng):
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        X = make_dense_metric_space(5)
+        target = EuclideanSpace(2)
+        gram = X.gram_matrix()
+        galerkin = spd(rng, 5)
+        base = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        tally = []
+
+        def counted(x):
+            tally.append(1)
+            return base.covariance(x)
+
+        covariance = LinearOperator.self_adjoint(
+            X, counted, traits=Traits.POSITIVE_DEFINITE
+        )
+        measure = GaussianMeasure(X, covariance=covariance)
+        operator = LinearOperator.from_matrix(
+            X, target, rng.normal(size=(2, 5)), form="galerkin"
+        )
+        noise = GaussianMeasure.from_standard_deviation(target, 0.3)
+        conditioned = measure.condition(
+            operator, target.random(rng=rng), noise=noise, solver=CholeskySolver()
+        )
+
+        tally.clear()
+        conditioned.covariance(X.random(rng=rng))
+        assert len(tally) == 2
+
+        components = np.linalg.solve(gram, galerkin)
+        forward = operator.matrix(form="components")
+        adjoint = np.linalg.solve(gram, forward.T)
+        middle = forward @ components @ adjoint + 0.09 * np.identity(2)
+        expected = components - components @ adjoint @ np.linalg.solve(
+            middle, forward @ components
+        )
+        assert conditioned.covariance.matrix(form="components") == pytest.approx(
+            expected, abs=1e-10
+        )
+
+
+class TestTheAmbientBall:
+    """It formed the dense component matrix and took a non-symmetric
+    eigendecomposition, whatever the covariance was: cubic, and reached on
+    every Backus route with a Gaussian error. v1 had a randomised spectrum and
+    a sampling radius; both are back, and a diagonal covariance now costs
+    nothing at all."""
+
+    def test_a_diagonal_covariance_needs_no_decomposition(self, rng):
+        """Exact, and the spectrum is already in hand. Measured at dimension
+        8000: 0.48 s of eigenvalues against 16 us."""
+        X = EuclideanSpace(60)
+        deviations = np.linspace(0.5, 2.0, 60)
+        mu = GaussianMeasure.from_standard_deviations(X, deviations)
+
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        expected = np.sqrt(weighted_chi2_quantile(deviations**2, 0.9))
+        assert mu.ambient_ball(level=0.9).radius == pytest.approx(expected)
+
+    def test_every_route_gives_the_same_ball(self, rng):
+        """On a dense metric, where the operator's eigenvalues are those of
+        ``G^-1 C_gal`` and not of any symmetric matrix in sight."""
+        X = make_dense_metric_space(20)
+        galerkin = spd(rng, 20)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        exact = np.linalg.eigvals(np.linalg.solve(X.gram_matrix(), galerkin)).real
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        expected = np.sqrt(weighted_chi2_quantile(np.clip(exact, 0.0, None), 0.9))
+
+        dense = mu.ambient_ball(level=0.9, method="dense")
+        assert dense.radius == pytest.approx(expected, rel=1e-8)
+        spectral = mu.ambient_ball(
+            level=0.9, method="spectral", rank=20, rng=np.random.default_rng(1)
+        )
+        assert spectral.radius == pytest.approx(expected, rel=1e-6)
+        sampled = mu.ambient_ball(
+            level=0.9, method="sampling", samples=40000, rng=np.random.default_rng(2)
+        )
+        assert sampled.radius == pytest.approx(expected, rel=0.05)
+
+    def test_a_truncated_spectrum_is_a_lower_bound(self, rng):
+        """Which is the honest reading of a randomised route: the tail it
+        drops is positive, so the ball it gives is too small."""
+        X = make_dense_metric_space(20)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20))
+        full = mu.ambient_ball(level=0.9, method="dense").radius
+        truncated = mu.ambient_ball(
+            level=0.9, method="spectral", rank=5, rng=np.random.default_rng(1)
+        ).radius
+        assert truncated < full
+
+    def test_the_ball_covers_what_it_claims(self, rng):
+        X = make_dense_metric_space(12)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 12))
+        ball = mu.ambient_ball(level=0.9)
+        draws = mu.samples(8000, rng=rng)
+        assert np.mean([ball.contains(x) for x in draws]) == pytest.approx(
+            0.9, abs=0.02
+        )
+
+    def test_auto_says_what_it_needs_when_it_cannot_afford_a_route(self):
+        """A large space, a covariance that cannot be sampled and no rank: the
+        only exact route is cubic and the message says which of the three
+        things to supply."""
+        from pygeoinf2.algebra.operators import LinearOperator as _Operator
+
+        X = EuclideanSpace(4000)
+        covariance = _Operator.self_adjoint(
+            X, lambda v: v, traits=Traits.POSITIVE_DEFINITE
+        )
+        mu = GaussianMeasure(X, covariance=covariance)
+        with pytest.raises(ValueError, match="No affordable route"):
+            mu.ambient_ball(level=0.9)
+        # ...and it is affordable once told how
+        assert mu.ambient_ball(level=0.9, method="spectral", rank=8).radius > 0.0
+
+    def test_a_long_spectrum_takes_the_matched_quantile(self):
+        """Imhof's inversion sums over every weight at every quadrature point:
+        0.8 s at 500 weights, 10.4 s at 2000. A sum of that many comparable
+        chi-squares is within 3e-5 of its moment-matched one, in 1 ms."""
+        weights = np.linspace(0.25, 4.0, 2000)
+        assert GaussianMeasure._quantile_method_for(weights) == "matched"
+        # a spectrum carried by a handful of modes is not, and keeps Imhof
+        dominated = np.concatenate([[1e6, 1e6], np.full(2000, 1e-8)])
+        assert GaussianMeasure._quantile_method_for(dominated) == "imhof"
+        assert GaussianMeasure._quantile_method_for(np.ones(50)) == "imhof"
+
+
+class TestDenseCovariance:
+    """v1's ``with_dense_covariance(parallel=, n_jobs=)``, which had no
+    successor. Every pyslfp plotting script calls it before drawing a variance
+    field: the covariance of a posterior is a graph of operators, and once it
+    is going to be applied ``dim`` times it is cheaper assembled."""
+
+    @pytest.fixture
+    def opaque(self, rng):
+        """A measure whose covariance is a callable: no factor, no precision,
+        nothing to read a matrix off."""
+        X = make_dense_metric_space(6)
+        galerkin = spd(rng, 6)
+        components = np.linalg.solve(X.gram_matrix(), galerkin)
+
+        def apply(vector):
+            return X.from_components(components @ X.to_components(vector))
+
+        covariance = LinearOperator.self_adjoint(
+            X, apply, traits=Traits.POSITIVE_DEFINITE
+        )
+        mean = X.random(rng=rng)
+        return X, components, GaussianMeasure(X, covariance=covariance,
+                                              expectation=mean)
+
+    def test_it_assembles_the_same_law(self, opaque, rng):
+        X, components, measure = opaque
+        assert not measure.can_sample
+        assert measure.precision is None
+
+        dense = measure.with_dense_covariance(n_jobs=2)
+
+        assert dense.covariance.matrix(form="components") == pytest.approx(
+            components
+        )
+        assert X.norm(X.subtract(dense.expectation, measure.expectation)) < 1e-14
+
+    def test_the_result_can_be_sampled_and_has_a_density(self, opaque, rng):
+        """Which the original could do neither of: the factorisation that
+        assembling makes possible supplies both."""
+        X, components, measure = opaque
+        dense = measure.with_dense_covariance()
+
+        assert dense.can_sample
+        assert dense.precision.matrix(form="components") == pytest.approx(
+            np.linalg.inv(components)
+        )
+        draws = np.array(
+            [X.to_components(dense.sample(rng=rng)) for _ in range(20000)]
+        )
+        inverse = np.linalg.inv(X.gram_matrix())
+        expected = components @ inverse
+        scale = float(np.max(np.abs(expected)))
+        assert np.cov(draws.T) == pytest.approx(expected, abs=0.05 * scale)
+
+    def test_the_assembly_happens_once(self, opaque):
+        X, _, measure = opaque
+        tally = []
+        counting = LinearOperator.self_adjoint(
+            X,
+            lambda v: (tally.append(1), measure.covariance(v))[1],
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        wrapped = GaussianMeasure(X, covariance=counting)
+
+        first = wrapped.with_dense_covariance()
+        assert len(tally) == X.dim
+        assert wrapped.with_dense_covariance(n_jobs=4) is first
+        assert len(tally) == X.dim
+
+    def test_a_measure_without_a_covariance_says_so(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = EuclideanSpace(4)
+        measure = GaussianMeasure(
+            space, precision=DiagonalLinearOperator(space, np.ones(4))
+        )
+        with pytest.raises(ValueError, match="covariance"):
+            measure.with_dense_covariance()
+
+
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 
@@ -777,3 +1304,72 @@ class TestParallelLoops:
                 )
             )
         assert kinds == {"DummyProcess"}
+
+
+class TestAMarginalsFactorMatchesItsCovariance:
+    """``marginal`` gives a diagonal block its square root as a covariance
+    factor, so that the marginal can still be sampled. On a non-diagonal metric
+    that root is not one: ``L`` with component matrix ``diag(r)`` has adjoint
+    ``G^-1 diag(r) G``, so ``L L*`` is ``diag(r) G^-1 diag(r) G`` and equals
+    ``diag(r^2)`` only when the two commute. The sampler is what would be
+    wrong, and nothing would say so.
+    """
+
+    @staticmethod
+    def build(space, values):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        return DiagonalLinearOperator(space, values).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+
+    @staticmethod
+    def joint(first, second, blocks):
+        from pygeoinf2.algebra.direct_sum import BlockLinearOperator, DirectSum
+        from pygeoinf2.algebra.operators import LinearOperator as _Operator
+
+        total = DirectSum([first, second])
+        zero_upper = _Operator.zero(second, codomain=first)
+        zero_lower = _Operator.zero(first, codomain=second)
+        covariance = BlockLinearOperator(
+            [[blocks[0], zero_upper], [zero_lower, blocks[1]]]
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        return total, GaussianMeasure(total, covariance=covariance)
+
+    def test_on_a_diagonal_metric_the_factor_is_kept(self):
+        first, second = make_weighted_space(), make_weighted_space()
+        values = np.linspace(1.0, 2.0, first.dim)
+        total, measure = self.joint(
+            first,
+            second,
+            [self.build(first, values), self.build(second, values)],
+        )
+        marginal = measure.marginal(0)
+
+        assert marginal.can_sample
+        factor = marginal.covariance_factor
+        assert (factor @ factor.adjoint).matrix(form="components") == pytest.approx(
+            np.diag(values)
+        )
+
+    def test_on_a_dense_metric_it_is_not_offered(self):
+        """Because there it is not a factor of anything."""
+        first, second = make_dense_metric_space(4), make_dense_metric_space(4)
+        values = np.linspace(1.0, 2.0, 4)
+        total, measure = self.joint(
+            first,
+            second,
+            [self.build(first, values), self.build(second, values)],
+        )
+        marginal = measure.marginal(0)
+
+        assert marginal.covariance.matrix(form="components") == pytest.approx(
+            np.diag(values)
+        )
+        assert marginal.covariance_factor is None
+        # ...and the reason: the root would not have been one
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        root = DiagonalLinearOperator(first, np.sqrt(values))
+        product = (root @ root.adjoint).matrix(form="components")
+        assert not np.allclose(product, np.diag(values))

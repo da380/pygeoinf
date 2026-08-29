@@ -921,6 +921,24 @@ class TestConstrainedEstimatorsCanBeReduced:
         with pytest.raises(ValueError, match="cannot carry"):
             estimator.parameterised(tiny)
 
+    def test_parameterised_advertises_no_keywords_it_cannot_take(self):
+        """The reduced problem's own ``parameterised`` accepts none, so a
+        ``**kwargs`` here promised a pass-through that was always a
+        ``TypeError``."""
+        import inspect
+
+        from pygeoinf2.inference.point import (
+            ConstrainedLeastSquares,
+            ConstrainedMinimumNorm,
+        )
+
+        for cls in (ConstrainedLeastSquares, ConstrainedMinimumNorm):
+            kinds = [
+                parameter.kind
+                for parameter in inspect.signature(cls.parameterised).parameters.values()
+            ]
+            assert inspect.Parameter.VAR_KEYWORD not in kinds
+
     def test_a_data_reduction_leaves_the_constraint_alone(self, setting, rng):
         """It lives in the model space, so there is nothing to pull back."""
         from pygeoinf2.inference.point import ConstrainedLeastSquares

@@ -24,6 +24,7 @@ from ..algebra.operators import AffineOperator, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
+from ..traits import congruence_traits
 
 __all__ = [
     "Estimator",
@@ -270,9 +271,23 @@ class GaussianEstimator(MeasureEstimator):
         since ``T C T*`` on a small property space is cheaper than forming
         ``C`` on the model space at all.
 
+        **Which of the two to reach for.** This pushes the *estimator*, and is
+        what to use for a property of data not yet seen -- one estimator, many
+        datasets, one property. For a property of a posterior already in hand,
+        push the *measure*: ``estimator(data).push_forward(T)`` gives the
+        identical measure -- same mean, same ``T C T*``, same sampler -- for no
+        solve at all, where ``estimator.push_forward(T)(data)`` solves the
+        normal equations again for data that have already been inverted.
+
         The sampler travels with it: a draw of ``T m`` is ``T`` applied to a
         draw of ``m``. So a property posterior can be sampled exactly when the
         model posterior can, which is what a non-linear property of it needs.
+
+        Args:
+            operator: the property map ``T``.
+
+        Returns:
+            The estimator of ``T m``.
         """
         pushed = None
         if self._centred_sample is not None:
@@ -280,8 +295,14 @@ class GaussianEstimator(MeasureEstimator):
             def pushed(rng: Any, _sample: Any = self._centred_sample) -> Any:
                 return operator(_sample(rng))
 
+        # A congruence preserves self-adjointness and semidefiniteness, and
+        # that is claimed here rather than left to the composition, which sees
+        # it only when the covariance happens to be one factor: written
+        # ``(I - K A) Q`` it is two, the list flattens, and the palindrome is
+        # no longer visible in it. The rule is the same either way.
+        covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
+            congruence_traits(self._covariance.traits, outer_invertible=False)
+        )
         return GaussianEstimator(
-            operator @ self._mean_map,
-            operator @ self._covariance @ operator.adjoint,
-            centred_sample=pushed,
+            operator @ self._mean_map, covariance, centred_sample=pushed
         )

@@ -1062,9 +1062,13 @@ class DualFeasibleProperty(SetEstimator):
         cache: dict[str, Any] = {}
 
         def prepare(certificate: Any) -> tuple[Any, Any]:
-            key = id(certificate)
-            if cache.get("key") != key:
-                cache["key"] = key
+            # The key is the certificate *object*, not its ``id``: holding a
+            # reference to it is what makes the identity test meaningful.
+            # Keying on ``id()`` alone lets a freed array's address be reused
+            # by the next one, and the memo then answers with the previous
+            # certificate's residual -- a wrong subgradient, silently.
+            if cache.get("certificate") is not certificate:
+                cache["certificate"] = certificate
                 cache["parts"] = (
                     model_space.subtract(pulled, forward.adjoint(certificate)),
                     space.scale(-1.0, certificate),
