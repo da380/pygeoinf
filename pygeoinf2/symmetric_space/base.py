@@ -882,7 +882,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 or one that is not positive semidefinite -- which for a pair
                 of fields means a correlation outside ``[-1, 1]``.
         """
-        from ..algebra.direct_sum import BlockLinearOperator, DirectSum
+        from ..algebra.direct_sum import DirectSum
 
         sigma = np.asarray(spectral_cross_covariances, dtype=float)
         if (

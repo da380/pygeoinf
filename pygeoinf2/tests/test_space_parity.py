@@ -603,7 +603,7 @@ class TestPowerSpectrumAgainstPyshtools:
     This is the same number, on this library's scale."""
 
     def test_it_is_pyshtools_spectrum_up_to_the_orthonormal_scale(self, rng):
-        sh = pytest.importorskip("pyshtools")
+        pytest.importorskip("pyshtools")
         from pygeoinf2.symmetric_space.sphere import Sobolev
 
         space = Sobolev(8, 2.0, 0.3, radius=2.0)
@@ -660,7 +660,6 @@ class TestTransformOptions:
         1e-10 and a box's 1e-12, and the operator has no business flattening
         that."""
         _, space = geometry
-        points = space.random_points(10, rng=rng)
         assert space._transform_options(None, None) == {}
         assert space._transform_options(1e-6, None) == {"eps": 1e-6}
         assert space._transform_options(None, 3) == {"nthreads": 3}

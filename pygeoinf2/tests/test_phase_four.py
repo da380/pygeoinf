@@ -211,9 +211,10 @@ class TestFlexibleCG:
         inner = CGSolver(rtol=0.3, maxiter=1, strict=False)(operator)
         preconditioner = LinearOperator.from_callables(X, X, inner, adjoint=inner)
         b = X.random(rng=rng)
-        result = FlexibleCGSolver(
-            rtol=1e-10, preconditioner=preconditioner, strict=False
-        )(operator).solve(b)
+        with pytest.warns(RuntimeWarning, match="did not converge in 1 iteration"):
+            result = FlexibleCGSolver(
+                rtol=1e-10, preconditioner=preconditioner, strict=False
+            )(operator).solve(b)
         assert X.norm(X.subtract(operator(result.solution), b)) < 1e-8 * X.norm(b)
 
 
@@ -238,9 +239,10 @@ class TestSolverDiagnostics:
         """Which the final residual alone cannot."""
         X = make_weighted_space()
         operator = positive_definite(X, rng)
-        result = CGSolver(rtol=1e-16, maxiter=2, strict=False)(operator).solve(
-            X.random(rng=rng)
-        )
+        with pytest.warns(RuntimeWarning, match="did not converge in 2 iter"):
+            result = CGSolver(rtol=1e-16, maxiter=2, strict=False)(operator).solve(
+                X.random(rng=rng)
+            )
         assert not result.converged
         assert len(result.history) >= 2
 
@@ -855,9 +857,10 @@ class TestPreconditioners:
         )
         vector = space.random(rng=rng)
         plain, _ = self.iterations(operator, None, vector)
-        count, residual = self.iterations(
-            operator, BandedPreconditioner(3, probe="banded"), vector
-        )
+        with pytest.warns(RuntimeWarning, match="did not converge"):
+            count, residual = self.iterations(
+                operator, BandedPreconditioner(3, probe="banded"), vector
+            )
         assert residual > 1e-3  # it did not converge at all
 
     def test_the_block_one_partitions_the_components(self, rng):

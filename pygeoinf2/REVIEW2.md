@@ -55,6 +55,22 @@ extent of reading the cited code; the numbers are the reviewers'.
 > work**: yesterday's `_known_matrix` hooks and the `dense_limit` change
 > absorbed it — `log_evidence` on example 21's problem is 0.26 s against the
 > 4.33 s measured here, and a second call is free.
+>
+> **Checked (2026-08-29, on `refactor`).** The third round's work was read
+> against the code and re-run: 2389 default + 32 slow passing; the metric
+> hooks (§4.4) are tested on a dense Gram over sixteen expressions; the
+> Sobolev flexure inverse (3.2) has residual below 1e-8 with varying rigidity on the
+> sphere and circle and claims no trait — that case had no test, and now has
+> one. The unmarked "smaller" items in §3 are all done (`from_grid_values`
+> copies, `eq=False` on the dataclasses, `plot_points(data=)`, the exports,
+> the docstrings, the catalogue rows; import 0.30 s). Left over and fixed
+> here: a dead `v_prev` in MinRes, an unannotated `Callable` in
+> `LevelBundleMethod.minimise`, five unused imports and five unused locals, and the suite's
+> own warnings — pyplot's figure leak in `test_plotting` and the deliberately
+> stalled solves in `test_phase_four`, now closed and `pytest.warns`-wrapped.
+> What remains are the 86 bundle-subproblem warnings from `test_backus`,
+> which are §4.5.1 and Mag's (Q2), and an `exp` overflow in
+> `test_laplace`'s own model.
 
 ## 0. Verdict
 
@@ -399,4 +415,4 @@ Recorded so the next reader need not rediscover them.
   measured: parallel overhead dominates `matrix()` for both cheap and
   CG-backed covariances. The hook is there; whether it ever pays is open.
 * Cosmetic, left alone: `circle`/`torus`/`line`/`plane` still `repr` as
-  `PeriodicBox(...)`/`Box(...)`; `test_geometry.py` has an unused local at 275.
+  `PeriodicBox(...)`/`Box(...)`.

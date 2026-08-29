@@ -1227,7 +1227,6 @@ class MinResSolver(IterativeSolver):
         # are what the three-term recurrence runs on, and v_k == M r_k / beta.
         r_prev = space.zero()
         r_current = r
-        v_prev = space.zero()
         v = space.scale(1.0 / beta, z)
 
         # Givens state. c = -1, s = 0 makes the first sweep act as no rotation.
@@ -1287,7 +1286,7 @@ class MinResSolver(IterativeSolver):
 
             # --- roll the state ---------------------------------------
             w_prev, w = w, w_next
-            v_prev, v = v, space.scale(1.0 / beta_next, z_next)
+            v = space.scale(1.0 / beta_next, z_next)
             r_prev, r_current = r_current, p
             beta_prev, beta = beta, beta_next
             delta_bar = delta_bar_next

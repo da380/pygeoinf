@@ -27,6 +27,7 @@ support-value machinery is entangled with it and is deliberately left behind.
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 

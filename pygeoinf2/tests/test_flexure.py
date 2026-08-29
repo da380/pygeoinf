@@ -351,6 +351,25 @@ class TestFlexureInverse:
         residual = X.subtract(A(inverse(w)), w)
         assert X.norm(residual) < 1e-6 * X.norm(w)
 
+    def test_a_varying_rigidity_inverts_on_a_sobolev_space(self, rng):
+        """REVIEW2 3.2's failing case: on a Sobolev space the lifted operator
+        is not self-adjoint, so CG cannot run there. The inverse is taken in
+        L2 and lifted, and must neither fail nor claim a trait it lacks.
+        """
+        X = Sobolev(16, 2.0, 0.2)
+        rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p[0]))
+        A = X.flexural_operator(rigidity, 0.25, 3.0)
+        inverse = X.inverse_flexural_operator(
+            rigidity, 0.25, 3.0, baseline_rigidity=1.0
+        )
+        w = X.random(rng=rng)
+        residual = X.subtract(A(inverse(w)), w)
+        assert X.norm(residual) < 1e-6 * X.norm(w)
+        assert not (Traits.SELF_ADJOINT & inverse.traits)
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        left, right = X.inner_product(inverse(x), y), X.inner_product(x, inverse(y))
+        assert not np.isclose(left, right, rtol=1e-6)  # genuinely not, in H^s
+
     def test_a_direct_solver_is_refused(self):
         from pygeoinf2.numerics.solvers import CholeskySolver
 
@@ -429,7 +448,6 @@ class TestFusedFlexure:
             from pygeoinf2.symmetric_space.circle import Lebesgue as CircleLebesgue
 
             X = CircleLebesgue(64)
-            t = X.grid_axes[0] if hasattr(X, "grid_axes") else None
             rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p))
             poisson = X.project_function(lambda p: 0.25 + 0.1 * np.sin(2 * p))
             buoyancy = X.project_function(lambda p: 2.0 + 0.3 * np.sin(p))

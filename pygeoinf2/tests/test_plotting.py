@@ -17,6 +17,17 @@ from pygeoinf2 import plotting  # noqa: E402
 from pygeoinf2.symmetric_space import Interval, Lebesgue  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _close_figures():
+    """Every test starts and ends with no open figures, so none leaks into
+    the next and pyplot's "more than 20 figures" warning cannot fire."""
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    yield
+    plt.close("all")
+
+
 class TestColourLimits:
     def test_it_takes_the_range_by_default(self):
         values = np.array([-1.0, 4.0])

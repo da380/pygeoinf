@@ -26,7 +26,7 @@ only what the *result* claims. See ``_require_spectrum``.
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Sequence
+from typing import Callable, Sequence
 
 import numpy as np
 

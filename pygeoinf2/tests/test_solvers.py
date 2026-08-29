@@ -793,7 +793,6 @@ class TestPreconditionerReplacement:
             solver.with_preconditioner(JacobiPreconditioner())
 
     def test_attaching_to_a_bare_solver_still_works(self, rng):
-        space = EuclideanSpace(8)
         attached = CGSolver().with_preconditioner(JacobiPreconditioner())
         assert isinstance(attached.preconditioner, JacobiPreconditioner)
         assert CGSolver().preconditioner is None

@@ -18,10 +18,8 @@ from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
 from pygeoinf2.algebra.direct_sum import (
     BlockDiagonalLinearOperator,
     BlockLinearOperator,
-    DirectSum,
 )
 from pygeoinf2.algebra.operators import LinearOperator, MatrixLinearOperator
-from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
 from pygeoinf2.numerics.randomised import (
     deflated_diagonal,

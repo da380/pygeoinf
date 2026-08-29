@@ -272,7 +272,6 @@ class TestEllipsoid:
             point = X.scale(3.0, X.random(rng=rng))
             if ellipsoid.contains(point):
                 continue
-            components = X.to_components(point)
             projected = ellipsoid.project(point)
 
             reference = minimize(

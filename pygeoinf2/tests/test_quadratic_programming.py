@@ -9,7 +9,6 @@ from pygeoinf2.numerics.convex import LevelBundleMethod, ProximalBundleMethod
 from pygeoinf2.numerics.quadratic_programming import (
     ClarabelQPSolver,
     OSQPQPSolver,
-    QPResult,
     QPSolver,
     SciPyQPSolver,
     best_available_qp_solver,
