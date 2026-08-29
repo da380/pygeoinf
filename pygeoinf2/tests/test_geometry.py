@@ -19,6 +19,7 @@ from pygeoinf2.geometry import (
     UniversalSet,
 )
 from pygeoinf2.numerics.convex import ProximalGradient, SquaredDistance, SupportFunction
+from pygeoinf2.numerics.solvers import CholeskySolver, LinearSolver
 from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import (
     check_operator,
@@ -416,6 +417,79 @@ class TestSubspaces:
             nonsmooth=subspace.indicator(),
         )
         assert np.allclose(A(result.minimiser), value, atol=1e-7)
+
+
+class TestOneNormalInverse:
+    """``(A A*)^-1`` is built once and shared.
+
+    Three constructions need it -- the kernel projector, the minimum-norm
+    translation and the pseudo-inverse -- and each used to build its own. With
+    an iterative solver that is a wasted object; with a direct one it is the
+    matrix of ``A A*`` extracted and factorised again each time, and a subspace
+    built from an equation did that twice in one constructor call.
+    """
+
+    class Counting(LinearSolver):
+        """A solver that records how often it was asked to invert."""
+
+        def __init__(self):
+            self.inner = CholeskySolver()
+            self.count = 0
+
+        def _invert(self, operator):
+            self.count += 1
+            return self.inner(operator)
+
+    @pytest.fixture
+    def problem(self, rng):
+        space = EuclideanSpace(40)
+        codomain = EuclideanSpace(6)
+        operator = LinearOperator.from_matrix(
+            space, codomain, rng.normal(size=(6, 40)), form="components"
+        )
+        return space, codomain, operator
+
+    def test_an_affine_subspace_builds_it_once(self, problem, rng):
+        space, codomain, operator = problem
+        solver = self.Counting()
+        subspace = AffineSubspace.from_linear_equation(
+            operator, codomain.random(rng=rng), solver=solver
+        )
+        assert solver.count == 1
+        subspace.pseudo_inverse()
+        assert solver.count == 1
+        subspace.with_constraint_value(codomain.random(rng=rng))
+        assert solver.count == 1
+        subspace.with_translation(space.random(rng=rng)).pseudo_inverse()
+        assert solver.count == 1
+
+    def test_a_kernel_builds_it_once(self, problem):
+        _, _, operator = problem
+        solver = self.Counting()
+        subspace = LinearSubspace.from_kernel(operator, solver=solver)
+        assert solver.count == 1
+        subspace.pseudo_inverse()
+        assert solver.count == 1
+
+    def test_sharing_it_does_not_change_the_answers(self, problem, rng):
+        """The projector is the same object in `with_constraint_value` because
+        the kernel does not move; the translation does."""
+        space, codomain, operator = problem
+        first = codomain.random(rng=rng)
+        second = codomain.random(rng=rng)
+        subspace = AffineSubspace.from_linear_equation(
+            operator, first, solver=CholeskySolver()
+        )
+        moved = subspace.with_constraint_value(second)
+        assert np.allclose(operator(moved.translation), second, atol=1e-9)
+        assert np.allclose(
+            operator(moved.project(space.random(rng=rng))), second, atol=1e-9
+        )
+        check_projection(moved, rng=rng)
+        # and the pseudo-inverse is still the minimum-norm right inverse.
+        recovered = subspace.pseudo_inverse()(second)
+        assert np.allclose(operator(recovered), second, atol=1e-9)
+        assert space.norm(recovered) <= space.norm(moved.translation) + 1e-9
 
 
 class TestPolytopeProjection:
