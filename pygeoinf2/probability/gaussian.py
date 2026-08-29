@@ -604,27 +604,115 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return covariance.eigenvalues
         return None
 
-    def hilbert_schmidt_norm(self, /, *, method: str = "auto") -> float:
-        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``.
+    def _stochastic_trace(
+        self,
+        operator: LinearOperator,
+        /,
+        *,
+        samples: int,
+        rtol: float | None,
+        rng: Generator | None,
+        n_jobs: int | None,
+    ) -> float:
+        """A Hutchinson trace, matrix-free.
+
+        ``random_trace`` draws its probes as white noise *on the space*, so the
+        expectation is the trace of the operator -- the component matrix's
+        trace -- and not ``tr(G A)``, which is what probes with standard normal
+        components would give on any space whose Gram matrix is not the
+        identity.
 
         Args:
-            method: ``"dense"`` forms the matrix, ``"stochastic"`` estimates
-                the trace, ``"auto"`` picks by dimension.
+            operator: the endomorphism whose trace is wanted.
+            samples: how many probes, or the first block when *rtol* is given.
+            rtol: stop when the standard error falls to this fraction of the
+                estimate, instead of at a fixed count.
+            rng: the generator.
+            n_jobs: workers for the probes.
+
+        Returns:
+            The estimated trace.
+        """
+        from ..numerics.randomised import random_trace
+
+        return float(
+            random_trace(
+                operator, samples=samples, rtol=rtol, rng=rng, n_jobs=n_jobs
+            ).value
+        )
+
+    def hilbert_schmidt_norm(
+        self,
+        /,
+        *,
+        method: str = "auto",
+        samples: int = 100,
+        rtol: float | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> float:
+        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``.
+
+        ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``, which is what
+        v1 did and what this docstring has always claimed; it used to form the
+        dense component matrix and return the exact answer, quietly, which is
+        the opposite of the promise and impossible at the sizes the option
+        exists for. The estimator is a trace of ``C^2``, so its relative error
+        is worse than a trace of ``C``: ask for more probes here than for
+        :meth:`nuclear_norm`, or pass *rtol* and let it decide.
+
+        Args:
+            method: ``"dense"`` forms the component matrix, ``"stochastic"``
+                estimates the trace with :func:`random_trace`, ``"diagonal"``
+                reads the spectrum of a diagonal covariance, and ``"auto"``
+                takes the diagonal route when it can and the dense one
+                otherwise. ``"auto"`` is always exact; a sampled norm has to be
+                asked for by name.
+            samples: probes for the stochastic route.
+            rtol: draw further blocks of probes until the standard error is
+                this fraction of the estimate.
+            rng: the generator for the probes.
+            n_jobs: workers for the probes.
 
         Returns:
             The norm.
+
+        Raises:
+            ValueError: for an unknown method, or a measure with no covariance.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
             return float(np.sqrt(np.sum(eigenvalues**2)))
+        covariance = self._require_covariance("A Hilbert-Schmidt norm")
+        if method == "stochastic":
+            # tr(C* C) == tr(C C), the covariance being self-adjoint. The max
+            # is against an estimate that has come out slightly negative on a
+            # near-singular covariance, where the truth is a very small number.
+            squared = self._stochastic_trace(
+                covariance @ covariance,
+                samples=samples,
+                rtol=rtol,
+                rng=rng,
+                n_jobs=n_jobs,
+            )
+            return float(np.sqrt(max(squared, 0.0)))
+        if method not in ("auto", "dense", "diagonal"):
+            raise ValueError(f"Unknown method {method!r}.")
         # tr(C* C) is basis-independent, so it comes from the *component*
         # matrix. The Galerkin one is G C_c, whose trace is a different number.
-        matrix = self._require_covariance("A Hilbert-Schmidt norm").matrix(
-            form="components"
-        )
+        matrix = covariance.matrix(form="components")
         return float(np.sqrt(np.sum(matrix * matrix.T)))
 
-    def nuclear_norm(self, /, *, method: str = "auto") -> float:
+    def nuclear_norm(
+        self,
+        /,
+        *,
+        method: str = "auto",
+        samples: int = 100,
+        rtol: float | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> float:
         """The trace norm of the covariance, ``tr|C|``.
 
         For a covariance this is the trace, since it is positive semidefinite —
@@ -632,21 +720,31 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             method: as for :meth:`hilbert_schmidt_norm`.
+            samples: probes for the stochastic route.
+            rtol: target relative standard error for the stochastic route.
+            rng: the generator for the probes.
+            n_jobs: workers for the probes.
 
         Returns:
             The norm.
+
+        Raises:
+            ValueError: for an unknown method, or a measure with no covariance.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
             return float(np.sum(np.abs(eigenvalues)))
+        covariance = self._require_covariance("A nuclear norm")
+        if method == "stochastic":
+            return self._stochastic_trace(
+                covariance, samples=samples, rtol=rtol, rng=rng, n_jobs=n_jobs
+            )
+        if method not in ("auto", "dense", "diagonal"):
+            raise ValueError(f"Unknown method {method!r}.")
         # A covariance is positive semidefinite, so its trace norm is its
         # trace -- and a trace is the component matrix's, not the Galerkin
         # matrix's, which carries an extra factor of the metric.
-        return float(
-            np.trace(
-                self._require_covariance("A nuclear norm").matrix(form="components")
-            )
-        )
+        return float(np.trace(covariance.matrix(form="components")))
 
     def _weighted_squared(self, vector: X, /) -> float:
         """``(C^-1 v, v)``, from the precision if there is one, else densely.

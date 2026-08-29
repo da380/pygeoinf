@@ -573,6 +573,69 @@ class TestPrecisionSurvivesTheAlgebra:
         assert product.domain.norm(residual) < 1e-10 * product.domain.norm(probe)
 
 
+class TestStochasticNorms:
+    """The ``"stochastic"`` option used to form the dense component matrix and
+    return the exact answer, which is the one thing a matrix-free estimator is
+    supposed not to do. It is now a Hutchinson trace, as v1's was."""
+
+    @pytest.fixture
+    def measure(self, rng):
+        X = make_dense_metric_space(20)
+        matrix = rng.standard_normal((20, 20))
+        galerkin = matrix @ matrix.T + 0.5 * np.identity(20)
+        components = np.linalg.solve(X.gram_matrix(), galerkin)
+        return GaussianMeasure.from_covariance_matrix(X, galerkin), components
+
+    def test_the_nuclear_norm_is_a_trace_of_the_component_matrix(self, measure, rng):
+        """Not of the Galerkin one, which carries an extra factor of ``G``.
+        The probes are white noise *on the space*, which is what makes the
+        expectation the operator's own trace."""
+        mu, components = measure
+        exact = np.trace(components)
+        estimate = mu.nuclear_norm(method="stochastic", samples=4000, rng=rng)
+        assert estimate == pytest.approx(exact, rel=0.05)
+        assert mu.nuclear_norm(method="dense") == pytest.approx(exact)
+
+    def test_the_hilbert_schmidt_norm_estimates_the_trace_of_the_square(
+        self, measure, rng
+    ):
+        mu, components = measure
+        exact = np.sqrt(np.sum(components * components.T))
+        estimate = mu.hilbert_schmidt_norm(method="stochastic", samples=4000, rng=rng)
+        assert estimate == pytest.approx(exact, rel=0.05)
+
+    def test_it_does_not_form_the_matrix(self, measure, rng):
+        """The point of the option. A covariance that refuses to be assembled
+        still has an estimable trace."""
+        mu, components = measure
+        space = mu.domain
+        applications = []
+
+        def apply(x):
+            applications.append(x)
+            return mu.covariance(x)
+
+        refuses = LinearOperator.self_adjoint(
+            space, apply, traits=Traits.POSITIVE_DEFINITE
+        )
+        opaque = GaussianMeasure(space, covariance=refuses)
+        estimate = opaque.nuclear_norm(method="stochastic", samples=200, rng=rng)
+        assert estimate == pytest.approx(np.trace(components), rel=0.2)
+        assert len(applications) == 200
+
+    def test_a_tolerance_stops_when_it_is_met(self, measure, rng):
+        mu, components = measure
+        estimate = mu.nuclear_norm(method="stochastic", samples=50, rtol=0.02, rng=rng)
+        assert estimate == pytest.approx(np.trace(components), rel=0.1)
+
+    def test_an_unknown_method_is_refused(self, measure):
+        mu, _ = measure
+        with pytest.raises(ValueError, match="Unknown method"):
+            mu.nuclear_norm(method="magic")
+        with pytest.raises(ValueError, match="Unknown method"):
+            mu.hilbert_schmidt_norm(method="magic")
+
+
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 
