@@ -102,6 +102,64 @@ def _semidefinite_factors(
     return root, None
 
 
+def _kl_kernel(values: np.ndarray) -> np.ndarray:
+    """``t - 1 - log t``, the whole of a Gaussian divergence bar the mean shift.
+
+    Non-negative, with a double zero at ``t == 1``: the two properties that
+    make a stochastic divergence built on it come out positive and vanish
+    identically when the two measures agree.
+
+    Args:
+        values: Ritz values from a Lanczos run, all positive in exact
+            arithmetic.
+
+    Returns:
+        ``g`` at each of them.
+    """
+    values = np.asarray(values, dtype=float)
+    # A Ritz value lies inside the spectrum, so it is positive; rounding can
+    # still hand back a zero on a reference that is singular in the direction
+    # the probe found. A floor makes that a very large divergence rather than
+    # a nan, which is the honest reading of a singular reference.
+    safe = np.clip(values, np.finfo(float).tiny, None)
+    return safe - 1.0 - np.log(safe)
+
+
+def _check_round_trip(
+    operator: LinearOperator, inverse: LinearOperator, /, *, rtol: float = 1e-4
+) -> None:
+    """Refuse a solver that does not actually invert the operator.
+
+    A Krylov solver stops on the *residual*, and on an ill-conditioned
+    covariance the residual says almost nothing about the error: conjugate
+    gradients at ``rtol=1e-8`` on a covariance of condition 4e10 returned a
+    trace of 217 where the truth was 289, without complaint. Two applications
+    and one solve buy an honest refusal instead.
+
+    Args:
+        operator: the operator being inverted.
+        inverse: the solver's inverse of it.
+        rtol: how far ``A^-1 A x`` may sit from ``x``, relatively.
+
+    Raises:
+        ValueError: when it sits further than that.
+    """
+    space = operator.domain
+    probe = space.white_noise()
+    error = space.norm(space.subtract(inverse(operator(probe)), probe))
+    reference = space.norm(probe)
+    if error > rtol * reference:
+        raise ValueError(
+            f"The solver does not invert the reference covariance accurately "
+            f"enough for this: a round trip moves a test vector by "
+            f"{error / reference:.2e}, against a tolerance of {rtol:.0e}. On "
+            f"an ill-conditioned covariance a small residual is not a small "
+            f"error. Pass solver= with a preconditioner or a tighter "
+            f"tolerance, or supply the reference measure's precision, which "
+            f"removes the solve entirely."
+        )
+
+
 class GaussianMeasure[X](ProbabilityMeasure[X]):
     """A Gaussian measure, defined by any of covariance, factor or precision."""
 
@@ -798,6 +856,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         method: str = "auto",
         solver: Any = None,
         samples: int = 100,
+        sample_rtol: float | None = None,
+        max_samples: int | None = None,
+        n_jobs: int | None = None,
         rng: Generator | None = None,
         dense_limit: int = 512,
         **kwargs: Any,
@@ -815,7 +876,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 way this quantity misleads.
             solver: how to invert the other's covariance, where needed.
             samples: probes for the stochastic route.
+            sample_rtol: target relative standard error for that route.
+            max_samples: a ceiling on the probes it may draw.
+            n_jobs: workers for the probes.
+            rng: the generator for the probes.
             dense_limit: the dimension below which the dense route is taken.
+            kwargs: passed to the Lanczos functional calculus.
 
         Returns:
             The divergence.
@@ -825,6 +891,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             method=method,
             solver=solver,
             samples=samples,
+            sample_rtol=sample_rtol,
+            max_samples=max_samples,
+            n_jobs=n_jobs,
             rng=rng,
             dense_limit=dense_limit,
             **kwargs,
@@ -838,6 +907,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         method: str = "auto",
         solver: Any = None,
         samples: int = 100,
+        sample_rtol: float | None = None,
+        max_samples: int | None = None,
+        n_jobs: int | None = None,
         rng: Generator | None = None,
         dense_limit: int = 512,
         **kwargs: Any,
@@ -861,14 +933,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             Form both matrices and factorise. Exact, and confined to a space
             small enough to hold two of them.
         ``"stochastic"``
-            Hutchinson for the trace and stochastic Lanczos for the
-            determinants, so nothing is ever formed. The route for a space too
-            large to assemble, at the cost of an answer with an error bar.
+            One Hutchinson estimate of ``tr(g(M))`` with ``M`` similar to
+            ``C_o^-1 C_s`` and ``g(t) == t - 1 - log t``, so nothing is ever
+            formed. The route for a space too large to assemble, at the cost
+            of an answer with an error bar. ``g`` is non-negative, so the
+            estimate is too, and it vanishes probe by probe when the two
+            measures agree; see :meth:`_kl_similarity` for why that matters
+            and for what this replaced.
 
-            **It has to be asked for by name.** On the ill-conditioned spectra
-            this library produces it is currently unreliable — measured at
-            -88.6 +/- 21.7 for a divergence of zero on a correlated measure of
-            dimension 578 — so ``"auto"`` raises rather than reaching for it.
+            **It still has to be asked for by name.** Not because it is
+            unreliable — on a dense reference of dimension 400 and condition
+            1e6 it gives 15.14 +/- 0.30 against an exact 15.67, where the old
+            route gave -7.0 +/- 22.8 — but because a divergence reported as a
+            bare number, with the error bar dropped, is the one way this
+            quantity misleads. ``"auto"`` raises and says so.
 
         Args:
             other: the reference measure. The divergence is not symmetric.
@@ -878,14 +956,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 is no larger than *dense_limit*, and raises otherwise rather
                 than reaching for the stochastic route unasked.
             solver: how to invert the reference covariance, for the stochastic
-                route. Conjugate gradients by default; a factory taking the
-                operator is also accepted.
-            samples: Hutchinson probes for the trace and each determinant.
+                route -- needed only when the reference has neither a precision
+                nor a precision factor. Conjugate gradients by default; a
+                factory taking the operator is also accepted.
+            samples: Hutchinson probes.
+            sample_rtol: draw further blocks of probes until the standard error
+                is this fraction of the estimate.
+            max_samples: a ceiling on that.
+            n_jobs: workers for the probes.
             rng: the generator for those probes.
             dense_limit: the dimension above which ``"auto"`` stops forming
                 matrices.
             kwargs: passed to
-                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`.
+                :func:`~pygeoinf2.numerics.functional_calculus.operator_function`,
+                which is where *max_iterations* and the Lanczos *rtol* live.
 
         Returns:
             An :class:`~pygeoinf2.numerics.randomised.Estimate`. The exact
@@ -893,13 +977,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Raises:
             ValueError: for an unknown method; if the two measures live on
-                different spaces; or, under ``"auto"``, when only the
-                stochastic route is available -- which is refused rather than
-                taken silently.
+                different spaces; under ``"auto"``, when only the stochastic
+                route is available -- which is refused rather than taken
+                silently; or if the stochastic route has no square root to
+                work with, or cannot invert the reference accurately. An
+                estimate whose standard error exceeds it is refused too,
+                though the non-negativity of ``g`` makes that unreachable.
         """
-        from ..numerics.functional_calculus import log_determinant
         from ..numerics.randomised import Estimate, random_trace
-        from ..numerics.solvers import resolve_solver
 
         if other.domain != self._domain:
             raise ValueError("Both measures must live on the same space.")
@@ -972,46 +1057,128 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 0,
             )
 
-        # Stochastic: nothing is formed. The trace operator C_o^-1 C_s is not
-        # self-adjoint, which costs nothing here -- Hutchinson estimates the
-        # trace of any endomorphism, self-adjoint or not.
-        definite = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
-        if self._covariance is None or other._covariance is None:
-            raise ValueError(
-                "The stochastic route needs both covariances as operators, and "
-                "at least one of these measures was given only a precision."
-            )
-        reference = other._covariance.with_traits(definite)
-        inverse = (
-            other._precision
-            if other._precision is not None
-            else resolve_solver(solver, reference)(reference)
-        )
-        trace = random_trace(inverse @ self._covariance, samples=samples, rng=rng)
-        quadratic = self._domain.inner_product(inverse(shift), shift)
-        log_theirs = log_determinant(
-            reference, method="stochastic", samples=samples, rng=rng, **kwargs
-        )
-        log_mine = log_determinant(
-            self._covariance.with_traits(definite),
-            method="stochastic",
+        # Stochastic: nothing is formed, and the three separately-estimated
+        # terms are folded into one. See _kl_similarity for why.
+        from ..numerics.functional_calculus import operator_function
+
+        similar, inverse = self._kl_similarity(other, solver=solver)
+        estimate = random_trace(
+            operator_function(similar, _kl_kernel, **kwargs),
             samples=samples,
+            rtol=sample_rtol,
+            max_samples=max_samples,
             rng=rng,
-            **kwargs,
+            n_jobs=n_jobs,
         )
-        value = 0.5 * (
-            trace.value + quadratic - dimension + log_theirs.value - log_mine.value
-        )
-        # Three independent estimates, so the errors add in quadrature and the
-        # halving outside carries through.
-        error = 0.5 * float(
-            np.sqrt(
-                trace.standard_error**2
-                + log_theirs.standard_error**2
-                + log_mine.standard_error**2
+        quadratic = self._domain.inner_product(inverse(shift), shift)
+        value = 0.5 * (estimate.value + quadratic)
+        error = 0.5 * estimate.standard_error
+        # An estimate whose error bar exceeds it says nothing, and the old
+        # route returned such numbers routinely. This one cannot: every probe
+        # returns ``(x, g(M) x) >= 0`` because ``g >= 0``, and for a
+        # non-negative sample ``sum x_i^2 <= (sum x_i)^2``, which is exactly
+        # the statement that the standard error is at most the mean. The check
+        # stays as the tripwire for that property rather than as a filter.
+        if error > abs(value):
+            raise ValueError(
+                f"The estimate is {value:.3g} with a standard error of "
+                f"{error:.3g}, which says nothing about the divergence. Draw "
+                f"more probes (samples=), or pass sample_rtol= and let the "
+                f"estimator decide when to stop."
             )
+        return Estimate(float(value), float(error), estimate.samples)
+
+    def _kl_similarity(
+        self, other: "GaussianMeasure", /, *, solver: Any
+    ) -> tuple[LinearOperator, LinearOperator]:
+        r"""An operator with the spectrum of ``C_o^-1 C_s``, and ``C_o^-1``.
+
+        The stochastic divergence used to estimate three things separately —
+        ``tr(C_o^-1 C_s)`` by Hutchinson and each log-determinant by its own
+        stochastic Lanczos run — and then combine them. Two of those estimates
+        are large and nearly equal whenever the measures are close, so the
+        answer was a small difference of large noisy numbers: ``KL(mu || mu)``
+        at dimension 289 came out as ``369 +/- 35``, and the same calculation
+        with the reference's precision to hand as ``-351 +/- 33``. A divergence
+        cannot be negative, and this one could not even get the sign right.
+
+        The cure is to fold the whole thing into one trace. With
+        ``M == C_o^-1 C_s``,
+
+        .. code-block:: text
+
+            2 D == tr(M) - dim - log det M + (m_o - m_s, C_o^-1 (m_o - m_s))
+                == tr(g(M)) + quadratic,   g(t) == t - 1 - log t
+
+        and ``g`` is non-negative with a double zero at ``t == 1``. So the
+        estimate is a trace of a positive operator and cannot come out
+        negative; and for two equal measures ``M`` is the identity, ``g(M)``
+        is exactly zero, and *every probe returns zero* — the cancellation
+        happens inside each probe instead of between three estimates.
+
+        ``M`` itself is not self-adjoint, but it is similar to something that
+        is, and a trace only sees the spectrum. Two such:
+        ``L_s* C_o^-1 L_s`` from this measure's covariance factor, and
+        ``Li_o C_s Li_o*`` from the reference's precision factor. Both are
+        palindromes, so they *earn* self-adjointness from the algebra rather
+        than claiming it — which is what the old route did to the two
+        covariances, on operators that had not been checked.
+
+        A solve is needed only when the reference has neither a precision nor
+        a precision factor. Then the accuracy of the answer is the accuracy of
+        that solve, which on an ill-conditioned covariance is much worse than
+        its residual suggests: conjugate gradients at ``rtol=1e-8`` on a
+        covariance of condition 4e10 returned a trace of 217 where the truth
+        was 289. So the solver is tested on a round trip before it is trusted.
+
+        Args:
+            other: the reference measure.
+            solver: how to invert the reference covariance, if it comes to
+                that.
+
+        Returns:
+            ``(M', C_o^-1)`` with ``M'`` self-adjoint and similar to
+            ``C_o^-1 C_s``.
+
+        Raises:
+            ValueError: if neither similarity is available; if the reference
+                covariance must be inverted but does not claim positive
+                definiteness; or if the solver does not invert it accurately.
+        """
+        from ..numerics.solvers import resolve_solver
+
+        if other._precision is not None:
+            inverse = other._precision
+        elif other._precision_factor is not None:
+            inverse = other._precision_factor.adjoint @ other._precision_factor
+        else:
+            reference = other._require_covariance("A stochastic divergence")
+            if Traits.POSITIVE_DEFINITE not in reference.traits:
+                raise ValueError(
+                    "The reference covariance has to be inverted, and it does "
+                    "not claim POSITIVE_DEFINITE. Attach the trait with "
+                    "with_traits() once testing.check_traits() has confirmed "
+                    "it, or supply the measure's precision -- which is the "
+                    "cheaper route anyway, since it removes the solve."
+                )
+            inverse = resolve_solver(solver, reference)(reference)
+            _check_round_trip(reference, inverse)
+
+        if self._covariance_factor is not None:
+            factor = self._covariance_factor
+            return factor.adjoint @ inverse @ factor, inverse
+        if other._precision_factor is not None:
+            root = other._precision_factor
+            covariance = self._require_covariance("A stochastic divergence")
+            return root @ covariance @ root.adjoint, inverse
+        raise ValueError(
+            "The stochastic route needs a square root of one of the two "
+            "covariances -- this measure's covariance factor, or the "
+            "reference's precision factor -- because the operator whose "
+            "spectrum it needs is only self-adjoint when written around one. "
+            "Supply covariance_factor here, or precision_factor there, or use "
+            "an exact route."
         )
-        return Estimate(float(value), error, samples)
 
     def rescale_directional_variance(
         self, direction: X, standard_deviation: float, /

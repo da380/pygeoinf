@@ -636,6 +636,153 @@ class TestStochasticNorms:
             mu.hilbert_schmidt_norm(method="magic")
 
 
+class TestStochasticDivergence:
+    """Bug 3.9. The route estimated three things and combined them: the trace
+    of ``C_o^-1 C_s`` and two log-determinants, each with its own probes. Two
+    of those are large and nearly equal whenever the measures are close, so the
+    answer was a small difference of large noisy numbers -- ``KL(mu || mu)``
+    came back as ``369 +/- 35``, and the other way round as ``-351 +/- 33``.
+
+    It is now one trace of ``g(M) == M - 1 - log M`` with ``M`` similar to
+    ``C_o^-1 C_s``, which is non-negative and vanishes at ``M == I``.
+    """
+
+    @staticmethod
+    def build(space, seed, /, *, shift=0.0):
+        matrix = np.random.default_rng(seed).standard_normal((space.dim, space.dim))
+        galerkin = matrix @ matrix.T + 0.5 * np.identity(space.dim)
+        expectation = None
+        if shift:
+            expectation = space.from_components(shift * np.ones(space.dim))
+        return GaussianMeasure.from_covariance_matrix(
+            space, galerkin, expectation=expectation
+        )
+
+    @pytest.fixture(
+        params=[lambda: EuclideanSpace(8), make_weighted_space, make_dense_metric_space],
+        ids=["euclidean", "weighted", "dense-metric"],
+    )
+    def space(self, request):
+        return request.param()
+
+    def test_a_measure_from_itself_is_zero_probe_by_probe(self, space):
+        """Not zero on average: zero in every probe, because ``M`` is the
+        identity and ``g`` has a double zero there. The old route needed the
+        cancellation to happen between three separate estimates and it did
+        not."""
+        mu = self.build(space, 1)
+        estimate = mu.kl_divergence_estimate(
+            mu, method="stochastic", samples=8, rng=np.random.default_rng(0)
+        )
+        assert abs(estimate.value) < 1e-8
+        assert estimate.standard_error < 1e-8
+
+    def test_it_agrees_with_the_dense_route(self, space):
+        mu = self.build(space, 1)
+        nu = self.build(space, 2, shift=0.3)
+        exact = mu.kl_divergence(nu, method="dense")
+        estimate = mu.kl_divergence_estimate(
+            nu, method="stochastic", samples=4000, rng=np.random.default_rng(5)
+        )
+        assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
+
+    def test_it_is_never_negative_and_never_less_certain_than_it_is_large(
+        self, space
+    ):
+        """A divergence cannot be negative, and this estimator cannot report
+        one: every probe returns ``(x, g(M) x) >= 0``. The same
+        non-negativity bounds the standard error by the mean, since
+        ``sum x_i^2 <= (sum x_i)^2`` for non-negative ``x``."""
+        mu = self.build(space, 1)
+        for seed in range(3, 9):
+            nu = self.build(space, seed)
+            estimate = mu.kl_divergence_estimate(
+                nu, method="stochastic", samples=4, rng=np.random.default_rng(seed)
+            )
+            assert estimate.value >= 0.0
+            assert estimate.standard_error <= estimate.value + 1e-12
+
+    def test_a_solver_that_does_not_invert_is_refused(self, rng):
+        """A Krylov solver stops on the residual, which on an ill-conditioned
+        covariance says almost nothing about the error. The old route trusted
+        it: CG at ``rtol=1e-8`` on a covariance of condition 4e10 gave a trace
+        of 217 where the truth was 289."""
+        from pygeoinf2.numerics.solvers import CGSolver
+
+        X = EuclideanSpace(60)
+        spectrum = np.geomspace(1.0, 1e-12, 60)
+        rotation, _ = np.linalg.qr(rng.standard_normal((60, 60)))
+        covariance = LinearOperator.from_matrix(
+            X,
+            X,
+            rotation @ np.diag(spectrum) @ rotation.T,
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        factor = LinearOperator.from_matrix(
+            EuclideanSpace(60), X, rotation @ np.diag(np.sqrt(spectrum)),
+            form="components",
+        )
+        reference = GaussianMeasure(X, covariance=covariance)
+        mine = GaussianMeasure(X, covariance_factor=factor)
+
+        with pytest.raises(ValueError, match="round trip"):
+            mine.kl_divergence_estimate(
+                reference,
+                method="stochastic",
+                samples=4,
+                solver=CGSolver(rtol=1e-6, strict=False),
+                rng=rng,
+            )
+
+    def test_an_unearned_definiteness_claim_is_not_made_for_the_caller(self, rng):
+        """The old route wrote ``with_traits(POSITIVE_DEFINITE)`` on both
+        covariances so that CG and Lanczos would accept them. That is the
+        caller's claim to make."""
+        X = EuclideanSpace(6)
+        matrix = rng.standard_normal((6, 6))
+        semidefinite = LinearOperator.from_matrix(
+            X,
+            X,
+            matrix @ matrix.T,
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        reference = GaussianMeasure(X, covariance=semidefinite)
+        mine = self.build(X, 1)
+
+        with pytest.raises(ValueError, match="POSITIVE_DEFINITE"):
+            mine.kl_divergence_estimate(reference, method="stochastic", samples=4)
+
+    def test_it_says_so_when_it_has_no_square_root(self, rng):
+        """``C_o^-1 C_s`` is not self-adjoint; the estimator needs it written
+        around a factor of one side or the other."""
+        X = EuclideanSpace(6)
+        matrix = rng.standard_normal((6, 6))
+        definite = LinearOperator.from_matrix(
+            X,
+            X,
+            matrix @ matrix.T + np.identity(6),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        bare = GaussianMeasure(X, covariance=definite)
+        reference = GaussianMeasure(
+            X,
+            covariance=definite,
+            precision=LinearOperator.from_matrix(
+                X,
+                X,
+                np.linalg.inv(matrix @ matrix.T + np.identity(6)),
+                form="components",
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="square root"):
+            bare.kl_divergence_estimate(reference, method="stochastic", samples=4)
+
+
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 
