@@ -744,12 +744,14 @@ class HilbertModule[V](HilbertSpace[V], ABC):
     wave speed, a variable rigidity, a mask — are where a physical model stops
     being invariant.
 
-    **The product of two band-limited functions is not band-limited.** Both
-    implementations here multiply on the grid, so the result is the exact
-    product sampled and then projected back, which aliases whatever lies above
-    the truncation. That is inherent rather than a defect, but it means the
-    truncation has to be chosen with the products in mind and not just the
-    fields.
+    **The product of two band-limited functions is not band-limited.** The
+    implementations here multiply on the grid and leave the result there, so a
+    product is the exact product sampled -- it is *not* projected back into the
+    span of the basis, which is what :meth:`SymmetricSpace.truncate` is for and
+    what anything reading its components does implicitly. The aliasing that
+    projection would introduce is inherent rather than a defect, but it means
+    the truncation has to be chosen with the products in mind and not just the
+    fields. See DESIGN.md section 35.
     """
 
     @abstractmethod
