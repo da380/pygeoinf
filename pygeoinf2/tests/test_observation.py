@@ -127,6 +127,33 @@ class TestGeodesics:
         exact = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(radius / RADIUS))
         assert weights.sum() == pytest.approx(exact, rel=1e-12)
 
+    def test_ball_nodes_lie_inside_the_ball(self, space, rng):
+        """The rule is now built as one array rather than ring by ring, so
+        this pins that the rings and their azimuths still line up."""
+        centre = space.random_point(rng=rng)
+        radius = 0.3 * RADIUS
+        nodes, weights = space.geodesic_ball_quadrature(centre, radius, count=200)
+        assert len(nodes) == weights.size == 200
+        distances = np.array(
+            [space.geodesic_distance(centre, node) for node in nodes]
+        )
+        assert distances.max() <= radius + 1e-12
+        assert distances.max() > 0.5 * radius
+
+    def test_a_gauss_rule_is_computed_once(self):
+        """REVIEW2 4.2.6: `leggauss` solves an eigenproblem, and every path
+        asks for the same few counts -- 0.8 s for 2000 of them."""
+        from pygeoinf2.symmetric_space.base import _gauss_legendre
+
+        abscissae, weights = _gauss_legendre(12)
+        again = _gauss_legendre(12)
+        assert again[0] is abscissae and again[1] is weights
+        reference = np.polynomial.legendre.leggauss(12)
+        assert np.array_equal(abscissae, reference[0])
+        assert np.array_equal(weights, reference[1])
+        with pytest.raises(ValueError):
+            abscissae[0] = 0.0
+
 
 class TestAverages:
     """Constant fields are the calibration: an average of one must be one."""
@@ -457,13 +484,31 @@ class TestWeightOperator:
     """The sparse half of the W E factorisation."""
 
     def test_it_is_its_own_transpose_adjoint(self, rng):
-        from pygeoinf2.symmetric_space.base import _weight_operator
+        from pygeoinf2.symmetric_space.base import _weight_matrix, _weight_operator
 
-        W = _weight_operator(2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0])
+        sparse = _weight_matrix(
+            2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0]
+        )
+        W = _weight_operator(sparse)
         check_operator(W, rng=rng)
         assert isinstance(W, LinearOperator)
         assert W.domain == EuclideanSpace(4)
         assert np.allclose(W(np.array([1.0, 1.0, 1.0, 1.0])), [3.0, 7.0])
+
+    def test_the_dense_route_never_densifies_the_weights(self, space, rng):
+        """REVIEW2 4.2.6. `weights.matrix()` built a (paths, nodes) array that
+        holds one entry per node: 1.59 s against 0.018 s at 2000 paths."""
+        paths = list(
+            zip(space.random_points(6, rng=rng), space.random_points(6, rng=rng))
+        )
+        field = space.random(rng=rng)
+        free = space.path_integral_operator(paths, count=8)
+        dense = space.path_integral_operator(paths, count=8, dense=True)
+        assert np.allclose(free(field), dense(field))
+        assert np.allclose(
+            space.to_components(free.adjoint(np.arange(1.0, 7.0))),
+            space.to_components(dense.adjoint(np.arange(1.0, 7.0))),
+        )
 
 
 class TestPointConvention:

@@ -30,7 +30,7 @@ from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import ArrayVectorMixin
-from .base import PreparedPoints, SymmetricSpace, lift_formal_adjoint
+from .base import PreparedPoints, SymmetricSpace, _gauss_legendre, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
 
@@ -637,9 +637,9 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         offset = self._separation(start, end)
         length = float(np.linalg.norm(offset))
 
-        abscissae, weights = np.polynomial.legendre.leggauss(count)
+        abscissae, weights = _gauss_legendre(count)
         fractions = 0.5 * (abscissae + 1.0)
-        nodes = [self._wrap(first + fraction * offset) for fraction in fractions]
+        nodes = list(self._wrap(first[None, :] + fractions[:, None] * offset[None, :]))
         return nodes, 0.5 * length * weights
 
     def _wrap(self, point: np.ndarray, /) -> np.ndarray:
@@ -846,26 +846,26 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         first = self._as_point(centre)
 
         if dimension == 1:
-            abscissae, weights = np.polynomial.legendre.leggauss(max(count, 1))
+            abscissae, weights = _gauss_legendre(max(count, 1))
             offsets = radius * abscissae
-            nodes = [self._wrap(first + np.array([offset])) for offset in offsets]
+            nodes = list(self._wrap(first[None, :] + offsets[:, None]))
             return nodes, radius * weights
 
         rings = max(1, int(np.sqrt(count)))
         spokes = max(1, count // rings)
-        abscissae, weights = np.polynomial.legendre.leggauss(rings)
+        abscissae, weights = _gauss_legendre(rings)
         radii = 0.5 * radius * (abscissae + 1.0)
         # r dr from the area element, and the half-width of the mapping.
         radial = 0.5 * radius * weights * radii
         angles = 2.0 * np.pi * np.arange(spokes) / spokes
 
-        nodes, values = [], []
-        for ring_radius, ring_weight in zip(radii, radial):
-            for angle in angles:
-                offset = ring_radius * np.array([np.cos(angle), np.sin(angle)])
-                nodes.append(self._wrap(first + offset))
-                values.append(ring_weight * 2.0 * np.pi / spokes)
-        return nodes, np.array(values)
+        # The outer product of rings and spokes, taken as one array rather
+        # than as a double Python loop wrapping a point at a time.
+        directions = np.column_stack([np.cos(angles), np.sin(angles)])
+        offsets = (radii[:, None, None] * directions[None, :, :]).reshape(-1, 2)
+        nodes = list(self._wrap(first[None, :] + offsets))
+        values = np.repeat(radial * 2.0 * np.pi / spokes, spokes)
+        return nodes, values
 
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
         """Points at given distances from a point, along the first axis.

@@ -27,6 +27,7 @@ See DESIGN.md section 13.
 from __future__ import annotations
 
 from abc import abstractmethod
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable, Hashable, Sequence
 
 import numpy as np
@@ -2190,11 +2191,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             columns.extend(range(offset, offset + len(path_nodes)))
             values.extend(path_weights.tolist())
 
-        weights = _weight_operator(len(paths), len(nodes), rows, columns, values)
+        sparse = _weight_matrix(len(paths), len(nodes), rows, columns, values)
         if dense:
             from ..algebra.spaces import EuclideanSpace
 
-            matrix = weights.matrix(form="components") @ self.basis_matrix(nodes)
+            # The weights stay sparse. Asking the operator for its matrix
+            # densified a (paths, nodes) array that is one entry per node --
+            # 1.59 s against 0.018 s for 2000 paths (REVIEW2 4.2.6).
+            matrix = sparse @ self.basis_matrix(nodes)
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(paths)), matrix, form="galerkin"
             )
@@ -2203,7 +2207,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # this one is bounded only for order above 1/2 rather than for every
         # order -- a weaker condition than point evaluation's, and one this
         # class does not check.
-        return weights @ self.point_evaluation_operator(
+        return _weight_operator(sparse) @ self.point_evaluation_operator(
             nodes, unsafe=True, eps=eps, nthreads=nthreads
         )
 
@@ -2259,11 +2263,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             columns.extend(range(offset, offset + len(ball_nodes)))
             values.extend(np.asarray(ball_weights, dtype=float).tolist())
 
-        weights = _weight_operator(len(centres), len(nodes), rows, columns, values)
+        sparse = _weight_matrix(len(centres), len(nodes), rows, columns, values)
         if dense:
             from ..algebra.spaces import EuclideanSpace
 
-            matrix = weights.matrix(form="components") @ self.basis_matrix(nodes)
+            # Sparse, for the reason given in _path_operator.
+            matrix = sparse @ self.basis_matrix(nodes)
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(centres)), matrix, form="galerkin"
             )
@@ -2271,7 +2276,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # computes is an average over a set of positive measure, which is
         # bounded on L2 and has a perfectly good representer there. The
         # closed-form route below takes no point values at all.
-        return weights @ self.point_evaluation_operator(nodes, unsafe=True)
+        return _weight_operator(sparse) @ self.point_evaluation_operator(
+            nodes, unsafe=True
+        )
 
     @abstractmethod
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
@@ -2576,13 +2583,38 @@ def _distribute(total: int, weights: np.ndarray) -> np.ndarray:
     return counts
 
 
-def _weight_operator(
+@lru_cache(maxsize=64)
+def _gauss_legendre(count: int) -> tuple[np.ndarray, np.ndarray]:
+    """Gauss-Legendre abscissae and weights, computed once per count.
+
+    Every path and every ball asks for the same few counts, and
+    ``np.polynomial.legendre.leggauss`` solves an eigenproblem each time:
+    0.8 s for the 2000 calls one tomographic geometry makes (REVIEW2 4.2.6).
+    Returned read-only, since the arrays are shared.
+    """
+    abscissae, weights = np.polynomial.legendre.leggauss(count)
+    abscissae.flags.writeable = False
+    weights.flags.writeable = False
+    return abscissae, weights
+
+
+def _weight_matrix(
     rows: int,
     columns: int,
     row_indices: Sequence[int],
     column_indices: Sequence[int],
     values: Sequence[float],
-) -> LinearOperator:
+) -> Any:
+    """The sparse quadrature weights of a ``W E`` factorisation, as a CSR."""
+    from scipy.sparse import coo_matrix
+
+    return coo_matrix(
+        (np.asarray(values, dtype=float), (row_indices, column_indices)),
+        shape=(rows, columns),
+    ).tocsr()
+
+
+def _weight_operator(matrix: Any, /) -> LinearOperator:
     """A sparse matrix between Euclidean spaces, as a linear operator.
 
     Both spaces are orthonormal, so the adjoint *is* the transpose and there is
@@ -2590,14 +2622,9 @@ def _weight_operator(
     true, and it is why the ``W E`` factorisation is worth having: all the
     metric lives in ``E``, which is built from derivative components.
     """
-    from scipy.sparse import coo_matrix
-
     from ..algebra.spaces import EuclideanSpace
 
-    matrix = coo_matrix(
-        (np.asarray(values, dtype=float), (row_indices, column_indices)),
-        shape=(rows, columns),
-    ).tocsr()
+    rows, columns = matrix.shape
     transpose = matrix.T.tocsr()
     return LinearOperator.from_callables(
         EuclideanSpace(columns),

@@ -41,7 +41,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearFunctional, LinearOperator
-from .base import PreparedPoints, SymmetricSpace, _distribute
+from .base import PreparedPoints, SymmetricSpace, _distribute, _gauss_legendre
 
 __all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
@@ -1207,16 +1207,33 @@ class Sphere(SymmetricSpace[Any]):
     @staticmethod
     def _to_point(vector: np.ndarray) -> np.ndarray:
         """A unit vector as a ``(latitude, longitude)`` pair in degrees."""
-        unit = np.asarray(vector, dtype=float)
-        unit = unit / np.linalg.norm(unit)
+        return Sphere._to_points(np.atleast_2d(np.asarray(vector, dtype=float)))[0]
+
+    @staticmethod
+    def _to_points(vectors: np.ndarray, /) -> np.ndarray:
+        """Many vectors as ``(latitude, longitude)`` pairs in degrees.
+
+        The batched form of :meth:`_to_point`, and the reason a quadrature
+        rule can be built without a Python loop over its nodes: one path of
+        32 nodes made 32 of these calls, and a tomographic geometry of 2000
+        paths made 64 000 (REVIEW2 4.2.6).
+
+        Args:
+            vectors: an ``(n, 3)`` array. Need not be normalised.
+
+        Returns:
+            An ``(n, 2)`` array of points.
+        """
+        array = np.asarray(vectors, dtype=float)
+        unit = array / np.linalg.norm(array, axis=-1, keepdims=True)
         return Sphere.to_latitude_degrees(
-            np.array(
+            np.column_stack(
                 [
-                    float(np.arccos(np.clip(unit[2], -1.0, 1.0))),
-                    float(np.arctan2(unit[1], unit[0]) % (2.0 * np.pi)),
+                    np.arccos(np.clip(unit[:, 2], -1.0, 1.0)),
+                    np.arctan2(unit[:, 1], unit[:, 0]) % (2.0 * np.pi),
                 ]
             )
-        )[0]
+        )
 
     @staticmethod
     def _tangent_frame(centre: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1288,16 +1305,16 @@ class Sphere(SymmetricSpace[Any]):
             )
 
         arc_length = self._radius * angle
-        abscissae, weights = np.polynomial.legendre.leggauss(count)
+        abscissae, weights = _gauss_legendre(count)
         parameters = 0.5 * (abscissae + 1.0)
         sine = np.sin(angle)
-        nodes = [
-            self._to_point(
-                (np.sin((1.0 - s) * angle) * first + np.sin(s * angle) * second) / sine
-            )
-            for s in parameters
-        ]
-        return nodes, weights * (0.5 * arc_length)
+        # The slerp, over every node at once. Node for node the same points as
+        # the loop it replaces, to 4e-13 degrees.
+        vectors = (
+            np.sin((1.0 - parameters) * angle)[:, None] * first[None, :]
+            + np.sin(parameters * angle)[:, None] * second[None, :]
+        ) / sine
+        return list(self._to_points(vectors)), weights * (0.5 * arc_length)
 
     def geodesic_ball_quadrature(
         self, centre: Any, radius: float, /, *, count: int
@@ -1333,7 +1350,7 @@ class Sphere(SymmetricSpace[Any]):
         angular_radius = radius / self._radius
         cosine = np.cos(angular_radius)
         ring_count = min(count, max(1, int(np.sqrt(count))))
-        abscissae, weights = np.polynomial.legendre.leggauss(ring_count)
+        abscissae, weights = _gauss_legendre(ring_count)
         half_width = 0.5 * (1.0 - cosine)
         heights = half_width * (abscissae + 1.0) + cosine
         ring_weights = half_width * weights
@@ -1343,21 +1360,24 @@ class Sphere(SymmetricSpace[Any]):
         centre_vector = self._to_vector(centre)
         first, second = self._tangent_frame(centre_vector)
 
-        nodes: list[np.ndarray] = []
-        node_weights: list[float] = []
-        for height, weight, ring_radius, points_here in zip(
-            heights, ring_weights, ring_radii, counts
-        ):
-            azimuths = 2.0 * np.pi * np.arange(points_here, dtype=float) / points_here
-            vectors = height * centre_vector[None, :] + ring_radius * (
-                np.cos(azimuths)[:, None] * first[None, :]
-                + np.sin(azimuths)[:, None] * second[None, :]
-            )
-            nodes.extend(self._to_point(vector) for vector in vectors)
-            share = self._radius**2 * 2.0 * np.pi * weight / points_here
-            node_weights.extend([share] * points_here)
-
-        return nodes, np.asarray(node_weights)
+        # Every ring's azimuths at once, then every node converted at once:
+        # the rings differ only in how many points they hold, so the whole
+        # rule is three concatenations and one vectorised conversion.
+        azimuths = np.concatenate(
+            [
+                2.0 * np.pi * np.arange(points_here, dtype=float) / points_here
+                for points_here in counts
+            ]
+        )
+        ring_of_node = np.repeat(np.arange(counts.size), counts)
+        vectors = heights[ring_of_node, None] * centre_vector[None, :] + ring_radii[
+            ring_of_node, None
+        ] * (
+            np.cos(azimuths)[:, None] * first[None, :]
+            + np.sin(azimuths)[:, None] * second[None, :]
+        )
+        shares = self._radius**2 * 2.0 * np.pi * ring_weights / counts
+        return list(self._to_points(vectors)), shares[ring_of_node]
 
     # ----------------------------------------------------------------- #
     #                          Cap averages                             #
