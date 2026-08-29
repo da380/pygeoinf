@@ -920,6 +920,86 @@ class TestTheAmbientBall:
         assert GaussianMeasure._quantile_method_for(np.ones(50)) == "imhof"
 
 
+class TestDenseCovariance:
+    """v1's ``with_dense_covariance(parallel=, n_jobs=)``, which had no
+    successor. Every pyslfp plotting script calls it before drawing a variance
+    field: the covariance of a posterior is a graph of operators, and once it
+    is going to be applied ``dim`` times it is cheaper assembled."""
+
+    @pytest.fixture
+    def opaque(self, rng):
+        """A measure whose covariance is a callable: no factor, no precision,
+        nothing to read a matrix off."""
+        X = make_dense_metric_space(6)
+        galerkin = spd(rng, 6)
+        components = np.linalg.solve(X.gram_matrix(), galerkin)
+
+        def apply(vector):
+            return X.from_components(components @ X.to_components(vector))
+
+        covariance = LinearOperator.self_adjoint(
+            X, apply, traits=Traits.POSITIVE_DEFINITE
+        )
+        mean = X.random(rng=rng)
+        return X, components, GaussianMeasure(X, covariance=covariance,
+                                              expectation=mean)
+
+    def test_it_assembles_the_same_law(self, opaque, rng):
+        X, components, measure = opaque
+        assert not measure.can_sample
+        assert measure.precision is None
+
+        dense = measure.with_dense_covariance(n_jobs=2)
+
+        assert dense.covariance.matrix(form="components") == pytest.approx(
+            components
+        )
+        assert X.norm(X.subtract(dense.expectation, measure.expectation)) < 1e-14
+
+    def test_the_result_can_be_sampled_and_has_a_density(self, opaque, rng):
+        """Which the original could do neither of: the factorisation that
+        assembling makes possible supplies both."""
+        X, components, measure = opaque
+        dense = measure.with_dense_covariance()
+
+        assert dense.can_sample
+        assert dense.precision.matrix(form="components") == pytest.approx(
+            np.linalg.inv(components)
+        )
+        draws = np.array(
+            [X.to_components(dense.sample(rng=rng)) for _ in range(20000)]
+        )
+        inverse = np.linalg.inv(X.gram_matrix())
+        expected = components @ inverse
+        scale = float(np.max(np.abs(expected)))
+        assert np.cov(draws.T) == pytest.approx(expected, abs=0.05 * scale)
+
+    def test_the_assembly_happens_once(self, opaque):
+        X, _, measure = opaque
+        tally = []
+        counting = LinearOperator.self_adjoint(
+            X,
+            lambda v: (tally.append(1), measure.covariance(v))[1],
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        wrapped = GaussianMeasure(X, covariance=counting)
+
+        first = wrapped.with_dense_covariance()
+        assert len(tally) == X.dim
+        assert wrapped.with_dense_covariance(n_jobs=4) is first
+        assert len(tally) == X.dim
+
+    def test_a_measure_without_a_covariance_says_so(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = EuclideanSpace(4)
+        measure = GaussianMeasure(
+            space, precision=DiagonalLinearOperator(space, np.ones(4))
+        )
+        with pytest.raises(ValueError, match="covariance"):
+            measure.with_dense_covariance()
+
+
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 

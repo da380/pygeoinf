@@ -230,6 +230,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         self._precision_factor = precision_factor
         self._sample_fn = sample
         self._log_normalisation: float | None = None
+        self._dense: GaussianMeasure[X] | None = None
 
     # ----------------------------------------------------------------- #
     #                            Constructors                           #
@@ -1261,6 +1262,73 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation=self._expectation,
             covariance_factor=factorised.factor,
         )
+
+    def with_dense_covariance(
+        self, /, *, n_jobs: int | None = None
+    ) -> "GaussianMeasure[X]":
+        """The same measure with its covariance assembled as a dense matrix.
+
+        The covariance of a measure built by the algebra -- a pushforward, a
+        posterior, a sum -- is a graph of operators, and applying it costs
+        whatever that graph costs. Once it is going to be applied many times,
+        or once something wants to look at it, assembling it once is cheaper:
+        this is what a plotting script does before drawing a variance field,
+        and it is v1's ``with_dense_covariance(parallel=, n_jobs=)``, which had
+        no successor here.
+
+        The assembly is ``dim`` applications of the covariance, run in
+        parallel when *n_jobs* asks. The result carries a matrix-backed
+        covariance, and the factor and precision factor that come out of
+        factorising it -- so the returned measure can be sampled and has a
+        density even when this one could do neither.
+
+        The dense measure is kept, so a second call is free and a later
+        *n_jobs* is ignored. That is the point: the assembly is the expensive
+        thing and nobody wants it twice.
+
+        Args:
+            n_jobs: workers for the ``dim`` applications.
+
+        Returns:
+            A measure with the same law and a matrix-backed covariance.
+
+        Raises:
+            ValueError: if this measure has no covariance operator, or the
+                space has no coordinates to assemble one in.
+        """
+        if self._dense is not None:
+            return self._dense
+
+        require_coordinates(self._domain)
+        covariance = self._require_covariance("A dense covariance")
+        galerkin = covariance.matrix(form="galerkin", n_jobs=n_jobs)
+        symmetric = 0.5 * (galerkin + galerkin.T)
+
+        # The factors come from the same construction as
+        # from_covariance_matrix, which accepts a semidefinite matrix and
+        # attaches a precision when there is one to attach. The covariance
+        # itself is then replaced by the matrix rather than left as ``L L*``:
+        # one product instead of two, and a matrix the operator algebra can
+        # read straight off. That is v1's move here too.
+        factored = GaussianMeasure.from_covariance_matrix(
+            self._domain, symmetric, expectation=self._expectation
+        )
+        dense = LinearOperator.from_matrix(
+            self._domain,
+            self._domain,
+            symmetric,
+            traits=_REQUIRED,
+            form="galerkin",
+        )
+        self._dense = self._rebuild(
+            self._domain,
+            expectation=self._expectation,
+            covariance=dense,
+            covariance_factor=factored.covariance_factor,
+            precision=factored.precision,
+            precision_factor=factored.precision_factor,
+        )
+        return self._dense
 
     def with_regularized_inverse(
         self,
