@@ -976,7 +976,6 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         samples: int | None = None,
         rng: Generator | None = None,
         n_jobs: int | None = None,
-        backend: str | None = None,
     ) -> np.ndarray:
         """``Var(x(p))`` at given points, for *any* measure on this space.
 
@@ -1001,7 +1000,6 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 covariance application per point.
             rng: the generator for those probes.
             n_jobs: workers for the exact route, whose points are independent.
-            backend: the joblib backend.
 
         Returns:
             One variance per point.
@@ -1020,7 +1018,6 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                     ),
                     points,
                     n_jobs=n_jobs,
-                    backend=backend,
                 )
             )
         evaluation = self.point_evaluation_operator(points)

@@ -670,7 +670,6 @@ class LinearOperator[X, Y](Operator[X, Y]):
         form: Literal["auto", "components", "galerkin"] = "auto",
         by: Literal["auto", "columns", "rows"] = "auto",
         n_jobs: int | None = None,
-        backend: str | None = None,
     ) -> np.ndarray:
         """A dense matrix representation. Requires coordinates on both sides.
 
@@ -701,7 +700,6 @@ class LinearOperator[X, Y](Operator[X, Y]):
             form: which representation to return.
             by: which way to fill it in.
             n_jobs: workers for the column or row loop. Serial by default.
-            backend: joblib's backend.
 
         Returns:
             The matrix.
@@ -728,9 +726,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
                     self(self.domain.basis_vector(index))
                 )
 
-            columns = parallel_map(
-                column, range(self.domain.dim), n_jobs=n_jobs, backend=backend
-            )
+            columns = parallel_map(column, range(self.domain.dim), n_jobs=n_jobs)
             matrix = (
                 np.column_stack(columns)
                 if columns
@@ -754,9 +750,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
             representer = adjoint(self.codomain.basis_vector(index))
             return self.domain.apply_gram(self.domain.to_components(representer))
 
-        rows = parallel_map(
-            row, range(self.codomain.dim), n_jobs=n_jobs, backend=backend
-        )
+        rows = parallel_map(row, range(self.codomain.dim), n_jobs=n_jobs)
         matrix = np.stack(rows) if rows else np.zeros((0, self.domain.dim))
         if form == "components":
             # A_c == G_Y^-1 M, so the inverse metric acts down each column.

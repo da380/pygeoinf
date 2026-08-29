@@ -79,7 +79,6 @@ class ProbabilityMeasure[X](ABC):
         *,
         rng: Generator | None = None,
         n_jobs: int | None = None,
-        backend: str | None = None,
     ) -> list[X]:
         """Draw ``n`` independent samples.
 
@@ -88,19 +87,16 @@ class ProbabilityMeasure[X](ABC):
         solve -- so it takes an ``n_jobs``. Serial by default; see
         :mod:`pygeoinf2.parallel`.
 
-        **Seeding across workers.** Each draw is given its own generator, spawned
-        from *rng*, so a parallel run is reproducible and the workers do not
-        share a stream. That means the draws differ from a serial run with the
-        same seed: independent, identically distributed, and not the same
-        numbers. A test that pins particular values should stay serial.
+        **Seeding.** Each draw is given its own generator, spawned from *rng*,
+        whether or not the loop runs in parallel. So the draws are a function
+        of the seed alone: the same at any ``n_jobs``, and independent across
+        workers. They are not the draws that ``n`` successive calls of
+        :meth:`sample` on *rng* would give.
 
         Args:
             n: how many draws.
-            rng: the generator. Draws are spawned from it when parallel.
+            rng: the generator the per-draw streams are spawned from.
             n_jobs: workers. Serial by default.
-            backend: joblib's backend. Processes by default, which is the
-                right choice on a sphere -- ``"threading"`` crashes the
-                interpreter there. See :mod:`pygeoinf2.parallel`.
 
         Returns:
             The draws.
@@ -110,20 +106,13 @@ class ProbabilityMeasure[X](ABC):
         """
         if n < 0:
             raise ValueError("n must be non-negative.")
-        from ..parallel import parallel_map, resolve_jobs
-
-        if resolve_jobs(n_jobs) == 1:
-            return [self.sample(rng=rng) for _ in range(n)]
-
         from numpy.random import default_rng
 
+        from ..parallel import parallel_map
+
         parent = default_rng() if rng is None else rng
-        streams = parent.spawn(n)
         return parallel_map(
-            lambda stream: self.sample(rng=stream),
-            streams,
-            n_jobs=n_jobs,
-            backend=backend,
+            lambda stream: self.sample(rng=stream), parent.spawn(n), n_jobs=n_jobs
         )
 
     def sample_expectation(self, n: int, *, rng: Generator | None = None) -> X:

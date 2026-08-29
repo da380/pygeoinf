@@ -722,7 +722,6 @@ def random_trace(
     block_size: int = 20,
     rng: Generator | None = None,
     n_jobs: int | None = None,
-    backend: str | None = None,
 ) -> Estimate:
     """The Hutchinson trace estimate, coordinate-free.
 
@@ -743,9 +742,11 @@ def random_trace(
         max_samples: a ceiling on the adaptive route. Defaults to twenty
             blocks past the first.
         block_size: how many probes to add per round.
-        rng: the generator.
-        n_jobs: workers for the probes.
-        backend: the joblib backend.
+        rng: the generator. One stream per probe is spawned from it, whether
+            or not the probes run in parallel, so the estimate is a function
+            of the seed alone (see :mod:`pygeoinf2.parallel`).
+        n_jobs: workers for the probes, and for each further block on the
+            adaptive route.
 
     Returns:
         The estimate, with the standard error that earns it.
@@ -762,41 +763,29 @@ def random_trace(
         raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
 
     space = operator.domain
-    from ..parallel import parallel_map, resolve_jobs
+    from numpy.random import default_rng
 
-    if resolve_jobs(n_jobs) == 1:
-        draws = np.empty(samples)
-        for index in range(samples):
-            probe = space.white_noise(rng=rng)
-            draws[index] = space.inner_product(operator(probe), probe)
-    else:
-        # A probe per worker, each with its own stream so the run is
-        # reproducible and the workers do not share one. The draws then differ
-        # from a serial run at the same seed -- independent, not identical.
-        from numpy.random import default_rng
+    from ..parallel import parallel_map
 
-        parent = default_rng() if rng is None else rng
+    parent = default_rng() if rng is None else rng
 
-        def probe_once(stream: Any) -> float:
-            probe = space.white_noise(rng=stream)
-            return space.inner_product(operator(probe), probe)
+    def probe_once(stream: Any) -> float:
+        probe = space.white_noise(rng=stream)
+        return space.inner_product(operator(probe), probe)
 
-        draws = np.array(
-            parallel_map(
-                probe_once, parent.spawn(samples), n_jobs=n_jobs, backend=backend
-            )
-        )
+    def block(count: int) -> np.ndarray:
+        # One stream per probe, spawned in order from the parent, so the
+        # draws are the same whether they run here or across workers.
+        return np.array(parallel_map(probe_once, parent.spawn(count), n_jobs=n_jobs))
+
+    draws = block(samples)
     if rtol is not None:
         ceiling = max_samples if max_samples is not None else samples + 20 * block_size
         while draws.size < ceiling:
             error = float(draws.std(ddof=1) / np.sqrt(draws.size))
             if error <= rtol * abs(float(draws.mean())):
                 break
-            more = np.empty(min(block_size, ceiling - draws.size))
-            for index in range(more.size):
-                probe = space.white_noise(rng=rng)
-                more[index] = space.inner_product(operator(probe), probe)
-            draws = np.concatenate([draws, more])
+            draws = np.concatenate([draws, block(min(block_size, ceiling - draws.size))])
         samples = draws.size
 
     return Estimate(

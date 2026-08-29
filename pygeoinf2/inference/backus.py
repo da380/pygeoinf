@@ -1258,7 +1258,6 @@ class DualFeasibleProperty(SetEstimator):
         route: str = "dual",
         warm_start: bool = True,
         n_jobs: int | None = None,
-        backend: str | None = None,
         **kwargs: Any,
     ) -> np.ndarray:
         """The support values in many directions, sweeping with a warm start.
@@ -1300,7 +1299,6 @@ class DualFeasibleProperty(SetEstimator):
             warm_start: carry each answer into the next. Ignored when running
                 in parallel, where there is no previous answer to carry.
             n_jobs: workers. ``None`` or one keeps the sweep sequential.
-            backend: the joblib backend.
             **kwargs: passed to the primal solver, and ignored on the dual
                 route, which is configured through ``method=`` at construction.
 
@@ -1372,7 +1370,6 @@ class DualFeasibleProperty(SetEstimator):
                     lambda direction: self.support(direction, data),
                     directions,
                     n_jobs=n_jobs,
-                    backend=backend,
                 )
             )
 

@@ -604,31 +604,30 @@ class TestConditioning:
 class TestParallelLoops:
     """D-6: ``n_jobs`` at the loops *around* operators, never inside them."""
 
-    def test_parallel_draws_have_the_right_law(self, rng):
-        """Not the same numbers as a serial run at the same seed -- each worker
-        gets its own spawned stream, so the draws are independent rather than
-        identical. Reproducible, and not a repeat."""
-        space = make_weighted_space()
+    def test_draws_do_not_depend_on_the_job_count(self, rng):
+        """One stream per draw is spawned from the parent whether or not the
+        loop is parallel, so the same seed gives the same draws at any
+        ``n_jobs`` -- and the workers never share a stream."""
+        space = make_dense_metric_space(6)
         measure = GaussianMeasure.from_standard_deviation(space, 1.5)
 
-        serial = measure.samples(2000, rng=np.random.default_rng(3))
-        parallel = measure.samples(
-            2000, rng=np.random.default_rng(3), n_jobs=2, backend="threading"
-        )
-        assert len(parallel) == 2000
-        assert not np.allclose(serial[0], parallel[0])
+        serial = measure.samples(12, rng=np.random.default_rng(3))
+        parallel = measure.samples(12, rng=np.random.default_rng(3), n_jobs=2)
+        assert len(parallel) == 12
+        for x, y in zip(serial, parallel):
+            assert np.allclose(x, y)
+        assert not np.allclose(serial[0], serial[1])
 
-        for draws in (serial, parallel):
-            components = np.array([space.to_components(x) for x in draws])
-            for index in range(space.dim):
-                direction = space.basis_vector(index)
-                empirical = np.mean(
-                    [space.inner_product(x, direction) ** 2 for x in draws]
-                )
-                assert empirical == pytest.approx(
-                    1.5**2 * space.inner_product(direction, direction), rel=0.12
-                )
-            assert components.shape == (2000, space.dim)
+    def test_parallel_draws_have_the_right_law(self, rng):
+        space = make_weighted_space()
+        measure = GaussianMeasure.from_standard_deviation(space, 1.5)
+        draws = measure.samples(2000, rng=np.random.default_rng(3), n_jobs=2)
+        for index in range(space.dim):
+            direction = space.basis_vector(index)
+            empirical = np.mean([space.inner_product(x, direction) ** 2 for x in draws])
+            assert empirical == pytest.approx(
+                1.5**2 * space.inner_product(direction, direction), rel=0.12
+            )
 
     def test_a_parallel_matrix_is_the_serial_one(self, rng):
         space = make_dense_metric_space()
@@ -647,14 +646,31 @@ class TestParallelLoops:
         for form in ("components", "galerkin"):
             for by in ("columns", "rows"):
                 assert operator.matrix(form=form, by=by) == pytest.approx(
-                    operator.matrix(form=form, by=by, n_jobs=2, backend="threading")
+                    operator.matrix(form=form, by=by, n_jobs=2)
                 )
+
+    def test_a_trace_estimate_does_not_depend_on_the_job_count(self, rng):
+        from pygeoinf2.numerics.randomised import random_trace
+
+        space = make_dense_metric_space(5)
+        operator = LinearOperator.from_matrix(
+            space, space, np.diag([1.0, 2.0, 3.0, 4.0, 5.0]), form="components"
+        )
+        serial = random_trace(operator, samples=8, rng=np.random.default_rng(2))
+        parallel = random_trace(
+            operator, samples=8, rng=np.random.default_rng(2), n_jobs=2
+        )
+        assert serial.value == pytest.approx(parallel.value)
+        assert serial.standard_error == pytest.approx(parallel.standard_error)
+        adaptive = random_trace(
+            operator, samples=8, rtol=0.5, rng=np.random.default_rng(2), n_jobs=2
+        )
+        assert adaptive.samples >= 8
 
     @pytest.mark.slow
     def test_the_process_backend_works_on_a_sphere(self, rng):
-        """The default, and the only safe one there: the pyshtools transforms
-        crash the interpreter when called from two Python threads at once, so
-        ``backend="threading"`` is for work that stays in NumPy."""
+        """The only safe backend there: the pyshtools transforms crash the
+        interpreter when called from two Python threads at once."""
         pytest.importorskip("pyshtools")
         from pygeoinf2.symmetric_space.sphere import Sobolev
 
@@ -680,19 +696,84 @@ class TestParallelLoops:
         with pytest.raises(ValueError, match="positive count"):
             resolve_jobs(-2)
 
-    def test_it_stays_serial_without_joblib(self, monkeypatch):
-        """The dependency is optional: with one job nothing is imported, and
-        with joblib missing the loop still runs."""
-        import builtins
+    def test_all_cores_means_the_cores_this_process_may_use(self):
+        """``-1`` follows the affinity mask, not the machine: in a scheduler
+        allocation ``os.cpu_count`` reports the whole node."""
+        import os
+
+        from pygeoinf2.parallel import resolve_jobs
+
+        if not hasattr(os, "sched_setaffinity"):
+            pytest.skip("no affinity control on this platform")
+        original = os.sched_getaffinity(0)
+        if len(original) < 2:
+            pytest.skip("one core only")
+        try:
+            os.sched_setaffinity(0, set(sorted(original)[:1]))
+            assert resolve_jobs(-1) == 1
+        finally:
+            os.sched_setaffinity(0, original)
+
+    def test_workers_get_one_thread_each(self):
+        """joblib's own default hands each worker cores // n_jobs OpenMP and
+        BLAS threads, which for this library's transforms is a measured loss;
+        the loop caps them at one. An exported variable, or a
+        ``parallel_config`` context, wins over that."""
+        import os
+
+        from joblib import parallel_config
 
         from pygeoinf2.parallel import parallel_map
 
-        real_import = builtins.__import__
+        def threads(_):
+            return os.environ.get("OMP_NUM_THREADS"), os.environ.get(
+                "OPENBLAS_NUM_THREADS"
+            )
 
-        def refuse(name, *args, **kwargs):
-            if name == "joblib":
-                raise ImportError("no joblib")
-            return real_import(name, *args, **kwargs)
+        assert set(parallel_map(threads, range(4), n_jobs=2)) == {("1", "1")}
+        with parallel_config(backend="loky", inner_max_num_threads=2):
+            assert set(parallel_map(threads, range(4), n_jobs=2)) == {("2", "2")}
 
-        monkeypatch.setattr(builtins, "__import__", refuse)
-        assert parallel_map(lambda i: i * i, range(4), n_jobs=2) == [0, 1, 4, 9]
+    def test_a_nested_loop_runs_serially_in_its_worker(self):
+        """joblib would otherwise turn the inner request into threads inside
+        the worker -- on a sphere, a crash. So a forwarded ``n_jobs`` can never
+        produce threads."""
+        import os
+        import threading
+
+        from pygeoinf2.parallel import parallel_map
+
+        def inner(_):
+            return set(
+                parallel_map(
+                    lambda j: (os.getpid(), threading.current_thread().name),
+                    range(3),
+                    n_jobs=3,
+                )
+            )
+
+        for where in parallel_map(inner, range(2), n_jobs=2):
+            assert len(where) == 1
+            (pid, thread), = where
+            assert pid != os.getpid()
+            assert thread == "MainThread"
+
+    def test_a_context_chooses_the_backend(self):
+        """The loops pass only ``n_jobs``; everything else is joblib's
+        ``parallel_config``, which is how a threading backend -- safe for
+        NumPy-bound work -- or a cluster is chosen."""
+        import threading
+
+        from joblib import parallel_config
+
+        from pygeoinf2.parallel import parallel_map
+
+        with parallel_config(backend="threading"):
+            kinds = set(
+                parallel_map(
+                    lambda i: type(threading.current_thread()).__name__,
+                    range(4),
+                    n_jobs=2,
+                )
+            )
+        assert kinds == {"DummyProcess"}
