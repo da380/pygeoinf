@@ -303,6 +303,84 @@ class TestAnInvariantDrawIsTakenInComponents:
         assert np.allclose(drawn, 2.0 * once)
 
 
+class TestTwoPointQuantitiesInClosedForm:
+    """REVIEW2 4.2.4. An invariant measure's covariance is diagonal, so both
+    two-point quantities are sums over the basis rather than applications of
+    the operator to a Dirac's representer."""
+
+    @staticmethod
+    def _by_hand(space, variances, first, second):
+        """`sum_k s_k phi_k(p) phi_k(q) / g_k`, written out."""
+        return float(
+            np.sum(
+                variances
+                * space.basis_at(first)
+                * space.basis_at(second)
+                / space.metric_values
+            )
+        )
+
+    def test_the_covariance_function_is_the_sum_over_the_basis(self, geometry):
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        anchor = space.reference_point
+        distances = np.array([0.0, 0.05, 0.13, 0.4])
+        expected = [
+            self._by_hand(space, variances, anchor, point)
+            for point in space.walk_from(anchor, distances)
+        ]
+        assert np.allclose(
+            space.covariance_function(measure, distances), expected, rtol=1e-10
+        )
+
+    def test_at_zero_it_is_the_pointwise_variance(self, geometry):
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        assert space.covariance_function(measure, np.array([0.0]))[
+            0
+        ] == pytest.approx(space.pointwise_variance(variances))
+
+    def test_the_pointwise_variance_at_points_is_the_same_sum(self, geometry, rng):
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        points = space.random_points(6, rng=rng)
+        expected = [self._by_hand(space, variances, p, p) for p in points]
+        assert np.allclose(
+            space.pointwise_variance_at(measure, points), expected, rtol=1e-10
+        )
+
+    def test_a_measure_that_is_not_invariant_still_works(self, geometry, rng):
+        """The general route stays: a posterior is not invariant, and its
+        pointwise variance is the interesting one."""
+        _, space = geometry
+        prior = space.sobolev_measure(2.0, 0.3)
+        points = space.random_points(3, rng=rng)
+        operator = space.point_evaluation_operator(points)
+        posterior = prior.condition(operator, np.zeros(3))
+        assert space._spectral_variances(prior) is not None
+        assert space._spectral_variances(posterior) is None
+        variances = space.pointwise_variance_at(posterior, points)
+        by_dirac = [
+            posterior.directional_variance(space.dirac(p).representer) for p in points
+        ]
+        assert np.allclose(variances, by_dirac)
+
+    def test_the_order_guard_is_not_weakened(self, geometry):
+        """Q4: D-11 is a guard on the space. The closed form needs no Dirac,
+        so the guard is asked for explicitly rather than arriving through one.
+        """
+        _, space = geometry
+        lebesgue = space.with_order(0.0)
+        measure = lebesgue.invariant_measure(lebesgue.sobolev_symbol(-2.0, 0.3))
+        with pytest.raises(ValueError, match="Sobolev order"):
+            lebesgue.covariance_function(measure, np.array([0.0, 0.1]))
+        with pytest.raises(ValueError, match="Sobolev order"):
+            lebesgue.pointwise_variance_at(measure, [lebesgue.reference_point])
+
+
 class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 

@@ -563,6 +563,49 @@ class TestWeightOperator:
         )
 
 
+class TestTheCovarianceFunctionOnASphere:
+    """REVIEW2 4.2.4. The addition theorem collapses the sum over the basis to
+    a Legendre series, when the spectrum is isotropic -- which is what a
+    measure built from a symbol has and what a per-component spectrum need not.
+    """
+
+    def test_it_matches_the_sum_over_the_basis(self, space):
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        distances = np.linspace(0.0, 2.0 * np.pi * RADIUS, 41)
+        for measure in (
+            space.sobolev_measure(2.0, 0.2),
+            space.heat_measure(0.3),
+            space.power_measure(lambda degree: (1.0 + degree) ** -3.0),
+        ):
+            legendre = space.covariance_function(measure, distances)
+            basis = SymmetricSpace.covariance_function(space, measure, distances)
+            assert np.allclose(legendre, basis, rtol=1e-10)
+
+    def test_it_is_even_about_the_antipode(self, space):
+        """The walk continues past the pole and `cos` is even, so no special
+        case is needed: the covariance at `2 pi R - d` is the one at `d`."""
+        measure = space.heat_measure(0.4)
+        circumference = 2.0 * np.pi * RADIUS
+        distances = np.array([0.3, 1.1, 2.0])
+        near = space.covariance_function(measure, distances)
+        far = space.covariance_function(measure, circumference - distances)
+        assert np.allclose(near, far)
+
+    def test_an_anisotropic_spectrum_falls_back(self, space, rng):
+        """`invariant_measure` takes one variance per component, and with an
+        anisotropic one the covariance is not a function of distance alone --
+        so the collapse to degrees is checked rather than assumed."""
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        measure = space.invariant_measure(rng.uniform(0.5, 1.5, space.dim))
+        distances = np.linspace(0.0, 1.0, 9)
+        assert np.array_equal(
+            space.covariance_function(measure, distances),
+            SymmetricSpace.covariance_function(space, measure, distances),
+        )
+
+
 class TestPointConvention:
     """D-2: points are ``(latitude, longitude)`` in degrees, everywhere."""
 

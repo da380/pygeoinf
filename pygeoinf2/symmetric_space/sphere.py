@@ -1069,6 +1069,63 @@ class Sphere(SymmetricSpace[Any]):
             ]
         )
 
+    def covariance_function(
+        self, measure: Any, distances: np.ndarray, /
+    ) -> np.ndarray:
+        r"""An invariant measure's covariance as a function of distance.
+
+        The addition theorem collapses the sum over the basis to a sum over
+        degrees, whenever the measure's spectrum is *isotropic* -- constant
+        within each degree, which is what "a function of the Laplacian
+        eigenvalue" means and what every measure built here has:
+
+        .. code-block:: text
+
+            sum_m phi_lm(p) phi_lm(q) == (2l + 1) P_l(cos gamma) / (4 pi R^2)
+
+            c(d) == sum_l r_l (2l + 1) P_l(cos(d / R)) / (4 pi R^2),
+            r_l == s_l / g_l
+
+        That is one Legendre series per distance rather than one row of the
+        basis: 1.2 ms against 24 ms for 50 distances at ``lmax`` 256
+        (REVIEW2 4.2.4). ``cos`` is even and periodic, so a walk past the pole
+        needs no special case.
+
+        ``invariant_measure`` does not *require* an isotropic spectrum -- it
+        takes one variance per component -- and with an anisotropic one the
+        covariance is not a function of distance alone. So the spectrum is
+        checked rather than assumed, and the base class's exact sum over the
+        basis is used where the check fails.
+
+        Args:
+            measure: the measure.
+            distances: the separations, as *physical* distances.
+
+        Returns:
+            One covariance per distance.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below one, so that point
+                values on a surface do not exist.
+        """
+        variances = self._spectral_variances(measure)
+        if variances is None:
+            return super().covariance_function(measure, distances)
+
+        ratio = variances / self.metric_values
+        degrees = self.degrees
+        counts = np.bincount(degrees)
+        per_degree = np.bincount(degrees, weights=ratio) / counts
+        tolerance = 1.0e-12 * float(np.max(ratio, initial=0.0))
+        if not np.allclose(ratio, per_degree[degrees], rtol=1e-12, atol=tolerance):
+            return super().covariance_function(measure, distances)
+
+        self._require_point_evaluation("A covariance function", unsafe=False)
+        orders = np.arange(per_degree.size, dtype=float)
+        coefficients = per_degree * (2.0 * orders + 1.0) / (4.0 * np.pi * self._radius**2)
+        angles = np.asarray(distances, dtype=float) / self._radius
+        return np.polynomial.legendre.legval(np.cos(angles), coefficients)
+
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[np.ndarray]:
         """Points at given distances from a point, along a meridian.
 

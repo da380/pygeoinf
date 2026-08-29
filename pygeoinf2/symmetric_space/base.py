@@ -1073,6 +1073,22 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         counts = np.bincount(degrees)[degrees]
         return self.invariant_measure(per_degree / counts, expectation=expectation)
 
+    def _spectral_variances(self, measure: GaussianMeasure, /) -> np.ndarray | None:
+        """A measure's spectral variances, when its covariance is diagonal here.
+
+        The test for "this is an invariant measure on this space", which is
+        what turns a covariance *operator* into a closed form: its eigenvalues
+        are the spectrum, and every two-point quantity is a sum over the basis
+        rather than an application of the operator.
+
+        ``None`` when it is not -- a posterior is not invariant, and the
+        general route stays for it.
+        """
+        covariance = getattr(measure, "covariance", None)
+        if isinstance(covariance, DiagonalLinearOperator) and covariance.domain == self:
+            return np.asarray(covariance.eigenvalues, dtype=float)
+        return None
+
     def covariance_function(
         self, measure: GaussianMeasure, distances: np.ndarray, /
     ) -> np.ndarray:
@@ -1081,10 +1097,48 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Homogeneity is what makes this well defined: the two-point covariance
         depends on the pair of points only through the distance between them,
         so one anchor and a walk away from it gives the whole function.
+
+        With a diagonal covariance -- which is what an invariant measure has --
+        there is a closed form and no operator is applied at all:
+
+        .. code-block:: text
+
+            c(p, q) == sum_k s_k phi_k(p) phi_k(q) / g_k
+
+        so this is one row of :meth:`basis_matrix` per distance against a fixed
+        weight vector. The general route, which builds the Dirac's representer,
+        applies the covariance to it and evaluates the result, stays for a
+        measure that is not invariant (REVIEW2 4.2.4).
+
+        **The order guard is not weakened by the closed form.** A covariance
+        function is a statement about point values, and D-11's position -- the
+        user's, answering Q4 -- is that a space too rough for point evaluation
+        should not be asked for them, whatever the measure's spectrum would
+        allow. So the guard is asked for explicitly here rather than arriving
+        by way of the Dirac the closed form does not need.
+
+        Args:
+            measure: the measure. Invariant, for the answer to depend on the
+                distance alone.
+            distances: the separations to evaluate at, as *physical*
+                distances.
+
+        Returns:
+            One covariance per distance.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below half the spatial
+                dimension, so that point values do not exist.
         """
         anchor = self.reference_point
-        field = measure.two_point_covariance(anchor)
-        return self.evaluate(field, self.walk_from(anchor, distances))
+        points = self.walk_from(anchor, distances)
+        variances = self._spectral_variances(measure)
+        if variances is None:
+            field = measure.two_point_covariance(anchor)
+            return self.evaluate(field, points)
+        self._require_point_evaluation("A covariance function", unsafe=False)
+        weights = variances * self.basis_at(anchor) / self.metric_values
+        return self.basis_matrix(points) @ weights
 
     def pointwise_variance_at(
         self,
@@ -1120,12 +1174,39 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 covariance application per point.
             rng: the generator for those probes.
             n_jobs: workers: for the points on the exact route, and for the
-                operator applications on the sampling one.
+                operator applications on the sampling one. Not used where the
+                measure is invariant and the closed form applies, which is
+                vectorised over the points already.
 
         Returns:
             One variance per point.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below half the spatial
+                dimension, so that point values do not exist.
         """
         if samples is None:
+            variances = self._spectral_variances(measure)
+            if variances is not None:
+                # An invariant measure has a closed form, `sum_k s_k
+                # phi_k(p)^2 / g_k`, so the whole set of points is one basis
+                # matrix against a fixed weight vector rather than five
+                # transforms per point (REVIEW2 4.2.4). The order guard is
+                # asked for explicitly, since the Dirac that used to raise it
+                # is not built here; see covariance_function on why it stays.
+                self._require_point_evaluation("A pointwise variance", unsafe=False)
+                weights = variances / self.metric_values
+                points = tuple(points)
+                # One basis matrix at a time stays a sensible size, as it does
+                # in the sphere's own evaluation.
+                per_chunk = max(1, 4_000_000 // max(self.dim, 1))
+                return np.concatenate(
+                    [
+                        self.basis_matrix(points[start : start + per_chunk]) ** 2
+                        @ weights
+                        for start in range(0, len(points), per_chunk)
+                    ]
+                )
             # One covariance application per point, and the points are
             # independent: the loop parallelises even though nothing inside it
             # does. The operator below is not built on this path -- it was,
