@@ -74,8 +74,10 @@ estimator = gi.MaximumAPosteriori(problem, prior)
 result = estimator(data)
 
 print(f"the search converged: {result.converged}")
-print(f"  in {result.optimisation.iterations} iterations, "
-      f"{result.optimisation.evaluations} evaluations")
+print(
+    f"  in {result.optimisation.iterations} iterations, "
+    f"{result.optimisation.evaluations} evaluations"
+)
 print(f"  truth     {np.round(X.to_components(truth), 4)}")
 print(f"  recovered {np.round(X.to_components(result.model), 4)}")
 print()
@@ -118,21 +120,17 @@ mesh_x, mesh_y = np.meshgrid(axis_x, axis_y)
 
 density = estimator.log_posterior(data)
 exact = np.array(
-    [
-        [
-            density(X.from_components(np.array([x, y])))
-            for x in axis_x
-        ]
-        for y in axis_y
-    ]
+    [[density(X.from_components(np.array([x, y]))) for x in axis_x] for y in axis_y]
 )
 exact -= exact.max()
 
 # The Gaussian's own log density, up to the same constant.
 precision = np.linalg.inv(covariance)
 offset = np.stack(
-    [mesh_x - X.to_components(result.model)[0],
-     mesh_y - X.to_components(result.model)[1]],
+    [
+        mesh_x - X.to_components(result.model)[0],
+        mesh_y - X.to_components(result.model)[1],
+    ],
     axis=-1,
 )
 approximate = -0.5 * np.einsum("...i,ij,...j->...", offset, precision, offset)
@@ -142,7 +140,12 @@ levels = [-0.5 * s**2 for s in (3.0, 2.0, 1.0)]
 figure, axes = plt.subplots(1, 1, figsize=(6.0, 5.0))
 axes.contour(mesh_x, mesh_y, exact, levels=levels, colors="black", linewidths=1.4)
 axes.contour(
-    mesh_x, mesh_y, approximate, levels=levels, colors="C0", linewidths=1.4,
+    mesh_x,
+    mesh_y,
+    approximate,
+    levels=levels,
+    colors="C0",
+    linewidths=1.4,
     linestyles="--",
 )
 axes.plot(*X.to_components(result.model), "o", color="C0", label="MAP model")
@@ -158,8 +161,10 @@ for sigmas in (1.0, 2.0, 3.0):
     ring = np.abs(approximate - (-0.5 * sigmas**2)) < 0.02
     if ring.any():
         discrepancy = np.abs(exact[ring] - approximate[ring]).max()
-        print(f"at {sigmas:.0f} sigma, the two log densities differ by up to "
-              f"{discrepancy:.3f}")
+        print(
+            f"at {sigmas:.0f} sigma, the two log densities differ by up to "
+            f"{discrepancy:.3f}"
+        )
 
 print()
 print("the dashed ellipses are the Gaussian's; the solid contours are the")
@@ -174,3 +179,5 @@ print("  different points. Every linear method in this library returns a mean.")
 print("  This one returns a mode, and says so.")
 print()
 print("one figure drawn; matplotlib.pyplot.show() displays it")
+
+plt.show()

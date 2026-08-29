@@ -19,6 +19,7 @@ Needs pyshtools and cartopy, which come with the 'sphere' extra.
 """
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 from pygeoinf2 import plotting
 from pygeoinf2.algebra.direct_sum import (
@@ -229,3 +230,4 @@ for index, (name, field, unit) in enumerate(
     panels[index].set_title(name)
 
 print("four panels drawn; matplotlib.pyplot.show() displays them")
+plt.show()

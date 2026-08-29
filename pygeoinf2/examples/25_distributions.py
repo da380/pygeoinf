@@ -145,3 +145,4 @@ print("  summary of this measure would have thrown away")
 
 print()
 print("three figures drawn; matplotlib.pyplot.show() displays them")
+plt.show()
