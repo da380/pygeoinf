@@ -24,6 +24,18 @@ load and with five reviewers profiling at once, so **ratios are reliable,
 absolute numbers are ±30 %**. The findings I quote below I have checked to the
 extent of reading the cited code; the numbers are the reviewers'.
 
+> **Status (2026-08-29, branch `refactor-r2`):** the fixture (3.16) and §4.1 a–c
+> are on `refactor` (`26baa84`, `06d651c`, with `b692230`, `4bf99f5` for the
+> small numerics items and `monotone_root`). On `refactor-r2`, one commit each:
+> `review/parallel.md` R1–R6 (`542de76`); §4.4 with `apply_block`, D-6's
+> remaining `n_jobs` hooks, 3.5 and 3.14's `_rebuild` half (`6620637`); §4.1 e
+> generalised as component-native products and sums (`63ddc8a`); §4.1 d, the
+> Krylov loops on a `ComponentView` (`849d7c0`); 3.2 and §4.2.2, the flexure
+> operator fused and its inverse taken in L² (`cb70beb`); §4.2.9 with P Must-3's
+> precision (`8511651`). Each commit message carries its before/after numbers.
+> Still open from this list: the rest of §3 (one-to-five-line bugs), §4.2
+> except 4.2.2/4.2.9, §4.3, §4.5, and the questions in §5.
+
 ## 0. Verdict
 
 1. **The first review's plan was largely executed, and executed well.** The
