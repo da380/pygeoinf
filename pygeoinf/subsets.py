@@ -841,9 +841,10 @@ class ConvexIntersection(ConvexSubset):
         This is always safe (never overestimates), but may be loose.
 
         Returns:
-            (x_best, value_best):
-              - x_best is a feasible candidate point (or None if none found)
-              - value_best = ⟨direction, x_best⟩, or -∞ if none found
+            The tuple ``(x_best, value_best)``.
+
+            - **x_best** -- a feasible candidate point, or None if none found.
+            - **value_best** -- ``⟨direction, x_best⟩``, or -∞ if none found.
         """
         best_x: Optional["Vector"] = None
         best_val: float = float(np.NINF)

@@ -63,7 +63,7 @@ furo = "^2025.7.19"
 # Lower bound: the apidoc template in docs/apidoc_templates is named
 # package.rst.jinja, which is the name Sphinx looks for from 7.4 onwards
 # (it was package.rst_t before).
-sphinx = ">=7.4,<8.2"
+sphinx = ">=7.4"
 # Keep in step with the `rev` of the ruff hook in .pre-commit-config.yaml, so
 # that the hook and `poetry run ruff` format identically.
 ruff = "^0.5.5"
