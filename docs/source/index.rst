@@ -30,22 +30,57 @@ Key Features
 * **Application-Specific Spaces**: Provides concrete `HilbertSpace` implementations for functions on a **line**, **circle**, and the **two-sphere**.
 * **High-Quality Visualisation**: Built-in plotting methods for functions on symmetric spaces, including map projections via `cartopy`.
 
-## Tutorials
+Tutorials
+=========
 
 You can run the interactive tutorials directly in Google Colab to get started with the core concepts of the library.
 
-| Tutorial Name | Link to Colab |
-| :--- | :--- |
-| Tutorial 1 - A first example | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial1.ipynb) |
-| Tutorial 2 - Hilbert spaces | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial2.ipynb) |
-| Tutorial 3 - Dual spaces | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial3.ipynb) |
-| Tutorial 4 - Linear operators | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial4.ipynb) |
-| Tutorial 5 - Linear solvers | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial5.ipynb) |
-| Tutorial 6 - Gaussian measures | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial6.ipynb) |
-| Tutorial 7 - Minimum norm inversions | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial7.ipynb) |
-| Tutorial 8 - Bayesian inversions | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial8.ipynb) |
-| Tutorial 9 - Direct sums | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial9.ipynb) |
-| Tutorial 10 - Symmetric spaces | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial10.ipynb) |
+.. list-table::
+   :header-rows: 1
+   :widths: 60 40
+
+   * - Tutorial Name
+     - Link to Colab
+   * - Tutorial 1 - A first example
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial1.ipynb
+          :alt: Open Tutorial 1 in Colab
+   * - Tutorial 2 - Hilbert spaces
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial2.ipynb
+          :alt: Open Tutorial 2 in Colab
+   * - Tutorial 3 - Dual spaces
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial3.ipynb
+          :alt: Open Tutorial 3 in Colab
+   * - Tutorial 4 - Linear operators
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial4.ipynb
+          :alt: Open Tutorial 4 in Colab
+   * - Tutorial 5 - Linear solvers
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial5.ipynb
+          :alt: Open Tutorial 5 in Colab
+   * - Tutorial 6 - Gaussian measures
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial6.ipynb
+          :alt: Open Tutorial 6 in Colab
+   * - Tutorial 7 - Minimum norm inversions
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial7.ipynb
+          :alt: Open Tutorial 7 in Colab
+   * - Tutorial 8 - Bayesian inversions
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial8.ipynb
+          :alt: Open Tutorial 8 in Colab
+   * - Tutorial 9 - Direct sums
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial9.ipynb
+          :alt: Open Tutorial 9 in Colab
+   * - Tutorial 10 - Symmetric spaces
+     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
+          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial10.ipynb
+          :alt: Open Tutorial 10 in Colab
 
 
 .. toctree::
