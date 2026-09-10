@@ -62,7 +62,13 @@ jupyter = "^1.1.1"
 furo = "^2025.7.19"
 sphinx = "<8.2"
 nbsphinx = "^0.9.7"
+# Keep in step with the `rev` of the ruff hook in .pre-commit-config.yaml, so
+# that the hook and `poetry run ruff` format identically.
 ruff = "^0.5.5"
+pre-commit = "^4.6.2"
+# Strips outputs and normalises cell ids in the tutorial notebooks. Driven by
+# pre-commit; listed here so it can also be run by hand on a single notebook.
+nbstripout = "^0.9.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]
@@ -79,8 +85,10 @@ exclude = ["work"]
 # positives. F401 is suppressed because notebook cells share scope across execution.
 "tutorials/*.ipynb" = ["E402", "F821", "F401", "F541", "E731"]
 
-# For any file in the "tests/" directory, ignore the lambda assignment warning (E731).
-"tests/*" = ["E731", "E741"]
+# For any file in a "tests/" directory, ignore the lambda assignment warning
+# (E731) and the ambiguous-name warning (E741). The glob is anchored with `**/`
+# so that it covers pygeoinf2/tests/ as well as the top-level tests/.
+"**/tests/*" = ["E731", "E741"]
 
 # test_subsets.py has matplotlib imports mid-file due to backend setup (matplotlib.use("Agg"))
 "tests/test_subsets.py" = ["E731", "E741", "E402"]

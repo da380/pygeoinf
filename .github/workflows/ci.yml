@@ -7,6 +7,39 @@ on:
     branches: [ main ]
 
 jobs:
+  # Linting, formatting and the notebook-output rule, straight from
+  # .pre-commit-config.yaml so that the hooks and CI can never disagree about
+  # what "clean" means. Runs once on Linux: none of these checks are
+  # platform-dependent.
+  lint:
+    name: Lint (pre-commit)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+
+    - name: Cache pre-commit environments
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/pre-commit
+        key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+    - name: Install pre-commit
+      run: pip install pre-commit
+
+    - name: Run hooks
+      env:
+        # `no-commit-to-branch` guards local commits; on a CI checkout of main
+        # it would fail every run. `pytest` is a pre-push hook and is covered by
+        # the test job below, across all three platforms.
+        SKIP: no-commit-to-branch,pytest
+      run: pre-commit run --all-files --show-diff-on-failure --color=always
+
   build-and-test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -15,10 +48,10 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v7
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -30,11 +63,8 @@ jobs:
     - name: Install dependencies
       run: poetry install --with dev --all-extras
 
-    - name: Lint with ruff
-      run: poetry run ruff check .
-
     - name: Test with pytest
-      run: poetry run pytest --cov=pygeoinf
+      run: poetry run pytest --cov=pygeoinf --cov=pygeoinf2
 
     - name: Build package
       run: poetry build

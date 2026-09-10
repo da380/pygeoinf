@@ -1,3 +1,13 @@
+# Hooks that guard every commit and push.
+#
+# Install them once, after `poetry install --with dev`:
+#
+#     poetry run pre-commit install --hook-type pre-commit --hook-type pre-push
+#
+# Both hook types matter: the linting and notebook hooks run on `git commit`,
+# the test suite on `git push`. CI runs the same file (see ci.yml), so a clean
+# commit here is a green lint job there.
+
 repos:
   # --- 1. Prevent commits to main ---
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -6,15 +16,31 @@ repos:
       - id: no-commit-to-branch
         args: [--branch, main]
 
-  # --- 2. Run Ruff (Linting & Formatting) ---
+  # --- 2. Strip notebook outputs ---
+  # Tutorials are committed as source, not as a record of one run. Outputs are
+  # megabytes of base64 images and run-dependent numbers that make every diff
+  # unreadable and every re-execution a spurious change. nbstripout also
+  # renumbers cell ids, so simply opening a notebook stops dirtying the tree.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
+    hooks:
+      - id: nbstripout
+
+  # --- 3. Run Ruff (Linting & Formatting) ---
+  # `rev` tracks the ruff version in pyproject.toml's dev group so that the hook
+  # and `poetry run ruff` format identically. Bump the two together, never one
+  # alone: a mismatch reformats files back and forth between commits.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+    rev: v0.5.7
     hooks:
       - id: ruff
-        args: [ --fix ]
+        args: [--fix]
       - id: ruff-format
 
-  # --- 3. Run Pytest (Local Hook) ---
+  # --- 4. Run Pytest (Local Hook) ---
+  # On push rather than on commit. The suite takes long enough that running it
+  # per commit is what teaches people to reach for `--no-verify`; running it
+  # per push still keeps a broken tree off the remote.
   - repo: local
     hooks:
       - id: pytest
@@ -23,4 +49,4 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-commit]
+        stages: [pre-push]
