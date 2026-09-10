@@ -2,7 +2,13 @@ __pycache__
 .ipynb_checkpoints
 *~
 dist/*
-*.png
+# Scratch figures only. work/correlated.py writes its PNGs into whatever
+# directory it is run from, which is normally the repository root; the anchor
+# keeps that noise out without hiding deliberate figures such as
+# work/figures/, which were only ever tracked because tracking beats
+# .gitignore.
+/*.png
+/work/*.png
 
 # Python bytecode
 __pycache__/
