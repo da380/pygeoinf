@@ -61,7 +61,6 @@ snakeviz = "^2.2.2"
 jupyter = "^1.1.1"
 furo = "^2025.7.19"
 sphinx = "<8.2"
-nbsphinx = "^0.9.7"
 # Keep in step with the `rev` of the ruff hook in .pre-commit-config.yaml, so
 # that the hook and `poetry run ruff` format identically.
 ruff = "^0.5.5"
