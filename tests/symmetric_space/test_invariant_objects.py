@@ -17,7 +17,6 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.linear_operators import LinearOperator
 
 
-
 @pytest.fixture
 def space() -> Lebesgue:
     """Provides a simple symmetric space for testing invariant objects."""

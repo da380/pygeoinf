@@ -642,9 +642,7 @@ class DiscrepancyPrinciple(Operator):
         from ..algebra.operators import Linearisation
 
         resolved = self._resolve(data)
-        return Linearisation(
-            data, resolved[0], self._derivative_from(data, *resolved)
-        )
+        return Linearisation(data, resolved[0], self._derivative_from(data, *resolved))
 
     def estimator_at(self, damping: float, /) -> LeastSquares:
         """The fixed-damping estimator this collapses to at one damping."""
@@ -870,7 +868,6 @@ class ConstrainedLeastSquares(LinearPointEstimator):
     ) -> AffineSubspace:
         """The constraint, read in the parameter space."""
         return _parameterised_subspace(self._subspace, parameterisation)
-
 
     def data_reduced(self, *args: Any, **kwargs: Any) -> "ConstrainedLeastSquares":
         """The same estimator on a reduced set of data.

@@ -459,7 +459,9 @@ class TestFusedFlexure:
         w = X.random(rng=rng)
         fused = X.to_components(A(w))
         reference = X.to_components(term_by_term(X, rigidity, poisson, buoyancy, w))
-        assert np.allclose(fused, reference, rtol=1e-10, atol=1e-12 * np.abs(reference).max())
+        assert np.allclose(
+            fused, reference, rtol=1e-10, atol=1e-12 * np.abs(reference).max()
+        )
 
     def test_it_acts_on_components_the_same_way(self, case, rng):
         X, rigidity, poisson, buoyancy = case

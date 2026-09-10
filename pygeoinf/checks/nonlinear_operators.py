@@ -176,9 +176,7 @@ class NonLinearOperatorAxiomChecks:
             f"\nRunning {n_checks} randomized checks for {self.__class__.__name__}..."
         )
 
-
         if measure is None:
-
             sampler = self.domain.random
 
         else:

@@ -281,7 +281,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:
-
         arc_length = self.geodesic_distance(p1, p2)
 
         diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
@@ -341,7 +340,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def invariant_covariance_function(
         self, spectral_variances: np.ndarray
     ) -> Callable[[np.ndarray], np.ndarray]:
-
         # Extract the wavenumber variances
         k_variances = np.zeros(self.kmax + 1)
         for k in range(self.kmax + 1):

@@ -119,9 +119,9 @@ class TestTheLevelBundleBoundIsABound:
         """At every stage, not just at the end -- an invalid bound part way
         through is still an invalid bound."""
         space, functional, exact = quadratic_problem
-        result = LevelBundleMethod(
-            tolerance=1e-14, iterations=iterations
-        ).minimise(functional, space.zero())
+        result = LevelBundleMethod(tolerance=1e-14, iterations=iterations).minimise(
+            functional, space.zero()
+        )
 
         assert result.value - result.gap <= exact + 1e-9
         assert result.value >= exact - 1e-9
@@ -261,18 +261,26 @@ class TestTheTwoRoutesMeet:
 
         model_space = estimator._problem.model_space
         data_space = estimator.data_space
-        assert model_space.norm(
-            model_space.subtract(estimator._prior.project(result.model), result.model)
-        ) < 1e-8
-        assert data_space.norm(
-            data_space.subtract(
-                data_space.add(
-                    estimator._problem.forward_operator(result.model),
-                    result.discrepancy,
-                ),
-                data,
+        assert (
+            model_space.norm(
+                model_space.subtract(
+                    estimator._prior.project(result.model), result.model
+                )
             )
-        ) < 1e-7
+            < 1e-8
+        )
+        assert (
+            data_space.norm(
+                data_space.subtract(
+                    data_space.add(
+                        estimator._problem.forward_operator(result.model),
+                        result.discrepancy,
+                    ),
+                    data,
+                )
+            )
+            < 1e-7
+        )
 
     def test_an_unknown_route_is_refused(self, setting):
         estimator, space, data = setting
@@ -368,9 +376,7 @@ class TestTheKKTRouteAgreesWhereItApplies:
             exact = kkt.solve(objective)
             iterated = splitting.solve(objective)
             assert exact.converged
-            agreements.append(
-                abs(exact.value - iterated.value) / abs(iterated.value)
-            )
+            agreements.append(abs(exact.value - iterated.value) / abs(iterated.value))
         # Most agree to machine precision; those where the second multiplier
         # saturates against a tight noise ball agree to about 1e-3, which is
         # the method's documented limit and not a failure of the port -- v1
@@ -393,9 +399,7 @@ class TestTheKKTRouteAgreesWhereItApplies:
         result = solver.solve(objective)
         assert result.multipliers[1] == 0.0
         assert result.value == pytest.approx(
-            forward.domain.inner_product(
-                objective, prior.support_maximiser(objective)
-            )
+            forward.domain.inner_product(objective, prior.support_maximiser(objective))
         )
 
     def test_a_general_convex_set_is_refused(self, setting):
@@ -502,9 +506,7 @@ class TestTheSmoothedRoute:
             directions, data, route="primal", tolerance=1e-10, iterations=100_000
         )
 
-        coarse = est.support_values(
-            directions, data, route="smoothed", epsilon=1e-1
-        )
+        coarse = est.support_values(directions, data, route="smoothed", epsilon=1e-1)
         fine = est.support_values(directions, data, route="smoothed", epsilon=1e-4)
 
         coarse_error = np.abs((coarse - reference) / reference).max()
@@ -519,17 +521,13 @@ class TestTheSmoothedRoute:
         est, space, data = estimator
         directions = self.directions(space, 8)
 
-        smoothed = est.support_values(
-            directions, data, route="smoothed", epsilon=1e-4
-        )
+        smoothed = est.support_values(directions, data, route="smoothed", epsilon=1e-4)
         primal = est.support_values(
             directions, data, route="primal", tolerance=1e-10, iterations=100_000
         )
         assert smoothed == pytest.approx(primal, rel=1e-6)
 
-    def test_the_smoothed_cost_is_differentiable_where_the_dual_is_not(
-        self, estimator
-    ):
+    def test_the_smoothed_cost_is_differentiable_where_the_dual_is_not(self, estimator):
         """At the origin, which is where a support function has its corner and
         where the minimisation spends its time."""
         est, space, data = estimator
@@ -544,7 +542,9 @@ class TestTheSmoothedRoute:
         step = 1e-6
         for index in range(est.data_space.dim):
             basis = est.data_space.basis_vector(index)
-            forward = cost(est.data_space.axpy(step, basis, est.data_space.copy(origin)))
+            forward = cost(
+                est.data_space.axpy(step, basis, est.data_space.copy(origin))
+            )
             backward = cost(
                 est.data_space.axpy(-step, basis, est.data_space.copy(origin))
             )

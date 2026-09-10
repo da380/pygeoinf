@@ -802,15 +802,12 @@ class TestConvexIntersection:
                 constraints=[
                     {
                         "type": "ineq",
-                        "fun": lambda z: 1.0
-                        - X.norm(X.from_components(z)),
+                        "fun": lambda z: 1.0 - X.norm(X.from_components(z)),
                     },
                     {
                         "type": "ineq",
                         "fun": lambda z: -0.2
-                        - X.inner_product(
-                            X.basis_vector(0), X.from_components(z)
-                        ),
+                        - X.inner_product(X.basis_vector(0), X.from_components(z)),
                     },
                 ],
             )

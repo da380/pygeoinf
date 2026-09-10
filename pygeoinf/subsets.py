@@ -635,6 +635,7 @@ class ConvexSubset(SublevelSet):
         """
         if self.is_open:
             import warnings
+
             warnings.warn(
                 f"Operation '{operation}' requires a closed convex set. "
                 f"Using the closure cl(S) = {{x | f(x) <= {self.level}}} instead. "
@@ -1251,9 +1252,7 @@ class HyperPlane(Subset):
         # Validate normal vector is non-zero
         a_norm = self.domain.norm(normal_vector)
         if a_norm < 1e-14:
-            raise ValueError(
-                "Normal vector must be non-zero for a hyperplane."
-            )
+            raise ValueError("Normal vector must be non-zero for a hyperplane.")
 
         # Store normal vector and offset
         self._normal_vector = normal_vector
@@ -1387,9 +1386,7 @@ class HalfSpace(Subset):
         # Validate normal vector is non-zero
         a_norm = self.domain.norm(normal_vector)
         if a_norm < 1e-14:
-            raise ValueError(
-                "Normal vector must be non-zero for a half-space."
-            )
+            raise ValueError("Normal vector must be non-zero for a half-space.")
 
         # Validate inequality type
         if inequality_type not in ("<=", ">="):

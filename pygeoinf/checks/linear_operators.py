@@ -186,7 +186,6 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
             measure=domain_measure,
         )
 
-
         if domain_measure is None:
             domain_sampler = self.domain.random
         else:

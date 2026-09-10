@@ -24,6 +24,7 @@ np.random.seed(42)
 # Helper: small DualMasterCostFunction fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_dual_master_cost():
     """Return a small DualMasterCostFunction for tests."""
     rng = np.random.default_rng(42)
@@ -47,8 +48,7 @@ def _make_dual_master_cost():
     q = rng.standard_normal(n_prop)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q
+        data_space, prop_space, model_space, G, T, model_prior, data_error, d_tilde, q
     )
     return cost, data_space
 
@@ -57,30 +57,38 @@ def _make_dual_master_cost():
 # Simple oracle helpers
 # ---------------------------------------------------------------------------
 
+
 def _quadratic_oracle():
     """f(λ) = λ² + 2λ, minimiser at λ* = -1, f* = -1."""
     domain = EuclideanSpace(1)
+
     def f(x):
         return float(x[0] ** 2 + 2.0 * x[0])
+
     def g(x):
         return np.array([2.0 * x[0] + 2.0])
+
     return NonLinearForm(domain, f, subgradient=g), domain
 
 
 def _abs_oracle():
     """f(λ) = |λ - 0.5|, minimiser at λ* = 0.5, f* = 0."""
     domain = EuclideanSpace(1)
+
     def f(x):
         return float(abs(x[0] - 0.5))
+
     def g(x):
         v = x[0] - 0.5
         return np.array([1.0 if v > 0 else (-1.0 if v < 0 else 0.0)])
+
     return NonLinearForm(domain, f, subgradient=g), domain
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_proximal_bundle_quadratic_1d():
     """Bundle method should minimise f(λ)=λ²+2λ to within atol=1e-3."""
@@ -139,9 +147,9 @@ def test_proximal_bundle_gap_certificate():
     result = solver.solve(x0)
 
     assert result.converged, "Should have converged on smooth quadratic"
-    assert result.gap <= tol * 10, (
-        f"Gap {result.gap} should be at most 10 * tolerance = {10 * tol}"
-    )
+    assert (
+        result.gap <= tol * 10
+    ), f"Gap {result.gap} should be at most 10 * tolerance = {10 * tol}"
 
 
 def test_proximal_bundle_serious_steps():
@@ -155,9 +163,9 @@ def test_proximal_bundle_serious_steps():
     x0 = domain.from_components(np.array([2.0]))
     result = solver.solve(x0)
 
-    assert result.num_serious_steps > 0, (
-        "Smooth quadratic should trigger at least one serious step"
-    )
+    assert (
+        result.num_serious_steps > 0
+    ), "Smooth quadratic should trigger at least one serious step"
 
 
 def test_proximal_bundle_dual_master():
@@ -174,9 +182,9 @@ def test_proximal_bundle_dual_master():
     result = solver.solve(x0)
 
     assert isinstance(result, BundleResult), "Should return BundleResult"
-    assert result.f_best <= f_initial + 1e-10, (
-        f"Bundle should not increase f: f_best={result.f_best}, f_initial={f_initial}"
-    )
+    assert (
+        result.f_best <= f_initial + 1e-10
+    ), f"Bundle should not increase f: f_best={result.f_best}, f_initial={f_initial}"
 
 
 def test_proximal_bundle_dual_master_gap():
@@ -192,6 +200,6 @@ def test_proximal_bundle_dual_master_gap():
     )
     result = solver.solve(x0)
 
-    assert result.gap <= tol * 10, (
-        f"Gap {result.gap:.2e} exceeds 10 * tolerance = {10 * tol:.2e}"
-    )
+    assert (
+        result.gap <= tol * 10
+    ), f"Gap {result.gap:.2e} exceeds 10 * tolerance = {10 * tol:.2e}"

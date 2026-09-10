@@ -259,9 +259,7 @@ class TestMeasureAdjustments:
         """
         X = EuclideanSpace(6)
         root = rng.normal(size=(6, 6))
-        factor = LinearOperator.from_matrix(
-            EuclideanSpace(6), X, root, form="galerkin"
-        )
+        factor = LinearOperator.from_matrix(EuclideanSpace(6), X, root, form="galerkin")
         return (X, root @ root.T, GaussianMeasure(X, covariance_factor=factor))
 
     def test_a_regularised_inverse_supplies_a_precision(self, measure, rng):
@@ -901,9 +899,7 @@ class TestPreconditioners:
         vector = space.random(rng=rng)
 
         blocks = [list(range(0, 12)), list(range(8, 20)), list(range(18, space.dim))]
-        count, residual = self.iterations(
-            operator, BlockPreconditioner(blocks), vector
-        )
+        count, residual = self.iterations(operator, BlockPreconditioner(blocks), vector)
         assert residual < 1e-8
 
     def test_a_block_outside_the_space_is_refused(self, rng):
@@ -1558,7 +1554,9 @@ class TestARootFindSaysWhyItStopped:
 
             if multiplier > 4.0:
                 raise ConvergenceError("ran out of iterations")
-            return Evaluation(value=10.0 / multiplier, solution=multiplier, iterations=1)
+            return Evaluation(
+                value=10.0 / multiplier, solution=multiplier, iterations=1
+            )
 
         result = monotone_root(evaluate, 0.5, initial=1.0)
         assert result.breakdown is not None
@@ -1572,7 +1570,9 @@ class TestARootFindSaysWhyItStopped:
         def evaluate(multiplier, guess):
             if multiplier > 4.0:
                 raise np.linalg.LinAlgError("singular")
-            return Evaluation(value=10.0 / multiplier, solution=multiplier, iterations=1)
+            return Evaluation(
+                value=10.0 / multiplier, solution=multiplier, iterations=1
+            )
 
         result = monotone_root(evaluate, 0.5, initial=1.0)
         assert result.breakdown is None
@@ -1628,7 +1628,9 @@ class TestSpectralBlockOperator:
             assert np.allclose(X.to_components(a), X.to_components(b))
         for a, b in zip(fast.adjoint(x), grid.adjoint(x)):
             assert np.allclose(X.to_components(a), X.to_components(b))
-        assert fast.matrix(form="galerkin") == pytest.approx(grid.matrix(form="galerkin"))
+        assert fast.matrix(form="galerkin") == pytest.approx(
+            grid.matrix(form="galerkin")
+        )
         assert fast.diagonals(offsets=(0,), form="galerkin") == pytest.approx(
             grid.diagonals(offsets=(0,), form="galerkin")
         )
@@ -1675,9 +1677,7 @@ class TestSpectralBlockOperator:
             [first, X.sobolev_symbol(-2.0, 0.2)], np.array([[1.0, 0.3], [0.3, 1.0]])
         )
         assert np.allclose(measure.marginal(0).covariance.eigenvalues, first)
-        assert np.allclose(
-            X.spectral_correlations(measure)[X.degrees > 0], 0.3
-        )
+        assert np.allclose(X.spectral_correlations(measure)[X.degrees > 0], 0.3)
 
     def test_the_draws_have_the_requested_correlation(self, rng):
         X = self.space()

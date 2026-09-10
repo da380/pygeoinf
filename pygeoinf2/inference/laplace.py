@@ -198,9 +198,7 @@ class MaximumAPosteriori:
         def derivative(model: Any) -> LinearFunctional:
             linearisation = forward.at(model)
             residual = data_space.subtract(data, linearisation.value)
-            weighted = error.precision(
-                data_space.subtract(residual, error.expectation)
-            )
+            weighted = error.precision(data_space.subtract(residual, error.expectation))
             offset = space.subtract(model, expectation)
             gradient = space.axpy(
                 2.0,

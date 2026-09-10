@@ -43,6 +43,7 @@ N_PROP = 1
 # Helper: unsupported SupportFunction for error tests
 # ---------------------------------------------------------------------------
 
+
 class _UnsupportedSupport(SupportFunction):
     """A SupportFunction subclass not handled by SmoothedDualMaster."""
 
@@ -53,6 +54,7 @@ class _UnsupportedSupport(SupportFunction):
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_operators(rng):
     """Return (data_space, model_space, prop_space, G, T)."""
@@ -79,8 +81,15 @@ def _make_ball_cost():
     q = rng.standard_normal(N_PROP)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q,
+        data_space,
+        prop_space,
+        model_space,
+        G,
+        T,
+        model_prior,
+        data_error,
+        d_tilde,
+        q,
     )
     return cost, data_space
 
@@ -115,13 +124,17 @@ def _make_ellipsoid_cost():
     )
 
     model_prior = EllipsoidSupportFunction(
-        model_space, model_space.zero, 1.0,
+        model_space,
+        model_space.zero,
+        1.0,
         A_model,
         inverse_operator=A_model_inv,
         inverse_sqrt_operator=A_model_inv_sqrt,
     )
     data_error = EllipsoidSupportFunction(
-        data_space, data_space.zero, 0.5,
+        data_space,
+        data_space.zero,
+        0.5,
         A_data,
         inverse_operator=A_data_inv,
         inverse_sqrt_operator=A_data_inv_sqrt,
@@ -131,8 +144,15 @@ def _make_ellipsoid_cost():
     q = rng.standard_normal(N_PROP)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q,
+        data_space,
+        prop_space,
+        model_space,
+        G,
+        T,
+        model_prior,
+        data_error,
+        d_tilde,
+        q,
     )
     return cost, data_space
 
@@ -155,6 +175,7 @@ def _fd_gradient(smoothed: SmoothedDualMaster, lam, data_space, eps_fd: float = 
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_smoothed_ball_gradient_consistency():
     """Analytic gradient of SmoothedDualMaster (ball priors) matches central FD, rtol=1e-3."""
     cost, data_space = _make_ball_cost()
@@ -169,7 +190,10 @@ def test_smoothed_ball_gradient_consistency():
     fd_grad = _fd_gradient(smoothed, lam, data_space)
 
     np.testing.assert_allclose(
-        analytic_grad, fd_grad, rtol=1e-3, atol=1e-7,
+        analytic_grad,
+        fd_grad,
+        rtol=1e-3,
+        atol=1e-7,
         err_msg="Analytic ball gradient should match finite-difference gradient",
     )
 
@@ -188,7 +212,10 @@ def test_smoothed_ellipsoid_gradient_consistency():
     fd_grad = _fd_gradient(smoothed, lam, data_space)
 
     np.testing.assert_allclose(
-        analytic_grad, fd_grad, rtol=1e-3, atol=1e-7,
+        analytic_grad,
+        fd_grad,
+        rtol=1e-3,
+        atol=1e-7,
         err_msg="Analytic ellipsoid gradient should match finite-difference gradient",
     )
 
@@ -204,9 +231,9 @@ def test_smoothed_lbfgs_converges_ball():
 
     assert isinstance(result, BundleResult), "Should return BundleResult"
     assert np.isfinite(result.f_best), "f_best should be finite"
-    assert result.f_best <= f_initial + 1e-6, (
-        f"Solver should decrease f: f_best={result.f_best:.6f}, f_initial={f_initial:.6f}"
-    )
+    assert (
+        result.f_best <= f_initial + 1e-6
+    ), f"Solver should decrease f: f_best={result.f_best:.6f}, f_initial={f_initial:.6f}"
     assert result.num_iterations > 0, "Should perform at least one iteration"
 
 
@@ -226,7 +253,9 @@ def test_smoothed_lbfgs_agrees_with_proximal_bundle():
     lbfgs_result = lbfgs_solver.solve(lam0)
 
     np.testing.assert_allclose(
-        lbfgs_result.f_best, bundle_result.f_best, rtol=1e-2,
+        lbfgs_result.f_best,
+        bundle_result.f_best,
+        rtol=1e-2,
         err_msg=(
             f"L-BFGS-B f_best={lbfgs_result.f_best:.6f} should agree with "
             f"bundle f_best={bundle_result.f_best:.6f} within rtol=1e-2"
@@ -247,8 +276,15 @@ def test_smoothed_raises_for_unsupported_support():
     q = rng.standard_normal(N_PROP)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q,
+        data_space,
+        prop_space,
+        model_space,
+        G,
+        T,
+        model_prior,
+        data_error,
+        d_tilde,
+        q,
     )
 
     smoothed = SmoothedDualMaster(cost, 1e-2)

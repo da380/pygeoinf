@@ -750,9 +750,8 @@ def _get_value_and_subgradient(
     Returns:
         ``(f, g)`` — scalar value and subgradient vector.
     """
-    if (
-        hasattr(oracle, "value_and_subgradient")
-        and callable(oracle.value_and_subgradient)
+    if hasattr(oracle, "value_and_subgradient") and callable(
+        oracle.value_and_subgradient
     ):
         return oracle.value_and_subgradient(x)
     return oracle(x), oracle.subgradient(x)
@@ -837,7 +836,9 @@ class ProximalBundleMethod:
         self._max_iterations = max_iterations
         self._bundle_size = bundle_size
         self._store_iterates = store_iterates
-        self._qp_solver: QPSolver = qp_solver if qp_solver is not None else SciPyQPSolver()
+        self._qp_solver: QPSolver = (
+            qp_solver if qp_solver is not None else SciPyQPSolver()
+        )
 
     def _solve_master(
         self,
@@ -1095,7 +1096,9 @@ class LevelBundleMethod:
         self._max_iterations = max_iterations
         self._bundle_size = bundle_size
         self._store_iterates = store_iterates
-        self._qp_solver: QPSolver = qp_solver if qp_solver is not None else SciPyQPSolver()
+        self._qp_solver: QPSolver = (
+            qp_solver if qp_solver is not None else SciPyQPSolver()
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1151,7 +1154,7 @@ class LevelBundleMethod:
         # Box constraint: -R <= lambda_i - lam_hat_i <= R  (no constraint on t)
         R = 1e3 * (1.0 + float(np.max(np.abs(lam_hat_c))))
         lb = np.append(lam_hat_c - R, -np.inf)  # lower var bounds
-        ub = np.append(lam_hat_c + R, np.inf)   # upper var bounds
+        ub = np.append(lam_hat_c + R, np.inf)  # upper var bounds
 
         result = linprog(
             c, A_ub=A_ub, b_ub=b_ub, bounds=list(zip(lb, ub)), method="highs"
@@ -1460,6 +1463,7 @@ def solve_support_values(
 
         except ImportError:
             import warnings
+
             warnings.warn(
                 "joblib is not installed; falling back to sequential execution.",
                 RuntimeWarning,
@@ -1625,9 +1629,7 @@ class ChambollePockSolver:
         G = self._G
 
         rng = np.random.default_rng(0)
-        x_m = model_space.from_components(
-            rng.standard_normal(model_space.dim)
-        )
+        x_m = model_space.from_components(rng.standard_normal(model_space.dim))
         # Normalise initial vector
         n0 = model_space.norm(x_m)
         if n0 > 1e-14:
@@ -1635,9 +1637,9 @@ class ChambollePockSolver:
 
         eigenvalue_est = 1.0
         for _ in range(20):
-            y = G(x_m)                  # data space: G x_m
-            z = G.adjoint(y)            # model space: G^T G x_m
-            eigenvalue_est = model_space.norm(z)   # ||G^T G x_m|| -> sigma_max^2
+            y = G(x_m)  # data space: G x_m
+            z = G.adjoint(y)  # model space: G^T G x_m
+            eigenvalue_est = model_space.norm(z)  # ||G^T G x_m|| -> sigma_max^2
             if eigenvalue_est < 1e-14:
                 eigenvalue_est = 0.0
                 break
@@ -1646,7 +1648,7 @@ class ChambollePockSolver:
         # eigenvalue_est ≈ ||G||^2  (dominant eigenvalue of G^T G)
         G_norm_est = float(np.sqrt(max(eigenvalue_est, 0.0)))
         # ||K||^2 <= ||G||^2 + 1  (K = [G; I])
-        K_norm = float(np.sqrt(G_norm_est ** 2 + 1.0)) * 1.01  # slight over-estimate
+        K_norm = float(np.sqrt(G_norm_est**2 + 1.0)) * 1.01  # slight over-estimate
         step = 0.99 / K_norm
         return step, step
 
@@ -1758,9 +1760,7 @@ class ChambollePockSolver:
             # --- Dual update --------------------------------------------------
             # mu^{n+1} = mu^n + sigma * (G m_bar + v_bar - d_tilde)
             Gm_bar = G(m_bar)
-            residual = data_space.subtract(
-                data_space.add(Gm_bar, v_bar), d_tilde
-            )
+            residual = data_space.subtract(data_space.add(Gm_bar, v_bar), d_tilde)
             mu_new = data_space.add(mu, data_space.multiply(sigma, residual))
 
             # --- Primal update m ----------------------------------------------
@@ -1853,7 +1853,7 @@ def solve_primal_feasibility(
 
     values = []
     for q in qs:
-        c = T.adjoint(q)              # c = T^* q  (in model space)
+        c = T.adjoint(q)  # c = T^* q  (in model space)
         result = cp_solver.solve(c)
         h_value = model_space.inner_product(c, result.m)
         values.append(h_value)
@@ -1936,9 +1936,7 @@ class SmoothedDualMaster:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _eval_support(
-        self, z: "Vector", sigma: object
-    ) -> "tuple[float, Vector]":
+    def _eval_support(self, z: "Vector", sigma: object) -> "tuple[float, Vector]":
         """Dispatch to the appropriate smoothed value-and-gradient helper.
 
         Args:
@@ -2173,9 +2171,7 @@ class SmoothedLBFGSSolver:
         total_iters = 0
         function_values: List[float] = []
 
-        eps_schedule = [
-            self._epsilon0 * (10.0 ** (-i)) for i in range(self._n_levels)
-        ]
+        eps_schedule = [self._epsilon0 * (10.0 ** (-i)) for i in range(self._n_levels)]
 
         scipy_result = None  # will hold the last scipy OptimizeResult
         smoothed = None
@@ -2226,6 +2222,7 @@ class SmoothedLBFGSSolver:
 # ---------------------------------------------------------------------------
 # PrimalKKTSolver
 # ---------------------------------------------------------------------------
+
 
 class PrimalKKTSolver:
     r"""Primal KKT solver via Woodbury identity in abstract Hilbert spaces.
@@ -2352,7 +2349,7 @@ class PrimalKKTSolver:
             self._G_adj_AV = G.adjoint @ V._A
 
         # --- Precomputed H-vectors ---
-        self._A_B_u0 = self._A_B_op(self._u0)       # H-vector
+        self._A_B_u0 = self._A_B_op(self._u0)  # H-vector
         self._G_adj_AV_d = self._G_adj_AV(d_tilde)  # H-vector
 
         # --- A_V^{-1} matrix (M×M, data space only) ---
@@ -2425,15 +2422,11 @@ class PrimalKKTSolver:
 
         # correction = (1/λ) A_B_inv(G*(z))   [abstract H]
         # NOTE: uses G.adjoint (plain adjoint), NOT G_adj_AV
-        correction_H = ms.multiply(
-            1.0 / lam, self._A_B_inv_op(self._G.adjoint(z_D))
-        )
+        correction_H = ms.multiply(1.0 / lam, self._A_B_inv_op(self._G.adjoint(z_D)))
 
         return ms.subtract(w_H, correction_H)
 
-    def _residuals(
-        self, lam: float, mu: float, c: "Vector"
-    ) -> "tuple[float, float]":
+    def _residuals(self, lam: float, mu: float, c: "Vector") -> "tuple[float, float]":
         r"""KKT residuals $(\rho_1, \rho_2)$ at $(\lambda, \mu)$.
 
         .. math::
@@ -2459,10 +2452,10 @@ class PrimalKKTSolver:
         diff_u = ms.subtract(u, self._u0)
         # For ball B: A_B_op = identity, so <diff_u, diff_u>_H = ||u* - u0||_H^2
         # For ellipsoid B: <A_B(diff_u), diff_u>_H
-        rho1 = float(ms.inner_product(self._A_B_op(diff_u), diff_u)) - self._eta ** 2
+        rho1 = float(ms.inner_product(self._A_B_op(diff_u), diff_u)) - self._eta**2
 
         res_d = ds.subtract(self._G(u), self._d_tilde)
-        rho2 = float(ds.inner_product(self._A_V_op(res_d), res_d)) - self._r ** 2
+        rho2 = float(ds.inner_product(self._A_V_op(res_d), res_d)) - self._r**2
 
         return rho1, rho2
 
@@ -2502,7 +2495,7 @@ class PrimalKKTSolver:
             res_data = ds.subtract(self._G(u_ball), self._d_tilde)
             data_sq = float(ds.inner_product(self._A_V_op(res_data), res_data))
 
-            if data_sq <= self._r ** 2 * (1.0 + 1e-9):
+            if data_sq <= self._r**2 * (1.0 + 1e-9):
                 # Compute λ* from the active prior constraint
                 if self._prior_is_ball:
                     c_norm = float(ms.norm(c))
@@ -2567,10 +2560,12 @@ class PrimalKKTSolver:
                 (0.5 * lam_phys, 1.0),
             ]
             for alt_lam, alt_mu in fallback_guesses:
-                alt_x0 = np.array([
-                    np.log(max(alt_lam, 1e-4)),
-                    np.log(max(alt_mu, 1e-8)),
-                ])
+                alt_x0 = np.array(
+                    [
+                        np.log(max(alt_lam, 1e-4)),
+                        np.log(max(alt_mu, 1e-8)),
+                    ]
+                )
                 alt_sol, alt_info, alt_ier, _ = fsolve(
                     _residual_log,
                     alt_x0,

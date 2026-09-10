@@ -492,18 +492,14 @@ class TestTheBundleSubproblem:
             generator = np.random.default_rng(seed)
             size = int(generator.integers(5, 25))
             vectors = generator.standard_normal((size, 40))
-            vectors[3:] = vectors[:1] + 0.01 * generator.standard_normal(
-                (size - 3, 40)
-            )
+            vectors[3:] = vectors[:1] + 0.01 * generator.standard_normal((size - 3, 40))
             quadratic = vectors @ vectors.T
             linear = generator.uniform(0.0, 1.0, size)
 
             step = 1.0 / max(float(np.linalg.eigvalsh(quadratic).max()), 1e-12)
             plain = np.full(size, 1.0 / size)
             for _ in range(400):
-                plain = _project_on_simplex(
-                    plain - step * (quadratic @ plain - linear)
-                )
+                plain = _project_on_simplex(plain - step * (quadratic @ plain - linear))
             accelerated = _minimise_on_simplex(
                 quadratic, linear, iterations=400, tolerance=0.0, warn_above=np.inf
             )
@@ -559,8 +555,14 @@ class TestBundleResultReadsLikeAnOptimisationResult:
         shared = {f.name for f in fields(BundleResult)} & {
             f.name for f in fields(OptimisationResult)
         }
-        assert {"value", "minimiser", "iterations", "evaluations", "converged",
-                "message"} <= shared
+        assert {
+            "value",
+            "minimiser",
+            "iterations",
+            "evaluations",
+            "converged",
+            "message",
+        } <= shared
 
     def test_the_evaluations_are_counted(self, rng):
         from pygeoinf2.numerics.convex import ProximalBundleMethod
@@ -583,7 +585,9 @@ class TestReportedCounts:
 
         class Refusing:
             def solve(self, *args, **kwargs):
-                return QPResult(x=np.zeros(args[1].size), objective=0.0, status="failed")
+                return QPResult(
+                    x=np.zeros(args[1].size), objective=0.0, status="failed"
+                )
 
         space = EuclideanSpace(3)
         functional = SquaredDistance(space, centre=space.random(rng=rng))

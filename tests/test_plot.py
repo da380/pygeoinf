@@ -13,7 +13,12 @@ import pygeoinf
 import pygeoinf.plot
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter, plot_slice
+from pygeoinf.plot import (
+    plot_1d_distributions,
+    plot_corner_distributions,
+    SubspaceSlicePlotter,
+    plot_slice,
+)
 from pygeoinf.subspaces import AffineSubspace
 from pygeoinf.subsets import Ball, HalfSpace, PolyhedralSet
 
@@ -506,6 +511,7 @@ class TestPlotEdgeCases:
 
         plt.close(fig)
 
+
 # =============================================================================
 # Phase 1 Baseline: Import & SubspaceSlicePlotter Tests
 # =============================================================================
@@ -517,6 +523,7 @@ class TestVisualizationModuleImports:
     def test_visualization_module_imports(self):
         """pygeoinf.plot must be importable with no errors."""
         import importlib
+
         mod = importlib.import_module("pygeoinf.plot")
         assert mod is not None
         assert hasattr(mod, "plot_1d_distributions")
@@ -554,9 +561,7 @@ class TestSubspaceSlicePlotter2D:
         ball = Ball(domain_2d, center, radius=0.5, open_set=False)
 
         plotter = SubspaceSlicePlotter(ball, subspace_2d, grid_size=10)
-        fig, ax, payload = plotter.plot(
-            bounds=(-1.0, 1.0, -1.0, 1.0), show_plot=False
-        )
+        fig, ax, payload = plotter.plot(bounds=(-1.0, 1.0, -1.0, 1.0), show_plot=False)
 
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
@@ -583,9 +588,7 @@ class TestSubspaceSlicePlotter2D:
         poly = PolyhedralSet(domain_2d, half_spaces)
 
         plotter = SubspaceSlicePlotter(poly, subspace_2d, grid_size=10)
-        fig, ax, payload = plotter.plot(
-            bounds=(-1.0, 1.0, -1.0, 1.0), show_plot=False
-        )
+        fig, ax, payload = plotter.plot(bounds=(-1.0, 1.0, -1.0, 1.0), show_plot=False)
 
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
@@ -708,7 +711,8 @@ class TestPlotSliceWrapper:
 
         # Should succeed, not raise
         fig, ax, payload = plot_slice(
-            ball, subspace,
+            ball,
+            subspace,
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
             grid_size=5,
             show_plot=False,
@@ -743,7 +747,9 @@ class TestSubsetPlotEntryPoint:
             subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2])
 
         ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
-        result = ball.plot(subspace, bounds=(-1.0, 1.0, -1.0, 1.0), grid_size=10, show_plot=False)
+        result = ball.plot(
+            subspace, bounds=(-1.0, 1.0, -1.0, 1.0), grid_size=10, show_plot=False
+        )
 
         assert isinstance(result, tuple)
         assert len(result) == 3
@@ -845,7 +851,9 @@ class TestPlotSlice3D:
         # All surface points must lie at distance ≈ 0.5 from the origin (ball center)
         dists = np.linalg.norm(payload, axis=1)
         np.testing.assert_allclose(
-            dists, 0.5, rtol=1e-6,
+            dists,
+            0.5,
+            rtol=1e-6,
             err_msg="Exact 3D ball surface points should all be at distance r=0.5 from center",
         )
         plt.close(fig)
@@ -854,7 +862,8 @@ class TestPlotSlice3D:
         """SubspaceSlicePlotter.plot() works directly for a 3D Ball via exact path."""
         plotter = SubspaceSlicePlotter(ball_3d, subspace_3d, grid_size=5)
         fig, ax, payload = plotter.plot(
-            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0), show_plot=False,
+            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+            show_plot=False,
             backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
@@ -876,12 +885,16 @@ class TestPlotSlice3D:
             show_plot=False,
             backend="matplotlib",
         )
-        assert payload.ndim == 2 and payload.shape[1] == 3, (
-            f"Expected surface points (N, 3), got {payload.shape}"
-        )
+        assert (
+            payload.ndim == 2 and payload.shape[1] == 3
+        ), f"Expected surface points (N, 3), got {payload.shape}"
         dists = np.linalg.norm(payload, axis=1)
-        np.testing.assert_allclose(dists, 0.5, rtol=1e-6,
-            err_msg="All 3D ball surface points must be at distance r=0.5 from center")
+        np.testing.assert_allclose(
+            dists,
+            0.5,
+            rtol=1e-6,
+            err_msg="All 3D ball surface points must be at distance r=0.5 from center",
+        )
         plt.close(fig)
 
     def test_plot_slice_polyhedral_3d_exact_path(self, domain_3d, subspace_3d):
@@ -913,14 +926,14 @@ class TestPlotSlice3D:
         assert hasattr(ax, "set_zlim"), "3D exact path must return Axes3D"
         # payload is a vertex array (n_vertices, 3) in parameter coordinates
         assert isinstance(payload, np.ndarray), f"payload type: {type(payload)}"
-        assert payload.ndim == 2 and payload.shape[1] == 3, (
-            f"Expected vertex array of shape (n,3), got {payload.shape}"
-        )
+        assert (
+            payload.ndim == 2 and payload.shape[1] == 3
+        ), f"Expected vertex array of shape (n,3), got {payload.shape}"
         assert payload.shape[0] >= 4, "3D polytope must have at least 4 vertices"
         # All vertices must lie within the given bounds [-1, 1]^3
-        assert np.all(payload >= -1.0 - 1e-10) and np.all(payload <= 1.0 + 1e-10), (
-            "Vertices must lie within the given bounds"
-        )
+        assert np.all(payload >= -1.0 - 1e-10) and np.all(
+            payload <= 1.0 + 1e-10
+        ), "Vertices must lie within the given bounds"
         plt.close(fig)
 
     def test_3d_large_grid_warns(self, domain_3d, subspace_3d):
@@ -934,9 +947,15 @@ class TestPlotSlice3D:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             SubspaceSlicePlotter(ball_3d, subspace_3d, grid_size=31)
-        grid_warns = [w for w in caught if issubclass(w.category, UserWarning)
-                      and "3D sampled rendering" in str(w.message)]
-        assert grid_warns == [], "Ball (exact path) must not trigger 3D sampling warning"
+        grid_warns = [
+            w
+            for w in caught
+            if issubclass(w.category, UserWarning)
+            and "3D sampled rendering" in str(w.message)
+        ]
+        assert (
+            grid_warns == []
+        ), "Ball (exact path) must not trigger 3D sampling warning"
 
         # HalfSpace uses sampled path: warning expected
         normal = np.array([1.0, 0.0, 0.0])
@@ -957,11 +976,12 @@ class TestBackendParameterPhase1:
     def test_plot_slice_backend_parameter_defaults(self):
         """plot_slice() must accept backend kwarg and default to 'auto'."""
         import inspect
+
         sig = inspect.signature(plot_slice)
         assert "backend" in sig.parameters, "plot_slice must have a backend parameter"
-        assert sig.parameters["backend"].default == "auto", (
-            "Default backend must be 'auto'"
-        )
+        assert (
+            sig.parameters["backend"].default == "auto"
+        ), "Default backend must be 'auto'"
 
     def test_plot_slice_backend_valid_values(self):
         """plot_slice() must accept 'auto', 'matplotlib', and 'plotly' as backend values.
@@ -979,7 +999,8 @@ class TestBackendParameterPhase1:
 
         for backend in ("auto", "matplotlib", "plotly"):
             fig, ax, payload = plot_slice(
-                ball, subspace,
+                ball,
+                subspace,
                 bounds=(-1.0, 1.0, -1.0, 1.0),
                 grid_size=5,
                 show_plot=False,
@@ -995,23 +1016,25 @@ class TestBackendParameterPhase1:
     def test_subspace_slice_plotter_plot_backend_parameter(self):
         """SubspaceSlicePlotter.plot() must accept backend kwarg and default to 'auto'."""
         import inspect
+
         sig = inspect.signature(SubspaceSlicePlotter.plot)
-        assert "backend" in sig.parameters, (
-            "SubspaceSlicePlotter.plot must have a backend parameter"
-        )
-        assert sig.parameters["backend"].default == "auto", (
-            "Default backend must be 'auto'"
-        )
+        assert (
+            "backend" in sig.parameters
+        ), "SubspaceSlicePlotter.plot must have a backend parameter"
+        assert (
+            sig.parameters["backend"].default == "auto"
+        ), "Default backend must be 'auto'"
 
     def test_subset_plot_backend_parameter_exists(self):
         """Subset.plot() must accept backend kwarg and default to 'auto'."""
         import inspect
         from pygeoinf.subsets import Subset
+
         sig = inspect.signature(Subset.plot)
         assert "backend" in sig.parameters, "Subset.plot must have a backend parameter"
-        assert sig.parameters["backend"].default == "auto", (
-            "Default backend must be 'auto'"
-        )
+        assert (
+            sig.parameters["backend"].default == "auto"
+        ), "Default backend must be 'auto'"
 
     def test_subset_plot_forwards_backend(self):
         """Subset.plot() must forward the backend kwarg to plot_slice()."""
@@ -1020,7 +1043,11 @@ class TestBackendParameterPhase1:
 
         with patch("pygeoinf.plot.SubspaceSlicePlotter") as mock_plotter_cls:
             mock_plotter = Mock()
-            mock_plotter.plot.return_value = (Mock(), Mock(), np.ones((5, 5), dtype=bool))
+            mock_plotter.plot.return_value = (
+                Mock(),
+                Mock(),
+                np.ones((5, 5), dtype=bool),
+            )
             mock_plotter_cls.return_value = mock_plotter
 
             ball.plot(show_plot=False, grid_size=5, backend="matplotlib")
@@ -1053,9 +1080,9 @@ class TestBackendParameterPhase1:
             backend="auto",
         )
         # Phase 2: 'auto' with plotly installed must return a Plotly figure
-        assert isinstance(fig, go.Figure), (
-            f"auto backend with plotly installed must return go.Figure, got {type(fig)}"
-        )
+        assert isinstance(
+            fig, go.Figure
+        ), f"auto backend with plotly installed must return go.Figure, got {type(fig)}"
         assert ax is None, "ax must be None for Plotly figures"
         assert isinstance(payload, np.ndarray)
         plt.close("all")
@@ -1140,18 +1167,18 @@ class TestPlotSlice3DPlotlyBackend:
             show_plot=False,
             backend="plotly",
         )
-        assert isinstance(fig, go.Figure), (
-            f"backend='plotly' must return go.Figure, got {type(fig)}"
-        )
+        assert isinstance(
+            fig, go.Figure
+        ), f"backend='plotly' must return go.Figure, got {type(fig)}"
         assert ax_or_none is None, "ax must be None for Plotly figures"
         # Exact quadratic path returns surface points (N, 3), not a boolean voxel mask
         assert isinstance(payload, np.ndarray)
         assert payload.ndim == 2 and payload.shape[1] == 3
         # Exact 3D path renders as a Surface trace (not Isosurface)
         assert len(fig.data) >= 1, "Plotly figure must contain at least one trace"
-        assert isinstance(fig.data[0], go.Surface), (
-            f"Exact 3D quadratic path must use go.Surface trace, got {type(fig.data[0])}"
-        )
+        assert isinstance(
+            fig.data[0], go.Surface
+        ), f"Exact 3D quadratic path must use go.Surface trace, got {type(fig.data[0])}"
 
     def test_plot_slice_polyhedral_3d_plotly_exact_path(self, box_3d, subspace_3d):
         """backend='plotly' returns a Plotly figure for 3D PolyhedralSet (exact path)."""
@@ -1164,18 +1191,18 @@ class TestPlotSlice3DPlotlyBackend:
             show_plot=False,
             backend="plotly",
         )
-        assert isinstance(fig, go.Figure), (
-            f"backend='plotly' polyhedral exact path must return go.Figure, got {type(fig)}"
-        )
+        assert isinstance(
+            fig, go.Figure
+        ), f"backend='plotly' polyhedral exact path must return go.Figure, got {type(fig)}"
         assert ax_or_none is None
         assert isinstance(payload, np.ndarray)
         assert payload.ndim == 2 and payload.shape[1] == 3
         assert payload.shape[0] >= 4, "3D polytope must have at least 4 vertices"
         # Exact polyhedral 3D path renders as a Mesh3d trace.
         assert len(fig.data) >= 1, "Plotly figure must contain at least one trace"
-        assert isinstance(fig.data[0], go.Mesh3d), (
-            f"Exact 3D polyhedral path must use go.Mesh3d trace, got {type(fig.data[0])}"
-        )
+        assert isinstance(
+            fig.data[0], go.Mesh3d
+        ), f"Exact 3D polyhedral path must use go.Mesh3d trace, got {type(fig.data[0])}"
 
     def test_plot_slice_plotly_rejects_matplotlib_ax(self, ball_3d, subspace_3d):
         """Passing a Matplotlib ax when backend='plotly' raises ValueError."""

@@ -615,9 +615,7 @@ class _ComponentOperator(LinearOperator):
     view has the same one.
     """
 
-    def __init__(
-        self, operator: LinearOperator, domain: Any, codomain: Any, /
-    ) -> None:
+    def __init__(self, operator: LinearOperator, domain: Any, codomain: Any, /) -> None:
         super().__init__(domain, codomain, traits=operator.traits)
         self._operator = operator
         self._action = operator._components_action()
@@ -1212,9 +1210,7 @@ class MinResSolver(IterativeSolver):
 
         # Relative to the M-norm of the right-hand side, since that is the norm
         # phi_bar below is measured in.
-        tolerance = max(
-            self._rtol * m_norm(b, preconditioned(b)), self._atol
-        )
+        tolerance = max(self._rtol * m_norm(b, preconditioned(b)), self._atol)
 
         history: list[float] = []
         z = preconditioned(r)

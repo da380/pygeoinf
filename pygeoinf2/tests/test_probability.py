@@ -125,7 +125,9 @@ class TestConstruction:
         )
         x = X.random(rng=rng)
         coordinates = X.to_components(x)
-        expected = coordinates @ X.gram_matrix() @ np.linalg.inv(components) @ coordinates
+        expected = (
+            coordinates @ X.gram_matrix() @ np.linalg.inv(components) @ coordinates
+        )
         assert mu.mahalanobis_squared(x) == pytest.approx(expected)
 
     @pytest.mark.parametrize(
@@ -659,7 +661,11 @@ class TestStochasticDivergence:
         )
 
     @pytest.fixture(
-        params=[lambda: EuclideanSpace(8), make_weighted_space, make_dense_metric_space],
+        params=[
+            lambda: EuclideanSpace(8),
+            make_weighted_space,
+            make_dense_metric_space,
+        ],
         ids=["euclidean", "weighted", "dense-metric"],
     )
     def space(self, request):
@@ -686,9 +692,7 @@ class TestStochasticDivergence:
         )
         assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
 
-    def test_it_is_never_negative_and_never_less_certain_than_it_is_large(
-        self, space
-    ):
+    def test_it_is_never_negative_and_never_less_certain_than_it_is_large(self, space):
         """A divergence cannot be negative, and this estimator cannot report
         one: every probe returns ``(x, g(M) x) >= 0``. The same
         non-negativity bounds the standard error by the mean, since
@@ -720,7 +724,9 @@ class TestStochasticDivergence:
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
         )
         factor = LinearOperator.from_matrix(
-            EuclideanSpace(60), X, rotation @ np.diag(np.sqrt(spectrum)),
+            EuclideanSpace(60),
+            X,
+            rotation @ np.diag(np.sqrt(spectrum)),
             form="components",
         )
         reference = GaussianMeasure(X, covariance=covariance)
@@ -941,8 +947,11 @@ class TestDenseCovariance:
             X, apply, traits=Traits.POSITIVE_DEFINITE
         )
         mean = X.random(rng=rng)
-        return X, components, GaussianMeasure(X, covariance=covariance,
-                                              expectation=mean)
+        return (
+            X,
+            components,
+            GaussianMeasure(X, covariance=covariance, expectation=mean),
+        )
 
     def test_it_assembles_the_same_law(self, opaque, rng):
         X, components, measure = opaque
@@ -951,9 +960,7 @@ class TestDenseCovariance:
 
         dense = measure.with_dense_covariance(n_jobs=2)
 
-        assert dense.covariance.matrix(form="components") == pytest.approx(
-            components
-        )
+        assert dense.covariance.matrix(form="components") == pytest.approx(components)
         assert X.norm(X.subtract(dense.expectation, measure.expectation)) < 1e-14
 
     def test_the_result_can_be_sampled_and_has_a_density(self, opaque, rng):
@@ -966,9 +973,7 @@ class TestDenseCovariance:
         assert dense.precision.matrix(form="components") == pytest.approx(
             np.linalg.inv(components)
         )
-        draws = np.array(
-            [X.to_components(dense.sample(rng=rng)) for _ in range(20000)]
-        )
+        draws = np.array([X.to_components(dense.sample(rng=rng)) for _ in range(20000)])
         inverse = np.linalg.inv(X.gram_matrix())
         expected = components @ inverse
         scale = float(np.max(np.abs(expected)))
@@ -1281,7 +1286,7 @@ class TestParallelLoops:
 
         for where in parallel_map(inner, range(2), n_jobs=2):
             assert len(where) == 1
-            (pid, thread), = where
+            ((pid, thread),) = where
             assert pid != os.getpid()
             assert thread == "MainThread"
 

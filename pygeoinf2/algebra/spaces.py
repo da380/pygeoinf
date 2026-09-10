@@ -496,7 +496,9 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """
         if columns.shape[1] == 0:
             return columns.copy()
-        return np.stack([self.apply_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1)
+        return np.stack(
+            [self.apply_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1
+        )
 
     def gram_diagonal(self) -> np.ndarray:
         """The diagonal of the Gram matrix, ``(e_i, e_i)`` for each basis vector.
@@ -526,7 +528,9 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """
         if columns.shape[1] == 0:
             return columns.copy()
-        return np.stack([self.solve_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1)
+        return np.stack(
+            [self.solve_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1
+        )
 
     def _orthonormalise_columns(
         self,

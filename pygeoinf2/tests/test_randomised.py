@@ -376,7 +376,11 @@ class TestAdaptiveRangeIsIncremental:
         space = EuclideanSpace(200)
         _, operator = self.low_rank(space, 40, rng)
         basis = random_range(
-            operator, rtol=1e-8, block_size=8, max_rank=100, rng=np.random.default_rng(2)
+            operator,
+            rtol=1e-8,
+            block_size=8,
+            max_rank=100,
+            rng=np.random.default_rng(2),
         )
         stacked = np.array(basis)
         assert stacked @ stacked.T == pytest.approx(np.eye(len(basis)), abs=1e-10)
@@ -597,7 +601,9 @@ class TestComponentFastPaths:
         assert counts["analysis"] <= 2 * applications
         assert counts["synthesis"] <= 2 * applications + 2 * probes
         # One power step on a 1/(1+i) spectrum: approximate, as the method is.
-        assert np.allclose(decomposition.eigenvalues, np.sort(values)[::-1][:rank], rtol=0.05)
+        assert np.allclose(
+            decomposition.eigenvalues, np.sort(values)[::-1][:rank], rtol=0.05
+        )
 
     def test_the_two_routes_agree_on_a_dense_metric(self, rng):
         """The component route against the coordinate-free one it replaces."""

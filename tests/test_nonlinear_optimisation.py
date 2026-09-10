@@ -94,7 +94,6 @@ class TestScipyUnconstrainedOptimiser:
         ],
     )
     def test_quadratic_minimisation(self, method: str, quadratic_problem: dict):
-
         # 1. Unpack the test problem
         form = quadratic_problem["form"]
         x0 = quadratic_problem["x0"]

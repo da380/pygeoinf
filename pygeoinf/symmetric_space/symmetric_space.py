@@ -465,7 +465,6 @@ class InvariantGaussianMeasure(GaussianMeasure):
             )
 
         if inverse_solver is not None and inverse_preconditioner is None:
-
             if isinstance(inverse_solver, IterativeLinearSolver):
                 # A. Top-Left Block: "Water-filling" spectral regularization
                 max_var = np.max(self.spectral_variances)

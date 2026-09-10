@@ -163,9 +163,7 @@ class CholeskySolver(DirectLinearSolver):
             parallel=self._parallel,
             n_jobs=self._n_jobs,
         )
-        factor = cho_factor(
-            matrix, overwrite_a=False, check_finite=self._check_finite
-        )
+        factor = cho_factor(matrix, overwrite_a=False, check_finite=self._check_finite)
 
         def solve_galerkin(c: np.ndarray) -> np.ndarray:
             return cho_solve(factor, c, check_finite=self._check_finite)
@@ -528,8 +526,8 @@ class CGSolver(IterativeLinearSolver):
             den = domain.inner_product(p, q)
             if not np.isfinite(den):
                 raise FloatingPointError(
-                "CG numerical breakdown: non-finite recurrence product "
-                "p.T A p. Rescale the problem or preconditioner."
+                    "CG numerical breakdown: non-finite recurrence product "
+                    "p.T A p. Rescale the problem or preconditioner."
                 )
             if den <= 0:
                 raise FloatingPointError(

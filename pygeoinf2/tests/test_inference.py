@@ -728,7 +728,8 @@ class TestJointInversionEndToEnd:
         # the weighting would still look plausible on equal ones.
         problems = [
             LinearForwardProblem(
-                first, error=gi.GaussianMeasure.from_standard_deviation(first_data, 0.05)
+                first,
+                error=gi.GaussianMeasure.from_standard_deviation(first_data, 0.05),
             ),
             LinearForwardProblem(
                 second,
@@ -744,10 +745,7 @@ class TestJointInversionEndToEnd:
     def dense_reference(problems, prior, data):
         """``(Q^-1 + A* R^-1 A)^-1 A* R^-1 d``, assembled in components."""
         forward = np.vstack(
-            [
-                problem.forward_operator.matrix(form="components")
-                for problem in problems
-            ]
+            [problem.forward_operator.matrix(form="components") for problem in problems]
         )
         noise = np.diag(
             np.concatenate(
@@ -762,8 +760,10 @@ class TestJointInversionEndToEnd:
         )
         covariance = np.diag(prior.covariance.eigenvalues)
         stacked = np.concatenate([np.asarray(part) for part in data])
-        gain = covariance @ forward.T @ np.linalg.inv(
-            forward @ covariance @ forward.T + noise
+        gain = (
+            covariance
+            @ forward.T
+            @ np.linalg.inv(forward @ covariance @ forward.T + noise)
         )
         return gain @ stacked
 
@@ -773,9 +773,11 @@ class TestJointInversionEndToEnd:
         joint = LinearForwardProblem.from_direct_sum(problems)
         inversion = LinearGaussianInversion(joint, prior, formalism=formalism)
 
-        estimate = inversion(joint.data_space.from_components(
-            np.concatenate([np.asarray(part) for part in data])
-        ))
+        estimate = inversion(
+            joint.data_space.from_components(
+                np.concatenate([np.asarray(part) for part in data])
+            )
+        )
         reference = self.dense_reference(problems, prior, data)
         assert np.asarray(estimate.expectation) == pytest.approx(reference, rel=1e-6)
 
@@ -935,7 +937,9 @@ class TestConstrainedEstimatorsCanBeReduced:
         for cls in (ConstrainedLeastSquares, ConstrainedMinimumNorm):
             kinds = [
                 parameter.kind
-                for parameter in inspect.signature(cls.parameterised).parameters.values()
+                for parameter in inspect.signature(
+                    cls.parameterised
+                ).parameters.values()
             ]
             assert inspect.Parameter.VAR_KEYWORD not in kinds
 
@@ -986,8 +990,12 @@ class TestFeasibilityIsAskable:
         exact = LinearForwardProblem(forward)
         noisy = LinearForwardProblem(forward, error=Ball(forward.codomain, radius=1e-6))
 
-        assert not BackusInference(exact, target, Ball(model, radius=1e-3)).is_feasible(data)
-        assert BackusInference(exact, target, Ball(model, radius=100.0)).is_feasible(data)
+        assert not BackusInference(exact, target, Ball(model, radius=1e-3)).is_feasible(
+            data
+        )
+        assert BackusInference(exact, target, Ball(model, radius=100.0)).is_feasible(
+            data
+        )
 
         for route in (FeasibleProperty, DualFeasibleProperty):
             assert not route(noisy, target, Ball(model, radius=1e-3)).is_feasible(data)

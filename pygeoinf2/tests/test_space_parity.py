@@ -252,13 +252,13 @@ class TestPointsAreConvertedOnce:
         field = space.random(rng=rng)
         weights = rng.normal(size=7)
         prepared = space.prepare_points(points)
-        assert np.allclose(space.evaluate(field, prepared), space.evaluate(field, points))
+        assert np.allclose(
+            space.evaluate(field, prepared), space.evaluate(field, points)
+        )
         assert np.allclose(
             space.accumulate(weights, prepared), space.accumulate(weights, points)
         )
-        assert np.allclose(
-            space.basis_matrix(prepared), space.basis_matrix(points)
-        )
+        assert np.allclose(space.basis_matrix(prepared), space.basis_matrix(points))
 
 
 class TestAnInvariantDrawIsTakenInComponents:
@@ -338,9 +338,9 @@ class TestTwoPointQuantitiesInClosedForm:
         _, space = geometry
         variances = space.sobolev_symbol(-2.0, 0.3)
         measure = space.invariant_measure(variances)
-        assert space.covariance_function(measure, np.array([0.0]))[
-            0
-        ] == pytest.approx(space.pointwise_variance(variances))
+        assert space.covariance_function(measure, np.array([0.0]))[0] == pytest.approx(
+            space.pointwise_variance(variances)
+        )
 
     def test_the_pointwise_variance_at_points_is_the_same_sum(self, geometry, rng):
         _, space = geometry
@@ -407,7 +407,10 @@ class TestNeighbourSearchAndClustering:
         # domain the tree wraps, so measuring the pairs afterwards has to wrap
         # too -- otherwise it reports the long way round.
         reference = np.array(
-            [space.geodesic_distance(points[i], points[j]) for i, j in zip(rows, columns)]
+            [
+                space.geodesic_distance(points[i], points[j])
+                for i, j in zip(rows, columns)
+            ]
         )
         assert distances == pytest.approx(reference)
 
@@ -443,7 +446,9 @@ class TestNeighbourSearchAndClustering:
         for cluster in space.cluster_points(points, radius=scale):
             for i in cluster:
                 for j in cluster:
-                    assert space.geodesic_distance(points[i], points[j]) <= scale * 1.001
+                    assert (
+                        space.geodesic_distance(points[i], points[j]) <= scale * 1.001
+                    )
 
     def test_exactly_one_criterion_is_needed(self, geometry, rng):
         _, space = geometry
@@ -520,9 +525,7 @@ class TestCoefficientAccess:
         _, space = geometry
         field = space.random(rng=rng)
         components = space.to_components(field)
-        assert space.power_spectrum(field).sum() == pytest.approx(
-            np.sum(components**2)
-        )
+        assert space.power_spectrum(field).sum() == pytest.approx(np.sum(components**2))
 
     def test_a_lebesgue_measures_power_is_the_power_it_was_given(self, geometry, rng):
         """On L2 the two meet: draws from ``power_measure(p)`` have spectrum
@@ -553,7 +556,8 @@ class TestCoefficientAccess:
 
         expected = np.bincount(
             degrees,
-            weights=measure.covariance.eigenvalues / space.apply_gram(np.ones(space.dim)),
+            weights=measure.covariance.eigenvalues
+            / space.apply_gram(np.ones(space.dim)),
         )
         drawn = np.mean(
             [space.power_spectrum(measure.sample(rng=rng)) for _ in range(400)],
@@ -839,9 +843,7 @@ class TestCorrelatedMeasureAccessors:
         to zero at the shortest wavelengths a circle carries, and there the
         convention below applies instead."""
         _, space = geometry
-        live = (
-            space.sobolev_symbol(-2.0, 0.2) * space.heat_symbol(0.14)
-        ) > 0.0
+        live = (space.sobolev_symbol(-2.0, 0.2) * space.heat_symbol(0.14)) > 0.0
         correlations = space.spectral_correlations(self._measure(space))
         assert correlations[live] == pytest.approx(0.5)
         assert correlations[~live] == pytest.approx(0.0)
@@ -859,9 +861,7 @@ class TestCorrelatedMeasureAccessors:
 
         measure = space.correlated_measure(sigma)
         live = variance > 0.0
-        assert space.spectral_correlations(measure)[live] == pytest.approx(
-            wanted[live]
-        )
+        assert space.spectral_correlations(measure)[live] == pytest.approx(wanted[live])
 
     def test_a_mode_with_no_variance_has_no_correlation(self, geometry):
         """0/0, and v1's convention is zero -- there is nothing to report."""
@@ -883,8 +883,7 @@ class TestCorrelatedMeasureAccessors:
         cross = measure.cross_covariance(0, 1)
         assert cross.domain is space and cross.codomain is space
         assert cross.eigenvalues == pytest.approx(
-            0.5
-            * np.sqrt(space.sobolev_symbol(-2.0, 0.2) * space.heat_symbol(0.14))
+            0.5 * np.sqrt(space.sobolev_symbol(-2.0, 0.2) * space.heat_symbol(0.14))
         )
 
     def test_they_are_refused_off_a_direct_sum(self, geometry):

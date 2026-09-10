@@ -160,9 +160,7 @@ class TestTheLebesgueInnerProductIsTheQuadrature:
             DiagonalMetricSpace.inner_product(X, x, y)
         )
         quadrature = float(
-            np.einsum(
-                "j,ji,ji->", X._quadrature, X.grid_values(x), X.grid_values(y)
-            )
+            np.einsum("j,ji,ji->", X._quadrature, X.grid_values(x), X.grid_values(y))
         )
         assert not np.isclose(X.inner_product(x, y), quadrature)
 

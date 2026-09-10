@@ -49,9 +49,7 @@ def test_imhof_two_weights_matches_mc():
     p = 0.85
     r_imhof = weighted_chi2_quantile(weights, p, method="imhof", rtol=1e-9)
     rng = np.random.default_rng(0)
-    r_mc = weighted_chi2_quantile(
-        weights, p, method="mc", n_samples=200_000, rng=rng
-    )
+    r_mc = weighted_chi2_quantile(weights, p, method="mc", n_samples=200_000, rng=rng)
     # Statistical uncertainty for MC quantile is roughly sigma_p / sqrt(N).
     # Allow 2% tolerance.
     assert_allclose(r_imhof, r_mc, rtol=2e-2)
@@ -63,9 +61,7 @@ def test_imhof_anisotropic_matches_mc():
     p = 0.9
     r_imhof = weighted_chi2_quantile(weights, p, method="imhof", rtol=1e-9)
     rng = np.random.default_rng(1)
-    r_mc = weighted_chi2_quantile(
-        weights, p, method="mc", n_samples=200_000, rng=rng
-    )
+    r_mc = weighted_chi2_quantile(weights, p, method="mc", n_samples=200_000, rng=rng)
     assert_allclose(r_imhof, r_mc, rtol=3e-2)
 
 
@@ -86,9 +82,7 @@ def test_imhof_decaying_weights():
     p = 0.9
     r_imhof = weighted_chi2_quantile(weights, p, method="imhof", rtol=1e-9)
     rng = np.random.default_rng(2)
-    r_mc = weighted_chi2_quantile(
-        weights, p, method="mc", n_samples=200_000, rng=rng
-    )
+    r_mc = weighted_chi2_quantile(weights, p, method="mc", n_samples=200_000, rng=rng)
     assert_allclose(r_imhof, r_mc, rtol=2e-2)
 
 
@@ -224,4 +218,3 @@ def test_auto_mode_tol_explicit_method_independence():
     q1 = weighted_chi2_quantile(w, 0.8, method="imhof", tol=1e-6)
     q2 = weighted_chi2_quantile(w, 0.8, method="imhof", tol=0.5)
     assert_allclose(q1, q2, rtol=1e-12)
-

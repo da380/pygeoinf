@@ -690,9 +690,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         expected = self._packing.rfft_shape
         array = np.asarray(coefficients, dtype=complex)
         if array.shape != expected:
-            raise ValueError(
-                f"Coefficients have shape {expected}, got {array.shape}."
-            )
+            raise ValueError(f"Coefficients have shape {expected}, got {array.shape}.")
         return irfftn(array, s=self._shape)
 
     # ----------------------------------------------------------------- #
@@ -747,7 +745,10 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         """Where each ``(wavevector, phase)`` label sits in the components."""
         packing = self._packing
         return {
-            (tuple(int(k) for k in packing.wavenumbers[:, i]), int(packing.phases[i])): i
+            (
+                tuple(int(k) for k in packing.wavenumbers[:, i]),
+                int(packing.phases[i]),
+            ): i
             for i in range(self.dim)
         }
 

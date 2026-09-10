@@ -146,9 +146,7 @@ def _fast(space: Any) -> bool:
 
 def _orthonormal_columns(space: CoordinateSpace, vectors: Sequence[Any]) -> np.ndarray:
     """``orthonormal_basis`` on components, returning the columns."""
-    columns, _ = space._orthonormalise_columns(
-        space.components_of(vectors), rtol=1e-10
-    )
+    columns, _ = space._orthonormalise_columns(space.components_of(vectors), rtol=1e-10)
     return columns
 
 
@@ -270,7 +268,9 @@ def random_range(
         if rank <= 0:
             raise ValueError("rank must be positive.")
         count = min(rank + oversampling, ceiling)
-        basis = codomain.orthonormal_basis(_probe_range(operator, count, rng, n_jobs=n_jobs))
+        basis = codomain.orthonormal_basis(
+            _probe_range(operator, count, rng, n_jobs=n_jobs)
+        )
         return _power_iterate(operator, basis, power, n_jobs=n_jobs)
 
     # --- adaptive: grow until a fresh block is nearly in the span ------
@@ -285,7 +285,9 @@ def random_range(
         columns = _adaptive_range_on_components(
             operator, codomain, ceiling, block_size, rtol, rng, n_jobs=n_jobs
         )
-        return _power_iterate(operator, codomain.vectors_from(columns), power, n_jobs=n_jobs)
+        return _power_iterate(
+            operator, codomain.vectors_from(columns), power, n_jobs=n_jobs
+        )
     basis: list[Any] = []
     scale: float | None = None
     while len(basis) < ceiling:
@@ -647,9 +649,7 @@ def random_svd(
         pulled_columns = domain.components_of(pulled)
         gram = pulled_columns.T @ domain.apply_gram_to_columns(pulled_columns)
     else:
-        gram = np.array(
-            [[domain.inner_product(u, v) for v in pulled] for u in pulled]
-        )
+        gram = np.array([[domain.inner_product(u, v) for v in pulled] for u in pulled])
     gram = 0.5 * (gram + gram.T)
     values, vectors = np.linalg.eigh(gram)
 
@@ -821,7 +821,9 @@ def random_trace(
             error = float(draws.std(ddof=1) / np.sqrt(draws.size))
             if error <= rtol * abs(float(draws.mean())):
                 break
-            draws = np.concatenate([draws, block(min(block_size, ceiling - draws.size))])
+            draws = np.concatenate(
+                [draws, block(min(block_size, ceiling - draws.size))]
+            )
         samples = draws.size
 
     return Estimate(

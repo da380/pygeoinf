@@ -90,9 +90,7 @@ def weighted_chi2_cdf(
     """
     w = _validate_weights(weights)
     if method not in _VALID_METHODS:
-        raise ValueError(
-            f"Unknown method '{method}'. Choose one of {_VALID_METHODS}."
-        )
+        raise ValueError(f"Unknown method '{method}'. Choose one of {_VALID_METHODS}.")
 
     scalar = np.isscalar(t)
     t_arr = np.atleast_1d(np.asarray(t, dtype=float))
@@ -156,9 +154,7 @@ def weighted_chi2_quantile(
         raise ValueError("probability must lie strictly between 0 and 1.")
     w = _validate_weights(weights)
     if method not in _VALID_METHODS:
-        raise ValueError(
-            f"Unknown method '{method}'. Choose one of {_VALID_METHODS}."
-        )
+        raise ValueError(f"Unknown method '{method}'. Choose one of {_VALID_METHODS}.")
 
     if w.size == 0 or np.all(w == 0.0):
         return 0.0
@@ -173,12 +169,8 @@ def weighted_chi2_quantile(
 
     # Closed-form fast path for equal positive weights.
     positive = w[w > 0.0]
-    if positive.size > 0 and np.allclose(
-        positive, positive[0], rtol=1e-12, atol=0.0
-    ):
-        return float(
-            positive[0] * scipy.stats.chi2.ppf(probability, df=positive.size)
-        )
+    if positive.size > 0 and np.allclose(positive, positive[0], rtol=1e-12, atol=0.0):
+        return float(positive[0] * scipy.stats.chi2.ppf(probability, df=positive.size))
 
     cdf_fn = (
         (lambda t: _imhof_cdf(w, t, rtol=rtol))
@@ -237,7 +229,7 @@ def _auto_select_method(weights: np.ndarray, tol: float) -> str:
         ``"imhof"`` otherwise.
     """
     s1 = float(np.sum(weights))
-    s2 = float(np.sum(weights ** 2))
+    s2 = float(np.sum(weights**2))
     nu_eff = s1 * s1 / s2 if s2 > 0.0 else 1.0
     # Conservative: 3x safety factor on the empirical error model.
     sp_expected_error = 0.1 / max(nu_eff, 1e-10)
@@ -249,9 +241,7 @@ def _auto_select_method(weights: np.ndarray, tol: float) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _imhof_integrand_vec(
-    u: np.ndarray, weights: np.ndarray, t: float
-) -> np.ndarray:
+def _imhof_integrand_vec(u: np.ndarray, weights: np.ndarray, t: float) -> np.ndarray:
     """Vectorised Imhof integrand on a grid ``u`` of strictly positive points.
 
     Works in log-space for the denominator to avoid overflow when the
@@ -291,9 +281,7 @@ def _imhof_cdf(weights: np.ndarray, t: float, *, rtol: float = 1e-8) -> float:
 
     # Closed-form fast path for equal positive weights: Q = w * chi^2_n.
     positive = weights[weights > 0.0]
-    if positive.size > 0 and np.allclose(
-        positive, positive[0], rtol=1e-12, atol=0.0
-    ):
+    if positive.size > 0 and np.allclose(positive, positive[0], rtol=1e-12, atol=0.0):
         return float(scipy.stats.chi2.cdf(t / positive[0], df=positive.size))
 
     mean = float(np.sum(weights))
@@ -335,9 +323,7 @@ def _imhof_cdf(weights: np.ndarray, t: float, *, rtol: float = 1e-8) -> float:
         vals = _imhof_integrand_vec(u_grid, weights, t)
         # u=0 contribution at the limit.
         f0 = 0.5 * (mean - t)
-        integral_curr = h * (
-            0.5 * (f0 + vals[-1]) + float(np.sum(vals[:-1]))
-        )
+        integral_curr = h * (0.5 * (f0 + vals[-1]) + float(np.sum(vals[:-1])))
         if integral_prev is not None:
             denom = max(abs(integral_curr), 1e-12)
             if abs(integral_curr - integral_prev) / denom < rtol:

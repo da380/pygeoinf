@@ -1317,8 +1317,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             rows = columns = diagonal
         if not with_distances:
             return rows, columns
-        return rows, columns, self._embedded_separations(
-            vectors[rows], vectors[columns], boxsize
+        return (
+            rows,
+            columns,
+            self._embedded_separations(vectors[rows], vectors[columns], boxsize),
         )
 
     def _embedded_separations(
@@ -1387,9 +1389,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         vectors, boxsize = self._embedding(points)
         first, second = np.triu_indices(len(points), k=1)
-        condensed = self._embedded_separations(
-            vectors[first], vectors[second], boxsize
-        )
+        condensed = self._embedded_separations(vectors[first], vectors[second], boxsize)
 
         tree = linkage(condensed, method=method)
         if count is not None:
@@ -2422,8 +2422,6 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         )
 
 
-
-
 class SpectralBlockLinearOperator(BlockLinearOperator):
     """A block operator on ``n`` copies of one space, diagonal in the spectrum.
 
@@ -2442,7 +2440,9 @@ class SpectralBlockLinearOperator(BlockLinearOperator):
     carries the same diagonal metric.
     """
 
-    def __new__(cls, space: HilbertSpace, slices: np.ndarray, /) -> "SpectralBlockLinearOperator":
+    def __new__(
+        cls, space: HilbertSpace, slices: np.ndarray, /
+    ) -> "SpectralBlockLinearOperator":
         # BlockOperator.__new__ dispatches on a grid of blocks; this class is
         # built from an array and is always linear.
         return object.__new__(cls)
@@ -2622,7 +2622,11 @@ class _FlexureOperator(LinearOperator):
     def _action(self, components: np.ndarray) -> np.ndarray:
         lam, K = self._eigenvalues, self._curvature
         D, E = self._rigidity, self._effective
-        LE, L2E, rho = self._laplacian_effective, self._bilaplacian_effective, self._buoyancy
+        LE, L2E, rho = (
+            self._laplacian_effective,
+            self._bilaplacian_effective,
+            self._buoyancy,
+        )
         w = self._synthesise(components)
         Lw = self._synthesise(lam * components)
         L2w = self._synthesise(lam**2 * components)

@@ -17,7 +17,11 @@ from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.convex_analysis import BallSupportFunction
 from pygeoinf.backus_gilbert import DualMasterCostFunction
 from pygeoinf.nonlinear_forms import NonLinearForm
-from pygeoinf.convex_optimisation import LevelBundleMethod, ProximalBundleMethod, BundleResult
+from pygeoinf.convex_optimisation import (
+    LevelBundleMethod,
+    ProximalBundleMethod,
+    BundleResult,
+)
 
 np.random.seed(42)
 
@@ -49,8 +53,7 @@ def _make_dual_master_cost():
     q = rng.standard_normal(n_prop)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q
+        data_space, prop_space, model_space, G, T, model_prior, data_error, d_tilde, q
     )
     return cost, data_space
 
@@ -144,9 +147,9 @@ def test_level_bundle_gap_certificate():
     result = solver.solve(x0)
 
     assert result.converged, "Should have converged on smooth quadratic"
-    assert result.gap <= tol * 10, (
-        f"Gap {result.gap} should be at most 10 * tolerance = {10 * tol}"
-    )
+    assert (
+        result.gap <= tol * 10
+    ), f"Gap {result.gap} should be at most 10 * tolerance = {10 * tol}"
 
 
 def test_level_bundle_infeasibility_recovery():
@@ -180,9 +183,7 @@ def test_level_bundle_dual_master():
     result = solver.solve(x0)
 
     assert isinstance(result, BundleResult), "Should return BundleResult"
-    assert np.isfinite(result.f_best), (
-        f"f_best should be finite, got {result.f_best}"
-    )
+    assert np.isfinite(result.f_best), f"f_best should be finite, got {result.f_best}"
 
 
 def test_level_vs_proximal_agreement():

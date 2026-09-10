@@ -51,10 +51,17 @@ class DualMasterCostFunction(NonLinearForm):
         observed_data: Vector,
         q_direction: Vector,
     ) -> None:
-
-        self._validation(data_space, property_space, model_space,
-                         G, T, model_prior_support, data_error_support,
-                         observed_data, q_direction)
+        self._validation(
+            data_space,
+            property_space,
+            model_space,
+            G,
+            T,
+            model_prior_support,
+            data_error_support,
+            observed_data,
+            q_direction,
+        )
         self._data_space = data_space
         self._property_space = property_space
         self._model_space = model_space
@@ -68,9 +75,7 @@ class DualMasterCostFunction(NonLinearForm):
 
         self._Tstar_q = self._T.adjoint(q_direction)
 
-        super().__init__(
-            data_space, self._mapping, subgradient=self._subgradient
-        )
+        super().__init__(data_space, self._mapping, subgradient=self._subgradient)
 
     @property
     def observed_data(self) -> Vector:
@@ -206,9 +211,7 @@ class DualMasterCostFunction(NonLinearForm):
         """
         return self._subgradient(lam)
 
-    def _finite_difference_gradient(
-        self, lam: Vector, eps: float = 1e-6
-    ) -> Vector:
+    def _finite_difference_gradient(self, lam: Vector, eps: float = 1e-6) -> Vector:
         if eps <= 0:
             raise ValueError("eps must be positive")
 
@@ -229,9 +232,16 @@ class DualMasterCostFunction(NonLinearForm):
         return self.domain.from_components(grad)
 
     def _validation(
-        self, data_space, property_space, model_space,
-        G, T, model_prior_support, data_error_support,
-        observed_data, q_direction,
+        self,
+        data_space,
+        property_space,
+        model_space,
+        G,
+        T,
+        model_prior_support,
+        data_error_support,
+        observed_data,
+        q_direction,
     ) -> None:
         if not isinstance(data_space, HilbertSpace):
             raise ValueError("data_space must be a HilbertSpace")
@@ -256,20 +266,14 @@ class DualMasterCostFunction(NonLinearForm):
             raise ValueError("data_error_support must be a SupportFunction")
 
         if model_prior_support.primal_domain != model_space:
-            raise ValueError(
-                "model_prior_support must be defined on model_space"
-            )
+            raise ValueError("model_prior_support must be defined on model_space")
         if data_error_support.primal_domain != data_space:
-            raise ValueError(
-                "data_error_support must be defined on data_space"
-            )
+            raise ValueError("data_error_support must be defined on data_space")
 
         if not data_space.is_element(observed_data):
             raise ValueError("observed_data must be an element of data_space")
         if not property_space.is_element(q_direction):
-            raise ValueError(
-                "q_direction must be an element of property_space"
-            )
+            raise ValueError("q_direction must be an element of property_space")
 
 
 class BackusInference(LinearInference):

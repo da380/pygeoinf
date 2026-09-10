@@ -77,9 +77,7 @@ class SupportFunction(NonLinearForm, ABC):
         """Return a subgradient of the support function at q."""
         return self._subgradient_impl(q)
 
-    def value_and_support_point(
-        self, q: "Vector"
-    ) -> "tuple[float, Optional[Vector]]":
+    def value_and_support_point(self, q: "Vector") -> "tuple[float, Optional[Vector]]":
         r"""Return ``(h(q), x*(q))`` sharing intermediate work where possible.
 
         For a support function $h_S(q) = \sup_{x \in S} \langle q, x \rangle$,
@@ -127,7 +125,9 @@ class SupportFunction(NonLinearForm, ABC):
         Returns:
             A :class:`CallableSupportFunction` instance.
         """
-        return CallableSupportFunction(primal_domain, mapping, support_point_fn=support_point)
+        return CallableSupportFunction(
+            primal_domain, mapping, support_point_fn=support_point
+        )
 
     @classmethod
     def point(
@@ -183,7 +183,9 @@ class SupportFunction(NonLinearForm, ABC):
         Returns:
             A :class:`MinkowskiSumSupportFunction` on the same space.
         """
-        return MinkowskiSumSupportFunction(self, PointSupportFunction(self.primal_domain, point))
+        return MinkowskiSumSupportFunction(
+            self, PointSupportFunction(self.primal_domain, point)
+        )
 
     def scale(self, alpha: float) -> "ScaledSupportFunction":
         r"""Return the support function of the scaled set $\alpha C$.
@@ -274,9 +276,7 @@ class BallSupportFunction(SupportFunction):
         # x* = c + r * (q / ||q||)
         return H.add(self._center, H.multiply(self._radius / n, q))
 
-    def value_and_support_point(
-        self, q: "Vector"
-    ) -> "tuple[float, Optional[Vector]]":
+    def value_and_support_point(self, q: "Vector") -> "tuple[float, Optional[Vector]]":
         r"""Return ``(h(q), x*(q))`` computing $\|q\|$ once.
 
         Both $h(q) = \langle q, c \rangle + r\|q\|$ and
@@ -381,7 +381,7 @@ class EllipsoidSupportFunction(SupportFunction):
         q_term_squared = H.inner_product(q, A_inv_q)
         if q_term_squared < 0:
             q_term_squared = 0.0  # Numerical noise
-        norm_term = q_term_squared ** 0.5
+        norm_term = q_term_squared**0.5
 
         if norm_term < 1e-14:
             # q ≈ 0: center is a maximizer
@@ -391,9 +391,7 @@ class EllipsoidSupportFunction(SupportFunction):
         scaled = H.multiply(self._radius / norm_term, A_inv_q)
         return H.add(self._center, scaled)
 
-    def value_and_support_point(
-        self, q: "Vector"
-    ) -> "tuple[float, Optional[Vector]]":
+    def value_and_support_point(self, q: "Vector") -> "tuple[float, Optional[Vector]]":
         r"""Return ``(h(q), x*(q))`` computing $A^{-1} q$ once.
 
         When $A^{-1}$ is available, both the value
@@ -435,7 +433,7 @@ class EllipsoidSupportFunction(SupportFunction):
         q_sq = H.inner_product(q, A_inv_q)
         if q_sq < 0:
             q_sq = 0.0  # clamp numerical noise
-        norm_term = q_sq ** 0.5  # == ||A^{-1/2} q||
+        norm_term = q_sq**0.5  # == ||A^{-1/2} q||
         value = center_term + self._radius * norm_term
         if norm_term < 1e-14:
             return (value, self._center)
@@ -500,7 +498,9 @@ class HalfSpaceSupportFunction(NonLinearForm):
         if a_norm_sq <= 0:
             raise ValueError("normal_vector must be nonzero (a ≠ 0).")
 
-        super().__init__(primal_domain, self._mapping, subgradient=self._subgradient_impl)
+        super().__init__(
+            primal_domain, self._mapping, subgradient=self._subgradient_impl
+        )
 
     @property
     def normal_vector(self) -> "Vector":

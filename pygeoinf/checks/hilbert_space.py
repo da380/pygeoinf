@@ -195,7 +195,6 @@ class HilbertSpaceAxiomChecks:
         )
 
         if measure is None:
-
             self.sampler = lambda: self.random()
 
         else:

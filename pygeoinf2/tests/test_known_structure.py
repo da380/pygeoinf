@@ -189,9 +189,7 @@ class TestKnownMatrix:
 
     def test_the_solver_takes_workers_for_the_probe(self, family):
         space, expressions = family
-        wrapped = probed(expressions["S + 0.5 I"]).with_traits(
-            Traits.POSITIVE_DEFINITE
-        )
+        wrapped = probed(expressions["S + 0.5 I"]).with_traits(Traits.POSITIVE_DEFINITE)
         serial = CholeskySolver()(wrapped).matrix()
         parallel = CholeskySolver(n_jobs=2)(wrapped).matrix()
         assert serial == pytest.approx(parallel)
@@ -285,9 +283,7 @@ class TestApplyBlock:
         for a, b in zip(serial, parallel):
             assert np.allclose(a, b)
 
-    def test_the_randomised_routines_do_not_move_with_the_job_count(
-        self, family, rng
-    ):
+    def test_the_randomised_routines_do_not_move_with_the_job_count(self, family, rng):
         space, expressions = family
         S = probed(expressions["S + 0.5 I"]).with_traits(Traits.POSITIVE_DEFINITE)
         serial = random_eig(S, rank=3, rng=np.random.default_rng(1))
@@ -310,9 +306,7 @@ class TestApplyBlock:
         space, _ = family
         measure = GaussianMeasure.from_standard_deviation(space, 1.5)
         serial = measure.sample_expectation(8, rng=np.random.default_rng(4))
-        parallel = measure.sample_expectation(
-            8, rng=np.random.default_rng(4), n_jobs=2
-        )
+        parallel = measure.sample_expectation(8, rng=np.random.default_rng(4), n_jobs=2)
         assert np.allclose(serial, parallel)
 
 

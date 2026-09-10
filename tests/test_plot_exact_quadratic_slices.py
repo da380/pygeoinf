@@ -8,6 +8,7 @@ Phase 2 tests: Ellipsoid exact slices in 1D and 2D.
 import warnings
 
 import matplotlib
+
 matplotlib.use("Agg")  # non-interactive backend for CI
 
 import matplotlib.pyplot as plt
@@ -30,6 +31,7 @@ def close_figures():
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared fixtures
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _space2():
     return inf.EuclideanSpace(2)
@@ -76,6 +78,7 @@ def _make_ellipsoid(center=None, radius=1.0, A_mat=None):
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 1: Ball exact slices — 1D and 2D
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestBallExact1D:
     """Ball sliced by a line through the center."""
@@ -125,9 +128,11 @@ class TestBallExact1D:
         subspace = _make_line_subspace(axis=0)
         call_count = [0]
         original = ball.is_element
+
         def counting(x, /, **kwargs):
             call_count[0] += 1
             return original(x, **kwargs)
+
         monkeypatch.setattr(ball, "is_element", counting)
         plot_slice(ball, subspace, bounds=(-2.0, 2.0), show_plot=False)
         assert call_count[0] == 0, f"Expected 0 is_element calls, got {call_count[0]}"
@@ -147,7 +152,9 @@ class TestBallExact2D:
     def test_returns_boundary_points_payload(self):
         ball = _make_ball(center=np.zeros(2), radius=1.0)
         subspace = _make_subspace_2d()
-        _, _, payload = plot_slice(ball, subspace, bounds=(-2, 2, -2, 2), show_plot=False)
+        _, _, payload = plot_slice(
+            ball, subspace, bounds=(-2, 2, -2, 2), show_plot=False
+        )
         assert isinstance(payload, np.ndarray)
         assert payload.ndim == 2
         assert payload.shape[1] == 2
@@ -156,7 +163,9 @@ class TestBallExact2D:
         """All boundary points of a unit ball should be at radius 1 from origin."""
         ball = _make_ball(center=np.zeros(2), radius=1.0)
         subspace = _make_subspace_2d()
-        _, _, payload = plot_slice(ball, subspace, bounds=(-2, 2, -2, 2), show_plot=False)
+        _, _, payload = plot_slice(
+            ball, subspace, bounds=(-2, 2, -2, 2), show_plot=False
+        )
         norms = np.linalg.norm(payload, axis=1)
         np.testing.assert_allclose(norms, 1.0, atol=1e-6)
 
@@ -164,7 +173,9 @@ class TestBallExact2D:
         """Boundary points of a radius-2 ball should be at radius 2."""
         ball = _make_ball(center=np.zeros(2), radius=2.0)
         subspace = _make_subspace_2d()
-        _, _, payload = plot_slice(ball, subspace, bounds=(-3, 3, -3, 3), show_plot=False)
+        _, _, payload = plot_slice(
+            ball, subspace, bounds=(-3, 3, -3, 3), show_plot=False
+        )
         norms = np.linalg.norm(payload, axis=1)
         np.testing.assert_allclose(norms, 2.0, atol=1e-6)
 
@@ -173,7 +184,9 @@ class TestBallExact2D:
         center = np.array([0.3, -0.2])
         ball = _make_ball(center=center, radius=1.0)
         subspace = _make_subspace_2d()
-        _, _, payload = plot_slice(ball, subspace, bounds=(-3, 3, -3, 3), show_plot=False)
+        _, _, payload = plot_slice(
+            ball, subspace, bounds=(-3, 3, -3, 3), show_plot=False
+        )
         dists = np.linalg.norm(payload - center, axis=1)
         np.testing.assert_allclose(dists, 1.0, atol=1e-6)
 
@@ -182,9 +195,11 @@ class TestBallExact2D:
         subspace = _make_subspace_2d()
         call_count = [0]
         original = ball.is_element
+
         def counting(x, /, **kwargs):
             call_count[0] += 1
             return original(x, **kwargs)
+
         monkeypatch.setattr(ball, "is_element", counting)
         plot_slice(ball, subspace, bounds=(-2, 2, -2, 2), show_plot=False)
         assert call_count[0] == 0
@@ -209,13 +224,16 @@ class TestBallExact2D:
 # Phase 2: Ellipsoid exact slices — 1D and 2D
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestEllipsoidExact1D:
     """Ellipsoid sliced by a line through its center."""
 
     def test_returns_interval_payload_shape(self):
         ellipsoid = _make_ellipsoid(center=np.zeros(2))
         subspace = _make_line_subspace(axis=0)
-        _, _, payload = plot_slice(ellipsoid, subspace, bounds=(-5.0, 5.0), show_plot=False)
+        _, _, payload = plot_slice(
+            ellipsoid, subspace, bounds=(-5.0, 5.0), show_plot=False
+        )
         assert isinstance(payload, np.ndarray)
         assert payload.shape == (2,)
 
@@ -228,7 +246,9 @@ class TestEllipsoidExact1D:
         r = 1.0
         ellipsoid = _make_ellipsoid(center=np.zeros(2), radius=r, A_mat=A_mat)
         subspace = _make_line_subspace(axis=0)  # x-axis, y=0 in slice
-        _, _, payload = plot_slice(ellipsoid, subspace, bounds=(-3.0, 3.0), show_plot=False)
+        _, _, payload = plot_slice(
+            ellipsoid, subspace, bounds=(-3.0, 3.0), show_plot=False
+        )
         # x1 in [-1/sqrt(4), 1/sqrt(4)] = [-0.5, 0.5]
         expected_half_len = r / np.sqrt(4.0)
         np.testing.assert_allclose(payload[0], -expected_half_len, atol=1e-10)
@@ -239,7 +259,9 @@ class TestEllipsoidExact1D:
         r = 1.0
         ellipsoid = _make_ellipsoid(center=np.zeros(2), radius=r, A_mat=A_mat)
         subspace = _make_line_subspace(axis=1)  # y-axis, x=0 in slice
-        _, _, payload = plot_slice(ellipsoid, subspace, bounds=(-3.0, 3.0), show_plot=False)
+        _, _, payload = plot_slice(
+            ellipsoid, subspace, bounds=(-3.0, 3.0), show_plot=False
+        )
         # x2 in [-1/sqrt(1), 1/sqrt(1)] = [-1, 1]
         np.testing.assert_allclose(payload[0], -1.0, atol=1e-10)
         np.testing.assert_allclose(payload[1], 1.0, atol=1e-10)
@@ -256,9 +278,11 @@ class TestEllipsoidExact1D:
         subspace = _make_line_subspace(axis=0)
         call_count = [0]
         original = ellipsoid.is_element
+
         def counting(x, /, **kwargs):
             call_count[0] += 1
             return original(x, **kwargs)
+
         monkeypatch.setattr(ellipsoid, "is_element", counting)
         plot_slice(ellipsoid, subspace, bounds=(-3.0, 3.0), show_plot=False)
         assert call_count[0] == 0
@@ -270,7 +294,9 @@ class TestEllipsoidExact2D:
     def test_returns_boundary_points_payload(self):
         ellipsoid = _make_ellipsoid(center=np.zeros(2))
         subspace = _make_subspace_2d()
-        _, _, payload = plot_slice(ellipsoid, subspace, bounds=(-3, 3, -3, 3), show_plot=False)
+        _, _, payload = plot_slice(
+            ellipsoid, subspace, bounds=(-3, 3, -3, 3), show_plot=False
+        )
         assert isinstance(payload, np.ndarray)
         assert payload.ndim == 2
         assert payload.shape[1] == 2
@@ -282,12 +308,18 @@ class TestEllipsoidExact2D:
         center = np.array([0.3, -0.2])
         ellipsoid = _make_ellipsoid(center=center, radius=r, A_mat=A_mat)
         subspace = _make_subspace_2d()
-        _, _, payload = plot_slice(ellipsoid, subspace, bounds=(-5, 5, -5, 5), show_plot=False)
+        _, _, payload = plot_slice(
+            ellipsoid, subspace, bounds=(-5, 5, -5, 5), show_plot=False
+        )
         for pt in payload:
             d = pt - center
             quad_val = d @ A_mat @ d
-            np.testing.assert_allclose(quad_val, r**2, atol=1e-6,
-                                        err_msg=f"Point {pt} not on ellipsoid boundary")
+            np.testing.assert_allclose(
+                quad_val,
+                r**2,
+                atol=1e-6,
+                err_msg=f"Point {pt} not on ellipsoid boundary",
+            )
 
     def test_boundary_points_for_identity_match_ball_boundary(self):
         """Ellipsoid with A=I and radius r should give the same boundary as Ball."""
@@ -297,8 +329,12 @@ class TestEllipsoidExact2D:
         ellipsoid = _make_ellipsoid(center=center, radius=r, A_mat=A_mat)
         ball = _make_ball(center=center, radius=r)
         subspace = _make_subspace_2d()
-        _, _, pts_ell = plot_slice(ellipsoid, subspace, bounds=(-4, 4, -4, 4), show_plot=False)
-        _, _, pts_ball = plot_slice(ball, subspace, bounds=(-4, 4, -4, 4), show_plot=False)
+        _, _, pts_ell = plot_slice(
+            ellipsoid, subspace, bounds=(-4, 4, -4, 4), show_plot=False
+        )
+        _, _, pts_ball = plot_slice(
+            ball, subspace, bounds=(-4, 4, -4, 4), show_plot=False
+        )
         # Both should have the same number of boundary points and radii
         norms_ell = np.linalg.norm(pts_ell - center, axis=1)
         norms_ball = np.linalg.norm(pts_ball - center, axis=1)
@@ -310,9 +346,11 @@ class TestEllipsoidExact2D:
         subspace = _make_subspace_2d()
         call_count = [0]
         original = ellipsoid.is_element
+
         def counting(x, /, **kwargs):
             call_count[0] += 1
             return original(x, **kwargs)
+
         monkeypatch.setattr(ellipsoid, "is_element", counting)
         plot_slice(ellipsoid, subspace, bounds=(-3, 3, -3, 3), show_plot=False)
         assert call_count[0] == 0
@@ -330,12 +368,14 @@ class TestEllipsoidExact2D:
 # Cross-checks: exact path does not break non-quadratic subsets
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestSampledPathPreserved:
     """Non-Ball/Ellipsoid subsets must still go through the sampled raster path."""
 
     def test_polyhedral_still_uses_exact_path(self):
         """PolyhedralSet must still use its own exact path (no sampling)."""
         from pygeoinf.subsets import HalfSpace, PolyhedralSet
+
         space = _space2()
         hs1 = HalfSpace(space, space.basis_vector(0), 1.0)
         hs2 = HalfSpace(space, -space.basis_vector(0), 1.0)
@@ -343,6 +383,8 @@ class TestSampledPathPreserved:
         hs4 = HalfSpace(space, -space.basis_vector(1), 1.0)
         polytope = PolyhedralSet(space, [hs1, hs2, hs3, hs4])
         subspace = _make_subspace_2d()
-        fig, ax, payload = plot_slice(polytope, subspace, bounds=(-2, 2, -2, 2), show_plot=False)
+        fig, ax, payload = plot_slice(
+            polytope, subspace, bounds=(-2, 2, -2, 2), show_plot=False
+        )
         # The polyhedral fast-path payload is vertex coordinates (not boundary points)
         assert isinstance(payload, np.ndarray)

@@ -29,6 +29,7 @@ np.random.seed(42)
 # Fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_fixture():
     """Return a small, feasible Chambolle-Pock problem setup."""
     rng = np.random.default_rng(42)
@@ -49,8 +50,8 @@ def _make_fixture():
     data_error = BallSupportFunction(data_space, data_space.zero, 0.5)
 
     # Construct a feasible d_tilde = G m_feas + v_feas
-    m_feas = rng.standard_normal(n_model) * 0.5   # ||m_feas|| < 1  -> in B
-    v_feas = rng.standard_normal(n_data) * 0.2    # ||v_feas|| < 0.5 -> in V
+    m_feas = rng.standard_normal(n_model) * 0.5  # ||m_feas|| < 1  -> in B
+    v_feas = rng.standard_normal(n_data) * 0.2  # ||v_feas|| < 0.5 -> in V
     d_tilde = G_matrix @ m_feas + v_feas
 
     cp_solver = ChambollePockSolver(
@@ -108,6 +109,7 @@ def _random_direction(fx, seed=1):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_chambolle_pock_feasibility():
     """||G*m + v - d_tilde|| <= tolerance * 10 after solve."""
     fx = _make_fixture()
@@ -139,9 +141,7 @@ def test_chambolle_pock_m_in_B():
 
     diff = model_space.subtract(result.m, center)
     dist = model_space.norm(diff)
-    assert dist <= radius + 1e-3, (
-        f"||m - center|| = {dist:.6f}, radius = {radius}"
-    )
+    assert dist <= radius + 1e-3, f"||m - center|| = {dist:.6f}, radius = {radius}"
 
 
 def test_chambolle_pock_v_in_V():
@@ -156,9 +156,7 @@ def test_chambolle_pock_v_in_V():
 
     diff = data_space.subtract(result.v, center)
     dist = data_space.norm(diff)
-    assert dist <= radius + 1e-3, (
-        f"||v - center|| = {dist:.6f}, radius = {radius}"
-    )
+    assert dist <= radius + 1e-3, f"||v - center|| = {dist:.6f}, radius = {radius}"
 
 
 def test_chambolle_pock_returns_result():

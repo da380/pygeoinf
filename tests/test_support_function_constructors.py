@@ -29,6 +29,7 @@ np.random.seed(0)
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def space_2d():
     return EuclideanSpace(2)
@@ -43,11 +44,13 @@ def space_3d():
 # CallableSupportFunction – value evaluation
 # ---------------------------------------------------------------------------
 
+
 class TestCallableSupportFunction:
     """Tests for CallableSupportFunction."""
 
     def test_evaluate_matches_callable(self, space_2d):
         """h(q) returns the value produced by the wrapped callable."""
+
         # Use L1 norm as a support function (unit L-inf ball in R^2)
         def fn(q):
             return float(np.sum(np.abs(q)))
@@ -58,6 +61,7 @@ class TestCallableSupportFunction:
 
     def test_evaluate_another_direction(self, space_2d):
         """h(q) is correct for several query directions."""
+
         def fn(q):
             return float(np.sum(np.abs(q)))
 
@@ -67,6 +71,7 @@ class TestCallableSupportFunction:
 
     def test_primal_domain_stored(self, space_2d):
         """primal_domain is the space passed at construction."""
+
         def fn(q):
             return 0.0
 
@@ -80,6 +85,7 @@ class TestCallableSupportFunction:
 
     def test_support_point_none_when_no_fn(self, space_2d):
         """support_point returns None when no callable is provided."""
+
         def fn(q):
             return float(np.linalg.norm(q))
 
@@ -88,6 +94,7 @@ class TestCallableSupportFunction:
 
     def test_subgradient_raises_when_no_fn(self, space_2d):
         """subgradient raises NotImplementedError when support_point is unavailable."""
+
         def fn(q):
             return float(np.linalg.norm(q))
 
@@ -102,6 +109,7 @@ class TestCallableSupportFunction:
 
     def test_support_point_delegates_to_callable(self, space_2d):
         """support_point calls the user-supplied callback and returns its result."""
+
         # L2-ball support: h(q) = ||q||, x*(q) = q / ||q||
         def h_fn(q):
             return float(np.linalg.norm(q))
@@ -119,6 +127,7 @@ class TestCallableSupportFunction:
 
     def test_subgradient_uses_support_point_callable(self, space_2d):
         """subgradient delegates to support_point when a callable is provided."""
+
         def h_fn(q):
             return float(np.linalg.norm(q))
 
@@ -139,6 +148,7 @@ class TestCallableSupportFunction:
 # ---------------------------------------------------------------------------
 # PointSupportFunction – singleton-set support h(q) = <q, p>
 # ---------------------------------------------------------------------------
+
 
 class TestPointSupportFunction:
     """Tests for PointSupportFunction."""
@@ -202,11 +212,13 @@ class TestPointSupportFunction:
 # Convenience constructors on SupportFunction
 # ---------------------------------------------------------------------------
 
+
 class TestSupportFunctionConvenienceConstructors:
     """Tests for SupportFunction.callable() and SupportFunction.point()."""
 
     def test_callable_returns_callable_support_function(self, space_2d):
         """SupportFunction.callable(...) returns a CallableSupportFunction."""
+
         def fn(q):
             return float(np.linalg.norm(q))
 
@@ -215,6 +227,7 @@ class TestSupportFunctionConvenienceConstructors:
 
     def test_callable_value_matches_fn(self, space_2d):
         """SupportFunction.callable: h(q) agrees with the supplied function."""
+
         def fn(q):
             return float(np.max(np.abs(q)))
 
@@ -224,6 +237,7 @@ class TestSupportFunctionConvenienceConstructors:
 
     def test_callable_with_support_point(self, space_2d):
         """SupportFunction.callable: optional support_point callable is wired up."""
+
         def fn(q):
             return float(np.linalg.norm(q))
 
@@ -264,6 +278,7 @@ class TestSupportFunctionConvenienceConstructors:
 
     def test_callable_subgradient_matches_support_point(self, space_2d):
         """SupportFunction.callable: subgradient(q) equals support_point(q)."""
+
         def fn(q):
             return float(np.linalg.norm(q))
 
@@ -308,6 +323,7 @@ class TestValueAndSupportPoint:
 
     def test_default_callable_point_consistent(self, space_2d):
         """Default: point equals support_point(q) for a CallableSupportFunction."""
+
         def sp_fn(q):
             return q / np.linalg.norm(q)
 
@@ -324,7 +340,8 @@ class TestValueAndSupportPoint:
     def test_default_no_support_point_returns_none(self, space_2d):
         """Default: when support_point returns None, second element is None."""
         h = CallableSupportFunction(
-            space_2d, lambda q: float(np.linalg.norm(q))  # no support_point_fn
+            space_2d,
+            lambda q: float(np.linalg.norm(q)),  # no support_point_fn
         )
         q = np.array([1.0, 2.0])
         val, pt = h.value_and_support_point(q)

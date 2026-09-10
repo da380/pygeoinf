@@ -210,7 +210,6 @@ def plot_1d_distributions(
 
     # Plot true value if provided
     if true_value is not None:
-
         label_text = (
             f"True Value: {true_value:.5f}"
             if show_true_value_in_legend

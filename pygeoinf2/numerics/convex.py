@@ -976,8 +976,13 @@ class ProximalBundleMethod:
             candidate, gap = self._solve_model(space, centre, best, cuts, weight)
             if gap <= self._tolerance * max(abs(best), 1.0):
                 return BundleResult(
-                    best, centre, iteration, evaluations, True,
-                    "gap tolerance reached", gap,
+                    best,
+                    centre,
+                    iteration,
+                    evaluations,
+                    True,
+                    "gap tolerance reached",
+                    gap,
                 )
 
             value = float(functional(candidate))
@@ -993,8 +998,13 @@ class ProximalBundleMethod:
                 weight = min(weight * 2.0, 1e12)  # a null step: trust less
 
         return BundleResult(
-            best, centre, self._iterations, evaluations, False,
-            "iteration limit reached", gap,
+            best,
+            centre,
+            self._iterations,
+            evaluations,
+            False,
+            "iteration limit reached",
+            gap,
         )
 
     def _gram(self, space: Any, cuts: Any) -> np.ndarray:
@@ -1173,9 +1183,7 @@ def _minimise_on_simplex(
         if residual <= tolerance * max(float(np.abs(gradient).max()), 1.0):
             return best
 
-        moved = _project_on_simplex(
-            lookahead - step * (quadratic @ lookahead - linear)
-        )
+        moved = _project_on_simplex(lookahead - step * (quadratic @ lookahead - linear))
         next_momentum = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * momentum * momentum))
         lookahead = moved + ((momentum - 1.0) / next_momentum) * (moved - weights)
         if np.max(np.abs(moved - weights)) < 1e-15:
@@ -1408,8 +1416,13 @@ class LevelBundleMethod:
             gap = upper - lower
             if gap <= self._tolerance * max(abs(upper), 1.0):
                 return BundleResult(
-                    upper, best_point, iteration, evaluations, True,
-                    "gap tolerance reached", gap,
+                    upper,
+                    best_point,
+                    iteration,
+                    evaluations,
+                    True,
+                    "gap tolerance reached",
+                    gap,
                 )
 
             centre_components = space.to_components(centre)
@@ -1421,7 +1434,10 @@ class LevelBundleMethod:
                 if not np.isfinite(lower):
                     break
                 candidate = self._master(
-                    space, cuts, centre_components, alpha * lower + (1.0 - alpha) * upper
+                    space,
+                    cuts,
+                    centre_components,
+                    alpha * lower + (1.0 - alpha) * upper,
                 )
                 if candidate is not None:
                     break
@@ -1449,7 +1465,12 @@ class LevelBundleMethod:
         # ``iteration`` rather than the cap: a break on a failed master
         # problem used to be reported as the full run.
         return BundleResult(
-            upper, best_point, iteration, evaluations, False, message,
+            upper,
+            best_point,
+            iteration,
+            evaluations,
+            False,
+            message,
             upper - lower,
         )
 
@@ -1822,9 +1843,9 @@ class PrimalKKTSolver:
         # construction -- so these are the only matrices formed, whatever the
         # model space is.
         self._noise_covariance_matrix = self._noise_parts[1].matrix(form="components")
-        self._gram = (
-            forward @ self._prior_parts[1] @ forward.adjoint
-        ).matrix(form="components")
+        self._gram = (forward @ self._prior_parts[1] @ forward.adjoint).matrix(
+            form="components"
+        )
 
     @staticmethod
     def _quadratic(space: Any, given: Any) -> tuple[Any, Any, float, Any]:
@@ -1909,10 +1930,9 @@ class PrimalKKTSolver:
         # constraint does not bite.
         best = self._prior.support_maximiser(objective)
         residual = data_space.subtract(self._forward(best), self._data)
-        if (
-            float(data_space.inner_product(self._noise_weight(residual), residual))
-            <= self._noise_radius**2 * (1.0 + 1e-9)
-        ):
+        if float(
+            data_space.inner_product(self._noise_weight(residual), residual)
+        ) <= self._noise_radius**2 * (1.0 + 1e-9):
             return KKTResult(
                 float(model_space.inner_product(objective, best)),
                 best,
@@ -1986,7 +2006,9 @@ class PrimalKKTSolver:
                 if status == 1:
                     break
 
-        multipliers = tuple(float(value) for value in np.exp(np.clip(found, -30.0, 25.0)))
+        multipliers = tuple(
+            float(value) for value in np.exp(np.clip(found, -30.0, 25.0))
+        )
         # Only a *converged* solve is worth carrying into the next direction.
         # Carrying a failed one starts the next problem from a point that is
         # not a root of anything.

@@ -26,7 +26,11 @@ def test_model_space_builds():
 
 
 def test_cap_property_operator_shape():
-    from sphere_dli_example import DEFAULT_TARGET_LATLON, build_cap_property_operator, build_model_space
+    from sphere_dli_example import (
+        DEFAULT_TARGET_LATLON,
+        build_cap_property_operator,
+        build_model_space,
+    )
 
     model_space = build_model_space()
     operator = build_cap_property_operator(model_space, DEFAULT_TARGET_LATLON)
@@ -37,7 +41,11 @@ def test_cap_property_operator_shape():
 
 
 def test_cap_property_operator_constant_field():
-    from sphere_dli_example import DEFAULT_TARGET_LATLON, build_cap_property_operator, build_model_space
+    from sphere_dli_example import (
+        DEFAULT_TARGET_LATLON,
+        build_cap_property_operator,
+        build_model_space,
+    )
 
     model_space = build_model_space()
     operator = build_cap_property_operator(model_space, DEFAULT_TARGET_LATLON)
@@ -45,7 +53,9 @@ def test_cap_property_operator_constant_field():
 
     cap_values = operator(constant_field)
 
-    assert_allclose(cap_values, np.ones(len(DEFAULT_TARGET_LATLON)), rtol=1e-3, atol=1e-3)
+    assert_allclose(
+        cap_values, np.ones(len(DEFAULT_TARGET_LATLON)), rtol=1e-3, atol=1e-3
+    )
 
 
 def test_cap_property_operator_quadrature_default_is_seed_deterministic():
@@ -70,7 +80,9 @@ def test_cap_property_operator_quadrature_default_is_seed_deterministic():
         np.linspace(-0.5, 0.5, model_space.dim, dtype=float)
     )
 
-    assert_allclose(operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12)
+    assert_allclose(
+        operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12
+    )
 
 
 def test_cap_property_operator_exact_mode_is_n_cap_independent():
@@ -97,11 +109,18 @@ def test_cap_property_operator_exact_mode_is_n_cap_independent():
         np.linspace(-0.5, 0.5, model_space.dim, dtype=float)
     )
 
-    assert_allclose(operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12)
+    assert_allclose(
+        operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12
+    )
 
 
 def test_forward_operator_shape():
-    from sphere_dli_example import N_RECEIVERS, N_SOURCES, build_forward_operator, build_model_space
+    from sphere_dli_example import (
+        N_RECEIVERS,
+        N_SOURCES,
+        build_forward_operator,
+        build_model_space,
+    )
 
     model_space = build_model_space()
     forward_operator, paths = build_forward_operator(model_space)
@@ -131,10 +150,16 @@ def test_forward_operator_constant_field_is_reference_weighted_path_average():
     This verifies that the forward operator now implements the remaining
     inverse-reference-velocity factor required by the linearized physics.
     """
-    from sphere_dli_example import build_forward_operator, build_model_space, reference_phase_velocity
+    from sphere_dli_example import (
+        build_forward_operator,
+        build_model_space,
+        reference_phase_velocity,
+    )
 
     model_space = build_model_space()
-    forward_operator, paths = build_forward_operator(model_space, n_sources=2, n_receivers=3, seed=0)
+    forward_operator, paths = build_forward_operator(
+        model_space, n_sources=2, n_receivers=3, seed=0
+    )
     c = 2.5
     constant_field = model_space.project_function(lambda _: c)
 
@@ -145,12 +170,17 @@ def test_forward_operator_constant_field_is_reference_weighted_path_average():
         _, trial_weights = model_space.geodesic_quadrature(point_1, point_2, n_points=2)
         trial_arc_length = float(np.sum(trial_weights))
         n_points = max(2, int(np.ceil((trial_arc_length / model_space.scale) * 2.0)))
-        points, weights = model_space.geodesic_quadrature(point_1, point_2, n_points=n_points)
+        points, weights = model_space.geodesic_quadrature(
+            point_1, point_2, n_points=n_points
+        )
         arc_length = float(np.sum(weights))
         expected.append(
             c
             * np.sum(
-                [weight / reference_phase_velocity(point) for point, weight in zip(points, weights)]
+                [
+                    weight / reference_phase_velocity(point)
+                    for point, weight in zip(points, weights)
+                ]
             )
             / arc_length
         )
@@ -161,7 +191,11 @@ def test_forward_operator_constant_field_is_reference_weighted_path_average():
 
 
 def test_synthetic_data_shape():
-    from sphere_dli_example import build_forward_operator, build_model_space, generate_synthetic_data
+    from sphere_dli_example import (
+        build_forward_operator,
+        build_model_space,
+        generate_synthetic_data,
+    )
 
     model_space = build_model_space()
     forward_operator, _ = build_forward_operator(model_space)

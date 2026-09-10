@@ -23,6 +23,7 @@ np.random.seed(42)
 # Fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_cost():
     """Small DualMasterCostFunction for n_data=4, n_model=5, n_prop=1."""
     rng = np.random.default_rng(42)
@@ -46,8 +47,7 @@ def _make_cost():
     q = rng.standard_normal(n_prop)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q
+        data_space, prop_space, model_space, G, T, model_prior, data_error, d_tilde, q
     )
     return cost, data_space
 
@@ -55,6 +55,7 @@ def _make_cost():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_value_and_subgradient_consistency():
     """value_and_subgradient must agree with separate value / subgradient calls.
@@ -79,7 +80,7 @@ def test_value_and_subgradient_consistency():
             f_direct,
             rtol=1e-10,
             err_msg=f"value_and_subgradient value differs from direct call: "
-                    f"f_joint={f_joint}, f_direct={f_direct}",
+            f"f_joint={f_joint}, f_direct={f_direct}",
         )
         np.testing.assert_allclose(
             data_space.to_components(g_joint),
@@ -92,6 +93,7 @@ def test_value_and_subgradient_consistency():
 # ---------------------------------------------------------------------------
 # Phase 1 guardrail test doubles
 # ---------------------------------------------------------------------------
+
 
 class _CountingBallSupportFunction(BallSupportFunction):
     """BallSupportFunction that counts scalar (_mapping) evaluations separately
@@ -134,6 +136,7 @@ class _AdjointCountingLinearOperator(LinearOperator):
 # Phase 3 guardrail tests (pass against current production code post-Phase 3)
 # ---------------------------------------------------------------------------
 
+
 def test_no_redundant_scalar_eval_when_support_point_exists():
     """GUARDRAIL: value_and_subgradient must NOT call the scalar support
     function when a support point is available.
@@ -167,8 +170,15 @@ def test_no_redundant_scalar_eval_when_support_point_exists():
     d_tilde = rng.standard_normal(n_data)
     q_vec = rng.standard_normal(n_prop)
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q_vec,
+        data_space,
+        prop_space,
+        model_space,
+        G,
+        T,
+        model_prior,
+        data_error,
+        d_tilde,
+        q_vec,
     )
 
     # Reset after construction in case any incidental evaluation occurred
@@ -222,8 +232,15 @@ def test_no_repeated_adjoint_fetch_across_oracle_calls():
     d_tilde = rng.standard_normal(n_data)
     q_vec = rng.standard_normal(n_prop)
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G_tracked, T, model_prior, data_error, d_tilde, q_vec,
+        data_space,
+        prop_space,
+        model_space,
+        G_tracked,
+        T,
+        model_prior,
+        data_error,
+        d_tilde,
+        q_vec,
     )
 
     # Reset after construction: only post-init accesses count for the oracle test
@@ -244,6 +261,7 @@ def test_no_repeated_adjoint_fetch_across_oracle_calls():
 # ---------------------------------------------------------------------------
 # Phase 3 fallback regression test
 # ---------------------------------------------------------------------------
+
 
 class _NullSupportPointFunction(BallSupportFunction):
     """BallSupportFunction whose ``value_and_support_point`` always returns
@@ -282,8 +300,15 @@ def test_fallback_branch_correctness_and_instrumentation():
     d_tilde = rng.standard_normal(n_data)
     q_vec = rng.standard_normal(n_prop)
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q_vec,
+        data_space,
+        prop_space,
+        model_space,
+        G,
+        T,
+        model_prior,
+        data_error,
+        d_tilde,
+        q_vec,
     )
 
     lam_comps = rng.standard_normal(n_data)
@@ -299,7 +324,5 @@ def test_fallback_branch_correctness_and_instrumentation():
         f_fallback,
         f_direct,
         rtol=1e-5,
-        err_msg=(
-            f"Fallback value {f_fallback} differs from direct cost {f_direct}"
-        ),
+        err_msg=(f"Fallback value {f_fallback} differs from direct cost {f_direct}"),
     )

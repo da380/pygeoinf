@@ -520,9 +520,9 @@ class NormalOperator(FactoredNormalOperator):
         # A Schur complement, so positive semidefinite -- a posterior
         # covariance always is. The trait algebra cannot see that through a
         # difference, so the claim is made where the reason is known.
-        return (
-            (identity - gain @ self._forward) @ self.prior_covariance
-        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE)
+        return ((identity - gain @ self._forward) @ self.prior_covariance).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        )
 
     def right_hand_side(self, residual: Any, /) -> Any:
         """The right-hand side of ``N w = v`` for a shifted data residual.

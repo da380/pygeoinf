@@ -31,6 +31,7 @@ def space_3d():
 # HyperPlane Tests
 # ============================================================================
 
+
 class TestHyperPlane:
     """Test suite for HyperPlane class."""
 
@@ -147,6 +148,7 @@ class TestHyperPlane:
 # HalfSpace Tests
 # ============================================================================
 
+
 class TestHalfSpace:
     """Test suite for HalfSpace class."""
 
@@ -154,11 +156,11 @@ class TestHalfSpace:
         """Test initialization with different inequality types."""
         normal = np.array([1.0, 0.0])
 
-        hs_leq = HalfSpace(space_2d, normal, 1.0, inequality_type='<=')
-        hs_geq = HalfSpace(space_2d, normal, 1.0, inequality_type='>=')
+        hs_leq = HalfSpace(space_2d, normal, 1.0, inequality_type="<=")
+        hs_geq = HalfSpace(space_2d, normal, 1.0, inequality_type=">=")
 
-        assert hs_leq.inequality_type == '<='
-        assert hs_geq.inequality_type == '>='
+        assert hs_leq.inequality_type == "<="
+        assert hs_geq.inequality_type == ">="
 
     def test_initialization_zero_normal_raises(self, space_2d):
         """Test that zero normal vector raises error."""
@@ -168,7 +170,7 @@ class TestHalfSpace:
     def test_is_element_inside_leq(self, space_2d):
         """Test membership for points inside half-space (<=)."""
         # Half-space: x ≤ 5
-        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type="<=")
 
         assert hs.is_element(np.array([0.0, 0.0]))
         assert hs.is_element(np.array([3.0, 100.0]))
@@ -176,14 +178,14 @@ class TestHalfSpace:
 
     def test_is_element_outside_leq(self, space_2d):
         """Test membership for points outside half-space (<=)."""
-        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type="<=")
 
         assert not hs.is_element(np.array([6.0, 0.0]))
         assert not hs.is_element(np.array([10.0, -5.0]))
 
     def test_is_element_boundary(self, space_2d):
         """Test membership for points on boundary."""
-        hs = HalfSpace(space_2d, np.array([1.0, 1.0]), 10.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 1.0]), 10.0, inequality_type="<=")
 
         # Boundary: x + y = 10
         assert hs.is_element(np.array([5.0, 5.0]))
@@ -194,11 +196,11 @@ class TestHalfSpace:
         """Test that <= and >= behave oppositely."""
         normal = np.array([1.0, 0.0])
 
-        hs_leq = HalfSpace(space_2d, normal, 0.0, inequality_type='<=')
-        hs_geq = HalfSpace(space_2d, normal, 0.0, inequality_type='>=')
+        hs_leq = HalfSpace(space_2d, normal, 0.0, inequality_type="<=")
+        hs_geq = HalfSpace(space_2d, normal, 0.0, inequality_type=">=")
 
         p_neg = np.array([-5.0, 0.0])  # x < 0
-        p_pos = np.array([5.0, 0.0])   # x > 0
+        p_pos = np.array([5.0, 0.0])  # x > 0
 
         assert hs_leq.is_element(p_neg) and not hs_leq.is_element(p_pos)
         assert hs_geq.is_element(p_pos) and not hs_geq.is_element(p_neg)
@@ -211,12 +213,13 @@ class TestHalfSpace:
         sf = hs.support_function
 
         from pygeoinf.convex_analysis import HalfSpaceSupportFunction
+
         assert isinstance(sf, HalfSpaceSupportFunction)
 
     def test_support_function_bounded_direction_leq(self, space_2d):
         """Test support function for bounded direction (<=)."""
         # Half-space: x ≤ 10 (normal = [1, 0], offset = 10)
-        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type="<=")
         sf = hs.support_function
 
         # For <=: σ(q) = α·b when q = α·a with α ≥ 0, else +∞
@@ -233,7 +236,7 @@ class TestHalfSpace:
     def test_support_function_bounded_direction_geq(self, space_2d):
         """Test support function for bounded direction (>=)."""
         # Half-space: x ≥ 10 (normal = [1, 0], offset = 10)
-        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type='>=')
+        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type=">=")
         sf = hs.support_function
 
         # For >=: σ(q) = α·b when q = α·a with α ≤ 0, else +∞
@@ -250,19 +253,21 @@ class TestHalfSpace:
     def test_support_function_perpendicular_unbounded(self, space_2d):
         """Test that perpendicular directions are unbounded."""
         # Half-space: x ≤ 5
-        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type="<=")
         sf = hs.support_function
 
         # Query perpendicular to normal: q = [0, 1]
         q_perp = np.array([0.0, 1.0])
         result = sf(q_perp)
 
-        assert np.isinf(result) and result > 0, "Perpendicular direction should be unbounded"
+        assert (
+            np.isinf(result) and result > 0
+        ), "Perpendicular direction should be unbounded"
 
     def test_support_point_minimum_norm(self, space_2d):
         """Test that support_point returns minimum-norm boundary point."""
         # Half-space: x + y ≤ 10
-        hs = HalfSpace(space_2d, np.array([1.0, 1.0]), 10.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 1.0]), 10.0, inequality_type="<=")
         sf = hs.support_function
 
         # Bounded query: q = [1, 1] (parallel to normal, α = 1 ≥ 0)
@@ -280,7 +285,7 @@ class TestHalfSpace:
 
     def test_project_onto_boundary(self, space_2d):
         """Test projection returns points on boundary hyperplane."""
-        hs = HalfSpace(space_2d, np.array([0.0, 1.0]), 3.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([0.0, 1.0]), 3.0, inequality_type="<=")
 
         # Project point onto boundary y = 3
         p = np.array([7.0, 10.0])
@@ -308,13 +313,14 @@ class TestHalfSpace:
 # PolyhedralSet Tests
 # ============================================================================
 
+
 class TestPolyhedralSet:
     """Test suite for PolyhedralSet (intersection of half-spaces)."""
 
     def test_initialization_valid(self, space_2d):
         """Test valid initialization of polyhedral set."""
-        hs1 = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type='<=')
-        hs2 = HalfSpace(space_2d, np.array([0.0, 1.0]), 5.0, inequality_type='<=')
+        hs1 = HalfSpace(space_2d, np.array([1.0, 0.0]), 5.0, inequality_type="<=")
+        hs2 = HalfSpace(space_2d, np.array([0.0, 1.0]), 5.0, inequality_type="<=")
 
         poly = PolyhedralSet(space_2d, [hs1, hs2])
 
@@ -331,10 +337,14 @@ class TestPolyhedralSet:
     def test_is_element_satisfies_all_constraints(self, space_2d):
         """Test that membership requires satisfying all constraints."""
         # Box: 0 ≤ x ≤ 10, 0 ≤ y ≤ 10
-        hs1 = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type='<=')
-        hs2 = HalfSpace(space_2d, np.array([-1.0, 0.0]), 0.0, inequality_type='<=')  # x ≥ 0
-        hs3 = HalfSpace(space_2d, np.array([0.0, 1.0]), 10.0, inequality_type='<=')
-        hs4 = HalfSpace(space_2d, np.array([0.0, -1.0]), 0.0, inequality_type='<=')  # y ≥ 0
+        hs1 = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type="<=")
+        hs2 = HalfSpace(
+            space_2d, np.array([-1.0, 0.0]), 0.0, inequality_type="<="
+        )  # x ≥ 0
+        hs3 = HalfSpace(space_2d, np.array([0.0, 1.0]), 10.0, inequality_type="<=")
+        hs4 = HalfSpace(
+            space_2d, np.array([0.0, -1.0]), 0.0, inequality_type="<="
+        )  # y ≥ 0
 
         poly = PolyhedralSet(space_2d, [hs1, hs2, hs3, hs4])
 
@@ -350,13 +360,21 @@ class TestPolyhedralSet:
     def test_is_element_simplex(self, space_3d):
         """Test standard simplex: x ≥ 0, y ≥ 0, z ≥ 0, x+y+z ≤ 1."""
         # x ≥ 0: -x ≤ 0
-        hs_x = HalfSpace(space_3d, np.array([-1.0, 0.0, 0.0]), 0.0, inequality_type='<=')
+        hs_x = HalfSpace(
+            space_3d, np.array([-1.0, 0.0, 0.0]), 0.0, inequality_type="<="
+        )
         # y ≥ 0: -y ≤ 0
-        hs_y = HalfSpace(space_3d, np.array([0.0, -1.0, 0.0]), 0.0, inequality_type='<=')
+        hs_y = HalfSpace(
+            space_3d, np.array([0.0, -1.0, 0.0]), 0.0, inequality_type="<="
+        )
         # z ≥ 0: -z ≤ 0
-        hs_z = HalfSpace(space_3d, np.array([0.0, 0.0, -1.0]), 0.0, inequality_type='<=')
+        hs_z = HalfSpace(
+            space_3d, np.array([0.0, 0.0, -1.0]), 0.0, inequality_type="<="
+        )
         # x + y + z ≤ 1
-        hs_sum = HalfSpace(space_3d, np.array([1.0, 1.0, 1.0]), 1.0, inequality_type='<=')
+        hs_sum = HalfSpace(
+            space_3d, np.array([1.0, 1.0, 1.0]), 1.0, inequality_type="<="
+        )
 
         simplex = PolyhedralSet(space_3d, [hs_x, hs_y, hs_z, hs_sum])
 
@@ -385,19 +403,22 @@ class TestPolyhedralSet:
         hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 1.0)
         poly = PolyhedralSet(space_2d, [hs])
 
-        assert poly.support_function is None, "PolyhedralSet support function requires LP solver"
+        assert (
+            poly.support_function is None
+        ), "PolyhedralSet support function requires LP solver"
 
 
 # ============================================================================
 # Numerical Robustness Tests
 # ============================================================================
 
+
 class TestNumericalRobustness:
     """Test numerical edge cases and tolerance handling."""
 
     def test_nearly_parallel_directions(self, space_2d):
         """Test support function with nearly parallel query directions."""
-        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type='<=')
+        hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type="<=")
         sf = hs.support_function
 
         # Query almost parallel but slightly off: q = [-1, 1e-10]
@@ -423,4 +444,3 @@ class TestNumericalRobustness:
 
         # Normal norm should be 1e-8
         assert_allclose(plane.normal_norm, 1e-8, rtol=1e-10)
-

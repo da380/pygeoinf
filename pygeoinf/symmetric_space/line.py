@@ -306,7 +306,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:
-
         th1 = self.point_to_angle(p1)
         th2 = self.point_to_angle(p2)
         circle_points, weights = self._circle_space.geodesic_quadrature(

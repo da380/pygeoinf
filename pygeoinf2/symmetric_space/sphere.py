@@ -568,8 +568,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         if order <= 1.0:
             raise ValueError(
-                f"The order must exceed one for the power to converge, got "
-                f"{order}."
+                f"The order must exceed one for the power to converge, got " f"{order}."
             )
         if not 0.0 < rtol < 1.0:
             raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
@@ -1132,9 +1131,7 @@ class Sphere(SymmetricSpace[Any]):
             ]
         )
 
-    def covariance_function(
-        self, measure: Any, distances: np.ndarray, /
-    ) -> np.ndarray:
+    def covariance_function(self, measure: Any, distances: np.ndarray, /) -> np.ndarray:
         r"""An invariant measure's covariance as a function of distance.
 
         The addition theorem collapses the sum over the basis to a sum over
@@ -1185,7 +1182,9 @@ class Sphere(SymmetricSpace[Any]):
 
         self._require_point_evaluation("A covariance function", unsafe=False)
         orders = np.arange(per_degree.size, dtype=float)
-        coefficients = per_degree * (2.0 * orders + 1.0) / (4.0 * np.pi * self._radius**2)
+        coefficients = (
+            per_degree * (2.0 * orders + 1.0) / (4.0 * np.pi * self._radius**2)
+        )
         angles = np.asarray(distances, dtype=float) / self._radius
         return np.polynomial.legendre.legval(np.cos(angles), coefficients)
 
@@ -1594,9 +1593,9 @@ class Sphere(SymmetricSpace[Any]):
             return np.zeros((len(centres), self.dim))
 
         # P_0 ... P_{lmax+1} at the single point cos(alpha).
-        legendre = np.polynomial.legendre.legvander(
-            np.array([cosine]), self._lmax + 1
-        )[0]
+        legendre = np.polynomial.legendre.legvander(np.array([cosine]), self._lmax + 1)[
+            0
+        ]
         degrees = np.arange(self._lmax + 1)
         integrals = np.empty(self._lmax + 1)
         integrals[0] = 1.0 - cosine
@@ -1835,7 +1834,9 @@ class Sphere(SymmetricSpace[Any]):
 
     def _geodesic_from_embedded(self, lengths: np.ndarray, /) -> np.ndarray:
         """Chords back to geodesics: ``2 R asin(c / 2R)``."""
-        ratio = np.clip(np.asarray(lengths, dtype=float) / (2.0 * self._radius), -1.0, 1.0)
+        ratio = np.clip(
+            np.asarray(lengths, dtype=float) / (2.0 * self._radius), -1.0, 1.0
+        )
         return 2.0 * self._radius * np.arcsin(ratio)
 
     # ----------------------------------------------------------------- #
@@ -1876,9 +1877,7 @@ class Sphere(SymmetricSpace[Any]):
         scale = self._length_scale if length_scale is None else float(length_scale)
         if order == 0.0:
             return Lebesgue(lmax, radius=self._radius, sampling=self._sampling)
-        return Sobolev(
-            lmax, order, scale, radius=self._radius, sampling=self._sampling
-        )
+        return Sobolev(lmax, order, scale, radius=self._radius, sampling=self._sampling)
 
     def with_degree(self, lmax: int, /) -> Sphere:
         """The same space, truncated at or extended to a different degree.

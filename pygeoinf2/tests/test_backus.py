@@ -760,7 +760,9 @@ class TestSupportValuesSweep:
 
         estimator, space, data = dual
         tight = DualFeasibleProperty(
-            estimator._problem, estimator._target, Ball(estimator._problem.model_space, radius=1e-4)
+            estimator._problem,
+            estimator._target,
+            Ball(estimator._problem.model_space, radius=1e-4),
         )
         with pytest.raises(ValueError, match="no model lies"):
             tight.support_values(self.directions(space, 3), data)

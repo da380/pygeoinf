@@ -533,9 +533,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # from_matrix(E, X, R, form="galerkin") has component matrix G^-1 R, and
         # (G^-1 R)(G^-1 R)* has Galerkin matrix R R^T == the covariance.
         coefficients = EuclideanSpace(domain.dim)
-        factor = LinearOperator.from_matrix(
-            coefficients, domain, root, form="galerkin"
-        )
+        factor = LinearOperator.from_matrix(coefficients, domain, root, form="galerkin")
 
         precision = None
         precision_factor = None
@@ -1581,9 +1579,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
-            return self._ambient_ball_from_spectrum(
-                eigenvalues, level, quantile_method
-            )
+            return self._ambient_ball_from_spectrum(eigenvalues, level, quantile_method)
         if method == "diagonal":
             raise ValueError(
                 "The diagonal route needs a covariance diagonal in the space's "
@@ -1621,8 +1617,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             centre = self.expectation
             draws = self.samples(samples, rng=rng, n_jobs=n_jobs)
             squared = np.array(
-                [self._domain.squared_norm(self._domain.subtract(x, centre))
-                 for x in draws]
+                [
+                    self._domain.squared_norm(self._domain.subtract(x, centre))
+                    for x in draws
+                ]
             )
             radius = float(np.sqrt(max(float(np.quantile(squared, level)), 0.0)))
             return Ball(self._domain, radius=radius, centre=centre)
@@ -1679,9 +1677,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         weights = np.clip(np.asarray(eigenvalues, dtype=float), 0.0, None)
         if quantile_method == "auto":
             quantile_method = self._quantile_method_for(weights)
-        radius = np.sqrt(
-            weighted_chi2_quantile(weights, level, method=quantile_method)
-        )
+        radius = np.sqrt(weighted_chi2_quantile(weights, level, method=quantile_method))
         return Ball(self._domain, radius=float(radius), centre=self.expectation)
 
     @staticmethod
@@ -2167,9 +2163,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # composition: the palindrome is visible to the trait algebra only
             # when the covariance is a single factor, and a covariance written
             # as a product -- ``(I - K A) Q``, the posterior's -- is not.
-            covariance = (
-                operator @ self._covariance @ operator.adjoint
-            ).with_traits(
+            covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
                 congruence_traits(self._covariance.traits, outer_invertible=False)
             )
         # With no factor to map there is still a sampler: push each draw

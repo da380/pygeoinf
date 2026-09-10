@@ -36,6 +36,7 @@ np.random.seed(42)
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def R2():
     return EuclideanSpace(2)
@@ -67,23 +68,21 @@ def point_sf_R2(R2):
 @pytest.fixture
 def A_R2_to_R3(R2, R3):
     """A fixed 3x2 linear operator from R^2 to R^3."""
-    mat = np.array([[1., 0.],
-                    [0., 1.],
-                    [1., 1.]])
+    mat = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
     return LinearOperator.from_matrix(R2, R3, mat)
 
 
 @pytest.fixture
 def A_R3_to_R2(R2, R3):
     """Transpose of the above: 2x3 linear operator from R^3 to R^2."""
-    mat = np.array([[1., 0., 1.],
-                    [0., 1., 1.]])
+    mat = np.array([[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]])
     return LinearOperator.from_matrix(R3, R2, mat)
 
 
 # ---------------------------------------------------------------------------
 # LinearImageSupportFunction
 # ---------------------------------------------------------------------------
+
 
 class TestLinearImageSupportFunction:
     """h_{A(C)}(q) = h_C(A^* q)."""
@@ -150,6 +149,7 @@ class TestLinearImageSupportFunction:
 # MinkowskiSumSupportFunction
 # ---------------------------------------------------------------------------
 
+
 class TestMinkowskiSumSupportFunction:
     """h_{C+D}(q) = h_C(q) + h_D(q)."""
 
@@ -208,6 +208,7 @@ class TestMinkowskiSumSupportFunction:
 # ScaledSupportFunction
 # ---------------------------------------------------------------------------
 
+
 class TestScaledSupportFunction:
     """h_{alpha C}(q) = alpha h_C(q)."""
 
@@ -243,6 +244,7 @@ class TestScaledSupportFunction:
         (returns +inf for directions not in the nonneg span of [1,0]).
         Without the short-circuit, 0 * float('inf') == nan.
         """
+
         def half_space_like(q):
             # sigma_{H}(q) = q[0] if q[1]==0 and q[0]>=0, else +inf
             if q[1] != 0.0 or q[0] < 0.0:
@@ -315,6 +317,7 @@ class TestScaledSupportFunction:
 # SupportFunction.translate
 # ---------------------------------------------------------------------------
 
+
 class TestTranslate:
     """h_{C + p}(q) = h_C(q) + <q, p>."""
 
@@ -354,6 +357,7 @@ class TestTranslate:
 # SupportFunction.scale convenience method
 # ---------------------------------------------------------------------------
 
+
 class TestScaleMethod:
     """scale(alpha) convenience method."""
 
@@ -380,6 +384,7 @@ class TestScaleMethod:
 # ---------------------------------------------------------------------------
 # Chained algebra
 # ---------------------------------------------------------------------------
+
 
 class TestChainedAlgebra:
     """Verify multi-step compositions produce correct values."""
@@ -411,6 +416,7 @@ class TestChainedAlgebra:
     def test_add_non_support_function_raises(self, R2, ball_R2):
         """Adding a plain NonLinearForm (not a SupportFunction) raises TypeError."""
         from pygeoinf.nonlinear_forms import NonLinearForm
+
         plain_form = NonLinearForm(R2, lambda q: 0.0)
         with pytest.raises(TypeError):
             _ = ball_R2 + plain_form
@@ -448,7 +454,9 @@ class TestLinearImageSupportPointPropagation:
         expected = A_R2_to_R3(x_base)  # Apply A to the base support point
         assert_allclose(x_star, expected, rtol=1e-12)
 
-    def test_support_point_returns_none_for_callable_without_fn(self, R2, R3, A_R2_to_R3):
+    def test_support_point_returns_none_for_callable_without_fn(
+        self, R2, R3, A_R2_to_R3
+    ):
         """LinearImageSupportFunction.support_point returns None when base has no support_point."""
         # Create a callable support function without a support_point callback
         h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
@@ -470,7 +478,9 @@ class TestLinearImageSupportPointPropagation:
         expected = A_R2_to_R3(p)  # Apply A to p
         assert_allclose(x_star, expected, rtol=1e-12)
 
-    def test_subgradient_works_when_support_point_available(self, R2, R3, ball_R2, A_R2_to_R3):
+    def test_subgradient_works_when_support_point_available(
+        self, R2, R3, ball_R2, A_R2_to_R3
+    ):
         """subgradient(q) works through linearimage when support_point is available."""
         h_image = LinearImageSupportFunction(ball_R2, A_R2_to_R3)
 
@@ -480,7 +490,9 @@ class TestLinearImageSupportPointPropagation:
         assert grad is not None
         assert grad.shape == (3,)  # Result is in R^3 (codomain of A)
 
-    def test_subgradient_raises_when_support_point_unavailable(self, R2, R3, A_R2_to_R3):
+    def test_subgradient_raises_when_support_point_unavailable(
+        self, R2, R3, A_R2_to_R3
+    ):
         """subgradient(q) raises NotImplementedError when support_point is None."""
         h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
         h_image = LinearImageSupportFunction(h_callable, A_R2_to_R3)

@@ -831,7 +831,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def _compute_dense_matrix(
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
-
         if (
             self.codomain.dim < self.domain.dim
             and not self.__using_default_dual_and_adjoint

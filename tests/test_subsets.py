@@ -146,6 +146,7 @@ class TestEllipsoid:
 # =============================================================================
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.figure
@@ -190,7 +191,9 @@ class TestSubsetPlotEntryPoint:
         assert payload.ndim == 2 and payload.shape[1] == 2
         plt.close(fig)
 
-    def test_subset_plot_requires_subspace_or_builds_default(self, domain_2d, domain_3d):
+    def test_subset_plot_requires_subspace_or_builds_default(
+        self, domain_2d, domain_3d
+    ):
         """2D EuclideanSpace auto-builds default subspace; 3D requires explicit on_subspace."""
         ball_2d = Ball(domain_2d, np.zeros(2), radius=0.5, open_set=False)
 
@@ -233,9 +236,9 @@ class TestSubsetPlotEntryPoint:
             fig, ax, payload = ball.plot(show_plot=False, grid_size=11)
 
         user_warnings = [w for w in caught if issubclass(w.category, UserWarning)]
-        assert user_warnings == [], (
-            f"Unexpected UserWarning(s): {[str(w.message) for w in user_warnings]}"
-        )
+        assert (
+            user_warnings == []
+        ), f"Unexpected UserWarning(s): {[str(w.message) for w in user_warnings]}"
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
         assert isinstance(payload, np.ndarray)
@@ -257,10 +260,14 @@ class TestSubsetPlotEntryPoint:
 
         sentinel = (MagicMock(), MagicMock(), np.zeros((5, 5), dtype=bool))
         with patch("pygeoinf.plot.plot_slice", return_value=sentinel) as mock_ps:
-            result = ball.plot(subspace, bounds=(-1, 1, -1, 1), grid_size=5, show_plot=False)
+            result = ball.plot(
+                subspace, bounds=(-1, 1, -1, 1), grid_size=5, show_plot=False
+            )
 
         mock_ps.assert_called_once()
         call_args = mock_ps.call_args
         assert call_args.args[0] is ball, "first positional arg should be the subset"
-        assert call_args.args[1] is subspace, "second positional arg should be on_subspace"
+        assert (
+            call_args.args[1] is subspace
+        ), "second positional arg should be on_subspace"
         assert result is sentinel

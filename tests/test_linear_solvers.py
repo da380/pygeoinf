@@ -263,9 +263,9 @@ def test_cholesky_solver_check_finite_can_be_disabled():
     with pytest.raises(ValueError):
         CholeskySolver(galerkin=True)(identity)(invalid_rhs)
 
-    unchecked_result = CholeskySolver(
-        galerkin=True, check_finite=False
-    )(identity)(invalid_rhs)
+    unchecked_result = CholeskySolver(galerkin=True, check_finite=False)(identity)(
+        invalid_rhs
+    )
     assert np.isnan(unchecked_result[0])
 
 
@@ -282,9 +282,10 @@ def test_cg_raises_for_non_finite_recurrence_product():
 
     with np.errstate(over="ignore", invalid="ignore"):
         with pytest.raises(FloatingPointError, match="non-finite recurrence"):
-            CGSolver(rtol=1.0e-12, maxiter=2)(
-                identity, preconditioner=preconditioner
-            )(rhs)
+            CGSolver(rtol=1.0e-12, maxiter=2)(identity, preconditioner=preconditioner)(
+                rhs
+            )
+
 
 def test_cg_does_not_expose_rhs_normalization_option():
     """RHS scaling remains a caller-controlled system transformation."""

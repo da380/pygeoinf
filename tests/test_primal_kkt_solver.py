@@ -31,6 +31,7 @@ np.random.seed(42)
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_ball_fixture(seed: int = 42, n_model: int = 5, n_data: int = 3):
     """Small ball-prior + ball-data-error fixture with a feasible d_tilde."""
     rng = np.random.default_rng(seed)
@@ -41,20 +42,25 @@ def _make_ball_fixture(seed: int = 42, n_model: int = 5, n_data: int = 3):
     G = LinearOperator.from_matrix(ms, ds, G_mat)
 
     # Construct a feasible d_tilde = G m_feas + v_feas
-    m_feas = rng.standard_normal(n_model) * 0.4   # ‖m_feas‖ < 1.0 (inside B)
-    v_feas = rng.standard_normal(n_data) * 0.15   # ‖v_feas‖ < 0.5 (inside V)
+    m_feas = rng.standard_normal(n_model) * 0.4  # ‖m_feas‖ < 1.0 (inside B)
+    v_feas = rng.standard_normal(n_data) * 0.15  # ‖v_feas‖ < 0.5 (inside V)
     d_tilde_comps = G_mat @ m_feas + v_feas
     d_tilde = ds.from_components(d_tilde_comps)
 
-    B = BallSupportFunction(ms, ms.zero, 1.0)    # prior ball
-    V = BallSupportFunction(ds, ds.zero, 0.5)    # data error ball
+    B = BallSupportFunction(ms, ms.zero, 1.0)  # prior ball
+    V = BallSupportFunction(ds, ds.zero, 0.5)  # data error ball
 
     return dict(
-        ms=ms, ds=ds,
-        G=G, G_mat=G_mat,
-        d_tilde=d_tilde, d_tilde_comps=d_tilde_comps,
-        B=B, V=V,
-        prior_radius=1.0, data_radius=0.5,
+        ms=ms,
+        ds=ds,
+        G=G,
+        G_mat=G_mat,
+        d_tilde=d_tilde,
+        d_tilde_comps=d_tilde_comps,
+        B=B,
+        V=V,
+        prior_radius=1.0,
+        data_radius=0.5,
     )
 
 
@@ -78,7 +84,7 @@ def _make_tight_fixture(seed: int = 0, n_model: int = 6, n_data: int = 4):
     d_tilde_comps = np.zeros(n_data)
 
     B = BallSupportFunction(ms, ms.zero, 1.0)
-    V = BallSupportFunction(ds, ds.zero, 0.1)   # tight data ball
+    V = BallSupportFunction(ds, ds.zero, 0.1)  # tight data ball
 
     # Random unit direction (‖G c_normalized‖ >> 0.1 w.h.p.)
     c_comps = rng.standard_normal(n_model)
@@ -86,12 +92,18 @@ def _make_tight_fixture(seed: int = 0, n_model: int = 6, n_data: int = 4):
     c = ms.from_components(c_comps)
 
     return dict(
-        ms=ms, ds=ds,
-        G=G, G_mat=G_mat,
-        d_tilde=d_tilde, d_tilde_comps=d_tilde_comps,
-        B=B, V=V,
-        prior_radius=1.0, data_radius=0.1,
-        c=c, c_comps=c_comps,
+        ms=ms,
+        ds=ds,
+        G=G,
+        G_mat=G_mat,
+        d_tilde=d_tilde,
+        d_tilde_comps=d_tilde_comps,
+        B=B,
+        V=V,
+        prior_radius=1.0,
+        data_radius=0.1,
+        c=c,
+        c_comps=c_comps,
     )
 
 
@@ -147,10 +159,12 @@ def _make_mass_weighted_tight_fixture(
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestImportable:
     def test_importable_from_pygeoinf(self):
         """PrimalKKTSolver and KKTResult must be importable from top-level pygeoinf."""
         from pygeoinf import PrimalKKTSolver as PKS, KKTResult as KR
+
         assert PKS is not None
         assert KR is not None
 
@@ -195,8 +209,9 @@ class TestPrimalBallFeasibility:
             m_comps = fx["ms"].to_components(result.m)
             norm_m = np.linalg.norm(m_comps)
             np.testing.assert_array_less(
-                norm_m, fx["prior_radius"] + 1e-5,
-                err_msg=f"‖m*‖={norm_m:.6f} > η={fx['prior_radius']}"
+                norm_m,
+                fx["prior_radius"] + 1e-5,
+                err_msg=f"‖m*‖={norm_m:.6f} > η={fx['prior_radius']}",
             )
 
     def test_prior_ball_tight_data(self):
@@ -224,8 +239,9 @@ class TestDataBallFeasibility:
             residual = fx["G_mat"] @ m_comps - fx["d_tilde_comps"]
             norm_res = np.linalg.norm(residual)
             np.testing.assert_array_less(
-                norm_res, fx["data_radius"] + 1e-5,
-                err_msg=f"‖Gm*-d̃‖={norm_res:.6f} > r={fx['data_radius']}"
+                norm_res,
+                fx["data_radius"] + 1e-5,
+                err_msg=f"‖Gm*-d̃‖={norm_res:.6f} > r={fx['data_radius']}",
             )
 
     def test_data_ball_tight(self):
@@ -246,8 +262,12 @@ class TestSupportValueAgreement:
         fx = _make_ball_fixture(seed=42, n_model=5, n_data=3)
         kkt_solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
         cp_solver = ChambollePockSolver(
-            fx["B"], fx["V"], fx["G"], fx["d_tilde"],
-            max_iterations=5000, tolerance=1e-5,
+            fx["B"],
+            fx["V"],
+            fx["G"],
+            fx["d_tilde"],
+            max_iterations=5000,
+            tolerance=1e-5,
         )
         rng = np.random.default_rng(7)
         for _ in range(3):
@@ -262,8 +282,11 @@ class TestSupportValueAgreement:
             cp_val = fx["ms"].inner_product(c, cp_result.m)
 
             np.testing.assert_allclose(
-                kkt_val, cp_val, rtol=1e-2, atol=1e-3,
-                err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}"
+                kkt_val,
+                cp_val,
+                rtol=1e-2,
+                atol=1e-3,
+                err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}",
             )
 
     def test_tight_data_agreement(self):
@@ -271,8 +294,12 @@ class TestSupportValueAgreement:
         fx = _make_tight_fixture(seed=5, n_model=4, n_data=3)
         kkt_solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
         cp_solver = ChambollePockSolver(
-            fx["B"], fx["V"], fx["G"], fx["d_tilde"],
-            max_iterations=5000, tolerance=1e-5,
+            fx["B"],
+            fx["V"],
+            fx["G"],
+            fx["d_tilde"],
+            max_iterations=5000,
+            tolerance=1e-5,
         )
         kkt_result = kkt_solver.solve(fx["c"])
         cp_result = cp_solver.solve(fx["c"])
@@ -281,8 +308,11 @@ class TestSupportValueAgreement:
         cp_val = fx["ms"].inner_product(fx["c"], cp_result.m)
 
         np.testing.assert_allclose(
-            kkt_val, cp_val, rtol=1e-2, atol=1e-3,
-            err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}"
+            kkt_val,
+            cp_val,
+            rtol=1e-2,
+            atol=1e-3,
+            err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}",
         )
 
     def test_mass_weighted_ball_agreement(self):
@@ -290,8 +320,12 @@ class TestSupportValueAgreement:
         fx = _make_mass_weighted_tight_fixture()
         kkt_solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
         cp_solver = ChambollePockSolver(
-            fx["B"], fx["V"], fx["G"], fx["d_tilde"],
-            max_iterations=5000, tolerance=1e-5,
+            fx["B"],
+            fx["V"],
+            fx["G"],
+            fx["d_tilde"],
+            max_iterations=5000,
+            tolerance=1e-5,
         )
 
         kkt_result = kkt_solver.solve(fx["c"])
@@ -301,8 +335,11 @@ class TestSupportValueAgreement:
         cp_val = fx["ms"].inner_product(fx["c"], cp_result.m)
 
         np.testing.assert_allclose(
-            kkt_val, cp_val, rtol=1e-4, atol=1e-5,
-            err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}"
+            kkt_val,
+            cp_val,
+            rtol=1e-4,
+            atol=1e-5,
+            err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}",
         )
 
 
@@ -320,13 +357,10 @@ class TestWarmStart:
         solver.solve(fx["c"])  # both-active case
 
         # At least one multiplier should have changed
-        changed = (
-            solver._lambda_prev != lam_init
-            or solver._mu_prev != mu_init
-        )
-        assert changed, (
-            f"Warm-start state unchanged: λ={solver._lambda_prev}, μ={solver._mu_prev}"
-        )
+        changed = solver._lambda_prev != lam_init or solver._mu_prev != mu_init
+        assert (
+            changed
+        ), f"Warm-start state unchanged: λ={solver._lambda_prev}, μ={solver._mu_prev}"
         assert solver._has_warm_start is True
 
     def test_initial_warm_start_values(self):
@@ -381,8 +415,9 @@ class TestEllipsoidPrior:
             # Check ellipsoid constraint: m^T A m ≤ η² (u0=0)
             ellipsoid_val = m_comps @ A_mat @ m_comps
             np.testing.assert_array_less(
-                ellipsoid_val, eta ** 2 + 1e-5,
-                err_msg=f"Ellipsoid constraint violated: {ellipsoid_val:.6f} > {eta**2}"
+                ellipsoid_val,
+                eta**2 + 1e-5,
+                err_msg=f"Ellipsoid constraint violated: {ellipsoid_val:.6f} > {eta**2}",
             )
 
     def test_ellipsoid_support_value_agreement(self):
@@ -423,6 +458,9 @@ class TestEllipsoidPrior:
         val_ball = ms.inner_product(c, kkt_ball.solve(c).m)
 
         np.testing.assert_allclose(
-            val_ellip, val_ball, rtol=1e-6, atol=1e-6,
-            err_msg="Identity ellipsoid should give same result as ball"
+            val_ellip,
+            val_ball,
+            rtol=1e-6,
+            atol=1e-6,
+            err_msg="Identity ellipsoid should give same result as ball",
         )

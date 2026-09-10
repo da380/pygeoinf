@@ -483,7 +483,6 @@ class ColumnThresholdedPreconditioningMethod(LinearSolver):
 
             # If we exceed max_nnz, we need to strictly truncate
             if self._max_nnz is not None and len(valid_indices) > self._max_nnz:
-
                 k = self._max_nnz - 1  # We need k extra elements (excluding diagonal)
 
                 if k > 0:

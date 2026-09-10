@@ -28,6 +28,7 @@ np.random.seed(42)
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_cost_and_lambda0(n_prop: int = 2):
     """Return (cost, lambda0) for a small DualMasterCostFunction.
 
@@ -55,8 +56,7 @@ def _make_cost_and_lambda0(n_prop: int = 2):
     q0 = np.array([1.0, 0.0]) if n_prop == 2 else rng.standard_normal(n_prop)
 
     cost = DualMasterCostFunction(
-        data_space, prop_space, model_space,
-        G, T, model_prior, data_error, d_tilde, q0
+        data_space, prop_space, model_space, G, T, model_prior, data_error, d_tilde, q0
     )
     lambda0 = data_space.zero
     return cost, lambda0
@@ -78,15 +78,14 @@ _DIRECTIONS = [
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_single_direction():
     """solve_support_values for a single direction returns array of shape (1,)."""
     cost, lambda0 = _make_cost_and_lambda0()
     solver = _make_solver(cost)
 
     qs = [np.array([1.0, 0.0])]
-    values, lambdas, diagnostics = solve_support_values(
-        cost, qs, solver, lambda0
-    )
+    values, lambdas, diagnostics = solve_support_values(cost, qs, solver, lambda0)
 
     assert values.shape == (1,), f"Expected shape (1,), got {values.shape}"
     assert np.isfinite(values[0]), "Support value should be finite"
@@ -95,8 +94,10 @@ def test_single_direction():
     cost.set_direction(qs[0])
     direct = solver.solve(lambda0)
     np.testing.assert_allclose(
-        values[0], direct.f_best, atol=1e-2,
-        err_msg="Single-direction value should match direct solve"
+        values[0],
+        direct.f_best,
+        atol=1e-2,
+        err_msg="Single-direction value should match direct solve",
     )
 
 
@@ -119,8 +120,10 @@ def test_multiple_directions_sequential():
         cost.set_direction(q)
         direct = solver.solve(lambda0)
         np.testing.assert_allclose(
-            values[i], direct.f_best, atol=5e-2,
-            err_msg=f"Direction {i}: value {values[i]:.4f} vs direct {direct.f_best:.4f}"
+            values[i],
+            direct.f_best,
+            atol=5e-2,
+            err_msg=f"Direction {i}: value {values[i]:.4f} vs direct {direct.f_best:.4f}",
         )
 
 
@@ -139,8 +142,10 @@ def test_warm_start_vs_cold_start_agreement():
     )
 
     np.testing.assert_allclose(
-        vals_warm, vals_cold, atol=1e-2,
-        err_msg="Warm-start and cold-start values should agree within atol=1e-2"
+        vals_warm,
+        vals_cold,
+        atol=1e-2,
+        err_msg="Warm-start and cold-start values should agree within atol=1e-2",
     )
 
 
@@ -160,8 +165,10 @@ def test_parallel_agrees_with_sequential():
     )
 
     np.testing.assert_allclose(
-        vals_par, vals_seq, atol=1e-2,
-        err_msg="Parallel values should agree with sequential values"
+        vals_par,
+        vals_seq,
+        atol=1e-2,
+        err_msg="Parallel values should agree with sequential values",
     )
 
 
@@ -177,6 +184,6 @@ def test_returns_correct_types():
     assert isinstance(values, np.ndarray), "values should be np.ndarray"
     assert isinstance(lambdas, list), "lambdas should be a list"
     assert isinstance(diagnostics, list), "diagnostics should be a list"
-    assert all(isinstance(d, BundleResult) for d in diagnostics), (
-        "Each diagnostic should be a BundleResult"
-    )
+    assert all(
+        isinstance(d, BundleResult) for d in diagnostics
+    ), "Each diagnostic should be a BundleResult"

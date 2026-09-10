@@ -134,9 +134,7 @@ class TestGeodesics:
         radius = 0.3 * RADIUS
         nodes, weights = space.geodesic_ball_quadrature(centre, radius, count=200)
         assert len(nodes) == weights.size == 200
-        distances = np.array(
-            [space.geodesic_distance(centre, node) for node in nodes]
-        )
+        distances = np.array([space.geodesic_distance(centre, node) for node in nodes])
         assert distances.max() <= radius + 1e-12
         assert distances.max() > 0.5 * radius
 
@@ -210,9 +208,7 @@ class TestAverages:
     def test_the_closed_form_normalises_by_the_cap_area(self, lebesgue, rng):
         centres = lebesgue.random_points(3, rng=rng)
         angular = 24.0
-        area = (
-            2.0 * np.pi * lebesgue.radius**2 * (1.0 - np.cos(np.radians(angular)))
-        )
+        area = 2.0 * np.pi * lebesgue.radius**2 * (1.0 - np.cos(np.radians(angular)))
         integrals = lebesgue.cap_integral_components(centres, angular)
         averages = lebesgue.cap_integral_components(centres, angular, normalise=True)
         assert np.allclose(averages * area, integrals)
@@ -538,9 +534,7 @@ class TestWeightOperator:
     def test_it_is_its_own_transpose_adjoint(self, rng):
         from pygeoinf2.symmetric_space.base import _weight_matrix, _weight_operator
 
-        sparse = _weight_matrix(
-            2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0]
-        )
+        sparse = _weight_matrix(2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0])
         W = _weight_operator(sparse)
         check_operator(W, rng=rng)
         assert isinstance(W, LinearOperator)

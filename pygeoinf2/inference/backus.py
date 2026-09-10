@@ -1137,9 +1137,7 @@ class DualFeasibleProperty(SetEstimator):
 
         if isinstance(given, Ellipsoid):
             if given._covariance is None:
-                raise ValueError(
-                    "A smoothed ellipsoid support needs the covariance."
-                )
+                raise ValueError("A smoothed ellipsoid support needs the covariance.")
             covariance, centre = given._covariance, given.centre
 
             def value(z: Any) -> float:
@@ -1150,9 +1148,7 @@ class DualFeasibleProperty(SetEstimator):
 
             def gradient(z: Any) -> Any:
                 weighted = covariance(z)
-                scale = 1.0 / float(
-                    np.sqrt(space.inner_product(z, weighted) + squared)
-                )
+                scale = 1.0 / float(np.sqrt(space.inner_product(z, weighted) + squared))
                 return space.add(centre, space.scale(scale, weighted))
 
             return value, gradient

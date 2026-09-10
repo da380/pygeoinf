@@ -107,9 +107,7 @@ class NonLinearForm:
                 during initialization.
         """
         if self._gradient is None:
-            raise NotImplementedError(
-                "Gradient not implemented for this form."
-            )
+            raise NotImplementedError("Gradient not implemented for this form.")
         return self._gradient(x)
 
     def derivative(self, x: Vector) -> LinearForm:
@@ -169,9 +167,7 @@ class NonLinearForm:
                 during initialization.
         """
         if self._subgradient is None:
-            raise NotImplementedError(
-                "Subgradient not implemented for this form."
-            )
+            raise NotImplementedError("Subgradient not implemented for this form.")
         return self._subgradient(x)
 
     def __neg__(self) -> NonLinearForm:
@@ -261,9 +257,7 @@ class NonLinearForm:
         else:
 
             def subgradient(x: Vector) -> Vector:
-                return self.domain.add(
-                    self.subgradient(x), other.subgradient(x)
-                )
+                return self.domain.add(self.subgradient(x), other.subgradient(x))
 
         if self._hessian is None or other._hessian is None:
             hessian = None
@@ -288,18 +282,14 @@ class NonLinearForm:
         else:
 
             def gradient(x: Vector) -> Vector:
-                return self.domain.subtract(
-                    self.gradient(x), other.gradient(x)
-                )
+                return self.domain.subtract(self.gradient(x), other.gradient(x))
 
         if self._subgradient is None or other._subgradient is None:
             subgradient = None
         else:
 
             def subgradient(x: Vector) -> Vector:
-                return self.domain.subtract(
-                    self.subgradient(x), other.subgradient(x)
-                )
+                return self.domain.subtract(self.subgradient(x), other.subgradient(x))
 
         if self._hessian is None or other._hessian is None:
             hessian = None

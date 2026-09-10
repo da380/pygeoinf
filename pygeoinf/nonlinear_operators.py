@@ -145,7 +145,6 @@ class NonLinearOperator(NonLinearOperatorAxiomChecks):
         return self * (1.0 / a)
 
     def __add__(self, other: NonLinearOperator) -> NonLinearOperator:
-
         if not isinstance(other, NonLinearOperator):
             raise TypeError("Operand must be a NonLinearOperator")
 
@@ -166,7 +165,6 @@ class NonLinearOperator(NonLinearOperatorAxiomChecks):
         return NonLinearOperator(domain, codomain, mapping, derivative=derivative)
 
     def __sub__(self, other: NonLinearOperator) -> NonLinearOperator:
-
         if not isinstance(other, NonLinearOperator):
             raise TypeError("Operand must be a NonLinearOperator")
 

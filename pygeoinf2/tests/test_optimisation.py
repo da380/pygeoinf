@@ -594,9 +594,7 @@ class TestSteepestDescentUsesAWolfeSearch:
     direction carries no natural scale."""
 
     def test_that_is_the_default(self):
-        assert isinstance(
-            SteepestDescent()._line_search, StrongWolfeLineSearch
-        )
+        assert isinstance(SteepestDescent()._line_search, StrongWolfeLineSearch)
 
     def test_it_costs_about_half_the_evaluations(self, rng):
         """Measured on a quadratic of spread 1e3: 3376 evaluations against
@@ -618,9 +616,9 @@ class TestSteepestDescentUsesAWolfeSearch:
             ("armijo", ArmijoLineSearch()),
             ("wolfe", StrongWolfeLineSearch()),
         ]:
-            result = SteepestDescent(
-                max_iterations=5000, line_search=search
-            ).minimise(functional, space.zero())
+            result = SteepestDescent(max_iterations=5000, line_search=search).minimise(
+                functional, space.zero()
+            )
             counts[label] = result.evaluations
         assert counts["wolfe"] < 0.75 * counts["armijo"]
 
@@ -664,7 +662,7 @@ class TestArmijoReportsItsEvaluations:
         functional._value = counted
         search = ArmijoLineSearch(max_backtracks=200, min_step=1e-3)
         result = search(
-            functional, point, np.ones(3), value=functional(point) , slope=-1.0
+            functional, point, np.ones(3), value=functional(point), slope=-1.0
         )
         assert not result.converged
         assert result.evaluations == calls["n"] - 1  # the value= argument's call

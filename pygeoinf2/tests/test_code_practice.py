@@ -253,9 +253,7 @@ class TestTheCatalogueMatchesTheCode:
         # `backends.mfem` and the like.
         for module in pkgutil.walk_packages(pygeoinf2.__path__, "pygeoinf2."):
             known.add(module.name.rsplit(".", 1)[-1])
-        dotted = re.findall(
-            r"`(?:pygeoinf2\.)?((?:\w+\.)+\w+)`", self.catalogue()
-        )
+        dotted = re.findall(r"`(?:pygeoinf2\.)?((?:\w+\.)+\w+)`", self.catalogue())
         missing = sorted(
             {
                 path.split(".")[-1]
@@ -321,7 +319,6 @@ class TestTheCatalogueMatchesTheCode:
 CONVENTIONAL = {"rng", "n_jobs", "backend"}
 
 
-
 def relative(path) -> str:
     """The path within the package, since several files share a bare name.
 
@@ -353,9 +350,7 @@ def documentation_gaps(path) -> list[str]:
     # closure defined inside one is an implementation detail, and requiring
     # its arguments to be documented documents nothing.
     reachable = []
-    for parent in [tree] + [
-        n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
-    ]:
+    for parent in [tree] + [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
         reachable.extend(
             n
             for n in parent.body
@@ -375,7 +370,9 @@ def documentation_gaps(path) -> list[str]:
         choices = [a.arg for a in args.kwonlyargs]
         positional = list(args.posonlyargs) + list(args.args)
         if args.defaults:
-            choices += [a.arg for a in positional[len(positional) - len(args.defaults) :]]
+            choices += [
+                a.arg for a in positional[len(positional) - len(args.defaults) :]
+            ]
         choices = [
             c for c in choices if c not in ("self", "cls") and c not in CONVENTIONAL
         ]
@@ -401,8 +398,7 @@ class TestDocstringsCarryTheContract:
     def test_the_contract_is_documented(self, path):
         gaps = documentation_gaps(path)
         assert not gaps, (
-            f"{path.name} has {len(gaps)} documentation gaps:\n  "
-            + "\n  ".join(gaps)
+            f"{path.name} has {len(gaps)} documentation gaps:\n  " + "\n  ".join(gaps)
         )
 
 

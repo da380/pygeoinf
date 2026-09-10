@@ -265,9 +265,7 @@ class Box(PeriodicBox):
         scale = self._length_scale if length_scale is None else float(length_scale)
         if order == 0.0:
             return Lebesgue(shape, bounds=self._bounds, padding=self._padding)
-        return Sobolev(
-            shape, order, scale, bounds=self._bounds, padding=self._padding
-        )
+        return Sobolev(shape, order, scale, bounds=self._bounds, padding=self._padding)
 
     # ----------------------------------------------------------------- #
     #                              Support                              #

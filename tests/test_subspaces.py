@@ -84,6 +84,7 @@ class TestAffineSubspace:
         e1 = space_3d.from_components(np.array([1.0, 0.0, 0.0]))
         subspace = AffineSubspace.from_tangent_basis(space_3d, [e1])
         assert isinstance(subspace.boundary, EmptySet)
+
     def test_get_tangent_basis_axis_aligned_1d(self, space_3d):
         """Axis-aligned 1D subspace: basis should have dimension 1."""
         e3 = space_3d.from_components(np.array([0.0, 0.0, 1.0]))
@@ -106,13 +107,15 @@ class TestAffineSubspace:
         diag = space_3d.from_components(np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0))
         subspace = AffineSubspace.from_tangent_basis(space_3d, [diag])
         basis = subspace.get_tangent_basis()
-        assert len(basis) == 1, (
-            f"Expected dimension 1 for diagonal 1D subspace, got {len(basis)}"
-        )
+        assert (
+            len(basis) == 1
+        ), f"Expected dimension 1 for diagonal 1D subspace, got {len(basis)}"
         # The single basis vector should span the same line as diag.
         np.testing.assert_allclose(
-            np.abs(np.dot(basis[0], diag)), 1.0, rtol=1e-9,
-            err_msg="Basis vector should be parallel to the original diagonal direction"
+            np.abs(np.dot(basis[0], diag)),
+            1.0,
+            rtol=1e-9,
+            err_msg="Basis vector should be parallel to the original diagonal direction",
         )
 
     def test_get_tangent_basis_diagonal_2d(self, space_3d):
@@ -122,24 +125,20 @@ class TestAffineSubspace:
         v2 = space_3d.from_components(np.array([0.0, 0.0, 1.0]))
         subspace = AffineSubspace.from_tangent_basis(space_3d, [v1, v2])
         basis = subspace.get_tangent_basis()
-        assert len(basis) == 2, (
-            f"Expected dimension 2 for oblique 2D subspace, got {len(basis)}"
-        )
+        assert (
+            len(basis) == 2
+        ), f"Expected dimension 2 for oblique 2D subspace, got {len(basis)}"
         # Basis vectors should be orthonormal.
-        np.testing.assert_allclose(
-            np.dot(basis[0], basis[0]), 1.0, rtol=1e-9
-        )
-        np.testing.assert_allclose(
-            np.dot(basis[1], basis[1]), 1.0, rtol=1e-9
-        )
-        np.testing.assert_allclose(
-            np.dot(basis[0], basis[1]), 0.0, atol=1e-9
-        )
+        np.testing.assert_allclose(np.dot(basis[0], basis[0]), 1.0, rtol=1e-9)
+        np.testing.assert_allclose(np.dot(basis[1], basis[1]), 1.0, rtol=1e-9)
+        np.testing.assert_allclose(np.dot(basis[0], basis[1]), 0.0, atol=1e-9)
 
     def test_get_tangent_basis_oblique_1d_with_translation(self, space_3d):
         """Translation should not affect the tangent basis dimension."""
         diag = space_3d.from_components(np.array([1.0, -1.0, 0.0]) / np.sqrt(2.0))
         translation = space_3d.from_components(np.array([3.0, 1.0, -2.0]))
-        subspace = AffineSubspace.from_tangent_basis(space_3d, [diag], translation=translation)
+        subspace = AffineSubspace.from_tangent_basis(
+            space_3d, [diag], translation=translation
+        )
         basis = subspace.get_tangent_basis()
         assert len(basis) == 1

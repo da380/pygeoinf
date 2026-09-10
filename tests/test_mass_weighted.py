@@ -83,5 +83,3 @@ def test_inner_product_definition(
     inner_product_Y = mass_weighted_space.inner_product(u, v)
     inner_product_X = underlying_space.inner_product(mass_operator(u), v)
     assert np.isclose(inner_product_Y, inner_product_X)
-
-

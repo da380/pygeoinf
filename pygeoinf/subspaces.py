@@ -486,9 +486,7 @@ class AffineSubspace(Subset):
         codomain = EuclideanSpace(m)
 
         def constraint_mapping(x: Vector) -> np.ndarray:
-            return np.array([
-                domain.inner_product(a_i, x) for a_i in normal_vectors
-            ])
+            return np.array([domain.inner_product(a_i, x) for a_i in normal_vectors])
 
         def constraint_adjoint(c: np.ndarray) -> Vector:
             result = domain.zero
@@ -502,7 +500,9 @@ class AffineSubspace(Subset):
 
         w = np.array(offsets)
 
-        return cls.from_linear_equation(B, w, solver=solver, preconditioner=preconditioner)
+        return cls.from_linear_equation(
+            B, w, solver=solver, preconditioner=preconditioner
+        )
 
     def to_hyperplanes(self) -> List["Subset"]:
         """
