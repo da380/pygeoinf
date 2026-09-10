@@ -2111,13 +2111,13 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
         -------------------------
         This operator evaluates the covariant tensor divergence of the non-Euclidean
         moment equations. Under the geometer's Laplacian convention, the exact
-        equation is:
+        equation is::
 
-        Op(w) = \Delta(D \Delta w)
-              - \Delta(D_{eff}) \Delta w
-              + tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
-              - K D_{eff} \Delta w
-              + \rho_g w
+            Op(w) = \Delta(D \Delta w)
+                  - \Delta(D_{eff}) \Delta w
+                  + tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
+                  - K D_{eff} \Delta w
+                  + \rho_g w
 
         Notation:
         ---------
@@ -2910,13 +2910,13 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         -------------------------
         This operator evaluates the covariant tensor divergence of the non-Euclidean
         moment equations. Under the geometer's Laplacian convention, the exact
-        equation is:
+        equation is::
 
-        Op(w) = \Delta(D \Delta w)
-              - \Delta(D_{eff}) \Delta w
-              + tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
-              - K D_{eff} \Delta w
-              + \rho_g w
+            Op(w) = \Delta(D \Delta w)
+                  - \Delta(D_{eff}) \Delta w
+                  + tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
+                  - K D_{eff} \Delta w
+                  + \rho_g w
 
         Notation:
         ---------

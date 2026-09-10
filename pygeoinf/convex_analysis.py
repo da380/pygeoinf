@@ -569,8 +569,11 @@ class HalfSpaceSupportFunction(NonLinearForm):
         Return a canonical maximizer when σ_H(q) is finite.
 
         When finite, the maximizers are all x with ⟨a,x⟩ = b (boundary hyperplane).
-        If return_min_norm_support_point=True, we return the minimum-norm boundary point:
+        If return_min_norm_support_point=True, we return the minimum-norm
+        boundary point::
+
             x_min = (b / ||a||^2) a.
+
         Otherwise return None (non-unique support set).
         """
         if not self._return_min_norm:

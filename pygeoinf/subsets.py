@@ -6,17 +6,18 @@ definitions to concrete geometric shapes. It supports Constructive Solid
 Geometry (CSG) operations, with specialized handling for convex intersections
 via functional combination.
 
-Hierarchy:
-- Subset (Abstract Base)
-    - EmptySet / UniversalSet
-    - LevelSet (f(x) = c)
-        - EllipsoidSurface -> Sphere
-    - SublevelSet (f(x) <= c)
-        - ConvexSubset -> Ellipsoid -> Ball
-        - ConvexIntersection (Max-Functional Combination)
-    - Intersection (Generic)
-    - Union (Generic)
-    - Complement (S^c)
+Hierarchy::
+
+    - Subset (Abstract Base)
+        - EmptySet / UniversalSet
+        - LevelSet (f(x) = c)
+            - EllipsoidSurface -> Sphere
+        - SublevelSet (f(x) <= c)
+            - ConvexSubset -> Ellipsoid -> Ball
+            - ConvexIntersection (Max-Functional Combination)
+        - Intersection (Generic)
+        - Union (Generic)
+        - Complement (S^c)
 """
 
 from __future__ import annotations
@@ -487,7 +488,7 @@ class SublevelSet(Subset):
     def is_element(self, x: Vector, /, *, rtol: float = 1e-6) -> bool:
         """
         Returns True if f(x) <= c (or < c).
-        Tolerance is scaled by max(1.0, |c|).
+        Tolerance is scaled by ``max(1.0, |c|)``.
         """
         val = self._form(x)
         scale = max(1.0, abs(self._level))
@@ -539,7 +540,7 @@ class LevelSet(Subset):
     def is_element(self, x: Vector, /, *, rtol: float = 1e-6) -> bool:
         """
         Returns True if f(x) is approximately equal to c.
-        Tolerance is scaled by max(1.0, |c|).
+        Tolerance is scaled by ``max(1.0, |c|)``.
         """
         val = self._form(x)
         scale = max(1.0, abs(self._level))
@@ -1284,7 +1285,7 @@ class HyperPlane(Subset):
             rtol: Relative tolerance for the equality check.
 
         Returns:
-            bool: True if |⟨a, x⟩ - b| ≤ rtol * max(1, |b|).
+            bool: True if ``|⟨a, x⟩ - b| ≤ rtol * max(1, |b|)``.
         """
         inner_product = self.domain.inner_product(self._normal_vector, x)
         tolerance = rtol * max(1.0, abs(self._offset))
@@ -1294,7 +1295,7 @@ class HyperPlane(Subset):
         """
         Computes the perpendicular distance from x to the hyperplane.
 
-        Distance = |⟨a, x⟩ - b| / ||a||
+        ``Distance = |⟨a, x⟩ - b| / ||a||``
 
         Args:
             x: A vector from the domain.
@@ -1423,8 +1424,8 @@ class HalfSpace(Subset):
         """
         Returns True if x lies within the half-space.
 
-        For '<=' type: checks if ⟨a, x⟩ ≤ b + rtol * max(1, |b|).
-        For '>=' type: checks if ⟨a, x⟩ ≥ b - rtol * max(1, |b|).
+        For '<=' type: checks if ``⟨a, x⟩ ≤ b + rtol * max(1, |b|)``.
+        For '>=' type: checks if ``⟨a, x⟩ ≥ b - rtol * max(1, |b|)``.
 
         Args:
             x: A vector from the domain.
@@ -1692,7 +1693,8 @@ class PolyhedralSet(Subset):
         Returns the support function of the polyhedral set.
 
         For a polyhedral set P = ∩_i H_i (intersection of half-spaces),
-        the support function is:
+        the support function is::
+
             σ_P(q) = inf_{i} σ_{H_i}(q)
 
         However, evaluating the infimum of support functions is complex

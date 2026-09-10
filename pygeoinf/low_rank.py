@@ -513,6 +513,7 @@ def random_range(
     (`Q* Q = I`), which is strictly required for downstream low-rank factorizations.
 
     Execution Paths:
+
     - **Path A (Abstract/Geometric):** If a `GaussianMeasure` is provided (or generated),
       it draws structured samples and applies abstract Gram-Schmidt orthogonalization.
       This strictly respects the space's intrinsic inner product (e.g., mass matrices).
@@ -1074,7 +1075,9 @@ def random_trace(
     bypasses abstract metric distortions by evaluating the trace directly on the
     coordinate matrix representation of the operator. It draws standard Euclidean
     Rademacher noise (z_c), lifts it to the abstract space to apply the operator,
-    extracts the components of the result, and computes the standard dot product:
+    extracts the components of the result, and computes the standard dot
+    product::
+
         Tr(A) = E[ z_c . (A_c z_c) ]
 
 

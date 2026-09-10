@@ -366,11 +366,12 @@ class SubspaceSlicePlotter:
         Parse and validate bounds for current dimension.
 
         Flexible input format handling:
+
         - None: Use default [-1, 1] per dimension
         - 1D: (u_min, u_max)
         - 2D: (u_min, u_max, v_min, v_max) OR ((u_min, u_max), (v_min, v_max))
         - 3D: (u_min, u_max, v_min, v_max, w_min, w_max) OR
-              ((u_min, u_max), (v_min, v_max), (w_min, w_max))
+          ((u_min, u_max), (v_min, v_max), (w_min, w_max))
 
         Args:
             bounds: User-provided bounds or None

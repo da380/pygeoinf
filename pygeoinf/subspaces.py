@@ -98,6 +98,7 @@ class AffineSubspace(Subset):
     Represents an affine subspace A = x0 + V.
 
     This class serves two primary roles:
+
     1. A geometric subset that can project points and check membership.
     2. A constraint definition for Bayesian inversion (conditioning a Gaussian
        measure on the subspace).

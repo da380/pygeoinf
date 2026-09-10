@@ -22,19 +22,20 @@ from .convex_analysis import SupportFunction
 
 class DualMasterCostFunction(NonLinearForm):
     """
-    Cost function for the master dual equation (Hilbert form):
+    Cost function for the master dual equation (Hilbert form)::
 
         h_U(q)
         = inf_{λ ∈ D}
           { (λ, d̃)_D + σ_B(T* q - G* λ) + σ_V(-λ) }
 
-    i.e.
+    i.e.::
 
         φ(λ; q) = (λ, d̃)_D + σ_B(T* q - G* λ) + σ_V(-λ)
 
     where:
-      - σ_B is the support function of the model prior convex set B ⊆ M
-      - σ_V is the support function of the data error convex set V ⊆ D
+
+    - σ_B is the support function of the model prior convex set B ⊆ M
+    - σ_V is the support function of the data error convex set V ⊆ D
 
     Minimizing φ(λ; q) over λ ∈ D yields h_U(q).
     """

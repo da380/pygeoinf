@@ -52,7 +52,7 @@ def solve_trajectory(
     Integrates a single ODE trajectory over time.
 
     Args:
-        eom_func: The Equation of Motion function f(t, y, *args) -> dy/dt.
+        eom_func: The Equation of Motion function ``f(t, y, *args) -> dy/dt``.
         y0: Initial state vector of shape (n_dim,).
         t_points: Array of time points to evaluate at.
         args: Tuple of extra arguments to pass to eom_func.
@@ -124,7 +124,7 @@ def get_gaussian_pdf(mean: np.ndarray, cov: np.ndarray) -> Callable[..., np.ndar
         cov: Covariance matrix of shape (N, N).
 
     Returns:
-        A function pdf(*coordinates) -> density_array.
+        A function ``pdf(*coordinates) -> density_array``.
     """
     # Create the frozen distribution object
     dist = multivariate_normal(mean=mean, cov=cov)
@@ -150,7 +150,7 @@ def get_independent_gaussian_pdf(
         stds: List or array of standard deviations for each dimension.
 
     Returns:
-        A function pdf(*coordinates) -> density_array.
+        A function ``pdf(*coordinates) -> density_array``.
     """
     means = np.asarray(means)
     stds = np.asarray(stds)
@@ -384,7 +384,7 @@ class ProbabilityGrid:
         Propagates the probability density forward in time by 't_final'.
 
         Args:
-            eom_func: The differential equation f(t, y, *args).
+            eom_func: The differential equation ``f(t, y, *args)``.
             t_final: The time duration to propagate forward.
             eom_args: Physics arguments for the eom_func.
 

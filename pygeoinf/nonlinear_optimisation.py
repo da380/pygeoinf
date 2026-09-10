@@ -134,28 +134,31 @@ def line_search(
         pk (Vector): The search direction.
         gfk (Vector, optional): The gradient at x=xk. If not provided will be recalculated.
         old_fval (float, optional): The function value at x=xk. If not provided will be recalculated.
-        old_old_fval (float, optional): The valur at the point proceeding x=xk.
+        old_old_fval (float, optional): The value at the point preceding x=xk.
         c1 (float, optional): Parameter for Armijo condition rule.
         c2 (float, optional): Parameter for curvature condition rule.
         amax (float, optional): Maximum step size.
         extra_condition (callable, optional): A callable of the form extra_condition(alpha, x, f, g) returning
-             a boolean. Arguments are the proposed step alpha and the corresponding x, f and g values. The line
-             search accepts the value of alpha only if this callable returns True. If the callable returns False
-             for the step length, the algorithm will continue with new iterates. The callable is only called for
-             iterates satisfying the strong Wolfe conditions.
+            a boolean. Arguments are the proposed step alpha and the corresponding x, f and g values. The line
+            search accepts the value of alpha only if this callable returns True. If the callable returns False
+            for the step length, the algorithm will continue with new iterates. The callable is only called for
+            iterates satisfying the strong Wolfe conditions.
         maxiter (int, optional): Maximum number of iterations to perform.
 
     Returns:
-        alpha (float | None): Alpha for which x_new = x0 + alpha * pk, or None if the
-             line search algorithm did not converge.
-        fc (int): Number of function evaluations made.
-        gc (int): Numner of gradient evaluations mades.
-        new_fval (float | None): New function value f(x_new)=f(x0+alpha*pk), or
-            None if the line search algorithm did not converge.
-        old_fval (float): Old function value f(x0).
-        new_slope (float | None): The local slope along the search direction at
-             the new value <myfprime(x_new), pk>, or None if the line search algorithm
-             did not converge.
+        The tuple ``(alpha, fc, gc, new_fval, old_fval, new_slope)``.
+
+        - **alpha** (float | None) -- Alpha for which x_new = x0 + alpha * pk,
+          or None if the line search algorithm did not converge.
+        - **fc** (int) -- Number of function evaluations made.
+        - **gc** (int) -- Number of gradient evaluations made.
+        - **new_fval** (float | None) -- New function value
+          f(x_new)=f(x0+alpha*pk), or None if the line search algorithm did not
+          converge.
+        - **old_fval** (float) -- Old function value f(x0).
+        - **new_slope** (float | None) -- The local slope along the search
+          direction at the new value <myfprime(x_new), pk>, or None if the line
+          search algorithm did not converge.
 
     Raises:
         ValueError: If the non-linear form does not have a gradient set.

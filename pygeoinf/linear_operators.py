@@ -729,8 +729,10 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
         Returns:
             A tuple containing:
+
             - A NumPy array where each row is a diagonal.
             - The list of offsets.
+
             This format is compatible with scipy.sparse.spdiags.
         """
         dim = min(self.domain.dim, self.codomain.dim)

@@ -8,6 +8,7 @@ Hilbert spaces and seamlessly applied to discrete representations.
 
 A core feature of this module is its dual algebraic formalism, allowing users to
 optimize computational efficiency based on the problem geometry:
+
 - **Model Space Formulation**: Assembles and solves the standard normal equations
   (size N x N, where N is the model dimension). Best suited for overdetermined problems.
 - **Data Space Formulation**: Assembles and solves the dual formulation (size M x M,
@@ -47,7 +48,8 @@ class LinearLeastSquaresInversion(LinearInversion):
     """
     Solves a linear inverse problem using Tikhonov-regularized least-squares.
 
-    This method finds the model `u` that minimizes the cost functional:
+    This method finds the model `u` that minimizes the cost functional::
+
         J(u) = ||A(u) - d||^2_R + damping * ||u||^2
 
     where `A` is the forward operator, `d` is the observed data, `R` is the
@@ -55,6 +57,7 @@ class LinearLeastSquaresInversion(LinearInversion):
     Tikhonov regularization parameter.
 
     This class supports two formalisms for constructing the linear system:
+
     1. 'model_space': Solves the standard normal equations of size (N x N),
        where N is the model dimension. Best for overdetermined problems.
     2. 'data_space': Solves the dual formulation of size (M x M), where M

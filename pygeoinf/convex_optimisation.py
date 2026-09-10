@@ -185,8 +185,10 @@ class Bundle:
     """Collection of cutting-plane linearisations of a convex function.
 
     A bundle stores a list of :class:`Cut` objects and provides utilities
-    for building the piecewise-linear epigraph model:
+    for building the piecewise-linear epigraph model::
+
         hat_phi(lambda) = max_j [ f_j + <g_j, lambda - x_j> ]
+
     used by proximal and level bundle methods.
 
     Examples:
@@ -760,7 +762,8 @@ def _get_value_and_subgradient(
 class ProximalBundleMethod:
     """Proximal bundle method for minimising a non-smooth convex function.
 
-    Solves:
+    Solves::
+
         min_{lambda in D} f(lambda)
 
     where f is a convex function accessible through a value + subgradient
@@ -1015,14 +1018,16 @@ class ProximalBundleMethod:
 class LevelBundleMethod:
     """Level bundle method for minimising a non-smooth convex function.
 
-    Solves:
+    Solves::
+
         min_{lambda in D} f(lambda)
 
     where f is a convex function accessible through a value + subgradient
     oracle (a :class:`~pygeoinf.nonlinear_forms.NonLinearForm` with
     ``subgradient``).
 
-    At each iteration the *level master QP* is:
+    At each iteration the *level master QP* is::
+
         min_{lambda, t} (1/2) ||lambda - lambda_hat||^2
         subject to: f_j + <g_j, lambda - x_j> <= t  for all j
                    t <= f_lev
@@ -1030,7 +1035,8 @@ class LevelBundleMethod:
     where the level is: f_lev = alpha * f_low + (1 - alpha) * f_up, alpha in (0,1).
 
     The lower bound f_low is maintained as the LP optimal value of
-    the cutting-plane model:
+    the cutting-plane model::
+
         f_LP = min_{lambda} hat_phi(lambda)
              = min_{lambda, t} t
         subject to: f_j + <g_j, lambda - x_j> <= t
@@ -1429,11 +1435,14 @@ def solve_support_values(
             workers is disabled; each worker starts from ``lambda0``).
 
     Returns:
-        values: ``np.ndarray`` of shape ``(p,)``, support values
-            $h_U(q_i)$ for each direction.
-        lambdas: ``list`` of length ``p``, optimal lambda for each
-            direction.
-        diagnostics: ``list`` of :class:`BundleResult` for each direction.
+        The tuple ``(values, lambdas, diagnostics)``.
+
+        - **values** -- ``np.ndarray`` of shape ``(p,)``, support values
+          $h_U(q_i)$ for each direction.
+        - **lambdas** -- ``list`` of length ``p``, optimal lambda for each
+          direction.
+        - **diagnostics** -- ``list`` of :class:`BundleResult` for each
+          direction.
 
     Raises:
         ImportError: If ``n_jobs > 1`` and ``joblib`` is not installed
@@ -1831,7 +1840,8 @@ def solve_primal_feasibility(
     (using c = T* @ q_i), exploiting that the feasible set
     (B, V, G, d_tilde) is independent of q.
 
-    The support value for direction q is:
+    The support value for direction q is::
+
         h_U(q) = max_{m in B, v in V} <T* @ q, m>
                  subject to: G @ m + v = d_tilde
                = <T* @ q, m*(q)>

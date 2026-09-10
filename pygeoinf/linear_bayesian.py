@@ -506,12 +506,14 @@ class LinearBayesianInversion(LinearInversion):
         expectation.
 
         Mathematically, for a shifted data residual vector v = d - A(mu_u) - mu_e,
-        the term evaluates the quadratic form:
+        the term evaluates the quadratic form::
+
             Misfit = <v, (A Q A* + R)^-1 v>
 
         In the 'model_space' formalism, this is computed far more efficiently
         using the Woodbury matrix identity to bypass the massive data-space
-        inversion:
+        inversion::
+
             Misfit = <v, R^-1 v> - <A* R^-1 v, (Q^-1 + A* R^-1 A)^-1 A* R^-1 v>
 
         Args:
@@ -661,7 +663,7 @@ class LinearBayesianInversion(LinearInversion):
             n_jobs: Number of CPU cores to use if parallel=True.
 
         Returns:
-            float: The estimated log-determinant ln(|N|).
+            float: The estimated log-determinant ``ln(|N|)``.
         """
         surrogate = self.with_formalism(operator_type)
         space = (

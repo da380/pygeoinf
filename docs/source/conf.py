@@ -36,6 +36,12 @@ extensions = [
 templates_path = ["_templates"]
 exclude_patterns = []
 
+# The docstrings use Markdown's convention of single backticks for inline code
+# (`HilbertSpace`, `cartopy`). Left to itself reStructuredText reads those as
+# "title reference" and renders them as italics; this makes them render as code,
+# which is what they mean everywhere in this project.
+default_role = "code"
+
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
