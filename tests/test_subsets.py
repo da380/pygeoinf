@@ -13,6 +13,7 @@ from pygeoinf.subsets import (
     Sphere,
     Ellipsoid,
     NormalisedEllipsoid,
+    ConvexIntersection,
 )
 
 
@@ -93,6 +94,70 @@ class TestBallAndSphere:
         # The Ball class inherits check() from ConvexSubset
         ball = Ball(space_2d, space_2d.zero, radius=1.0)
         ball.check(20)
+
+
+class TestConvexIntersection:
+    """`feasible_lower_bound` had no test at all, which is how a call to
+    `np.NINF` - removed in NumPy 2.0 - survived on its first line."""
+
+    def test_feasible_lower_bound(self, space_2d):
+        # Closed balls: Ball defaults to open, and an open set sends
+        # directional_bound through ConvexSubset.closure(), which is broken
+        # independently of what is being tested here.
+        left = Ball(
+            space_2d,
+            space_2d.from_components(np.array([0.0, 0.0])),
+            1.0,
+            open_set=False,
+        )
+        right = Ball(
+            space_2d,
+            space_2d.from_components(np.array([1.0, 0.0])),
+            1.0,
+            open_set=False,
+        )
+        both = ConvexIntersection([left, right])
+
+        direction = space_2d.from_components(np.array([1.0, 0.0]))
+        x_best, value_best = both.feasible_lower_bound(direction)
+
+        # A feasible candidate was found, so the bound is a real number rather
+        # than the -inf sentinel, and the point lies in both balls.
+        assert x_best is not None
+        assert np.isfinite(value_best)
+        assert left.is_element(x_best)
+        assert right.is_element(x_best)
+
+        # The bound never overestimates: the true support value in the +x
+        # direction is 2.0, attained on the right ball's boundary.
+        assert value_best <= 2.0 + 1e-9
+        assert value_best == pytest.approx(
+            float(space_2d.inner_product(direction, x_best))
+        )
+
+    def test_feasible_lower_bound_returns_sentinel_when_infeasible(self, space_2d):
+        # Disjoint balls: no component's support point satisfies both, so the
+        # loop never fires and the -inf sentinel is returned as documented.
+        left = Ball(
+            space_2d,
+            space_2d.from_components(np.array([0.0, 0.0])),
+            0.5,
+            open_set=False,
+        )
+        right = Ball(
+            space_2d,
+            space_2d.from_components(np.array([10.0, 0.0])),
+            0.5,
+            open_set=False,
+        )
+        both = ConvexIntersection([left, right])
+
+        x_best, value_best = both.feasible_lower_bound(
+            space_2d.from_components(np.array([1.0, 0.0]))
+        )
+
+        assert x_best is None
+        assert value_best == -np.inf
 
 
 class TestEllipsoid:

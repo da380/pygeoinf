@@ -847,7 +847,7 @@ class ConvexIntersection(ConvexSubset):
             - **value_best** -- ``⟨direction, x_best⟩``, or -∞ if none found.
         """
         best_x: Optional["Vector"] = None
-        best_val: float = float(np.NINF)
+        best_val: float = -np.inf
 
         for subset in self._subsets:
             x_cand, _ = subset.directional_bound(direction)
