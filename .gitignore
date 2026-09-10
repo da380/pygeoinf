@@ -19,6 +19,9 @@ htmlcov/
 
 # Sphinx documentation build output
 docs/build/
+# ...including the API stubs, which conf.py regenerates on every build.
+docs/source/modules.rst
+docs/source/pygeoinf*.rst
 
 
 

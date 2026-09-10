@@ -42,6 +42,14 @@ exclude_patterns = []
 # which is what they mean everywhere in this project.
 default_role = "code"
 
+# The result dataclasses (BundleResult, KKTResult, ...) describe their fields in
+# an `Attributes:` docstring section *and* declare them as annotated fields.
+# Napoleon's default turns that section into standalone `.. attribute::`
+# directives, which autodoc then documents a second time from the annotations.
+# Rendering them as info-field entries instead keeps the descriptions and leaves
+# each field defined exactly once.
+napoleon_use_ivar = True
+
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
@@ -49,3 +57,37 @@ default_role = "code"
 # Set the HTML theme to 'furo' for a clean, modern look.
 html_theme = "furo"
 html_static_path = ["_static"]
+
+
+# -- Generated API reference -------------------------------------------------
+# sphinx-apidoc runs from here rather than from .readthedocs.yaml, so that a
+# local build and a Read the Docs build produce the same pages from the same
+# settings. The .rst files it writes are build output, not source, and are
+# gitignored; previously they were committed, went stale, and quietly hid whole
+# modules from anyone building the docs locally.
+
+_SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_SOURCE_DIR, "..", ".."))
+
+
+def _run_apidoc(_app):
+    """Regenerate the per-module .rst stubs before the build reads them."""
+    from sphinx.ext.apidoc import main
+
+    main(
+        [
+            "--force",
+            "--templatedir",
+            os.path.join(_REPO_ROOT, "docs", "apidoc_templates"),
+            "--output-dir",
+            _SOURCE_DIR,
+            os.path.join(_REPO_ROOT, "pygeoinf"),
+            # Excluded: data_assimilation is not ready to be part of the
+            # public API reference. Remove this line to publish it.
+            os.path.join(_REPO_ROOT, "pygeoinf", "data_assimilation"),
+        ]
+    )
+
+
+def setup(app):
+    app.connect("builder-inited", _run_apidoc)
