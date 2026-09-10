@@ -2,15 +2,15 @@ __pycache__
 .ipynb_checkpoints
 *~
 dist/*
-poetry.lock
 *.png
 
 # Python bytecode
 __pycache__/
 *.pyc
 
-# Pytest cache
+# Linter and test caches
 .pytest_cache/
+.ruff_cache/
 
 # Coverage reports
 .coverage
