@@ -1225,20 +1225,25 @@ class GaussianMeasure:
 
             new_inverse_covariance = -1.0 * (proj @ B_inv @ incl)
 
+        def new_sample() -> Vector:
+            mapped_sample = _operator(self.sample())
+            if _translation is None:
+                return mapped_sample
+            return _operator.codomain.add(mapped_sample, _translation)
+
         if new_covariance_factor is not None:
+            # An existing sampler must be pushed forward alongside the factor:
+            # the factor-default sampler draws iid components on the factor's
+            # domain, which is white noise only when that domain's metric is
+            # the identity (in particular not for the spectral factors of
+            # invariant measures on Sobolev spaces).
             return GaussianMeasure(
                 covariance_factor=new_covariance_factor,
                 expectation=new_expectation,
+                sample=new_sample if self.sample_set else None,
                 inverse_covariance=new_inverse_covariance,
             )
         else:
-
-            def new_sample() -> Vector:
-                mapped_sample = _operator(self.sample())
-                if _translation is None:
-                    return mapped_sample
-                return _operator.codomain.add(mapped_sample, _translation)
-
             return GaussianMeasure(
                 covariance=new_covariance,
                 expectation=new_expectation,
