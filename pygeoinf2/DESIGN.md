@@ -5576,3 +5576,56 @@ at the same step.
 CG, flexible CG, MinRes, GMRES and BiCGStab; `strict=False` still raises;
 an overflowing operator is refused; CG refuses `P == -I` with a message
 naming the preconditioner. The 800-iteration run is gone.
+
+## 41. The calculus stops on its tolerance, not on a cap (2026-09-16)
+
+Sixth item from `FUNCTIONALITY_AUDIT.md` §0.3: `apply_operator_function`
+capped at 50 iterations where v1 used the dimension, with `rtol=1e-10`
+where v1 used `1e-3`. A judgement about defaults rather than a defect, so
+it was measured before it was decided.
+
+**Measured.** Applications of the operator and relative error of
+`f(A) x`, for `sqrt` and `log`, at each candidate default:
+
+```
+dim   cond   f    | (50, 1e-10)      | (dim, 1e-3)      | (dim, 1e-10)
+ 200  1e2  sqrt   |  50   4.5e-08    |  11   1.7e-03    |  69   1.9e-10
+ 200  1e4  sqrt   |  50   1.0e-03    |  22   8.4e-03    | 149   1.5e-10
+ 200  1e6  log    |  50   1.0e-01    |  99   1.5e-02    | 183   1.0e-10
+1000  1e6  log    |  50   1.6e-01    | 106   8.9e-02    | 677   5.2e-10
+```
+
+Three things follow. v2's tolerance was never met within 50 steps on any
+operator tried: the default was in effect "50 steps, take what you get",
+spending 50 applications where 11 sufficed and, on a badly conditioned
+operator, stopping silently at 1e-3 to 1e-1. v1's `1e-3`, measured on the
+change in coefficients, delivered errors of 1e-2 to 1e-1, because the
+change between two Krylov dimensions under-reports the distance to the
+answer. And that under-reporting is why the tolerance is not loosened to
+the solvers' `1e-8`: tried, it delivered `1e-6` in the answer and failed
+two existing tests that pin `1e-8`; `1e-10` on the change delivers
+`1e-10` in the answer across the table.
+
+**What it does now.** The cap defaults to the dimension of the space, as
+in v1: Lanczos terminates exactly there, so by default the tolerance
+decides and the cap never truncates. The tolerance stays at `1e-10`,
+which now means what it says. On a badly conditioned operator that costs
+some hundreds of applications, which is what the answer to that accuracy
+costs; a caller wanting a cheap approximation sets the tolerance, and one
+setting a cap gets a quadrature of that degree, truncated without
+complaint, which is what `log_determinant` (40 steps, `1e-3`) relies on.
+The same defaults apply to `operator_quadratic_form`, whose cap of 30 had
+the same shape, and to `OperatorFunction`. Nothing warns when a caller's
+cap is hit: a cap is a degree, and the one caller in the library that sets
+one would warn on every probe.
+
+**Why not v1's tolerance.** Restoring the cap is v1's arrangement; keeping
+its tolerance would not be. `1e-3` on the coefficient change was measured
+at 1e-2 in the answer, and v1's own callers never used it: the evidence
+routine passed 40 steps at `1e-3` as a quadrature, and the fractional
+powers took every parameter from the caller.
+
+**Checked.** With the defaults, a 200-dimensional operator of condition
+100 stops under 100 applications at 1e-6; at condition 1e4 the answer is
+within 1e-6 where the cap of 50 left it above 1e-4; the quadratic form and
+the operator agree with closed forms at the same conditioning.

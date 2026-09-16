@@ -338,7 +338,7 @@ def apply_operator_function(
     x: Any,
     /,
     *,
-    max_iterations: int = 50,
+    max_iterations: int | None = None,
     rtol: float = 1e-10,
     reorthogonalise: bool = True,
 ) -> Any:
@@ -358,12 +358,27 @@ def apply_operator_function(
     more expensive than the iteration it is testing. The basis is combined
     once, at the end. That is v1's arrangement.
 
+    **The defaults are adaptive.** The cap is the dimension of the space,
+    where Lanczos terminates exactly, so by default the tolerance decides
+    when to stop and the cap never truncates. It used to be 50, which the
+    tolerance never met on any operator measured: every call spent all 50
+    applications, where a well-conditioned operator needed 11, and a badly
+    conditioned one stopped, silently, at a relative error between 1e-3
+    and 1e-1 (DESIGN §41). A cap the caller
+    sets still truncates without complaint: it is a quadrature degree, and
+    stochastic Lanczos quadrature relies on that.
+
     Args:
         operator: a self-adjoint ``A``.
         function: applied to the eigenvalues.
         x: the vector to apply ``f(A)`` to.
-        max_iterations: the Krylov dimension to stop at.
-        rtol: relative change in the coefficients to stop at.
+        max_iterations: the Krylov dimension to stop at. The space's
+            dimension if omitted.
+        rtol: relative change in the coefficients to stop at. Tighter than
+            the solvers' ``1e-8`` because the change between two Krylov
+            dimensions under-reports the distance to the answer: ``1e-8``
+            here was measured at ``1e-6`` in the result, ``1e-10`` at
+            ``1e-10``.
         reorthogonalise: keep the Krylov basis orthogonal.
 
     Returns:
@@ -372,6 +387,8 @@ def apply_operator_function(
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "Applying an operator function")
     function = _guard_spectrum(operator, function)
+    if max_iterations is None:
+        max_iterations = space.dim
 
     norm = space.norm(x)
     if norm == 0.0:
@@ -460,7 +477,7 @@ def operator_quadratic_form(
     x: Any,
     /,
     *,
-    max_iterations: int = 30,
+    max_iterations: int | None = None,
     rtol: float = 1e-10,
     reorthogonalise: bool = True,
 ) -> float:
@@ -480,7 +497,8 @@ def operator_quadratic_form(
         operator: a self-adjoint ``A``.
         function: applied to the eigenvalues.
         x: the vector.
-        max_iterations: the Krylov dimension to stop at.
+        max_iterations: the Krylov dimension to stop at. The space's
+            dimension if omitted; see :func:`apply_operator_function` on why.
         rtol: relative change in the value to stop at.
         reorthogonalise: keep the Krylov basis orthogonal.
 
@@ -490,6 +508,8 @@ def operator_quadratic_form(
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "An operator quadratic form")
     function = _guard_spectrum(operator, function)
+    if max_iterations is None:
+        max_iterations = space.dim
 
     squared_norm = space.squared_norm(x)
     if squared_norm == 0.0:
@@ -532,10 +552,20 @@ class OperatorFunction(LinearOperator):
         /,
         *,
         traits: Traits = Traits.NONE,
-        max_iterations: int = 50,
+        max_iterations: int | None = None,
         rtol: float = 1e-10,
         reorthogonalise: bool = True,
     ) -> None:
+        """
+        Args:
+            operator: a self-adjoint ``A``.
+            function: applied to the eigenvalues.
+            traits: the claim about ``f(A)``; self-adjointness is added.
+            max_iterations: the Krylov dimension each application stops at.
+                The space's dimension if omitted, so that *rtol* decides.
+            rtol: relative change in the coefficients to stop at.
+            reorthogonalise: keep the Krylov basis orthogonal.
+        """
         _require_self_adjoint(operator, "An operator function")
         super().__init__(
             operator.domain,

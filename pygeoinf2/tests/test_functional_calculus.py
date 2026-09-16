@@ -190,6 +190,73 @@ class TestOperatorFunction:
         assert np.allclose(product(x), matrix @ x, rtol=1e-6)
 
 
+class TestAdaptiveDefaults:
+    """By default the tolerance decides when to stop, not a cap.
+
+    The cap was 50, which the tolerance of 1e-10 never met in 50 steps:
+    every call spent 50 applications, a well-conditioned operator needing
+    11, and a badly conditioned one stopped silently at 1e-3 to 1e-1
+    relative error. The cap is now the dimension, where Lanczos is exact,
+    so the tolerance decides.
+    """
+
+    @staticmethod
+    def conditioned(rng, n, cond):
+        rotation, _ = np.linalg.qr(rng.normal(size=(n, n)))
+        values = np.geomspace(1.0 / cond, 1.0, n)
+        matrix = (rotation * values) @ rotation.T
+        space = EuclideanSpace(n)
+        operator = LinearOperator.from_matrix(
+            space, space, matrix, traits=Traits.POSITIVE_DEFINITE, form="galerkin"
+        )
+        return space, operator, rotation, values
+
+    @staticmethod
+    def counted(operator):
+        count = [0]
+
+        def apply(x):
+            count[0] += 1
+            return operator(x)
+
+        wrapped = LinearOperator.from_callables(
+            operator.domain, operator.domain, apply, adjoint=apply
+        ).with_traits(operator.traits)
+        return wrapped, count
+
+    def test_a_well_conditioned_operator_stops_early(self, rng):
+        space, operator, rotation, values = self.conditioned(rng, 200, 1e2)
+        wrapped, count = self.counted(operator)
+        x = space.random(rng=rng)
+        got = apply_operator_function(wrapped, np.sqrt, x)
+        expected = (rotation * np.sqrt(values)) @ rotation.T @ x
+        assert count[0] < 100
+        assert np.linalg.norm(got - expected) < 1e-6 * np.linalg.norm(expected)
+
+    def test_a_badly_conditioned_operator_is_still_answered(self, rng):
+        """Where the old cap of 50 gave 1e-3 and said nothing."""
+        space, operator, rotation, values = self.conditioned(rng, 200, 1e4)
+        x = space.random(rng=rng)
+        expected = (rotation * np.sqrt(values)) @ rotation.T @ x
+        scale = np.linalg.norm(expected)
+        capped = apply_operator_function(operator, np.sqrt, x, max_iterations=50)
+        assert np.linalg.norm(capped - expected) > 1e-4 * scale
+        adaptive = apply_operator_function(operator, np.sqrt, x)
+        assert np.linalg.norm(adaptive - expected) < 1e-6 * scale
+
+    def test_the_quadratic_form_and_the_operator_share_the_defaults(self, rng):
+        space, operator, rotation, values = self.conditioned(rng, 200, 1e4)
+        x = space.random(rng=rng)
+        coefficients = rotation.T @ x
+        expected = float(np.dot(coefficients**2, np.log(values)))
+        assert operator_quadratic_form(operator, np.log, x) == pytest.approx(
+            expected, rel=1e-6
+        )
+        assert np.linalg.norm(
+            operator_log(operator)(x) - (rotation * np.log(values)) @ rotation.T @ x
+        ) < 1e-6 * np.linalg.norm(x)
+
+
 class TestSpectrumGuard:
     """Ritz values are pulled back inside the spectrum the operator claims.
 
