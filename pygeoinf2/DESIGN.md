@@ -6048,3 +6048,67 @@ costs no more applications than the stochastic route's own budget of
 `kl_divergence` (4000) and `ambient_ball` (1024) compare the dimension
 alone. Nothing is changed by this note; it says which pattern to copy if
 one of the dimension-keyed limits ever bites.
+
+## 50. Feasibility is decided in the data space, matrix-free (2026-09-16)
+
+Fourth of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3: `FeasibleProperty.is_feasible` did a dense eigendecomposition of
+``A A*`` where v1 used a matrix-free damped Krylov minimum-norm solve.
+
+**What a data space is.** David, on this item: data spaces run from tens
+to millions of dimensions; they are small only *relative to model
+spaces*, and that is all that can be assumed. Forming ``A A*`` costs one
+forward and one adjoint solve per datum. It is never a safe default, and
+the earlier remark in §49 that the data space is "small" is corrected
+here.
+
+**What v1 did.** `test_data_compatibility` built the minimum-norm
+operator with its damping set by the discrepancy principle -- a damped
+Krylov solve and a root search, matrix-free -- and compared the norm of
+the model it gave with the prior bound.
+
+**What the port did.** The primal route (§18.3(c)) reduces to the data
+space by diagonalising ``A A*`` once, which is what makes its nested
+bisection affordable and is BGP §2.6's construction; that cost is
+declared in the class docstring and is the price of the route's support
+values. But `is_feasible`, the yes-or-no question a caller asks *before*
+committing to the route, was answered by attempting one support
+evaluation, and so paid the whole reduction to say yes or no. The dual
+route's `is_feasible` was a heuristic -- one bundle minimisation, read as
+infeasible only if the dual had fallen below ``-1e6`` without converging.
+
+**What it does now.** `_minimum_norm_fits` is v1's test in v2's
+primitives. With ``w`` solving ``(A A* + t I) w == d`` in the data-space
+Tikhonov family, the model is ``A* w`` and the residual ``t w``, so the
+misfit ``t ||w||`` rises with the damping while the model's norm falls;
+`monotone_root` finds the damping at which the misfit reaches the noise
+radius, one warm-started Krylov solve per probe, each an application of
+``A`` and ``A*``, and the answer is whether the model there lies within
+the prior radius. Data already within the noise radius are fitted by the
+zero model; a misfit that stays above the radius at the smallest damping
+tried means no model fits. Both noisy routes use it: the primal always,
+the dual when its two sets are balls, keeping the dual's own diagnosis
+for general convex sets, where it is the only test there is.
+
+**Checked.** With a negligible noise radius the threshold is the norm of
+the exact minimum-norm model ``A^+ d``, and prior radii one per cent
+either side of it fall on opposite sides for both routes, with
+`matrix()` patched to raise; a noise ball wide enough to hold the data
+makes any prior feasible; the existing tight-versus-roomy tests pass
+unchanged.
+
+**One search, two misfits.** David asked whether this was different from
+what v1's minimum-norm solutions do. It is not: v1's `minimum_norm_operator`
+bracketed the damping and bisected on it, each probe a damped solve
+warm-started from the last, and `test_data_compatibility` called it and
+compared the norm. The first draft of this item re-implemented that search
+beside the one `MinimumNorm.for_data` already used. They are now one
+function, `point.misfit_search`, taking the misfit as a callable: the
+discrepancy principle passes the chi-squared against its critical value,
+the feasibility test the plain data norm against the noise radius. That
+difference is the difference between a credible ellipsoid and a noise
+ball, and it is the route's, not the search's: the primal route's
+data-space reduction is written for the plain norm, and lifting it to a
+non-identity error covariance is a whitening of the data by the
+covariance's factor -- the back-and-forth David recalls having with Mag.
+Logged in the checklist as its own line; the search is ready for it.

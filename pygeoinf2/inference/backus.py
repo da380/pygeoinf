@@ -492,6 +492,73 @@ class BackusInference(SetEstimator):
         )
 
 
+def _minimum_norm_fits(
+    problem: LinearForwardProblem,
+    data: Any,
+    /,
+    *,
+    noise_radius: float,
+    prior_radius: float,
+    solver: LinearSolver | None = None,
+    iterations: int = 60,
+    rtol: float = 1e-6,
+) -> bool:
+    """Whether a model within the prior ball fits the data within the noise ball.
+
+    v1's ``test_data_compatibility``, matrix-free, and the same search as
+    the discrepancy principle's: the smallest model whose misfit
+    ``||d - A m||`` is within the noise radius is the damped minimum-norm
+    model at the damping where the misfit reaches it, because the misfit
+    rises with the damping while the model's norm falls.
+    :func:`~pygeoinf2.inference.point.misfit_search` finds that damping,
+    one warm-started Krylov solve in the data space per probe, each an
+    application of ``A`` and ``A*``, and never forms ``A A*`` -- which at a
+    datum per column is the one thing a data space of any size cannot
+    afford (DESIGN §50). Only the misfit differs from the discrepancy
+    principle's: the plain data norm here, the chi-squared there, which is
+    the difference between a noise ball and a credible ellipsoid.
+
+    The misfit is measured on the model the solve gives, so it carries the
+    solve's residual: a noise radius below the solver's tolerance is one no
+    fit can be certified to, and the answer is then that nothing fits.
+
+    Args:
+        problem: the forward problem; its error measure is not used, the
+            noise being given as a radius in the data space's own norm.
+        data: the observations.
+        noise_radius: how far a fit may miss the data. Must exceed the
+            solver's residual floor to be answerable.
+        prior_radius: how large a model may be.
+        solver: for the data-space solves. Conjugate gradients by default.
+        iterations: the root search's budget.
+        rtol: the root search's bracket tolerance.
+
+    Returns:
+        Whether such a model exists.
+    """
+    from .point import misfit_search
+    from .tikhonov import TikhonovFamily
+
+    forward = problem.forward_operator
+    data_space, model_space = forward.codomain, forward.domain
+    if data_space.norm(data) <= noise_radius:
+        return True  # the zero model already fits
+    family = TikhonovFamily(forward, solver=solver, formalism="data_space")
+    found = misfit_search(
+        family,
+        family.right_hand_side(data),
+        lambda model: data_space.norm(data_space.subtract(data, forward(model))),
+        noise_radius,
+        iterations=iterations,
+        rtol=rtol,
+    )
+    if found.value > noise_radius * (1.0 + rtol) and found.exhausted is not None:
+        # The misfit stayed above the radius at the smallest damping tried:
+        # the data are not fitted to the noise by any model at all.
+        return False
+    return model_space.norm(family.model_from(found.solution)) <= prior_radius
+
+
 class FeasibleProperty(SetEstimator):
     """The exact feasible property set for noisy data, by the primal route.
 
@@ -773,11 +840,14 @@ class FeasibleProperty(SetEstimator):
         there is no feasible set and a support value has nothing to be the
         support of.
 
-        Answered by attempting one support evaluation, so it costs one -- and
-        that is the honest price, because on this route emptiness is not a
-        cheap closed-form test as it is for
-        :meth:`BackusInference.is_feasible`. A caller sweeping many directions
-        should ask once, not per direction.
+        Answered matrix-free, by the damped minimum-norm search of
+        :func:`_minimum_norm_fits`: a few warm-started Krylov solves in the
+        data space, and nothing assembled. It used to attempt one support
+        evaluation, which went through this route's dense reduction and so
+        formed ``A A*`` -- a forward and an adjoint solve per datum -- to
+        answer a yes-or-no question that is asked *before* committing to the
+        route. The reduction is still what the support values themselves
+        cost, and the class docstring says so.
 
         Args:
             data: the observations.
@@ -785,11 +855,14 @@ class FeasibleProperty(SetEstimator):
         Returns:
             Whether the feasible set is non-empty.
         """
-        try:
-            self.support(self.target_space.basis_vector(0), data)
-        except ValueError:
-            return False
-        return True
+        return _minimum_norm_fits(
+            self._problem,
+            data,
+            noise_radius=self._noise_radius,
+            prior_radius=self._radius,
+            solver=self._solver,
+            iterations=self._iterations,
+        )
 
     def __call__(self, data: Any) -> ConvexSet:
         """The feasible property set, as a support-function oracle.
@@ -1437,10 +1510,15 @@ class DualFeasibleProperty(SetEstimator):
     def is_feasible(self, data: Any, /) -> bool:
         """Whether any model lies in both the prior set and the noise set.
 
-        The dual's own diagnosis: an unbounded dual *is* an empty primal, which
-        is why :meth:`support` refuses rather than returning the large negative
-        number the minimisation was heading towards. This asks the same
-        question without the exception, and costs the same one minimisation.
+        When both sets are norm balls this is v1's test, matrix-free: the
+        damped minimum-norm search of :func:`_minimum_norm_fits`, a few
+        warm-started Krylov solves in the data space. For general convex
+        sets it is the dual's own diagnosis: an unbounded dual *is* an empty
+        primal, which is why :meth:`support` refuses rather than returning
+        the large negative number the minimisation was heading towards, and
+        this asks the same question without the exception, at the cost of
+        one minimisation and with the caveat that a dual which has not yet
+        fallen far enough is read as feasible.
 
         Args:
             data: the observations.
@@ -1448,6 +1526,13 @@ class DualFeasibleProperty(SetEstimator):
         Returns:
             Whether the feasible set is non-empty.
         """
+        if isinstance(self._prior, Ball) and isinstance(self._noise, Ball):
+            return _minimum_norm_fits(
+                self._problem,
+                data,
+                noise_radius=self._noise.radius,
+                prior_radius=self._prior.radius,
+            )
         try:
             self.support(self.target_space.basis_vector(0), data)
         except ValueError:

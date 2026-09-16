@@ -36,7 +36,7 @@ bite on a real problem; the small restorations below matter less in practice.
 - [x] `with_sparse_approximation` forms the dense covariance first — **restored** as an operator: `numerics.sparse_approximation` probes columns matrix-free with v1's correlation criterion and cap, sharing the thresholded preconditioner's assembly; `GaussianMeasure.sparse_covariance` delegates; the measure-returning method is gone. DESIGN §47.
 - [x] `nuclear_norm` / `hilbert_schmidt_norm` default dense; correlated invariant measures assemble the block matrix — **restored**: `auto` is exact and matrix-free (spectrum, spectral slices, stored matrix, or probed diagonal in linear memory); `dense` is opt-in. KL's refusal above `dense_limit` kept as D-8. DESIGN §48.
 - [x] `credible_set` without a precision goes O(N³); `ambient_ball(method='auto')` picks dense `eigh` — credible set **restored** matrix-free: the precision is the covariance's inverse through a solver (CG by default, a direct solver by name); ambient ball **kept**, the dense route being cheaper than sampling at its limit and exact. DESIGN §49.
-- [ ] `FeasibleProperty.is_feasible` does a dense `eigh`
+- [x] `FeasibleProperty.is_feasible` does a dense `eigh` — **restored** v1's matrix-free test: a damped minimum-norm root search in the data space, one warm-started Krylov solve per probe; the dual route uses it too when its sets are balls. Data spaces are small only relative to model spaces. DESIGN §50.
 - [ ] `l2_products_operator` stacks a dense matrix; low-rank factors stored as dense blocks
 - [ ] `LinearGaussianInversion` factorises at construction; `normal_log_determinant` forms dense Galerkin matrices
 - [ ] `Ellipsoid.project` factorises the dense Galerkin matrix every Newton step
@@ -56,6 +56,7 @@ bite on a real problem; the small restorations below matter less in practice.
 - [ ] 5. `weakened_ellipsoid`, Cameron–Martin credible set, `sample_pointwise_variance`, KKT push-forward precision
 - [ ] 10. `LinearOperator.matrix(dense=False)` scipy bridge
 - [ ] 6. `random_domain_points`, the `extend` grid option
+- [ ] primal feasible-property route is norm balls only: a non-identity error covariance is a whitening of the data by its factor (Mag's discussion with David); the feasibility search already takes any misfit (`point.misfit_search`, DESIGN §50), the data-space reduction does not
 
 ## 5. Lost knobs (§0.3)
 
@@ -63,6 +64,8 @@ bite on a real problem; the small restorations below matter less in practice.
 - [ ] `random_range`: `measure=` probes and `power` default 2 → 1; `random_cholesky` Nyström; `random_trace` probe type
 - [ ] parallelism: `n_jobs=` on point/path evaluation, preconditioner probing, `as_multivariate_normal`, log-determinant, `support_values`
 - [ ] escape hatches: `lazy_quadrature`, `incomplete=True`, `inverse_sqrt_operator` route, `to_coefficient_operator` padding, degree proposal beyond the space
+- [ ] a derivative-only query on any `Operator` goes through `at()` and so evaluates the value too (v1 called the derivative closure alone): doubles a derivative-only query on a forward operator whose value is a PDE solve; line searches take that path. Audit row on `NonLinearOperator.derivative`
+- [ ] `DiscrepancyPrinciple` dropped v1's `atol` and `minimum_damping`; the root finder has both but does not expose them
 
 ## 6. Naming (§0.4) — one pass, last, with `compat` carrying the old names
 

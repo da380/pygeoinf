@@ -435,6 +435,55 @@ class MinimumNorm(LeastSquares):
         )
 
 
+def misfit_search(
+    family: TikhonovFamily,
+    right_hand_side: Any,
+    misfit: Callable[[Any], float],
+    target: float,
+    /,
+    *,
+    iterations: int = 60,
+    rtol: float = 1e-6,
+) -> RootResult:
+    """Find the damping at which a misfit of the damped model reaches *target*.
+
+    The one search under the discrepancy principle and the feasibility tests
+    of the Backus-Gilbert routes: each probe solves ``N(t) w == v`` in the
+    family, warm-started from the previous probe's ``w`` -- which is what
+    makes a sixty-step search cost roughly one solve rather than sixty --
+    and measures the misfit of the model that ``w`` gives. Any misfit that
+    rises with the damping will do: the chi-squared against its critical
+    value, or the plain data-norm misfit against a noise radius.
+
+    Args:
+        family: the damped normal operators.
+        right_hand_side: the family's right-hand side for the data.
+        misfit: of a model, increasing in the damping.
+        target: the value the misfit is to reach.
+        iterations: the search's budget.
+        rtol: the search's bracket tolerance.
+
+    Returns:
+        The root, with its diagnostics and the saturated cases marked.
+    """
+
+    def evaluate(damping: float, previous: Any) -> Evaluation:
+        result = family.solve(damping, right_hand_side, x0=previous)
+        return Evaluation(
+            value=misfit(family.model_from(result.solution)),
+            solution=result.solution,
+            iterations=result.iterations,
+        )
+
+    return monotone_root(
+        evaluate,
+        target,
+        decreasing=False,
+        iterations=iterations,
+        rtol=rtol,
+    )
+
+
 def _discrepancy_search(
     family: TikhonovFamily,
     problem: LinearForwardProblem,
@@ -445,28 +494,12 @@ def _discrepancy_search(
     iterations: int = 60,
     rtol: float = 1e-6,
 ) -> RootResult:
-    """Find the damping at which the misfit reaches its threshold.
-
-    Each probe is a solve of ``N(t) w == v``, warm-started from the previous
-    probe's ``w`` — which is what makes a sixty-step bisection cost roughly one
-    solve rather than sixty.
-    """
-    target = problem.critical_chi_squared(level=level)
-    right_hand_side = family.right_hand_side(data)
-
-    def evaluate(damping: float, previous: Any) -> Evaluation:
-        result = family.solve(damping, right_hand_side, x0=previous)
-        model = family.model_from(result.solution)
-        return Evaluation(
-            value=problem.chi_squared(model, data),
-            solution=result.solution,
-            iterations=result.iterations,
-        )
-
-    return monotone_root(
-        evaluate,
-        target,
-        decreasing=False,
+    """Find the damping at which the chi-squared misfit reaches its threshold."""
+    return misfit_search(
+        family,
+        family.right_hand_side(data),
+        lambda model: problem.chi_squared(model, data),
+        problem.critical_chi_squared(level=level),
         iterations=iterations,
         rtol=rtol,
     )

@@ -1001,6 +1001,47 @@ class TestFeasibilityIsAskable:
             assert not route(noisy, target, Ball(model, radius=1e-3)).is_feasible(data)
             assert route(noisy, target, Ball(model, radius=100.0)).is_feasible(data)
 
+    def test_feasibility_is_decided_without_forming_the_data_gram(
+        self, setting, monkeypatch
+    ):
+        """Both noisy routes answer by a damped minimum-norm search in the data
+        space, one warm-started solve per probe. The primal route used to
+        attempt a support evaluation, which formed A A*: a forward and an
+        adjoint solve per datum, for a yes-or-no question. And the answer is
+        sharp: with a noise radius small next to the data -- but above the
+        solver's residual, below which no fit can be certified -- the
+        threshold is the norm of the exact minimum-norm model ``A^+ d``, and
+        prior radii one per cent either side of it fall on opposite sides."""
+        from pygeoinf2.inference import DualFeasibleProperty, FeasibleProperty
+
+        model, forward, target, data = setting
+        matrix = forward.matrix(form="components")
+        threshold = float(np.linalg.norm(np.linalg.pinv(matrix) @ data))
+        noisy = LinearForwardProblem(
+            forward,
+            error=Ball(forward.codomain, radius=1e-6 * float(np.linalg.norm(data))),
+        )
+
+        monkeypatch.setattr(
+            LinearOperator,
+            "matrix",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("A A* was formed")),
+        )
+        for route in (FeasibleProperty, DualFeasibleProperty):
+            assert route(
+                noisy, target, Ball(model, radius=1.01 * threshold)
+            ).is_feasible(data)
+            assert not route(
+                noisy, target, Ball(model, radius=0.99 * threshold)
+            ).is_feasible(data)
+            # A noise ball wide enough to hold the data is fitted by the zero
+            # model, so any prior at all is feasible.
+            roomy = LinearForwardProblem(
+                forward,
+                error=Ball(forward.codomain, radius=2.0 * float(np.linalg.norm(data))),
+            )
+            assert route(roomy, target, Ball(model, radius=1e-9)).is_feasible(data)
+
     def test_the_predicate_agrees_with_the_exception(self, setting):
         from pygeoinf2.inference import BackusInference
 
