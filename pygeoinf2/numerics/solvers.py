@@ -810,10 +810,27 @@ class IterativeSolver(LinearSolver):
         return max(2 * operator.domain.dim, 20)
 
     def _record(self, iteration: int, residual: float, history: list) -> None:
-        """Note one step's residual, and tell the callback about it."""
-        history.append(float(residual))
+        """Note one step's residual, and tell the callback about it.
+
+        A non-finite residual is a breakdown, not slow convergence: something
+        returned NaN or inf, and every later step is arithmetic on it. It is
+        refused here, once for every solver, and regardless of ``strict``,
+        which downgrades a solve that was *slow* and not one that was
+        poisoned. Left to the residual test -- which a NaN never passes --
+        the solve ran to its iteration cap and reported "did not converge",
+        with the cause unmentioned and the cap's worth of applications spent.
+        """
+        residual = float(residual)
+        if not np.isfinite(residual):
+            raise ConvergenceError(
+                f"{type(self).__name__} met a non-finite residual ({residual}) "
+                f"at iteration {iteration}. The operator or the preconditioner "
+                f"returned NaN or inf, or the problem needs rescaling; this is a "
+                f"breakdown, so strict=False does not downgrade it."
+            )
+        history.append(residual)
         if self._callback is not None:
-            self._callback(iteration, float(residual))
+            self._callback(iteration, residual)
 
     def _finish(self, result: SolveResult) -> SolveResult:
         if not result.converged:
@@ -950,6 +967,28 @@ class CGSolver(IterativeSolver):
 
     requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
 
+    @staticmethod
+    def _refuse_preconditioner(value: float, iteration: int) -> None:
+        """``(r, P r)`` was not positive: the preconditioner is not.
+
+        The recurrence divides by it, and its theory needs it positive; a
+        preconditioner that is not positive definite is the usual reason, and
+        the operator is not, since the curvature check guards that.
+        """
+        if not np.isfinite(value):
+            raise ConvergenceError(
+                f"CG met a non-finite preconditioned product ((r, P r) == "
+                f"{value}) at iteration {iteration}. The preconditioner "
+                f"returned NaN or inf, or the problem needs rescaling; this is "
+                f"a breakdown, so strict=False does not downgrade it."
+            )
+        raise ConvergenceError(
+            f"CG met a non-positive preconditioned product "
+            f"((r, P r) == {value:g}) at iteration {iteration}. The "
+            f"preconditioner is not positive definite, which conjugate "
+            f"gradients requires of it; verify it with testing.check_traits()."
+        )
+
     def _solve(
         self,
         operator: LinearOperator,
@@ -971,6 +1010,8 @@ class CGSolver(IterativeSolver):
         p = space.copy(z)
         # Without a preconditioner (r, z) is (r, r), which the norm just gave.
         rz = residual**2 if preconditioner is None else space.inner_product(r, z)
+        if not rz > 0.0:
+            self._refuse_preconditioner(rz, 0)
 
         for iteration in range(1, self._limit(operator) + 1):
             ap = operator(p)
@@ -995,6 +1036,8 @@ class CGSolver(IterativeSolver):
             rz_next = (
                 residual**2 if preconditioner is None else space.inner_product(r, z)
             )
+            if rz_next < 0.0:
+                self._refuse_preconditioner(rz_next, iteration)
             beta = rz_next / rz
             rz = rz_next
             # p <- z + beta p

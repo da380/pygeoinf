@@ -145,6 +145,71 @@ class TestDeclaredPreconditions:
             CGSolver()(liar).solve(rng.normal(size=N))
 
 
+class TestBreakdown:
+    """A poisoned solve stops at once and says why.
+
+    v1's CG checked every recurrence scalar for NaN and raised a diagnostic;
+    v2 checked only the curvature. A NaN from an ill-posed preconditioner
+    then ran to the iteration cap -- 800 operator applications on a
+    400-dimensional problem -- before "did not converge, residual nan", and
+    under ``strict=False`` came back as a NaN solution with a warning.
+    """
+
+    @staticmethod
+    def poisoned(space):
+        nan = np.full(space.dim, np.nan)
+        return LinearOperator.from_callables(
+            space, space, lambda r: nan.copy(), adjoint=lambda r: nan.copy()
+        )
+
+    @pytest.mark.parametrize(
+        "Solver",
+        [
+            "CGSolver",
+            "FlexibleCGSolver",
+            "MinResSolver",
+            "GMRESSolver",
+            "BiCGStabSolver",
+        ],
+    )
+    def test_a_non_finite_residual_is_refused_at_once(self, spd_problem, Solver):
+        from pygeoinf2.numerics import solvers
+
+        A, b, _ = spd_problem
+        seen = []
+        solver = getattr(solvers, Solver)(
+            preconditioner=self.poisoned(A.domain), callback=lambda k, r: seen.append(k)
+        )
+        with pytest.raises(ConvergenceError, match="non-finite"):
+            solver(A).solve(b)
+        # Refused on the first poisoned step, not at the iteration cap.
+        assert len(seen) <= 2
+
+    def test_strict_false_does_not_downgrade_a_breakdown(self, spd_problem):
+        A, b, _ = spd_problem
+        with pytest.raises(ConvergenceError, match="non-finite"):
+            CGSolver(strict=False, preconditioner=self.poisoned(A.domain))(A).solve(b)
+
+    def test_an_overflowing_operator_is_refused(self, rng):
+        """inf, not only NaN."""
+        X = EuclideanSpace(N)
+        huge = LinearOperator.from_callables(
+            X, X, lambda x: 1e300 * x * 1e300, adjoint=lambda x: 1e300 * x * 1e300
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        with pytest.raises(ConvergenceError, match="non-finite"):
+            with np.errstate(over="ignore"):
+                CGSolver()(huge).solve(rng.normal(size=N) * 1e300)
+
+    def test_cg_refuses_an_indefinite_preconditioner(self, spd_problem):
+        """``(r, P r) <= 0`` is the textbook breakdown of preconditioned CG,
+        and v1 checked it. The curvature check guards the operator; this one
+        guards the preconditioner, and its message says which."""
+        A, b, _ = spd_problem
+        negative = -1.0 * LinearOperator.identity(A.domain)
+        with pytest.raises(ConvergenceError, match="preconditioner is not positive"):
+            CGSolver(preconditioner=negative)(A).solve(b)
+
+
 class TestCoordinateFreedom:
     """The iterative solvers must never reach for a component map."""
 

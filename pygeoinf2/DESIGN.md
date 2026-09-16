@@ -5529,3 +5529,50 @@ far from the exact log-determinant on a badly conditioned spectrum
 (`-1279` against `-1382` over six decades), because the small eigenvalues
 that dominate the sum are the ones Lanczos resolves last. That is the
 method's limit, not a defect, and the dense route is exact where it fits.
+
+## 40. A poisoned solve stops at once (2026-09-16)
+
+Fifth item from `FUNCTIONALITY_AUDIT.md` §0.3: CG lost its non-finite
+breakdown checks. True, and the audit's row is precise: v1's CG checked
+every recurrence scalar -- `(r, z)` at the start and after each step,
+`(p, A p)`, `alpha`, `beta` -- for NaN and for sign, and raised a
+`FloatingPointError` naming the likely cause; v2 kept only the curvature
+check `(p, A p) <= 0`.
+
+**What that cost, measured.** A preconditioner returning NaN on a
+400-dimensional problem: the residual test is never passed by a NaN, so CG
+ran to its cap of 800 iterations, 800 operator applications, and then
+raised "did not converge; the residual norm is nan", with the cause
+unmentioned. Under `strict=False` it returned the NaN solution with a
+warning. An overflowing preconditioner did the same. No v2 solver checked
+for a non-finite value anywhere.
+
+**What v1 also checked, and why it is weaker than it looks.** `(r, P r)`
+not positive is the textbook breakdown of preconditioned CG. The obvious
+offender, `P == -I`, in fact converges: the sign cancels between `p` and
+`alpha` and the iterates are those of `P == I`. A general indefinite `P`
+does not, and the recurrence divides by the product, so the check stays,
+with a message that names the preconditioner rather than the operator,
+since the curvature check already guards the latter.
+
+**What it does now.** Two checks, at the two altitudes they belong to.
+
+* *Every* iterative solver refuses a non-finite residual, in the shared
+  `_record` hook each of them calls once per step, so the check is written
+  once and cannot be forgotten by the next solver. It raises
+  `ConvergenceError` regardless of `strict`: `strict=False` downgrades a
+  solve that was *slow*, and a poisoned one is not slow but wrong from that
+  step on. That matches the curvature check, which also ignores `strict`.
+* CG refuses `(r, P r) <= 0` at the start and `< 0` after a step, as v1
+  did.
+
+v1 raised `FloatingPointError`; v2 raises `ConvergenceError`, which is the
+exception a solve already raises and what callers already catch. The
+per-scalar checks on `alpha` and `beta` are not reproduced: both are ratios
+of the products now checked, and a non-finite one shows up in the residual
+at the same step.
+
+**Checked.** A NaN preconditioner is refused within two recorded steps by
+CG, flexible CG, MinRes, GMRES and BiCGStab; `strict=False` still raises;
+an overflowing operator is refused; CG refuses `P == -I` with a message
+naming the preconditioner. The 800-iteration run is gone.
