@@ -97,7 +97,9 @@ class GaussianMeasure:
             expectation: The expectation (mean) of the measure. Defaults to
                 the zero vector of the space (stored internally as None).
             sample: A function that returns a random sample from the measure.
-                If a `covariance_factor` is given, a default sampler is created.
+                If not provided and a `covariance_factor` is given, a default
+                sampler based on the factor is created; an explicitly provided
+                sampler always takes precedence.
             inverse_covariance: The inverse of the covariance operator (the
                 precision operator).
             inverse_covariance_factor: A factor Li of the inverse covariance,
@@ -118,9 +120,12 @@ class GaussianMeasure:
             else covariance
         )
         self._domain: HilbertSpace = self._covariance.domain
-        self._sample: Optional[Callable[[], Vector]] = (
-            sample if covariance_factor is None else self._sample_from_factor
-        )
+        if sample is not None:
+            self._sample: Optional[Callable[[], Vector]] = sample
+        elif covariance_factor is not None:
+            self._sample = self._sample_from_factor
+        else:
+            self._sample = None
         self._inverse_covariance_factor: Optional[LinearOperator] = (
             inverse_covariance_factor
         )
@@ -1220,20 +1225,25 @@ class GaussianMeasure:
 
             new_inverse_covariance = -1.0 * (proj @ B_inv @ incl)
 
+        def new_sample() -> Vector:
+            mapped_sample = _operator(self.sample())
+            if _translation is None:
+                return mapped_sample
+            return _operator.codomain.add(mapped_sample, _translation)
+
         if new_covariance_factor is not None:
+            # An existing sampler must be pushed forward alongside the factor:
+            # the factor-default sampler draws iid components on the factor's
+            # domain, which is white noise only when that domain's metric is
+            # the identity (in particular not for the spectral factors of
+            # invariant measures on Sobolev spaces).
             return GaussianMeasure(
                 covariance_factor=new_covariance_factor,
                 expectation=new_expectation,
+                sample=new_sample if self.sample_set else None,
                 inverse_covariance=new_inverse_covariance,
             )
         else:
-
-            def new_sample() -> Vector:
-                mapped_sample = _operator(self.sample())
-                if _translation is None:
-                    return mapped_sample
-                return _operator.codomain.add(mapped_sample, _translation)
-
             return GaussianMeasure(
                 covariance=new_covariance,
                 expectation=new_expectation,

@@ -748,3 +748,69 @@ class TestDeflatedPointwiseVariance:
         # Verify std = sqrt(var) using the HilbertModule's pointwise vector_sqrt
         expected_std_field = space.vector_sqrt(var_field)
         assert np.allclose(std_field, expected_std_field)
+
+
+class TestSamplerPrecedence:
+    """Constructor precedence between an explicit sampler and a factor."""
+
+    def test_explicit_sample_takes_precedence_over_factor(self):
+        """An explicitly provided sampler must not be displaced by the
+        default factor-based sampler."""
+        space = EuclideanSpace(4)
+        factor = LinearOperator.from_matrix(space, space, np.eye(4))
+        fixed = np.arange(4.0)
+
+        measure = GaussianMeasure(covariance_factor=factor, sample=lambda: fixed)
+
+        assert np.allclose(measure.sample(), fixed)
+
+    def test_factor_sampler_used_when_no_explicit_sample(self):
+        space = EuclideanSpace(4)
+        factor = LinearOperator.from_matrix(space, space, np.eye(4))
+
+        measure = GaussianMeasure(covariance_factor=factor)
+
+        assert measure.sample_set is True
+        assert measure.sample().shape == (4,)
+
+
+class TestAffineMappingSamplerPropagation:
+    """affine_mapping must push an explicit sampler forward with the factor.
+
+    Regression test: when the source measure carried a covariance factor,
+    affine_mapping dropped any explicit sampler and the pushforward fell
+    back on the factor-default sampler. That default draws iid components
+    on the factor's domain, which is white noise only w.r.t. the component
+    inner product, so on function-space factor domains the pushforward's
+    samples had the wrong covariance. A sentinel sampler makes the check
+    deterministic.
+    """
+
+    @staticmethod
+    def _measure_with_sentinel_sampler():
+        space = EuclideanSpace(4)
+        factor = LinearOperator.from_matrix(space, space, np.eye(4))
+        fixed = np.arange(4.0)
+        measure = GaussianMeasure(covariance_factor=factor, sample=lambda: fixed)
+        return space, measure, fixed
+
+    def test_explicit_sampler_is_pushed_forward(self):
+        space, measure, fixed = self._measure_with_sentinel_sampler()
+        matrix = np.diag([1.0, 2.0, 3.0, 4.0])
+        operator = LinearOperator.from_matrix(space, space, matrix)
+
+        mapped = measure.affine_mapping(operator=operator)
+
+        assert mapped.covariance_factor_set
+        assert np.allclose(mapped.sample(), matrix @ fixed)
+
+    def test_explicit_sampler_is_pushed_forward_with_translation(self):
+        space, measure, fixed = self._measure_with_sentinel_sampler()
+        matrix = np.diag([1.0, 2.0, 3.0, 4.0])
+        operator = LinearOperator.from_matrix(space, space, matrix)
+        translation = np.ones(4)
+
+        mapped = measure.affine_mapping(operator=operator, translation=translation)
+
+        assert mapped.covariance_factor_set
+        assert np.allclose(mapped.sample(), matrix @ fixed + translation)
