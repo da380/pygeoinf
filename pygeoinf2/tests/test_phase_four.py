@@ -262,33 +262,11 @@ class TestMeasureAdjustments:
         factor = LinearOperator.from_matrix(EuclideanSpace(6), X, root, form="galerkin")
         return (X, root @ root.T, GaussianMeasure(X, covariance_factor=factor))
 
-    def test_a_regularised_inverse_supplies_a_precision(self, measure, rng):
-        space, matrix, without = measure
-        with pytest.raises(NotImplementedError):
+    def test_a_measure_without_a_precision_says_so(self, measure, rng):
+        """Rather than falling back to a dense solve behind a quadratic form."""
+        space, _, without = measure
+        with pytest.raises(NotImplementedError, match="no precision"):
             without.mahalanobis_squared(space.random(rng=rng))
-        with_precision = without.with_regularized_inverse(
-            CholeskySolver(), damping=1e-6
-        )
-        x = space.random(rng=rng)
-        assert with_precision.mahalanobis_squared(x) == pytest.approx(
-            float(x @ np.linalg.solve(matrix + 1e-6 * np.identity(6), x))
-        )
-
-    def test_the_covariance_is_left_alone(self, measure):
-        """The two are deliberately not inverses; the measure says so."""
-        space, matrix, without = measure
-        with_precision = without.with_regularized_inverse(
-            CholeskySolver(), damping=1e-3
-        )
-        assert np.allclose(
-            with_precision.covariance.matrix(form="galerkin"),
-            without.covariance.matrix(form="galerkin"),
-        )
-
-    def test_negative_damping_is_refused(self, measure):
-        _, _, without = measure
-        with pytest.raises(ValueError, match="non-negative"):
-            without.with_regularized_inverse(CholeskySolver(), damping=-1.0)
 
     def test_rescaling_hits_the_requested_deviation(self, measure, rng):
         space, _, original = measure
@@ -1220,6 +1198,105 @@ class TestWoodburyPreconditioner:
                 assert space.norm(space.subtract(back, vector)) == pytest.approx(
                     0.0, abs=1e-10 * space.norm(vector)
                 )
+
+    @staticmethod
+    def singular(space, rng):
+        """A covariance of rank ``dim - 1``: a prior with no inverse at all."""
+        root = rng.normal(size=(space.dim, space.dim))
+        root[:, -1] = 0.0
+        return LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            form="galerkin",
+        )
+
+    def test_damping_gives_the_data_form_of_the_damped_prior(self, pieces, rng):
+        """Most priors approximate measures on function spaces and have no
+        usable inverse; the data form needs one. ``prior_damping`` makes it
+        the exact inverse of ``Q + d I``, which is self-adjoint, positive
+        definite and as close to ``Q^-1`` as a preconditioner needs. The model
+        form never inverts ``Q`` and is left as it was."""
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        forward, _, noise = pieces
+        model, data = forward.domain, forward.codomain
+        prior, damping = self.singular(model, rng), 0.1
+        wood = WoodburyPreconditioner(
+            forward, prior, noise, solver=CholeskySolver(), prior_damping=damping
+        )
+        damped = prior + damping * LinearOperator.identity(model)
+        normal_data = (noise + forward @ damped @ forward.adjoint).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        for approximate, normal in [
+            (wood.data_form(), normal_data),
+            (wood(normal_data), normal_data),
+        ]:
+            for _ in range(5):
+                vector = data.random(rng=rng)
+                back = approximate(normal(vector))
+                assert data.norm(data.subtract(back, vector)) == pytest.approx(
+                    0.0, abs=1e-10 * data.norm(vector)
+                )
+        # The model form never inverts Q, so the damping is not its business.
+        undamped = WoodburyPreconditioner(
+            forward, prior, noise, solver=CholeskySolver()
+        )
+        for _ in range(5):
+            vector = model.random(rng=rng)
+            assert model.norm(
+                model.subtract(wood.model_form()(vector), undamped.model_form()(vector))
+            ) == pytest.approx(0.0, abs=1e-12 * model.norm(vector))
+
+    def test_from_normal_damps_instead_of_reading_a_precision(self, pieces, rng):
+        """With a damping the precision a measure carries is not picked up:
+        the point of damping is that ``Q`` has no usable inverse of its own."""
+        from types import SimpleNamespace
+
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        forward, _, noise = pieces
+        model, data = forward.domain, forward.codomain
+        prior, damping = self.singular(model, rng), 0.1
+        # A precision that is plainly wrong, to prove it is ignored.
+        normal = SimpleNamespace(
+            forward=forward,
+            prior_covariance=prior,
+            error_covariance=noise,
+            prior_precision=5.0 * LinearOperator.identity(model),
+            error_precision=None,
+        )
+        wood = WoodburyPreconditioner.from_normal(
+            normal, solver=CholeskySolver(), prior_damping=damping
+        )
+        damped = prior + damping * LinearOperator.identity(model)
+        normal_data = (noise + forward @ damped @ forward.adjoint).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        approximate = wood.data_form()
+        for _ in range(5):
+            vector = data.random(rng=rng)
+            back = approximate(normal_data(vector))
+            assert data.norm(data.subtract(back, vector)) == pytest.approx(
+                0.0, abs=1e-10 * data.norm(vector)
+            )
+
+    def test_damping_is_refused_when_it_contradicts(self, pieces):
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        forward, prior, noise = pieces
+        with pytest.raises(ValueError, match="non-negative"):
+            WoodburyPreconditioner(forward, prior, noise, prior_damping=-1.0)
+        with pytest.raises(ValueError, match="one or the other"):
+            WoodburyPreconditioner(
+                forward,
+                prior,
+                noise,
+                prior_inverse=CholeskySolver()(prior),
+                prior_damping=0.1,
+            )
 
     def test_the_model_form_never_inverts_the_covariances(self, pieces, rng):
         """Which is what lets it survive a prior whose inverse is unbounded.

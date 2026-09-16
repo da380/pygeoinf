@@ -545,6 +545,7 @@ class WoodburyPreconditioner(LinearSolver):
         noise_solver: LinearSolver | None = None,
         prior_inverse: LinearOperator | None = None,
         noise_inverse: LinearOperator | None = None,
+        prior_damping: float = 0.0,
     ) -> None:
         """
         Args:
@@ -566,7 +567,30 @@ class WoodburyPreconditioner(LinearSolver):
                 usually cheaper and always better conditioned than solving.
             noise_inverse: ``R^-1`` likewise — a diagonal noise covariance
                 inverts by hand.
+            prior_damping: a floor for the data form's ``Q^-1``, which is
+                then ``(Q + prior_damping I)^-1`` with ``I`` the identity on
+                the model space. Most priors here approximate measures on
+                function spaces and are singular in practice long before they
+                are in theory, so ``Q^-1`` does not exist and a solve for it
+                fails; damping supplies an operator that is self-adjoint,
+                positive definite and close to what the identity asks for,
+                which is all a preconditioner needs. The model form never
+                inverts ``Q`` and is not affected. Contradicts
+                *prior_inverse*, so the two cannot be given together.
+
+        Raises:
+            ValueError: if the spaces do not fit together, if the damping is
+                negative, or if a damping is given alongside *prior_inverse*.
         """
+        if prior_damping < 0.0:
+            raise ValueError(
+                f"The prior damping must be non-negative, got {prior_damping}."
+            )
+        if prior_damping > 0.0 and prior_inverse is not None:
+            raise ValueError(
+                "prior_damping regularises the solve for Q^-1, and prior_inverse "
+                "says Q^-1 is already known; give one or the other."
+            )
         if forward.domain.dim != prior_covariance.domain.dim:
             raise ValueError(
                 f"The prior covariance acts on a space of dimension "
@@ -587,6 +611,7 @@ class WoodburyPreconditioner(LinearSolver):
         self._noise_solver = noise_solver
         self._prior_inverse = prior_inverse
         self._noise_inverse = noise_inverse
+        self._prior_damping = float(prior_damping)
 
     @classmethod
     def from_normal(
@@ -597,6 +622,7 @@ class WoodburyPreconditioner(LinearSolver):
         solver: LinearSolver | None = None,
         prior_solver: LinearSolver | None = None,
         noise_solver: LinearSolver | None = None,
+        prior_damping: float = 0.0,
     ) -> "WoodburyPreconditioner":
         """Read ``A``, ``Q`` and ``R`` off a normal operator.
 
@@ -616,13 +642,18 @@ class WoodburyPreconditioner(LinearSolver):
             solver: inverts the inner operator; see the constructor.
             prior_solver: inverts ``Q``, for the data form.
             noise_solver: inverts ``R``, likewise.
+            prior_damping: a floor for the data form's ``Q^-1``; see the
+                constructor. When it is given, a precision the prior measure
+                carries is *not* picked up, since the point of damping is that
+                ``Q`` has no usable inverse of its own.
 
         Returns:
             The preconditioner.
 
         Raises:
             TypeError: if the object does not expose the three factors.
-            ValueError: if they do not fit together.
+            ValueError: if they do not fit together, or the damping is
+                negative.
         """
         for attribute in ("forward", "prior_covariance", "error_covariance"):
             if not hasattr(normal, attribute):
@@ -646,8 +677,13 @@ class WoodburyPreconditioner(LinearSolver):
             solver=solver,
             prior_solver=prior_solver,
             noise_solver=noise_solver,
-            prior_inverse=getattr(normal, "prior_precision", None),
+            prior_inverse=(
+                None
+                if prior_damping > 0.0
+                else getattr(normal, "prior_precision", None)
+            ),
             noise_inverse=getattr(normal, "error_precision", None),
+            prior_damping=prior_damping,
         )
 
     @property
@@ -698,12 +734,17 @@ class WoodburyPreconditioner(LinearSolver):
         """``R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1``, an approximate ``N_d^-1``.
 
         Needs ``Q^-1`` and ``R^-1``, so it wants covariances given in inverse
-        form; see the class docstring.
+        form; see the class docstring. With a ``prior_damping`` the first is
+        ``(Q + prior_damping I)^-1`` instead, the approximate inverse of a
+        prior that has no exact one.
         """
         forward = self._forward
-        prior_inverse = self._resolve(
-            self._prior_inverse, self._prior, self._prior_solver
-        )
+        prior = self._prior
+        if self._prior_damping > 0.0:
+            # Semidefinite plus definite is definite by the trait closure
+            # rules, so the sum needs no claim of its own.
+            prior = prior + self._prior_damping * LinearOperator.identity(prior.domain)
+        prior_inverse = self._resolve(self._prior_inverse, prior, self._prior_solver)
         noise_inverse = self._resolve(
             self._noise_inverse, self._noise, self._noise_solver
         )

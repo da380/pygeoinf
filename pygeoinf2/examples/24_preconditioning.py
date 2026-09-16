@@ -159,12 +159,10 @@ iterations(NormalDiagonalPreconditioner(), "diagonal, exact")
 
 coarse = X.with_degree(X.lmax // 6)
 coarse_forward = coarse.path_average_operator(paths, count=16, dense=True)
-# The prior needs a precision for the Woodbury data form, and a heat-kernel
-# covariance is singular in practice long before it is in theory -- so it is
-# damped, which says the smallest variances are no smaller than the damping.
-coarse_prior = coarse.heat_measure(0.17, pointwise_std=0.05).with_regularized_inverse(
-    CholeskySolver(), damping=1e-6
-)
+# A heat-kernel covariance is singular in practice long before it is in
+# theory, so the Woodbury data form cannot invert it as it stands: the
+# preconditioner is told to damp it first, below.
+coarse_prior = coarse.heat_measure(0.17, pointwise_std=0.05)
 
 surrogate = inversion.surrogate(forward=coarse_forward, prior=coarse_prior)
 print()
@@ -175,7 +173,9 @@ print(
 print(f"  {surrogate!r}")
 
 preconditioned = iterations(
-    WoodburyPreconditioner.from_normal(surrogate, solver=CholeskySolver()),
+    WoodburyPreconditioner.from_normal(
+        surrogate, solver=CholeskySolver(), prior_damping=1e-6
+    ),
     "Woodbury from the surrogate",
 )
 

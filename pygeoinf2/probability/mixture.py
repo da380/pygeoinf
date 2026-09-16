@@ -318,7 +318,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         if not self.has_log_density:
             raise NotImplementedError(
                 "Some component has no log density, so the mixture has none. "
-                "Each needs a precision; with_regularized_inverse supplies one."
+                "Each component needs a precision."
             )
         densities = np.array(
             [

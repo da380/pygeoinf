@@ -1337,54 +1337,6 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
         return self._dense
 
-    def with_regularized_inverse(
-        self,
-        solver: Any,
-        /,
-        *,
-        damping: float = 0.0,
-    ) -> "GaussianMeasure[X]":
-        """The same measure, given a precision by inverting ``C + damping I``.
-
-        A covariance with a decaying spectrum is singular in practice long
-        before it is in theory, so its precision does not exist and anything
-        needing one — a Mahalanobis distance, a log density, a KL divergence —
-        is unavailable. Damping supplies one, at the cost of saying that the
-        smallest variances are no smaller than ``damping``.
-
-        The covariance itself is left alone. Only the precision is regularised,
-        so the two are deliberately *not* inverses of each other and the
-        measure says so by construction.
-
-        Args:
-            damping: the floor added to the spectrum before inverting. Larger
-                is better conditioned and further from the true precision.
-
-        Returns:
-            The measure with a regularised precision.
-
-        Raises:
-            ValueError: for non-positive damping, or a measure with no
-                covariance to regularise the inverse of.
-        """
-        if damping < 0.0:
-            raise ValueError(f"The damping must be non-negative, got {damping}.")
-        from ..algebra.operators import LinearOperator
-        from ..traits import Traits as _Traits
-
-        operator = self._require_covariance("Regularising the inverse")
-        if damping > 0.0:
-            operator = operator + damping * LinearOperator.identity(self._domain)
-        precision = solver(operator.with_traits(_Traits.POSITIVE_DEFINITE))
-        return GaussianMeasure(
-            self._domain,
-            expectation=self._expectation,
-            covariance=self._covariance,
-            covariance_factor=self._covariance_factor,
-            precision=precision.with_traits(_Traits.POSITIVE_DEFINITE),
-            sample=self._sample_fn,
-        )
-
     def with_sparse_approximation(
         self, /, *, threshold: float = 1e-3, form: str = "galerkin"
     ) -> "GaussianMeasure[X]":
@@ -1971,8 +1923,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Needs a precision, and says so rather than falling back to a dense
         solve. The fallback exists — :meth:`_weighted_squared` has it — but
         reaching it silently would mean a cubic cost incurred by a method that
-        looks like a quadratic form. Regularise one into existence with
-        :meth:`with_regularized_inverse` if that is what you want.
+        looks like a quadratic form. A measure whose covariance has no usable
+        inverse has no Mahalanobis distance either; build one with a damped
+        covariance, ``C + damping I``, and its inverse as the precision if an
+        approximation is what you want.
 
         Args:
             x: the vector to measure.
@@ -1986,8 +1940,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self._precision is None:
             raise NotImplementedError(
                 "This measure has no precision, so no Mahalanobis distance. "
-                "Supply precision or precision_factor, or regularise one into "
-                "existence with with_regularized_inverse."
+                "Supply precision or precision_factor at construction."
             )
         deviation = self._deviation(x)
         return self._domain.inner_product(self._precision(deviation), deviation)

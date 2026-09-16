@@ -281,9 +281,8 @@ class NormalOperator(FactoredNormalOperator):
             if prior.precision is None:
                 raise ValueError(
                     "The model-space formalism needs the prior precision Q^-1. "
-                    "Supply one, or obtain it by damping with "
-                    "GaussianMeasure.with_regularized_inverse, or assemble in "
-                    "the data space instead."
+                    "Supply a prior that carries one, or assemble in the data "
+                    "space instead, which never inverts Q."
                 )
             # error is not None on this branch: the guard above sends the
             # error-free case to the data space.

@@ -5318,3 +5318,63 @@ grid is the representation; what it holds is not thrown away on the way past.
 
 There is no such form on a Sobolev space — the metric weights the modes and
 the grid knows nothing of that — so those keep the component route.
+
+## 36. A damped inverse belongs to the preconditioner, not the measure (2026-09-16)
+
+The first item taken from `FUNCTIONALITY_AUDIT.md` §0.3. It began as a
+correctness fix and ended as a removal, and the reasoning is the useful part.
+
+**What v1 did.** `GaussianMeasure.with_regularized_inverse(solver, damping=d)`
+returned the Gaussian `N(m, C + d I)`: covariance `C + d I`, inverse
+covariance its inverse, and a sampler that added `sqrt(d)` white noise to
+the original draw. One measure, self-consistent, slightly wider than the
+original.
+
+**What the port did.** The Phase 4 port (commit `d97a23d`, 2026-08-26) kept
+the covariance at `C`, kept the factor and sampler, and attached the
+precision `(C + d I)^-1`, with a docstring saying the two were "deliberately
+not inverses of each other" and a test pinning that. Nothing here or in the
+reviews said why.
+
+**Why that was wrong.** A precision exists to make a density available, and
+a density has two halves. `log_density` used the damped precision;
+`log_normalising_constant` used the covariance, which is the singular
+operator the damping was there to step around, so it raised or, on a
+covariance that is merely ill-conditioned, gave the determinant of a
+different Gaussian. `GaussianMixture.log_density` adds the two halves and
+its error message sent the user to this very method: a mixture of damped
+components had no density at all. A measure whose precision is not the
+inverse of its covariance should not exist, and for a while today it was
+made consistent again, v1's way.
+
+**Why the method went anyway.** The measures this library works with
+approximate measures on function spaces and are singular, or numerically so;
+precisions and densities are rarely wanted. The one real use of the method
+was the Woodbury data form, which needs `Q^-1` and had nowhere to get one for
+such a prior. There the damped operator is only an *approximation* to an
+inverse, feeding a preconditioner, and whether it is the exact inverse of
+anything the measure says does not matter. That is an operation on an
+operator, at the place the inverse is used, not on a measure. So:
+
+* `WoodburyPreconditioner` takes `prior_damping=`, on the constructor and
+  on `from_normal`. The data form then inverts `Q + prior_damping I`, with
+  `I` the identity on the model space. Semidefinite plus definite is
+  definite by the trait closure rules, so nothing is claimed. The result is
+  self-adjoint and positive definite, which is what conjugate gradients
+  needs of a preconditioner; a thresholded spectrum would not have been. The
+  model form never inverts `Q` and is untouched. With a damping,
+  `from_normal` does *not* pick up a precision the measure carries, since the
+  point of damping is that the prior has no usable inverse of its own.
+* `GaussianMeasure.with_regularized_inverse` is removed. The three messages
+  that pointed at it now say what they need: a prior that carries a
+  precision, or the data-space formalism, which never inverts `Q`. Anyone who
+  does want a floored measure builds `N(m, C + d I)` by hand, which is a
+  constructor call.
+
+**What was checked.** On each of the Woodbury test metrics with a prior of
+rank `dim - 1`: the data form is the exact inverse of `R + A (Q + d I) A*`
+to 1e-10; the model form is unchanged; `from_normal` with a damping ignores
+a deliberately wrong precision on the measure; negative damping and damping
+alongside `prior_inverse` are refused. Example 24, the only caller that
+damped, now passes `prior_damping=1e-6` to the preconditioner and runs
+unchanged.
