@@ -5475,3 +5475,57 @@ operators are unaffected, their adjoint being themselves.
 BiCGStab and GMRES take at most two steps in either direction and the
 adjoint solution satisfies `A* w == x`; a deferred `LUSolver` is factorised
 exactly once across a forward and an adjoint solve.
+
+## 39. Ritz values are held to the claimed spectrum (2026-09-16)
+
+Fourth item from `FUNCTIONALITY_AUDIT.md` §0.3: `operator_log` has no floor
+on Ritz values, NaN where v1 floored. True, reproducible, and narrower in
+its cause and wider in its effect than the audit's one line.
+
+**Where it does not happen.** A positive definite operator with a spectrum
+running eighteen decades, or with exact zeros, gives no NaN in a hundred
+and twenty draws on either metric: Lanczos Ritz values interlace the
+spectrum and a tiny positive one has a finite logarithm.
+
+**Where it does.** A covariance *formed* as `L L*` with a null space. Its
+null eigenvalues come out of the arithmetic at `-1e-13` or so, the Ritz
+values inherit the sign, and `log`, `sqrt`, `inverse sqrt` and a fractional
+power of a negative number are all NaN: about half the draws, and every
+stochastic log-determinant, since one NaN probe poisons the Hutchinson
+mean. That is the operator an evidence calculation or a sampler meets in
+practice, and v1 floored it, at an absolute `1e-15`, inside
+`LinearBayesianInversion._trace_log_slq` (`linear_bayesian.py:602`) — and
+only there; v1's generic calculus had no floor, but v1 had no generic
+`sqrt` or `log` through Lanczos either. The refactor made the calculus
+generic and public and lost the one floor v1 carried, in the one routine
+that used it.
+
+**What it does now.** The guard lives in the two Lanczos kernels,
+`apply_operator_function` and `operator_quadratic_form`, so every function
+and every route through them has it, and it is keyed on the *claim*: a
+Ritz value that roundoff puts outside a positive semidefinite claim is
+moved to zero, outside a definite claim to `eps` times the largest Ritz
+value, which is what keeps a logarithm finite. The floor is relative, not
+v1's absolute `1e-15`, so it means the same thing at any scale. A value
+meaningfully outside the claim, below `-1e-8` of the largest, is not
+roundoff but a wrong claim, and is refused with the same message the dense
+log-determinant already uses: this is the library's rule that traits are
+claims and `check_traits` verifies them, not a licence to launder an
+indefinite operator. No claim, no guard, so `exp` of an indefinite
+operator is untouched. The diagonal route is exact and gates on the
+spectrum itself.
+
+**Checked.** On a Euclidean and a dense-metric space with a formed
+rank-deficient covariance claimed definite: `log`, `sqrt`, inverse `sqrt`,
+a fractional power and the log quadratic form are finite on every draw and
+the stochastic log-determinant is finite; under a semidefinite claim the
+square root squared reproduces the operator to 1e-6; an operator with an
+eigenvalue at `-0.1` claiming definiteness is refused on both kernels; and
+`exp` of an indefinite operator matches `expm`. Every one of the first
+three fails without the guard.
+
+**Noted, not addressed.** Stochastic Lanczos quadrature at forty steps is
+far from the exact log-determinant on a badly conditioned spectrum
+(`-1279` against `-1382` over six decades), because the small eigenvalues
+that dominate the sum are the ones Lanczos resolves last. That is the
+method's limit, not a defect, and the dense route is exact where it fits.

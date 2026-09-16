@@ -69,6 +69,50 @@ def _require_self_adjoint(operator: LinearOperator, what: str) -> None:
         )
 
 
+# Ritz values of a claimed-definite operator below this fraction of the
+# largest are treated as roundoff and floored; below minus this fraction they
+# are treated as a false claim and refused. Lanczos roundoff on a formed
+# covariance is 1e-15 of the largest eigenvalue; a real negative eigenvalue
+# is never this small relative to the spectrum.
+_SPECTRUM_TOLERANCE = 1e-8
+
+
+def _guard_spectrum(
+    operator: LinearOperator, function: Callable[[np.ndarray], np.ndarray]
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Pull Ritz values back inside the spectrum the operator claims.
+
+    A covariance formed as ``L L*`` with a null space has null eigenvalues
+    that roundoff puts at ``-1e-13`` or so, and the Ritz values inherit the
+    sign: ``log``, ``sqrt`` and a fractional power of one are NaN. The claim
+    says what the spectrum is, so a Ritz value outside it by roundoff is
+    moved to its edge -- zero for a semidefinite claim, ``eps`` times the
+    largest Ritz value for a definite one, which is what keeps a logarithm
+    finite. A value meaningfully outside is not roundoff but a wrong claim,
+    and is refused as the dense route already refuses it. No claim, no guard.
+    """
+    traits = operator.traits
+    if not (Traits.POSITIVE_SEMIDEFINITE & traits):
+        return function
+    definite = bool(Traits.POSITIVE_DEFINITE & traits)
+    eps = float(np.finfo(float).eps)
+
+    def guarded(values: np.ndarray) -> np.ndarray:
+        values = np.asarray(values, dtype=float)
+        scale = float(np.max(np.abs(values))) if values.size else 0.0
+        if scale and float(np.min(values)) < -_SPECTRUM_TOLERANCE * scale:
+            claim = "POSITIVE_DEFINITE" if definite else "POSITIVE_SEMIDEFINITE"
+            raise ValueError(
+                f"The operator has an eigenvalue near {float(np.min(values)):.3g} "
+                f"against a largest of {scale:.3g}, so it is not {claim} as "
+                f"claimed; verify the claim with testing.check_traits()."
+            )
+        floor = eps * scale if definite else 0.0
+        return function(np.maximum(values, floor))
+
+    return guarded
+
+
 # --------------------------------------------------------------------- #
 #                              Lanczos                                  #
 # --------------------------------------------------------------------- #
@@ -327,6 +371,7 @@ def apply_operator_function(
     """
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "Applying an operator function")
+    function = _guard_spectrum(operator, function)
 
     norm = space.norm(x)
     if norm == 0.0:
@@ -444,6 +489,7 @@ def operator_quadratic_form(
     """
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "An operator quadratic form")
+    function = _guard_spectrum(operator, function)
 
     squared_norm = space.squared_norm(x)
     if squared_norm == 0.0:
@@ -563,6 +609,13 @@ def operator_function(
     On a Euclidean space, and on every symmetric space here, a diagonal
     operator's metric is diagonal in the same basis, so it commutes and the
     trait is deduced: the requirement bites only where it should.
+
+    **The claimed spectrum is enforced on the Lanczos route.** Ritz values
+    that roundoff puts outside a positive semidefinite or definite claim are
+    moved to its edge before ``f`` sees them, so a formed covariance whose
+    null eigenvalues are ``-1e-13`` still has a finite ``log``, ``sqrt`` and
+    fractional power; a value meaningfully outside the claim is refused.
+    The diagonal route is exact and needs no such guard.
 
     Args:
         operator: a self-adjoint ``A``.

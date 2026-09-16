@@ -190,6 +190,99 @@ class TestOperatorFunction:
         assert np.allclose(product(x), matrix @ x, rtol=1e-6)
 
 
+class TestSpectrumGuard:
+    """Ritz values are pulled back inside the spectrum the operator claims.
+
+    A covariance formed as ``L L*`` with a null space has null eigenvalues
+    that roundoff makes negative, at ``-1e-13`` or so; the Lanczos Ritz
+    values inherit the sign, and ``log``, ``sqrt`` and a fractional power of
+    a negative number are NaN. Half the draws came out NaN and every
+    stochastic log-determinant did. v1 floored the log at ``1e-15`` inside
+    its evidence routine; the guard now lives in the Lanczos kernels and is
+    keyed on the claim, so every function benefits.
+    """
+
+    @staticmethod
+    def formed(space, rng, *, rank):
+        """``L L*`` of rank *rank* on *space*, its null eigenvalues at roundoff."""
+        n = space.dim
+        root = rng.normal(size=(n, n))
+        root[:, rank:] = 0.0
+        components = np.linalg.solve(space.gram_matrix(), root @ root.T)
+        return LinearOperator.from_matrix(space, space, components, form="components")
+
+    @pytest.mark.parametrize(
+        "build", [lambda: EuclideanSpace(60), lambda: make_dense_metric_space(60)]
+    )
+    def test_roundoff_negative_eigenvalues_do_not_give_nan(self, build, rng):
+        space = build()
+        operator = self.formed(space, rng, rank=20).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        functions = [
+            operator_log(operator),
+            operator_sqrt(operator),
+            operator_inverse_sqrt(operator),
+            operator_power(operator, 0.5),
+        ]
+        for _ in range(10):
+            x = space.random(rng=rng)
+            for function in functions:
+                assert np.all(np.isfinite(space.to_components(function(x))))
+            assert np.isfinite(operator_quadratic_form(operator, np.log, x))
+        estimate = log_determinant(operator, method="stochastic", samples=5, rng=rng)
+        assert np.isfinite(estimate.value)
+
+    def test_a_semidefinite_claim_clips_at_zero_and_stays_exact(self, rng):
+        """The square root of a rank-deficient operator, squared, is the
+        operator: the clipped null directions contribute nothing, as they
+        should, and the rest is untouched."""
+        space = make_dense_metric_space(40)
+        operator = self.formed(space, rng, rank=15).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        )
+        root = operator_sqrt(operator)
+        for _ in range(5):
+            x = space.random(rng=rng)
+            squared = root(root(x))
+            assert np.all(np.isfinite(space.to_components(squared)))
+            assert space.norm(space.subtract(squared, operator(x))) < 1e-6 * space.norm(
+                operator(x)
+            )
+
+    def test_a_meaningfully_indefinite_operator_is_refused(self, rng):
+        """The guard covers roundoff, not a false claim. An eigenvalue at
+        ``-0.1`` on an operator claiming definiteness is a wrong claim, and the
+        Lanczos route says so the way the dense route already did."""
+        space = EuclideanSpace(30)
+        values = np.linspace(0.5, 2.0, 30)
+        values[0] = -0.1
+        rotation, _ = np.linalg.qr(rng.normal(size=(30, 30)))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            (rotation * values) @ rotation.T,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="components",
+        )
+        with pytest.raises(ValueError, match="check_traits"):
+            operator_log(operator)(space.random(rng=rng))
+        with pytest.raises(ValueError, match="check_traits"):
+            operator_quadratic_form(operator, np.log, space.random(rng=rng))
+
+    def test_an_unclaimed_spectrum_is_not_touched(self, rng):
+        """``exp`` of an indefinite operator is fine and gets no floor."""
+        space = EuclideanSpace(20)
+        values = np.linspace(-1.0, 1.0, 20)
+        rotation, _ = np.linalg.qr(rng.normal(size=(20, 20)))
+        matrix = (rotation * values) @ rotation.T
+        operator = LinearOperator.from_matrix(
+            space, space, matrix, traits=Traits.SELF_ADJOINT, form="components"
+        )
+        x = space.random(rng=rng)
+        assert np.allclose(operator_exp(operator)(x), sla.expm(matrix) @ x, rtol=1e-7)
+
+
 class TestTraitGating:
     def test_a_non_self_adjoint_operator_is_refused(self, rng):
         X = EuclideanSpace(N)

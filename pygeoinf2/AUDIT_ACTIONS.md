@@ -13,7 +13,7 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 - [x] `with_regularized_inverse`: covariance and precision disagree for `damping > 0` — **dropped**. The mismatch was real (the mixture density it fed raised), but its one use was a damped `Q⁻¹` for the Woodbury data form, which is now `WoodburyPreconditioner(prior_damping=)`. DESIGN §36.
 - [x] `WoodburyPreconditioner.data_form()` on a Tikhonov operator returns `t·N⁻¹` not `N⁻¹` — **restored**, and wider than the audit saw: every factor-built preconditioner had the factor. `FactoredNormalOperator.scale` now carries it and each consumer divides by it. DESIGN §37.
 - [x] adjoint solve of a non-self-adjoint operator with a fixed preconditioner uses `P` not `P*` — **restored**: iterative inverses now carry an adjoint solve preconditioned by `P*` from the same resolved `P`, which also ends the second factorisation of a deferred direct preconditioner. Right answer, slow, before; never a wrong number. DESIGN §38.
-- [ ] `operator_log` has no floor on Ritz values
+- [x] `operator_log` has no floor on Ritz values — **restored**, generalised: both Lanczos kernels now hold Ritz values to the claimed spectrum (floor at 0 for semidefinite, `eps·λmax` for definite), and refuse a meaningfully negative one as a false claim. Triggered by formed `L L*` covariances, which also broke `sqrt` and fractional powers and every stochastic log-determinant. DESIGN §39.
 - [ ] CG lost its non-finite breakdown checks
 - [ ] `apply_operator_function` caps at 50 iterations with `rtol=1e-10`
 - [ ] path operators bypass the Sobolev-order guard
