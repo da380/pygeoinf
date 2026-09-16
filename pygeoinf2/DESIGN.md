@@ -6219,3 +6219,38 @@ avoided. Not changed.
 factorises nothing; the first solve does both once; a second solve, the
 adjoint and a matrix read add nothing; the answer is right. The existing
 once-only factorisation tests pass unchanged.
+
+## 53. Projecting onto an ellipsoid is matrix-free (2026-09-16)
+
+Seventh of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3: `Ellipsoid.project`, new in v2, factorised the dense Galerkin
+matrix of ``I + lambda P`` at every Newton step. v1 had no projection
+onto an ellipsoid at all -- it raised -- so this is not a lost fast
+path but a new operation that arrived dense.
+
+**What it is.** The nearest point of ``{y : (P y, y) <= 1}`` satisfies
+``y + lambda P y == x - c``, so ``y(lambda) == (I + lambda P)^-1 (x - c)``
+and ``lambda`` solves the scalar secular equation ``(P y, y) == 1`` by
+Newton. Each step needs ``y'(lambda) == -(I + lambda P)^-1 P y`` for the
+derivative and ``y`` at the new multiplier: two solves with a positive
+definite operator. The port defaulted those solves to a Cholesky
+factorisation, which extracts the operator's matrix -- ``dim``
+applications of ``P`` where ``P`` has to be probed -- and factorises it,
+twice per step, and the whole thing runs inside every proximal iteration
+of the primal-dual route and every Dykstra sweep of an intersection.
+Measured at dimension 1500: 3.5 s with a matrix-backed precision, and
+31 s with 54 000 applications of one that had to be probed.
+
+**What it does now.** The solves go through `resolve_solver`, conjugate
+gradients at ``1e-12`` by default so the constraint can be met to the
+projection's own tolerance; the second solve of each step starts from
+the first-order predictor ``y + d lambda y'``, which the derivative solve
+has just computed, so it is usually a short correction. Nothing is
+formed. A direct solver passed by name behaves as before, and with §52
+its factorisation is now paid on the first solve rather than at
+``solver(A)``.
+
+**Checked.** On a Euclidean and a dense-metric space the default
+projection is built with `matrix()` patched to raise, lands on the
+boundary to 1e-10, and agrees with the Cholesky route to 1e-8; the
+existing nearest-point, idempotence and support tests pass unchanged.

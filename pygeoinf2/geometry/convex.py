@@ -962,12 +962,24 @@ class Ellipsoid(ConvexSet):
         above and cannot overshoot into negative multipliers. A point already
         inside is returned unchanged, which is where ``lambda == 0``.
 
+        **Matrix-free by default.** Each Newton step solves with
+        ``I + lambda P`` twice, once for ``phi'`` and once for the new point,
+        and each solve is conjugate gradients on that operator, which is
+        positive definite: applications of ``P`` and nothing formed. The
+        second solve starts from the first-order predictor ``y + d lambda
+        y'``, which is what the derivative solve just computed, so it is
+        usually a correction. A Cholesky factorisation used to be the default,
+        which extracted and factorised ``I + lambda P`` twice per step: at
+        dimension 1500, 3.5 s with a matrix-backed precision and 31 s with
+        54 000 applications of one that had to be probed (DESIGN §53). It is
+        still available by name for a small space.
+
         Args:
             x: the point to project.
-            solver: how to invert ``I + lambda P``. Defaults to a Cholesky
-                factorisation, which the operator admits, being positive
-                definite. On a space with no component map, pass an iterative
-                one.
+            solver: how to invert ``I + lambda P`` -- a linear solver, or a
+                callable taking the operator and returning one. Conjugate
+                gradients at ``rtol=1e-12`` by default, so that the constraint
+                can be met to *rtol*.
             rtol: on the constraint residual.
             iterations: the Newton cap.
 
@@ -975,15 +987,21 @@ class Ellipsoid(ConvexSet):
             The nearest point of the ellipsoid.
         """
         from ..algebra.operators import LinearOperator
-        from ..numerics.solvers import CholeskySolver
+        from ..numerics.solvers import CGSolver, resolve_solver
+        from ..traits import Traits
 
         space = self.domain
         offset = space.subtract(x, self._centre)
         if float(space.inner_product(self._precision(offset), offset)) <= 1.0:
             return space.copy(x)
 
-        chosen = solver if solver is not None else CholeskySolver()
+        chosen = resolve_solver(solver, self._precision, default=CGSolver(rtol=1e-12))
         identity = LinearOperator.identity(space)
+
+        def shifted(multiplier: float) -> LinearOperator:
+            return (identity + multiplier * self._precision).with_traits(
+                Traits.POSITIVE_DEFINITE
+            )
 
         multiplier = 0.0
         point = offset
@@ -992,17 +1010,15 @@ class Ellipsoid(ConvexSet):
             residual = float(space.inner_product(weighted, point)) - 1.0
             if abs(residual) <= rtol:
                 break
-            # phi'(lambda) == -2 (P y, (I + lambda P)^-1 P y).
-            shifted = chosen(identity + multiplier * self._precision)
-            derivative = -2.0 * float(
-                space.inner_product(weighted, shifted.solve(weighted).solution)
-            )
+            # y'(lambda) == -(I + lambda P)^-1 P y, and phi' == 2 (P y, y').
+            slope = space.negative(chosen(shifted(multiplier)).solve(weighted).solution)
+            derivative = 2.0 * float(space.inner_product(weighted, slope))
             if derivative == 0.0:  # pragma: no cover - a degenerate ellipsoid
                 break
-            multiplier = max(multiplier - residual / derivative, 0.0)
-            point = (
-                chosen(identity + multiplier * self._precision).solve(offset).solution
-            )
+            advanced = max(multiplier - residual / derivative, 0.0)
+            guess = space.axpy(advanced - multiplier, slope, space.copy(point))
+            point = chosen(shifted(advanced)).solve(offset, x0=guess).solution
+            multiplier = advanced
 
         return space.add(self._centre, point)
 

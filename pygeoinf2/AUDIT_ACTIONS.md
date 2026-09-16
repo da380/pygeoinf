@@ -39,7 +39,7 @@ bite on a real problem; the small restorations below matter less in practice.
 - [x] `FeasibleProperty.is_feasible` does a dense `eigh` — **restored** v1's matrix-free test: a damped minimum-norm root search in the data space, one warm-started Krylov solve per probe; the dual route uses it too when its sets are balls. Data spaces are small only relative to model spaces. DESIGN §50.
 - [x] `l2_products_operator` stacks a dense matrix; low-rank factors stored as dense blocks — **not a defect** as stated (the rows and the column blocks are the vectors themselves, and smaller than the fields), but a real trap beside it **fixed**: a composition's known matrix multiplied low-rank factors into a dense n×n product for any caller that asked; it now declines a product larger than its largest factor and gives the diagonal of a low-rank product in O(nk). DESIGN §51.
 - [x] `LinearGaussianInversion` factorises at construction; `normal_log_determinant` forms dense Galerkin matrices — construction **restored** lazy at the solver: every direct solver now factorises on first use and keeps the factors (v1 refactorised per call); the log-determinant's routing **kept**, it already counts applications. DESIGN §52.
-- [ ] `Ellipsoid.project` factorises the dense Galerkin matrix every Newton step
+- [x] `Ellipsoid.project` factorises the dense Galerkin matrix every Newton step — **fixed** (new in v2, no v1 path): the two solves per step go through `resolve_solver`, CG at 1e-12 by default with a first-order predictor as warm start; a direct solver by name as before. DESIGN §53.
 - [ ] `DiagonalMetricSpace.gram_matrix()` probes a dense array; `MassWeightedSpace.mass_inverse` defaults to CG
 
 ## 4. Lost capabilities with an obvious home (§0.2)

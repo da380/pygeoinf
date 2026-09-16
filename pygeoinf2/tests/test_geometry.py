@@ -284,6 +284,44 @@ class TestEllipsoid:
                 rel=1e-5,
             )
 
+    def test_the_projection_is_matrix_free_by_default(self, rng, monkeypatch):
+        """Conjugate gradients on ``I + lambda P``, nothing extracted. A
+        Cholesky factorisation used to be the default, twice per Newton step:
+        3.5 s at dimension 1500, and 31 s with 54 000 applications when the
+        precision had to be probed for its matrix. A direct solver by name
+        gives the same point."""
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        for space in (EuclideanSpace(40), make_dense_metric_space(40)):
+            root = rng.normal(size=(40, 40)) / np.sqrt(40)
+            components = np.linalg.solve(
+                space.gram_matrix(), root @ root.T + 0.5 * np.identity(40)
+            )
+            precision = LinearOperator.from_matrix(
+                space,
+                space,
+                components,
+                traits=Traits.POSITIVE_DEFINITE,
+                form="components",
+            )
+            ellipsoid = Ellipsoid(space, precision)
+            point = space.scale(3.0, space.random(rng=rng))
+
+            with monkeypatch.context() as patched:
+                patched.setattr(
+                    LinearOperator,
+                    "matrix",
+                    lambda *a, **k: (_ for _ in ()).throw(AssertionError("dense")),
+                )
+                projected = ellipsoid.project(point)
+            assert ellipsoid.mahalanobis_squared(projected) == pytest.approx(
+                1.0, abs=1e-10
+            )
+            direct = ellipsoid.project(point, solver=CholeskySolver())
+            assert space.norm(space.subtract(projected, direct)) < 1e-8 * space.norm(
+                direct
+            )
+
     def test_an_indefinite_precision_is_refused(self, X, rng):
         bad = LinearOperator.self_adjoint(X, lambda x: x)
         with pytest.raises(ValueError, match="must claim"):
