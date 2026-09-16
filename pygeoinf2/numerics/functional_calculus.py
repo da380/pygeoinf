@@ -856,7 +856,11 @@ def log_determinant(
         # factorisation of the identity cost 0.37 s, as much as the operator's
         # own, and doubled the memory.
         metric = 0.0
-        if not space.is_orthonormal:
+        if space.has_diagonal_metric:
+            # A diagonal metric's determinant is the product of its diagonal;
+            # the dense route took an O(dim^3) slogdet of a diagonal matrix.
+            metric = float(np.sum(np.log(space.gram_diagonal())))
+        elif not space.is_orthonormal:
             _, metric = np.linalg.slogdet(space.gram_matrix())
         return Estimate(float(logarithm - metric), 0.0, 0)
 

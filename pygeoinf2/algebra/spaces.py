@@ -891,8 +891,14 @@ class MassWeightedSpace[V](HilbertSpace[V]):
     def mass_inverse(self) -> "LinearOperator":
         """``M^-1``, from the solver, built once."""
         from ..numerics.solvers import CGSolver, LinearSolver
+        from .diagonal import DiagonalLinearOperator
 
         solver = self._mass_solver
+        if solver is None and isinstance(self._mass, DiagonalLinearOperator):
+            # Free when the mass operator is diagonal, as promised: its
+            # inverse is the reciprocal spectrum, and a conjugate-gradient
+            # solve per application was what this used to cost instead.
+            return self._mass.inverse
         if solver is None:
             solver = CGSolver()
         if isinstance(solver, LinearSolver):
@@ -1015,6 +1021,17 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
     def gram_diagonal(self) -> np.ndarray:
         """The metric values themselves."""
         return np.array(self._metric_values)
+
+    def gram_matrix(self) -> np.ndarray:
+        """``diag(metric_values)``, written down rather than probed.
+
+        The base class forms its Gram matrix by ``dim`` applications of
+        :meth:`apply_gram` to basis vectors, which for a diagonal metric is
+        ``dim^2`` multiplications to learn ``dim`` numbers it already holds.
+        The array returned is still dense, that being the contract, and a
+        caller that wants only the diagonal has :meth:`gram_diagonal`.
+        """
+        return np.diag(self._metric_values)
 
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, G^-1)``, using the diagonal factor."""

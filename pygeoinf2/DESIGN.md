@@ -6254,3 +6254,44 @@ its factorisation is now paid on the first solve rather than at
 projection is built with `matrix()` patched to raise, lands on the
 boundary to 1e-10, and agrees with the Cholesky route to 1e-8; the
 existing nearest-point, idempotence and support tests pass unchanged.
+
+## 54. A diagonal metric is written down, not probed (2026-09-16)
+
+Last of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3, in two halves: `DiagonalMetricSpace.gram_matrix()` built a dense
+``n x n`` array by ``n`` probes where v1's `OrthogonalHilbertSpace` held
+a sparse diagonal; and `MassWeightedSpace.mass_inverse` defaulted to a
+conjugate-gradient solve per application where v1 took the inverse from
+the caller.
+
+**The Gram matrix.** The base class forms it by applying the metric to
+every basis vector: for a diagonal metric, ``dim^2`` multiplications to
+learn the ``dim`` numbers the space already holds. It is now
+``diag(metric_values)``, written down. The array is still dense, that
+being the method's contract and what its callers -- a generalised
+eigenproblem, a direct solver's known inverse, the identity's Galerkin
+matrix -- multiply with; a caller that wants the diagonal alone has
+`gram_diagonal`. The one caller that took a dense factorisation of it
+for no reason was the dense log-determinant, which subtracts the
+metric's own determinant to report the component matrix's and did so by
+`slogdet` of the full Gram matrix, ``O(dim^3)`` on a diagonal one. It
+now sums the diagonal's logarithms when the metric is diagonal, which on
+a symmetric space it always is.
+
+**The mass inverse.** The docstring promised "free when the mass
+operator is diagonal" and the code built a conjugate-gradient inverse
+regardless, so a diagonal mass -- the library's own test fixture -- paid
+a Krylov solve on every application of the lifted adjoint. A diagonal
+mass now inverts by its reciprocal spectrum; a general one keeps the
+solver default, and a caller with the inverse in hand passes it as
+`mass_solver`, which is v1's arrangement kept as an option rather than a
+requirement. The finite-element case, where the mass matrix is sparse
+and its inverse is a sparse solve, is the `mfem_hilbert` backend's own
+business and unchanged.
+
+**Checked.** A weighted space's Gram matrix equals its diagonal with the
+metric application patched to raise; the dense log-determinant on that
+space never builds the Gram matrix and matches `slogdet` of the
+component matrix; a diagonal mass inverts to its reciprocal spectrum
+with the CG solver's constructor patched to raise; a general mass still
+inverts through a solve.

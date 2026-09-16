@@ -7,6 +7,7 @@ import pytest
 
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace, HilbertSpace, Reals
+from pygeoinf2.traits import Traits
 from pygeoinf2.testing import (
     check_coordinates,
     check_representer,
@@ -258,6 +259,49 @@ class TestCoordinateFreeSpace:
             space.random()
 
 
+class TestADiagonalMetricKnowsItsGramMatrix:
+    """Written down from the diagonal, not probed: the base class applied the
+    metric to every basis vector, dim^2 multiplications to learn the dim
+    numbers a diagonal-metric space already holds, and the dense
+    log-determinant then took an O(dim^3) slogdet of the result."""
+
+    def test_the_gram_matrix_is_the_diagonal_without_a_probe(self, monkeypatch):
+        space = make_weighted_space()
+        monkeypatch.setattr(
+            type(space),
+            "apply_gram",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("probed")),
+        )
+        assert np.allclose(space.gram_matrix(), np.diag(space.metric_values))
+
+    def test_the_dense_log_determinant_never_builds_the_gram_matrix(
+        self, rng, monkeypatch
+    ):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        space = make_weighted_space()
+        values = rng.uniform(1.0, 3.0, space.dim)
+        # A non-diagonal operator on a diagonal-metric space, so the dense
+        # route is the one taken and the metric correction is needed.
+        root = rng.normal(size=(space.dim, space.dim))
+        galerkin = root @ root.T + space.dim * np.identity(space.dim)
+        operator = LinearOperator.from_matrix(
+            space, space, galerkin, traits=Traits.POSITIVE_DEFINITE, form="galerkin"
+        )
+        components = np.linalg.solve(np.diag(space.metric_values), galerkin)
+        expected = float(np.linalg.slogdet(components)[1])
+        monkeypatch.setattr(
+            type(space),
+            "gram_matrix",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("dense gram")),
+        )
+        assert log_determinant(operator, method="dense").value == pytest.approx(
+            expected
+        )
+        del values, DiagonalLinearOperator
+
+
 class TestMassWeightedSpace:
     """One inner product against another, on the same vectors."""
 
@@ -269,6 +313,45 @@ class TestMassWeightedSpace:
         base = EuclideanSpace(4)
         mass = DiagonalLinearOperator(base, np.array([1.0, 4.0, 9.0, 0.25]))
         return base, mass, MassWeightedSpace(base, mass)
+
+    def test_a_diagonal_mass_is_inverted_exactly_and_for_free(
+        self, weighted, monkeypatch
+    ):
+        """As the docstring always promised, and as v1 had by taking the
+        inverse from the caller; the default used to be a conjugate-gradient
+        solve on every application."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics import solvers
+
+        base, mass, space = weighted
+        monkeypatch.setattr(
+            solvers.CGSolver,
+            "__init__",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("CG built")),
+        )
+        inverse = space.mass_inverse
+        assert isinstance(inverse, DiagonalLinearOperator)
+        assert np.allclose(inverse.eigenvalues, 1.0 / mass.eigenvalues)
+
+    def test_a_general_mass_still_falls_back_to_a_solve(self, rng):
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+        from pygeoinf2.numerics.solvers import InverseOperator
+
+        base = EuclideanSpace(4)
+        root = rng.normal(size=(4, 4))
+        mass = LinearOperator.from_matrix(
+            base,
+            base,
+            root @ root.T + 4.0 * np.identity(4),
+            traits=Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        space = MassWeightedSpace(base, mass)
+        assert isinstance(space.mass_inverse, InverseOperator)
+        x = base.random(rng=rng)
+        assert base.norm(
+            base.subtract(mass(space.mass_inverse(x)), x)
+        ) < 1e-8 * base.norm(x)
 
     def test_it_is_a_hilbert_space(self, weighted, rng):
         _, _, space = weighted
