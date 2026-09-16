@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Sequence
 
+import numpy as np
+
 from .fourier import PeriodicBox
 
 __all__ = ["Torus", "Lebesgue", "Sobolev"]
@@ -23,23 +25,41 @@ class Torus(PeriodicBox):
         /,
         *,
         lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
         order: float = 0.0,
         length_scale: float = 1.0,
     ) -> None:
         """
         Args:
             shape: grid points along each of the two axes.
-            lengths: the period along each axis. Unit lengths by default.
+            lengths: the period along each axis. ``(2 pi, 2 pi)``, the unit
+                torus, if neither this nor *radii* is given. Points are
+                physical coordinates in these periods, never angles; on the
+                unit torus the two coincide (DESIGN §46).
+            radii: the radius along each axis, as an alternative to the
+                periods; ``length == 2 pi radius`` on each. v1's parameters.
             order: the Sobolev order. Zero gives the Lebesgue space.
             length_scale: the length at which the Sobolev weight turns over.
 
         Raises:
-            ValueError: if the shape is not two-dimensional.
+            ValueError: if the shape is not two-dimensional, if both *lengths*
+                and *radii* are given, or if a radius is not positive.
         """
         shape = tuple(int(n) for n in shape)
         if len(shape) != 2:
             raise ValueError(f"A torus has two axes, got {len(shape)}.")
-        super().__init__(shape, lengths=lengths, order=order, length_scale=length_scale)
+        super().__init__(
+            shape,
+            lengths=_periods(lengths, radii),
+            order=order,
+            length_scale=length_scale,
+        )
+
+    @property
+    def radii(self) -> tuple[float, float]:
+        """The periods over ``2 pi``."""
+        first, second = self.lengths
+        return float(first) / (2.0 * np.pi), float(second) / (2.0 * np.pi)
 
     def _rebuilt(
         self,
@@ -75,14 +95,23 @@ class Lebesgue(Torus):
     """The ``L2`` space on a torus."""
 
     def __init__(
-        self, shape: Sequence[int], /, *, lengths: Sequence[float] | None = None
+        self,
+        shape: Sequence[int],
+        /,
+        *,
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
     ) -> None:
         """
         Args:
             shape: grid points along each of the two axes.
-            lengths: the period along each axis.
+            lengths: the period along each axis; ``2 pi`` each by default.
+            radii: the radii, as an alternative.
+
+        Raises:
+            ValueError: if both are given, or a radius is not positive.
         """
-        super().__init__(shape, lengths=lengths, order=0.0)
+        super().__init__(shape, lengths=lengths, radii=radii, order=0.0)
 
 
 class Sobolev(Torus):
@@ -96,12 +125,37 @@ class Sobolev(Torus):
         /,
         *,
         lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
     ) -> None:
         """
         Args:
             shape: grid points along each of the two axes.
             order: the Sobolev order.
             length_scale: the length at which the Sobolev weight turns over.
-            lengths: the period along each axis.
+            lengths: the period along each axis; ``2 pi`` each by default.
+            radii: the radii, as an alternative.
+
+        Raises:
+            ValueError: if both are given, or a radius is not positive.
         """
-        super().__init__(shape, lengths=lengths, order=order, length_scale=length_scale)
+        super().__init__(
+            shape,
+            lengths=lengths,
+            radii=radii,
+            order=order,
+            length_scale=length_scale,
+        )
+
+
+def _periods(
+    lengths: Sequence[float] | None, radii: Sequence[float] | None, /
+) -> tuple[float, float] | None:
+    """The periods from whichever of the two was given; None for the default."""
+    if lengths is not None and radii is not None:
+        raise ValueError("Give the periods or the radii, not both.")
+    if radii is not None:
+        radii = tuple(float(r) for r in radii)
+        if len(radii) != 2 or any(r <= 0.0 for r in radii):
+            raise ValueError(f"A torus has two positive radii, got {radii}.")
+        return (2.0 * np.pi * radii[0], 2.0 * np.pi * radii[1])
+    return None if lengths is None else (float(lengths[0]), float(lengths[1]))

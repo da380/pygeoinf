@@ -24,8 +24,8 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 
 ## 2. Silent unit changes (§0.3)
 
-- [ ] circle/torus `geodesic_distance` and `project_function` take physical coordinates, not angles
-- [ ] `degree_multiplicity` at the Nyquist degree (1 in v2, 2 in v1; Dan's v1 fix branch says 1 is right)
+- [x] circle/torus `geodesic_distance` and `project_function` take physical coordinates, not angles — **kept** (every box is physical), but the named classes now default to the unit circle and torus (period `2π`, as the generic box and v1's radius one already did) and take `radius=`/`radii=`; on a unit circle the coordinate is the angle and v1's numbers are v2's. DESIGN §46.
+- [x] `degree_multiplicity` at the Nyquist degree — **not a defect**: one is right, v1's two was the bug Dan's fix branch corrects. DESIGN §46.
 
 ## 3. Dense-by-default regressions (§0.3), in the audit's order of likely pain
 

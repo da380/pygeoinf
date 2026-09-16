@@ -413,6 +413,75 @@ class TestFormalAdjointLift:
             lift_formal_adjoint(base, sobolev)
 
 
+class TestTheNamedCircleAndTorus:
+    """The classes named for the geometry default to the unit circle and the
+    unit torus, as the generic box and v1's radius of one already did.
+    They defaulted to a period of one, so a v1 script's cosine of the angle
+    sampled over [0, 1) and its distances came out wrong, silently, on the
+    first space a tutorial builds. Points are arc lengths, not angles: on
+    the unit circle the two coincide."""
+
+    def test_the_default_circle_is_the_unit_circle(self):
+        from pygeoinf2.symmetric_space import circle
+
+        space = circle.Lebesgue(16)
+        assert space.volume == pytest.approx(2.0 * np.pi)
+        assert space.radius == pytest.approx(1.0)
+        assert circle.Sobolev(16, 2.0, 0.3).volume == pytest.approx(2.0 * np.pi)
+
+    def test_the_radius_is_an_alternative_to_the_length(self):
+        from pygeoinf2.symmetric_space import circle
+
+        assert circle.Lebesgue(16, radius=2.0).volume == pytest.approx(4.0 * np.pi)
+        assert circle.Lebesgue(16, length=3.0).volume == pytest.approx(3.0)
+        with pytest.raises(ValueError, match="not both"):
+            circle.Lebesgue(16, length=3.0, radius=1.0)
+        with pytest.raises(ValueError, match="positive"):
+            circle.Lebesgue(16, radius=-1.0)
+
+    def test_v1s_numbers_hold_on_the_unit_circle(self):
+        """The coordinate is the angle there, so v1's callback and v1's
+        distances give the same numbers; on radius two the arc length is
+        twice the angle."""
+        from pygeoinf2.symmetric_space import circle
+
+        unit = circle.Lebesgue(32)
+        sampled = unit.project_function(lambda theta: np.cos(theta))
+        assert np.allclose(sampled, np.cos(np.arange(32) * 2.0 * np.pi / 32))
+        assert unit.geodesic_distance(
+            np.array([0.0]), np.array([0.75])
+        ) == pytest.approx(0.75)
+        double = circle.Lebesgue(32, radius=2.0)
+        assert double.geodesic_distance(
+            np.array([0.0]), np.array([1.5])
+        ) == pytest.approx(1.5)
+        assert double.radius == pytest.approx(2.0)
+
+    def test_the_default_torus_is_the_unit_torus(self):
+        from pygeoinf2.symmetric_space import torus
+
+        space = torus.Lebesgue((8, 8))
+        assert space.volume == pytest.approx(4.0 * np.pi**2)
+        assert space.radii == pytest.approx((1.0, 1.0))
+        assert torus.Sobolev(
+            (8, 8), 2.0, 0.3, radii=(2.0, 0.5)
+        ).volume == pytest.approx(4.0 * np.pi**2)
+        with pytest.raises(ValueError, match="not both"):
+            torus.Lebesgue((8, 8), lengths=(1.0, 1.0), radii=(1.0, 1.0))
+        with pytest.raises(ValueError, match="positive"):
+            torus.Lebesgue((8, 8), radii=(1.0, 0.0))
+
+    def test_with_order_keeps_the_period(self):
+        from pygeoinf2.symmetric_space import circle, torus
+
+        assert circle.Lebesgue(16, radius=2.0).with_order(1.5).volume == pytest.approx(
+            4.0 * np.pi
+        )
+        assert torus.Lebesgue((8, 8), radii=(2.0, 1.0)).with_order(1.5).volume == (
+            pytest.approx(8.0 * np.pi**2)
+        )
+
+
 class TestConstruction:
     def test_defaults_give_the_unit_circle(self):
         space = Lebesgue((8,))

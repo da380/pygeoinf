@@ -5830,3 +5830,48 @@ adjoint agrees with the matrix-built operator's and passes the operator
 axioms; the assembly happens once; a wide operator's `matrix(by="auto")`,
 which fills by rows through the adjoint, works after the opt-in and is
 refused before it; a space without coordinates is refused.
+
+## 46. The circle and the torus are unit ones by default (2026-09-16)
+
+The two silent unit changes of `FUNCTIONALITY_AUDIT.md` §0.3, group 2 of
+the checklist.
+
+**The change the audit found.** v1's circle and torus took *angles*:
+`geodesic_distance` wrapped the difference of two angles and multiplied by
+the radius, `project_function` handed its callback the grid angle, and the
+constructors took `radius`. v2 makes each a
+:class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox` of one or two
+axes, and every box takes physical coordinates: a point on the circle is an
+arc length in `[0, L)`. That is the right design -- one parametrisation for
+every box, and CURRENT_STATE §3's rule that lengths are physical -- and it
+is kept.
+
+**The trap inside it.** The generic box defaults its period to `2 pi`, so
+that a one-dimensional box *is* the unit circle and a physical coordinate
+*is* the angle; `circle.Lebesgue` and `torus.Lebesgue`, the classes named
+for the geometry, defaulted to a period of one. A v1 script's
+`project_function(lambda theta: cos(theta))` on the default circle
+sampled the cosine over `[0, 1)`, and `geodesic_distance(0, 0.75)` gave
+`0.25` where v1 gave `0.75`. Both ran and both were wrong, on the default
+that every tutorial reaches for first.
+
+**What it does now.** The circle's default `length` is `2 pi` and the
+torus's default `lengths` are `(2 pi, 2 pi)`: the unit circle and the unit
+torus, which are v1's defaults of radius one, and the generic box's. Both
+constructors take v1's vocabulary as well, `radius=` on the circle and
+`radii=` on the torus, as an alternative to the length, with
+`length == 2 pi radius`; giving both is refused. Points stay physical. On
+a unit circle that is the angle and v1's numbers are v2's; on any other
+radius a v1 angle must be multiplied by the radius, and the docstrings
+say so in those words.
+
+**Not a defect.** `degree_multiplicity` returns one at the Nyquist degree
+where v1 returned two. Dan's v1 fix branch of 2026-07 (`af7f568`)
+establishes that the Nyquist mode is stored once and has multiplicity
+one; v2's packing had it right from the start.
+
+**Checked.** The default circle has circumference `2 pi` and the default
+torus area `4 pi^2`; `radius=2` gives `4 pi`; both keywords together are
+refused; the cosine of the grid coordinate on the default circle is the
+cosine of the angle; `geodesic_distance(0, 0.75)` is `0.75` on the unit
+circle and `1.5` on radius two.
