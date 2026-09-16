@@ -5717,3 +5717,72 @@ the unit step, the search converges to it in at most three evaluations;
 the evaluation count reported equals the number of calls made to the
 functional; the existing strong Wolfe, model hand-back and optimiser
 tests pass unchanged.
+
+## 44. The bundle methods get their exact subproblems back (2026-09-16)
+
+Ninth and tenth items from `FUNCTIONALITY_AUDIT.md` §0.3, taken together
+because they share a root: `LevelBundleMethod` lost the serious/null step
+test, the QP warm start and the box on its LP; `ProximalBundleMethod` lost
+its exact QP backend for an accelerated projected gradient with a residual
+floor. These are Mag's methods, ported under **D-13**; David asked for
+them to be worked on rather than only written up.
+
+**The level method.** Three of v1's details went in the port, each with a
+consequence. The stability centre moved to every trial point, so the
+proximal term penalised distance from wherever the last trial landed
+rather than from the best point the method trusts; v1 moved it only on a
+serious step, `f(trial) < f(centre)`, and does again. The LP that gives
+the certified lower bound had no box, so it was unbounded until the cuts
+happened to span the space, and until then the method had no level to aim
+at and took proximal steps; v1's box `|x_i - centre_i| <= 1e3 (1 + max
+|centre|)` keeps the bound finite from the first cut without binding at
+any minimiser the method could reach, and is restored, as is v1's level
+of the best value itself when the bound is still infinite. And the master
+QP was handed to its backend cold; v1 warm-started it at the centre with
+`t` at the level, and does again. `BundleResult` regains the certified
+bound as `lower_bound` and the count of `serious_steps`, both of which v1
+reported and the proximal method leaves at their defaults.
+
+**The proximal method.** v1 solved the master QP in the space's
+dimension plus one with a general QP backend. v2 solves its dual, a
+simplex-constrained QP in the *number of cuts*, which is the right
+problem -- small, and metric-free -- but solved it by accelerated
+projected gradient, which on the near-parallel bundle a converging method
+produces has a residual floor and warned about it on the Backus tests. It
+now solves that same dual through a QP backend when one is installed:
+Clarabel, then OSQP, warm-started from the previous weights, and falls
+back to the projected gradient when neither is. Measured on a Backus dual
+over sixteen directions against the primal route:
+
+```
+subproblem solver      time     max deviation   warnings
+projected gradient    10.84 s      1.7e-8           9
+OSQP                   0.89 s      6.5e-8         822 (its own notice)
+Clarabel               0.37 s      6.5e-11          0
+SciPy SLSQP           15.09 s      4.6e-7           0
+```
+
+Thirty times faster and a thousand times closer with Clarabel; SciPy's
+SLSQP is slower *and* less accurate than the projected gradient, which
+is why it is not chosen by default and the fallback is the built-in
+method rather than the always-present backend. `CURRENT_STATE` §4's
+figure of 10.96 s for the dual route is now 0.37 s.
+
+**The backend order.** `best_available_qp_solver` preferred OSQP, for
+speed and its warm start. On the level method's master QP, whose
+quadratic is singular in the level variable, OSQP hit its 10,000-iteration
+cap on 40 per cent of the solves -- on the old code too, where 15 of 58
+failed and the run survived only because its fallback happened to
+succeed -- and Clarabel solved every one; the proximal figures above say
+the same. Clarabel now comes first. An interior-point method suits these
+small, badly conditioned programmes; ADMM does not. OSQP's solve is also
+asked explicitly not to raise, which is the flag its deprecation notice
+was about.
+
+**Checked.** The level bound is finite after one cut and never exceeds
+the minimum; the centre moves on a strict subset of the iterations; the
+proximal default is Clarabel where installed and the built-in method on
+request; on a near-parallel bundle of thirty cuts the backend's objective
+is no worse than the projected gradient's, which warns; both routes reach
+the same minimum on a nonsmooth problem; the sixteen-direction Backus
+test that produced nine subproblem warnings produces none.

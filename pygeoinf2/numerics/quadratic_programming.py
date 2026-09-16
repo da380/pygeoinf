@@ -323,7 +323,9 @@ class OSQPQPSolver:
         if x0 is not None:
             problem.warm_start(x=np.asarray(x0, dtype=float))
 
-        outcome = problem.solve()
+        # raise_error: OSQP warns that its default will flip to raising on a
+        # failed solve. The status is read below, so ask for it explicitly.
+        outcome = problem.solve(raise_error=False)
         reported = str(outcome.info.status)
         return QPResult(
             x=np.asarray(outcome.x, dtype=float),
@@ -462,15 +464,24 @@ class ClarabelQPSolver:
 def best_available_qp_solver() -> QPSolver:
     """Whichever QP backend is installed, in order of preference.
 
-    OSQP first, for speed and its warm start; Clarabel next, for accuracy;
-    SciPy's SLSQP last, because it is always there. The point of the ordering
-    is that a caller need not know which of the optional packages the user has,
-    and gets the best of them without asking.
+    Clarabel first, OSQP next, SciPy's SLSQP last because it is always there.
+    The point of the ordering is that a caller need not know which of the
+    optional packages the user has, and gets the best of them without asking.
+
+    OSQP used to come first, for its speed and warm start. Measured on the
+    two bundle subproblems (DESIGN §44), Clarabel is faster as well as more
+    accurate: on the level method's master QP, whose quadratic is singular
+    in the level variable, OSQP hit its iteration cap on 40 per cent of the
+    solves and the run aborted, where Clarabel solved every one; on the
+    proximal method's simplex QP over a Backus dual, Clarabel took 0.37 s
+    against OSQP's 0.89 s and was a thousand times closer to the primal
+    reference. An interior-point method suits these small, badly conditioned
+    programmes better than ADMM does.
 
     Returns:
         An instance of the best available backend.
     """
-    for backend in (OSQPQPSolver, ClarabelQPSolver):
+    for backend in (ClarabelQPSolver, OSQPQPSolver):
         try:
             return backend()
         except ImportError:  # pragma: no cover - depends on the install

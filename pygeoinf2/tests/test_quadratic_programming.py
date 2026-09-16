@@ -135,6 +135,27 @@ class TestTheLevelBundleBoundIsABound:
         assert result.converged
         assert result.value == pytest.approx(exact, abs=1e-5)
 
+    def test_the_bound_is_finite_from_the_first_cut(self, quadratic_problem):
+        """The LP is boxed, as in v1: one cut does not bound a function below
+        on its own, and without the box the method had no level to aim at
+        and took proximal steps until the cuts happened to span the space."""
+        space, functional, exact = quadratic_problem
+        result = LevelBundleMethod(tolerance=1e-14, iterations=1).minimise(
+            functional, space.zero()
+        )
+        assert np.isfinite(result.lower_bound)
+        assert result.lower_bound <= exact + 1e-9
+        assert result.gap == pytest.approx(result.value - result.lower_bound)
+
+    def test_the_centre_moves_only_on_serious_steps(self, quadratic_problem):
+        """v1's rule, restored: a trial that does not improve on the centre
+        is a null step, which sharpens the model there and leaves the
+        proximal term anchored to the best point the method trusts."""
+        space, functional, exact = quadratic_problem
+        result = LevelBundleMethod(tolerance=1e-6).minimise(functional, space.zero())
+        assert result.converged
+        assert 0 < result.serious_steps < result.iterations
+
     def test_it_agrees_with_the_proximal_method_on_a_nonsmooth_problem(self, rng):
         """Different methods, same minimum, or one of them is wrong."""
         size, rows = 10, 6
@@ -188,6 +209,75 @@ class TestTheLevelBundleBoundIsABound:
         )
         with pytest.raises(Exception):
             LevelBundleMethod().minimise(functional, space.zero())
+
+
+class TestTheProximalSubproblemBackend:
+    """The simplex QP in the number of cuts, solved exactly when a backend is
+    installed, as v1's master QP was, and by the built-in projected gradient
+    otherwise. Measured on a Backus dual over sixteen directions, Clarabel
+    took 0.37 s against the built-in method's 10.8 s and matched the primal
+    route to 6.5e-11 against 1.7e-8, with none of its nine warnings."""
+
+    @staticmethod
+    def near_parallel_bundle(rng, count, dimension):
+        base = rng.standard_normal(dimension)
+        gradients = np.array(
+            [base + 1e-3 * rng.standard_normal(dimension) for _ in range(count)]
+        )
+        gram = gradients @ gradients.T
+        errors = np.abs(rng.standard_normal(count)) * 1e-2
+        return gram, errors
+
+    def test_the_default_is_an_exact_backend_where_one_is_installed(self):
+        pytest.importorskip("clarabel")
+        method = ProximalBundleMethod()
+        assert isinstance(method.qp_solver, ClarabelQPSolver)
+        assert ProximalBundleMethod(qp_solver="builtin").qp_solver is None
+
+    def test_the_backend_does_at_least_as_well_as_the_projected_gradient(self, rng):
+        """On the badly conditioned bundle a converging method produces,
+        which is where the projected gradient has its residual floor. The
+        objective the backend reaches is no worse, and the weights are a
+        point of the simplex."""
+        pytest.importorskip("clarabel")
+        gram, errors = self.near_parallel_bundle(rng, 30, 12)
+        exact = ProximalBundleMethod(qp_solver=ClarabelQPSolver())
+        builtin = ProximalBundleMethod(qp_solver="builtin")
+
+        def objective(weights):
+            return 0.5 * weights @ gram @ weights + errors @ weights
+
+        approximate = builtin._simplex_weights(gram, errors)
+        precise = exact._simplex_weights(gram, errors)
+        assert precise.sum() == pytest.approx(1.0)
+        assert np.all(precise >= 0.0)
+        assert objective(precise) <= objective(approximate) + 1e-12
+
+    def test_both_routes_reach_the_same_minimum(self, rng):
+        size, rows = 10, 6
+        matrix = rng.standard_normal((rows, size))
+        offset = rng.standard_normal(rows)
+        space = EuclideanSpace(size)
+        functional = Functional.from_callables(
+            space,
+            lambda c: float(np.abs(matrix @ c - offset).sum() + 0.1 * c @ c),
+            derivative=lambda c: LinearFunctional.from_derivative_components(
+                space, matrix.T @ np.sign(matrix @ c - offset) + 0.2 * c
+            ),
+        )
+        exact = ProximalBundleMethod(tolerance=1e-8, iterations=300).minimise(
+            functional, space.zero()
+        )
+        builtin = ProximalBundleMethod(
+            tolerance=1e-8, iterations=300, qp_solver="builtin"
+        ).minimise(functional, space.zero())
+        assert exact.value == pytest.approx(builtin.value, abs=1e-5)
+
+
+class TestTheBackendOrder:
+    def test_clarabel_is_preferred_when_installed(self):
+        pytest.importorskip("clarabel")
+        assert isinstance(best_available_qp_solver(), ClarabelQPSolver)
 
 
 class TestTheTwoRoutesMeet:

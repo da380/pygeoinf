@@ -86,7 +86,7 @@ Three routes answer a Backus–Gilbert support value, selectable by `route=`:
 
 | route | needs | cost (16 directions) | agreement |
 |---|---|---|---|
-| `dual` | any convex sets | 10.96 s | 1.7e-8 |
+| `dual` | any convex sets | 0.37 s | 6.5e-11 |
 | `primal` | any convex sets | 0.066 s | reference |
 | `smoothed` | balls or ellipsoids | 0.013 s | 2.4e-9 |
 | `kkt` | balls or ellipsoids | 0.008 s | 2.4e-3 |
@@ -163,12 +163,10 @@ Recorded rather than settled, so nobody has to rediscover them.
   Whether it should mean the `H^s` spectrum it currently means, or the `L2` one
   a modeller more often writes down, is a decision for the API.
 - **The convex solvers' API.** Ported under **D-13** and not redesigned. Mag's
-  view is to be sought before anything beyond the port changes, and nothing has
-  been cut.
-- **`ProximalBundleMethod`'s subproblem accuracy.** Its Gram matrices are
-  near-singular by construction, so the accelerated projected gradient has a
-  residual floor. `best_available_qp_solver` is now available and would fix it,
-  but that changes the behaviour of Mag's method.
+  view is to be sought before the API changes; the numerics were restored to
+  v1's on 2026-09-16 (DESIGN §44): the level method's serious steps, LP box
+  and warm start, and the proximal method's exact subproblem, now solved
+  through Clarabel or OSQP with the projected gradient as the fallback.
 - **Iteration-cap naming.** `maxiter`, `max_iterations` and `iterations` all
   appear. One should win.
 - **`random_domain_points`** (land/ocean rejection sampling) is not ported.

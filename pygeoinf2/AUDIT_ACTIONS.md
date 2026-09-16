@@ -18,8 +18,8 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 - [x] `apply_operator_function` caps at 50 iterations with `rtol=1e-10` — **restored** v1's dimension cap and kept v2's tolerance: measured, the cap of 50 never let the tolerance be met (50 applications always; 1e-3 to 1e-1 error on hard spectra, silently), v1's `1e-3` delivered 1e-2, and `1e-8` delivered 1e-6. Same for the quadratic form and `OperatorFunction`. DESIGN §41.
 - [x] path operators bypass the Sobolev-order guard — **restored**, with the right threshold: a path integral needs order above `(d-1)/2` (one half on a surface, measured: the representer diverges at and below it), not point evaluation's `d/2` that v1 used; `unsafe=True` on both path methods. Ball averages need no order and keep their bypass. DESIGN §42.
 - [x] `StrongWolfeLineSearch._zoom` is pure bisection — **restored**: cubic/quadratic interpolation with bisection as the safeguard, as SciPy's search that v1 wrapped; the wasted re-evaluation on zoom entry is gone. Nonlinear CG halves its evaluations (224→113 Rosenbrock, 4321→2013 on a cond-1e4 quadratic), same answers. DESIGN §43.
-- [ ] `LevelBundleMethod`: serious/null step test, QP warm start, λ bounding box
-- [ ] `ProximalBundleMethod`: exact QP backend replaced by projected gradient with a residual floor
+- [x] `LevelBundleMethod`: serious/null step test, QP warm start, λ bounding box — **restored** all three, plus `lower_bound` and `serious_steps` on the result. DESIGN §44.
+- [x] `ProximalBundleMethod`: exact QP backend replaced by projected gradient with a residual floor — **restored**: the k-variable dual now goes through Clarabel or OSQP when installed (30× faster, 1000× closer to the primal on the Backus dual), projected gradient as the fallback; backend order now Clarabel first, OSQP having capped out on 40% of level masters. DESIGN §44.
 - [ ] v1's probed default adjoint versus v2's `NotImplementedError`
 
 ## 2. Silent unit changes (§0.3)

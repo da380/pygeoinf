@@ -870,6 +870,17 @@ class BundleResult:
     gives, and that is D-13.
     """
 
+    lower_bound: float = -np.inf
+    """A certified lower bound on the minimum, where the method has one.
+
+    The level method's LP bound, so that ``value - lower_bound`` is its
+    ``gap``; the proximal method has no certified bound and leaves this at
+    minus infinity. v1 reported it as ``f_low``.
+    """
+
+    serious_steps: int = 0
+    """How many iterations moved the stability centre."""
+
     def __repr__(self) -> str:
         return (
             f"BundleResult(value={self.value:.6g}, "
@@ -902,6 +913,7 @@ class ProximalBundleMethod:
         iterations: int = 200,
         capacity: int = 40,
         descent: float = 0.1,
+        qp_solver: Any = None,
     ) -> None:
         """
         Args:
@@ -911,6 +923,18 @@ class ProximalBundleMethod:
             capacity: how many cuts to keep; the oldest are dropped.
             descent: the fraction of the predicted decrease a step must
                 deliver to be accepted as a serious step.
+            qp_solver: a backend for the subproblem, the simplex-constrained
+                QP in the number of cuts. ``None`` takes Clarabel or OSQP if
+                either is installed and otherwise the accelerated projected
+                gradient built in; ``"builtin"`` asks for the latter outright;
+                a :class:`~pygeoinf2.numerics.quadratic_programming.QPSolver`
+                is used as given. An exact backend is what v1 had through its
+                master QP and what the gap needs to be trusted to its last
+                digits: measured on a Backus dual (DESIGN §44), Clarabel is
+                thirty times faster than the projected gradient and a
+                thousand times closer to the primal reference. SciPy's SLSQP
+                is slower and less accurate than the projected gradient
+                there, which is why it is not chosen by default.
         """
         if not 0.0 < descent < 1.0:
             raise ValueError(f"The descent fraction lies in (0, 1), got {descent}.")
@@ -919,6 +943,23 @@ class ProximalBundleMethod:
         self._iterations = iterations
         self._capacity = capacity
         self._descent = descent
+        self._qp_solver = qp_solver
+        self._warm: np.ndarray | None = None
+
+    @property
+    def qp_solver(self) -> Any:
+        """The subproblem backend, or ``None`` for the built-in method."""
+        if self._qp_solver is None:
+            from .quadratic_programming import ClarabelQPSolver, OSQPQPSolver
+
+            self._qp_solver = "builtin"
+            for backend in (ClarabelQPSolver, OSQPQPSolver):
+                try:
+                    self._qp_solver = backend()
+                    break
+                except ImportError:  # pragma: no cover - depends on the install
+                    continue
+        return None if self._qp_solver == "builtin" else self._qp_solver
         # The cuts a stored Gram matrix was built from, and the matrix. Reset
         # at the start of each minimisation.
         self._cache: tuple[list[int], np.ndarray] = ([], np.empty((0, 0)))
@@ -946,6 +987,7 @@ class ProximalBundleMethod:
         slope = subgradient or functional.subgradient
 
         self._cache = ([], np.empty((0, 0)))
+        self._warm = None
         centre = space.copy(start)
         best = float(functional(centre))
         # Each cut is (gradient, value, point). The point matters: a cut taken
@@ -1073,7 +1115,7 @@ class ProximalBundleMethod:
         )
 
         step_size = 1.0 / weight
-        weights = _minimise_on_simplex(step_size * gram, -errors)
+        weights = self._simplex_weights(step_size * gram, errors)
 
         combination = space.zero()
         for coefficient, (gradient, _, _) in zip(weights, cuts):
@@ -1083,6 +1125,38 @@ class ProximalBundleMethod:
             weights @ errors
         )
         return candidate, max(decrease, 0.0)
+
+    def _simplex_weights(self, quadratic: np.ndarray, errors: np.ndarray) -> np.ndarray:
+        """``argmin w' Q w / 2 + e' w`` over the unit simplex.
+
+        Through the QP backend when one was given, warm-started from the
+        previous subproblem's weights padded with a zero for the new cut, and
+        through the built-in accelerated projected gradient otherwise.
+        """
+        size = errors.size
+        backend = self.qp_solver
+        if backend is None:
+            return _minimise_on_simplex(quadratic, -errors)
+        warm = None
+        if self._warm is not None and self._warm.size in (size, size - 1):
+            warm = np.zeros(size)
+            warm[: self._warm.size] = self._warm
+        elif self._warm is not None:
+            # The bundle dropped its oldest cut: shift the weights along.
+            warm = np.zeros(size)
+            kept = self._warm[-(size - 1) :] if size > 1 else self._warm[:0]
+            warm[: kept.size] = kept
+        # sum w == 1, then 0 <= w_i.
+        rows = np.vstack([np.ones((1, size)), np.eye(size)])
+        lower = np.concatenate([[1.0], np.zeros(size)])
+        upper = np.concatenate([[1.0], np.full(size, np.inf)])
+        result = backend.solve(quadratic, errors, rows, lower, upper, x0=warm)
+        if not result.solved:
+            weights = _minimise_on_simplex(quadratic, -errors)
+        else:
+            weights = _project_on_simplex(np.asarray(result.x, dtype=float))
+        self._warm = weights
+        return weights
 
 
 def _project_on_simplex(vector: np.ndarray) -> np.ndarray:
@@ -1148,7 +1222,9 @@ def _minimise_on_simplex(
     number is 1e23. The residual distribution there is 4.8e-7 at the median and
     3.5e-3 at the 99th percentile, so a single threshold either warns half the
     time or never. The accuracy answer for the hard tail is a proper QP
-    backend on the ``k``-variable dual, which is D-13.
+    backend on the ``k``-variable dual, which :class:`ProximalBundleMethod`
+    now uses by default when one is installed (DESIGN §44); this is the
+    fallback for when none is.
 
     Args:
         quadratic: the ``Q`` above, symmetric positive semidefinite.
@@ -1310,15 +1386,23 @@ class LevelBundleMethod:
             bounds.append(float(components @ space.to_components(point)) - value)
         return np.asarray(rows, dtype=float), np.asarray(bounds, dtype=float)
 
-    def _lower_bound(self, space: Any, cuts: list) -> float:
+    def _lower_bound(self, space: Any, cuts: list, centre: np.ndarray) -> float:
         """The cutting-plane model's own minimum: a global lower bound.
 
         A linear programme, and solved as one. The model underestimates the
         function everywhere, so this underestimates the minimum -- which is
         what makes the gap a bound rather than an indication.
 
-        Returns ``-inf`` when the LP is unbounded or infeasible, which is the
-        honest answer early on: one cut does not bound a function below.
+        The variable is kept inside a box ``|x_i - centre_i| <= R`` with
+        ``R == 1e3 (1 + max |centre|)``, as v1 did. Without it the LP is
+        unbounded whenever the cuts do not span the space, which early on
+        they never do, and the method then has no bound and no level to aim
+        at and takes proximal steps instead; with it there is a finite bound
+        from the first cut. The box is so large relative to the iterates
+        that it never binds at a minimiser the method could reach, so it
+        does not bias the bound; it only keeps it finite.
+
+        Returns ``-inf`` when the LP is infeasible or the solver fails.
         """
         from scipy.optimize import linprog
 
@@ -1326,20 +1410,31 @@ class LevelBundleMethod:
         size = space.dim
         objective = np.zeros(size + 1)
         objective[size] = 1.0
+        radius = 1e3 * (1.0 + float(np.max(np.abs(centre))))
+        box = [(float(c - radius), float(c + radius)) for c in centre]
 
         outcome = linprog(
             objective,
             A_ub=rows,
             b_ub=bounds,
-            bounds=[(None, None)] * (size + 1),
+            bounds=box + [(None, None)],
             method="highs",
         )
         return float(outcome.x[size]) if outcome.status == 0 else -np.inf
 
     def _master(
-        self, space: Any, cuts: list, centre: np.ndarray, level: float | None
+        self,
+        space: Any,
+        cuts: list,
+        centre: np.ndarray,
+        level: float | None,
+        warm: float,
     ) -> np.ndarray | None:
         """The level QP, or the proximal fallback when *level* is ``None``.
+
+        Warm-started at the centre with ``t == warm``, as v1 did: a feasible
+        start for the ``t`` variable is what lets an active-set or ADMM
+        backend begin from a point that satisfies the cuts.
 
         Returns the new point's components, or ``None`` if the programme was
         infeasible -- which for the level problem is expected and handled, and
@@ -1366,6 +1461,7 @@ class LevelBundleMethod:
             rows,
             np.full(bounds.size, -np.inf),
             bounds,
+            x0=np.append(centre, warm),
         )
         if not result.solved:
             return None
@@ -1401,18 +1497,21 @@ class LevelBundleMethod:
         slope = subgradient or functional.subgradient
 
         centre = space.copy(start)
+        centre_value = float(functional(centre))
         best_point = space.copy(start)
-        upper = float(functional(centre))
+        upper = centre_value
         evaluations = 1
         cuts: list[tuple[Any, float, Any]] = [
             (space.copy(slope(centre)), upper, space.copy(centre))
         ]
         lower = -np.inf
+        serious = 0
         message = "iteration limit reached"
         iteration = 0
 
         for iteration in range(1, self._iterations + 1):
-            lower = max(lower, self._lower_bound(space, cuts))
+            centre_components = space.to_components(centre)
+            lower = max(lower, self._lower_bound(space, cuts, centre_components))
             gap = upper - lower
             if gap <= self._tolerance * max(abs(upper), 1.0):
                 return BundleResult(
@@ -1423,30 +1522,36 @@ class LevelBundleMethod:
                     True,
                     "gap tolerance reached",
                     gap,
+                    lower,
+                    serious,
                 )
 
-            centre_components = space.to_components(centre)
             candidate = None
             alpha = self._alpha
             # A level too close to the bound can be unreachable. Widen towards
             # caution and retry before giving up on the level step entirely.
+            # With no bound yet the level is the best value itself, as in v1:
+            # the QP then asks for the nearest point the model puts no higher
+            # than the best seen, which is still a level step.
             for _ in range(3):
-                if not np.isfinite(lower):
-                    break
+                level = (
+                    alpha * lower + (1.0 - alpha) * upper
+                    if np.isfinite(lower)
+                    else upper
+                )
                 candidate = self._master(
-                    space,
-                    cuts,
-                    centre_components,
-                    alpha * lower + (1.0 - alpha) * upper,
+                    space, cuts, centre_components, level, min(level, centre_value)
                 )
                 if candidate is not None:
                     break
                 alpha = min(alpha * 1.5, 0.9)
             if candidate is None:
-                # No reachable level, or no bound yet to set one from. A
-                # proximal step still improves the centre and the bundle, which
-                # is what the next lower bound is built from.
-                candidate = self._master(space, cuts, centre_components, None)
+                # No reachable level. A proximal step still improves the
+                # centre and the bundle, which is what the next lower bound
+                # is built from.
+                candidate = self._master(
+                    space, cuts, centre_components, None, centre_value
+                )
             if candidate is None:
                 message = "the master problem could not be solved"
                 break
@@ -1460,7 +1565,14 @@ class LevelBundleMethod:
 
             if value < upper:
                 upper, best_point = value, space.copy(point)
-            centre = point
+            # A serious step moves the stability centre; a null step leaves
+            # it and lets the new cut sharpen the model there. The centre
+            # used to move every iteration, which turned the proximal term
+            # into a penalty on the distance from wherever the last trial
+            # landed rather than from the best point the method trusts.
+            if value < centre_value:
+                centre, centre_value = point, value
+                serious += 1
 
         # ``iteration`` rather than the cap: a break on a failed master
         # problem used to be reported as the full run.
@@ -1472,6 +1584,8 @@ class LevelBundleMethod:
             False,
             message,
             upper - lower,
+            lower,
+            serious,
         )
 
 
