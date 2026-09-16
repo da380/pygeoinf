@@ -6112,3 +6112,47 @@ data-space reduction is written for the plain norm, and lifting it to a
 non-identity error covariance is a whitening of the data by the
 covariance's factor -- the back-and-forth David recalls having with Mag.
 Logged in the checklist as its own line; the search is ready for it.
+
+## 51. A low-rank product is never expanded (2026-09-16)
+
+Fifth of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3, in two halves: `l2_products_operator` stacks a dense
+``(n_fields, dim)`` matrix where v1 used `from_vectors`; and low-rank
+factors on coordinate spaces are stored as dense ``(dim, k)`` column
+blocks where v1 kept compositions. David's rule for this group:
+matrix-free by default unless there are very strong reasons otherwise.
+
+**The stacked rows, kept.** The matrix is the fields' own components, one
+row per field, and it is *smaller* than the fields: on a sphere at
+``lmax`` 64 with fifty fields, 1.69 MB of rows against 6.76 MB of grids.
+It applies in one product plus one analysis, 0.33 ms, where a
+coordinate-free build of fifty ``L2`` inner products, each transforming
+both arguments, takes 1.1 ms, and the two agree. This is CURRENT_STATE
+§3's rule -- coordinate-free when it must be, and not otherwise -- and
+the memory is the vectors' own. The same holds of a ``(dim, k)`` column
+block: it *is* the ``k`` vectors, stored once. Neither is a dense
+regression; the strong reason is that nothing larger than the data is
+ever formed.
+
+**The trap, found and fixed.** What *was* formed was a product. The
+composition node answered "is your matrix known?" by multiplying its
+factors' known matrices, so a rank-``k`` factor times its adjoint --
+``L L*``, the covariance of every sampled low-rank measure -- handed back
+a dense ``n x n`` array to any caller that asked: at ``n == 3000`` and
+``k == 10``, 72 MB in 13 ms, from 2nk numbers stored. The callers that
+ask without meaning to form anything are the Hilbert-Schmidt norm's
+stored-matrix shortcut of §48, `log_determinant`'s automatic routing,
+the damped-solve check in `root_find`, and every node that propagates
+the hook. The node now declines a product larger than its largest
+factor and is probed like any other operator; a product that does not
+expand, two square matrices say, is still known. And it answers a
+main-diagonal request in ``O(nk)`` from the factors, ``diag(A B) ==
+sum_j A_ij B_ji``, where probing cost ``n`` applications of an
+``O(nk)`` operator.
+
+**Checked.** A rank-5 factor times its adjoint on a 400-dimensional
+space reports no known matrix, is still assembled correctly when asked
+by name, and gives its diagonal without a single application; two
+square known matrices still compose; a sampled low-rank measure's
+nuclear and Hilbert-Schmidt norms match their closed forms with no known
+matrix on the covariance.

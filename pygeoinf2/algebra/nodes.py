@@ -699,18 +699,59 @@ class _Composition[X, Y](LinearOperator[X, Y]):
 
         return chained
 
+    def _known_factors(self) -> list[np.ndarray] | None:
+        """The factors' component matrices, when every one is known."""
+        known = []
+        for factor in self._factors:
+            matrix = factor._known_matrix("components")
+            if matrix is None:
+                return None
+            known.append(np.asarray(matrix))
+        return known
+
     def _known_matrix(self, form: str) -> np.ndarray | None:
         # Components matrices compose by multiplication; the Galerkin form of
-        # the product is then the codomain's metric on the result.
-        product = None
-        for factor in self._factors:
-            known = factor._known_matrix("components")
-            if known is None:
+        # the product is then the codomain's metric on the result. But a
+        # product is "known" only when forming it creates nothing larger than
+        # what is already stored: a rank-k factor times its adjoint on a
+        # space of dimension n holds 2nk numbers, and its product n^2, which
+        # at n == 3000 and k == 10 is 72 MB materialised by any caller that
+        # so much as asked whether a matrix was known (DESIGN §51). Such a
+        # product is declined, and the operator is probed like any other.
+        known = self._known_factors()
+        if known is None:
+            return None
+        largest = max(matrix.size for matrix in known)
+        product = known[0]
+        for matrix in known[1:]:
+            if product.shape[0] * matrix.shape[1] > largest:
                 return None
-            product = np.array(known) if product is None else product @ known
+            product = product @ matrix
         if form == "components":
             return product
         return self.codomain.apply_gram_to_columns(product)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        # The main diagonal of a product whose factors are known, without the
+        # product: diag(A B) == sum_j A_ij B_ji, which for a low-rank
+        # A B == U V* is O(nk) against the O(n^2 k) of probing n columns. The
+        # inner product B is formed only where it does not expand, as above.
+        if offsets != (0,) or self.domain.dim != self.codomain.dim:
+            return None
+        if form == "galerkin" and not getattr(self.codomain, "is_orthonormal", False):
+            return None
+        known = self._known_factors()
+        if known is None or len(known) < 2:
+            return None
+        largest = max(matrix.size for matrix in known)
+        inner = known[-1]
+        for matrix in reversed(known[1:-1]):
+            if matrix.shape[0] * inner.shape[1] > largest:
+                return None
+            inner = matrix @ inner
+        return np.einsum("ij,ji->i", known[0], inner)[None, :]
 
     def apply_block(
         self, vectors: Sequence[Any], /, *, n_jobs: int | None = None

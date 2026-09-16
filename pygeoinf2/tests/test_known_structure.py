@@ -536,3 +536,75 @@ class TestKrylovInComponents:
         b = space.random(rng=rng)
         result = CGSolver()(operator).solve(b)
         assert result.converged
+
+
+class TestALowRankProductIsNeverExpanded:
+    """A composition's known matrix is the product of its factors' -- but only
+    when the product is no larger than the largest factor. A rank-k factor
+    times its adjoint holds 2nk numbers and its product n^2: at n == 3000 and
+    k == 10 that is 72 MB, materialised by any caller that asked whether a
+    matrix was known, which the Hilbert-Schmidt shortcut, the log-determinant's
+    routing and the damped-solve check all do. Its main diagonal is O(nk)."""
+
+    @pytest.fixture
+    def low_rank(self, rng):
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space = EuclideanSpace(400)
+        columns = rng.normal(size=(400, 5))
+        factor = LinearOperator.from_component_columns(space, columns)
+        return space, columns, factor @ factor.adjoint
+
+    def test_the_product_is_declined_and_the_operator_probed(self, low_rank):
+        space, columns, product = low_rank
+        assert product._known_matrix("components") is None
+        # Explicitly asked for, the matrix is still there -- by probing.
+        assert np.allclose(product.matrix(form="components"), columns @ columns.T)
+
+    def test_the_diagonal_is_known_in_linear_time(self, low_rank, monkeypatch):
+        space, columns, product = low_rank
+        known = product._known_diagonals((0,), "components")
+        assert known is not None
+        assert np.allclose(known[0], np.sum(columns * columns, axis=1))
+        # And diagonals() takes it rather than probing: no application at all.
+        monkeypatch.setattr(
+            type(product),
+            "_value",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("probed")),
+        )
+        assert np.allclose(
+            product.diagonals(offsets=(0,), form="components")[0],
+            np.sum(columns * columns, axis=1),
+        )
+
+    def test_a_product_that_does_not_expand_is_still_known(self, rng):
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space = EuclideanSpace(30)
+        first, second = rng.normal(size=(30, 30)), rng.normal(size=(30, 30))
+        product = LinearOperator.from_matrix(
+            space, space, first, form="components"
+        ) @ LinearOperator.from_matrix(space, space, second, form="components")
+        assert np.allclose(product._known_matrix("components"), first @ second)
+
+    def test_a_low_rank_measures_norms_stay_matrix_free(self, rng):
+        """The route the trap was found on: a sampled low-rank covariance
+        L L* whose norms went through the known-matrix shortcut."""
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = EuclideanSpace(500)
+        columns = rng.normal(size=(500, 4))
+        measure = GaussianMeasure(
+            space,
+            covariance_factor=LinearOperator.from_component_columns(space, columns),
+        )
+        assert measure.covariance._known_matrix("components") is None
+        gram = columns.T @ columns
+        assert measure.nuclear_norm() == pytest.approx(float(np.trace(gram)))
+        assert measure.hilbert_schmidt_norm() == pytest.approx(
+            float(np.sqrt(np.sum(gram * gram.T)))
+        )
