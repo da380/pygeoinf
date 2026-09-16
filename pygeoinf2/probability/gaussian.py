@@ -1337,56 +1337,29 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
         return self._dense
 
-    def with_sparse_approximation(
-        self, /, *, threshold: float = 1e-3, form: str = "galerkin"
-    ) -> "GaussianMeasure[X]":
-        """The same measure with entries below a relative threshold dropped.
+    def sparse_covariance(self, /, **options: Any) -> LinearOperator:
+        """A sparse operator approximating the covariance, built matrix-free.
 
-        For a covariance with genuinely local correlations, most of the matrix
-        is noise-level and storing it is waste. Thresholding is the crudest
-        localisation there is and it does not preserve positive definiteness —
-        so the result is checked, and refused if it has stopped being a
-        covariance rather than being returned as one.
+        :func:`~pygeoinf2.numerics.preconditioners.sparse_approximation` of
+        the covariance, with its options; see there. An operator and not a
+        measure: thresholding does not keep a covariance positive definite,
+        and a sparse matrix cannot be sampled from without a sparse Cholesky,
+        which SciPy does not have (DESIGN §47).
 
         Args:
-            threshold: entries below this fraction of their row's diagonal are
-                dropped.
-            form: which matrix to threshold.
+            **options: ``threshold``, ``max_per_column``, ``criterion`` and
+                ``diagonal``, as for the function.
 
         Returns:
-            The measure with a sparsified covariance.
+            The sparse operator on the space.
 
         Raises:
-            ValueError: if the result is no longer positive semidefinite --
-                which thresholding can do, and is why it is checked.
+            ValueError: for a measure with no covariance, or a bad option.
         """
-        require_coordinates(self._domain)
-        if not 0.0 <= threshold < 1.0:
-            raise ValueError(f"The threshold lies in [0, 1), got {threshold}.")
-        from scipy.sparse import csr_matrix
+        from ..numerics.preconditioners import sparse_approximation
 
-        from ..algebra.operators import LinearOperator
-        from ..traits import Traits as _Traits
-
-        matrix = self._covariance.matrix(form=form)
-        matrix = 0.5 * (matrix + matrix.T)
-        matrix[np.abs(matrix) < threshold * np.abs(matrix).max()] = 0.0
-        if np.linalg.eigvalsh(matrix).min() < -1e-10 * np.abs(matrix).max():
-            raise ValueError(
-                f"Thresholding at {threshold} left an operator that is no "
-                "longer positive semidefinite, so it is not a covariance. Use "
-                "a smaller threshold."
-            )
-        sparse = csr_matrix(matrix)
-        covariance = LinearOperator.from_matrix(
-            self._domain,
-            self._domain,
-            sparse,
-            form=form,
-            traits=_Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE,
-        )
-        return GaussianMeasure(
-            self._domain, expectation=self._expectation, covariance=covariance
+        return sparse_approximation(
+            self._require_covariance("A sparse approximation"), **options
         )
 
     def credible_set(self, /, *, level: float = 0.95) -> "Ellipsoid":

@@ -411,7 +411,7 @@ concentration of things to decide about.
 | `with_dense_covariance` | Subsumed | `covariance.assembled()` | |
 | `low_rank_approximation` | Subsumed | `random_eig` on the covariance | |
 | `with_regularized_inverse` | Dropped | Its one real use was a damped `Q^-1` for the Woodbury data form, which is now `WoodburyPreconditioner(prior_damping=)`. A measure with a floored precision is easy to build by hand if ever wanted (DESIGN §36). | Removed 2026-09-16. |
-| `with_sparse_approximation` | Ported | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
+| `with_sparse_approximation` | Changed | `numerics.sparse_approximation(operator, ...)` / `GaussianMeasure.sparse_covariance(...)`: the same matrix-free column probing and correlation threshold, returning a sparse operator rather than a measure (DESIGN §47). | Reworked 2026-09-16. |
 | `sample_pointwise_variance`, `sample_pointwise_std` | Subsumed | `pointwise_variance` on a `SymmetricSpace` computes this exactly, without sampling — but only for an *invariant* measure. The sampled version is still the general answer | |
 | `deflated_pointwise_variance`, `deflated_pointwise_std` | Not ported | No such method exists in v2 — the row said "Ported" and nothing answered to the name. Pointwise variance with a low-rank part removed; `numerics.randomised.deflated_diagonal` is the piece it would be built on | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
 | `two_point_covariance` | Ported | `GaussianMeasure.two_point_covariance` | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|

@@ -291,35 +291,102 @@ class TestMeasureAdjustments:
         with pytest.raises(ValueError, match="not positive"):
             original.rescale_directional_variance(original.domain.zero(), 1.0)
 
-    def test_thresholding_that_breaks_positivity_is_refused(self):
-        """It is not a covariance any more, so it is not returned as one.
+    def test_the_sparse_covariance_is_an_operator_built_without_the_matrix(
+        self, measure, monkeypatch
+    ):
+        """v1's with_sparse_approximation probed columns and never held the
+        dense matrix; the port formed it, thresholded it globally and ran an
+        O(N^3) definiteness check on it. And the result is an operator, not
+        a measure: a thresholded covariance need not be definite, and a
+        sparse one cannot be sampled without a sparse Cholesky."""
+        from scipy.sparse import issparse
 
-        Dropping entries from a positive semidefinite matrix usually leaves one
-        — which is why it needs checking rather than assuming. This particular
-        covariance goes to a smallest eigenvalue of ``-0.41`` at a tenth of its
-        largest entry.
-        """
-        space = EuclideanSpace(4)
-        covariance = np.array(
-            [
-                [0.4544, 0.8193, -0.3161, -1.1381],
-                [0.8193, 3.0151, -0.8542, -1.1519],
-                [-0.3161, -0.8542, 2.4867, 2.6594],
-                [-1.1381, -1.1519, 2.6594, 7.5421],
-            ]
-        )
-        measure = GaussianMeasure.from_covariance_matrix(space, covariance)
-        measure.with_sparse_approximation(threshold=0.01)
-        with pytest.raises(ValueError, match="positive semidefinite"):
-            measure.with_sparse_approximation(threshold=0.1)
+        space, matrix, original = measure
 
-    def test_a_gentle_threshold_keeps_a_covariance(self, measure, rng):
-        space, _, original = measure
-        sparse = original.with_sparse_approximation(threshold=1e-12)
-        assert np.allclose(
-            sparse.covariance.matrix(form="galerkin"),
-            original.covariance.matrix(form="galerkin"),
+        def refuse(*args, **kwargs):
+            raise AssertionError("the dense matrix was formed")
+
+        monkeypatch.setattr(LinearOperator, "matrix", refuse)
+        sparse = original.sparse_covariance(threshold=1e-12)
+        assert isinstance(sparse, LinearOperator)
+        assert not hasattr(sparse, "sample")
+        assert issparse(sparse._stored)
+        monkeypatch.undo()
+        assert np.allclose(sparse.matrix(form="galerkin"), matrix)
+
+    def test_the_correlation_criterion_is_the_scale_free_one(self):
+        """An entry that is a large fraction of the *smaller* variance but a
+        small correlation: v1's test, the correlation, drops it; the
+        preconditioner's per-column magnitude test keeps it, since in the
+        small-variance column it dominates the diagonal, and the symmetrised
+        pattern then carries it to the other column too."""
+        from pygeoinf2.numerics.preconditioners import sparse_approximation
+
+        space = EuclideanSpace(3)
+        covariance = np.array([[1.0, 1e-3, 0.0], [1e-3, 1e-4, 0.0], [0.0, 0.0, 1.0]])
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            covariance,
+            traits=Traits.POSITIVE_SEMIDEFINITE,
+            form="galerkin",
         )
+        # correlation 1e-3 / sqrt(1e-4) == 0.1, below the threshold of 0.5;
+        # against column 1's own diagonal, 1e-3 >= 0.5 * 1e-4.
+        by_correlation = sparse_approximation(operator, threshold=0.5)
+        by_column = sparse_approximation(operator, threshold=0.5, criterion="column")
+        assert by_correlation.matrix(form="galerkin")[0, 1] == 0.0
+        assert by_column.matrix(form="galerkin")[0, 1] == pytest.approx(1e-3)
+        assert by_correlation.matrix(form="galerkin")[1, 1] == pytest.approx(1e-4)
+
+    def test_the_cap_keeps_the_diagonal_and_the_largest(self, rng):
+        from pygeoinf2.numerics.preconditioners import sparse_approximation
+
+        space = make_dense_metric_space(6)
+        root = rng.normal(size=(6, 6))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            traits=Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        capped = sparse_approximation(operator, threshold=0.0, max_per_column=2)
+        stored = capped._stored.toarray()
+        assert np.all(np.diag(stored) != 0.0)
+        assert np.allclose(stored, stored.T)
+        check_operator(capped, rng=rng)
+
+    def test_a_supplied_diagonal_is_used(self, rng):
+        """For an operator too large to probe twice, an estimate from
+        random_diagonal stands in for the exact one."""
+        from pygeoinf2.numerics.preconditioners import sparse_approximation
+
+        space = EuclideanSpace(5)
+        root = rng.normal(size=(5, 5))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            traits=Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        # A diagonal so large that every correlation falls below threshold:
+        # only the diagonal survives.
+        huge = np.full(5, 1e12)
+        alone = sparse_approximation(operator, threshold=0.5, diagonal=huge)
+        assert alone._stored.nnz == 5
+        with pytest.raises(ValueError, match="shape"):
+            sparse_approximation(operator, diagonal=np.ones(4))
+
+    def test_the_options_are_validated(self, measure):
+        _, _, original = measure
+        with pytest.raises(ValueError, match="non-negative"):
+            original.sparse_covariance(threshold=-1.0)
+        with pytest.raises(ValueError, match="max_per_column"):
+            original.sparse_covariance(max_per_column=0)
+        with pytest.raises(ValueError, match="criterion"):
+            original.sparse_covariance(criterion="sideways")
 
 
 class TestSubspaceConstructions:

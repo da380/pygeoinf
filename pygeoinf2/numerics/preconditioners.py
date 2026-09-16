@@ -9,7 +9,7 @@ operator or a solver to build one from.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterator, Literal, Sequence
+from typing import Any, Callable, ClassVar, Iterator, Literal, Sequence
 
 import numpy as np
 import scipy.sparse as sparse
@@ -353,6 +353,159 @@ def _probe_columns(
         image = codomain.to_components(operator(domain.from_components(basis)))
         basis[index] = 0.0
         yield index, codomain.apply_gram(image) if galerkin else image
+
+
+def _thresholded_matrix(
+    operator: LinearOperator,
+    keep: "Callable[[np.ndarray, int], np.ndarray]",
+) -> "sparse.csc_matrix":
+    """The Galerkin matrix with, in each column, only the rows *keep* names.
+
+    One pass of column probes, never the whole matrix: at dim 2000 with 20
+    entries kept per column that is 0.6 MB against 32 MB. Either column
+    wanting a position is enough, which makes the pattern symmetric without
+    dropping anything that was asked for; the value at a position one column
+    wanted and the other did not is the Galerkin matrix's own, which is
+    symmetric, so the transpose of what was kept supplies it and no second
+    probe is needed.
+    """
+    dimension = operator.domain.dim
+    kept_rows, kept_columns, kept_values = [], [], []
+    for index, column in _probe_columns(operator, range(dimension), galerkin=True):
+        rows = keep(column, index)
+        kept_rows.append(rows)
+        kept_columns.append(np.full(rows.size, index))
+        kept_values.append(column[rows])
+
+    thresholded = sparse.coo_matrix(
+        (
+            np.concatenate(kept_values),
+            (np.concatenate(kept_rows), np.concatenate(kept_columns)),
+        ),
+        shape=(dimension, dimension),
+    ).tocsr()
+    mirrored = thresholded.T.tocsr()
+    missing = mirrored.copy()
+    missing[thresholded.astype(bool)] = 0.0
+    missing.eliminate_zeros()
+    return (thresholded + missing).tocsc()
+
+
+def sparse_approximation(
+    operator: LinearOperator,
+    /,
+    *,
+    threshold: float = 1e-3,
+    max_per_column: int | None = None,
+    criterion: Literal["correlation", "column"] = "correlation",
+    diagonal: np.ndarray | None = None,
+) -> LinearOperator:
+    """A sparse operator approximating a self-adjoint one, never formed densely.
+
+    Built by probing the operator's Galerkin matrix one column at a time and
+    keeping, in each column, the entries that pass a test against the
+    diagonal; the pattern is symmetrised and the diagonal is always kept.
+    The result is a :class:`~pygeoinf2.algebra.operators.LinearOperator`
+    backed by a ``scipy.sparse`` matrix in Galerkin form, which is what a
+    sparse solver, a localised preconditioner or a plotting routine wants
+    from a covariance whose correlations are genuinely local. It is an
+    operator, not a measure: thresholding does not preserve positive
+    definiteness, so nothing here claims it -- ``testing.check_traits`` can
+    verify the claim if one is wanted -- and SciPy has no sparse Cholesky
+    to sample from, so a measure built on it could not be drawn from.
+
+    This is v1's ``with_sparse_approximation`` with the measure taken off
+    it (DESIGN §47). The port had replaced it with a dense assembly, a
+    global threshold and an ``O(N^3)`` definiteness check.
+
+    Args:
+        operator: self-adjoint, on a coordinate space.
+        threshold: the entries kept. Under ``"correlation"`` those with
+            ``|c_ij| / sqrt(d_i d_j) >= threshold``, the natural test for a
+            covariance and v1's; under ``"column"`` those with
+            ``|c_ij| >= threshold |c_jj|``, the test the thresholded
+            preconditioner uses.
+        max_per_column: a hard cap on entries kept per column, the largest
+            by the same measure. The diagonal is always among them.
+        criterion: which test.
+        diagonal: the Galerkin diagonal, when the caller has it -- from
+            :func:`~pygeoinf2.numerics.randomised.random_diagonal` or
+            :func:`~pygeoinf2.numerics.randomised.deflated_diagonal` as an
+            estimate on an operator too large to probe twice. Read exactly
+            from the operator when omitted, which is free where the operator
+            knows its diagonal and one application per column otherwise.
+
+    Returns:
+        The sparse operator, claiming self-adjointness and nothing more.
+
+    Raises:
+        ValueError: for a negative threshold, a cap below one, an unknown
+            criterion, or a diagonal of the wrong length.
+        TypeError: if the space has no component map.
+    """
+    if threshold < 0.0:
+        raise ValueError(f"The threshold must be non-negative, got {threshold}.")
+    if max_per_column is not None and max_per_column < 1:
+        raise ValueError(
+            f"At least one entry per column must be kept -- the diagonal -- "
+            f"but max_per_column is {max_per_column}."
+        )
+    if criterion not in ("correlation", "column"):
+        raise ValueError(
+            f"The criterion is 'correlation' or 'column', got {criterion!r}."
+        )
+    _require_self_adjoint_claim(operator, "A sparse approximation")
+    require_coordinates(operator.domain, operator.codomain)
+    dimension = operator.domain.dim
+
+    if criterion == "correlation":
+        if diagonal is None:
+            diagonal = operator.diagonals(offsets=(0,), form="galerkin")[0]
+        diagonal = np.asarray(diagonal, dtype=float)
+        if diagonal.shape != (dimension,):
+            raise ValueError(
+                f"The diagonal has shape {diagonal.shape}; expected ({dimension},)."
+            )
+        scale = np.sqrt(np.where(np.abs(diagonal) < 1e-14, 1.0, np.abs(diagonal)))
+
+    def keep(column: np.ndarray, index: int) -> np.ndarray:
+        if criterion == "correlation":
+            measure = np.abs(column) / (scale * scale[index])
+            kept = np.flatnonzero(measure >= threshold)
+        else:
+            measure = np.abs(column)
+            reference = measure[index]
+            if reference < 1e-14:
+                reference = measure.max(initial=0.0)
+            kept = np.flatnonzero(measure >= threshold * reference)
+        if max_per_column is not None and kept.size > max_per_column:
+            masked = measure.copy()
+            masked[index] = -1.0
+            largest = (
+                np.argpartition(masked, -(max_per_column - 1))[-(max_per_column - 1) :]
+                if max_per_column > 1
+                else []
+            )
+            kept = np.asarray(largest, dtype=int)
+        return np.union1d(kept, [index])
+
+    matrix = _thresholded_matrix(operator, keep)
+    return LinearOperator.from_matrix(
+        operator.domain,
+        operator.domain,
+        matrix,
+        form="galerkin",
+        traits=Traits.SELF_ADJOINT,
+    )
+
+
+def _require_self_adjoint_claim(operator: LinearOperator, what: str) -> None:
+    if not (Traits.SELF_ADJOINT & operator.traits):
+        raise ValueError(
+            f"{what} needs a self-adjoint operator; this one claims "
+            f"{operator.traits!s}. Attach the trait with with_traits() and "
+            f"verify it with testing.check_traits()."
+        )
 
 
 class BlockPreconditioner(LinearSolver):
@@ -877,33 +1030,10 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         require_coordinates(domain, operator.codomain)
         dimension = domain.dim
 
-        # One pass, keeping only what survives each column's own test. The
-        # whole matrix is never held: at dim 2000 with 20 entries kept per
-        # column that is 0.6 MB against 32 MB.
-        kept_rows, kept_columns, kept_values = [], [], []
-        for index, column in _probe_columns(operator, range(dimension), galerkin=True):
-            keep = self._keep(column, index)
-            kept_rows.append(keep)
-            kept_columns.append(np.full(keep.size, index))
-            kept_values.append(column[keep])
-
-        rows = np.concatenate(kept_rows)
-        columns = np.concatenate(kept_columns)
-        values = np.concatenate(kept_values)
-
-        # Either column wanting a position is enough, which makes the pattern
-        # symmetric without dropping anything that was asked for. The value at
-        # a position one column wanted and the other did not is the Galerkin
-        # matrix's own, which is symmetric -- so the transpose of what was kept
-        # supplies it, and no second probe is needed.
-        thresholded = sparse.coo_matrix(
-            (values, (rows, columns)), shape=(dimension, dimension)
-        ).tocsr()
-        mirrored = thresholded.T.tocsr()
-        missing = mirrored.copy()
-        missing[thresholded.astype(bool)] = 0.0
-        missing.eliminate_zeros()
-        thresholded = (thresholded + missing).tocsc()
+        # One pass, keeping only what survives each column's own test; the
+        # whole matrix is never held. Shared with sparse_approximation.
+        del dimension
+        thresholded = _thresholded_matrix(operator, self._keep)
 
         if self._incomplete:
             factorised = sparse_linalg.spilu(

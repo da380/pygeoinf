@@ -5875,3 +5875,64 @@ torus area `4 pi^2`; `radius=2` gives `4 pi`; both keywords together are
 refused; the cosine of the grid coordinate on the default circle is the
 cosine of the angle; `geodesic_distance(0, 0.75)` is `0.75` on the unit
 circle and `1.5` on radius two.
+
+## 47. A sparse approximation is an operator, not a measure (2026-09-16)
+
+First of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3, and the one the audit ranked most likely to bite:
+`with_sparse_approximation` formed the full dense covariance and
+thresholded it, where v1 went straight to a sparse matrix by ``N``
+applications.
+
+**What v1 did.** Probed the covariance's Galerkin matrix one column at a
+time through a matrix-free wrapper, kept in each column the entries whose
+*correlation* ``|c_ij| / sqrt(d_i d_j)`` reached a threshold, capped the
+count per column, symmetrised, and wrapped the result as a sparse
+operator; then factorised a regularised copy with a sparse LU for the
+precision and returned a new measure carrying both. The diagonal came from
+an exact extraction or a deflated stochastic estimate.
+
+**What the port did.** Called ``matrix()`` -- the dense ``N x N`` array,
+which is the one thing the method exists to avoid -- thresholded it by
+magnitude against the largest entry anywhere, ran a dense ``eigvalsh`` to
+refuse a result that was no longer semidefinite, and returned a measure
+with that covariance and nothing else: no precision, no factor, no
+sampler.
+
+**What it is for, and so what it is.** David's reading, and the usage
+agrees: this makes an *operator* from a measure's covariance, for a sparse
+solver, a localised preconditioner, or anything else that wants a
+covariance with genuinely local correlations in a form it can hold. It is
+not a new measure. Thresholding does not preserve positive definiteness,
+so the result should not claim it; the precision is rarely wanted; and a
+sparse covariance cannot be sampled from without a sparse Cholesky, which
+SciPy does not have -- a persistent irritation, and one an operator does
+not pretend to solve.
+
+**What it does now.** `numerics.preconditioners.sparse_approximation`
+takes any self-adjoint operator on a coordinate space and returns a
+sparse-backed operator in Galerkin form, assembled by the column probes
+the thresholded preconditioner already used; the two now share one
+assembly. The criterion is v1's correlation by default, with the
+preconditioner's per-column magnitude test as the alternative; the cap
+per column is kept; the diagonal is read exactly, free where the operator
+knows it, or taken from the caller, who can pass `random_diagonal`'s or
+`deflated_diagonal`'s estimate for an operator too large to probe twice.
+The result claims self-adjointness and nothing more. On the measure,
+`sparse_covariance(**options)` is the one-line delegate;
+`with_sparse_approximation` is gone. The dense assembly, the global
+threshold and the ``O(N^3)`` check go with it.
+
+**Not carried over.** v1's regularised sparse LU precision: the
+thresholded preconditioner *is* that object, built from the same sparse
+matrix, for whoever wants a solve; and the `regularization_fraction` that
+made the LU well-posed was a knob on a measure that no longer exists.
+The `parallel` flag is a knob for §5 of the checklist.
+
+**Checked.** The sparse covariance is built with `matrix()` patched to
+raise, is a sparse-backed operator with no sampler, and at a negligible
+threshold reproduces the Galerkin matrix; the correlation criterion keeps
+a tiny entry of correlation one that the magnitude test drops; the cap
+keeps the diagonal and a symmetric pattern and the result passes the
+operator axioms on a dense metric; a supplied diagonal is used and one of
+the wrong length refused; the options are validated.

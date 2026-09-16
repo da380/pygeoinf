@@ -33,7 +33,7 @@ Moved ahead of the lost capabilities on 2026-09-16: these bear directly on the
 matrix-free aim and the audit ranks the first six as the ones most likely to
 bite on a real problem; the small restorations below matter less in practice.
 
-- [ ] `with_sparse_approximation` forms the dense covariance first
+- [x] `with_sparse_approximation` forms the dense covariance first — **restored** as an operator: `numerics.sparse_approximation` probes columns matrix-free with v1's correlation criterion and cap, sharing the thresholded preconditioner's assembly; `GaussianMeasure.sparse_covariance` delegates; the measure-returning method is gone. DESIGN §47.
 - [ ] `nuclear_norm` / `hilbert_schmidt_norm` default dense; correlated invariant measures assemble the block matrix
 - [ ] `credible_set` without a precision goes O(N³); `ambient_ball(method='auto')` picks dense `eigh`
 - [ ] `FeasibleProperty.is_feasible` does a dense `eigh`
