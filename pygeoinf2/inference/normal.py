@@ -133,6 +133,21 @@ class FactoredNormalOperator(LinearOperator):
         """``R``, or None when the problem is noise-free."""
 
     @property
+    def scale(self) -> float:
+        """The factor between this operator and the Gaussian reading of its factors.
+
+        A Gaussian normal operator *is* ``Q^-1 + A* R^-1 A`` or ``A Q A* + R``.
+        A Tikhonov one, read with ``Q = (1/t) I``, is the first exactly, but
+        its data-space form ``A A* + t R`` is ``t`` times the second. A
+        preconditioner built from the factors inverts the Gaussian reading, so
+        it divides by this to invert the operator it was actually handed;
+        without that it returned ``t`` times the inverse, which a scale-blind
+        outer method such as conjugate gradients never noticed and anything
+        else did. One here, and overridden where the assembly is scaled.
+        """
+        return 1.0
+
+    @property
     def model_space(self) -> HilbertSpace:
         """The model space, which the forward operator maps out of."""
         return self.forward.domain

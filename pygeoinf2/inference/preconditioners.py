@@ -150,6 +150,9 @@ class NormalDiagonalPreconditioner(LinearSolver):
             diagonal = (
                 diagonal + error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
             )
+        # The diagonal of the Gaussian reading A Q A* + R; the operator is
+        # ``normal.scale`` times that.
+        diagonal = normal.scale * diagonal
 
         safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
         inverse_diagonal = 1.0 / safe
@@ -314,6 +317,8 @@ class LocalisedPreconditioner(LinearSolver):
             assembled = assembled + sparse.diags(
                 error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
             )
+        # Assembled as the Gaussian reading; the operator is a multiple of it.
+        assembled = normal.scale * assembled
         factorised = sparse_linalg.splu(assembled.tocsc())
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
@@ -505,7 +510,9 @@ class InvariantDistancePreconditioner(LinearSolver):
             variance = float(
                 self._space.covariance_function(normal.prior, np.zeros(1))[0]
             )
-            inverse_diagonal = 1.0 / (variance * metric * metric + noise)
+            inverse_diagonal = 1.0 / (
+                normal.scale * (variance * metric * metric + noise)
+            )
 
             def diagonal_solve(y: Any, x0: Any) -> SolveResult:
                 weighted = data_space.apply_gram(data_space.to_components(y))
@@ -533,7 +540,9 @@ class InvariantDistancePreconditioner(LinearSolver):
         # G K G, with G diagonal, is a row and a column scaling: sparsity and
         # symmetry both survive it.
         scaling = sparse.diags(metric)
-        assembled = (scaling @ assembled @ scaling + sparse.diags(noise)).tocsc()
+        assembled = (
+            normal.scale * (scaling @ assembled @ scaling + sparse.diags(noise))
+        ).tocsc()
         factorised = sparse_linalg.splu(assembled)
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:

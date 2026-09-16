@@ -213,6 +213,15 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         return self._damping * LinearOperator.identity(self.model_space)
 
     @property
+    def scale(self) -> float:
+        """``t`` in the data space, where ``A A* + t R == t (A Q A* + R)``.
+
+        One in the model space, where ``A* R^-1 A + t I`` is exactly
+        ``Q^-1 + A* R^-1 A``. See :attr:`FactoredNormalOperator.scale`.
+        """
+        return self._damping if self._formalism == "data_space" else 1.0
+
+    @property
     def base(self) -> LinearOperator:
         """The undamped part: ``A* R^-1 A`` or ``A A*``."""
         return self._base

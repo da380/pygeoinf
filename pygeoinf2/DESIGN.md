@@ -5378,3 +5378,50 @@ a deliberately wrong precision on the measure; negative damping and damping
 alongside `prior_inverse` are refused. Example 24, the only caller that
 damped, now passes `prior_damping=1e-6` to the preconditioner and runs
 unchanged.
+
+## 37. A Tikhonov operator is `t` times its Gaussian reading (2026-09-16)
+
+Second item from `FUNCTIONALITY_AUDIT.md` §0.3: the Woodbury data form on a
+Tikhonov normal operator returned `t N_d^-1`, not `N_d^-1`. Reproduced at
+`t = 0.3` and `t = 2`: `||W N x|| / ||x||` was `t` in the data space and 1
+in the model space.
+
+**Why.** `TikhonovNormalOperator` offers its factors to preconditioners by
+reading the damping as an isotropic prior, `Q = (1/t) I` (§18). In the model
+space that reading is exact: `A* R^-1 A + t I` *is* `Q^-1 + A* R^-1 A`. In
+the data space it is not: `A A* + t R == t (A Q A* + R)`. Every
+preconditioner built from the factors inverts the Gaussian reading, so on a
+data-space Tikhonov operator every one of them — Woodbury, the normal
+diagonal, the localised Nyström — returned `t` times the inverse. This is a refactor defect, not an
+inherited one: v1's Tikhonov inversion had its own Woodbury builders,
+written for `A A* + t R` directly, and both carried the `1/damping` by
+hand; its diagonal and localised preconditioners existed only on the
+Bayesian class, where there is nothing to scale. The factor was lost when
+the two hand-written identities were merged into one generic one behind
+the factor protocol.
+
+**Why it went unnoticed.** Conjugate gradients is blind to a constant factor
+in its preconditioner, and every test drove one through CG. Used as a solver,
+or under any outer method that reads the preconditioned residual's size, the
+factor is a wrong answer.
+
+**What it does now.** No single pair `(Q, R)` makes both formalisms exact —
+choosing `Q = I, R' = t R` fixes the data space and breaks the model space by
+the same factor — so the scale is made part of the factor protocol instead.
+`FactoredNormalOperator.scale` says by what factor the assembled operator
+exceeds the Gaussian reading of its factors: 1 on a Gaussian operator and on
+a model-space Tikhonov one, `t` on a data-space Tikhonov one. Each consumer
+divides by it: the Woodbury preconditioner in `_invert`, reading it off the
+operator it is handed, and the three inference preconditioners where they
+assemble. The forms `data_form()` and `model_form()` are left as the
+identities they are named for.
+
+**Checked.** On the point-estimator fixture: the scaled Gaussian reading
+reproduces the operator; the Woodbury preconditioner inverts the Tikhonov
+operator to 1e-10 in both formalisms; the normal-diagonal preconditioner
+agrees with the generic Jacobi one on the assembled operator, which holds
+only with the scale; a full-rank localised block is the exact inverse.
+
+**Left as it was.** `from_normal` still refuses a Tikhonov operator with no
+error measure, whose data-space form `A A* + t I` reads `R = I`; v1 refused
+it too.

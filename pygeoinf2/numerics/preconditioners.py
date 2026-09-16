@@ -774,6 +774,12 @@ class WoodburyPreconditioner(LinearSolver):
         else:
             model = dim == self.model_space.dim
         approximate = self.model_form() if model else self.data_form()
+        # The forms invert the Gaussian reading of the factors; the operator
+        # in hand may be a scalar multiple of that (a Tikhonov operator in
+        # the data space is ``t`` times it), and says so.
+        scale = float(getattr(operator, "scale", 1.0))
+        if scale != 1.0:
+            approximate = (1.0 / scale) * approximate
 
         def solve_fn(y, x0):
             return SolveResult(approximate(y), 1, 0.0, True)

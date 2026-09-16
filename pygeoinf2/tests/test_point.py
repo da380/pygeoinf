@@ -322,6 +322,91 @@ class TestTikhonovNormalOperator:
                 model.subtract(tikhonov(observed), expected)
             ) == pytest.approx(0.0, abs=1e-8 * model.norm(expected))
 
+    @pytest.mark.parametrize("formalism", ["model_space", "data_space"])
+    def test_the_scale_is_the_factor_over_the_gaussian_reading(
+        self, setup, formalism, rng
+    ):
+        """``A* R^-1 A + t I`` is exactly ``Q^-1 + A* R^-1 A`` with
+        ``Q = (1/t) I``, but ``A A* + t R`` is ``t`` times ``A Q A* + R``. The
+        operator says so, because everything built from its factors inverts
+        the Gaussian reading and has to know."""
+        problem = setup
+        damping = 0.3
+        normal = TikhonovNormalOperator(
+            problem.forward_operator,
+            damping,
+            error=problem.error_measure,
+            formalism=formalism,
+        )
+        assert normal.scale == (damping if formalism == "data_space" else 1.0)
+        forward, error = problem.forward_operator, problem.error_measure
+        if formalism == "data_space":
+            reading = forward @ normal.prior_covariance @ forward.adjoint + (
+                error.covariance
+            )
+        else:
+            reading = (
+                normal.prior_precision + forward.adjoint @ error.precision @ forward
+            )
+        space = normal.domain
+        for _ in range(5):
+            vector = space.random(rng=rng)
+            assert space.norm(
+                space.subtract(normal(vector), normal.scale * reading(vector))
+            ) == pytest.approx(0.0, abs=1e-10 * space.norm(vector))
+
+    @pytest.mark.parametrize("formalism", ["model_space", "data_space"])
+    def test_a_factor_built_preconditioner_inverts_the_operator_in_hand(
+        self, setup, formalism, rng
+    ):
+        """Not ``t`` times its inverse. Conjugate gradients cannot tell the
+        two apart, which is how the factor survived every CG-driven test; a
+        solver, or a residual-reading outer method, can."""
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        problem = setup
+        normal = TikhonovNormalOperator(
+            problem.forward_operator,
+            0.3,
+            error=problem.error_measure,
+            formalism=formalism,
+        )
+        space = normal.domain
+        woodbury = WoodburyPreconditioner.from_normal(normal, solver=CholeskySolver())
+        for _ in range(5):
+            vector = space.random(rng=rng)
+            back = woodbury(normal)(normal(vector))
+            assert space.norm(space.subtract(back, vector)) == pytest.approx(
+                0.0, abs=1e-10 * space.norm(vector)
+            )
+
+    def test_the_data_space_preconditioners_carry_the_scale_too(self, setup, rng):
+        """The normal diagonal must agree with the generic Jacobi preconditioner
+        on the assembled operator, and a full-rank localised block must be the
+        exact inverse; both held on a Gaussian operator and failed by ``t``
+        on a Tikhonov one."""
+        from pygeoinf2.inference.preconditioners import LocalisedPreconditioner
+
+        problem = setup
+        normal = TikhonovNormalOperator(
+            problem.forward_operator, 0.3, error=problem.error_measure
+        )
+        data = normal.data_space
+        cheap = NormalDiagonalPreconditioner()(normal)
+        generic = JacobiPreconditioner()(normal)
+        exact = LocalisedPreconditioner(
+            [list(range(data.dim))], rank=data.dim, rng=np.random.default_rng(3)
+        )(normal)
+        for _ in range(5):
+            vector = data.random(rng=rng)
+            expected = generic(vector)
+            assert data.norm(data.subtract(cheap(vector), expected)) == pytest.approx(
+                0.0, abs=1e-10 * data.norm(expected)
+            )
+            assert data.norm(
+                data.subtract(normal(exact(vector)), vector)
+            ) == pytest.approx(0.0, abs=1e-8 * data.norm(vector))
+
     def test_zero_damping_has_no_prior_reading(self, setup):
         problem = setup
         normal = TikhonovNormalOperator(

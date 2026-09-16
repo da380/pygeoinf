@@ -11,7 +11,7 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 ## 1. Correctness claims (§0.3, "changed numerics")
 
 - [x] `with_regularized_inverse`: covariance and precision disagree for `damping > 0` — **dropped**. The mismatch was real (the mixture density it fed raised), but its one use was a damped `Q⁻¹` for the Woodbury data form, which is now `WoodburyPreconditioner(prior_damping=)`. DESIGN §36.
-- [ ] `WoodburyPreconditioner.data_form()` on a Tikhonov operator returns `t·N⁻¹` not `N⁻¹`
+- [x] `WoodburyPreconditioner.data_form()` on a Tikhonov operator returns `t·N⁻¹` not `N⁻¹` — **restored**, and wider than the audit saw: every factor-built preconditioner had the factor. `FactoredNormalOperator.scale` now carries it and each consumer divides by it. DESIGN §37.
 - [ ] adjoint solve of a non-self-adjoint operator with a fixed preconditioner uses `P` not `P*`
 - [ ] `operator_log` has no floor on Ritz values
 - [ ] CG lost its non-finite breakdown checks
