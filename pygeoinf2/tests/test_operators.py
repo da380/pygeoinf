@@ -67,6 +67,72 @@ class TestAdjoint:
             A.adjoint(np.zeros(3))
 
 
+class TestProbedAdjoint:
+    """v1 derived a missing adjoint by probing every basis vector on every
+    application, silently; v2 refuses. The opt-in assembles the matrix once
+    and derives the adjoint from it, and its cost is in its name."""
+
+    @staticmethod
+    def action_only(X, Y, matrix):
+        return LinearOperator.from_callables(
+            X, Y, lambda x: Y.from_components(matrix @ X.to_components(x))
+        )
+
+    def test_it_agrees_with_the_matrix_built_adjoint_on_a_dense_metric(self, rng):
+        X, Y = make_dense_metric_space(5), make_weighted_space()
+        matrix = rng.normal(size=(Y.dim, X.dim))
+        probed = self.action_only(X, Y, matrix).with_probed_adjoint()
+        reference = LinearOperator.from_matrix(X, Y, matrix, form="components")
+        check_operator(probed, rng=rng)
+        for _ in range(3):
+            y = Y.random(rng=rng)
+            assert X.norm(
+                X.subtract(probed.adjoint(y), reference.adjoint(y))
+            ) < 1e-10 * X.norm(reference.adjoint(y))
+
+    def test_the_matrix_is_assembled_once(self, rng):
+        X, Y = make_dense_metric_space(6), make_weighted_space()
+        matrix = rng.normal(size=(Y.dim, X.dim))
+        applications = []
+        operator = LinearOperator.from_callables(
+            X,
+            Y,
+            lambda x: (
+                applications.append(1),
+                Y.from_components(matrix @ X.to_components(x)),
+            )[1],
+        ).with_probed_adjoint()
+        y = Y.random(rng=rng)
+        operator.adjoint(y)
+        assert len(applications) == X.dim
+        operator.adjoint(y)
+        operator.matrix(form="galerkin")
+        assert len(applications) == X.dim
+
+    def test_the_refusal_names_the_opt_in(self, spaces):
+        X, Y = spaces
+        A = LinearOperator.from_callables(X, Y, lambda x: np.zeros(3))
+        with pytest.raises(NotImplementedError, match="with_probed_adjoint"):
+            A.adjoint(np.zeros(3))
+
+    def test_a_wide_operator_gets_its_matrix_by_rows_after_opting_in(self, rng):
+        """``matrix(by="auto")`` fills by rows through the adjoint when the
+        codomain is the smaller side, which an operator without one could not
+        do; with the opt-in it can, and gets the assembled matrix."""
+        X, Y = EuclideanSpace(8), EuclideanSpace(3)
+        matrix = rng.normal(size=(3, 8))
+        bare = self.action_only(X, Y, matrix)
+        with pytest.raises(NotImplementedError):
+            bare.matrix()
+        assert np.allclose(bare.with_probed_adjoint().matrix(), matrix)
+
+    def test_a_space_without_coordinates_is_refused(self):
+        X = OpaqueSpace(4)
+        A = LinearOperator.from_callables(X, X, lambda x: x)
+        with pytest.raises(TypeError):
+            A.with_probed_adjoint()
+
+
 class TestTraitPropagation:
     def test_gramian_is_semidefinite(self, spaces, rng):
         X, Y = spaces

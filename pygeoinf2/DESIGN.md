@@ -5786,3 +5786,47 @@ request; on a near-parallel bundle of thirty cuts the backend's objective
 is no worse than the projected gradient's, which warns; both routes reach
 the same minimum on a nonsmooth problem; the sixteen-direction Backus
 test that produced nine subproblem warnings produces none.
+
+## 45. A probed adjoint, on request (2026-09-16)
+
+Last item of the correctness group in `FUNCTIONALITY_AUDIT.md` §0.3: when
+no adjoint was supplied, v1 derived one; v2 raises. A contract question,
+and David chose the opt-in.
+
+**What v1 did.** An operator built from its action alone got a default
+dual mapping, the form `x -> y'(A x)`, whose representer was found by
+evaluating that form on every basis vector of the domain and solving with
+the Gram matrix. Correct on any metric, always available, and costing
+`dim(X)` applications of the operator on *every* adjoint application,
+silently: a wide operator on a large model space made each adjoint a
+full assembly, and nothing said so.
+
+**What v2 did.** Refused, with a message naming the missing action. The
+audit calls that defensible and notes it surprises ported code, which is
+right on both counts; the `from_callables` docstring, meanwhile, still
+claimed the adjoint was "derived by solving", which it was not.
+
+**What it does now.** `LinearOperator.with_probed_adjoint()` returns the
+same operator with an adjoint derived from its assembled component
+matrix: the first adjoint application costs `dim(X)` applications of the
+operator, each later one a matrix-vector product, and the matrix is
+handed to `matrix()` so nothing is assembled twice. The formula is
+`A* y == G_X^-1 A_c^T G_Y y_c`, the derivative-to-representer step done
+once on the assembled matrix rather than once per basis vector per
+application. It requires coordinates on both sides, as v1's route did,
+and refuses a space without them by name. The default stays the refusal,
+and its message now names the opt-in. `from_callables`' docstring says
+what happens.
+
+**Why opt-in and not v1's default.** A cost of `dim(X)` operator
+applications is what this library is designed to make visible, not to
+hide behind an attribute access; and once the matrix is assembled it is a
+dense one, which on a large space is the thing the design avoids. Ported
+code that relied on v1's default gets it back with one method call, and
+learns from the name what it is paying.
+
+**Checked.** On a dense-metric domain and a weighted codomain the probed
+adjoint agrees with the matrix-built operator's and passes the operator
+axioms; the assembly happens once; a wide operator's `matrix(by="auto")`,
+which fills by rows through the adjoint, works after the opt-in and is
+refused before it; a space without coordinates is refused.

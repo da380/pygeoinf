@@ -20,7 +20,7 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 - [x] `StrongWolfeLineSearch._zoom` is pure bisection — **restored**: cubic/quadratic interpolation with bisection as the safeguard, as SciPy's search that v1 wrapped; the wasted re-evaluation on zoom entry is gone. Nonlinear CG halves its evaluations (224→113 Rosenbrock, 4321→2013 on a cond-1e4 quadratic), same answers. DESIGN §43.
 - [x] `LevelBundleMethod`: serious/null step test, QP warm start, λ bounding box — **restored** all three, plus `lower_bound` and `serious_steps` on the result. DESIGN §44.
 - [x] `ProximalBundleMethod`: exact QP backend replaced by projected gradient with a residual floor — **restored**: the k-variable dual now goes through Clarabel or OSQP when installed (30× faster, 1000× closer to the primal on the Backus dual), projected gradient as the fallback; backend order now Clarabel first, OSQP having capped out on 40% of level masters. DESIGN §44.
-- [ ] v1's probed default adjoint versus v2's `NotImplementedError`
+- [x] v1's probed default adjoint versus v2's `NotImplementedError` — **subsumed** as an opt-in: `with_probed_adjoint()` assembles the matrix once and derives the adjoint from it; the refusal stays the default and its message names the opt-in. DESIGN §45.
 
 ## 2. Silent unit changes (§0.3)
 

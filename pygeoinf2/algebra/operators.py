@@ -645,8 +645,35 @@ class LinearOperator[X, Y](Operator[X, Y]):
     def _adjoint_value(self, y: Y) -> X:
         """The action of the adjoint. Subclasses that know it override this."""
         raise NotImplementedError(
-            f"{type(self).__name__} does not supply an adjoint action."
+            f"{type(self).__name__} does not supply an adjoint action. "
+            f"with_probed_adjoint() derives one from the assembled matrix, at "
+            f"dim(domain) applications, if that cost is acceptable."
         )
+
+    def with_probed_adjoint(self) -> LinearOperator[X, Y]:
+        """The same operator, its adjoint derived from its assembled matrix.
+
+        For an operator whose action is known and whose adjoint is not. v1
+        derived one silently, by probing every basis vector of the domain on
+        *every* adjoint application; v2 refuses, and this is the opt-in. The
+        first adjoint application assembles the component matrix, which
+        costs ``dim(domain)`` applications of the operator; each later one is
+        a matrix-vector product, and the matrix is handed to :meth:`matrix`
+        so nothing is assembled twice. The adjoint is
+        ``A* y == G_X^-1 A_c^T G_Y y_c``, correct on any metric.
+
+        The cost is the reason this is a method with a name rather than the
+        default: ``dim(domain)`` applications is a full assembly, and on a
+        large space it is exactly what an attribute access should not hide.
+
+        Returns:
+            The operator with a probed adjoint. Its traits are this one's.
+
+        Raises:
+            TypeError: if either space has no component map, which the probe
+                needs.
+        """
+        return _ProbedAdjointOperator(self)
 
     # ----------------------------------------------------------------- #
     #                       Operator specialisation                     #
@@ -1063,9 +1090,11 @@ class LinearOperator[X, Y](Operator[X, Y]):
             domain: the operator's domain.
             codomain: its codomain.
             value: the action.
-            adjoint: the adjoint's action. Without it the adjoint is derived
-                by solving, which is correct and far more expensive -- so
-                supply it whenever it is known.
+            adjoint: the adjoint's action. Without it the adjoint is
+                refused; :meth:`LinearOperator.with_probed_adjoint` derives
+                one from the assembled matrix, at ``dim(domain)``
+                applications, for a caller who accepts that cost. Supply it
+                whenever it is known.
             traits: claims about the operator. Not verified here;
                 ``testing.check_traits`` does that.
 
@@ -1664,10 +1693,66 @@ class _CallableLinearOperator[X, Y](LinearOperator[X, Y]):
         if self._adjoint_fn is None:
             raise NotImplementedError(
                 "No adjoint action was supplied for this operator. Deriving "
-                "one numerically is possible only with coordinates and is "
-                "prohibitively expensive, so it is not done implicitly."
+                "one numerically needs coordinates and costs dim(domain) "
+                "applications, so it is not done implicitly: opt in with "
+                "with_probed_adjoint() if that is acceptable."
             )
         return self._adjoint_fn(y)
+
+
+class _ProbedAdjointOperator[X, Y](LinearOperator[X, Y]):
+    """An operator whose adjoint comes from its assembled component matrix.
+
+    See :meth:`LinearOperator.with_probed_adjoint`. The base operator's
+    action and traits are kept; the matrix is assembled on the first adjoint
+    application, or the first request for the matrix, whichever comes first.
+    """
+
+    def __init__(self, base: LinearOperator[X, Y]) -> None:
+        require_coordinates(base.domain, base.codomain)
+        super().__init__(base.domain, base.codomain, traits=base.traits)
+        self._base = base
+        self._components: np.ndarray | None = None
+
+    @property
+    def base_operator(self) -> LinearOperator[X, Y]:
+        """The operator whose adjoint is being derived."""
+        return self._base
+
+    def _assembled(self) -> np.ndarray:
+        if self._components is None:
+            self._components = self._base.matrix(form="components", by="columns")
+        return self._components
+
+    def _value(self, x: X) -> Y:
+        return self._base(x)
+
+    def _adjoint_value(self, y: Y) -> X:
+        matrix = self._assembled()
+        weighted = self.codomain.apply_gram(self.codomain.to_components(y))
+        return self.domain.from_components(self.domain.solve_gram(matrix.T @ weighted))
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        matrix = self._assembled()
+        if form == "galerkin":
+            return self.codomain.apply_gram_to_columns(matrix)
+        return matrix
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._base._components_action()
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        domain, codomain = self.domain, self.codomain
+
+        def action(c: np.ndarray) -> np.ndarray:
+            return domain.solve_gram(self._assembled().T @ codomain.apply_gram(c))
+
+        return action
+
+    def __repr__(self) -> str:
+        return f"ProbedAdjoint({self._base!r})"
 
 
 class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
