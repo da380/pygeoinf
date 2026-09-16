@@ -710,26 +710,29 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> float:
         """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``.
 
-        ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``, which is what
-        v1 did and what this docstring has always claimed; it used to form the
-        dense component matrix and return the exact answer, quietly, which is
-        the opposite of the promise and impossible at the sizes the option
-        exists for. The estimator is a trace of ``C^2``, so its relative error
-        is worse than a trace of ``C``: ask for more probes here than for
+        **Exact without the matrix.** ``"auto"`` reads the spectrum of a
+        diagonal covariance or the slices of a spectrally block-diagonal one,
+        takes ``sum(M * M.T)`` on a covariance that already holds its
+        component matrix, and otherwise probes the diagonal of ``C C`` one
+        basis vector at a time: two applications per column and linear
+        memory, which is v1's exact route. The dense matrix is formed only
+        when asked for by name; it used to be the default, at ``N^2`` memory
+        for a number that needs ``N`` (DESIGN §48).
+
+        ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``. The
+        estimator is a trace of ``C^2``, so its relative error is worse than a
+        trace of ``C``: ask for more probes here than for
         :meth:`nuclear_norm`, or pass *rtol* and let it decide.
 
         Args:
-            method: ``"dense"`` forms the component matrix, ``"stochastic"``
-                estimates the trace with :func:`random_trace`, ``"diagonal"``
-                reads the spectrum of a diagonal covariance, and ``"auto"``
-                takes the diagonal route when it can and the dense one
-                otherwise. ``"auto"`` is always exact; a sampled norm has to be
-                asked for by name.
+            method: ``"auto"`` or ``"diagonal"`` is the exact matrix-free
+                route above; ``"dense"`` forms the component matrix;
+                ``"stochastic"`` estimates the trace with :func:`random_trace`.
             samples: probes for the stochastic route.
             rtol: draw further blocks of probes until the standard error is
                 this fraction of the estimate.
             rng: the generator for the probes.
-            n_jobs: workers for the probes.
+            n_jobs: workers for the probes, or for the diagonal probe.
 
         Returns:
             The norm.
@@ -757,8 +760,44 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             raise ValueError(f"Unknown method {method!r}.")
         # tr(C* C) is basis-independent, so it comes from the *component*
         # matrix. The Galerkin one is G C_c, whose trace is a different number.
-        matrix = covariance.matrix(form="components")
-        return float(np.sqrt(np.sum(matrix * matrix.T)))
+        if method == "dense":
+            matrix = covariance.matrix(form="components")
+            return float(np.sqrt(np.sum(matrix * matrix.T)))
+        slices = self._spectral_slices()
+        if slices is not None:
+            # tr(C^2) == sum over modes of tr(S_k^2), the blocks being diagonal.
+            return float(np.sqrt(np.einsum("kij,kji->", slices, slices)))
+        known = covariance._known_matrix("components")
+        if known is not None:
+            return float(np.sqrt(np.sum(known * known.T)))
+        # The diagonal of C C, one basis vector at a time: (C C)_ii is the
+        # i-th component of C(C(e_i)). Two applications per column and one
+        # vector of memory.
+        from ..parallel import parallel_map
+
+        space = self._domain
+
+        def entry(index: int) -> float:
+            basis = space.basis_vector(index)
+            return float(space.to_components(covariance(covariance(basis)))[index])
+
+        squared = sum(parallel_map(entry, range(space.dim), n_jobs=n_jobs))
+        return float(np.sqrt(max(squared, 0.0)))
+
+    def _spectral_slices(self) -> np.ndarray | None:
+        """The ``(dim, n, n)`` slices of a spectrally block-diagonal covariance.
+
+        A correlated measure on several fields has one small matrix per mode
+        (:class:`~pygeoinf2.symmetric_space.base.SpectralBlockLinearOperator`),
+        from which both norms follow in ``O(dim n^2)``; v1 had these formulas
+        on its correlated measure. Recognised by shape rather than by type, so
+        that this module does not import the symmetric spaces.
+        """
+        slices = getattr(self._covariance, "slices", None)
+        if slices is None:
+            return None
+        slices = np.asarray(slices)
+        return slices if slices.ndim == 3 else None
 
     def nuclear_norm(
         self,
@@ -775,12 +814,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         For a covariance this is the trace, since it is positive semidefinite —
         the total variance of the measure.
 
+        **Exact without the matrix.** ``"auto"`` reads the spectrum of a
+        diagonal covariance or the slices of a spectrally block-diagonal one,
+        and otherwise sums the component diagonal from :meth:`diagonals`,
+        which is free where the operator knows it and one application per
+        column where it must be probed, in linear memory: v1's exact route.
+        The dense matrix is formed only when asked for by name (DESIGN §48).
+
         Args:
             method: as for :meth:`hilbert_schmidt_norm`.
             samples: probes for the stochastic route.
             rtol: target relative standard error for the stochastic route.
             rng: the generator for the probes.
-            n_jobs: workers for the probes.
+            n_jobs: workers for the probes, or for the diagonal probe.
 
         Returns:
             The norm.
@@ -801,7 +847,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # A covariance is positive semidefinite, so its trace norm is its
         # trace -- and a trace is the component matrix's, not the Galerkin
         # matrix's, which carries an extra factor of the metric.
-        return float(np.trace(covariance.matrix(form="components")))
+        if method == "dense":
+            return float(np.trace(covariance.matrix(form="components")))
+        slices = self._spectral_slices()
+        if slices is not None:
+            return float(np.einsum("kii->", slices))
+        diagonal = covariance.diagonals(offsets=(0,), form="components", n_jobs=n_jobs)
+        return float(np.sum(diagonal[0]))
 
     def _weighted_squared(self, vector: X, /) -> float:
         """``(C^-1 v, v)``, from the precision if there is one, else densely.

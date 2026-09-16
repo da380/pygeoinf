@@ -5936,3 +5936,49 @@ a tiny entry of correlation one that the magnitude test drops; the cap
 keeps the diagonal and a symmetric pattern and the result passes the
 operator axioms on a dense metric; a supplied diagonal is used and one of
 the wrong length refused; the options are validated.
+
+## 48. The measure norms are exact without the matrix (2026-09-16)
+
+Second of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3: `nuclear_norm` and `hilbert_schmidt_norm` defaulted to forming the
+dense component matrix; v1's exact route summed an extracted diagonal in
+linear memory, and its correlated invariant measure had closed forms in
+the spectral slices where v2 assembled the ``(n dim)^2`` block matrix.
+
+**What v1 did.** Defaulted to a Hutchinson estimate, and under
+``exact=True`` took the trace from `extract_diagonal` -- ``N``
+applications, one vector of memory -- and the Hilbert-Schmidt norm from
+the diagonal of ``C C`` the same way. On `CorrelatedInvariantGaussianMeasure`
+both were sums over the spectral eigenvalues.
+
+**What the port did.** Made the default exact, which is right -- a norm
+should be a number, and a sampled one has to be asked for by name -- but
+took the exact answer from ``matrix()``: ``N^2`` memory for a number that
+needs ``N``, and on a correlated measure the assembled block matrix. The
+port did keep a fast path for a diagonal covariance.
+
+**What it does now.** ``"auto"`` is exact and matrix-free at every level
+of structure the covariance offers. A diagonal covariance gives its
+spectrum; a spectrally block-diagonal one, which is what a correlated
+measure carries, gives its ``(dim, n, n)`` slices, from which the trace
+is ``sum_k tr S_k`` and the Hilbert-Schmidt norm ``sqrt(sum_k tr S_k^2)``
+in ``O(dim n^2)``, recognised by shape so that the probability module
+does not import the symmetric spaces; a covariance that already holds
+its matrix is read, not reassembled; and anything else is probed, the
+trace as the sum of `diagonals()` -- free where the operator knows its
+diagonal, one application per column otherwise -- and the
+Hilbert-Schmidt norm as the diagonal of ``C C`` one basis vector at a
+time, two applications per column and one vector of memory. ``"dense"``
+still exists and is the only route that forms the matrix.
+
+**Left as it was.** `kl_divergence(method="auto")` refuses, with a
+message, above `dense_limit` when neither exact route applies, where v1
+fell silently back to the stochastic estimate. The audit lists that as a
+regression; it is **D-8**'s rule applied to an estimate with an error bar,
+and the message says what to pass. Not changed.
+
+**Checked.** A covariance that refuses to be assembled gives both norms
+exactly, at ``N`` and ``2N`` applications; a matrix-built covariance is
+read without a second assembly; a correlated measure's norms agree with
+the dense ones and with the slice formulas, with `matrix()` patched to
+raise throughout.

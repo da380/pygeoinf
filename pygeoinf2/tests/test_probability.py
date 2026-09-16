@@ -625,6 +625,52 @@ class TestStochasticNorms:
         assert estimate == pytest.approx(np.trace(components), rel=0.2)
         assert len(applications) == 200
 
+    def test_the_exact_norms_never_form_the_matrix(self, measure, rng, monkeypatch):
+        """v1's exact route summed a probed diagonal in linear memory; the
+        port formed the dense component matrix by default. A covariance that
+        refuses to be assembled still has exact norms: N applications for the
+        trace and 2N for the trace of the square."""
+        mu, components = measure
+        space = mu.domain
+        applications = []
+
+        def apply(x):
+            applications.append(x)
+            return mu.covariance(x)
+
+        opaque = GaussianMeasure(
+            space,
+            covariance=LinearOperator.self_adjoint(
+                space, apply, traits=Traits.POSITIVE_DEFINITE
+            ),
+        )
+        monkeypatch.setattr(
+            LinearOperator,
+            "matrix",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("dense")),
+        )
+        assert opaque.nuclear_norm() == pytest.approx(np.trace(components))
+        assert len(applications) == space.dim
+        applications.clear()
+        assert opaque.hilbert_schmidt_norm() == pytest.approx(
+            np.sqrt(np.sum(components * components.T))
+        )
+        assert len(applications) == 2 * space.dim
+
+    def test_a_stored_matrix_is_read_not_reassembled(self, measure, monkeypatch):
+        """A covariance built from a matrix already holds it; the norms read
+        it rather than probing or forming a second copy."""
+        mu, components = measure
+        monkeypatch.setattr(
+            LinearOperator,
+            "matrix",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("dense")),
+        )
+        assert mu.nuclear_norm() == pytest.approx(np.trace(components))
+        assert mu.hilbert_schmidt_norm() == pytest.approx(
+            np.sqrt(np.sum(components * components.T))
+        )
+
     def test_a_tolerance_stops_when_it_is_met(self, measure, rng):
         mu, components = measure
         estimate = mu.nuclear_norm(method="stochastic", samples=50, rtol=0.02, rng=rng)

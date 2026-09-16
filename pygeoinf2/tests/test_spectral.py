@@ -326,6 +326,30 @@ class TestMeasureStatistics:
             measure.hilbert_schmidt_norm(method="dense")
         )
 
+    def test_a_correlated_measures_norms_come_from_its_slices(self, monkeypatch):
+        """One small matrix per mode: the trace is the sum of their traces and
+        the Hilbert-Schmidt norm the root of the sum of their squared
+        Frobenius norms, in O(dim n^2), as v1 had. The port assembled the
+        dense (n dim)^2 block matrix for both."""
+        from pygeoinf2.algebra.operators import LinearOperator
+
+        X = Sobolev(6, 2.0, 0.2)
+        base = np.array([[1.0, 0.5], [0.5, 2.0]])
+        decay = 1.0 / (1.0 + np.arange(X.dim))
+        slices = decay[:, None, None] * base[None, :, :]
+        measure = X.correlated_measure(slices)
+        dense_nuclear = measure.nuclear_norm(method="dense")
+        dense_hs = measure.hilbert_schmidt_norm(method="dense")
+
+        monkeypatch.setattr(
+            LinearOperator,
+            "matrix",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("dense")),
+        )
+        assert measure.nuclear_norm() == pytest.approx(dense_nuclear)
+        assert measure.nuclear_norm() == pytest.approx(np.einsum("kii->", slices))
+        assert measure.hilbert_schmidt_norm() == pytest.approx(dense_hs)
+
     def test_directional_statistics(self, pair, rng):
         space, first, _ = pair
         u, v = space.random(rng=rng), space.random(rng=rng)
