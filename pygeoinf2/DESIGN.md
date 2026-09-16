@@ -5425,3 +5425,53 @@ only with the scale; a full-rank localised block is the exact inverse.
 **Left as it was.** `from_normal` still refuses a Tikhonov operator with no
 error measure, whose data-space form `A A* + t I` reads `R = I`; v1 refused
 it too.
+
+## 38. The adjoint solve is preconditioned by `P*` (2026-09-16)
+
+Third item from `FUNCTIONALITY_AUDIT.md` §0.3, which said the adjoint solve
+of a non-self-adjoint operator with a fixed preconditioner used `P` rather
+than `P*`. True, and the audit's own row splits it correctly into two
+branches, neither of which is a wrong number.
+
+**What happened.** An `InverseOperator` from an iterative solver carried no
+adjoint solve of its own, so `inv.adjoint` fell through to the generic
+route: hand `A*` back to the solver. The solver then resolved its
+preconditioner against `A*`. A *fixed* `P` came back unchanged, so `A*` was
+preconditioned by `P`, which is no preconditioner for `A*` at all: with
+`P == A^-1` exactly, the forward solve took one step and the adjoint
+thirteen (BiCGStab) or sixteen (GMRES), to the right answer. A *deferred*
+direct preconditioner was rebuilt from `A*`, which is a second matrix
+extraction and a second `O(n^3)` factorisation of what is, up to a
+transpose, the same matrix.
+
+**How v1 had it.** v1 resolved the preconditioner once, at the moment the
+inverse was built, took its adjoint there and then, and returned an
+inverse carrying two closures: `A` with `P` and `A*` with `P*`
+(`linear_solvers.py:296-320`). For an LU-built `P` the adjoint was the
+transposed solve from the same factors. Both branches were right by
+construction. The refactor replaced the closure pair with an
+`InverseOperator` that builds its adjoint *as an inverse* — the better
+structure, and what lets direct solvers share a factorisation — but the
+iterative solver never supplied an adjoint solve to it, so the generic
+fallback ran: hand `A*` back to the solver, which is right about the
+operator and knows nothing of the resolved `P`. v1's one line, the
+adjoint of the resolved preconditioner, had no counterpart. The same
+shape as §37: two hand-written paths unified into one mechanism, and the
+detail one of them carried by hand dropped in the merge.
+
+**Why it matters short of a wrong answer.** A solve that converges slowly is
+one iteration cap away from a `ConvergenceError` under `strict=True`, and
+the whole point of a preconditioner is that cap. And the factorisation is
+the cost that a direct preconditioner exists to pay once.
+
+**What it does now.** `IterativeSolver._invert` gives its inverse an
+`adjoint_solve_fn` that solves `A*` preconditioned by `P*`, from the *same*
+resolved `P`, built lazily on first use. For a fixed operator that is its
+adjoint; for a deferred `LUSolver` it is the transposed solve from the same
+factors, so the count is one factorisation for both directions. Self-adjoint
+operators are unaffected, their adjoint being themselves.
+
+**Checked.** With `P == A^-1` on a Euclidean and a dense-metric space, both
+BiCGStab and GMRES take at most two steps in either direction and the
+adjoint solution satisfies `A* w == x`; a deferred `LUSolver` is factorised
+exactly once across a forward and an adjoint solve.

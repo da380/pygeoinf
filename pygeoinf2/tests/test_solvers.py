@@ -463,6 +463,64 @@ class TestDirectInverseAdjoint:
         assert space.norm(space.subtract(recovered, probe)) < 1e-10 * space.norm(probe)
 
 
+class TestIterativeInverseAdjoint:
+    """The adjoint solve is preconditioned by ``P*``, from the same ``P``."""
+
+    @pytest.mark.parametrize(
+        "build", [lambda: EuclideanSpace(40), lambda: make_dense_metric_space(40)]
+    )
+    @pytest.mark.parametrize("Solver", ["BiCGStabSolver", "GMRESSolver"])
+    def test_a_fixed_preconditioner_is_transposed_for_the_adjoint(
+        self, build, Solver, rng
+    ):
+        """With ``P == A^-1`` exactly, both solves should take one step. The
+        adjoint used to be handed ``P`` itself, which is no preconditioner for
+        ``A*`` at all: it converged, to the right answer, in thirteen."""
+        from pygeoinf2.numerics import solvers
+
+        space = build()
+        size = space.dim
+        matrix = rng.normal(size=(size, size)) + 4.0 * np.diag(
+            np.linspace(1.0, size, size)
+        )
+        operator = LinearOperator.from_matrix(space, space, matrix, form="galerkin")
+        solver = getattr(solvers, Solver)(
+            rtol=1e-10, strict=False, preconditioner=LUSolver()(operator)
+        )
+        inverse = solver(operator)
+        probe = space.random(rng=rng)
+        forward = inverse.solve(probe)
+        adjoint = inverse.adjoint.solve(probe)
+        assert forward.iterations <= 2
+        assert adjoint.iterations <= 2
+        recovered = operator.adjoint(adjoint.solution)
+        assert space.norm(space.subtract(recovered, probe)) < 1e-8 * space.norm(probe)
+
+    def test_a_deferred_direct_preconditioner_is_factorised_once(
+        self, rng, monkeypatch
+    ):
+        """``P*`` is one transposed solve away from ``P``; the adjoint used to
+        rebuild the preconditioner from ``A*`` and factorise it again."""
+        space = EuclideanSpace(30)
+        matrix = rng.normal(size=(30, 30)) + 30.0 * np.identity(30)
+        operator = LinearOperator.from_matrix(space, space, matrix, form="galerkin")
+        factorisations = 0
+        original = LUSolver._factorise
+
+        def counting(self, *args, **kwargs):
+            nonlocal factorisations
+            factorisations += 1
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(LUSolver, "_factorise", counting)
+        inverse = BiCGStabSolver(rtol=1e-10, preconditioner=LUSolver())(operator)
+        probe = space.random(rng=rng)
+        inverse(probe)
+        recovered = operator.adjoint(inverse.adjoint(probe))
+        assert factorisations == 1
+        assert space.norm(space.subtract(recovered, probe)) < 1e-8 * space.norm(probe)
+
+
 class TestProgressCallback:
     """The diagnostic an inversion otherwise discards."""
 

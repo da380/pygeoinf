@@ -831,6 +831,35 @@ class IterativeSolver(LinearSolver):
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         preconditioner = self._resolve_preconditioner(operator)
+        solve_fn = self._solve_fn(operator, preconditioner)
+
+        # The adjoint system ``A* w == x`` is preconditioned by ``P*``, from
+        # the *same* resolved ``P``. Left to the generic route, the adjoint
+        # inverse was built by handing ``A*`` back to this solver, which
+        # preconditioned it with ``P`` itself -- the right answer, reached
+        # slowly (an exact ``P == A^-1`` took 13 iterations on ``A*`` instead
+        # of one) -- and, for a deferred direct preconditioner, factorised
+        # ``A*`` a second time when ``P*`` was one transposed solve away.
+        adjoint_solve_fn = None
+        if preconditioner is not None:
+            adjoint_solve = None
+
+            def adjoint_solve_fn(x, w0):
+                nonlocal adjoint_solve
+                if adjoint_solve is None:
+                    adjoint_solve = self._solve_fn(
+                        operator.adjoint, preconditioner.adjoint
+                    )
+                return adjoint_solve(x, w0)
+
+        return InverseOperator(
+            operator, self, solve_fn, adjoint_solve_fn=adjoint_solve_fn
+        )
+
+    def _solve_fn(
+        self, operator: LinearOperator, preconditioner: LinearOperator | None
+    ) -> Callable[[Any, Any | None], SolveResult]:
+        """``(y, x0) -> SolveResult`` for one operator and its preconditioner."""
         viewed = self._viewed(operator, preconditioner)
 
         def solve_fn(y, x0):
@@ -858,7 +887,7 @@ class IterativeSolver(LinearSolver):
                 )
             )
 
-        return InverseOperator(operator, self, solve_fn)
+        return solve_fn
 
     def _viewed(
         self, operator: LinearOperator, preconditioner: LinearOperator | None
