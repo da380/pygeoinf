@@ -58,7 +58,13 @@ print()
 L = Lebesgue(32, radius=2.0)
 one = L.project_function(lambda point: 1.0)
 a, b = sources[0], stations[0]
-print("path average of 1: ", L.path_average_operator([(a, b)], count=12)(one)[0])
+# unsafe: on L2 a path integral is not a bounded functional (it needs order
+# above one half on a surface) and the library refuses it; on the constant
+# field the quadrature is still exact, which is all this calibration checks.
+print(
+    "path average of 1: ",
+    L.path_average_operator([(a, b)], count=12, unsafe=True)(one)[0],
+)
 print("cap average of 1:  ", L.geodesic_ball_average_operator([a], 0.15)(one)[0])
 print()
 

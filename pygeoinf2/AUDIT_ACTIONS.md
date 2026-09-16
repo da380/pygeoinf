@@ -16,7 +16,7 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 - [x] `operator_log` has no floor on Ritz values — **restored**, generalised: both Lanczos kernels now hold Ritz values to the claimed spectrum (floor at 0 for semidefinite, `eps·λmax` for definite), and refuse a meaningfully negative one as a false claim. Triggered by formed `L L*` covariances, which also broke `sqrt` and fractional powers and every stochastic log-determinant. DESIGN §39.
 - [x] CG lost its non-finite breakdown checks — **restored**, and for every iterative solver: a non-finite residual is refused at once in the shared per-step hook, regardless of `strict`; CG also refuses `(r, P r) <= 0`. Before, a NaN ran to the iteration cap (800 applications at dim 400) and under `strict=False` came back as a NaN answer. DESIGN §40.
 - [x] `apply_operator_function` caps at 50 iterations with `rtol=1e-10` — **restored** v1's dimension cap and kept v2's tolerance: measured, the cap of 50 never let the tolerance be met (50 applications always; 1e-3 to 1e-1 error on hard spectra, silently), v1's `1e-3` delivered 1e-2, and `1e-8` delivered 1e-6. Same for the quadratic form and `OperatorFunction`. DESIGN §41.
-- [ ] path operators bypass the Sobolev-order guard
+- [x] path operators bypass the Sobolev-order guard — **restored**, with the right threshold: a path integral needs order above `(d-1)/2` (one half on a surface, measured: the representer diverges at and below it), not point evaluation's `d/2` that v1 used; `unsafe=True` on both path methods. Ball averages need no order and keep their bypass. DESIGN §42.
 - [ ] `StrongWolfeLineSearch._zoom` is pure bisection
 - [ ] `LevelBundleMethod`: serious/null step test, QP warm start, λ bounding box
 - [ ] `ProximalBundleMethod`: exact QP backend replaced by projected gradient with a residual floor
@@ -27,7 +27,22 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 - [ ] circle/torus `geodesic_distance` and `project_function` take physical coordinates, not angles
 - [ ] `degree_multiplicity` at the Nyquist degree (1 in v2, 2 in v1; Dan's v1 fix branch says 1 is right)
 
-## 3. Lost capabilities with an obvious home (§0.2)
+## 3. Dense-by-default regressions (§0.3), in the audit's order of likely pain
+
+Moved ahead of the lost capabilities on 2026-09-16: these bear directly on the
+matrix-free aim and the audit ranks the first six as the ones most likely to
+bite on a real problem; the small restorations below matter less in practice.
+
+- [ ] `with_sparse_approximation` forms the dense covariance first
+- [ ] `nuclear_norm` / `hilbert_schmidt_norm` default dense; correlated invariant measures assemble the block matrix
+- [ ] `credible_set` without a precision goes O(N³); `ambient_ball(method='auto')` picks dense `eigh`
+- [ ] `FeasibleProperty.is_feasible` does a dense `eigh`
+- [ ] `l2_products_operator` stacks a dense matrix; low-rank factors stored as dense blocks
+- [ ] `LinearGaussianInversion` factorises at construction; `normal_log_determinant` forms dense Galerkin matrices
+- [ ] `Ellipsoid.project` factorises the dense Galerkin matrix every Newton step
+- [ ] `DiagonalMetricSpace.gram_matrix()` probes a dense array; `MassWeightedSpace.mass_inverse` defaults to CG
+
+## 4. Lost capabilities with an obvious home (§0.2)
 
 - [ ] 4. `SolutionTrackingCallback`: the solver callback cannot see the iterate
 - [ ] 3. `HalfSpace` support function raises
@@ -41,17 +56,6 @@ Baseline on 2026-09-16: 2454 passing in the fast suite.
 - [ ] 5. `weakened_ellipsoid`, Cameron–Martin credible set, `sample_pointwise_variance`, KKT push-forward precision
 - [ ] 10. `LinearOperator.matrix(dense=False)` scipy bridge
 - [ ] 6. `random_domain_points`, the `extend` grid option
-
-## 4. Dense-by-default regressions (§0.3), in the audit's order of likely pain
-
-- [ ] `with_sparse_approximation` forms the dense covariance first
-- [ ] `nuclear_norm` / `hilbert_schmidt_norm` default dense; correlated invariant measures assemble the block matrix
-- [ ] `credible_set` without a precision goes O(N³); `ambient_ball(method='auto')` picks dense `eigh`
-- [ ] `FeasibleProperty.is_feasible` does a dense `eigh`
-- [ ] `l2_products_operator` stacks a dense matrix; low-rank factors stored as dense blocks
-- [ ] `LinearGaussianInversion` factorises at construction; `normal_log_determinant` forms dense Galerkin matrices
-- [ ] `Ellipsoid.project` factorises the dense Galerkin matrix every Newton step
-- [ ] `DiagonalMetricSpace.gram_matrix()` probes a dense array; `MassWeightedSpace.mass_inverse` defaults to CG
 
 ## 5. Lost knobs (§0.3)
 

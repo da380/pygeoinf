@@ -234,7 +234,9 @@ class TestAverages:
     def test_the_path_average_of_one_is_one(self, lebesgue, rng):
         one = lebesgue.project_function(lambda point: 1.0)
         a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
-        A = lebesgue.path_average_operator([(a, b)], count=12)
+        # unsafe: L2 on a sphere admits no path integral (see TestPathGuard);
+        # this checks the quadrature's normalisation on a smooth field.
+        A = lebesgue.path_average_operator([(a, b)], count=12, unsafe=True)
         assert A(one)[0] == pytest.approx(1.0)
 
     def test_the_path_integral_of_one_is_the_arc_length(self, lebesgue, rng):
@@ -243,7 +245,7 @@ class TestAverages:
         exactly this while calling it an average."""
         one = lebesgue.project_function(lambda point: 1.0)
         a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
-        A = lebesgue.path_integral_operator([(a, b)], count=12)
+        A = lebesgue.path_integral_operator([(a, b)], count=12, unsafe=True)
         assert A(one)[0] == pytest.approx(lebesgue.geodesic_distance(a, b))
 
     def test_the_node_count_follows_the_length_scale(self, rng):
@@ -273,9 +275,9 @@ class TestAverages:
         field being solved for."""
         one = lebesgue.project_function(lambda point: 1.0)
         a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
-        plain = lebesgue.path_integral_operator([(a, b)], count=12)
+        plain = lebesgue.path_integral_operator([(a, b)], count=12, unsafe=True)
         doubled = lebesgue.path_integral_operator(
-            [(a, b)], count=12, weight=lambda point: 2.0
+            [(a, b)], count=12, weight=lambda point: 2.0, unsafe=True
         )
         assert doubled(one)[0] == pytest.approx(2.0 * plain(one)[0])
 
@@ -303,6 +305,76 @@ class TestAverages:
     def test_an_empty_set_of_paths_is_refused(self, space):
         with pytest.raises(ValueError, match="At least one path"):
             space.path_average_operator([])
+
+
+class TestPathGuard:
+    """A path integral is bounded on ``H^s`` only for ``s > (d - 1) / 2``.
+
+    The trace of an ``H^s`` field on a curve of codimension ``d - 1`` exists
+    for ``s`` above half that codimension, so on a sphere the threshold is
+    one half: a unit weaker than point evaluation's, and one v2 named in a
+    comment and did not check. Measured on a sphere of radius two, the
+    representer norm of one path integral as ``lmax`` doubles from 16 to
+    256: order 0 runs 2.5, 3.5, 5.0, 7.1, 10.0; order 0.5 runs 2.2, 2.7,
+    3.1, 3.5, 3.9; order 0.75 settles at 2.9 and order 1.5 at 1.90. v1
+    guarded path integrals with the point threshold, which is safe and too
+    strict; v2 dropped the guard; this is the right one.
+    """
+
+    def test_the_sphere_refuses_at_and_below_one_half(self, rng):
+        a, b = np.array([10.0, 20.0]), np.array([-30.0, 80.0])
+        for order in (0.25, 0.5):
+            space = Sobolev(16, order, 0.2, radius=RADIUS)
+            with pytest.raises(ValueError, match="order above 0.5"):
+                space.path_integral_operator([(a, b)], count=8)
+            with pytest.raises(ValueError, match="order above 0.5"):
+                space.path_average_operator([(a, b)], count=8)
+        with pytest.raises(ValueError, match="order above 0.5"):
+            Lebesgue(16, radius=RADIUS).path_integral_operator([(a, b)], count=8)
+
+    def test_the_sphere_admits_it_above_one_half(self, rng):
+        a, b = np.array([10.0, 20.0]), np.array([-30.0, 80.0])
+        space = Sobolev(16, 0.75, 0.2, radius=RADIUS)
+        assert space.path_integral_operator([(a, b)], count=8) is not None
+        # And a point evaluation is still refused there, its threshold being one.
+        with pytest.raises(ValueError, match="order above 1"):
+            space.point_evaluation_operator([a])
+
+    def test_unsafe_proceeds(self, lebesgue, rng):
+        a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
+        assert (
+            lebesgue.path_integral_operator([(a, b)], count=8, unsafe=True) is not None
+        )
+
+    def test_a_ball_average_needs_no_order(self, lebesgue, rng):
+        """An average over a set of positive measure is bounded on L2."""
+        centre = lebesgue.random_point(rng=rng)
+        assert (
+            lebesgue.geodesic_ball_average_operator([centre], 0.2 * RADIUS) is not None
+        )
+
+    def test_one_dimension_needs_no_order_either(self):
+        """A path in one dimension has codimension zero: the integral of an
+        L2 function over an interval is bounded."""
+        from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
+
+        space = BoxLebesgue((32,))
+        first, second = (
+            space.random_point(rng=np.random.default_rng(0)),
+            space.random_point(rng=np.random.default_rng(1)),
+        )
+        assert space.path_integral_operator([(first, second)], count=6) is not None
+
+    def test_three_dimensions_need_order_above_one(self):
+        """Codimension two: threshold one, the same as point evaluation in
+        two dimensions."""
+        low = BoxSobolev((8, 8, 8), 1.0, 0.3)
+        rng = np.random.default_rng(0)
+        first, second = low.random_point(rng=rng), low.random_point(rng=rng)
+        with pytest.raises(ValueError, match="order above 1"):
+            low.path_integral_operator([(first, second)], count=4)
+        high = BoxSobolev((8, 8, 8), 1.5, 0.3)
+        assert high.path_integral_operator([(first, second)], count=4) is not None
 
 
 class TestCoefficients:

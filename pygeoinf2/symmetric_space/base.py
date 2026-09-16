@@ -1500,6 +1500,45 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 f"unsafe=True if you want to see that for yourself."
             )
 
+    def _require_path_evaluation(self, what: str, /, *, unsafe: bool) -> None:
+        r"""Refuse a path integral on a space too rough to admit it.
+
+        A path is a curve of codimension ``d - 1``, and the trace of an
+        ``H^s`` field on it exists for ``s > (d - 1) / 2``: one half on a
+        surface, a unit weaker than point evaluation's threshold, nothing at
+        all in one dimension, where every ``L2`` function integrates over an
+        interval. Below it the functional has no representer and the
+        quadrature returns a number with no limit as the truncation rises --
+        measured on a sphere, the representer norm at order zero doubles
+        with every two doublings of ``lmax`` (DESIGN §42).
+
+        v1 guarded this with the point threshold, safe and too strict by
+        half a unit; v2 bypassed the guard with a comment naming the right
+        condition. This is that condition.
+
+        Args:
+            what: the operation, named for the message.
+            unsafe: proceed regardless.
+
+        Raises:
+            ValueError: when the order is at or below the threshold and
+                *unsafe* is not set.
+        """
+        if unsafe or self.spatial_dimension < 2:
+            return
+        threshold = (self.spatial_dimension - 1) / 2.0
+        if self.order <= threshold:
+            raise ValueError(
+                f"{what} needs a Sobolev order above {threshold:g} on a "
+                f"{self.spatial_dimension}-dimensional domain, and this space "
+                f"has order {self.order:g}. At or below that the integral "
+                f"along a curve is not a bounded functional: it has no "
+                f"representer, and the one this would return is a grid-scale "
+                f"artefact with no limit as the truncation rises. Raise the "
+                f"order, or pass unsafe=True if you want to see that for "
+                f"yourself."
+            )
+
     def dirac(self, point: Any, /, *, unsafe: bool = False) -> LinearFunctional:
         """The evaluation functional at a point.
 
@@ -2155,6 +2194,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         dense: bool = False,
         eps: float | None = None,
         nthreads: int | None = None,
+        unsafe: bool = False,
     ) -> LinearOperator:
         """Line integrals along a set of geodesic paths.
 
@@ -2187,13 +2227,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 and when the operator is assembled densely.
             nthreads: threads for that transform; see
                 :meth:`point_evaluation_operator`.
+            unsafe: build it even on a space too rough to admit it; see
+                :meth:`_require_path_evaluation`.
 
         Returns:
             The operator, from this space into a Euclidean space of one entry
             per path.
 
         Raises:
-            ValueError: if no paths are given.
+            ValueError: if no paths are given, or if the order is at or below
+                ``(d - 1) / 2`` and *unsafe* is not set.
         """
         return self._path_operator(
             paths,
@@ -2203,6 +2246,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             normalise=False,
             eps=eps,
             nthreads=nthreads,
+            unsafe=unsafe,
         )
 
     def path_average_operator(
@@ -2215,23 +2259,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         dense: bool = False,
         eps: float | None = None,
         nthreads: int | None = None,
+        unsafe: bool = False,
     ) -> LinearOperator:
         """Averages along a set of geodesic paths.
 
         :meth:`path_integral_operator` divided by each path's length. Use that
         one for a travel time; this one when the quantity of interest is a mean
         property of the material along the ray, independent of how far it goes.
-
-        Args:
-            paths: ``(start, end)`` pairs.
-            count, weight, dense: as for :meth:`path_integral_operator`.
-
-        Returns:
-            The operator.
-
-        Raises:
-            ValueError: if no paths are given, or if a path has zero length and
-                so no average.
 
         Args:
             paths: ``(start, end)`` pairs.
@@ -2242,6 +2276,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             eps: accuracy for the non-uniform FFT behind the point
                 evaluations.
             nthreads: threads for that transform.
+            unsafe: build it even on a space too rough to admit it; see
+                :meth:`_require_path_evaluation`.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if no paths are given, if a path has zero length and
+                so no average, or if the order is at or below ``(d - 1) / 2``
+                and *unsafe* is not set.
         """
         return self._path_operator(
             paths,
@@ -2251,6 +2295,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             normalise=True,
             eps=eps,
             nthreads=nthreads,
+            unsafe=unsafe,
         )
 
     def _path_operator(
@@ -2264,8 +2309,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         normalise: bool,
         eps: float | None = None,
         nthreads: int | None = None,
+        unsafe: bool = False,
     ) -> LinearOperator:
         """The integral or the average, which differ only by a scaling."""
+        self._require_path_evaluation(
+            "A path average" if normalise else "A path integral", unsafe=unsafe
+        )
         paths = tuple(paths)
         if not paths:
             raise ValueError("At least one path is needed.")
@@ -2303,11 +2352,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(paths)), matrix, form="galerkin"
             )
-        # unsafe: as for the ball average, the quadrature samples points but
-        # the functional does not. A path is a *measure-zero* set, though, so
-        # this one is bounded only for order above 1/2 rather than for every
-        # order -- a weaker condition than point evaluation's, and one this
-        # class does not check.
+        # unsafe on the *point* guard: the quadrature samples points but the
+        # functional does not, and its own, weaker condition -- order above
+        # (d - 1) / 2, since a path has measure zero but codimension one less
+        # than a point -- was checked by _require_path_evaluation above.
         return _weight_operator(sparse) @ self.point_evaluation_operator(
             nodes, unsafe=True, eps=eps, nthreads=nthreads
         )

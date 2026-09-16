@@ -5629,3 +5629,46 @@ powers took every parameter from the caller.
 100 stops under 100 applications at 1e-6; at condition 1e4 the answer is
 within 1e-6 where the cap of 50 left it above 1e-4; the quadratic form and
 the operator agree with closed forms at the same conditioning.
+
+## 42. A path integral has its own Sobolev threshold (2026-09-16)
+
+Seventh item from `FUNCTIONALITY_AUDIT.md` §0.3: the path operators bypass
+the Sobolev-order guard with `unsafe=True`. True, and the bypass carried a
+comment naming the correct condition and saying the class does not check
+it. This checks it.
+
+**The mathematics.** Point evaluation is bounded on `H^s` for `s > d/2`
+(**D-11**). A path is a curve of codimension `d - 1`, and the trace of an
+`H^s` field on it exists for `s > (d - 1)/2`: on a sphere, torus or plane
+the threshold is one half, a unit weaker than point evaluation's; in one
+dimension it is zero, and every `L2` function integrates over an interval;
+in three dimensions it is one. An average over a geodesic ball is an
+integral against an `L2` indicator and needs no order at all, which is why
+the ball average keeps its bypass.
+
+**Measured.** The representer norm of one path integral on a sphere of
+radius two as `lmax` doubles from 16 to 256:
+
+```
+order   0.0    0.25   0.5    0.75   1.5
+lmax 16  2.51   2.33   2.18   2.05   1.75
+    256  9.99   5.88   3.88   2.89   1.90
+```
+
+Orders 0 and 0.25 grow without bound, 0.5 grows logarithmically, which is
+the critical case, 0.75 converges slowly and 1.5 has converged. The
+threshold is where the theory puts it.
+
+**v1 and v2.** v1 guarded `geodesic_integral` with the point threshold
+`d/2`: safe, and too strict by half a unit, refusing the order-0.75 sphere
+that admits a path integral. v2 removed the guard, so `L2` on a sphere,
+the first space a tutorial builds, took a path integral without comment
+and returned a number with no limit. Neither is right; the guard now has
+the threshold the trace theorem gives, with `unsafe=True` on both path
+methods, as on point evaluation, for seeing the divergence oneself.
+
+**What changed elsewhere.** Four tests and one example calibrated the
+quadrature on `L2` by integrating the constant one, which the quadrature
+does exactly whatever the order. They pass `unsafe=True` and say why.
+Every parity geometry is order two and every tomography example order 1.5
+or above, so nothing else was touched.

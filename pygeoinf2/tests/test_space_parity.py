@@ -127,7 +127,12 @@ class TestEveryGeometryHasTheGeometry:
         middle = space.geodesic_quadrature(first, second, count=3)[0]
         start, end = middle[0], middle[-1]
 
-        operator = lebesgue.path_integral_operator([(start, end)], count=40)
+        # unsafe: on a surface L2 admits no path integral and the library
+        # refuses it; the quadrature of the constant is exact regardless,
+        # which is what this identity checks.
+        operator = lebesgue.path_integral_operator(
+            [(start, end)], count=40, unsafe=True
+        )
         assert operator(one)[0] == pytest.approx(
             lebesgue.geodesic_distance(start, end), rel=2e-2
         )
