@@ -35,7 +35,7 @@ bite on a real problem; the small restorations below matter less in practice.
 
 - [x] `with_sparse_approximation` forms the dense covariance first — **restored** as an operator: `numerics.sparse_approximation` probes columns matrix-free with v1's correlation criterion and cap, sharing the thresholded preconditioner's assembly; `GaussianMeasure.sparse_covariance` delegates; the measure-returning method is gone. DESIGN §47.
 - [x] `nuclear_norm` / `hilbert_schmidt_norm` default dense; correlated invariant measures assemble the block matrix — **restored**: `auto` is exact and matrix-free (spectrum, spectral slices, stored matrix, or probed diagonal in linear memory); `dense` is opt-in. KL's refusal above `dense_limit` kept as D-8. DESIGN §48.
-- [ ] `credible_set` without a precision goes O(N³); `ambient_ball(method='auto')` picks dense `eigh`
+- [x] `credible_set` without a precision goes O(N³); `ambient_ball(method='auto')` picks dense `eigh` — credible set **restored** matrix-free: the precision is the covariance's inverse through a solver (CG by default, a direct solver by name); ambient ball **kept**, the dense route being cheaper than sampling at its limit and exact. DESIGN §49.
 - [ ] `FeasibleProperty.is_feasible` does a dense `eigh`
 - [ ] `l2_products_operator` stacks a dense matrix; low-rank factors stored as dense blocks
 - [ ] `LinearGaussianInversion` factorises at construction; `normal_log_determinant` forms dense Galerkin matrices

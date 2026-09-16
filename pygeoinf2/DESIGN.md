@@ -5982,3 +5982,69 @@ exactly, at ``N`` and ``2N`` applications; a matrix-built covariance is
 read without a second assembly; a correlated measure's norms agree with
 the dense ones and with the slice formulas, with `matrix()` patched to
 raise throughout.
+
+## 49. A credible set inverts through a solver (2026-09-16)
+
+Third of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3: `credible_set` without a precision forms the dense Galerkin matrix
+and inverts it, ``O(N^3)``; and `ambient_ball(method="auto")` picks a
+dense generalised eigendecomposition where v1 picked a randomised
+spectrum or sampling.
+
+**The credible set.** An ellipsoid is defined by a precision. v1 read
+`inverse_covariance` and raised when there was none. The port inverted
+the Galerkin matrix densely -- and had to correct the result by two
+factors of the Gram matrix, because the inverse of ``G C_c`` is not the
+Galerkin matrix of ``C^-1``; the uncorrected set covered 46 per cent of
+its nominal 90 on a weighted space. That is the tell: a metric that has
+to be patched in by hand is one the construction got wrong. The
+covariance's inverse *through a solver* is an operator in the space's
+own metric by construction, and it is what the library uses for a
+precision everywhere else. So a measure with only a covariance now gets
+its ellipsoid's precision from `resolve_solver`, conjugate gradients by
+default: nothing is assembled, and each membership test or support
+value costs one solve, which is what the question costs on a space too
+large to invert. A direct solver passed by name factorises once, and is
+the dense route. The two library callers, `consistency_set` and the
+Backus hardening, act on the data-space error measure, which nearly
+always carries a precision and is unaffected.
+
+**The ambient ball, kept.** Its radius is a quantile of the weighted
+chi-squared with the covariance's eigenvalues as weights. ``"auto"``
+reads a diagonal spectrum first, which is the common case on a symmetric
+space; otherwise, below `dense_limit` (1024), it takes the dense
+generalised eigenproblem, and above it samples, then falls to a
+randomised spectrum if a rank was given. The audit reads the dense step
+as a regression from v1's sampling. Measured on a dense covariance:
+
+```
+dim    dense eigh   sampling, 10 000 draws
+ 256      0.52 s        0.16 s
+1024      0.28 s        0.60 s
+```
+
+At the limit the dense route is the cheaper of the two, both are
+sub-second, and only the dense one is exact: sampling gives an order
+statistic. Two matrices at 1024 are 16 MB. The order stands.
+
+**Checked.** On a Euclidean, a weighted and a dense-metric space a
+factor-only measure's credible set is built with `matrix()` patched to
+raise, carries an `InverseOperator` as its precision, and covers 90 per
+cent of 2000 draws to within three; the region from a Cholesky solver
+agrees with it point by point.
+
+**A caution, recorded (David, 2026-09-16).** A default keyed on dimension
+forgets that an application can be expensive. The dense routes here cost
+``dim`` applications of the covariance, and a covariance that applies a
+PDE solve or a spherical transform is not cheap at 1024, whatever the
+matrix's size. The typical use of these methods is on a data space that
+really is finite-dimensional with a non-singular covariance, and for a
+prior bound on the model space the ambient ball is the natural object,
+so the limits do no harm today; but two patterns exist in the code and
+only one of them respects the caution. `log_determinant` takes the dense
+route only if the operator can hand its matrix over, or if probing it
+costs no more applications than the stochastic route's own budget of
+``samples * max_iterations`` -- a comparison of application counts.
+`kl_divergence` (4000) and `ambient_ball` (1024) compare the dimension
+alone. Nothing is changed by this note; it says which pattern to copy if
+one of the dimension-keyed limits ever bites.

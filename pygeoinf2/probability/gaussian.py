@@ -1414,7 +1414,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             self._require_covariance("A sparse approximation"), **options
         )
 
-    def credible_set(self, /, *, level: float = 0.95) -> "Ellipsoid":
+    def credible_set(
+        self, /, *, level: float = 0.95, solver: Any = None
+    ) -> "Ellipsoid":
         """The region carrying a given share of the probability, as a set.
 
         The **hardening** of DESIGN.md section 18.1: a measure becomes a set at
@@ -1423,15 +1425,28 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         came from — which is why it is a named step rather than something a
         constructor does quietly.
 
+        An ellipsoid is defined by a precision. A measure that has one uses
+        it. A measure with only a covariance gets one as the covariance's
+        inverse *through a solver*, conjugate gradients by default: nothing is
+        assembled, and each membership test or support value then costs one
+        solve, which is what the question costs on a space too large to
+        invert. Pass a direct solver, ``CholeskySolver()``, to factorise the
+        covariance once on a space small enough to hold it; that is the dense
+        route, and it is taken only by name. It used to be taken silently,
+        with an ``O(N^3)`` inverse of the Galerkin matrix (DESIGN §49).
+
         Args:
             level: the probability the region carries, in ``(0, 1)``.
+            solver: how to invert the covariance when the measure has no
+                precision -- a linear solver, or a callable taking the
+                covariance and returning one. Ignored when a precision exists.
 
         Returns:
             The credible ellipsoid.
 
         Raises:
-            ValueError: for a level outside ``(0, 1)``, or a measure with no
-                covariance.
+            ValueError: for a level outside ``(0, 1)``, or a measure with
+                neither a precision nor a covariance.
         """
         from scipy.stats import chi2
 
@@ -1448,26 +1463,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             precision = self._precision * (1.0 / threshold)
         else:
             # A measure built from a covariance alone has no precision, and an
-            # ellipsoid is defined by one. Inverting densely is the only thing
-            # that can be done without being told how, and it is what a caller
-            # would otherwise have to write.
-            from ..algebra.operators import LinearOperator as _LinearOperator
+            # ellipsoid is defined by one: the covariance's inverse, through
+            # a solver, is an operator in the space's own metric -- which is
+            # what a dense inverse of the Galerkin matrix was not, until it
+            # was corrected by two factors of G, and what a solver gets right
+            # by construction.
+            from ..numerics.solvers import resolve_solver
 
-            require_coordinates(self._domain)
-            # The Galerkin matrix of C^-1 is G C_c^-1 == G C_gal^-1 G, not
-            # C_gal^-1: inverting the Galerkin matrix gives C_c^-1 G^-1, which
-            # is the component matrix of something else entirely. On an
-            # orthonormal basis the two coincide, and the resulting credible
-            # set covered 46% of its nominal 90% on a weighted one.
-            gram = self._domain.gram_matrix()
-            galerkin = gram @ np.linalg.solve(covariance.matrix(form="galerkin"), gram)
-            precision = _LinearOperator.from_matrix(
-                self._domain,
-                self._domain,
-                0.5 * (galerkin + galerkin.T),
-                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
-                form="galerkin",
+            definite = self._require_covariance("A credible set").with_traits(
+                Traits.POSITIVE_DEFINITE
             )
+            precision = resolve_solver(solver, definite)(definite) * (1.0 / threshold)
         return Ellipsoid(
             self.domain,
             precision,

@@ -1066,6 +1066,48 @@ class TestHardening:
                 )
                 assert covered == pytest.approx(level, abs=0.03)
 
+    def test_a_measure_without_a_precision_gets_one_through_a_solver(
+        self, rng, monkeypatch
+    ):
+        """No dense inverse: the covariance is inverted by conjugate gradients
+        as an operator in the space's metric, so nothing is assembled and the
+        set still covers what it claims on every metric. A direct solver,
+        passed by name, factorises once and gives the same region."""
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        for space in (
+            EuclideanSpace(4),
+            make_weighted_space(),
+            make_dense_metric_space(),
+        ):
+            root = rng.normal(size=(space.dim, space.dim)) + 2.0 * np.identity(
+                space.dim
+            )
+            factor = LinearOperator.from_matrix(
+                EuclideanSpace(space.dim), space, root, form="components"
+            )
+            measure = GaussianMeasure(space, covariance_factor=factor)
+            assert measure.precision is None
+
+            with monkeypatch.context() as patched:
+                patched.setattr(
+                    LinearOperator,
+                    "matrix",
+                    lambda *a, **k: (_ for _ in ()).throw(AssertionError("dense")),
+                )
+                region = measure.credible_set(level=0.9)
+                covered = np.mean(
+                    [region.contains(measure.sample(rng=rng)) for _ in range(2000)]
+                )
+            assert covered == pytest.approx(0.9, abs=0.03)
+
+            direct = measure.credible_set(level=0.9, solver=CholeskySolver())
+            for _ in range(20):
+                point = space.add(
+                    measure.expectation, space.scale(2.0, space.white_noise(rng=rng))
+                )
+                assert direct.contains(point) == region.contains(point)
+
     def test_an_ambient_ball_covers_what_it_claims(self, measures, rng):
         for space, measure in measures:
             ball = measure.ambient_ball(level=0.9)
