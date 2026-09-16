@@ -2411,7 +2411,11 @@ class AffineOperator[X, Y](Operator[X, Y]):
     string-based type check v1 uses in ``LinearOperator.__add__``.
     """
 
-    def __init__(self, linear_part: LinearOperator[X, Y], translation: Y) -> None:
+    def __init__(
+        self,
+        linear_part: LinearOperator[X, Y],
+        translation: "Y | Callable[[], Y]",
+    ) -> None:
         super().__init__(linear_part.domain, linear_part.codomain)
         self._linear_part = linear_part
         self._translation = translation
@@ -2424,6 +2428,11 @@ class AffineOperator[X, Y](Operator[X, Y]):
     @property
     def translation(self) -> Y:
         """The translation ``b``."""
+        # A translation may be given as a thunk and is then computed on the
+        # first request and kept: an inversion's constant term is one solve,
+        # and building the estimator must not pay for it (DESIGN §52).
+        if callable(self._translation):
+            self._translation = self._translation()
         return self._translation
 
     @property
@@ -2432,7 +2441,7 @@ class AffineOperator[X, Y](Operator[X, Y]):
         return True
 
     def _value(self, x: X) -> Y:
-        return self.codomain.add(self._linear_part(x), self._translation)
+        return self.codomain.add(self._linear_part(x), self.translation)
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
         return self._linear_part
@@ -2446,10 +2455,10 @@ class AffineOperator[X, Y](Operator[X, Y]):
         if isinstance(other, AffineOperator):
             return AffineOperator(
                 self._linear_part + other.linear_part,
-                self.codomain.add(self._translation, other.translation),
+                self.codomain.add(self.translation, other.translation),
             )
         if isinstance(other, LinearOperator):
-            return AffineOperator(self._linear_part + other, self._translation)
+            return AffineOperator(self._linear_part + other, self.translation)
         return None
 
     def _combine_radd(self, other: Operator) -> Operator | None:
@@ -2457,19 +2466,19 @@ class AffineOperator[X, Y](Operator[X, Y]):
 
     def _combine_scale(self, alpha: float) -> Operator | None:
         return AffineOperator(
-            self._linear_part * alpha, self.codomain.scale(alpha, self._translation)
+            self._linear_part * alpha, self.codomain.scale(alpha, self.translation)
         )
 
     def _combine_compose(self, other: Operator) -> Operator | None:
         """``self @ other`` with ``other`` linear stays affine."""
         if isinstance(other, LinearOperator):
-            return AffineOperator(self._linear_part @ other, self._translation)
+            return AffineOperator(self._linear_part @ other, self.translation)
         return None
 
     def _combine_rcompose(self, other: Operator) -> Operator | None:
         """``other @ self`` with ``other`` linear stays affine."""
         if isinstance(other, LinearOperator):
-            return AffineOperator(other @ self._linear_part, other(self._translation))
+            return AffineOperator(other @ self._linear_part, other(self.translation))
         return None
 
     def __repr__(self) -> str:

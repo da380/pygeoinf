@@ -249,8 +249,10 @@ class TestCoordinateFreedom:
     def test_the_direct_solvers_do_need_coordinates(self, strict_problem):
         """The negative control: this split is real, not decorative."""
         _, A, _ = strict_problem
+        # The refusal comes at the first solve, where the matrix is extracted;
+        # building the inverse is free and touches no components.
         with pytest.raises(NoCoordinatesError):
-            CholeskySolver()(A)
+            CholeskySolver()(A)(A.domain.zero())
 
 
 class TestInverseOperator:
@@ -501,9 +503,12 @@ class TestDirectInverseAdjoint:
 
         operator = LinearOperator.from_callables(space, space, value, adjoint=adjoint)
         inverse = LUSolver()(operator)
+        # The extraction happens at the first solve, so make one; what is
+        # being tested is that the adjoint then adds nothing.
+        probe = rng.normal(size=50)
+        inverse(probe)
 
         applications = 0
-        probe = rng.normal(size=50)
         recovered = inverse.adjoint(probe)
         assert applications == 0
         # Second path, which used to build its own inverse.
@@ -584,6 +589,54 @@ class TestIterativeInverseAdjoint:
         recovered = operator.adjoint(inverse.adjoint(probe))
         assert factorisations == 1
         assert space.norm(space.subtract(recovered, probe)) < 1e-8 * space.norm(probe)
+
+
+class TestADirectSolverFactorisesOnFirstUse:
+    """``solver(A)`` is free; the matrix is extracted and factorised on the
+    first solve and kept. An inversion built with a direct solver used to pay
+    the O(dim) extraction and O(dim^3) factorisation at construction, before
+    anyone applied it -- 0.40 s at dimension 1500 to build an estimator that
+    was then reduced, swept or made a surrogate of. v1 went the other way and
+    factorised inside every posterior call."""
+
+    @pytest.mark.parametrize("Solver", [LUSolver, CholeskySolver, EigenSolver])
+    def test_nothing_happens_until_the_first_solve(self, Solver, rng, monkeypatch):
+        space = EuclideanSpace(20)
+        root = rng.normal(size=(20, 20))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T + 20.0 * np.identity(20),
+            traits=Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        factorisations = []
+        original = Solver._factorise
+        monkeypatch.setattr(
+            Solver,
+            "_factorise",
+            lambda self, m: (factorisations.append(1), original(self, m))[1],
+        )
+        extractions = []
+        matrix = LinearOperator.matrix
+
+        def counting_matrix(self, *args, **kwargs):
+            if self is operator:  # the operator's extraction, not the inverse's own
+                extractions.append(1)
+            return matrix(self, *args, **kwargs)
+
+        monkeypatch.setattr(LinearOperator, "matrix", counting_matrix)
+
+        inverse = Solver()(operator)
+        assert factorisations == [] and extractions == []
+        y = space.random(rng=rng)
+        first = inverse(y)
+        assert len(factorisations) == 1 and len(extractions) == 1
+        inverse(y)
+        inverse.adjoint(y)
+        inverse.matrix()
+        assert len(factorisations) == 1 and len(extractions) == 1
+        assert np.allclose(operator(first), y)
 
 
 class TestProgressCallback:

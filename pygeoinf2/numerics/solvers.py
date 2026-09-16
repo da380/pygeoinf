@@ -443,6 +443,8 @@ class DirectSolver(LinearSolver):
 
     requires_coordinates: ClassVar[bool] = True
     form: ClassVar[str] = "components"
+    transposes: ClassVar[bool] = False
+    """Whether :meth:`_factorise` returns a transposed solve as well."""
 
     def __init__(self, /, *, n_jobs: int | None = None) -> None:
         """
@@ -458,10 +460,24 @@ class DirectSolver(LinearSolver):
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         domain: CoordinateSpace = operator.domain
         codomain: CoordinateSpace = operator.codomain
-        matrix = operator.matrix(form=self.form, n_jobs=self._n_jobs)
-        apply_inverse, apply_transposed = self._factorise(matrix)
+
+        # The matrix is extracted and factorised on the first solve, not
+        # here. ``solver(A)`` is then free, and an inverse that is built and
+        # never applied -- an inversion constructed to be reduced, swept or
+        # made a surrogate of, a preconditioner that is compared but not
+        # used -- costs nothing. Once done it is kept: v1 factorised inside
+        # every posterior call and so paid the O(n^3) step per use, which is
+        # what this deferral must not reintroduce (DESIGN §52).
+        factors: list[_Factors] = []
+
+        def factorised() -> _Factors:
+            if not factors:
+                matrix = operator.matrix(form=self.form, n_jobs=self._n_jobs)
+                factors.append(self._factorise(matrix))
+            return factors[0]
 
         def solve_fn(y, x0):
+            apply_inverse, _ = factorised()
             cy = codomain.to_components(y)
             if self.form == "galerkin":
                 # M c_x == G_Y c_y, since M == G_Y A_c.
@@ -472,6 +488,7 @@ class DirectSolver(LinearSolver):
         def known_matrix(form: str) -> np.ndarray:
             # (A^-1)_c is M^-1 for M the components form, and M^-1 G_Y for M
             # the Galerkin form G_Y A_c: the factors applied to a matrix.
+            apply_inverse, _ = factorised()
             if self.form == "components":
                 inverse = apply_inverse(np.identity(domain.dim))
             else:
@@ -481,15 +498,19 @@ class DirectSolver(LinearSolver):
             return domain.apply_gram_to_columns(inverse)
 
         def components_action(cy: np.ndarray) -> np.ndarray:
+            apply_inverse, _ = factorised()
             if self.form == "galerkin":
                 cy = codomain.apply_gram(cy)
             return apply_inverse(cy)
 
+        # Whether the factorisation will offer a transposed solve is a
+        # property of the solver, known before it runs.
         adjoint_solve_fn = None
         components_adjoint_action = None
-        if apply_transposed is not None:
+        if self.transposes:
 
             def components_adjoint_action(cx: np.ndarray) -> np.ndarray:
+                _, apply_transposed = factorised()
                 cw = apply_transposed(domain.apply_gram(cx))
                 if self.form == "components":
                     cw = codomain.solve_gram(cw)
@@ -500,6 +521,7 @@ class DirectSolver(LinearSolver):
                 # form, A* has component matrix G_X^-1 M^T G_Y, so
                 # c_w == G_Y^-1 M^-T G_X c_x; with M the Galerkin form the
                 # trailing G_Y is already in M and the last solve drops out.
+                _, apply_transposed = factorised()
                 cx = domain.apply_gram(domain.to_components(x))
                 cw = apply_transposed(cx)
                 if self.form == "components":
@@ -539,6 +561,7 @@ class LUSolver(DirectSolver):
     """LU factorisation. Makes no structural demands beyond squareness."""
 
     form: ClassVar[str] = "components"
+    transposes: ClassVar[bool] = True
 
     def _factorise(self, matrix: np.ndarray) -> _Factors:
         factor = lu_factor(matrix)

@@ -1007,6 +1007,10 @@ class TestThePosteriorCovarianceAppliesThePriorTwice:
         estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
 
         posterior = estimator.covariance
+        # The direct solver extracts and factorises the normal matrix on its
+        # first use, one application of the prior per data-space column; the
+        # count is of a steady-state action, so make that first use first.
+        posterior(model.random(rng=rng))
         tally.clear()
         posterior(model.random(rng=rng))
         assert len(tally) == 2

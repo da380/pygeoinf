@@ -6156,3 +6156,66 @@ by name, and gives its diagonal without a single application; two
 square known matrices still compose; a sampled low-rank measure's
 nuclear and Hilbert-Schmidt norms match their closed forms with no known
 matrix on the covariance.
+
+## 52. A direct solver factorises on first use (2026-09-16)
+
+Sixth of the dense-by-default regressions in `FUNCTIONALITY_AUDIT.md`
+§0.3, in two halves: `LinearGaussianInversion` with a direct solver
+factorises the normal matrix at construction where v1 was lazy; and
+`normal_log_determinant(method="auto")` forms dense Galerkin matrices.
+
+**What "lazy" meant in v1.** `model_posterior_measure` called
+``solver(normal_operator)`` inside every posterior call. Nothing happened
+at construction, and the ``O(n^3)`` factorisation happened on every use.
+v2 factorised once, at construction, and kept the inverse: the right
+arrangement for repeated use, and the wrong one for an estimator built
+to be reduced, swept, made a surrogate of, or have its normal operator
+read -- which pays for an inverse it never applies. Measured at model
+dimension 3000 and data dimension 1500 with a Cholesky solver:
+construction 0.40 s, of which the surrogate that followed needed none.
+
+**What it does now.** `DirectSolver._invert` extracts the matrix and
+factorises on the *first* solve, and keeps the factors: ``solver(A)`` is
+free, the first application pays once, and every later application,
+adjoint and matrix read shares the result. v1's laziness without v1's
+recomputation. Whether a transposed solve will be available is a
+property of the solver, now declared as `transposes` so the adjoint
+machinery can be set up before the factorisation exists; the LU solver
+has it, Cholesky and eigen do not need it.
+
+That alone did not make construction free, and the trace said why: the
+posterior mean is affine in the data, ``gain(d) + translation``, and the
+translation is ``m_0 - gain(A m_0 + e_0)``, one application of the gain
+-- one solve -- which the constructor performed to build the affine map.
+So `AffineOperator` now accepts its translation as a thunk, resolved once
+on the first request, and the inversion hands it the gain applied to the
+shift as one. The same measurement after both changes: construction
+0.001 s, first call 0.40 s, second call 0.009 s.
+
+Which change helps whom: the default solver is conjugate gradients, whose
+inverse is closures, so the deferred factorisation matters only when a
+direct solver is passed, as the tomography examples do. The deferred
+constant term matters for every solver, but only when the prior or the
+noise has a non-zero mean; with both zero the shift is zero and the
+solve returns at once. Measured with the default solver and a non-zero
+prior mean at data dimension 1500: construction cost 102 forward and
+adjoint applications before, one after, with the first call unchanged
+at 104.
+
+**The log-determinant, kept.** `normal_log_determinant` delegates to
+`log_determinant`, whose automatic route is the one in this library that
+already counts applications: dense only below `dense_limit` *and* only
+if the matrix can be read off the operator or probing it costs no more
+applications than the stochastic route's own budget of
+``samples * max_iterations``. The data-space normal operator
+``A Q A* + R`` is readable whenever ``A`` holds its matrix, since §51's
+rule lets a product that does not expand be known, and in the
+model-space formalism the extra ``log det Q`` and ``log det R`` take the
+exact ``O(dim)`` route for the diagonal covariances they almost always
+are. Nothing here forms a matrix that a cheaper route would have
+avoided. Not changed.
+
+**Checked.** For each direct solver, ``solver(A)`` extracts and
+factorises nothing; the first solve does both once; a second solve, the
+adjoint and a matrix read add nothing; the answer is right. The existing
+once-only factorisation tests pass unchanged.

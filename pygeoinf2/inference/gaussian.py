@@ -116,7 +116,16 @@ class LinearGaussianInversion(GaussianEstimator):
         covariance = normal.posterior_covariance(inverse, gain)
 
         shift = self._data_shift(problem, prior)
-        translation = problem.model_space.subtract(prior.expectation, gain(shift))
+        # The constant term of the posterior mean is one application of the
+        # gain -- one solve -- so it is deferred until the estimator is used.
+        # With a direct solver that solve is the factorisation, and an
+        # estimator built to be reduced, swept or made a surrogate of would
+        # otherwise pay O(n^3) at construction for an inverse it never applies.
+        model_space = problem.model_space
+
+        def translation():
+            return model_space.subtract(prior.expectation, gain(shift))
+
         # The sampler is passed *in* rather than attached on the way out, so
         # that push_forward carries it to the property posterior too.
         super().__init__(
