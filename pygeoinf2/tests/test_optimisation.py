@@ -329,6 +329,51 @@ class TestLineSearches:
         new_slope = space.inner_product(phi.at(result.point).gradient, direction)
         assert abs(new_slope) <= 0.9 * abs(slope)
 
+    def test_the_zoom_interpolates(self, setup):
+        """On a quadratic the interpolant is exact: a step that overshoots the
+        minimiser along the line is followed by one evaluation at the
+        minimiser itself, where the slope is zero and both conditions hold.
+        Bisection needed several halvings to get there. This is what v1 had
+        through SciPy's search, and what the port replaced with bisection."""
+        space, phi, x, model, direction, slope = setup
+        # Put the line minimiser at 0.3 of the unit step, so the unit step
+        # overshoots and the search must zoom. The curvature along the line is
+        # exact by second differences on a quadratic.
+        ahead = phi(space.axpy(1.0, direction, space.copy(x)))
+        behind = phi(space.axpy(-1.0, direction, space.copy(x)))
+        curvature = ahead - 2.0 * model.value + behind
+        minimiser = -slope / curvature
+        scaled = space.scale(minimiser / 0.3, direction)
+        scaled_slope = space.inner_product(model.gradient, scaled)
+
+        result = StrongWolfeLineSearch()(
+            phi, x, scaled, value=model.value, slope=scaled_slope
+        )
+        assert result.converged
+        assert result.step == pytest.approx(0.3, rel=1e-6)
+        # Two: the overshoot and the minimiser. A third would be the wasted
+        # re-evaluation of the bracket's low end that the zoom used to make.
+        assert result.evaluations == 2
+
+    def test_every_evaluation_is_counted_and_none_is_wasted(self, setup):
+        """The count the search reports is the number of times it called the
+        functional, and entering the zoom no longer re-evaluates the end of
+        the bracket the caller already knew."""
+        space, phi, x, model, direction, slope = setup
+        calls = []
+        counted = Functional.from_callables(
+            space,
+            lambda v: (calls.append("value"), phi(v))[1],
+            gradient=lambda v: (calls.append("gradient"), phi.at(v).gradient)[1],
+        )
+        # A direction long enough that the unit step overshoots and zooms.
+        long = space.scale(50.0, direction)
+        result = StrongWolfeLineSearch()(
+            counted, x, long, value=model.value, slope=50.0 * slope
+        )
+        assert result.converged
+        assert result.evaluations == calls.count("value")
+
     def test_the_constants_must_be_ordered(self):
         with pytest.raises(ValueError, match="decrease < curvature"):
             StrongWolfeLineSearch(decrease=0.9, curvature=0.1)

@@ -5672,3 +5672,48 @@ quadrature on `L2` by integrating the constant one, which the quadrature
 does exactly whatever the order. They pass `unsafe=True` and say why.
 Every parity geometry is order two and every tomography example order 1.5
 or above, so nothing else was touched.
+
+## 43. The Wolfe zoom interpolates (2026-09-16)
+
+Eighth item from `FUNCTIONALITY_AUDIT.md` §0.3: `StrongWolfeLineSearch._zoom`
+is pure bisection. True. v1 wrapped SciPy's strong Wolfe search, whose zoom
+takes the minimiser of a cubic through the bracket's ends and the last
+discarded point, or of a quadratic when there is no third point, and
+bisects only where the interpolant is untrustworthy (Nocedal and Wright
+§3.5). The port wrote a native search -- rightly, since SciPy's works in
+components and the native one works in the space's inner product -- and
+sectioned by halving. The audit also found the zoom re-evaluating the
+functional at the bracket's low end on entry, a value the caller had
+already supplied: one wasted evaluation per zooming search.
+
+**Measured**, evaluations to `gtol=1e-8` from the same starts:
+
+```
+                             bisection   interpolation
+Rosenbrock, nonlinear CG        224           113
+Rosenbrock, L-BFGS               74            62
+quadratic 60-D cond 1e2, CG     426           201
+quadratic 60-D cond 1e4, CG    4321          2013
+quadratic 60-D cond 1e4, LBFGS  907           870
+```
+
+The saving lands where the search zooms: nonlinear CG, whose curvature
+constant of 0.1 sends most searches into the zoom, halves its
+evaluations; L-BFGS, whose unit step is usually accepted outright, barely
+moves. Iteration counts and answers are the same to the tolerance.
+
+**What it does now.** The zoom takes the bracket's end values and the
+slope at its low end from the bracketing phase, so nothing is
+re-evaluated on entry, and picks each trial as the cubic minimiser through
+the ends and the most recently discarded point, the quadratic minimiser
+through the ends when there is no third point, or the midpoint when the
+interpolant's minimiser lies within a fifth (cubic) or a tenth (quadratic)
+of the bracket of either end. On a quadratic the interpolant is exact, so
+a unit step that overshoots is followed by one evaluation at the line
+minimiser itself. The bracketing phase is unchanged.
+
+**Checked.** On the SPD fixture with the line minimiser placed at 0.3 of
+the unit step, the search converges to it in at most three evaluations;
+the evaluation count reported equals the number of calls made to the
+functional; the existing strong Wolfe, model hand-back and optimiser
+tests pass unchanged.
