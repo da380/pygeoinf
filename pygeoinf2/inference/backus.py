@@ -469,6 +469,10 @@ class _ClosedFormRoute(SetEstimator):
         """
         return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
 
+    def inclusion_level(self, value: Any, data: Any, /) -> float:
+        """The prior's level function at the fitting model: the inclusion norm squared."""
+        return self.inclusion_norm(value, data) ** 2
+
     def push_forward(self, operator: LinearOperator, /) -> "_ClosedFormRoute":
         """The same inference about a further property of the model."""
         return _ClosedFormRoute(
@@ -1132,6 +1136,16 @@ class _BisectionRoute(SetEstimator):
         """
         return self.inclusion_norm(value, data) <= self._prior.scale * (1.0 + rtol)
 
+    def inclusion_level(self, value: Any, data: Any, /) -> float:
+        """The prior's level function at the fitting model.
+
+        The inclusion norm is reported in the prior's units, a ball's radius
+        or an ellipsoid's one, so the level function -- the squared distance
+        against the squared radius, the Mahalanobis form against one -- is
+        its square.
+        """
+        return self.inclusion_norm(value, data) ** 2
+
     def push_forward(self, operator: LinearOperator, /) -> "_BisectionRoute":
         """The same inference about a further property."""
         return _BisectionRoute(
@@ -1670,82 +1684,51 @@ class _DualRoute(SetEstimator):
 # --------------------------------------------------------------------- #
 
 
-def _likelihood_of(noise: ConvexSet) -> tuple[Functional, float]:
-    """A confidence set read as ``{ v : l(v) <= level }``.
+def _level_function_of(subset: Any, name: str) -> tuple[Functional, float]:
+    """A set read as ``{ x : f(x) <= level }`` with ``f`` convex and differentiable.
 
-    The form Al-Attar (2021) §3.3 works in, with ``l`` convex and
-    differentiable. A ball is the squared distance to its centre at the
-    squared radius; an ellipsoid its Mahalanobis form at one; a sublevel set
-    is already in the form. Any other set has no ``l`` to write down.
+    The form Al-Attar (2021) §3.3 works in: a ball is the squared distance
+    to its centre at the squared radius, an ellipsoid its Mahalanobis form at
+    one, a sublevel set is already in the form, and any convex set that
+    declares a level function supplies its own.
     """
-    space = noise.domain
-    if isinstance(noise, Ball):
-        centre = noise.centre
-
-        def value(v: Any) -> float:
-            return space.squared_norm(space.subtract(v, centre))
-
-        def gradient(v: Any) -> Any:
-            return space.scale(2.0, space.subtract(v, centre))
-
-        def hessian(v: Any) -> LinearOperator:
-            return (LinearOperator.identity(space) * 2.0).with_traits(
-                Traits.POSITIVE_DEFINITE
-            )
-
-        return (
-            Functional.from_callables(space, value, gradient=gradient, hessian=hessian),
-            noise.radius**2,
-        )
-    if isinstance(noise, Ellipsoid):
-        precision, centre = noise.precision, noise.centre
-
-        def value(v: Any) -> float:
-            return noise.mahalanobis_squared(v)
-
-        def gradient(v: Any) -> Any:
-            return space.scale(2.0, precision(space.subtract(v, centre)))
-
-        def hessian(v: Any) -> LinearOperator:
-            return (precision * 2.0).with_traits(Traits.POSITIVE_DEFINITE)
-
-        return (
-            Functional.from_callables(space, value, gradient=gradient, hessian=hessian),
-            1.0,
-        )
-    if isinstance(noise, SublevelSet):
-        return noise.functional, noise.level
+    if isinstance(subset, SublevelSet):
+        return subset.functional, float(subset.level)
+    if getattr(subset, "has_level_function", False):
+        return subset.level_function(), float(subset.level)
     raise TypeError(
-        f"The likelihood route needs the confidence set as a sublevel set of a "
-        f"differentiable convex functional -- a Ball, an Ellipsoid or a "
-        f"SublevelSet -- not a {type(noise).__name__}."
+        f"{name} must be a sublevel set of a differentiable convex functional -- "
+        f"a Ball, an Ellipsoid, a SublevelSet or a set with a level function -- "
+        f"not a {type(subset).__name__}."
     )
 
 
 class _LikelihoodRoute:
-    """Membership of a property value, by Al-Attar (2021) §3.3.
+    """Membership of a property value, by Al-Attar (2021) §3.3, on level functions.
 
-    The confidence set is ``{ v : l(v) <= s^2 }`` for a convex,
-    differentiable ``l``, the negative log-likelihood in the Gaussian case
-    and anything of that shape otherwise. The smallest model that has a
-    given property and fits the data within the set is found by a Lagrange
-    multiplier on the likelihood constraint: for each ``eta > 0`` the
-    convex functional ``||u||^2 / 2 + eta l(v - A u)`` has one minimiser,
-    and by Lemma 3.1 its misfit ``l(v - A u_eta)`` is non-increasing in
-    ``eta``, so the ``eta`` at which it meets ``s^2`` is a monotone scalar
-    root find, the same kernel as the discrepancy principle's. A misfit
-    that never reaches ``s^2`` however large ``eta`` grows is the
-    constructive proof that no model fits at all.
+    Both sets are read as sublevel sets of convex differentiable functionals,
+    the prior's ``f`` at level ``a`` and the confidence set's ``g`` at level
+    ``b``, the negative log-likelihood in the Gaussian case and anything of
+    that shape otherwise. The smallest model, in the prior's own sense, that
+    has a given property and fits the data is found by a Lagrange multiplier
+    on the confidence constraint: for each ``eta > 0`` the convex functional
+    ``f(m) + eta g(d - A m)`` has one minimiser over the models with that
+    property, and its misfit ``g`` is non-increasing in ``eta`` -- Lemma 3.1
+    for a squared norm, and the same monotonicity for any convex ``f`` -- so
+    the ``eta`` at which it meets ``b`` is a monotone scalar root find, the
+    same kernel as the discrepancy principle's. A misfit that never reaches
+    ``b`` however large ``eta`` grows is the constructive proof that no model
+    fits at all. The value is then ``f`` at that model, against ``a``.
 
-    A fixed property confines the model to ``u~ + ker T`` with ``u~`` the
-    minimum-norm model having that property, and the same problem is solved
-    in the kernel by replacing ``A*`` with ``P A*``, eq. (3.28). The norms
-    separate, and the answer is ``sqrt(||u~||^2 + ||u_eta||^2)``.
+    A fixed property confines the model to an affine subspace, ``m~ + ker T``
+    with ``m~`` any model having that property; the minimisation runs over
+    the kernel through its orthogonal projector, which needs no metric of the
+    prior's since the optimiser, not the projector, finds the minimum.
 
     Each probe is one convex minimisation, warm-started from the last. For
-    a quadratic ``l``, a ball or an ellipsoid, that is a linear solve and
-    Newton takes it in a step or two; for a general ``l`` it is Newton or
-    L-BFGS proper, whichever the functional's derivatives allow. Nothing is
+    quadratic ``f`` and ``g``, balls and ellipsoids, that is a linear solve
+    and Newton takes it in a step or two; for general ones it is Newton or
+    L-BFGS proper, whichever the functionals' derivatives allow. Nothing is
     assembled; the operators are only applied.
     """
 
@@ -1753,8 +1736,8 @@ class _LikelihoodRoute:
         self,
         problem: LinearForwardProblem,
         target: LinearOperator,
-        prior: Ball,
-        noise: ConvexSet,
+        prior: Any,
+        noise: Any,
         /,
         *,
         solver: LinearSolver | None = None,
@@ -1766,13 +1749,20 @@ class _LikelihoodRoute:
 
         self._problem = problem
         self._target = target
-        self._radius = _ball_radius(prior, "The prior")
-        self._likelihood, self._level = _likelihood_of(noise)
+        self._prior_set = prior
+        self._prior, self._prior_level = _level_function_of(prior, "The prior")
+        self._likelihood, self._level = _level_function_of(noise, "The confidence set")
         self._solver = solver or CGSolver(rtol=1e-12)
+        self._quadratic_prior = isinstance(prior, (Ball, Ellipsoid))
         if optimiser is None:
+            # The forcing term is tight because for quadratic level functions
+            # one *exact* Newton step is the minimiser: with the inexact
+            # default of 1e-3 the step carried a relative error of a
+            # thousandth into the model, and the value-decrease test then
+            # stopped the iteration there, warm start after warm start.
             optimiser = (
-                NewtonCG(forcing=1e-3, rtol=1e-10, gtol=0.0)
-                if self._likelihood.has_hessian
+                NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
+                if self._likelihood.has_hessian and self._prior.has_hessian
                 else LBFGS(rtol=1e-10, gtol=0.0)
             )
         self._optimiser = optimiser
@@ -1785,18 +1775,21 @@ class _LikelihoodRoute:
 
     @cached_property
     def _property_pseudo_inverse(self) -> LinearOperator:
-        """``T* (T T*)^-1``: the smallest model with a given property."""
+        """``T* (T T*)^-1``: some model with a given property, to start from."""
         normal = (self._target @ self._target.adjoint).with_traits(
             Traits.POSITIVE_DEFINITE
         )
         return self._target.adjoint @ CholeskySolver()(normal)
 
     def _objective(
-        self, base: Any, projector: LinearOperator, multiplier: float | None
+        self,
+        anchor: Any,
+        projector: LinearOperator,
+        multiplier: float | None,
     ) -> Functional:
-        """``||u||^2 / 2 + eta l(base - A P u)`` on the model space.
+        """``f(anchor + P v) + eta g(d - A (anchor + P v))`` over ``v``.
 
-        With ``multiplier=None`` the norm term is dropped and this is the
+        With ``multiplier=None`` the prior term is dropped and this is the
         misfit alone, whose minimum is the limit the multiplier search
         approaches: eq. (3.15)'s infimum, and the test of whether any model
         reaches the confidence set at all.
@@ -1804,79 +1797,103 @@ class _LikelihoodRoute:
         space = self._problem.model_space
         data_space = self._problem.data_space
         forward = self._problem.forward_operator
-        likelihood = self._likelihood
+        prior, likelihood = self._prior, self._likelihood
+        base = self._base
 
-        def misfit_point(u: Any) -> Any:
-            return data_space.subtract(base, forward(projector(u)))
+        def model_of(v: Any) -> Any:
+            return space.add(anchor, projector(v))
 
-        def value(u: Any) -> float:
-            fit = likelihood(misfit_point(u))
+        def misfit_point(m: Any) -> Any:
+            return data_space.subtract(base, forward(m))
+
+        # Scaled by the multiplier: ``f / eta + g`` rather than ``f + eta g``.
+        # The two have the same minimiser, but at a large multiplier the
+        # unscaled objective is dominated by the misfit term and the
+        # optimiser's value-decrease test fires while the prior term is
+        # still moving, which left the fitted misfit 0.8 per cent above the
+        # level on one seed in twenty-five. Scaled, the misfit is order one
+        # throughout and the prior term is what the last decreases are.
+        weight = 1.0 if multiplier is None else 1.0 / multiplier
+
+        def value(v: Any) -> float:
+            m = model_of(v)
+            fit = likelihood(misfit_point(m))
             if multiplier is None:
                 return fit
-            return multiplier * fit + 0.5 * space.squared_norm(u)
+            return weight * prior(m) + fit
 
-        def gradient(u: Any) -> Any:
-            pulled = projector(forward.adjoint(likelihood.gradient(misfit_point(u))))
+        def gradient(v: Any) -> Any:
+            m = model_of(v)
+            pulled = forward.adjoint(likelihood.gradient(misfit_point(m)))
             if multiplier is None:
-                return space.scale(-1.0, pulled)
-            return space.axpy(-multiplier, pulled, space.copy(u))
+                return projector(space.scale(-1.0, pulled))
+            total = space.axpy(-1.0, pulled, space.scale(weight, prior.gradient(m)))
+            return projector(total)
 
         hessian = None
-        if likelihood.has_hessian:
+        if likelihood.has_hessian and (multiplier is None or prior.has_hessian):
 
-            def hessian(u: Any) -> LinearOperator:
-                curvature = likelihood.hessian(misfit_point(u))
+            def hessian(v: Any) -> LinearOperator:
+                m = model_of(v)
+                curvature = likelihood.hessian(misfit_point(m))
                 pulled = projector @ forward.adjoint @ curvature @ forward @ projector
                 if multiplier is None:
                     return pulled.with_traits(Traits.POSITIVE_SEMIDEFINITE)
-                return (
-                    LinearOperator.identity(space) + pulled * multiplier
-                ).with_traits(Traits.POSITIVE_DEFINITE)
+                own = projector @ prior.hessian(m) @ projector
+                return (own * weight + pulled).with_traits(Traits.POSITIVE_SEMIDEFINITE)
 
         return Functional.from_callables(
             space, value, gradient=gradient, hessian=hessian
         )
 
-    def _fit(self, base: Any, projector: LinearOperator) -> Any | None:
-        """The smallest ``u`` in the projector's range with ``l(base - A P u) <= s^2``.
+    def _fit(self, data: Any, anchor: Any, projector: LinearOperator) -> Any | None:
+        """The model ``anchor + P v`` minimising ``f`` with ``g(d - A m) <= b``, or None.
 
-        ``None`` when there is none. Decided in three steps, as the paper's
-        remark after Lemma 3.1 suggests: the misfit's limit as the multiplier
-        grows is the unconstrained minimum of ``l(base - A P u)``, so that is
-        minimised first, from zero, which for a quadratic ``l`` gives the
-        minimum-norm minimiser. A limit above the level proves nothing
-        reaches the set; a limit at the level, to tolerance, makes that
-        minimiser the answer, the root lying at infinity; and a limit below
-        it guarantees a root at a finite multiplier, which the monotone
-        search then brackets without ever needing a multiplier large enough
-        to overflow the Newton system. Searching first and reading
-        exhaustion afterwards, the other way round, widened the multiplier by
-        two hundred decades on an unreachable value and met NaN on the way.
+        Decided in three steps, as the paper's remark after Lemma 3.1
+        suggests: the misfit's limit as the multiplier grows is the
+        unconstrained minimum of ``g(d - A m)`` over the subspace, so that is
+        minimised first. A limit above the level proves nothing reaches the
+        set; a limit at the level, to tolerance, makes that minimiser the
+        answer; and a limit below it guarantees a root at a finite
+        multiplier, which the monotone search then brackets without ever
+        needing a multiplier large enough to overflow the Newton system.
         """
         space = self._problem.model_space
-        data_space = self._problem.data_space
-        forward = self._problem.forward_operator
+        self._base = data
         level = self._level
-
+        start = space.zero()
         limit = self._optimiser.minimise(
-            self._objective(base, projector, None), space.zero()
+            self._objective(anchor, projector, None), start
         )
         floor = float(limit.value)
         if floor > level * (1.0 + self._rtol):
             return None
         if floor >= level * (1.0 - self._rtol):
-            return limit.minimiser
+            return space.add(anchor, projector(limit.minimiser))
 
+        # Every probe starts from zero. Warm-starting each from the last
+        # probe's minimiser -- the obvious saving, and what the first version
+        # did -- returned a misfit 0.7 per cent above the level on one seed
+        # in twenty-five while reporting convergence: Newton-CG from a
+        # nearby point stopped after one step short of the minimiser, the
+        # quantity froze across the closing bracket, and the search closed
+        # on a false root. Cold, a quadratic objective is one exact Newton
+        # step, so the saving was small; the optimiser's stopping rules on
+        # warm starts are an open point recorded in DESIGN §70.
         def probe(multiplier: float, previous: Any) -> Evaluation:
-            start = space.zero() if previous is None else previous
             result = self._optimiser.minimise(
-                self._objective(base, projector, multiplier), start
+                self._objective(anchor, projector, multiplier), start
             )
-            model = result.minimiser
+            v = result.minimiser
+            m = space.add(anchor, projector(v))
             misfit = float(
-                self._likelihood(data_space.subtract(base, forward(projector(model))))
+                self._likelihood(
+                    self._problem.data_space.subtract(
+                        data, self._problem.forward_operator(m)
+                    )
+                )
             )
-            return Evaluation(misfit, model, result.iterations)
+            return Evaluation(misfit, v, result.iterations)
 
         found = monotone_root(
             probe,
@@ -1885,6 +1902,7 @@ class _LikelihoodRoute:
             iterations=self._iterations,
             rtol=self._rtol,
             expansions=40,
+            warm_start=False,
         )
         if found.breakdown is not None:
             raise found.breakdown
@@ -1893,46 +1911,59 @@ class _LikelihoodRoute:
                 "The likelihood route could not bracket its multiplier although "
                 f"the misfit's limit {floor:.3g} lies below the level {level:.3g}."
             )
-        return found.solution
+        return space.add(anchor, projector(found.solution))
 
     def fitting_model(self, data: Any, /) -> Any | None:
-        """The smallest model fitting the data within the confidence set.
+        """The model smallest in the prior's sense that fits the data, or None.
 
-        ``None`` when no model does, eq. (3.15) with an infinite infimum.
-        The prior plays no part: this is the data against the confidence
-        set alone.
+        ``None`` when no model does, eq. (3.15) with an infinite infimum. The
+        prior's *level* plays no part: this is the data against the
+        confidence set alone, minimised in the prior's shape.
         """
         space = self._problem.model_space
         if self._likelihood(data) <= self._level:
-            return space.zero()
-        return self._fit(data, LinearOperator.identity(space))
+            # The zero correction fits; the model nearest the prior's own
+            # minimum among those fitting is found by the search anyway, so
+            # start it: a level exactly met is the search's boundary case.
+            pass
+        return self._fit(data, space.zero(), LinearOperator.identity(space))
 
     def is_feasible(self, data: Any, /) -> bool:
-        """Whether a model within the prior ball fits the data within the set."""
+        """Whether a model within the prior set fits the data within the confidence set."""
         model = self.fitting_model(data)
-        return (
-            model is not None and self._problem.model_space.norm(model) <= self._radius
+        return model is not None and float(self._prior(model)) <= self._prior_level * (
+            1.0 + self._rtol
         )
 
-    def inclusion_norm(self, value: Any, data: Any, /) -> float:
-        """``min { ||m|| : T m == value, l(d - A m) <= s^2 }``.
+    def inclusion_level(self, value: Any, data: Any, /) -> float:
+        """``min { f(m) : T m == value, g(d - A m) <= b }``, the prior's level function.
 
         Infinite when no model reproduces the value and fits the data, which
         is a proof rather than a failure.
         """
-        space = self._problem.model_space
-        data_space = self._problem.data_space
-        forward = self._problem.forward_operator
-
         anchor = self._property_pseudo_inverse(value)
-        anchor_norm = space.norm(anchor)
-        residual = data_space.subtract(data, forward(anchor))
-        if self._likelihood(residual) <= self._level:
-            return float(anchor_norm)
-        correction = self._fit(residual, self._kernel)
-        if correction is None:
+        model = self._fit(data, anchor, self._kernel)
+        if model is None:
             return float("inf")
-        return float(np.sqrt(anchor_norm**2 + space.squared_norm(correction)))
+        return float(self._prior(model))
+
+    def inclusion_norm(self, value: Any, data: Any, /) -> float:
+        """The root of the level function, for a quadratic prior only.
+
+        A ball's level function is the squared distance to its centre and an
+        ellipsoid's the Mahalanobis form, so the root is the model's norm
+        against the radius, or the Mahalanobis root against one.
+
+        Raises:
+            NotImplementedError: for a prior whose level function is not
+                quadratic; use :meth:`inclusion_level`.
+        """
+        if not self._quadratic_prior:
+            raise NotImplementedError(
+                "The inclusion norm is the root of a quadratic prior's level "
+                "function; this prior's is not quadratic. Use inclusion_level()."
+            )
+        return float(np.sqrt(max(self.inclusion_level(value, data), 0.0)))
 
     def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
         """Whether a property value is consistent with the data and the prior.
@@ -1940,17 +1971,12 @@ class _LikelihoodRoute:
         Args:
             value: the property value to test.
             data: the observations.
-            rtol: how far outside the prior radius still counts as admissible.
+            rtol: how far above the prior's level still counts.
 
         Returns:
             Whether the value is admissible.
         """
-        return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
-
-
-# --------------------------------------------------------------------- #
-#                      The one estimator, routes inside                 #
-# --------------------------------------------------------------------- #
+        return self.inclusion_level(value, data) <= self._prior_level * (1.0 + rtol)
 
 
 class _FeasibleSupport(SupportFunction):
@@ -2062,12 +2088,12 @@ class FeasiblePropertySet(ConvexSet):
 
     @property
     def has_support_function(self) -> bool:
-        """Whether :meth:`support_function` is available."""
-        return True
+        """Whether a route computes the support: false for sets known by membership only."""
+        return self._estimator.route is not None
 
     @property
     def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
+        """Whether the route exhibits the maximiser."""
         return self.route in ("closed_form", "bisection")
 
     @property
@@ -2077,7 +2103,12 @@ class FeasiblePropertySet(ConvexSet):
 
     @cached_property
     def _nonempty(self) -> bool:
-        return bool(self._algorithm.is_feasible(self._data))
+        engine = (
+            self._algorithm
+            if self._algorithm is not None
+            else self._estimator._inclusion
+        )
+        return bool(engine.is_feasible(self._data))
 
     def is_empty(self) -> bool:
         """Whether no model within the prior fits the data.
@@ -2097,8 +2128,11 @@ class FeasiblePropertySet(ConvexSet):
 
         Raises:
             ValueError: if the set is empty.
+            NotImplementedError: if no route computes the support -- a set
+                known through its level function only; see
+                :attr:`has_support_function`.
         """
-        route = self.route
+        route = self._need_route("A support value")
         if route == "closed_form":
             return float(self.ellipsoid.support_function()(direction))
         if route in ("bisection", "dual"):
@@ -2106,6 +2140,16 @@ class FeasiblePropertySet(ConvexSet):
         return float(
             self._algorithm.support_values([direction], self._data, route=route)[0]
         )
+
+    def _need_route(self, what: str) -> str:
+        route = self._estimator.route
+        if route is None:
+            raise NotImplementedError(
+                f"{what} needs a route computing the support function, and none "
+                "applies: a set without a support function is known through its "
+                "level function only. Use contains(), extent() and inner_hull()."
+            )
+        return route
 
     def support_values(
         self, directions: Sequence[Any], /, **options: Any
@@ -2240,28 +2284,58 @@ class FeasiblePropertySet(ConvexSet):
 
     @property
     def level(self) -> float:
-        """The level the inclusion norm is bounded by: a ball prior's radius, an ellipsoid's one."""
+        """The prior's level: what :meth:`level_function` is bounded by.
+
+        The general contract: the answer is ``{ p : F(p) <= level }`` with
+        ``F`` the prior's level function at the fitting model, so this is the
+        prior's own level -- a ball's squared radius, an ellipsoid's one, a
+        sublevel set's level.
+        """
         self._inclusion("The level")
         return self._estimator._prior_level
 
     def inclusion_norm(self, value: Any, /) -> float:
-        """``min { ||m|| : T m == value, A m fits the data }``, the cost of a value.
+        """``min { ||m|| : T m == value, A m fits the data }``, in the prior's norm.
 
-        §18.5: a value is admissible exactly when this is within the prior
-        radius. Infinite when no model reproduces the value and fits the
-        data, which is a proof of inadmissibility rather than a failure.
+        The quadratic case's convenience, §18.5: the root of the prior's
+        level function at the fitting model, so for a ball prior the model's
+        norm against the radius and for an ellipsoid the Mahalanobis root
+        against one. Infinite when no model reproduces the value and fits
+        the data. :meth:`inclusion_level` is the general form.
+
+        Raises:
+            NotImplementedError: unless membership can be decided and the
+                prior is a ball or an ellipsoid.
+        """
+        engine = self._inclusion("The inclusion norm")
+        if not hasattr(engine, "inclusion_norm"):
+            raise NotImplementedError(
+                "The inclusion norm is the root of a quadratic prior's level "
+                "function; this prior's is not quadratic. Use inclusion_level()."
+            )
+        return engine.inclusion_norm(value, self._data)
+
+    def inclusion_level(self, value: Any, /) -> float:
+        """The prior's level function at the smallest model with this value fitting the data.
+
+        Admissible exactly when at most :attr:`level`; infinite when no model
+        reproduces the value and fits the data, which is a proof of
+        inadmissibility rather than a failure.
 
         Raises:
             NotImplementedError: unless membership can be decided.
         """
-        return self._inclusion("The inclusion norm").inclusion_norm(value, self._data)
+        return self._inclusion("The inclusion level").inclusion_level(value, self._data)
 
     def admits(self, value: Any, /, *, rtol: float = 1e-8) -> bool:
         """Whether a property value is consistent with the data and the prior.
 
+        The membership characterisation of the set, computed without forming
+        it; it agrees with ``contains``, which calls it.
+
         Args:
             value: the property value to test.
-            rtol: how far outside the prior radius still counts.
+            rtol: how far above the level still counts.
 
         Raises:
             NotImplementedError: unless membership can be decided.
@@ -2283,13 +2357,13 @@ class FeasiblePropertySet(ConvexSet):
         return self.admits(x, rtol=rtol)
 
     def level_function(self) -> Functional:
-        """``p -> inclusion_norm(p)``, whose sublevel set at :attr:`level` is this set.
+        """``p -> inclusion_level(p)``, whose sublevel set at :attr:`level` is this set.
 
-        Convex on the property space (Al-Attar 2021 §2.3): the sublevel-set
-        characterisation, as :meth:`support_function` is the other.
+        The sublevel-set characterisation, as :meth:`support_function` is
+        the other: convex on the property space (Al-Attar 2021 §2.3).
         """
         self._inclusion("The level function")
-        return Functional.from_callables(self.domain, self.inclusion_norm)
+        return Functional.from_callables(self.domain, self.inclusion_level)
 
     def fitting_model(self) -> Any:
         """The smallest model fitting the data within the confidence set.
@@ -2444,6 +2518,26 @@ _GENERAL = ("dual", "primal", "kkt", "smoothed")
 _MEMBERSHIPS = ("auto", "closed_form", "reduced", "likelihood")
 
 
+def _has_level_function(subset: Any) -> bool:
+    """Whether a set describes itself by a *differentiable* level function.
+
+    The likelihood route minimises with gradients, so a polytope's level
+    function, the largest of its excesses with a subgradient only, does
+    not qualify; a ball's, an ellipsoid's or a smooth sublevel set's does.
+    """
+    if isinstance(subset, SublevelSet):
+        functional = subset.functional
+    elif getattr(subset, "has_level_function", False):
+        functional = subset.level_function()
+    else:
+        return False
+    return bool(getattr(functional, "has_derivative", False))
+
+
+def _has_support_function(subset: Any) -> bool:
+    return bool(getattr(subset, "has_support_function", False))
+
+
 class BackusGilbertParker(SetEstimator):
     """The feasible property set: what the data and a constraint let a property be.
 
@@ -2575,6 +2669,11 @@ class BackusGilbertParker(SetEstimator):
             raise ValueError("The property operator must act on the model space.")
         if prior.domain != problem.model_space:
             raise ValueError("The constraint set must lie in the model space.")
+        if not isinstance(prior, (ConvexSet, SublevelSet)):
+            raise TypeError(
+                "The constraint set must be a ConvexSet, or a SublevelSet of a "
+                "convex functional."
+            )
         noise = self._resolve_noise(problem, noise, level)
         if noise.domain != problem.data_space:
             raise ValueError("The confidence set must lie in the data space.")
@@ -2591,7 +2690,7 @@ class BackusGilbertParker(SetEstimator):
         self._method = method
         self._optimiser = optimiser
         self._route = self._choose(route)
-        self._algorithm = self._build(self._route)
+        self._algorithm = None if self._route is None else self._build(self._route)
         self._membership = self._choose_membership(membership)
 
     # ----------------------------------------------------------------- #
@@ -2639,10 +2738,8 @@ class BackusGilbertParker(SetEstimator):
 
     @property
     def _prior_level(self) -> float:
-        """The prior's level in the units its inclusion norm is reported in."""
-        if isinstance(self._prior, Ball):
-            return float(self._prior.radius)
-        return 1.0
+        """The prior's level: what its level function is bounded by."""
+        return float(self._prior.level)
 
     def _choose(self, route: str) -> str:
         if route == "auto":
@@ -2650,7 +2747,11 @@ class BackusGilbertParker(SetEstimator):
                 return "closed_form"
             if self._quadratic:
                 return "bisection"
-            return "dual"
+            if _has_support_function(self._prior) and _has_support_function(
+                self._noise
+            ):
+                return "dual"
+            return None
         if route == "closed_form" and not (
             self._exact and isinstance(self._prior, Ball)
         ):
@@ -2698,10 +2799,11 @@ class BackusGilbertParker(SetEstimator):
 
     @property
     def _likelihood_applies(self) -> bool:
+        """Both sets have level functions, and the data are not exact."""
         return (
-            isinstance(self._prior, Ball)
+            _has_level_function(self._prior)
             and not self._exact
-            and isinstance(self._noise, (Ball, Ellipsoid, SublevelSet))
+            and _has_level_function(self._noise)
         )
 
     def _choose_membership(self, membership: str) -> str | None:
@@ -2809,8 +2911,13 @@ class BackusGilbertParker(SetEstimator):
         return self._noise
 
     @property
-    def route(self) -> str:
-        """The route in use: ``"closed_form"``, ``"bisection"`` or a general one."""
+    def route(self) -> str | None:
+        """The route computing the support, or ``None`` when no set has one.
+
+        A prior or a confidence set given as a sublevel set alone has no
+        support function, so no route applies and the answer is known
+        through its level function only; the membership engine still runs.
+        """
         return self._route
 
     @property

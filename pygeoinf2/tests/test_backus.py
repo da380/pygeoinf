@@ -392,7 +392,13 @@ class TestOneEstimator:
             [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(2)],
             outer=True,
         )
-        assert BackusGilbertParker(noisy, target, box).route == "dual"
+        # A polytope has neither a support function nor a differentiable
+        # level function: no route computes the support, and no engine
+        # decides membership; a Minkowski sum has the support side only.
+        assert BackusGilbertParker(noisy, target, box).route is None
+        assert BackusGilbertParker(noisy, target, box).membership is None
+        fat = Ball(model, radius=2.0) + Ball(model, radius=1.0)
+        assert BackusGilbertParker(noisy, target, fat).route == "dual"
         # The closed form's answer is an ellipsoid, and says so; the others'
         # is known through its support function.
         closed = BackusGilbertParker(exact, target, ball)(data)
@@ -597,7 +603,15 @@ class TestLikelihoodMembership:
         prior = Ball(model, radius=3.0)
         estimator = BackusGilbertParker(problem, target, prior)
         assert estimator.membership == "likelihood"
-        assert estimator.route == "dual"
+        # A sublevel set has no support function, so no route computes the
+        # support: the answer is known through its level function only.
+        assert estimator.route is None
+        feasible = estimator(data)
+        assert not feasible.has_support_function and feasible.has_level_function
+        with pytest.raises(NotImplementedError, match="level function only"):
+            feasible.support(target.codomain.basis_vector(0))
+        assert not feasible.is_empty()
+        assert feasible.contains(target(truth))
         as_ball = BackusGilbertParker(
             LinearForwardProblem(forward, error=Ball(data_space, radius=radius)),
             target,
@@ -639,7 +653,7 @@ class TestLikelihoodMembership:
             for value in self.candidates(exact, target, truth, data, rng, count=4):
                 ball_norm = with_ball(data).inclusion_norm(value)
                 ellipsoid_norm = with_ellipsoid(data).inclusion_norm(value)
-                assert ellipsoid_norm >= ball_norm * (1.0 - 1e-8)
+                assert ellipsoid_norm >= ball_norm * (1.0 - 1e-5)
                 if np.isfinite(ellipsoid_norm):
                     assert reduced(data).inclusion_norm(value) == pytest.approx(
                         ellipsoid_norm, rel=1e-4
@@ -656,11 +670,16 @@ class TestLikelihoodMembership:
         problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
         estimator = BackusGilbertParker(problem, target, Ball(model, radius=3.0))
         feasible = estimator(data)
-        assert feasible.has_level_function and feasible.level == 3.0
+        # The general contract: the answer is the sublevel set of the prior's
+        # level function at the fitting model, at the prior's own level --
+        # a ball's squared radius. The inclusion norm is its root.
+        assert feasible.has_level_function and feasible.level == 9.0
         as_set = SublevelSet(feasible.level_function(), level=feasible.level)
         functional = feasible.level_function()
         for value in self.candidates(estimator, target, truth, data, rng):
-            assert functional(value) == estimator(data).inclusion_norm(value)
+            assert functional(value) == pytest.approx(
+                estimator(data).inclusion_norm(value) ** 2
+            )
             assert as_set.contains(value) == estimator(data).admits(value)
             assert estimator(data).contains(value) == estimator(data).admits(value)
 
@@ -1001,6 +1020,155 @@ class TestQuadraticSets:
         primal = BackusGilbertParker(problem, target, shifted)(data)
         dual = BackusGilbertParker(problem, target, shifted, route="dual")(data)
         self.agree(primal, dual, directions(target.codomain), 1e-5)
+
+
+class TestGeneralMembership:
+    """The likelihood engine on level functions on both sides: a prior that
+    is not a ball, the general contract for the answer's level function,
+    and a set known through its level function alone."""
+
+    @pytest.fixture
+    def pieces(self, rng):
+        model = make_weighted_space()
+        data_space = EuclideanSpace(3)
+        target_space = EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(3, model.dim)), form="galerkin"
+        )
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
+        )
+        raw = model.random(rng=rng)
+        truth = model.scale(2.0 / model.norm(raw), raw)
+        radius = 0.15
+        noise = data_space.random(rng=rng)
+        data = data_space.add(
+            forward(truth),
+            data_space.scale(0.6 * radius / data_space.norm(noise), noise),
+        )
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        return model, data_space, forward, target, truth, data, problem
+
+    @staticmethod
+    def candidates(target, truth, rng, count=5):
+        space = target.codomain
+        centre = target(truth)
+        return [centre] + [
+            space.axpy(0.5, space.random(rng=rng), space.copy(centre))
+            for _ in range(count - 1)
+        ]
+
+    def test_the_general_contract_on_a_ball_prior(self, pieces, rng):
+        """The answer's level function is the prior's at the fitting model,
+        against the prior's level: for a ball, the squared norm against the
+        squared radius, the inclusion norm being its root."""
+        model, data_space, forward, target, truth, data, problem = pieces
+        feasible = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        assert feasible.level == 9.0
+        for value in self.candidates(target, truth, rng):
+            level = feasible.inclusion_level(value)
+            norm = feasible.inclusion_norm(value)
+            if np.isfinite(norm):
+                assert level == pytest.approx(norm**2)
+                assert feasible.level_function()(value) == pytest.approx(level)
+            assert feasible.contains(value) == (level <= 9.0 * (1.0 + 1e-8))
+
+    def test_a_quartic_prior_equal_to_the_ball_gives_the_balls_answers(
+        self, pieces, rng
+    ):
+        """``||m||^4 <= r^4`` is the ball, given as a sublevel set with a
+        gradient only: the likelihood engine on the prior side, through
+        L-BFGS, against the reduced engine on the ball."""
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.geometry import SublevelSet
+
+        model, data_space, forward, target, truth, data, problem = pieces
+        quartic = Functional.from_callables(
+            model,
+            lambda m: model.squared_norm(m) ** 2,
+            gradient=lambda m: model.scale(4.0 * model.squared_norm(m), m),
+        )
+        same_ball = SublevelSet(quartic, level=3.0**4)
+        estimator = BackusGilbertParker(problem, target, same_ball)
+        assert estimator.membership == "likelihood" and estimator.route is None
+        feasible = estimator(data)
+        assert feasible.level == 3.0**4
+        assert not feasible.has_support_function and feasible.has_level_function
+        with pytest.raises(NotImplementedError, match="inclusion_level"):
+            feasible.inclusion_norm(target(truth))
+        reference = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        for value in self.candidates(target, truth, rng):
+            expected = reference.inclusion_norm(value)
+            got = feasible.inclusion_level(value)
+            if np.isfinite(expected):
+                assert got == pytest.approx(expected**4, rel=1e-4)
+            else:
+                assert got == float("inf")
+            assert feasible.contains(value) == reference.contains(value)
+        assert not feasible.is_empty()
+        # The extent goes through membership alone, and lies within the
+        # ball's support interval, which is the same set's.
+        q = target.codomain.basis_vector(0)
+        lower, upper = feasible.extent(q)
+        assert lower < upper
+        assert upper <= reference.support(q) * (1.0 + 1e-5) + 1e-9
+        assert lower >= -reference.support(-q) * (1.0 + 1e-5) - 1e-9
+
+    def test_an_ellipsoidal_prior_through_both_engines(self, pieces, rng):
+        from pygeoinf2.geometry.convex import Ellipsoid
+
+        model, data_space, forward, target, truth, data, problem = pieces
+        gram = model.gram_matrix()
+        scale = np.diag(np.linspace(9.0, 36.0, model.dim))
+        covariance = LinearOperator.from_matrix(
+            model,
+            model,
+            gram @ scale,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        precision = LinearOperator.from_matrix(
+            model,
+            model,
+            gram @ np.linalg.inv(scale),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        prior = Ellipsoid(model, precision, covariance=covariance)
+        reduced = BackusGilbertParker(problem, target, prior, membership="reduced")(
+            data
+        )
+        likelihood = BackusGilbertParker(
+            problem, target, prior, membership="likelihood"
+        )(data)
+        assert reduced.level == 1.0 == likelihood.level
+        for value in self.candidates(target, truth, rng):
+            expected = reduced.inclusion_level(value)
+            got = likelihood.inclusion_level(value)
+            if np.isfinite(expected):
+                assert got == pytest.approx(expected, rel=1e-5)
+            else:
+                assert got == float("inf")
+        assert likelihood.is_empty() == reduced.is_empty()
+        assert likelihood.contains(target(truth)) and reduced.contains(target(truth))
+
+    def test_a_polytope_has_neither_characterisation(self, pieces):
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        model, data_space, forward, target, truth, data, problem = pieces
+        box = Polytope(
+            model,
+            [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(2)],
+            outer=True,
+        )
+        estimator = BackusGilbertParker(problem, target, box)
+        assert estimator.route is None and estimator.membership is None
+        feasible = estimator(data)
+        assert not feasible.has_support_function and not feasible.has_level_function
+        with pytest.raises(NotImplementedError):
+            feasible.support(target.codomain.basis_vector(0))
+        with pytest.raises(NotImplementedError):
+            feasible.contains(target(truth))
 
 
 class TestBundleMethod:

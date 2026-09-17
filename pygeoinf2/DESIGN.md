@@ -7096,3 +7096,68 @@ the reduced and likelihood engines agree on the Gaussian ellipsoid's
 inclusion norms to 1e-4; every earlier test runs, the ones that assumed
 an ellipsoid goes to the dual now using a Minkowski sum for their
 general set.
+
+## 70. Membership on any level function, and the general contract (2026-09-17)
+
+The membership half of the general case, agreed with David as the
+item after §69, with the units decided: the general contract.
+
+**The engine.** The likelihood route of §59 minimised half the squared
+norm plus a multiple of the confidence set's level function, with a ball
+prior built in. It now takes any differentiable convex level function on
+either side: the prior's ``f`` at its level ``a``, the confidence set's
+``g`` at ``b``, each read off a ball, an ellipsoid, a smooth sublevel
+set or any convex set that declares one. For a property value it
+minimises ``f(m) + eta g(d - A m)`` over the models with that property,
+root-finds ``eta`` so that ``g`` meets ``b``, and reports ``f`` at the
+model against ``a``. The fixed property is handled by minimising over
+``m~ + ker T`` through the kernel's orthogonal projector; no metric of
+the prior's is needed, since the optimiser and not the projector finds
+the minimum. The misfit's limit is still minimised first, as §59 does,
+so an unreachable value is proved rather than searched for.
+
+**The general contract.** The answer is ``{ p : F(p) <= level }`` with
+``F`` the prior's level function at the smallest fitting model with that
+property, and ``level`` the prior's own. On the result `level_function`
+and `level` now mean exactly that for every set: a ball prior's level is
+its squared radius, an ellipsoid's one, a sublevel set's its level.
+`inclusion_norm`, the root of the quadratic case, stays as the
+convenience it is and refuses for a prior whose level function is not
+quadratic, naming `inclusion_level`. The two quadratic engines report
+the level as the square of the norm they already reported.
+
+**A set known by membership alone.** A prior or confidence set given as
+a sublevel set has no support function, so no route computes the
+support; the estimator's `route` is ``None`` and the result says it has
+no support function, while `contains`, `extent` and `inner_hull` work
+through the membership engine. The complement of the Minkowski sum, which
+has the support side only. A polytope has neither: its level function is
+the largest of its excesses, with a subgradient but no gradient, and the
+engine minimises with gradients, so the dispatch requires
+differentiability and a polytope goes to the dual for support, if its
+parts allow, and has no membership.
+
+**Two defects met on the way, both recorded.** The objective is scaled
+as ``f / eta + g`` rather than ``f + eta g``, since at a large multiplier
+the unscaled one is dominated by the misfit and the optimiser's
+value-decrease test fired while the prior term was still moving. And the
+probes of the multiplier search start cold: warm-starting each from the
+last probe's minimiser, which the first version did, returned a misfit
+0.7 per cent above the level on one seed in twenty-five while reporting
+convergence -- Newton-CG from a nearby point stopped one step short, the
+quantity froze across the closing bracket, and the search closed on a
+false root that cold starts do not produce. For a quadratic objective a
+cold start is one exact Newton step, so the saving forgone is small. The
+optimiser's behaviour on warm starts is an open point for the numerics
+module: a stopping rule that reports convergence at a point with a
+gradient of ``1e-2`` is the thing to find.
+
+**Checked.** The general contract on a ball prior, the level being the
+inclusion norm's square against nine; a quartic sublevel-set prior equal
+to a ball, given with a gradient only, reproducing the ball's inclusion
+levels to 1e-4 and its membership on every candidate, with no support
+side and an extent inside the ball's support interval; an ellipsoidal
+prior through the likelihood engine agreeing with the reduced engine's
+inclusion levels to 1e-5; a polytope having neither characterisation.
+Every earlier test passes, including the agreement of the two engines
+on a ball to 1e-5 that the warm-start defect had broken.
