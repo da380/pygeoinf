@@ -71,6 +71,9 @@ class JacobiPreconditioner(LinearSolver):
         *,
         floor: float = 1e-14,
         samples: int | None = None,
+        rtol: float | None = None,
+        max_samples: int | None = None,
+        block_size: int = 20,
         rng: Generator | None = None,
         n_jobs: int | None = None,
     ) -> None:
@@ -90,14 +93,26 @@ class JacobiPreconditioner(LinearSolver):
                 ``M + t I`` is read. A *composition* is not: ``A* A`` and
                 the normal operators built on it cannot be read and pay the
                 probe, and on those this is the argument to pass.
+            rtol: stop adding probes once the running estimate changes by
+                less than this, relative; ``samples`` is then the first
+                batch, ``block_size`` by default when it is not given. v1's
+                adaptive stopping, which the estimator underneath always had
+                and this did not pass on.
+            max_samples: the cap on the adaptive route.
+            block_size: probes added per step on the adaptive route.
             rng: the generator for those probes.
             n_jobs: workers for the exact probe, where one is needed. Serial
                 by default.
         """
         if samples is not None and samples < 1:
             raise ValueError(f"At least one sample is needed, got {samples}.")
+        if rtol is not None and samples is None:
+            samples = block_size
         self._floor = floor
         self._samples = samples
+        self._rtol = rtol
+        self._max_samples = max_samples
+        self._block_size = block_size
         self._rng = rng
         self._n_jobs = n_jobs
 
@@ -114,6 +129,9 @@ class JacobiPreconditioner(LinearSolver):
             diagonal = random_diagonal(
                 operator,
                 samples=self._samples,
+                rtol=self._rtol,
+                max_samples=self._max_samples,
+                block_size=self._block_size,
                 form="galerkin",
                 rng=self._rng,
                 n_jobs=self._n_jobs,
@@ -149,26 +167,46 @@ class SpectralPreconditioner(LinearSolver):
         self,
         /,
         *,
-        rank: int = 20,
+        rank: int | None = 20,
         damping: float | None = None,
+        rtol: float = 1e-4,
+        max_rank: int | None = None,
+        block_size: int = 10,
         rng: Generator | None = None,
     ) -> None:
         """
         Args:
-            rank: how many eigenmodes to resolve.
+            rank: how many eigenmodes to resolve. ``None`` resolves as many as
+                ``rtol`` demands, growing the range ``block_size`` modes at a
+                time until the residual falls below it or ``max_rank`` is
+                reached: v1's ``method="variable"``, which the range finder
+                underneath always offered and this did not pass on.
             damping: the scalar standing in for the tail. Defaults to the
                 smallest resolved eigenvalue.
+            rtol: the adaptive route's stopping tolerance.
+            max_rank: its cap.
+            block_size: modes added per step on the adaptive route.
             rng: the generator for the randomised range finder.
         """
-        if rank < 1:
+        if rank is not None and rank < 1:
             raise ValueError(f"The rank must be positive, got {rank}.")
         self._rank = rank
         self._damping = damping
+        self._rtol = rtol
+        self._max_rank = max_rank
+        self._block_size = block_size
         self._rng = rng
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         space = operator.domain
-        low_rank = random_eig(operator, rank=self._rank, rng=self._rng)
+        low_rank = random_eig(
+            operator,
+            rank=self._rank,
+            rng=self._rng,
+            rtol=self._rtol,
+            max_rank=self._max_rank,
+            block_size=self._block_size,
+        )
         values = low_rank.eigenvalues
         floor = self._damping
         if floor is None:

@@ -16,6 +16,7 @@ from pygeoinf2.numerics import (
     IdentityPreconditioner,
     InverseOperator,
     JacobiPreconditioner,
+    SpectralPreconditioner,
     LSQRSolver,
     LUSolver,
     MinResSolver,
@@ -1326,3 +1327,89 @@ class TestDampedSolvesExtractsItsMatricesOnce:
         space = EuclideanSpace(20)
         _, solves = self.family(space, CGSolver())
         assert solves._matrices() is None
+
+
+class TestAdaptiveKnobs:
+    """The randomised routines underneath always stopped on a tolerance; the
+    callers passed fixed counts only. The knobs are threaded through, with
+    the fixed defaults unchanged."""
+
+    def test_the_jacobi_preconditioner_passes_the_tolerance_on(
+        self, spd_problem, monkeypatch
+    ):
+        from pygeoinf2.numerics import preconditioners
+
+        A, b, _ = spd_problem
+        seen = {}
+        real = preconditioners.random_diagonal
+
+        def spy(operator, **kwargs):
+            seen.update(kwargs)
+            return real(operator, **kwargs)
+
+        monkeypatch.setattr(preconditioners, "random_diagonal", spy)
+        JacobiPreconditioner(rtol=1e-3, max_samples=400, block_size=10)(A)
+        assert seen["rtol"] == 1e-3 and seen["max_samples"] == 400
+        assert seen["samples"] == 10  # the first batch defaults to the block
+        seen.clear()
+        JacobiPreconditioner(samples=30, rtol=1e-2)(A)
+        assert seen["samples"] == 30 and seen["rtol"] == 1e-2
+
+    def test_a_tolerance_driven_jacobi_estimate_is_accurate(self, rng):
+        """On a dense operator whose diagonal is known: the tolerance buys
+        accuracy, and the preconditioner's action is the inverse diagonal."""
+        from pygeoinf2.tests.conftest import make_dense_metric_space
+
+        X = make_dense_metric_space(12)
+        raw = rng.normal(size=(12, 12))
+        galerkin = raw @ raw.T + 12.0 * np.eye(12)
+        A = LinearOperator.from_matrix(
+            X, X, galerkin, form="galerkin", traits=Traits.POSITIVE_DEFINITE
+        )
+        exact = np.diag(A.matrix(form="galerkin"))
+        inverse = JacobiPreconditioner(rtol=2e-3, max_samples=20_000, rng=rng)(A)
+        # Applying the preconditioner to the representer of e_i gives e_i / d_i.
+        estimated = np.array(
+            [
+                1.0
+                / X.to_components(
+                    inverse(X.from_components(X.solve_gram(np.eye(12)[i])))
+                )[i]
+                for i in range(12)
+            ]
+        )
+        assert np.allclose(estimated, exact, rtol=0.15)
+
+    def test_the_spectral_preconditioner_adapts_its_rank(self, rng, monkeypatch):
+        """``rank=None`` grows the range until the tolerance is met: on an
+        operator with three dominant modes and a flat tail, it resolves the
+        three and stops, and conjugate gradients converges in a few steps."""
+        from pygeoinf2.numerics import preconditioners
+
+        X = EuclideanSpace(30)
+        values = np.concatenate([[1000.0, 500.0, 200.0], np.full(27, 1.0)])
+        Q, _ = np.linalg.qr(rng.normal(size=(30, 30)))
+        matrix = Q @ np.diag(values) @ Q.T
+        A = LinearOperator.from_matrix(
+            X, X, matrix, form="components", traits=Traits.POSITIVE_DEFINITE
+        )
+        seen = {}
+        real = preconditioners.random_eig
+
+        def spy(operator, **kwargs):
+            seen.update(kwargs)
+            return real(operator, **kwargs)
+
+        monkeypatch.setattr(preconditioners, "random_eig", spy)
+        adaptive = SpectralPreconditioner(rank=None, rtol=1e-2, block_size=2, rng=rng)
+        assert adaptive(A) is not None
+        assert seen["rank"] is None and seen["rtol"] == 1e-2
+        b = X.random(rng=rng)
+        plain = CGSolver(rtol=1e-10)(A).solve(b)
+        fast = CGSolver(rtol=1e-10, preconditioner=adaptive)(A).solve(b)
+        assert fast.converged and fast.iterations < plain.iterations
+        assert X.norm(X.subtract(fast.solution, plain.solution)) < 1e-6 * X.norm(
+            plain.solution
+        )
+        with pytest.raises(ValueError, match="positive"):
+            SpectralPreconditioner(rank=0)

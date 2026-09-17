@@ -7208,3 +7208,33 @@ bounds, its outer polytope containing the truth; a quartic confidence
 set likewise; slack data leave the prior's own support point with a
 zero second multiplier; a polytope, whose level function has no
 gradient, is refused by the solver and by the route.
+
+## 72. The adaptive knobs are passed on (2026-09-17)
+
+First line of the knobs group in `AUDIT_ACTIONS.md`. The randomised
+routines underneath always stopped on a tolerance: the diagonal
+estimator takes ``rtol``, ``max_samples`` and ``block_size`` and adds
+probes until its running estimate settles, and the range finder grows
+its rank until the residual falls below ``rtol`` when no rank is given.
+The callers did not pass any of that on. The Jacobi preconditioner took
+a fixed sample count, the deflated diagonal a fixed count for its
+stochastic part, the pointwise variance built on it likewise, and the
+spectral preconditioner a fixed rank of twenty; so a user could ask each
+for a budget and not for an accuracy, which v1 allowed.
+
+The knobs are threaded through, with every default unchanged so nothing
+gets slower or noisier silently. On the Jacobi preconditioner, the
+deflated diagonal and `pointwise_variance_at`, ``rtol`` and
+``max_samples`` beside ``samples``, which becomes the first batch when a
+tolerance is given, and a tolerance alone on the pointwise variance
+selects the sampled route where ``samples=None`` alone means exact. On
+the spectral preconditioner ``rank=None`` means adaptive, with ``rtol``,
+``max_rank`` and ``block_size`` going to the range finder, and the
+damping still defaults to the smallest resolved eigenvalue.
+
+**Checked.** The tolerance and the cap reach the estimator from each
+caller, spied on the call; a tolerance-driven Jacobi estimate on a dense
+metric matches the known diagonal; the adaptive spectral preconditioner
+on an operator with three dominant modes and a flat tail resolves them
+and cuts conjugate gradients' iterations; a tolerance selects the
+sampled pointwise variance, which matches the exact one.

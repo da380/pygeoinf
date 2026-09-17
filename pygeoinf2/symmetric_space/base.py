@@ -1174,6 +1174,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         *,
         rank: int = 0,
         samples: int | None = None,
+        rtol: float | None = None,
+        max_samples: int | None = None,
         rng: Generator | None = None,
         n_jobs: int | None = None,
     ) -> np.ndarray:
@@ -1196,6 +1198,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             rank: how many leading eigenpairs to deflate before estimating.
                 For a covariance with a decaying spectrum this is the
                 difference between a useful estimate and a useless one.
+            rtol: on the sampled route, stop adding probes once the estimate
+                settles to this relative change; ``samples`` is then the first
+                batch, twenty if not given.
+            max_samples: the cap on that.
             samples: estimate rather than compute exactly. Exact costs one
                 covariance application per point.
             rng: the generator for those probes.
@@ -1211,7 +1217,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             ValueError: if the Sobolev order is at or below half the spatial
                 dimension, so that point values do not exist.
         """
-        if samples is None:
+        if samples is None and rtol is None:
             variances = self._spectral_variances(measure)
             if variances is not None:
                 # An invariant measure has a closed form, `sum_k s_k
@@ -1255,7 +1261,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         return deflated_diagonal(
             operator,
             rank=rank,
-            samples=samples,
+            samples=samples if samples is not None else 20,
+            rtol=rtol,
+            max_samples=max_samples,
             form="components",
             rng=rng,
             n_jobs=n_jobs,

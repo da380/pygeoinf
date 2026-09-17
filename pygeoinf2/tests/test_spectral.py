@@ -13,6 +13,7 @@ See DESIGN.md sections 20.5 (S) and 21.2 (P).
 import numpy as np
 import pytest
 
+from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
@@ -745,3 +746,64 @@ class TestSampledPointwiseVariance:
             measure.sample_pointwise_variance(3, rng=rng)
         with pytest.raises(ValueError, match="one draw"):
             Lebesgue(3).invariant_measure(np.ones(16)).sample_pointwise_variance(0)
+
+
+class TestAdaptiveDiagonals:
+    """The deflated diagonal and the pointwise variance on it pass the
+    tolerance on to the estimator underneath."""
+
+    def test_the_deflated_diagonal_passes_the_tolerance_on(self, rng, monkeypatch):
+        from pygeoinf2.numerics import randomised
+
+        X = EuclideanSpace(16)
+        raw = rng.normal(size=(16, 16))
+        A = LinearOperator.from_matrix(
+            X,
+            X,
+            raw @ raw.T + np.eye(16),
+            form="components",
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        seen = []
+        real = randomised.random_diagonal
+
+        def spy(operator, **kwargs):
+            seen.append(dict(kwargs))
+            return real(operator, **kwargs)
+
+        monkeypatch.setattr(randomised, "random_diagonal", spy)
+        randomised.deflated_diagonal(
+            A, rank=3, samples=10, rtol=1e-2, max_samples=300, rng=rng
+        )
+        assert seen[-1]["rtol"] == 1e-2 and seen[-1]["max_samples"] == 300
+        randomised.deflated_diagonal(A, rank=0, samples=10, rtol=5e-3, rng=rng)
+        assert seen[-1]["rtol"] == 5e-3
+
+    def test_a_tolerance_takes_the_sampled_route_for_the_pointwise_variance(
+        self, rng, monkeypatch
+    ):
+        """``rtol`` alone selects the sampled route, with the default first
+        batch, where ``samples=None`` alone means exact."""
+        from pygeoinf2.numerics import randomised
+
+        X = Sobolev(6, 2.0, 0.3)
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        points = [X.random_point(rng=rng) for _ in range(3)]
+        exact = X.pointwise_variance_at(measure, points)
+        seen = {}
+        real = randomised.deflated_diagonal
+
+        def spy(operator, **kwargs):
+            seen.update(kwargs)
+            return real(operator, **kwargs)
+
+        monkeypatch.setattr(randomised, "deflated_diagonal", spy)
+        sampled = X.pointwise_variance_at(
+            measure, points, rtol=1e-2, max_samples=4000, rng=rng
+        )
+        assert (
+            seen["rtol"] == 1e-2
+            and seen["samples"] == 20
+            and seen["max_samples"] == 4000
+        )
+        assert np.allclose(sampled, exact, rtol=0.2)

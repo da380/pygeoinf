@@ -839,6 +839,9 @@ def deflated_diagonal(
     *,
     rank: int = 10,
     samples: int = 100,
+    rtol: float | None = None,
+    max_samples: int | None = None,
+    block_size: int = 20,
     form: Literal["galerkin", "components"] = "galerkin",
     rng: Generator | None = None,
     n_jobs: int | None = None,
@@ -860,7 +863,12 @@ def deflated_diagonal(
         operator: self-adjoint, and positive semidefinite in the case this is
             for.
         rank: how many eigenpairs to remove.
-        samples: probes for the remainder.
+        samples: probes for the remainder, or the first batch of them when
+            ``rtol`` is given.
+        rtol: stop adding probes once the remainder's estimate settles to
+            this relative change, as :func:`random_diagonal` does.
+        max_samples: the cap on that.
+        block_size: probes per step on that.
         form: which matrix's diagonal, as for :func:`random_diagonal`.
         rng: the generator.
         n_jobs: workers for the operator applications, in the
@@ -878,7 +886,14 @@ def deflated_diagonal(
         raise ValueError(f"The rank must be non-negative, got {rank}.")
     if rank == 0:
         return random_diagonal(
-            operator, samples=samples, form=form, rng=rng, n_jobs=n_jobs
+            operator,
+            samples=samples,
+            rtol=rtol,
+            max_samples=max_samples,
+            block_size=block_size,
+            form=form,
+            rng=rng,
+            n_jobs=n_jobs,
         )
     generator = rng if rng is not None else np.random.default_rng()
     low_rank = random_eig(operator, rank=rank, rng=generator, n_jobs=n_jobs)
@@ -908,7 +923,14 @@ def deflated_diagonal(
 
     remainder = operator - low_rank
     return exact + random_diagonal(
-        remainder, samples=samples, form=form, rng=generator, n_jobs=n_jobs
+        remainder,
+        samples=samples,
+        rtol=rtol,
+        max_samples=max_samples,
+        block_size=block_size,
+        form=form,
+        rng=generator,
+        n_jobs=n_jobs,
     )
 
 
