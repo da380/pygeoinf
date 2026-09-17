@@ -807,3 +807,58 @@ class TestAdaptiveDiagonals:
             and seen["max_samples"] == 4000
         )
         assert np.allclose(sampled, exact, rtol=0.2)
+
+
+class TestPriorWeightedProbes:
+    """v1's ``measure=`` on the range finder: probes drawn from a prior find
+    the range the prior lets the data see, which white noise finds badly.
+    David remembered this working far better on function spaces; measured,
+    it does (DESIGN §74)."""
+
+    def test_the_prior_weighted_range_captures_what_the_data_can_see(self, rng):
+        from pygeoinf2.numerics.randomised import random_range
+
+        X = BoxLebesgue((64,), lengths=(1.0,))
+        prior = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        D = EuclideanSpace(40)
+        forward = LinearOperator.from_matrix(
+            X, D, rng.normal(size=(40, X.dim)) / 8.0, form="components"
+        )
+        # The composition the prior-weighted range finds: A L, with L the
+        # prior's factor. Its unresolved fraction is what is compared.
+        seen = forward @ prior.covariance_factor
+        matrix = seen.matrix(form="components")
+
+        def unresolved(basis):
+            Q = np.column_stack([D.to_components(v) for v in basis])
+            residual = matrix - Q @ (Q.T @ matrix)
+            return np.linalg.norm(residual, 2) / np.linalg.norm(matrix, 2)
+
+        white = np.mean(
+            [
+                unresolved(random_range(forward, rank=4, oversampling=2, rng=rng))
+                for _ in range(5)
+            ]
+        )
+        weighted = np.mean(
+            [
+                unresolved(
+                    random_range(
+                        forward, rank=4, oversampling=2, measure=prior, rng=rng
+                    )
+                )
+                for _ in range(5)
+            ]
+        )
+        assert weighted < 0.5 * white
+        # And it is the range finder's option on every factorisation.
+        from pygeoinf2.numerics.randomised import random_svd
+
+        assert random_svd(forward, rank=4, measure=prior, rng=rng) is not None
+        with pytest.raises(ValueError, match="probe measure"):
+            random_range(
+                forward,
+                rank=4,
+                measure=X.invariant_measure(np.ones(X.dim)).push_forward(forward),
+                rng=rng,
+            )

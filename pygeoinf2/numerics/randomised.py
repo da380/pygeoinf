@@ -77,16 +77,32 @@ def _probe_range(
     count: int,
     rng: Generator | None,
     *,
+    measure: Any = None,
     n_jobs: int | None = None,
 ) -> list[Any]:
-    """Apply the operator to white-noise probes drawn on its domain.
+    """Apply the operator to probes drawn on its domain.
 
-    The probes are drawn in order from *rng* and applied as one block, so a
-    matrix-backed operator does one product and a parallel run gives the same
-    numbers as a serial one.
+    White noise by default; from *measure* when one is given, which is v1's
+    ``measure=`` and finds the range of the operator composed with the
+    measure's covariance factor -- on a forward operator with a prior, the
+    range the prior lets the data see, which white noise finds badly (DESIGN
+    §74). The probes are drawn in order from *rng* and applied as one block,
+    so a matrix-backed operator does one product and a parallel run gives
+    the same numbers as a serial one.
+
+    Raises:
+        ValueError: if the measure lives on another space.
     """
     domain = operator.domain
-    probes = [domain.white_noise(rng=rng) for _ in range(count)]
+    if measure is None:
+        probes = [domain.white_noise(rng=rng) for _ in range(count)]
+    else:
+        if measure.domain != domain:
+            raise ValueError(
+                f"The probe measure lives on {measure.domain!r}, and the operator's "
+                f"domain is {domain!r}."
+            )
+        probes = [measure.sample(rng=rng) for _ in range(count)]
     return operator.apply_block(probes, n_jobs=n_jobs)
 
 
@@ -125,6 +141,7 @@ def _range_options(kwargs: dict) -> dict:
         "block_size",
         "rtol",
         "max_rank",
+        "measure",
         "n_jobs",
     }
     if unknown:
@@ -134,6 +151,7 @@ def _range_options(kwargs: dict) -> dict:
         "power": kwargs.get("power", 1),
         "block_size": kwargs.get("block_size", 10),
         "rtol": kwargs.get("rtol", 1e-4),
+        "measure": kwargs.get("measure"),
         "max_rank": kwargs.get("max_rank", None),
         "n_jobs": kwargs.get("n_jobs", None),
     }
@@ -161,6 +179,7 @@ def _range_with_columns(
     rtol: float,
     max_rank: int | None,
     rng: Generator | None,
+    measure: Any = None,
     n_jobs: int | None = None,
 ) -> tuple[list[Any], np.ndarray | None]:
     """``random_range``, also returning the basis as component columns.
@@ -182,6 +201,7 @@ def _range_with_columns(
                 block_size=block_size,
                 rtol=rtol,
                 max_rank=max_rank,
+                measure=measure,
                 rng=rng,
                 n_jobs=n_jobs,
             ),
@@ -195,11 +215,18 @@ def _range_with_columns(
             raise ValueError("rank must be positive.")
         count = min(rank + oversampling, ceiling)
         columns = _orthonormal_columns(
-            codomain, _probe_range(operator, count, rng, n_jobs=n_jobs)
+            codomain, _probe_range(operator, count, rng, measure=measure, n_jobs=n_jobs)
         )
     else:
         columns = _adaptive_range_on_components(
-            operator, codomain, ceiling, block_size, rtol, rng, n_jobs=n_jobs
+            operator,
+            codomain,
+            ceiling,
+            block_size,
+            rtol,
+            rng,
+            measure=measure,
+            n_jobs=n_jobs,
         )
     for _ in range(power):
         if columns.shape[1] == 0:
@@ -226,6 +253,7 @@ def random_range(
     block_size: int = 10,
     rtol: float = 1e-4,
     max_rank: int | None = None,
+    measure: Any = None,
     rng: Generator | None = None,
     n_jobs: int | None = None,
 ) -> list[Any]:
@@ -243,6 +271,11 @@ def random_range(
         block_size: probes per block in the adaptive mode.
         rtol: relative residual at which the adaptive mode stops.
         max_rank: hard ceiling, defaulting to the smaller dimension.
+        measure: draw the probes from this measure on the domain rather than
+            as white noise. Mathematically the range of the operator composed
+            with the measure's covariance factor; on a forward operator with
+            a prior, the range the prior lets the data see, which is the one
+            an inversion cares about and which white noise finds badly.
         rng: generator for the probes.
         n_jobs: workers for applying the operator to a block of probes, one
             probe per worker, where the operator cannot apply a block at
@@ -269,7 +302,7 @@ def random_range(
             raise ValueError("rank must be positive.")
         count = min(rank + oversampling, ceiling)
         basis = codomain.orthonormal_basis(
-            _probe_range(operator, count, rng, n_jobs=n_jobs)
+            _probe_range(operator, count, rng, measure=measure, n_jobs=n_jobs)
         )
         return _power_iterate(operator, basis, power, n_jobs=n_jobs)
 
@@ -283,7 +316,14 @@ def random_range(
     # one. That is v1's arrangement.
     if _fast(codomain):
         columns = _adaptive_range_on_components(
-            operator, codomain, ceiling, block_size, rtol, rng, n_jobs=n_jobs
+            operator,
+            codomain,
+            ceiling,
+            block_size,
+            rtol,
+            rng,
+            measure=measure,
+            n_jobs=n_jobs,
         )
         return _power_iterate(
             operator, codomain.vectors_from(columns), power, n_jobs=n_jobs
@@ -292,7 +332,11 @@ def random_range(
     scale: float | None = None
     while len(basis) < ceiling:
         block = _probe_range(
-            operator, min(block_size, ceiling - len(basis)), rng, n_jobs=n_jobs
+            operator,
+            min(block_size, ceiling - len(basis)),
+            rng,
+            measure=measure,
+            n_jobs=n_jobs,
         )
         if scale is None:
             scale = max((codomain.norm(y) for y in block), default=0.0)
@@ -322,6 +366,7 @@ def _adaptive_range_on_components(
     rtol: float,
     rng: Generator | None,
     *,
+    measure: Any = None,
     n_jobs: int | None = None,
 ) -> np.ndarray:
     """The adaptive loop with the basis kept as component columns.
@@ -338,7 +383,13 @@ def _adaptive_range_on_components(
     scale: float | None = None
     while count < ceiling:
         block = codomain.components_of(
-            _probe_range(operator, min(block_size, ceiling - count), rng, n_jobs=n_jobs)
+            _probe_range(
+                operator,
+                min(block_size, ceiling - count),
+                rng,
+                measure=measure,
+                n_jobs=n_jobs,
+            )
         )
         weighted = codomain.apply_gram_to_columns(block)
         norms = np.sqrt(np.maximum(np.einsum("ij,ij->j", block, weighted), 0.0))

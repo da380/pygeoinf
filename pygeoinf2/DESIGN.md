@@ -7262,3 +7262,51 @@ test direction.
 the operator and the space checks; a measure on another space is
 refused; a wrong adjoint still fails under smooth probes; the
 derivative, gradient and affine checks take the measure too.
+
+## 74. The range finder's four choices, measured (2026-09-17)
+
+Second line of the knobs group: four independent losses in the
+randomised routines, each a trade of accuracy for cost, so each was
+measured before deciding. Dense covariances of dimension 300 with
+spectra decaying like ``1/k``, ``1/k^2`` and ``exp(-k/30)``, ranks 10
+and 30, five draws each.
+
+**Measure-weighted probes: restored.** On the operator itself the probes'
+distribution makes under five per cent of difference either way. But
+that is not what they were for. On a forward operator with a prior, the
+range an inversion cares about is the one the prior lets the data see,
+the forward operator composed with the prior's covariance factor, and in
+that metric white noise finds it badly: with a ``1/k^2`` prior the
+unresolved fraction at rank 10 was 0.84 with white probes and 0.16 with
+probes drawn from the prior, 0.73 against 0.094 at rank 20, while the
+operator's own approximation was unchanged. David remembered exactly
+this working far better on function spaces, and the first version of
+this section, written from the first measurement, had it as subsumed by
+composing the factor in by hand. It is back as ``measure=`` on
+`random_range` and, through the forwarded options, on every
+factorisation over it, validating the measure's domain and documented
+as the composition it computes; a non-Gaussian measure works too, which
+the composition does not give.
+
+**Power iterations: kept at one.** A second step lowers the error by
+ten to fifteen per cent on every spectrum for double the operator
+applications per probe; the knob is there and David chose one.
+
+**The Nyström factor: kept dropped.** The audit's claim that the
+eigen-truncation is less accurate at the same rank came from an unfair
+comparison, the Nyström factor keeping more columns; at equal output
+rank the two agree within two per cent on every spectrum and rank, and
+v2's factor is an array, cheaper to apply than v1's operator
+composition.
+
+**Rademacher trace probes: kept dropped.** At fifty probes on the
+``1/k`` spectrum the relative standard deviation is 0.0376 against the
+Gaussian 0.0386, no difference; and Gaussian white noise on the space is
+what makes the estimate the trace on a weighted space, where Rademacher
+components would estimate a metric-weighted trace instead.
+
+**Checked.** On a periodic box with a ``1/(1 + k)^2`` prior and a random
+forward operator, prior-weighted probes at rank four leave less than
+half the unresolved fraction white noise leaves, in the metric of the
+composed operator; the option reaches the SVD; a measure on the wrong
+space is refused.
