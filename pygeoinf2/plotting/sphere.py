@@ -139,15 +139,14 @@ def _(
     if ax is None:
         _, ax = subplots(space)
 
-    values = space.grid_values(field)
-    if values.shape != space.grid_shape:
-        raise ValueError(
-            f"A field on this sphere has shape {space.grid_shape}, got "
-            f"{values.shape}."
-        )
+    # The transform's grid, without an extended space's wrap column and pole
+    # row: the seam is closed below from the grid's own longitudes.
+    values = space._core_values(field)
 
-    latitudes = 90.0 - np.degrees(space.colatitudes)
-    longitudes, values = _rolled_to_the_dateline(np.degrees(space.longitudes), values)
+    latitudes = 90.0 - np.degrees(space._core_colatitudes)
+    longitudes, values = _rolled_to_the_dateline(
+        np.degrees(space._core_longitudes), values
+    )
 
     low, high = colour_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
     common = dict(transform=crs.PlateCarree(), cmap=cmap, vmin=low, vmax=high)

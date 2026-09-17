@@ -368,3 +368,113 @@ class TestQuadratureFromDriscollHealy:
         assert space._quadrature[0] == 0.0
         assert np.flatnonzero(space._quadrature == 0.0).tolist() == [0]
         assert np.flatnonzero(space._quadrature_from_transform() == 0.0).tolist() == [0]
+
+
+class TestExtendedGrid:
+    """``extend=True``: fields carry the wrap column and the south-pole row,
+    as pyshtools' extended grids do, and the transforms, the quadrature and
+    the point evaluation neither see them nor change."""
+
+    def test_the_shape_and_the_angles_close_the_grid(self):
+        plain, wide = Lebesgue(6), Lebesgue(6, extend=True)
+        assert wide.grid_shape == (plain.grid_shape[0] + 1, plain.grid_shape[1] + 1)
+        assert wide.extend and not plain.extend
+        assert wide.colatitudes[-1] == pytest.approx(np.pi)
+        assert wide.longitudes[-1] == pytest.approx(2.0 * np.pi)
+        assert wide.dim == plain.dim
+        # Equality is of the space, not the grid, as for sampling; the grids
+        # differ in their coordinate key.
+        assert wide == plain
+        assert wide._coordinate_key() != plain._coordinate_key()
+
+    def test_synthesis_closes_the_seam_and_the_pole(self, rng):
+        plain, wide = Lebesgue(6), Lebesgue(6, extend=True)
+        c = rng.normal(size=wide.dim)
+        field = wide.grid_values(wide.from_components(c))
+        rows, columns = plain.grid_shape
+        assert np.allclose(field[:, columns], field[:, 0])
+        assert np.allclose(field[rows], field[rows, 0])
+        assert np.allclose(
+            field[:rows, :columns], plain.grid_values(plain.from_components(c))
+        )
+        assert np.allclose(wide.to_components(wide.from_components(c)), c)
+
+    def test_the_extras_carry_no_weight(self, rng):
+        plain, wide = Sobolev(6, 1.5, 0.3), Sobolev(6, 1.5, 0.3, extend=True)
+        c, d = rng.normal(size=wide.dim), rng.normal(size=wide.dim)
+        x, y = wide.from_components(c), wide.from_components(d)
+        assert wide.inner_product(x, y) == pytest.approx(
+            plain.inner_product(plain.from_components(c), plain.from_components(d))
+        )
+        # Scribbling on the wrap column and the pole row changes nothing the
+        # space measures.
+        values = wide.grid_values(x).copy()
+        values[:, -1] += 5.0
+        values[-1, :] += 5.0
+        scribbled = wide.from_grid_values(values)
+        assert np.allclose(wide.to_components(scribbled), c)
+        assert wide.inner_product(scribbled, y) == pytest.approx(
+            wide.inner_product(x, y)
+        )
+
+    def test_point_evaluation_agrees_with_the_plain_grid(self, rng):
+        plain, wide = Sobolev(8, 1.5, 0.3), Sobolev(8, 1.5, 0.3, extend=True)
+        c = rng.normal(size=wide.dim)
+        points = [plain.random_point(rng=rng) for _ in range(20)]
+        for transform in (True, False):
+            with forced(transform):
+                got = wide.evaluate(wide.from_components(c), points)
+                want = plain.evaluate(plain.from_components(c), points)
+                assert np.allclose(got, want, atol=1e-8)
+                weights = rng.normal(size=len(points))
+                assert np.allclose(
+                    wide.accumulate(weights, points),
+                    plain.accumulate(weights, points),
+                    atol=1e-8,
+                )
+        check_operator(wide.point_evaluation_operator(points), rng=rng)
+
+    def test_project_function_fills_the_extended_grid(self):
+        wide = Lebesgue(4, extend=True)
+        # A function of latitude alone, so that it is single-valued at the pole.
+        field = wide.project_function(lambda p: np.cos(np.radians(p[0])))
+        values = wide.grid_values(field)
+        assert values.shape == wide.grid_shape
+        assert np.allclose(values[:, -1], values[:, 0])
+        assert np.allclose(values[-1], values[-1, 0])
+
+    def test_the_wrong_shape_is_refused_and_siblings_keep_the_flag(self, rng):
+        wide = Sobolev(4, 1.0, 0.3, extend=True)
+        with pytest.raises(ValueError, match="shape"):
+            wide.to_components(np.zeros(Lebesgue(4).grid_shape))
+        assert wide.with_order(0.0).extend
+        assert wide.with_degree(6).extend
+        assert "extended" in repr(wide)
+
+
+class TestRandomDomainPoints:
+    """v1's rejection sampler over land or ocean, sharing the coastlines
+    with the mask."""
+
+    def test_points_land_where_they_should(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("shapely")
+        from pygeoinf2.symmetric_space.sphere import _land_test
+
+        on_land = _land_test("110m")
+        X = Lebesgue(4)
+        rng = np.random.default_rng(3)
+        sea = X.random_domain_points(40, ocean=True, rng=rng)
+        assert len(sea) == 40
+        assert all(not on_land(float(p[0]), float(p[1])) for p in sea)
+        land = X.random_domain_points(25, ocean=False, rng=rng)
+        assert len(land) == 25
+        assert all(on_land(float(p[0]), float(p[1])) for p in land)
+        # Reproducible from the generator, and the same coastlines as the mask.
+        again = X.random_domain_points(5, rng=np.random.default_rng(7))
+        assert np.allclose(
+            again, X.random_domain_points(5, rng=np.random.default_rng(7))
+        )
+        assert X.random_domain_points(0) == []
+        with pytest.raises(ValueError, match="negative"):
+            X.random_domain_points(-1)

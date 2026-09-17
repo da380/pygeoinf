@@ -122,6 +122,42 @@ def _legendre_indices_for(lmax: int) -> np.ndarray:
     return indices
 
 
+@lru_cache(maxsize=4)
+def _land_test(resolution: str) -> Callable[[float, float], bool]:
+    """``(latitude, longitude) -> on land``, from the Natural Earth coastlines.
+
+    Loaded once per resolution and shared by the mask and the point sampler:
+    the shapefile read and the polygon union are the cost, and the prepared
+    geometry makes each test cheap. Longitudes are wrapped to ``[-180, 180)``
+    before the test, which is the convention the polygons use.
+
+    Raises:
+        ImportError: without cartopy and shapely, which come with the
+            ``sphere`` extra.
+    """
+    try:
+        import shapely.geometry as geometry
+        from cartopy.io import shapereader
+        from shapely.prepared import prep
+    except ImportError as error:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "The coastlines need cartopy and shapely, which come with the "
+            "'sphere' extra."
+        ) from error
+    reader = shapereader.Reader(
+        shapereader.natural_earth(
+            resolution=resolution, category="physical", name="land"
+        )
+    )
+    land = prep(geometry.MultiPolygon(list(reader.geometries())))
+
+    def on_land(latitude: float, longitude: float) -> bool:
+        wrapped = (longitude + 180.0) % 360.0 - 180.0
+        return bool(land.contains(geometry.Point(wrapped, latitude)))
+
+    return on_land
+
+
 def _require_pyshtools() -> object:
     """Import pyshtools, with a message that says what to install."""
     try:
@@ -163,6 +199,7 @@ class Sphere(SymmetricSpace[Any]):
         order: float = 0.0,
         length_scale: float = 1.0,
         sampling: int = 1,
+        extend: bool = False,
     ) -> None:
         """
         Args:
@@ -179,6 +216,13 @@ class Sphere(SymmetricSpace[Any]):
                 Both represent the same functions exactly -- the transforms
                 cost the same and the components are identical -- so this is a
                 statement about the grid, not about the space.
+            extend: whether a field's grid carries the wrap column at 360
+                degrees and the south-pole row, as pyshtools' ``extend=True``
+                grids do. Off by default. The two extras carry no quadrature
+                weight and are not seen by the transforms; they are there for
+                plotting and interchange, where a closed grid is what is
+                wanted. Same components, same space; a statement about the
+                grid, like ``sampling``.
 
         Raises:
             ValueError: if lmax is negative, the radius or length scale is not
@@ -199,6 +243,7 @@ class Sphere(SymmetricSpace[Any]):
         self._order = float(order)
         self._length_scale = float(length_scale)
         self._sampling = int(sampling)
+        self._extend = bool(extend)
         self._latitudes = 2 * (self._lmax + 1)
 
         degrees = self._degree_of_component
@@ -237,8 +282,25 @@ class Sphere(SymmetricSpace[Any]):
 
     @property
     def grid_shape(self) -> tuple[int, int]:
-        """The shape of a field's values: latitudes by longitudes."""
+        """The shape of a field's values: latitudes by longitudes.
+
+        One row and one column more than the transform's grid when the space
+        is extended; see :attr:`extend`.
+        """
+        rows, columns = self._core_shape
+        if self._extend:
+            return (rows + 1, columns + 1)
+        return (rows, columns)
+
+    @property
+    def _core_shape(self) -> tuple[int, int]:
+        """The Driscoll-Healy grid the transforms and the quadrature act on."""
         return (self._latitudes, self._sampling * self._latitudes)
+
+    @property
+    def extend(self) -> bool:
+        """Whether fields carry the wrap column and the south-pole row."""
+        return self._extend
 
     @property
     def sampling(self) -> int:
@@ -331,11 +393,12 @@ class Sphere(SymmetricSpace[Any]):
         ``Sobolev`` are thin subclasses over the same grid, and keying on the
         concrete class would say two views of one field were different fields.
         """
-        return ("sphere", self._lmax, self._radius, self._sampling)
+        return ("sphere", self._lmax, self._radius, self._sampling, self._extend)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
-        return f"Sphere(lmax={self._lmax}, radius={self._radius}, {kind})"
+        grid = ", extended" if self._extend else ""
+        return f"Sphere(lmax={self._lmax}, radius={self._radius}, {kind}{grid})"
 
     # ----------------------------------------------------------------- #
     #                          Component packing                        #
@@ -399,6 +462,41 @@ class Sphere(SymmetricSpace[Any]):
         if isinstance(x, np.ndarray):
             return np.asarray(x, dtype=float)
         return np.asarray(x.data, dtype=float)
+
+    def _core_values(self, x: Any, /) -> np.ndarray:
+        """The values on the transform's grid, checked for shape.
+
+        On an extended space this drops the wrap column and the pole row,
+        which the transforms never see; on a plain one it is
+        :meth:`grid_values`. A view, not a copy.
+
+        Raises:
+            ValueError: if the field is not this sphere's shape.
+        """
+        values = self.grid_values(x)
+        if values.shape != self.grid_shape:
+            raise ValueError(
+                f"A field has shape {self.grid_shape}, got {values.shape}."
+            )
+        if self._extend:
+            rows, columns = self._core_shape
+            return values[:rows, :columns]
+        return values
+
+    def _field_from_core(self, core: np.ndarray, /) -> Any:
+        """A field from values on the transform's grid, padded if extended.
+
+        The wrap column repeats the first; the pole row is the pole value
+        the quadrature implies, from :attr:`_south_pole_kernel`.
+        """
+        if not self._extend:
+            return self._own_grid_values(core)
+        rows, columns = self._core_shape
+        padded = np.empty(self.grid_shape)
+        padded[:rows, :columns] = core
+        padded[:rows, columns] = core[:, 0]
+        padded[rows, :] = float(self._south_pole_kernel @ core.mean(axis=1))
+        return self._own_grid_values(padded)
 
     def from_grid_values(self, values: np.ndarray, /) -> Any:
         """A field holding the given values.
@@ -491,7 +589,10 @@ class Sphere(SymmetricSpace[Any]):
             return super().inner_product(x, y)
         return float(
             np.einsum(
-                "j,ji,ji->", self._quadrature, self.grid_values(x), self.grid_values(y)
+                "j,ji,ji->",
+                self._quadrature,
+                self._core_values(x),
+                self._core_values(y),
             )
         )
 
@@ -506,7 +607,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         if self._order != 0.0:
             return super().squared_norm(x)
-        values = self.grid_values(x)
+        values = self._core_values(x)
         return float(np.einsum("j,ji,ji->", self._quadrature, values, values))
 
     def to_components(self, x: Any) -> np.ndarray:
@@ -523,9 +624,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         from pyshtools.expand import SHExpandDH
 
-        field = self.grid_values(x)
-        if field.shape != self.grid_shape:
-            raise ValueError(f"A field has shape {self.grid_shape}, got {field.shape}.")
+        field = self._core_values(x)
         coefficients = SHExpandDH(
             field,
             norm=_ORTHONORMAL,
@@ -563,6 +662,7 @@ class Sphere(SymmetricSpace[Any]):
                 sampling=self._sampling,
                 csphase=_NO_CONDON_SHORTLEY,
                 lmax=self._lmax,
+                extend=self._extend,
             )
         )
 
@@ -663,9 +763,7 @@ class Sphere(SymmetricSpace[Any]):
         from pyshtools import SHCoeffs
         from pyshtools.expand import SHExpandDH
 
-        field = self.grid_values(x)
-        if field.shape != self.grid_shape:
-            raise ValueError(f"A field has shape {self.grid_shape}, got {field.shape}.")
+        field = self._core_values(x)
         return SHCoeffs.from_array(
             SHExpandDH(
                 field,
@@ -711,12 +809,28 @@ class Sphere(SymmetricSpace[Any]):
 
     @cached_property
     def colatitudes(self) -> np.ndarray:
-        """The grid colatitudes, in radians, from the pole downwards."""
-        return np.arange(self._latitudes) * np.pi / self._latitudes
+        """The grid colatitudes, in radians, from the pole downwards.
+
+        Ends at the south pole on an extended space.
+        """
+        rows = self._latitudes + (1 if self._extend else 0)
+        return np.arange(rows) * np.pi / self._latitudes
 
     @cached_property
     def longitudes(self) -> np.ndarray:
-        """The grid longitudes, in radians."""
+        """The grid longitudes, in radians. Ends at 360 degrees on an extended space."""
+        columns = self._sampling * self._latitudes
+        count = columns + (1 if self._extend else 0)
+        return np.arange(count) * 2.0 * np.pi / columns
+
+    @cached_property
+    def _core_colatitudes(self) -> np.ndarray:
+        """The transform grid's colatitudes, without the pole row."""
+        return np.arange(self._latitudes) * np.pi / self._latitudes
+
+    @cached_property
+    def _core_longitudes(self) -> np.ndarray:
+        """The transform grid's longitudes, without the wrap column."""
         columns = self._sampling * self._latitudes
         return np.arange(columns) * 2.0 * np.pi / columns
 
@@ -830,7 +944,7 @@ class Sphere(SymmetricSpace[Any]):
         if cached is not None:
             return cached
 
-        rows, columns = self.grid_shape
+        rows, columns = self._core_shape
         shape = DHaj(rows)
 
         # Calibrate against the transform itself, on the first row that
@@ -857,7 +971,7 @@ class Sphere(SymmetricSpace[Any]):
         Kept as the check on :meth:`_quadrature`, not as the way to get them:
         it costs one full analysis transform per grid row.
         """
-        rows, columns = self.grid_shape
+        rows, columns = self._core_shape
         # Component zero is the constant mode, so the point is arbitrary.
         reference = float(self.basis_at(self.reference_point)[0])
         weights = np.empty(rows)
@@ -915,7 +1029,7 @@ class Sphere(SymmetricSpace[Any]):
         if cached is not None:
             return cached
 
-        _, columns = self.grid_shape
+        _, columns = self._core_shape
         degrees = np.arange(self._lmax + 1)
         # PlmIndex(l, 0), the zonal entries of the packed Legendre array.
         zonal_indices = degrees * (degrees + 1) // 2
@@ -923,7 +1037,7 @@ class Sphere(SymmetricSpace[Any]):
         norms = PlmON(self._lmax, 1.0, csphase=_NO_CONDON_SHORTLEY)[zonal_indices]
         at_pole = norms * (-1.0) ** degrees
         legendre = np.polynomial.legendre.legvander(
-            np.cos(self.colatitudes), self._lmax
+            np.cos(self._core_colatitudes), self._lmax
         )
         rows = (legendre * norms) @ at_pole / self._radius**2
         kernel = columns * self._quadrature * rows
@@ -940,12 +1054,12 @@ class Sphere(SymmetricSpace[Any]):
         """
         weights = self._quadrature
         live = weights > 0.0
-        scaled = np.zeros(self.grid_shape)
+        scaled = np.zeros(self._core_shape)
         scaled[live] = values[live] / weights[live, None]
-        total = self.to_components(self._own_grid_values(scaled))
+        total = self.to_components(self._field_from_core(scaled))
         for row in np.flatnonzero(~live):
             total = total + values[row].sum() * self.basis_at(
-                np.array([90.0 - np.degrees(float(self.colatitudes[row])), 0.0])
+                np.array([90.0 - np.degrees(float(self._core_colatitudes[row])), 0.0])
             )
         return total
 
@@ -960,8 +1074,8 @@ class Sphere(SymmetricSpace[Any]):
         Costs no transform: the south pole is the one value the grid does not
         hold, and :attr:`_south_pole_kernel` reads it off the row means.
         """
-        rows, columns = self.grid_shape
-        field = self.grid_values(x)
+        rows, columns = self._core_shape
+        field = self._core_values(x)
         doubled = np.empty((2 * rows, columns))
         doubled[:rows] = field
         # theta == pi is the south pole: not a grid row, so it is evaluated.
@@ -971,7 +1085,7 @@ class Sphere(SymmetricSpace[Any]):
 
     def _double_adjoint(self, doubled: np.ndarray, /) -> np.ndarray:
         """The transpose of :meth:`_double`, in components."""
-        rows, columns = self.grid_shape
+        rows, columns = self._core_shape
         folded = np.array(doubled[:rows], dtype=float)
         folded[1:] += np.roll(doubled[rows + 1 :][::-1], columns // 2, axis=1)
         return self._synthesis_adjoint(folded) + doubled[rows].sum() * (
@@ -1062,7 +1176,7 @@ class Sphere(SymmetricSpace[Any]):
 
         import finufft
 
-        rows, columns = self.grid_shape
+        rows, columns = self._core_shape
         coefficients = np.fft.fft2(self._double(x)) / (2 * rows * columns)
         colatitudes, longitudes = self._angles(points)
         values = finufft.nufft2d2(
@@ -1121,7 +1235,7 @@ class Sphere(SymmetricSpace[Any]):
 
         import finufft
 
-        rows, columns = self.grid_shape
+        rows, columns = self._core_shape
         colatitudes, longitudes = self._angles(points)
         spectrum = finufft.nufft2d1(
             colatitudes,
@@ -1798,29 +1912,59 @@ class Sphere(SymmetricSpace[Any]):
         Raises:
             ImportError: without cartopy, which supplies the coastlines.
         """
-        try:
-            import shapely.geometry as geometry
-            from cartopy.io import shapereader
-            from shapely.prepared import prep
-        except ImportError as error:  # pragma: no cover - optional dependency
-            raise ImportError(
-                "domain_mask needs cartopy and shapely, which come with the "
-                "'sphere' extra."
-            ) from error
-
-        reader = shapereader.Reader(
-            shapereader.natural_earth(
-                resolution=resolution, category="physical", name="land"
-            )
-        )
-        land = prep(geometry.MultiPolygon(list(reader.geometries())))
+        on_land = _land_test(resolution)
 
         def indicator(point: Any) -> float:
             latitude, longitude = np.asarray(point, dtype=float)
-            on_land = land.contains(geometry.Point(float(longitude), float(latitude)))
-            return float(on_land != ocean)
+            return float(on_land(float(latitude), float(longitude)) != ocean)
 
         return self.project_function(indicator)
+
+    def random_domain_points(
+        self,
+        count: int,
+        /,
+        *,
+        ocean: bool = True,
+        resolution: str = "110m",
+        rng: Generator | None = None,
+    ) -> list[np.ndarray]:
+        """Points drawn uniformly over the ocean, or over the land.
+
+        Rejection sampling against the Natural Earth coastlines, the same
+        polygons :meth:`domain_mask` uses, so the two agree on which side of
+        the coast a point is. Uniform in area within the chosen region. This
+        is how a synthetic ocean-only or land-only network is made; v1's
+        ``random_domain_points``.
+
+        Args:
+            count: how many points, exactly.
+            ocean: draw over the ocean; ``False`` draws over the land.
+            resolution: the Natural Earth resolution, as cartopy names it.
+            rng: the generator.
+
+        Returns:
+            ``(latitude, longitude)`` pairs in degrees.
+
+        Raises:
+            ImportError: without cartopy and shapely.
+            ValueError: for a negative count.
+        """
+        if count < 0:
+            raise ValueError("The count must not be negative.")
+        on_land = _land_test(resolution)
+        generator = np.random.default_rng() if rng is None else rng
+        kept: list[np.ndarray] = []
+        # Land is about three tenths of the surface, so over-draw accordingly.
+        surplus = 1.5 if ocean else 4.0
+        while len(kept) < count:
+            batch = max(10, int((count - len(kept)) * surplus))
+            for point in self.random_points(batch, rng=generator):
+                if on_land(float(point[0]), float(point[1])) != ocean:
+                    kept.append(point)
+                    if len(kept) == count:
+                        break
+        return kept
 
     def source_receiver_paths(
         self,
@@ -1921,8 +2065,17 @@ class Sphere(SymmetricSpace[Any]):
         order = self._order if order is None else float(order)
         scale = self._length_scale if length_scale is None else float(length_scale)
         if order == 0.0:
-            return Lebesgue(lmax, radius=self._radius, sampling=self._sampling)
-        return Sobolev(lmax, order, scale, radius=self._radius, sampling=self._sampling)
+            return Lebesgue(
+                lmax, radius=self._radius, sampling=self._sampling, extend=self._extend
+            )
+        return Sobolev(
+            lmax,
+            order,
+            scale,
+            radius=self._radius,
+            sampling=self._sampling,
+            extend=self._extend,
+        )
 
     def with_degree(self, lmax: int, /) -> Sphere:
         """The same space, truncated at or extended to a different degree.
@@ -2059,14 +2212,18 @@ class Lebesgue(Sphere):
         *,
         radius: float = 1.0,
         sampling: int = 1,
+        extend: bool = False,
     ) -> None:
         """
         Args:
             lmax: the maximum spherical harmonic degree.
             radius: the sphere's radius.
             sampling: grid columns per row, 1 or 2.
+            extend: whether fields carry the wrap column and the pole row.
         """
-        super().__init__(lmax, radius=radius, order=0.0, sampling=sampling)
+        super().__init__(
+            lmax, radius=radius, order=0.0, sampling=sampling, extend=extend
+        )
 
 
 class Sobolev(Sphere):
@@ -2086,6 +2243,7 @@ class Sobolev(Sphere):
         *,
         radius: float = 1.0,
         sampling: int = 1,
+        extend: bool = False,
     ) -> None:
         """
         Args:
@@ -2094,6 +2252,7 @@ class Sobolev(Sphere):
             length_scale: the length at which the Sobolev weight turns over.
             radius: the sphere's radius.
             sampling: grid columns per row, 1 or 2.
+            extend: whether fields carry the wrap column and the pole row.
         """
         super().__init__(
             lmax,
@@ -2101,4 +2260,5 @@ class Sobolev(Sphere):
             order=order,
             length_scale=length_scale,
             sampling=sampling,
+            extend=extend,
         )

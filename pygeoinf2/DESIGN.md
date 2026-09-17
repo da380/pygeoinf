@@ -6983,3 +6983,52 @@ diagonal operator, with the Gram matrix as the mass, recovers its
 largest eigenvalue; the converse round-trips the operator and its
 adjoint and passes `check_operator`; a scipy-wrapped array enters as
 the component matrix; the wrong shape is refused.
+
+## 68. The extended grid, and random points over land or sea (2026-09-17)
+
+Item 6 of `FUNCTIONALITY_AUDIT.md` §0.2.
+
+**Random domain points.** v1 drew uniformly over the ocean or the land
+by rejection against the Natural Earth coastlines; v2 kept the
+coastlines for `domain_mask` and lost the sampler. It is back as
+`random_domain_points(count, ocean=, resolution=, rng=)`, and the
+coastline test is now one cached function shared by the mask and the
+sampler, so the two agree on which side of a coast a point is, and the
+shapefile is read once per resolution rather than once per call.
+
+**The extended grid.** v1's sphere took ``extend``, on by default,
+giving pyshtools grids with the wrap column at 360 degrees and the
+south-pole row; v2 fixed the grid to the Driscoll-Healy layout without
+them and never recorded the choice. David: the extended grid is useful
+in practice. It is now ``extend=`` on the sphere, off by default so
+nothing pinned by test moves, and it is a statement about the grid and
+not the space, like ``sampling``: the same components, the same
+dimension, the same operators. Inside, the sphere keeps two shapes. The
+public `grid_shape` is what a field's array is; the core shape is the
+Driscoll-Healy grid the transforms, the quadrature, the pole kernel and
+the NUFFT doubling act on, and every one of those reads a field through
+one accessor that drops the extras. Synthesis produces the extended grid
+directly from pyshtools; a core-shaped result on the way to analysis is
+padded with the wrap column and the pole value the quadrature implies.
+The extras carry no weight: scribbling on them changes neither the
+components nor an inner product, which is tested, and the plotting draws
+the core grid and closes the seam itself as it always did.
+
+**Not here: other grids.** David asked for Gauss-Legendre grids as well,
+with the Driscoll-Healy spacings, which already exist. GLQ changes the
+nodes and not just the shape -- the Legendre zeros, the GLQ transforms,
+exact weights, and a point-evaluation route that cannot be the
+equiangular NUFFT doubling -- so it wants a grid-strategy object behind
+the sphere holding the shape, the nodes, the transforms, the weights and
+the evaluation route, with the Driscoll-Healy layouts and GLQ as its
+instances. That is a redesign of the sphere's core and is recorded as
+its own session in the checklist's decisions group.
+
+**Checked.** The extended shape and angles close the grid; synthesis
+repeats the first column and makes the pole row constant, matches the
+plain grid on the core and round-trips the components; inner products
+match the plain space and ignore the extras; point evaluation and
+accumulation agree with the plain grid on both routes and the operator
+passes its checks; a sampled function fills the extended grid; the wrong
+shape is refused and siblings keep the flag. Random domain points land
+on the side asked for, exactly the count asked for, reproducibly.
