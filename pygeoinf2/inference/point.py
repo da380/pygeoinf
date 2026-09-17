@@ -351,6 +351,8 @@ class MinimumNorm(LeastSquares):
         level: float = 0.95,
         iterations: int = 60,
         rtol: float = 1e-6,
+        atol: float = 0.0,
+        minimum_damping: float = 0.0,
     ) -> "MinimumNorm":
         """The same method with the damping set by the discrepancy principle.
 
@@ -380,6 +382,8 @@ class MinimumNorm(LeastSquares):
             level: the confidence level setting the misfit target.
             iterations: the search's budget.
             rtol: the search's bracket tolerance.
+            atol: its absolute half, for a root near zero damping.
+            minimum_damping: a floor on the damping; see :func:`misfit_search`.
 
         Returns:
             A :class:`MinimumNorm` with its damping fixed at the value found.
@@ -394,6 +398,8 @@ class MinimumNorm(LeastSquares):
             level=level,
             iterations=iterations,
             rtol=rtol,
+            atol=atol,
+            minimum_damping=minimum_damping,
         )
         return MinimumNorm(
             self._problem,
@@ -410,6 +416,8 @@ class MinimumNorm(LeastSquares):
         level: float = 0.95,
         iterations: int = 60,
         rtol: float = 1e-6,
+        atol: float = 0.0,
+        minimum_damping: float = 0.0,
     ) -> RootResult:
         """The search itself, with its diagnostics.
 
@@ -422,6 +430,8 @@ class MinimumNorm(LeastSquares):
             level: the confidence level setting the misfit target.
             iterations: bisection steps once the root is bracketed.
             rtol: how tightly to close the bracket.
+            atol: its absolute half, for a root near zero damping.
+            minimum_damping: a floor on the damping; see :func:`misfit_search`.
 
         Returns:
             The root result, with its bracket, evaluation count and inner
@@ -434,6 +444,8 @@ class MinimumNorm(LeastSquares):
             level=level,
             iterations=iterations,
             rtol=rtol,
+            atol=atol,
+            minimum_damping=minimum_damping,
         )
 
 
@@ -446,6 +458,8 @@ def misfit_search(
     *,
     iterations: int = 60,
     rtol: float = 1e-6,
+    atol: float = 0.0,
+    minimum_damping: float = 0.0,
 ) -> RootResult:
     """Find the damping at which a misfit of the damped model reaches *target*.
 
@@ -464,6 +478,10 @@ def misfit_search(
         target: the value the misfit is to reach.
         iterations: the search's budget.
         rtol: the search's bracket tolerance.
+        atol: its absolute half, for a root near zero damping.
+        minimum_damping: a floor on the damping; the search stops there and
+            reports the range exhausted rather than probing a numerically
+            singular system. Zero is no floor.
 
     Returns:
         The root, with its diagnostics and the saturated cases marked.
@@ -483,6 +501,8 @@ def misfit_search(
         decreasing=False,
         iterations=iterations,
         rtol=rtol,
+        atol=atol,
+        minimum=minimum_damping,
     )
 
 
@@ -495,6 +515,8 @@ def _discrepancy_search(
     level: float = 0.95,
     iterations: int = 60,
     rtol: float = 1e-6,
+    atol: float = 0.0,
+    minimum_damping: float = 0.0,
 ) -> RootResult:
     """Find the damping at which the chi-squared misfit reaches its threshold."""
     return misfit_search(
@@ -504,6 +526,8 @@ def _discrepancy_search(
         problem.critical_chi_squared(level=level),
         iterations=iterations,
         rtol=rtol,
+        atol=atol,
+        minimum_damping=minimum_damping,
     )
 
 
@@ -516,6 +540,8 @@ def _searched_damping(
     level: float = 0.95,
     iterations: int = 60,
     rtol: float = 1e-6,
+    atol: float = 0.0,
+    minimum_damping: float = 0.0,
 ) -> RootResult:
     """The discrepancy search, refusing data that no model fits.
 
@@ -529,7 +555,14 @@ def _searched_damping(
         ValueError: when the misfit does not reach its target at any damping.
     """
     found = _discrepancy_search(
-        family, problem, data, level=level, iterations=iterations, rtol=rtol
+        family,
+        problem,
+        data,
+        level=level,
+        iterations=iterations,
+        rtol=rtol,
+        atol=atol,
+        minimum_damping=minimum_damping,
     )
     if found.exhausted == "low":
         # No damping small enough brings the misfit to its target, so the
@@ -585,6 +618,8 @@ class DiscrepancyPrinciple(Operator):
         formalism: Formalism = "data_space",
         iterations: int = 60,
         rtol: float = 1e-6,
+        atol: float = 0.0,
+        minimum_damping: float = 0.0,
     ) -> None:
         """
         Args:
@@ -594,6 +629,12 @@ class DiscrepancyPrinciple(Operator):
             solver: how to invert each ``N(t)``.
             formalism: which space to solve in.
             iterations, rtol: the discrepancy search's budget and tolerance.
+            atol: the absolute half of that tolerance, for a damping near
+                zero, where a relative test never closes.
+            minimum_damping: a floor on the damping. Data that no model fits
+                are refused after the search reaches it, rather than after
+                two hundred decades of probes on a numerically singular
+                system. Zero is no floor.
         """
         if not problem.has_error:
             raise ValueError(
@@ -608,6 +649,8 @@ class DiscrepancyPrinciple(Operator):
         self._formalism = formalism
         self._iterations = iterations
         self._rtol = rtol
+        self._atol = atol
+        self._minimum_damping = minimum_damping
         self._family = TikhonovFamily(
             problem.forward_operator,
             error=problem.error_measure,
@@ -634,6 +677,8 @@ class DiscrepancyPrinciple(Operator):
             level=self._level,
             iterations=self._iterations,
             rtol=self._rtol,
+            atol=self._atol,
+            minimum_damping=self._minimum_damping,
         )
 
     def _resolve(self, data: Any) -> tuple[Any, float, bool]:
@@ -655,6 +700,8 @@ class DiscrepancyPrinciple(Operator):
             level=self._level,
             iterations=self._iterations,
             rtol=self._rtol,
+            atol=self._atol,
+            minimum_damping=self._minimum_damping,
         )
         return (
             self._family.model_from(found.solution),

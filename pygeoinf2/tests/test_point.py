@@ -176,6 +176,37 @@ class TestMonotoneRoot:
             monotone_root(constant(1.0), 1.0, iterations=0)
 
 
+class TestRootFloorAndCeiling:
+    """The multiplier can be fenced, and the walk stops at the fence."""
+
+    def test_the_floor_ends_the_downward_walk(self):
+        result = monotone_root(
+            lambda t, _: Evaluation(1.0 / t), 1e9, minimum=1e-3, initial=1.0
+        )
+        assert result.exhausted == "low"
+        assert result.argument == pytest.approx(1e-3)
+        assert result.evaluations == 4
+
+    def test_the_ceiling_ends_the_upward_walk(self):
+        result = monotone_root(
+            lambda t, _: Evaluation(1.0 / t), 1e-9, maximum=1e3, initial=1.0
+        )
+        assert result.exhausted == "high"
+        assert result.argument == pytest.approx(1e3)
+
+    def test_a_root_inside_the_fence_is_unaffected(self):
+        fenced = monotone_root(
+            lambda t, _: Evaluation(1.0 / t), 0.3, minimum=1e-3, maximum=1e3
+        )
+        free = monotone_root(lambda t, _: Evaluation(1.0 / t), 0.3)
+        assert fenced.converged
+        assert fenced.argument == pytest.approx(free.argument)
+
+    def test_a_start_outside_the_fence_is_refused(self):
+        with pytest.raises(ValueError, match="floor"):
+            monotone_root(lambda t, _: Evaluation(1.0 / t), 0.3, minimum=2.0)
+
+
 class TestDampedSolves:
     """The family a sweep walks along, and what it keeps between steps."""
 
@@ -572,6 +603,44 @@ class TestDiscrepancyPrinciple:
             MinimumNorm(problem, damping=1.0).for_data(unfittable)
         with pytest.raises(ValueError, match="cannot be fitted"):
             DiscrepancyPrinciple(problem)(unfittable)
+
+    def test_the_floor_stops_the_search_on_unfittable_data(self):
+        """v1's ``minimum_damping``: the refusal comes after a handful of
+        probes at the floor rather than two hundred decades below it, and
+        the search reports the range exhausted at the floor."""
+        data_space, model_space = EuclideanSpace(3), EuclideanSpace(1)
+        forward = LinearOperator.from_matrix(
+            model_space, data_space, np.array([[1.0], [0.0], [0.0]]), form="components"
+        )
+        problem = LinearForwardProblem(
+            forward,
+            error=GaussianMeasure.from_standard_deviation(data_space, 1e-3),
+        )
+        unfittable = data_space.from_components(np.array([0.0, 4.0, 4.0]))
+
+        unfloored = MinimumNorm(problem).discrepancy_search(unfittable)
+        floored = MinimumNorm(problem).discrepancy_search(
+            unfittable, minimum_damping=1e-6
+        )
+        assert floored.exhausted == "low" and unfloored.exhausted == "low"
+        assert floored.argument >= 1e-6
+        assert floored.evaluations < unfloored.evaluations
+        with pytest.raises(ValueError, match="cannot be fitted"):
+            DiscrepancyPrinciple(problem, minimum_damping=1e-6)(unfittable)
+        with pytest.raises(ValueError, match="cannot be fitted"):
+            MinimumNorm(problem).for_data(unfittable, minimum_damping=1e-6)
+
+    def test_the_absolute_tolerance_reaches_the_root_finder(self, setup, rng):
+        """The same root either way, and the knob is what closes a bracket
+        the relative test alone would not."""
+        problem = setup
+        observed = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        plain = MinimumNorm(problem).discrepancy_search(observed)
+        absolute = MinimumNorm(problem).discrepancy_search(observed, atol=1e-12)
+        assert absolute.converged
+        assert absolute.argument == pytest.approx(plain.argument, rel=1e-4)
+        principle = DiscrepancyPrinciple(problem, atol=1e-12, rtol=1e-8)
+        assert principle.search(observed).converged
 
     def test_a_structure_aware_preconditioner_works_inside_the_sweep(self, setup, rng):
         """DESIGN's claim that every structure-aware preconditioner applies to

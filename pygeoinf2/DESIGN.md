@@ -7486,3 +7486,35 @@ composition it takes the inner value once, the inner derivative once
 and the outer derivative once; a linearise-only operator answers a
 derivative query through one linearisation; an operator without a
 derivative, and a sum of two, still raise.
+
+## 78. The discrepancy search takes its two missing knobs (2026-09-17)
+
+v1's discrepancy search took ``atol`` beside ``rtol`` and a
+``minimum_damping`` below which it gave up. v2's root finder already
+had ``atol``, the absolute half of the bracket criterion, which is what
+closes a bracket whose root sits near zero damping; nothing above it
+passed the argument on, so the principle and `MinimumNorm.for_data` ran
+with it fixed at zero. There was no floor at all: on data that no model
+fits the bracketing walks downward by decades, up to two hundred of
+them, each probe a solve of a system that is numerically singular long
+before the walk ends, and only then does the principle raise.
+
+**Now.** `monotone_root` takes ``minimum`` and ``maximum`` on the
+multiplier, general knobs: the walk in either direction stops short of
+the fence and reports the range exhausted, and a start outside it is
+refused. `misfit_search`, the two discrepancy helpers,
+`DiscrepancyPrinciple`, `MinimumNorm.for_data` and
+`MinimumNorm.discrepancy_search` take ``atol`` and
+``minimum_damping`` and pass them down, both defaulting to zero, so
+nothing changes unless asked. With a floor set the existing refusal of
+unfittable data comes after a handful of probes rather than two hundred
+decades, which is what v1's option was for; the message is the same.
+The knobs group of the audit is closed with this.
+
+**Checked.** On a hyperbola the floor ends the downward walk at the
+floor in four evaluations and the ceiling ends the upward one, a root
+inside the fence is the free root, and a start outside is refused; on
+unfittable data both searches report the range exhausted, the floored
+one at the floor and in fewer evaluations, and both the principle and
+``for_data`` still refuse; an absolute tolerance reaches the root
+finder and closes on the same root.

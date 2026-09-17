@@ -139,6 +139,8 @@ def monotone_root(
     rtol: float = 1e-6,
     atol: float = 0.0,
     expansions: int = 200,
+    minimum: float = 0.0,
+    maximum: float = float("inf"),
     warm_start: bool = True,
 ) -> RootResult:
     """Find the positive multiplier at which a monotone quantity hits *target*.
@@ -160,6 +162,12 @@ def monotone_root(
             root sits near zero and a relative test never closes.
         expansions: how far to widen, in factors of ten, before concluding
             that no root exists in that direction.
+        minimum: a floor on the multiplier. The downward walk stops short of
+            it and reports the range exhausted, rather than probing on: a
+            damping far below any physical scale solves a numerically
+            singular system at each probe and says nothing about the data.
+            v1's ``minimum_damping``. Zero, the default, is no floor.
+        maximum: a ceiling on the multiplier, likewise for the upward walk.
         warm_start: pass each probe the previous solution.
 
     Returns:
@@ -169,8 +177,8 @@ def monotone_root(
         be computed at all.
 
     Raises:
-        ValueError: for a non-positive ``initial``, or tolerances that cannot
-            close a bracket.
+        ValueError: for a non-positive ``initial``, one outside the floor and
+            ceiling, or tolerances that cannot close a bracket.
 
     The search works in the *logarithm* of the multiplier, because a
     multiplier of this kind ranges over orders of magnitude rather than over
@@ -181,6 +189,11 @@ def monotone_root(
         raise ValueError(f"The starting multiplier must be positive, got {initial}.")
     if not 0 < iterations:
         raise ValueError(f"At least one bisection step is needed, got {iterations}.")
+    if not 0.0 <= minimum <= initial <= maximum:
+        raise ValueError(
+            f"The start must lie between the floor and the ceiling: got "
+            f"minimum={minimum}, initial={initial}, maximum={maximum}."
+        )
 
     sign = 1.0 if decreasing else -1.0
     goal = sign * target
@@ -240,6 +253,8 @@ def monotone_root(
             return multiplier, scaled, solution, None
         for _ in range(expansions):
             candidate = multiplier * direction
+            if not minimum <= candidate <= maximum:
+                break
             try:
                 scaled_candidate, solution_candidate = probe(candidate)
             except _BREAKDOWN:
