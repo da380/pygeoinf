@@ -661,3 +661,87 @@ class TestInvariantAlgebraDrawsInOneTransform:
         assert first.covariance_factor is not None and first.precision is not None
         assert self.syntheses(X, first, rng) == 1
         assert np.isfinite(first.log_density(X.random(rng=rng)))
+
+
+class TestWeakenedEllipsoid:
+    """v1's fractional credible geometry, between the credible ellipsoid and
+    the ambient ball."""
+
+    def test_the_ends_are_the_two_hardenings(self, rng):
+        from pygeoinf2.geometry.convex import Ball, Ellipsoid
+
+        X = Sobolev(6, 1.5, 0.3)
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        full = measure.weakened_ellipsoid(level=0.9, power=1.0)
+        exact = measure.credible_set(level=0.9)
+        assert isinstance(full, Ellipsoid)
+        for _ in range(10):
+            x = measure.sample(rng=rng)
+            assert full.contains(x) == exact.contains(x)
+        ball = measure.weakened_ellipsoid(level=0.9, power=0.0)
+        assert isinstance(ball, Ball)
+        assert ball.radius == pytest.approx(measure.ambient_ball(level=0.9).radius)
+
+    def test_it_carries_its_level_and_nests(self, rng):
+        """Coverage by Monte Carlo at three powers, and the weakened set is
+        neither the ellipsoid nor the ball but between them in shape."""
+        X = Sobolev(6, 1.5, 0.3)
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        draws = measure.samples(3000, rng=rng)
+        for power in (0.25, 0.5, 0.75):
+            weakened = measure.weakened_ellipsoid(level=0.9, power=power)
+            assert weakened.has_support_function
+            covered = np.mean([weakened.contains(x) for x in draws])
+            assert covered == pytest.approx(0.9, abs=0.025)
+
+    def test_a_general_covariance_goes_through_the_calculus(self, rng):
+        """A dense, non-diagonal covariance on a weighted space: the spectrum
+        by the dense route and the fractional powers by Lanczos, and the
+        coverage still holds."""
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        X = make_weighted_space()
+        raw = rng.normal(size=(X.dim, X.dim))
+        # A symmetric positive definite Galerkin matrix is a covariance on
+        # any metric; the same numbers as components would not be.
+        matrix = raw @ raw.T + X.dim * np.eye(X.dim)
+        measure = GaussianMeasure.from_covariance_matrix(X, matrix, form="galerkin")
+        weakened = measure.weakened_ellipsoid(level=0.9, power=0.5)
+        draws = measure.samples(3000, rng=rng)
+        covered = np.mean([weakened.contains(x) for x in draws])
+        assert covered == pytest.approx(0.9, abs=0.03)
+        assert weakened.has_support_function
+
+    def test_a_bad_power_or_level_is_refused(self):
+        X = Lebesgue(4)
+        measure = X.invariant_measure(np.ones(X.dim))
+        with pytest.raises(ValueError, match="power"):
+            measure.weakened_ellipsoid(power=1.5)
+        with pytest.raises(ValueError, match="level"):
+            measure.weakened_ellipsoid(level=1.0, power=0.5)
+
+
+class TestSampledPointwiseVariance:
+    """v1's Monte Carlo pointwise variance on any module, against the exact
+    invariant answer on a symmetric space."""
+
+    def test_it_matches_the_exact_answer(self, rng):
+        X = Lebesgue(6)
+        variances = 1.0 / (1.0 + X.degrees) ** 2
+        measure = X.invariant_measure(variances)
+        exact = X.pointwise_variance(variances)
+        grid = lambda field: np.asarray(getattr(field, "data", field))  # noqa: E731
+        field = measure.sample_pointwise_variance(1500, rng=rng)
+        assert np.mean(grid(field)) == pytest.approx(exact, rel=0.08)
+        std = measure.sample_pointwise_std(1500, rng=rng)
+        assert np.mean(grid(std) ** 2) == pytest.approx(exact, rel=0.15)
+
+    def test_a_space_without_a_product_is_refused(self, rng):
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        X = make_weighted_space()
+        measure = GaussianMeasure.from_standard_deviation(X, 1.0)
+        with pytest.raises(TypeError, match="pointwise product"):
+            measure.sample_pointwise_variance(3, rng=rng)
+        with pytest.raises(ValueError, match="one draw"):
+            Lebesgue(3).invariant_measure(np.ones(16)).sample_pointwise_variance(0)

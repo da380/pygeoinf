@@ -1503,6 +1503,248 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             covariance=covariance,
         )
 
+    def weakened_ellipsoid(
+        self,
+        /,
+        *,
+        level: float = 0.95,
+        power: float = 0.5,
+        method: str = "auto",
+        quantile_method: str = "auto",
+        rank: int | None = None,
+        dense_limit: int = 1024,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+        **calculus: Any,
+    ) -> Any:
+        """A credible ellipsoid shaped by a fractional power of the covariance.
+
+        Between the two hardenings :meth:`credible_set` and
+        :meth:`ambient_ball` give: the set ``{ x : (C^-p (x - m), x - m) <=
+        r^2 }`` carrying the given probability, so that ``p == 1`` is the
+        credible ellipsoid, the distribution's own shape, and ``p == 0`` is
+        the ball in the space's norm. In between the ellipsoid is *weakened*,
+        its axes being ``lambda^(p/2)`` rather than ``lambda^(1/2)``, which
+        is what one wants of a prior that should not commit to the
+        covariance's fine structure at the level of a Mahalanobis form. v1's
+        ``weakened_ellipsoid``; its ``theta`` is ``power`` here.
+
+        The radius is a quantile of ``sum_i lambda_i^(1 - p) Z_i^2``, the
+        covariance's eigenvalues to the complementary power, and the
+        fractional powers of the covariance come from the operator calculus:
+        exact on a diagonal covariance, and by the Lanczos route otherwise,
+        which is what the covariance must then admit, being positive
+        definite and self-adjoint.
+
+        Args:
+            level: the probability the ellipsoid carries, in ``(0, 1)``.
+            power: the exponent ``p`` in ``[0, 1]``.
+            method: how the spectrum for the radius is found: ``"auto"``,
+                ``"diagonal"``, ``"dense"`` or ``"spectral"``, as for
+                :meth:`ambient_ball`; there is no sampling route, since the
+                fractional gauge of a draw costs a Lanczos application each.
+            quantile_method: how the weighted chi-square is inverted.
+            rank: eigenpairs on the randomised route.
+            dense_limit: the dimension above which ``"auto"`` stops forming
+                matrices.
+            rng: the generator for the probes.
+            n_jobs: workers for them.
+            **calculus: options for the Lanczos operator function on a
+                covariance that is not diagonal.
+
+        Returns:
+            An :class:`~pygeoinf2.geometry.convex.Ellipsoid`, with its
+            covariance so that it has a support function; or the credible
+            set or the ambient ball at the two ends.
+
+        Raises:
+            ValueError: for a power outside ``[0, 1]``, a level outside
+                ``(0, 1)``, or a spectrum this measure cannot supply.
+        """
+        from ..geometry.convex import Ellipsoid
+
+        if not 0.0 <= power <= 1.0:
+            raise ValueError(f"The power lies in [0, 1], got {power}.")
+        if not 0.0 < level < 1.0:
+            raise ValueError(f"A credible level lies in (0, 1), got {level}.")
+        if power == 1.0:
+            return self.credible_set(level=level)
+        if power == 0.0:
+            return self.ambient_ball(
+                level=level,
+                method=method,
+                quantile_method=quantile_method,
+                rank=rank,
+                dense_limit=dense_limit,
+                rng=rng,
+                n_jobs=n_jobs,
+            )
+        from ..numerics.quadratic_forms import weighted_chi2_quantile
+
+        eigenvalues = self._spectrum(
+            method, rank=rank, dense_limit=dense_limit, rng=rng, n_jobs=n_jobs
+        )
+        live = eigenvalues[eigenvalues > 0.0]
+        squared_radius = weighted_chi2_quantile(
+            live ** (1.0 - power), level, method=quantile_method
+        )
+        diagonal = self._diagonal_eigenvalues()
+        if diagonal is not None:
+            from ..algebra.diagonal import DiagonalLinearOperator
+
+            if np.any(diagonal <= 0.0):
+                raise ValueError(
+                    "A weakened ellipsoid needs a positive definite covariance; "
+                    "this one has a zero eigenvalue."
+                )
+            precision = DiagonalLinearOperator(
+                self._domain, diagonal ** (-power) / squared_radius
+            )
+            covariance = DiagonalLinearOperator(
+                self._domain, squared_radius * diagonal**power
+            )
+        else:
+            from ..numerics.functional_calculus import operator_function
+
+            base = self._require_covariance("A weakened ellipsoid").with_traits(
+                Traits.POSITIVE_DEFINITE
+            )
+            precision = operator_function(
+                base,
+                lambda t: t ** (-power) / squared_radius,
+                traits=Traits.POSITIVE_DEFINITE,
+                **calculus,
+            )
+            covariance = operator_function(
+                base,
+                lambda t: squared_radius * t**power,
+                traits=Traits.POSITIVE_DEFINITE,
+                **calculus,
+            )
+        return Ellipsoid(
+            self._domain, precision, centre=self.expectation, covariance=covariance
+        )
+
+    def _spectrum(
+        self,
+        method: str,
+        /,
+        *,
+        rank: int | None,
+        dense_limit: int,
+        rng: Generator | None,
+        n_jobs: int | None,
+    ) -> np.ndarray:
+        """The covariance's eigenvalues, by the route asked for or affordable.
+
+        The routes :meth:`ambient_ball` documents, without its sampling one,
+        which yields a radius but no spectrum.
+        """
+        eigenvalues = self._diagonal_eigenvalues()
+        if eigenvalues is not None and method in ("auto", "diagonal"):
+            return np.asarray(eigenvalues, dtype=float)
+        if method == "diagonal":
+            raise ValueError(
+                "The diagonal route needs a covariance diagonal in the space's "
+                "own basis, and this one is not."
+            )
+        if method == "auto":
+            if (
+                isinstance(self._domain, CoordinateSpace)
+                and self._domain.dim <= dense_limit
+            ):
+                method = "dense"
+            elif rank is not None:
+                method = "spectral"
+            else:
+                raise ValueError(
+                    f"No affordable route to the spectrum on a space of dimension "
+                    f"{self._domain.dim}: pass rank= for a randomised spectrum, "
+                    "or raise dense_limit."
+                )
+        covariance = self._require_covariance("The spectrum")
+        if method == "spectral":
+            from ..numerics.randomised import random_eig
+
+            decomposition = random_eig(covariance, rank=rank, rng=rng, n_jobs=n_jobs)
+            return np.asarray(decomposition.eigenvalues, dtype=float)
+        if method != "dense":
+            raise ValueError(f"Unknown method {method!r}.")
+        from scipy.linalg import eigh
+
+        require_coordinates(self._domain)
+        galerkin = covariance.matrix(form="galerkin")
+        return np.asarray(
+            eigh(galerkin, self._domain.gram_matrix(), eigvals_only=True), dtype=float
+        )
+
+    def sample_pointwise_variance(
+        self,
+        samples: int,
+        /,
+        *,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> X:
+        """The pointwise variance field, estimated from draws.
+
+        The mean over draws of ``(x - m) * (x - m)`` in the domain's pointwise
+        product, so it needs a domain that is a module. The general answer
+        on any space; on a symmetric space with an invariant measure,
+        :meth:`~pygeoinf2.symmetric_space.SymmetricSpace.pointwise_variance`
+        is the exact one and costs no draws.
+
+        Args:
+            samples: how many draws.
+            rng: the generator.
+            n_jobs: workers for the draws.
+
+        Returns:
+            A field of the domain.
+
+        Raises:
+            TypeError: if the domain has no pointwise product.
+            ValueError: for fewer than one draw.
+        """
+        from ..algebra.spaces import HilbertModule
+
+        space = self._domain
+        if not isinstance(space, HilbertModule):
+            raise TypeError(
+                "A pointwise variance needs a domain with a pointwise product, "
+                f"a HilbertModule; {type(space).__name__} is not one."
+            )
+        if samples < 1:
+            raise ValueError("At least one draw is needed.")
+        centre = self.expectation
+        total = space.zero()
+        for draw in self.samples(samples, rng=rng, n_jobs=n_jobs):
+            deviation = space.subtract(draw, centre)
+            total = space.axpy(1.0, space.multiply(deviation, deviation), total)
+        return space.scale(1.0 / samples, total)
+
+    def sample_pointwise_std(
+        self,
+        samples: int,
+        /,
+        *,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> X:
+        """The pointwise standard deviation field, the square root of the variance.
+
+        Args:
+            samples: how many draws.
+            rng: the generator.
+            n_jobs: workers for the draws.
+
+        Returns:
+            A field of the domain.
+        """
+        return self._domain.sqrt(
+            self.sample_pointwise_variance(samples, rng=rng, n_jobs=n_jobs)
+        )
+
     def ambient_ball(
         self,
         /,

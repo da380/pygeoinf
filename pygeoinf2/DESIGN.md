@@ -6899,3 +6899,52 @@ of two band-limited measures keeps a factor, draws in one transform,
 has no precision, and its draws vanish above the band; a marginal of a
 correlated measure keeps factor and precision, draws in one transform
 and has a finite density.
+
+## 66. The weakened ellipsoid and the sampled pointwise variance (2026-09-17)
+
+Item 5 of `FUNCTIONALITY_AUDIT.md` §0.2, four losses on the Gaussian
+measure with four verdicts.
+
+**Restored: the weakened ellipsoid.** v1's credible set had a fractional
+geometry, ``{ x : (C^-p (x - m), x - m) <= r^2 }`` with ``r^2`` the
+quantile of ``sum lambda^(1-p) Z^2``, interpolating between the
+credible ellipsoid at ``p == 1`` and the ambient ball at ``p == 0``.
+It is `weakened_ellipsoid(level=, power=)`, exact on a diagonal
+covariance, where every invariant and every isotropic measure lives,
+and by the operator calculus otherwise, Lanczos for the two fractional
+powers and the ambient ball's spectrum routes for the radius. The two
+ends delegate to the existing sets. v1's dozen knobs for the Lanczos
+and low-rank machinery are not carried; the calculus takes its own
+options through ``**calculus``.
+
+**Restored: the sampled pointwise variance.** The mean over draws of
+the squared deviation in the domain's pointwise product, on any module,
+with the standard deviation beside it. On a symmetric space with an
+invariant measure the exact `pointwise_variance` costs no draws and is
+the one to use; this is the general answer.
+
+**Subsumed: the Cameron-Martin credible set.** v1 returned the same
+region as a ball in a mass-weighted space whose metric is the
+precision. Geometrically it is the credible ellipsoid v2 returns. What
+the ball form alone gives is a `Ball`, which the cheap Backus routes
+ask for as a prior; that is the mass-weighted-space decision in group 7
+of the checklist, not a second credible set.
+
+**Dropped on purpose: the KKT push-forward precision.** v1's push-forward
+could take a solver and obtain the precision of ``A C A*`` by inverting
+a block saddle-point system. v2 keeps a precision under the identity
+and invertible diagonal maps and says why: a silent solve inside an
+algebraic operation is the hidden cost the library is built not to
+have. A caller wanting that precision asks the credible set for it
+through a solver, which is how the credible set already inverts a
+covariance.
+
+**Checked.** On a Sobolev sphere, the weakened ellipsoid at power one
+agrees with the credible set on every draw and at power zero has the
+ambient ball's radius; at three intermediate powers it carries its
+level to within 2.5 per cent on 3000 draws; on a dense non-diagonal
+covariance on a weighted space the same holds through the calculus;
+bad powers and levels are refused. The sampled pointwise variance
+matches the exact invariant answer to 8 per cent on 1500 draws, its
+standard deviation squared to 15 per cent; a space without a product
+and a zero draw count are refused.
