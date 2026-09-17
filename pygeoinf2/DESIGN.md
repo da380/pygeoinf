@@ -7568,3 +7568,56 @@ notes and the audit keep their prose as written.
 Nothing carries a renamed keyword: a renamed keyword raises
 ``TypeError`` at the call, the loud and easily fixed failure, and a shim
 would hide it.
+
+## 80. The set plotter, the compact port (2026-09-17)
+
+v1's ``SubspaceSlicePlotter`` and ``plot_slice`` were fourteen hundred
+lines: a subset of a Euclidean space sliced along a one-, two- or
+three-dimensional affine subspace and rendered by one of three paths
+chosen by the set's class, an exact polyhedral slice through half-space
+intersection, an exact quadratic slice for balls and ellipsoids, and a
+raster of membership samples for the rest, with voxels or plotly for
+three dimensions. v2 had nothing for sets. David chose the compact
+port: "Mag can expand it later if he wants."
+
+**One function, the route by capability.** `plotting.plot_set(subset,
+*, subspace=, ax=, bounds=, resolution=, directions=, route=)` draws
+in one or two dimensions, matplotlib only. The route is chosen by what
+the set can do, not by its class: a set with a support function is
+drawn as the polygon of its supporting lines, consecutive lines meeting
+at the vertices, which is exact for a polytope, whose vertices are
+where the normal cones change, and circumscribed for a smooth set,
+closer with more directions; a set with a level function is drawn as
+the filled contour of it at the set's level; anything else is rastered
+through membership. v1's two exact paths fall out of the first two
+routes without a class check. The picture is in components, and the
+support in a picture direction is asked in the domain direction
+``G^-1 n``, so a set on a space with a metric is drawn where its
+components lie.
+
+**Slices and projections.** ``subspace=`` slices along an affine
+subspace of dimension one or two, in the orthonormal coordinates of its
+tangent about its translation; a slice has no support function of its
+own, so the sampled routes draw it, with bounds derived from the whole
+set's support function where there is one. A higher-dimensional
+feasible set is more often wanted projected than sliced, and that needs
+nothing new: `push_forward` onto a coordinate pair gives a
+two-dimensional set with a support function, which example 23 now
+draws. This is the picture the Backus–Gilbert–Parker estimator was
+missing: the set it returns, on the property space, rather than
+intervals read off by hand.
+
+**Not ported.** Three dimensions, voxels and plotly, and ``Subset.plot``
+as a method: plotting stays a layer over the geometry, as it is for
+fields.
+
+**Checked.** A ball's polygon lies just outside its circle and nowhere
+far; an ellipsoid on a dense-metric space has every polygon vertex on
+its level to two parts in a thousand; the level and membership routes
+draw the same disc; a plane through a three-dimensional ball at height
+one is drawn within bounds covering the root-three disc, and the
+support route on a slice is refused; one dimension is a span of the
+right extent; a polytope, which has no support function, asks for
+bounds and draws from its level function with them; the wrong
+dimension and an unknown route are refused. Example 23 runs headless
+and draws its three figures.

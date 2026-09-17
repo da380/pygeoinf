@@ -200,5 +200,24 @@ ax, _ = plotting.plot(
 plotting.plot_points(X, centers, ax=ax, color="black", marker="o", size=40.0)
 ax.set_title("The model that maximizes cap 0")
 
-print("two panels drawn")
+# ---------------------------------------------------------------------------
+# The feasible set itself, projected onto two of the caps: the convex set
+# the estimator returns, drawn from its support function, with the truth.
+# ---------------------------------------------------------------------------
+
+from pygeoinf2.algebra.operators import LinearOperator  # noqa: E402
+from pygeoinf2.algebra.spaces import EuclideanSpace  # noqa: E402
+
+pair = LinearOperator.from_matrix(
+    P, EuclideanSpace(2), np.eye(2, P.dim), form="components"
+)
+projected = exact(data).push_forward(pair)
+ax, _ = plotting.plot_set(projected, color="tab:blue", alpha=0.4)
+ax.plot(truth_values[0], truth_values[1], "k*", markersize=12, label="truth")
+ax.set_xlabel("cap 0 average")
+ax.set_ylabel("cap 1 average")
+ax.set_title("The feasible set, projected onto caps 0 and 1")
+ax.legend()
+
+print("three figures drawn")
 plotting.show()

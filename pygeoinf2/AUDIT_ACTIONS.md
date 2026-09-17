@@ -103,7 +103,7 @@ bite on a real problem; the small restorations below matter less in practice.
 
 ## 7. Big-ticket items needing a decision, not a session
 
-- [ ] 1. `SubspaceSlicePlotter` / `plot_slice`
+- [x] 1. `SubspaceSlicePlotter` / `plot_slice` — **ported compactly** (David: "Mag can expand it later") as `plotting.plot_set(subset, subspace=, bounds=, route=)`: one and two dimensions, matplotlib only, the route by capability (support polygon, level contour, membership raster), slices through `subspace=`, projections through `push_forward`; no 3-D, voxels or plotly. Example 23 draws its feasible set. DESIGN §80.
 - [ ] 9. point, geodesic and network plotting on boxes/tori/planes; source/receiver markers
 - [ ] 7. dataset downloaders and the cache directory
 - [ ] 11/15. `MassWeightedHilbertModule`; `MassWeightedSpace` as a `CoordinateSpace`; `EuclideanSpace.subspace_projection`

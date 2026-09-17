@@ -855,3 +855,126 @@ class TestErrorBounds:
         space, low, _, high = setting
         with pytest.raises(ValueError, match="lower bound"):
             plot_error_bounds(space, np.zeros(5), high)
+
+
+class TestPlotSet:
+    """The compact slice plotter: one function, the route by capability."""
+
+    @staticmethod
+    def ball(dim, radius=1.5):
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.geometry.convex import Ball
+
+        space = EuclideanSpace(dim)
+        return space, Ball(space, radius=radius)
+
+    def test_a_ball_is_drawn_from_its_support_function(self):
+        space, ball = self.ball(2)
+        ax, polygon = plotting.plot_set(ball, directions=360)
+        vertices = polygon.get_xy()
+        radii = np.hypot(vertices[:, 0], vertices[:, 1])
+        # Circumscribed: every vertex just outside, none far.
+        assert np.all(radii >= 1.5 - 1e-9)
+        assert np.all(radii <= 1.5 * 1.001)
+
+    def test_an_ellipsoid_on_a_dense_metric_is_drawn_in_components(self, rng):
+        """The supporting lines are in the picture's coordinates, which are
+        components; the metric enters through the direction the support is
+        asked in. A wrong metric would draw the wrong ellipse."""
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.traits import Traits
+
+        from .conftest import make_dense_metric_space
+
+        space = make_dense_metric_space(2)
+        root = rng.normal(size=(2, 2)) + 2.0 * np.identity(2)
+        precision = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        covariance = LinearOperator.from_matrix(
+            space,
+            space,
+            np.linalg.inv(precision.matrix(form="components")),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        ellipsoid = Ellipsoid(space, precision, covariance=covariance)
+        ax, polygon = plotting.plot_set(ellipsoid, directions=720)
+        level = ellipsoid.level_function()
+        for vertex in polygon.get_xy():
+            value = level(space.from_components(vertex))
+            assert value == pytest.approx(ellipsoid.level, rel=2e-3)
+            assert value >= ellipsoid.level - 1e-9
+
+    def test_the_level_and_membership_routes_agree_with_the_support_route(self):
+        space, ball = self.ball(2)
+        _, filled = plotting.plot_set(ball, route="level", resolution=60)
+        _, rastered = plotting.plot_set(ball, route="membership", resolution=60)
+        assert filled.levels[-1] == pytest.approx(ball.level)
+        assert rastered.levels == pytest.approx([0.5, 1.5])
+
+    def test_a_slice_through_a_three_dimensional_ball(self):
+        from pygeoinf2.geometry.subspaces import AffineSubspace
+
+        space, ball = self.ball(3, radius=2.0)
+        plane = AffineSubspace.from_tangent_basis(
+            space,
+            [space.basis_vector(0), space.basis_vector(1)],
+            translation=space.from_components(np.array([0.0, 0.0, 1.0])),
+        )
+        ax, filled = plotting.plot_set(ball, subspace=plane, resolution=40)
+        # The slice at height one of a radius-two ball is a disc of radius
+        # root three; the derived bounds cover it.
+        assert filled.levels[-1] == pytest.approx(ball.level)
+        low, high = ax.get_xlim()
+        assert low <= -np.sqrt(3.0) and high >= np.sqrt(3.0)
+        with pytest.raises(ValueError, match="on a slice"):
+            plotting.plot_set(ball, subspace=plane, route="support")
+
+    @staticmethod
+    def extent(span):
+        """The x-extent of an ``axvspan``, a Rectangle or a Polygon by version."""
+        if hasattr(span, "get_width"):
+            return span.get_x(), span.get_x() + span.get_width()
+        xs = np.asarray(span.get_xy())[:, 0]
+        return xs.min(), xs.max()
+
+    def test_one_dimension_is_a_span(self):
+        space, ball = self.ball(1, radius=0.75)
+        ax, span = plotting.plot_set(ball)
+        low, high = self.extent(span)
+        assert low == pytest.approx(-0.75) and high == pytest.approx(0.75)
+        ax, spans = plotting.plot_set(ball, route="membership", resolution=201)
+        assert len(spans) == 1
+
+    def test_a_set_without_a_support_function_needs_bounds(self):
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        space, _ = self.ball(2)
+        square = Polytope(
+            space,
+            [
+                HalfSpace(space, space.basis_vector(0), offset=1.0),
+                HalfSpace(space, space.scale(-1.0, space.basis_vector(0)), offset=1.0),
+                HalfSpace(space, space.basis_vector(1), offset=1.0),
+                HalfSpace(space, space.scale(-1.0, space.basis_vector(1)), offset=1.0),
+            ],
+            outer=True,
+        )
+        with pytest.raises(ValueError, match="bounds"):
+            plotting.plot_set(square)
+        ax, filled = plotting.plot_set(square, bounds=((-2, 2), (-2, 2)), resolution=41)
+        assert filled.levels[-1] == pytest.approx(square.level)
+
+    def test_wrong_dimensions_and_routes_are_refused(self):
+        space, ball = self.ball(3)
+        with pytest.raises(ValueError, match="one or two"):
+            plotting.plot_set(ball)
+        space, ball = self.ball(2)
+        with pytest.raises(ValueError, match="route"):
+            plotting.plot_set(ball, route="voxels")
