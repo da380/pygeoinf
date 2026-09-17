@@ -497,6 +497,198 @@ class TestOneEstimator:
         assert pushed.problem is estimator.problem
 
 
+class TestLikelihoodMembership:
+    """Al-Attar (2021) §3.3: membership by a Lagrange multiplier on the
+    likelihood, for any confidence set that is a sublevel set of a
+    differentiable convex functional. The sublevel-set characterisation of
+    the answer, complementary to the support function."""
+
+    @pytest.fixture
+    def pieces(self, rng):
+        model = make_weighted_space()
+        data_space = EuclideanSpace(3)
+        target_space = EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(3, model.dim)), form="galerkin"
+        )
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
+        )
+        raw = model.random(rng=rng)
+        truth = model.scale(2.0 / model.norm(raw), raw)
+        radius = 0.15
+        noise = data_space.random(rng=rng)
+        data = data_space.add(
+            forward(truth),
+            data_space.scale(0.6 * radius / data_space.norm(noise), noise),
+        )
+        return model, data_space, forward, target, truth, data, radius
+
+    @staticmethod
+    def candidates(estimator, target, truth, data, rng, count=6):
+        space = target.codomain
+        centre = target(truth)
+        return [centre] + [
+            space.axpy(0.5, space.random(rng=rng), space.copy(centre))
+            for _ in range(count - 1)
+        ]
+
+    def test_it_agrees_with_the_data_space_reduction_on_a_ball(self, pieces, rng):
+        """The same minimum norm two ways: the spectral reduction in the
+        data space, and the multiplier root find with warm-started Newton
+        steps in the model space."""
+        model, data_space, forward, target, truth, data, radius = pieces
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        prior = Ball(model, radius=3.0)
+        reduced = BackusGilbertParker(problem, target, prior, membership="reduced")
+        likelihood = BackusGilbertParker(
+            problem, target, prior, membership="likelihood"
+        )
+        assert reduced.membership == "reduced" and likelihood.membership == "likelihood"
+        assert BackusGilbertParker(problem, target, prior).membership == "reduced"
+
+        for value in self.candidates(reduced, target, truth, data, rng):
+            expected = reduced.inclusion_norm(value, data)
+            if np.isfinite(expected):
+                assert likelihood.inclusion_norm(value, data) == pytest.approx(
+                    expected, rel=1e-5
+                )
+            else:
+                assert likelihood.inclusion_norm(value, data) == float("inf")
+        assert likelihood.is_feasible(data) == reduced.is_feasible(data) is True
+        assert likelihood.admits(target(truth), data)
+
+    def test_a_sublevel_set_equal_to_the_ball_gives_the_same_answer(self, pieces, rng):
+        """``||v - c||^4 <= r^4`` is the ball; given with a gradient only, so
+        the probes go through L-BFGS rather than Newton, and the general
+        path is what is tested."""
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.geometry import SublevelSet
+
+        model, data_space, forward, target, truth, data, radius = pieces
+        quartic = Functional.from_callables(
+            data_space,
+            lambda v: data_space.squared_norm(v) ** 2,
+            gradient=lambda v: data_space.scale(4.0 * data_space.squared_norm(v), v),
+        )
+        same_ball = SublevelSet(quartic, level=radius**4)
+        problem = LinearForwardProblem(forward, error=same_ball)
+        prior = Ball(model, radius=3.0)
+        estimator = BackusGilbertParker(problem, target, prior)
+        assert estimator.membership == "likelihood"
+        assert estimator.route == "dual"
+        as_ball = BackusGilbertParker(
+            LinearForwardProblem(forward, error=Ball(data_space, radius=radius)),
+            target,
+            prior,
+            membership="reduced",
+        )
+        for value in self.candidates(estimator, target, truth, data, rng, count=4):
+            expected = as_ball.inclusion_norm(value, data)
+            if np.isfinite(expected):
+                assert estimator.inclusion_norm(value, data) == pytest.approx(
+                    expected, rel=1e-4
+                )
+            else:
+                assert estimator.inclusion_norm(value, data) == float("inf")
+
+    def test_a_gaussian_error_taken_as_its_ellipsoid(self, pieces, rng):
+        """The credible ellipsoid sits inside the ambient ball, so it admits
+        no more than the ball does and its inclusion norms are no smaller;
+        and as the error vanishes both approach the closed form."""
+        from pygeoinf2 import GaussianMeasure
+
+        model, data_space, forward, target, truth, data, radius = pieces
+        prior = Ball(model, radius=3.0)
+        exact = BackusGilbertParker(LinearForwardProblem(forward), target, prior)
+        previous = None
+        for sigma in (0.05, 0.005):
+            error = GaussianMeasure.from_standard_deviation(data_space, sigma)
+            problem = LinearForwardProblem(forward, error=error)
+            with_ball = BackusGilbertParker(problem, target, prior, level=0.9)
+            ellipsoid = error.credible_set(level=0.9)
+            with_ellipsoid = BackusGilbertParker(
+                problem, target, prior, noise=ellipsoid
+            )
+            assert with_ellipsoid.membership == "likelihood"
+            gap = 0.0
+            for value in self.candidates(exact, target, truth, data, rng, count=4):
+                ball_norm = with_ball.inclusion_norm(value, data)
+                ellipsoid_norm = with_ellipsoid.inclusion_norm(value, data)
+                assert ellipsoid_norm >= ball_norm * (1.0 - 1e-8)
+                gap = max(gap, abs(ellipsoid_norm - exact.inclusion_norm(value, data)))
+            if previous is not None:
+                assert gap < previous
+            previous = gap
+
+    def test_the_answer_is_a_sublevel_set(self, pieces, rng):
+        from pygeoinf2.geometry import SublevelSet
+
+        model, data_space, forward, target, truth, data, radius = pieces
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        estimator = BackusGilbertParker(problem, target, Ball(model, radius=3.0))
+        as_set = estimator.sublevel_set(data)
+        assert isinstance(as_set, SublevelSet) and as_set.level == 3.0
+        functional = estimator.inclusion_functional(data)
+        for value in self.candidates(estimator, target, truth, data, rng):
+            assert functional(value) == estimator.inclusion_norm(value, data)
+            assert as_set.contains(value) == estimator.admits(value, data)
+            assert estimator(data).contains(value) == estimator.admits(value, data)
+
+    def test_the_extent_is_the_support_interval_on_a_scalar_property(self, pieces, rng):
+        """One-dimensional property: the two ends of the line are the two
+        support values, so the inner and outer bounds meet."""
+        model, data_space, forward, target, truth, data, radius = pieces
+        scalar = LinearOperator.from_matrix(
+            model, EuclideanSpace(1), rng.normal(size=(1, model.dim)), form="galerkin"
+        )
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        estimator = BackusGilbertParker(problem, scalar, Ball(model, radius=3.0))
+        q = EuclideanSpace(1).basis_vector(0)
+        lower, upper = estimator.extent(q, data)
+        assert lower < upper
+        assert upper == pytest.approx(estimator.support(q, data), rel=1e-5)
+        assert lower == pytest.approx(-estimator.support(-q, data), rel=1e-5)
+
+    def test_the_extent_is_an_inner_bound_in_more_dimensions(self, pieces):
+        model, data_space, forward, target, truth, data, radius = pieces
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        estimator = BackusGilbertParker(problem, target, Ball(model, radius=3.0))
+        for index in range(2):
+            q = target.codomain.basis_vector(index)
+            lower, upper = estimator.extent(q, data)
+            assert lower < upper
+            assert upper <= estimator.support(q, data) * (1.0 + 1e-6) + 1e-9
+            assert lower >= -estimator.support(-q, data) * (1.0 + 1e-6) - 1e-9
+
+    def test_membership_the_sets_do_not_allow_is_refused(self, pieces):
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        model, data_space, forward, target, truth, data, radius = pieces
+        ball = Ball(model, radius=3.0)
+        exact = LinearForwardProblem(forward)
+        noisy = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        with pytest.raises(ValueError, match="exact data"):
+            BackusGilbertParker(noisy, target, ball, membership="closed_form")
+        with pytest.raises(ValueError, match="positive radius"):
+            BackusGilbertParker(exact, target, ball, membership="reduced")
+        with pytest.raises(ValueError, match="Likelihood membership"):
+            BackusGilbertParker(exact, target, ball, membership="likelihood")
+        with pytest.raises(ValueError, match="membership must be"):
+            BackusGilbertParker(noisy, target, ball, membership="guess")
+        box = Polytope(
+            model,
+            [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(2)],
+            outer=True,
+        )
+        general = BackusGilbertParker(noisy, target, box)
+        assert general.membership is None
+        with pytest.raises(NotImplementedError, match="support function only"):
+            general.admits(target.codomain.zero(), data)
+        with pytest.raises(NotImplementedError, match="support function only"):
+            general.extent(target.codomain.basis_vector(0), data)
+
+
 class TestBundleMethod:
     """The minimiser route (d) is built on."""
 

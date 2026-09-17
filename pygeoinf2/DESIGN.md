@@ -6562,3 +6562,78 @@ options, and agrees with the general sweep; a Gaussian error is hardened
 to the credible ball at the level; push-forward keeps the sets and the
 request. Every previous test of the three routes runs through the one
 estimator, pinned to its route where it compares two.
+
+## 59. Membership by the likelihood: the sublevel-set characterisation (2026-09-17)
+
+Not an audit item. David's request on reading §58: Al-Attar (2021) §3.3
+has a method for a ball prior with data errors that differs from the
+support-function routes and complements them, and he wanted it built in.
+His framing, which this section adopts: the difference between the two
+is how the convex set is characterised, by a support function or by a
+sublevel-set function. Both are useful, and not both need be available
+for a given algorithm.
+
+**The method.** For a proposed property value, the smallest model that
+has that value and fits the data within the confidence set, compared
+with the prior radius. The confidence set is ``{ v : l(v) <= s^2 }``
+for a convex differentiable ``l``, the negative log-likelihood in the
+Gaussian case, where it is the chi-squared ellipsoid, and anything of
+that shape otherwise. A Lagrange multiplier on the likelihood
+constraint turns each probe into one convex minimisation, of ``||u||^2
+/ 2 + eta l(v - A u)``, and Lemma 3.1 proves the misfit is non-increasing
+in ``eta``, so the multiplier is found by the monotone root find of
+§18.6, the discrepancy principle's kernel, warm-started across probes.
+A fixed property confines the model to ``u~ + ker T`` and the same
+problem is solved there by replacing ``A*`` with ``P A*``, eq. (3.28).
+Nothing is assembled; the operators are applied. For a quadratic ``l``,
+a ball or an ellipsoid, Newton takes each probe in a step; for a
+general ``l`` it is Newton-CG or, with a gradient alone, L-BFGS. The
+set of acceptable values is then a sublevel set: the minimum-norm
+function on the property space, at the level of the prior radius.
+That is the `SublevelSet` of §57, and `sublevel_set(data)` returns it.
+
+**Where it sits.** The estimator of §58 already had a membership side,
+for balls only: the closed form's joint map for exact data and the
+data-space spectral reduction for two balls. The likelihood route is
+the third engine and the general one, and ``membership=`` chooses among
+them as ``route=`` chooses on the support side, ``auto`` taking the
+cheapest that applies. The confidence set may now also be a
+`SublevelSet` of a convex functional, taken as convex on the caller's
+word, since a sublevel set does not know. `inclusion_functional(data)`
+is the function itself, and `extent(direction, data)` is the paper's
+Fig. 8: the two ends of the line through the property of the smallest
+fitting model, by bracketing and bisecting membership. Those are inner
+bounds, points of the boundary, where the support values are outer
+ones; on a one-dimensional property the two coincide, which is tested.
+
+**The limit first.** The first version root-found straight away and
+read exhaustion afterwards, and on a value no model can reach the
+search widened the multiplier by two hundred decades and met NaN in
+the Newton system on the way. The misfit's limit as the multiplier
+grows is the unconstrained minimum of ``l(v - A P u)``, which the
+paper's remark after Lemma 3.1 identifies as the test of whether the
+data can be reached at all. It is now minimised first, from zero, which
+for a quadratic ``l`` gives the minimum-norm minimiser through the
+truncated CG's handling of zero curvature. A limit above the level is
+a proof that nothing fits; a limit at the level, to tolerance, makes
+that minimiser the answer, the root lying at infinity; and a limit
+below it guarantees a root at a finite multiplier, which the search
+then brackets in a few decades.
+
+**The Gaussian default** stays the ambient ball at the level, David's
+choice: the ball admits the cheap routes on both sides, so nothing gets
+slower silently. The credible ellipsoid is asked for by passing it as
+the confidence set, and then membership goes through the likelihood
+route and the support through the dual.
+
+**Checked.** On a weighted model space: the likelihood route agrees
+with the data-space reduction on a ball to 1e-5, on admitted and
+unreachable values alike; a quartic sublevel set equal to the ball,
+given with a gradient only so that the probes go through L-BFGS, gives
+the ball's answers; a Gaussian's credible ellipsoid admits no more than
+its ambient ball, and both approach the closed form as the error
+vanishes; the answer as a sublevel set contains exactly what `admits`
+admits, and so does the returned set; the extent on a scalar property
+is the support interval to 1e-5, and in two dimensions lies within it;
+every membership request the sets do not allow is refused with the
+alternative named, and a polytope prior has no membership and says so.

@@ -19,9 +19,10 @@ from typing import Any, Callable, Sequence
 import numpy as np
 import scipy.linalg
 
-from ..algebra.operators import LinearOperator
+from ..algebra.operators import Functional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..geometry.convex import Ball, ConvexSet, Ellipsoid, HalfSpace, Polytope
+from ..geometry.sets import SublevelSet
 from ..geometry.subspaces import OrthogonalProjector
 from ..numerics.root_find import Evaluation, monotone_root
 from ..probability.base import ProbabilityMeasure
@@ -1561,12 +1562,296 @@ class _DualRoute(SetEstimator):
 
 
 # --------------------------------------------------------------------- #
+#                 Membership by the likelihood, §3.3                    #
+# --------------------------------------------------------------------- #
+
+
+def _likelihood_of(noise: ConvexSet) -> tuple[Functional, float]:
+    """A confidence set read as ``{ v : l(v) <= level }``.
+
+    The form Al-Attar (2021) §3.3 works in, with ``l`` convex and
+    differentiable. A ball is the squared distance to its centre at the
+    squared radius; an ellipsoid its Mahalanobis form at one; a sublevel set
+    is already in the form. Any other set has no ``l`` to write down.
+    """
+    space = noise.domain
+    if isinstance(noise, Ball):
+        centre = noise.centre
+
+        def value(v: Any) -> float:
+            return space.squared_norm(space.subtract(v, centre))
+
+        def gradient(v: Any) -> Any:
+            return space.scale(2.0, space.subtract(v, centre))
+
+        def hessian(v: Any) -> LinearOperator:
+            return (LinearOperator.identity(space) * 2.0).with_traits(
+                Traits.POSITIVE_DEFINITE
+            )
+
+        return (
+            Functional.from_callables(space, value, gradient=gradient, hessian=hessian),
+            noise.radius**2,
+        )
+    if isinstance(noise, Ellipsoid):
+        precision, centre = noise.precision, noise.centre
+
+        def value(v: Any) -> float:
+            return noise.mahalanobis_squared(v)
+
+        def gradient(v: Any) -> Any:
+            return space.scale(2.0, precision(space.subtract(v, centre)))
+
+        def hessian(v: Any) -> LinearOperator:
+            return (precision * 2.0).with_traits(Traits.POSITIVE_DEFINITE)
+
+        return (
+            Functional.from_callables(space, value, gradient=gradient, hessian=hessian),
+            1.0,
+        )
+    if isinstance(noise, SublevelSet):
+        return noise.functional, noise.level
+    raise TypeError(
+        f"The likelihood route needs the confidence set as a sublevel set of a "
+        f"differentiable convex functional -- a Ball, an Ellipsoid or a "
+        f"SublevelSet -- not a {type(noise).__name__}."
+    )
+
+
+class _LikelihoodRoute:
+    """Membership of a property value, by Al-Attar (2021) §3.3.
+
+    The confidence set is ``{ v : l(v) <= s^2 }`` for a convex,
+    differentiable ``l``, the negative log-likelihood in the Gaussian case
+    and anything of that shape otherwise. The smallest model that has a
+    given property and fits the data within the set is found by a Lagrange
+    multiplier on the likelihood constraint: for each ``eta > 0`` the
+    convex functional ``||u||^2 / 2 + eta l(v - A u)`` has one minimiser,
+    and by Lemma 3.1 its misfit ``l(v - A u_eta)`` is non-increasing in
+    ``eta``, so the ``eta`` at which it meets ``s^2`` is a monotone scalar
+    root find, the same kernel as the discrepancy principle's. A misfit
+    that never reaches ``s^2`` however large ``eta`` grows is the
+    constructive proof that no model fits at all.
+
+    A fixed property confines the model to ``u~ + ker T`` with ``u~`` the
+    minimum-norm model having that property, and the same problem is solved
+    in the kernel by replacing ``A*`` with ``P A*``, eq. (3.28). The norms
+    separate, and the answer is ``sqrt(||u~||^2 + ||u_eta||^2)``.
+
+    Each probe is one convex minimisation, warm-started from the last. For
+    a quadratic ``l``, a ball or an ellipsoid, that is a linear solve and
+    Newton takes it in a step or two; for a general ``l`` it is Newton or
+    L-BFGS proper, whichever the functional's derivatives allow. Nothing is
+    assembled; the operators are only applied.
+    """
+
+    def __init__(
+        self,
+        problem: LinearForwardProblem,
+        target: LinearOperator,
+        prior: Ball,
+        noise: ConvexSet,
+        /,
+        *,
+        solver: LinearSolver | None = None,
+        optimiser: Any = None,
+        iterations: int = 60,
+        rtol: float = 1e-6,
+    ) -> None:
+        from ..numerics.optimisation import LBFGS, NewtonCG
+
+        self._problem = problem
+        self._target = target
+        self._radius = _ball_radius(prior, "The prior")
+        self._likelihood, self._level = _likelihood_of(noise)
+        self._solver = solver or CGSolver(rtol=1e-12)
+        if optimiser is None:
+            optimiser = (
+                NewtonCG(forcing=1e-3, rtol=1e-10, gtol=0.0)
+                if self._likelihood.has_hessian
+                else LBFGS(rtol=1e-10, gtol=0.0)
+            )
+        self._optimiser = optimiser
+        self._iterations = iterations
+        self._rtol = rtol
+
+    @cached_property
+    def _kernel(self) -> LinearOperator:
+        return OrthogonalProjector.onto_kernel(self._target, solver=self._solver)
+
+    @cached_property
+    def _property_pseudo_inverse(self) -> LinearOperator:
+        """``T* (T T*)^-1``: the smallest model with a given property."""
+        normal = (self._target @ self._target.adjoint).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+        return self._target.adjoint @ CholeskySolver()(normal)
+
+    def _objective(
+        self, base: Any, projector: LinearOperator, multiplier: float | None
+    ) -> Functional:
+        """``||u||^2 / 2 + eta l(base - A P u)`` on the model space.
+
+        With ``multiplier=None`` the norm term is dropped and this is the
+        misfit alone, whose minimum is the limit the multiplier search
+        approaches: eq. (3.15)'s infimum, and the test of whether any model
+        reaches the confidence set at all.
+        """
+        space = self._problem.model_space
+        data_space = self._problem.data_space
+        forward = self._problem.forward_operator
+        likelihood = self._likelihood
+
+        def misfit_point(u: Any) -> Any:
+            return data_space.subtract(base, forward(projector(u)))
+
+        def value(u: Any) -> float:
+            fit = likelihood(misfit_point(u))
+            if multiplier is None:
+                return fit
+            return multiplier * fit + 0.5 * space.squared_norm(u)
+
+        def gradient(u: Any) -> Any:
+            pulled = projector(forward.adjoint(likelihood.gradient(misfit_point(u))))
+            if multiplier is None:
+                return space.scale(-1.0, pulled)
+            return space.axpy(-multiplier, pulled, space.copy(u))
+
+        hessian = None
+        if likelihood.has_hessian:
+
+            def hessian(u: Any) -> LinearOperator:
+                curvature = likelihood.hessian(misfit_point(u))
+                pulled = projector @ forward.adjoint @ curvature @ forward @ projector
+                if multiplier is None:
+                    return pulled.with_traits(Traits.POSITIVE_SEMIDEFINITE)
+                return (
+                    LinearOperator.identity(space) + pulled * multiplier
+                ).with_traits(Traits.POSITIVE_DEFINITE)
+
+        return Functional.from_callables(
+            space, value, gradient=gradient, hessian=hessian
+        )
+
+    def _fit(self, base: Any, projector: LinearOperator) -> Any | None:
+        """The smallest ``u`` in the projector's range with ``l(base - A P u) <= s^2``.
+
+        ``None`` when there is none. Decided in three steps, as the paper's
+        remark after Lemma 3.1 suggests: the misfit's limit as the multiplier
+        grows is the unconstrained minimum of ``l(base - A P u)``, so that is
+        minimised first, from zero, which for a quadratic ``l`` gives the
+        minimum-norm minimiser. A limit above the level proves nothing
+        reaches the set; a limit at the level, to tolerance, makes that
+        minimiser the answer, the root lying at infinity; and a limit below
+        it guarantees a root at a finite multiplier, which the monotone
+        search then brackets without ever needing a multiplier large enough
+        to overflow the Newton system. Searching first and reading
+        exhaustion afterwards, the other way round, widened the multiplier by
+        two hundred decades on an unreachable value and met NaN on the way.
+        """
+        space = self._problem.model_space
+        data_space = self._problem.data_space
+        forward = self._problem.forward_operator
+        level = self._level
+
+        limit = self._optimiser.minimise(
+            self._objective(base, projector, None), space.zero()
+        )
+        floor = float(limit.value)
+        if floor > level * (1.0 + self._rtol):
+            return None
+        if floor >= level * (1.0 - self._rtol):
+            return limit.minimiser
+
+        def probe(multiplier: float, previous: Any) -> Evaluation:
+            start = space.zero() if previous is None else previous
+            result = self._optimiser.minimise(
+                self._objective(base, projector, multiplier), start
+            )
+            model = result.minimiser
+            misfit = float(
+                self._likelihood(data_space.subtract(base, forward(projector(model))))
+            )
+            return Evaluation(misfit, model, result.iterations)
+
+        found = monotone_root(
+            probe,
+            level,
+            decreasing=True,
+            iterations=self._iterations,
+            rtol=self._rtol,
+            expansions=40,
+        )
+        if found.breakdown is not None:
+            raise found.breakdown
+        if not found.converged:
+            raise ValueError(
+                "The likelihood route could not bracket its multiplier although "
+                f"the misfit's limit {floor:.3g} lies below the level {level:.3g}."
+            )
+        return found.solution
+
+    def fitting_model(self, data: Any, /) -> Any | None:
+        """The smallest model fitting the data within the confidence set.
+
+        ``None`` when no model does, eq. (3.15) with an infinite infimum.
+        The prior plays no part: this is the data against the confidence
+        set alone.
+        """
+        space = self._problem.model_space
+        if self._likelihood(data) <= self._level:
+            return space.zero()
+        return self._fit(data, LinearOperator.identity(space))
+
+    def is_feasible(self, data: Any, /) -> bool:
+        """Whether a model within the prior ball fits the data within the set."""
+        model = self.fitting_model(data)
+        return (
+            model is not None and self._problem.model_space.norm(model) <= self._radius
+        )
+
+    def inclusion_norm(self, value: Any, data: Any, /) -> float:
+        """``min { ||m|| : T m == value, l(d - A m) <= s^2 }``.
+
+        Infinite when no model reproduces the value and fits the data, which
+        is a proof rather than a failure.
+        """
+        space = self._problem.model_space
+        data_space = self._problem.data_space
+        forward = self._problem.forward_operator
+
+        anchor = self._property_pseudo_inverse(value)
+        anchor_norm = space.norm(anchor)
+        residual = data_space.subtract(data, forward(anchor))
+        if self._likelihood(residual) <= self._level:
+            return float(anchor_norm)
+        correction = self._fit(residual, self._kernel)
+        if correction is None:
+            return float("inf")
+        return float(np.sqrt(anchor_norm**2 + space.squared_norm(correction)))
+
+    def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
+        """Whether a property value is consistent with the data and the prior.
+
+        Args:
+            value: the property value to test.
+            data: the observations.
+            rtol: how far outside the prior radius still counts as admissible.
+
+        Returns:
+            Whether the value is admissible.
+        """
+        return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
+
+
+# --------------------------------------------------------------------- #
 #                      The one estimator, routes inside                 #
 # --------------------------------------------------------------------- #
 
 
 _ROUTES = ("auto", "closed_form", "bisection", "dual", "primal", "kkt", "smoothed")
 _GENERAL = ("dual", "primal", "kkt", "smoothed")
+_MEMBERSHIPS = ("auto", "closed_form", "reduced", "likelihood")
 
 
 class BackusGilbertParker(SetEstimator):
@@ -1605,15 +1890,22 @@ class BackusGilbertParker(SetEstimator):
     gives that: :meth:`support` in one direction, :meth:`support_values` in
     many, and :meth:`__call__` returns the set as an object carrying it, an
     :class:`~pygeoinf2.geometry.convex.Ellipsoid` from the closed form and a
-    support-function oracle otherwise. A set can also be characterised by
-    **membership**, a test saying whether a proposed value is in it, and
-    that is a different computation (§18.5): the minimum norm of a model
-    reproducing the value and fitting the data, compared with the prior
-    radius. It exists when the constraint and confidence sets are balls,
-    whichever route computes the support, and then :meth:`admits`,
-    :meth:`inclusion_norm` and :meth:`inner_hull` are available and the
-    returned set answers ``contains`` as well. With general sets the answer
-    is known through its support function only, and those methods say so.
+    support-function oracle otherwise. A set can also be characterised as
+    a **sublevel set**, by a function saying how far a proposed value is
+    from acceptable: the minimum norm of a model reproducing the value and
+    fitting the data, which is acceptable when within the prior radius
+    (§18.5, Al-Attar 2021 §2.3 and §3.3). That is a different computation,
+    and ``membership=`` chooses it: the closed form's joint map for exact
+    data, the data-space reduction for two balls, or the likelihood route
+    for a confidence set given as a sublevel set of any differentiable
+    convex functional, a ball, an ellipsoid or a ``SublevelSet``. It needs a
+    ball prior. When it exists, :meth:`inclusion_norm`, :meth:`admits`,
+    :meth:`inner_hull` and :meth:`extent` are available,
+    :meth:`inclusion_functional` is the function whose sublevel set the
+    answer is, and the returned set answers ``contains`` as well. The two
+    characterisations are complementary -- the support function bounds the
+    set from outside, membership decides points and gives inner bounds --
+    and not both are required of every algorithm.
 
     The chosen route's own object is :attr:`algorithm`, for diagnostics that
     belong to one route and not the others: the closed form's budget and
@@ -1631,9 +1923,11 @@ class BackusGilbertParker(SetEstimator):
         noise: ConvexSet | None = None,
         level: float = 0.95,
         route: str = "auto",
+        membership: str = "auto",
         solver: LinearSolver | None = None,
         iterations: int = 60,
         method: Any = None,
+        optimiser: Any = None,
     ) -> None:
         """
         Args:
@@ -1643,28 +1937,45 @@ class BackusGilbertParker(SetEstimator):
                 :class:`~pygeoinf2.geometry.convex.Ball` admits the cheap
                 routes; any convex set with a support function and a
                 maximiser admits the dual.
-            noise: the confidence set on the data space. Taken from the
-                problem when omitted, as described above.
+            noise: the confidence set on the data space: a convex set, or a
+                ``SublevelSet`` of a convex functional, which is taken as
+                convex on the caller's word since a sublevel set does not
+                know. Taken from the problem when omitted, as described
+                above.
             level: the probability the confidence set carries when it is
                 hardened from a measure.
             route: ``"auto"`` chooses by the sets. ``"closed_form"``,
                 ``"bisection"``, ``"dual"``, ``"primal"``, ``"kkt"`` and
                 ``"smoothed"`` force one; the last four are the general
                 route's solvers, see the dual sweep's own documentation.
-            solver: how the closed form and the bisection invert their
-                operators.
-            iterations: bisection steps, on each of the two multipliers.
+            membership: how membership is decided. ``"auto"`` chooses by
+                the sets: ``"closed_form"`` for exact data, ``"reduced"``
+                for two balls, ``"likelihood"`` for an ellipsoid or a
+                sublevel set; each can be forced where the sets allow it,
+                and the likelihood route applies to a ball as well.
+            solver: how the closed form, the bisection and the likelihood
+                route invert their operators.
+            iterations: bisection steps, on each of the two multipliers,
+                and the likelihood route's root find.
             method: the general route's minimiser. A proximal bundle method
                 by default.
+            optimiser: the likelihood route's minimiser for each probe.
+                Newton-CG when the confidence set's functional has a
+                Hessian, L-BFGS otherwise.
 
         Raises:
-            ValueError: if the route is unknown, or not available for these
-                sets; if an operator or set is on the wrong space.
+            ValueError: if the route or membership is unknown, or not
+                available for these sets; if an operator or set is on the
+                wrong space.
             TypeError: if the problem's error is neither a measure nor a
                 convex set.
         """
         if route not in _ROUTES:
             raise ValueError(f"route must be one of {_ROUTES}, got {route!r}.")
+        if membership not in _MEMBERSHIPS:
+            raise ValueError(
+                f"membership must be one of {_MEMBERSHIPS}, got {membership!r}."
+            )
         if target.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         if prior.domain != problem.model_space:
@@ -1679,11 +1990,14 @@ class BackusGilbertParker(SetEstimator):
         self._noise = noise
         self._level = level
         self._requested = route
+        self._requested_membership = membership
         self._solver = solver
         self._iterations = iterations
         self._method = method
+        self._optimiser = optimiser
         self._route = self._choose(route)
         self._algorithm = self._build(self._route)
+        self._membership = self._choose_membership(membership)
 
     # ----------------------------------------------------------------- #
     #                              Dispatch                             #
@@ -1694,13 +2008,16 @@ class BackusGilbertParker(SetEstimator):
         problem: LinearForwardProblem, noise: ConvexSet | None, level: float
     ) -> ConvexSet:
         if noise is not None:
-            if not isinstance(noise, ConvexSet):
-                raise TypeError("The confidence set must be a ConvexSet.")
+            if not isinstance(noise, (ConvexSet, SublevelSet)):
+                raise TypeError(
+                    "The confidence set must be a ConvexSet, or a SublevelSet of "
+                    "a convex functional."
+                )
             return noise
         if not problem.has_error:
             return Ball(problem.data_space, radius=0.0)
         error = problem.error
-        if isinstance(error, ConvexSet):
+        if isinstance(error, (ConvexSet, SublevelSet)):
             return error
         if isinstance(error, ProbabilityMeasure):
             return problem.error_measure.ambient_ball(level=level)
@@ -1769,27 +2086,88 @@ class BackusGilbertParker(SetEstimator):
             method=self._method,
         )
 
+    @property
+    def _likelihood_applies(self) -> bool:
+        return (
+            isinstance(self._prior, Ball)
+            and not self._exact
+            and isinstance(self._noise, (Ball, Ellipsoid, SublevelSet))
+        )
+
+    def _choose_membership(self, membership: str) -> str | None:
+        """Which engine decides membership, or ``None`` when none can."""
+        if membership == "auto":
+            if self._exact and isinstance(self._prior, Ball):
+                return "closed_form"
+            if self._balls:
+                return "reduced"
+            if self._likelihood_applies:
+                return "likelihood"
+            return None
+        if membership == "closed_form" and not (
+            self._exact and isinstance(self._prior, Ball)
+        ):
+            raise ValueError(
+                "Closed-form membership needs a ball prior and exact data; "
+                f"with these sets membership is {self._choose_membership('auto')!r}."
+            )
+        if membership == "reduced" and not (self._balls and not self._exact):
+            raise ValueError(
+                "Reduced membership needs a ball prior and a ball confidence "
+                "set of positive radius; with these sets membership is "
+                f"{self._choose_membership('auto')!r}."
+            )
+        if membership == "likelihood" and not self._likelihood_applies:
+            raise ValueError(
+                "Likelihood membership needs a ball prior and a confidence set "
+                "that is a sublevel set of a differentiable convex functional "
+                "-- a Ball of positive radius, an Ellipsoid or a SublevelSet."
+            )
+        return membership
+
     @cached_property
     def _inclusion(self) -> Any:
         """The engine that decides membership, or ``None`` without one.
 
         Independent of the route computing the support: membership is the
-        minimum-norm computation of §18.5, which exists for balls.
+        minimum-norm computation of §18.5, and the support route's own
+        object is reused when it happens to be the same engine.
         """
-        if self._route in ("closed_form", "bisection"):
-            return self._algorithm
-        if self._exact and isinstance(self._prior, Ball):
-            return self._build("closed_form")
-        if self._balls:
-            return self._build("bisection")
-        return None
+        if self._membership is None:
+            return None
+        if self._membership == "closed_form":
+            return (
+                self._algorithm
+                if self._route == "closed_form"
+                else self._build("closed_form")
+            )
+        if self._membership == "reduced":
+            return (
+                self._algorithm
+                if self._route == "bisection"
+                else self._build("bisection")
+            )
+        return self._likelihood_engine
+
+    @cached_property
+    def _likelihood_engine(self) -> Any:
+        return _LikelihoodRoute(
+            self._problem,
+            self._target,
+            self._prior,
+            self._noise,
+            solver=self._solver,
+            optimiser=self._optimiser,
+            iterations=self._iterations,
+        )
 
     def _need_inclusion(self, what: str) -> Any:
         engine = self._inclusion
         if engine is None:
             raise NotImplementedError(
-                f"{what} needs a ball prior and a ball (or absent) confidence "
-                "set; with general convex sets the feasible property set is "
+                f"{what} needs a ball prior and a confidence set that is a ball, "
+                "an ellipsoid or a sublevel set of a differentiable convex "
+                "functional; with other sets the feasible property set is "
                 "known through its support function only. Use the returned "
                 "set's outside() for a certificate of exclusion, or polytope() "
                 "for an outer bound."
@@ -1824,6 +2202,11 @@ class BackusGilbertParker(SetEstimator):
     def route(self) -> str:
         """The route in use: ``"closed_form"``, ``"bisection"`` or a general one."""
         return self._route
+
+    @property
+    def membership(self) -> str | None:
+        """How membership is decided, or ``None`` when it cannot be."""
+        return self._membership
 
     @property
     def algorithm(self) -> Any:
@@ -2009,6 +2392,115 @@ class BackusGilbertParker(SetEstimator):
         ]
         return Polytope(space, planes, outer=False)
 
+    def inclusion_functional(self, data: Any, /) -> Functional:
+        """The function whose sublevel set at the prior radius is the answer.
+
+        ``p -> inclusion_norm(p, data)``, convex on the property space
+        (Al-Attar 2021 §2.3), so that ``SublevelSet(f, level=radius)`` is the
+        feasible property set characterised by membership, as
+        :meth:`__call__` characterises it by its support function.
+
+        Raises:
+            NotImplementedError: unless membership can be decided.
+        """
+        self._need_inclusion("The inclusion functional")
+        return Functional.from_callables(
+            self.target_space, lambda value: self.inclusion_norm(value, data)
+        )
+
+    def sublevel_set(self, data: Any, /) -> SublevelSet:
+        """The feasible property set as a sublevel set, §3.3's characterisation."""
+        return SublevelSet(
+            self.inclusion_functional(data),
+            level=self._need_inclusion("A sublevel set")._radius,
+        )
+
+    def _interior_property(self, data: Any) -> Any:
+        """A property value inside the set: that of the smallest fitting model.
+
+        Raises:
+            ValueError: if no model within the prior fits the data.
+        """
+        if self._membership == "closed_form":
+            model = self._inclusion.minimum_norm_model(data)
+        else:
+            model = self._likelihood_engine.fitting_model(data)
+        if (
+            model is None
+            or self._problem.model_space.norm(model) > self._radius_of_prior
+        ):
+            raise ValueError(
+                "No model within the prior fits the data, so the feasible "
+                "property set is empty and has no extent."
+            )
+        return self._target(model)
+
+    @property
+    def _radius_of_prior(self) -> float:
+        return _ball_radius(self._prior, "The prior")
+
+    def extent(
+        self, direction: Any, data: Any, /, *, iterations: int = 40
+    ) -> tuple[float, float]:
+        """How far the set reaches along a line through an interior point.
+
+        Al-Attar (2021) Fig. 8: along the line through the property of the
+        smallest fitting model in the given direction, the values are
+        admissible on an interval, since the set is convex, and its two
+        ends are found by bracketing and bisecting :meth:`admits`. Returned
+        as the pairing ``(direction, p)`` at the two ends, so that they
+        compare directly with ``-support(-direction)`` and
+        ``support(direction)``: these are **inner** bounds, points of the
+        boundary, where the support values are outer ones, and the two
+        coincide when the property space is one-dimensional. Each end costs
+        one inclusion norm per bisection step.
+
+        Args:
+            direction: the direction of the line.
+            data: the observations.
+            iterations: bisection steps for each end.
+
+        Returns:
+            ``(lower, upper)``.
+
+        Raises:
+            NotImplementedError: unless membership can be decided.
+            ValueError: if the feasible set is empty.
+        """
+        self._need_inclusion("An extent")
+        space = self.target_space
+        base = self._interior_property(data)
+        length = space.squared_norm(direction)
+        if length == 0.0:
+            value = space.inner_product(direction, base)
+            return value, value
+        if not self.admits(base, data):
+            raise ValueError(
+                "The interior point is not admitted; the set may be empty."
+            )
+
+        def crossing(sign: float) -> float:
+            step = max(1.0, abs(space.inner_product(direction, base))) / length
+            inside, outside = 0.0, sign * step
+            for _ in range(60):
+                if not self.admits(
+                    space.axpy(outside, direction, space.copy(base)), data
+                ):
+                    break
+                inside, outside = outside, 2.0 * outside
+            else:
+                raise ValueError("The set appears unbounded along this direction.")
+            for _ in range(iterations):
+                middle = 0.5 * (inside + outside)
+                if self.admits(space.axpy(middle, direction, space.copy(base)), data):
+                    inside = middle
+                else:
+                    outside = middle
+            return inside
+
+        centre = space.inner_product(direction, base)
+        return centre + crossing(-1.0) * length, centre + crossing(1.0) * length
+
     # ----------------------------------------------------------------- #
 
     def push_forward(self, operator: LinearOperator, /) -> "BackusGilbertParker":
@@ -2020,9 +2512,11 @@ class BackusGilbertParker(SetEstimator):
             noise=self._noise,
             level=self._level,
             route=self._requested,
+            membership=self._requested_membership,
             solver=self._solver,
             iterations=self._iterations,
             method=self._method,
+            optimiser=self._optimiser,
         )
 
     def __repr__(self) -> str:
