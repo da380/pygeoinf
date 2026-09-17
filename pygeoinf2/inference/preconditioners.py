@@ -96,6 +96,7 @@ class NormalDiagonalPreconditioner(LinearSolver):
         *,
         blocks: Sequence[Sequence[int]] | None = None,
         floor: float = 1e-14,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -103,9 +104,12 @@ class NormalDiagonalPreconditioner(LinearSolver):
                 exactly once; a partial cover is refused rather than silently
                 left at zero. None means one block per index, which is exact.
             floor: diagonal entries at or below this are left uninverted.
+            n_jobs: workers for the probes, one adjoint application and one
+                prior application per block. Serial by default.
         """
         self._blocks = None if blocks is None else [list(b) for b in blocks]
         self._floor = floor
+        self._n_jobs = n_jobs
 
     def _partition(self, dimension: int) -> list[list[int]]:
         if self._blocks is None:
@@ -135,15 +139,19 @@ class NormalDiagonalPreconditioner(LinearSolver):
         dimension = data_space.dim
         blocks = self._partition(dimension)
 
-        diagonal = np.zeros(dimension)
-        components = np.zeros(dimension)
-        for block in blocks:
-            components[:] = 0.0
+        from ..parallel import parallel_map
+
+        def probe(block: Sequence[int]) -> float:
+            components = np.zeros(dimension)
             components[block] = 1.0 / len(block)
             pulled = adjoint(data_space.from_components(components))
-            diagonal[block] = model_space.inner_product(
-                pulled, prior_covariance(pulled)
-            )
+            return model_space.inner_product(pulled, prior_covariance(pulled))
+
+        diagonal = np.zeros(dimension)
+        for block, value in zip(
+            blocks, parallel_map(probe, blocks, n_jobs=self._n_jobs)
+        ):
+            diagonal[block] = value
 
         error_covariance = normal.error_covariance
         if error_covariance is not None:

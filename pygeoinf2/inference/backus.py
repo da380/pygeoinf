@@ -1462,9 +1462,10 @@ class _DualRoute(SetEstimator):
         its own.
 
         Warm starting is inherently *sequential*: each direction needs the one
-        before it. Passing ``n_jobs`` runs the directions in parallel instead
-        and gives the warm start up, which is the right trade only when the
-        directions are few and each minimisation is dear.
+        before it. Passing ``n_jobs`` runs the directions in parallel instead,
+        on whichever route was asked for, and gives the warm start up, which
+        is the right trade only when the directions are few and each
+        minimisation is dear.
 
         Args:
             directions: the directions to evaluate.
@@ -1490,7 +1491,8 @@ class _DualRoute(SetEstimator):
                 dual and primal, and 2.7e-11 between primal and KKT.
             warm_start: carry each answer into the next. Ignored when running
                 in parallel, where there is no previous answer to carry.
-            n_jobs: workers. ``None`` or one keeps the sweep sequential.
+            n_jobs: workers, on any route. ``None`` or one keeps the sweep
+                sequential.
             **kwargs: passed to the primal solver, and ignored on the dual
                 route, which is configured through ``method=`` at construction.
 
@@ -1509,6 +1511,19 @@ class _DualRoute(SetEstimator):
         directions = tuple(directions)
         if not directions:
             return np.empty(0)
+
+        from ..parallel import parallel_map, resolve_jobs
+
+        if resolve_jobs(n_jobs) != 1:
+            # One direction per task, each a cold start on the chosen route.
+            def one(direction: Any) -> float:
+                return float(
+                    self.support_values(
+                        [direction], data, route=route, warm_start=False, **kwargs
+                    )[0]
+                )
+
+            return np.array(parallel_map(one, directions, n_jobs=n_jobs))
 
         if route == "smoothed":
             from ..numerics.optimisation import LBFGS
@@ -1545,17 +1560,6 @@ class _DualRoute(SetEstimator):
                 if warm_start:
                     start = result.model
             return np.array(values)
-
-        from ..parallel import parallel_map, resolve_jobs
-
-        if resolve_jobs(n_jobs) != 1:
-            return np.array(
-                parallel_map(
-                    lambda direction: self.support(direction, data),
-                    directions,
-                    n_jobs=n_jobs,
-                )
-            )
 
         values, start = [], None
         for direction in directions:
@@ -2173,28 +2177,32 @@ class FeasiblePropertySet(ConvexSet):
         start across neighbouring directions and its ``route=``,
         ``warm_start=`` and ``n_jobs=`` options, the route defaulting to
         this set's. The closed form and the bisection have no state to
-        carry between directions and evaluate each in turn; they take no
-        options.
+        carry between directions and evaluate each in turn, or in parallel
+        with ``n_jobs=``; they take no other option.
 
         Args:
             directions: the directions to evaluate.
-            **options: the sweep's options, on a general route.
+            **options: the sweep's options: all of them on a general route,
+                ``n_jobs`` alone on the closed form and the bisection.
 
         Returns:
             One support value per direction.
 
         Raises:
-            TypeError: if options are given on a route that has none.
+            TypeError: if other options are given on a route that has none.
         """
         if self.route in _GENERAL:
             options.setdefault("route", self.route)
             return self._algorithm.support_values(directions, self._data, **options)
+        n_jobs = options.pop("n_jobs", None)
         if options:
             raise TypeError(
                 f"The {self.route!r} route sweeps directions one at a time and "
-                f"takes no options; got {sorted(options)}."
+                f"takes no option but n_jobs; got {sorted(options)}."
             )
-        return np.array([self.support(direction) for direction in directions])
+        from ..parallel import parallel_map
+
+        return np.array(parallel_map(self.support, list(directions), n_jobs=n_jobs))
 
     def support_function(self) -> SupportFunction:
         """The support function, answered by :meth:`support`."""

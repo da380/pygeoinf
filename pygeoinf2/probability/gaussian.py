@@ -1957,13 +1957,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         effective = float(np.sum(live) ** 2 / np.sum(live**2))
         return "matched" if effective > 100.0 else "imhof"
 
-    def as_multivariate_normal(self) -> Any:
+    def as_multivariate_normal(self, /, *, n_jobs: int | None = None) -> Any:
         """The measure as a ``scipy.stats`` object, in components.
 
         For anything scipy already does — a density, a rank correlation, a
         statistical test. It is the *component* representation, so it is a
         statement about coefficients rather than about fields, and a metric
         that is not the identity does not travel with it.
+
+        Args:
+            n_jobs: workers for assembling the covariance matrix, one
+                application per column. Serial by default.
         """
         from scipy.stats import multivariate_normal
 
@@ -1984,7 +1988,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
 
         galerkin = self._require_covariance("A multivariate normal").matrix(
-            form="galerkin"
+            form="galerkin", n_jobs=n_jobs
         )
         components = divide(divide(galerkin).T)
         return multivariate_normal(

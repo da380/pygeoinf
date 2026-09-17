@@ -173,6 +173,7 @@ class SpectralPreconditioner(LinearSolver):
         max_rank: int | None = None,
         block_size: int = 10,
         rng: Generator | None = None,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -187,6 +188,7 @@ class SpectralPreconditioner(LinearSolver):
             max_rank: its cap.
             block_size: modes added per step on the adaptive route.
             rng: the generator for the randomised range finder.
+            n_jobs: workers for the range finder's probes. Serial by default.
         """
         if rank is not None and rank < 1:
             raise ValueError(f"The rank must be positive, got {rank}.")
@@ -196,6 +198,7 @@ class SpectralPreconditioner(LinearSolver):
         self._max_rank = max_rank
         self._block_size = block_size
         self._rng = rng
+        self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         space = operator.domain
@@ -206,6 +209,7 @@ class SpectralPreconditioner(LinearSolver):
             rtol=self._rtol,
             max_rank=self._max_rank,
             block_size=self._block_size,
+            n_jobs=self._n_jobs,
         )
         values = low_rank.eigenvalues
         floor = self._damping
@@ -304,6 +308,7 @@ class BandedPreconditioner(LinearSolver):
         *,
         form: Literal["auto", "components", "galerkin"] = "auto",
         probe: Literal["exact", "banded"] = "exact",
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -320,18 +325,20 @@ class BandedPreconditioner(LinearSolver):
                 operator that is *not* banded that turns a merely unhelpful
                 preconditioner into an actively harmful one. Use ``"banded"``
                 when the operator really is banded, where the two agree.
+            n_jobs: workers for the exact probe's columns. Serial by default.
         """
         if bandwidth < 0:
             raise ValueError(f"The bandwidth must be non-negative, got {bandwidth}.")
         self._bandwidth = bandwidth
         self._form = form
         self._probe = probe
+        self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         space = operator.domain
         offsets = list(range(-self._bandwidth, self._bandwidth + 1))
         diagonals = operator.diagonals(
-            offsets=offsets, form=self._form, probe=self._probe
+            offsets=offsets, form=self._form, probe=self._probe, n_jobs=self._n_jobs
         )
         banded = sparse.dia_array(
             (diagonals, offsets), shape=(space.dim, space.dim)
@@ -363,6 +370,7 @@ def _probe_columns(
     /,
     *,
     galerkin: bool,
+    n_jobs: int | None = None,
 ) -> "Iterator[tuple[int, np.ndarray]]":
     """One column of an operator's matrix at a time, never all of them.
 
@@ -373,29 +381,48 @@ def _probe_columns(
     matrix-free scipy operator column by column for exactly this reason.
 
     The applications are the same either way; only the memory differs.
+    In parallel the columns go to the workers a few per worker at a time,
+    so the memory stays bounded by the block rather than by the matrix.
 
     Args:
         operator: the operator to probe.
         columns: which columns are wanted.
         galerkin: return the Galerkin column ``G A e_j`` rather than the
             component column ``A e_j``.
+        n_jobs: workers for the applications. Serial by default.
 
     Yields:
         ``(index, column)`` pairs.
     """
+    from ..parallel import parallel_map, resolve_jobs
+
     domain: CoordinateSpace = operator.domain
     codomain: CoordinateSpace = operator.codomain
-    basis = np.zeros(domain.dim)
-    for index in columns:
+
+    def probe(index: int) -> np.ndarray:
+        basis = np.zeros(domain.dim)
         basis[index] = 1.0
         image = codomain.to_components(operator(domain.from_components(basis)))
-        basis[index] = 0.0
-        yield index, codomain.apply_gram(image) if galerkin else image
+        return codomain.apply_gram(image) if galerkin else image
+
+    wanted = list(columns)
+    workers = resolve_jobs(n_jobs)
+    if workers == 1:
+        for index in wanted:
+            yield index, probe(index)
+        return
+    block = 8 * workers
+    for start in range(0, len(wanted), block):
+        chunk = wanted[start : start + block]
+        yield from zip(chunk, parallel_map(probe, chunk, n_jobs=n_jobs))
 
 
 def _thresholded_matrix(
     operator: LinearOperator,
     keep: "Callable[[np.ndarray, int], np.ndarray]",
+    /,
+    *,
+    n_jobs: int | None = None,
 ) -> "sparse.csc_matrix":
     """The Galerkin matrix with, in each column, only the rows *keep* names.
 
@@ -409,7 +436,9 @@ def _thresholded_matrix(
     """
     dimension = operator.domain.dim
     kept_rows, kept_columns, kept_values = [], [], []
-    for index, column in _probe_columns(operator, range(dimension), galerkin=True):
+    for index, column in _probe_columns(
+        operator, range(dimension), galerkin=True, n_jobs=n_jobs
+    ):
         rows = keep(column, index)
         kept_rows.append(rows)
         kept_columns.append(np.full(rows.size, index))
@@ -437,6 +466,7 @@ def sparse_approximation(
     max_per_column: int | None = None,
     criterion: Literal["correlation", "column"] = "correlation",
     diagonal: np.ndarray | None = None,
+    n_jobs: int | None = None,
 ) -> LinearOperator:
     """A sparse operator approximating a self-adjoint one, never formed densely.
 
@@ -472,6 +502,7 @@ def sparse_approximation(
             estimate on an operator too large to probe twice. Read exactly
             from the operator when omitted, which is free where the operator
             knows its diagonal and one application per column otherwise.
+        n_jobs: workers for the column probes. Serial by default.
 
     Returns:
         The sparse operator, claiming self-adjointness and nothing more.
@@ -498,7 +529,9 @@ def sparse_approximation(
 
     if criterion == "correlation":
         if diagonal is None:
-            diagonal = operator.diagonals(offsets=(0,), form="galerkin")[0]
+            diagonal = operator.diagonals(offsets=(0,), form="galerkin", n_jobs=n_jobs)[
+                0
+            ]
         diagonal = np.asarray(diagonal, dtype=float)
         if diagonal.shape != (dimension,):
             raise ValueError(
@@ -527,7 +560,7 @@ def sparse_approximation(
             kept = np.asarray(largest, dtype=int)
         return np.union1d(kept, [index])
 
-    matrix = _thresholded_matrix(operator, keep)
+    matrix = _thresholded_matrix(operator, keep, n_jobs=n_jobs)
     return LinearOperator.from_matrix(
         operator.domain,
         operator.domain,
@@ -577,6 +610,7 @@ class BlockPreconditioner(LinearSolver):
         /,
         *,
         form: Literal["auto", "components", "galerkin"] = "auto",
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -590,6 +624,7 @@ class BlockPreconditioner(LinearSolver):
                 :class:`BandedPreconditioner`, only the Galerkin form lets the
                 resulting inverse claim self-adjointness on a space whose
                 metric is not the identity; see :func:`_sparse_inverse_traits`.
+            n_jobs: workers for the column probes. Serial by default.
 
         Raises:
             ValueError: if no blocks are given, or an index is negative.
@@ -600,6 +635,7 @@ class BlockPreconditioner(LinearSolver):
         if any(block.size and block.min() < 0 for block in self._blocks):
             raise ValueError("Component indices are non-negative.")
         self._form = form
+        self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         space: CoordinateSpace = operator.domain
@@ -645,7 +681,7 @@ class BlockPreconditioner(LinearSolver):
 
         values = np.empty(rows.size)
         for index, column in _probe_columns(
-            operator, np.unique(columns), galerkin=galerkin
+            operator, np.unique(columns), galerkin=galerkin, n_jobs=self._n_jobs
         ):
             span = slice(starts[index], starts[index + 1])
             values[span] = column[rows[span]]
@@ -1021,6 +1057,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         incomplete: bool = False,
         drop_tol: float = 1e-4,
         fill_factor: float = 10.0,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -1032,6 +1069,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
                 sparse one, for when even the sparse factors fill in too much.
             drop_tol: the ILU drop tolerance, used only when *incomplete*.
             fill_factor: the ILU fill limit, used only when *incomplete*.
+            n_jobs: workers for the column probes. Serial by default.
         """
         if threshold < 0.0:
             raise ValueError(f"The threshold must be non-negative, got {threshold}.")
@@ -1045,6 +1083,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         self._incomplete = incomplete
         self._drop_tol = drop_tol
         self._fill_factor = fill_factor
+        self._n_jobs = n_jobs
 
     def _keep(self, column: np.ndarray, index: int) -> np.ndarray:
         """Which rows of one column survive."""
@@ -1071,7 +1110,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         # One pass, keeping only what survives each column's own test; the
         # whole matrix is never held. Shared with sparse_approximation.
         del dimension
-        thresholded = _thresholded_matrix(operator, self._keep)
+        thresholded = _thresholded_matrix(operator, self._keep, n_jobs=self._n_jobs)
 
         if self._incomplete:
             factorised = sparse_linalg.spilu(

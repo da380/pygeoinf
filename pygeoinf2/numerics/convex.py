@@ -2273,6 +2273,16 @@ class PrimalKKTSolver:
         )
         physical = max(weighted / self._prior_radius, 1e-4)
 
+        # fsolve's own verdict is not enough: with a multiplier run off to
+        # the clip the residuals stop changing, the step falls below xtol and
+        # it reports success at a point that solves nothing. Seen on a cold
+        # start where the noise multiplier went to 1e24 with the misfit
+        # equation still at -eta^2; the answer was 2 per cent low and marked
+        # converged. So a solve counts only if the equations hold, each to a
+        # tolerance in the units of its own level.
+        levels = np.array([self._prior_radius**2, self._noise_radius**2])
+        tolerance = 1e-6 * np.maximum(levels, 1e-300)
+
         def attempt(guess: tuple[float, float]) -> tuple[np.ndarray, dict, int]:
             logged = np.log(
                 np.array([max(guess[0], 1e-4), max(guess[1], 1e-8)], dtype=float)
@@ -2284,6 +2294,8 @@ class PrimalKKTSolver:
                 xtol=self._tolerance,
                 maxfev=self._evaluations,
             )
+            if status == 1 and np.any(np.abs(residuals(found)) > tolerance):
+                status = 0
             return found, info, status
 
         found, info, status = attempt(self._previous or (physical, 1e-3))
@@ -2508,6 +2520,9 @@ class LevelKKTSolver:
                 ]
             )
 
+        # As in PrimalKKTSolver: a solve counts only if the equations hold.
+        tolerance = 1e-6 * np.maximum(np.abs(np.array([a, b])), 1e-300)
+
         def attempt(guess: tuple[float, float]) -> tuple[np.ndarray, dict, int]:
             logged = np.log(np.array([max(guess[0], 1e-8), max(guess[1], 1e-8)]))
             found, info, status, _ = fsolve(
@@ -2517,6 +2532,8 @@ class LevelKKTSolver:
                 xtol=self._tolerance,
                 maxfev=self._evaluations,
             )
+            if status == 1 and np.any(np.abs(residuals(found)) > tolerance):
+                status = 0
             return found, info, status
 
         found, info, status = attempt(self._previous or (scale, 1e-3 * scale))

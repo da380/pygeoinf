@@ -7310,3 +7310,68 @@ forward operator, prior-weighted probes at rank four leave less than
 half the unresolved fraction white noise leaves, in the metric of the
 composed operator; the option reaches the SVD; a measure on the wrong
 space is refused.
+
+## 75. Every independent loop takes workers again (2026-09-17)
+
+The audit's knobs group (§0.3) listed the loops v1 could spread over
+cores and v2 ran serially: the dense point and path operators, the
+column probes behind the sparse preconditioners, the per-block probes
+of the normal-diagonal preconditioner, the covariance assembly behind
+the scipy bridge, the log determinant's Hutchinson probes, and the
+support sweep on every route but the dual, where ``n_jobs`` was
+accepted and ignored on three routes and refused on two. David's
+instruction on the line: do not decide from toy timings what is worth
+parallelising; the library is for problems where one serial solve takes
+minutes and more cores are there to share the load. So every listed
+loop takes ``n_jobs`` now, serial by default, through the one
+`parallel_map` of `pygeoinf2.parallel` (§7), and the numerics are
+unchanged on either path.
+
+**Where it went.** `SpectralPreconditioner` hands it to the range
+finder; `BandedPreconditioner` to `diagonals()`; `BlockPreconditioner`,
+`ColumnThresholdedPreconditioner` and `sparse_approximation` to the
+shared column probe, which now sends a few columns per worker at a time
+so the memory stays bounded by the block and not the matrix, the point
+of those preconditioners. `NormalDiagonalPreconditioner` runs its
+block probes, one adjoint and one prior application each, on the
+workers. `log_determinant` passes it to the dense assembly and to
+`random_trace`; `as_multivariate_normal` to the covariance assembly.
+The dense point, path and geodesic-ball operators pass it to
+`basis_matrix`, which on a generic space is one basis evaluation per
+point and on the sphere splits the points into one contiguous piece
+per worker for the Legendre tables, the per-point cost; the sphere's
+exact cap rows take it for the same reason. The NUFFT's ``nthreads``
+stays separate: it is threads inside one transform, this is processes
+around many.
+
+**The support sweep.** `FeasiblePropertySet.support_values` takes
+``n_jobs`` on the closed form and the bisection, which have no state
+between directions and simply map `support` over them; every other
+option is still refused there. On the general routes the dual engine's
+parallel branch used to sit below the smoothed, KKT and primal
+branches, so it only ever ran on the dual; it now comes first and
+sends each direction as a cold, single-direction sweep on whichever
+route was asked for.
+
+**A defect this uncovered.** The KKT solvers trusted ``fsolve``'s
+status flag. Run cold on one direction of a four-dimensional test
+problem, the noise multiplier ran off to the clip at ``exp(25)``, the
+residuals stopped changing, the step fell below ``xtol`` and ``fsolve``
+reported success at a point where the misfit equation still read
+``-eta^2``: the support value was 2 per cent low and marked converged.
+The warm-started sweep never showed it, because the previous
+direction's multipliers started it in the right decade; the parallel
+sweep, and `support()` on the KKT route, start cold. Both
+`PrimalKKTSolver` and `LevelKKTSolver` now accept a root only if the
+equations hold to ``1e-6`` of their own levels, and otherwise walk the
+retry ladder as they were meant to.
+
+**Checked.** For every site, the serial and the two-worker answers
+agree: the four sparse preconditioners and the spectral one applied to
+random vectors on a dense-metric space, the sparse approximation's
+matrix, the normal-diagonal preconditioner with and without blocks,
+the scipy covariance, the dense and the seeded stochastic log
+determinant, the closed-form, bisection, KKT and dual sweeps, and the
+sphere's dense point, path, average and cap operators with the box's
+generic basis matrix. The KKT route's single-direction support now
+agrees with the bisection on the direction that failed.

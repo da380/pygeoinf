@@ -733,6 +733,7 @@ def log_determinant(
     rtol: float = 1e-3,
     sample_rtol: float | None = None,
     max_samples: int | None = None,
+    n_jobs: int | None = None,
 ) -> "Estimate":
     """``log det A``, densely or by stochastic Lanczos quadrature.
 
@@ -844,7 +845,7 @@ def log_determinant(
 
     if method == "dense":
         if matrix is None:
-            matrix = operator.matrix(form="galerkin")
+            matrix = operator.matrix(form="galerkin", n_jobs=n_jobs)
         sign, logarithm = np.linalg.slogdet(0.5 * (matrix + matrix.T))
         if sign <= 0:
             raise ValueError(
@@ -870,4 +871,5 @@ def log_determinant(
         rtol=sample_rtol,
         max_samples=max_samples,
         rng=rng,
+        n_jobs=n_jobs,
     )

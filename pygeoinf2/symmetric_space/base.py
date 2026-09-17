@@ -1234,7 +1234,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 per_chunk = max(1, 4_000_000 // max(self.dim, 1))
                 return np.concatenate(
                     [
-                        self.basis_matrix(points[start : start + per_chunk]) ** 2
+                        self.basis_matrix(
+                            points[start : start + per_chunk], n_jobs=n_jobs
+                        )
+                        ** 2
                         @ weights
                         for start in range(0, len(points), per_chunk)
                     ]
@@ -1618,13 +1621,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             return points
         return PreparedPoints(points)
 
-    def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
+    def basis_matrix(
+        self, points: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> np.ndarray:
         """The basis at many points, as a ``(len(points), dim)`` array.
 
         The rows of an observation operator's derivative matrix. A space whose
         transform can do this in a batch should override it; the sphere does.
+
+        Args:
+            points: where to evaluate the basis.
+            n_jobs: workers for the points. Serial by default.
         """
-        return np.stack([self.basis_at(point) for point in points])
+        from ..parallel import parallel_map
+
+        return np.stack(parallel_map(self.basis_at, list(points), n_jobs=n_jobs))
 
     def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
         """The field's values at several points.
@@ -1661,6 +1672,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         unsafe: bool = False,
         eps: float | None = None,
         nthreads: int | None = None,
+        n_jobs: int | None = None,
     ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
@@ -1692,6 +1704,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 own, which is one: finufft's default of every core is slower
                 here at every size measured, and would oversubscribe inside an
                 outer parallel loop. Both are ignored on the direct route.
+            n_jobs: workers for the dense assembly, which is one basis
+                evaluation per point. Ignored on the matrix-free route, whose
+                application is one transform. Serial by default.
 
         Returns:
             The operator.
@@ -1713,7 +1728,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         if dense:
             return LinearOperator.from_matrix(
-                self, codomain, self.basis_matrix(points), form="galerkin"
+                self,
+                codomain,
+                self.basis_matrix(points, n_jobs=n_jobs),
+                form="galerkin",
             )
         options = self._transform_options(eps, nthreads)
         return LinearOperator.from_derivative_callables(
@@ -2229,6 +2247,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         eps: float | None = None,
         nthreads: int | None = None,
         unsafe: bool = False,
+        n_jobs: int | None = None,
     ) -> LinearOperator:
         """Line integrals along a set of geodesic paths.
 
@@ -2263,6 +2282,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 :meth:`point_evaluation_operator`.
             unsafe: build it even on a space too rough to admit it; see
                 :meth:`_require_path_evaluation`.
+            n_jobs: workers for the dense assembly, one basis evaluation per
+                quadrature node. Serial by default.
 
         Returns:
             The operator, from this space into a Euclidean space of one entry
@@ -2281,6 +2302,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             eps=eps,
             nthreads=nthreads,
             unsafe=unsafe,
+            n_jobs=n_jobs,
         )
 
     def path_average_operator(
@@ -2294,6 +2316,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         eps: float | None = None,
         nthreads: int | None = None,
         unsafe: bool = False,
+        n_jobs: int | None = None,
     ) -> LinearOperator:
         """Averages along a set of geodesic paths.
 
@@ -2312,6 +2335,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             nthreads: threads for that transform.
             unsafe: build it even on a space too rough to admit it; see
                 :meth:`_require_path_evaluation`.
+            n_jobs: workers for the dense assembly. Serial by default.
 
         Returns:
             The operator.
@@ -2330,6 +2354,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             eps=eps,
             nthreads=nthreads,
             unsafe=unsafe,
+            n_jobs=n_jobs,
         )
 
     def _path_operator(
@@ -2344,6 +2369,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         eps: float | None = None,
         nthreads: int | None = None,
         unsafe: bool = False,
+        n_jobs: int | None = None,
     ) -> LinearOperator:
         """The integral or the average, which differ only by a scaling."""
         self._require_path_evaluation(
@@ -2382,7 +2408,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             # The weights stay sparse. Asking the operator for its matrix
             # densified a (paths, nodes) array that is one entry per node --
             # 1.59 s against 0.018 s for 2000 paths (REVIEW2 4.2.6).
-            matrix = sparse @ self.basis_matrix(nodes)
+            matrix = sparse @ self.basis_matrix(nodes, n_jobs=n_jobs)
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(paths)), matrix, form="galerkin"
             )
@@ -2403,6 +2429,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         count: int = 100,
         normalise: bool = True,
         dense: bool = False,
+        n_jobs: int | None = None,
     ) -> LinearOperator:
         """Averages, or integrals, over geodesic balls of a common radius.
 
@@ -2418,6 +2445,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 than an integral.
             dense: assemble the derivative matrix rather than staying
                 matrix-free.
+            n_jobs: workers for the dense assembly. Serial by default.
 
         Returns:
             The operator.
@@ -2451,7 +2479,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             from ..algebra.spaces import EuclideanSpace
 
             # Sparse, for the reason given in _path_operator.
-            matrix = sparse @ self.basis_matrix(nodes)
+            matrix = sparse @ self.basis_matrix(nodes, n_jobs=n_jobs)
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(centres)), matrix, form="galerkin"
             )

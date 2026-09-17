@@ -468,7 +468,7 @@ class TestOneEstimator:
             answer.contains(value)
         assert np.isfinite(estimator(data).support(target.codomain.basis_vector(0)))
 
-    def test_the_sweep_on_a_cheap_route_is_a_loop_with_no_options(self, pieces):
+    def test_the_sweep_on_a_cheap_route_is_a_loop_taking_only_n_jobs(self, pieces):
         from pygeoinf2.inference import BackusGilbertParker
 
         model, forward, target, data, exact, noisy = pieces
@@ -478,7 +478,7 @@ class TestOneEstimator:
         ]
         swept = estimator(data).support_values(directions)
         assert swept == pytest.approx([estimator(data).support(d) for d in directions])
-        with pytest.raises(TypeError, match="no options"):
+        with pytest.raises(TypeError, match="no option but n_jobs"):
             estimator(data).support_values(directions, warm_start=False)
         # On the general route the sweep is the dual engine's, options and all.
         general = BackusGilbertParker(

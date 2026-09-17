@@ -857,7 +857,9 @@ class Sphere(SymmetricSpace[Any]):
         # not on the unit one.
         return harmonics / self._radius
 
-    def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
+    def basis_matrix(
+        self, points: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> np.ndarray:
         """The basis evaluated at many points, as a ``(len(points), dim)`` array.
 
         The batched form of :meth:`basis_at`, and the reason both
@@ -868,17 +870,23 @@ class Sphere(SymmetricSpace[Any]):
         and trigonometry that vectorises.
 
         Rows are ordered as ``points``, columns as the components.
+
+        Args:
+            points: where to evaluate the basis.
+            n_jobs: workers for the Legendre tables, which are the per-point
+                cost; the points are split into one contiguous piece per
+                worker. Serial by default.
         """
-        from pyshtools.legendre import PlmON
+        from ..parallel import parallel_map, resolve_jobs
 
         positions = self.prepare_points(points).data
-
-        indices = self._legendre_indices
-        count = positions.shape[0]
-        result = np.empty((count, indices.size))
-        for row, colatitude in enumerate(positions[:, 0]):
-            table = PlmON(self._lmax, np.cos(colatitude), csphase=_NO_CONDON_SHORTLEY)
-            result[row] = table[indices]
+        colatitudes = positions[:, 0]
+        workers = resolve_jobs(n_jobs)
+        if workers == 1 or colatitudes.size < 2 * workers:
+            result = self._legendre_rows(colatitudes)
+        else:
+            pieces = np.array_split(colatitudes, workers)
+            result = np.vstack(parallel_map(self._legendre_rows, pieces, n_jobs=n_jobs))
 
         # The azimuthal factor depends only on the order m, of which there are
         # lmax + 1 values rather than dim. Computing cos(m phi) and sin(m phi)
@@ -891,6 +899,17 @@ class Sphere(SymmetricSpace[Any]):
         result[:, cosine_columns] *= cosine[:, cosine_orders]
         result[:, sine_columns] *= sine[:, sine_orders]
         return result / self._radius
+
+    def _legendre_rows(self, colatitudes: np.ndarray, /) -> np.ndarray:
+        """The Legendre part of the basis at each colatitude, one row each."""
+        from pyshtools.legendre import PlmON
+
+        indices = self._legendre_indices
+        result = np.empty((colatitudes.size, indices.size))
+        for row, colatitude in enumerate(colatitudes):
+            table = PlmON(self._lmax, np.cos(colatitude), csphase=_NO_CONDON_SHORTLEY)
+            result[row] = table[indices]
+        return result
 
     def _in_chunks(self, points: Sequence[Any], /) -> Any:
         """Split points so one basis matrix at a time stays a sensible size.
@@ -1701,6 +1720,7 @@ class Sphere(SymmetricSpace[Any]):
         /,
         *,
         normalise: bool = False,
+        n_jobs: int | None = None,
     ) -> np.ndarray:
         r"""The derivative components of many cap integrals, in closed form.
 
@@ -1731,6 +1751,7 @@ class Sphere(SymmetricSpace[Any]):
             angular_radius: the caps' common half-angle, **in degrees**.
             normalise: divide by the cap's area, giving the average rather
                 than the integral.
+            n_jobs: workers for the basis at the centres. Serial by default.
 
         Returns:
             A ``(len(centres), dim)`` array, one row per centre.
@@ -1763,7 +1784,9 @@ class Sphere(SymmetricSpace[Any]):
             integrals[1:] = (legendre[rest - 1] - legendre[rest + 1]) / (2 * rest + 1)
 
         scale = 2.0 * np.pi * self._radius**2
-        rows = self.basis_matrix(centres) * (scale * integrals[self.degrees])
+        rows = self.basis_matrix(centres, n_jobs=n_jobs) * (
+            scale * integrals[self.degrees]
+        )
         if normalise:
             rows = rows / (scale * (1.0 - cosine))
         return rows
@@ -1791,6 +1814,7 @@ class Sphere(SymmetricSpace[Any]):
         count: int | None = None,
         normalise: bool = True,
         dense: bool = False,
+        n_jobs: int | None = None,
     ) -> LinearOperator:
         """Cap averages, exactly, as an operator into a Euclidean space.
 
@@ -1808,6 +1832,9 @@ class Sphere(SymmetricSpace[Any]):
                 than an integral.
             dense: assemble the derivative matrix rather than staying
                 matrix-free.
+            n_jobs: workers for the basis evaluations at the centres on the
+                exact route, and for the dense assembly on the quadrature
+                route. Serial by default.
 
         Returns:
             The operator.
@@ -1820,7 +1847,12 @@ class Sphere(SymmetricSpace[Any]):
             raise ValueError("At least one centre is needed.")
         if count is not None:
             return super().geodesic_ball_average_operator(
-                centres, radius, count=count, normalise=normalise, dense=dense
+                centres,
+                radius,
+                count=count,
+                normalise=normalise,
+                dense=dense,
+                n_jobs=n_jobs,
             )
 
         from ..algebra.spaces import EuclideanSpace
@@ -1829,7 +1861,7 @@ class Sphere(SymmetricSpace[Any]):
         # cap_integral_components takes the half-angle in degrees.
         angular_radius = np.degrees(radius / self._radius)
         rows = self.cap_integral_components(
-            centres, angular_radius, normalise=normalise
+            centres, angular_radius, normalise=normalise, n_jobs=n_jobs
         )
         return LinearOperator.from_matrix(
             self, EuclideanSpace(len(centres)), rows, form="galerkin"
