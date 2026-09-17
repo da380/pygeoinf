@@ -305,9 +305,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         )
 
     def coefficient_operator(
-        self, /, *, lmax: int | None = None, lmin: int = 0
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        lmin: int = 0,
+        components: Any = None,
     ) -> LinearOperator:
-        """Analysis: a field in, a band of its coefficients out.
+        """Analysis: a field in, some of its coefficients out.
 
         The property operator of Al-Attar (2021): estimate finitely many
         spectral coefficients from a finite set of point values. On a space
@@ -323,13 +328,22 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             lmax: the highest degree to report. The largest present if
                 omitted.
             lmin: the lowest.
+            components: instead of a band, the positions of the components
+                to report, in the order they are to come out -- typically
+                from ``component_of`` on a set of labels, which is how a
+                property operator picking named harmonics or wavevectors is
+                written.
 
         Returns:
             The operator into a Euclidean space of the selected components.
+
+        Raises:
+            ValueError: for a band outside the space, a position outside
+                it or repeated, or a band and positions both given.
         """
         from ..algebra.spaces import EuclideanSpace
 
-        selected = self._band(lmin, lmax)
+        selected = self._selection(lmin, lmax, components)
 
         def value(x: Any) -> np.ndarray:
             return self.to_components(x)[selected]
@@ -344,9 +358,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         )
 
     def from_coefficient_operator(
-        self, /, *, lmax: int | None = None, lmin: int = 0
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        lmin: int = 0,
+        components: Any = None,
     ) -> LinearOperator:
-        """Synthesis: a band of coefficients in, a field out.
+        """Synthesis: some coefficients in, a field out.
 
         The companion of :meth:`coefficient_operator`, and *not* its adjoint.
         The adjoint of analysis carries this space's metric, so on anything but
@@ -359,13 +378,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Args:
             lmax: the highest degree accepted. The largest present if omitted.
             lmin: the lowest.
+            components: instead of a band, the positions the incoming
+                coefficients go to, as for :meth:`coefficient_operator`.
 
         Returns:
             The operator from a Euclidean space of coefficients into this one.
+
+        Raises:
+            ValueError: as for :meth:`coefficient_operator`.
         """
         from ..algebra.spaces import EuclideanSpace
 
-        selected = self._band(lmin, lmax)
+        selected = self._selection(lmin, lmax, components)
 
         def value(c: np.ndarray) -> Any:
             total = np.zeros(self.dim)
@@ -378,6 +402,19 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         return LinearOperator.from_derivative_callables(
             EuclideanSpace(selected.size), self, value, derivative_components
         )
+
+    def _selection(self, lmin: int, lmax: int | None, components: Any, /) -> np.ndarray:
+        """The positions a coefficient operator works on: a band, or as given."""
+        if components is None:
+            return self._band(lmin, lmax)
+        if lmin != 0 or lmax is not None:
+            raise ValueError("Give either a band (lmin, lmax) or components, not both.")
+        positions = np.atleast_1d(np.asarray(components, dtype=int)).ravel()
+        if positions.size and (positions.min() < 0 or positions.max() >= self.dim):
+            raise ValueError(f"Component positions must lie in [0, {self.dim}).")
+        if np.unique(positions).size != positions.size:
+            raise ValueError("Component positions must not repeat.")
+        return positions
 
     def _band(self, lmin: int, lmax: int | None, /) -> np.ndarray:
         """Which components fall in a band of degrees."""

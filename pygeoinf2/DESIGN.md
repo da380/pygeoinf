@@ -6760,3 +6760,50 @@ through both the derivative and the linearisation, since a derivative
 query goes through the latter; a non-affine action fails; a linear
 operator is refused by type; a wrong adjoint in the linear part fails
 the adjoint identity.
+
+## 63. The spectral packing is public, as arrays (2026-09-17)
+
+Item 12 of `FUNCTIONALITY_AUDIT.md` §0.2: v1's spectral spaces exposed
+their coefficient packing through scalar maps, `index_to_integer` from a
+label to a position and back, and an `indices` generator; v2 exposed
+`degrees` alone and kept the orders, wavevectors and phases private. The
+one thing that lost is a symbol or a query depending on more than the
+degree: a zonal projection on the sphere, an anisotropic filter on a
+box, the coefficient of one named harmonic.
+
+**Arrays, not scalars.** v2's idiom for anything per component is an
+array of length ``dim`` in component order, and `spectral_operator`
+takes one, so a symbol depending on the label is one array expression
+against the label arrays rather than a Python loop over every
+component, which is what v1's scalar maps drove and what it had to
+special-case with integer square roots to keep bearable. The sphere
+gets `orders`, signed in v1's and pyshtools' convention so that a
+degree and an order name a component uniquely; the boxes get
+`wavevectors`, one column per component, and `phases`, zero for a
+cosine or a self-conjugate mode and one for a sine. The reverse map,
+position to label, is indexing those arrays, and `indices` is zipping
+them, so neither is a method. The one direction arrays do not give is
+label to position, and that is `component_of`, vectorised: a scalar
+label gives an integer, an array of labels an array. On the boxes it
+takes wavevectors modulo the grid, so an aliased mode may be named by
+either sign, and refuses a sine of a self-conjugate mode. Scalar
+wrappers for readability were offered and declined: two spellings of
+one thing would have to be settled again in the naming pass.
+
+**The application.** David's check on the item: the main use of the
+packing is a linear operator from a field to a chosen subset of its
+spectral coefficients. `coefficient_operator` and
+`from_coefficient_operator` took a band of degrees only; they now take
+``components=`` as well, the positions in the order they are to come
+out, so ``X.coefficient_operator(components=X.component_of(l, m))`` is
+the property operator that picks named harmonics, and the synthesis
+companion puts them back and nothing else. A band and positions
+together, a position outside the space or a repeated one are refused.
+
+**Checked.** Every component of a sphere and of one-, two- and
+three-dimensional boxes carries a distinct label whose position
+`component_of` returns, one at a time and all at once; v1's ordering
+within a degree holds; a zonal projection written against the orders
+and an axis filter written against the wavevectors keep exactly the
+components they name; the box degree is the wavevector's magnitude
+rounded down; the labels a space does not hold are refused; named coefficients come out of the analysis operator in the order asked and go back through synthesis to their places alone, both passing `check_operator`.

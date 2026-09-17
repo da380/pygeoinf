@@ -256,6 +256,51 @@ class Sphere(SymmetricSpace[Any]):
         return self._packing[1]
 
     @property
+    def orders(self) -> np.ndarray:
+        """The signed harmonic order of each component.
+
+        Non-negative for a cosine coefficient and negative for a sine one, so
+        that ``(degrees[i], orders[i])`` labels component ``i`` uniquely, in
+        the convention v1 and pyshtools use. With :attr:`degrees` this is
+        the packing made public: a symbol depending on the order is written
+        against the two arrays and handed to ``spectral_operator``, and the
+        label of a component is read off them. :meth:`component_of` goes
+        the other way.
+        """
+        parts, _, orders = self._packing
+        return np.where(parts == 0, orders, -orders)
+
+    def component_of(self, degree: Any, order: Any, /) -> Any:
+        """The position of the component with a given degree and signed order.
+
+        v1's ``index_to_integer``, vectorised: scalars give an integer,
+        arrays give an array, so a whole set of labels is placed at once.
+
+        Args:
+            degree: ``l``, at most ``lmax``.
+            order: ``m``, with ``|m| <= l``; negative for a sine coefficient.
+
+        Returns:
+            The index into the components.
+
+        Raises:
+            ValueError: for a label the space does not hold.
+        """
+        degree = np.asarray(degree, dtype=int)
+        order = np.asarray(order, dtype=int)
+        if (
+            np.any(degree < 0)
+            or np.any(degree > self._lmax)
+            or np.any(np.abs(order) > degree)
+        ):
+            raise ValueError(
+                f"A label needs 0 <= |m| <= l <= {self._lmax}; got l = {degree}, "
+                f"m = {order}."
+            )
+        position = np.where(order >= 0, degree**2 + order, degree**2 + degree - order)
+        return int(position) if position.ndim == 0 else position
+
+    @property
     def spatial_dimension(self) -> int:
         """Two: a sphere is a two-dimensional surface."""
         return 2

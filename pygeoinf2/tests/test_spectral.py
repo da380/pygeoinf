@@ -41,6 +41,114 @@ class TestDegrees:
         assert X.degrees.max() == 8
 
 
+class TestSpectralLabels:
+    """The packing made public, vectorised: v1's ``indices``,
+    ``index_to_integer`` and ``integer_to_index`` as arrays of labels and
+    one method placing a label."""
+
+    def test_the_sphere_labels_every_component_once(self):
+        X = Lebesgue(6)
+        degrees, orders = X.degrees, X.orders
+        assert degrees.shape == orders.shape == (X.dim,)
+        assert np.all(np.abs(orders) <= degrees)
+        labels = set(zip(degrees.tolist(), orders.tolist()))
+        assert len(labels) == X.dim
+        # The round trip, one label at a time and all at once.
+        for i in range(X.dim):
+            assert X.component_of(degrees[i], orders[i]) == i
+        assert np.array_equal(X.component_of(degrees, orders), np.arange(X.dim))
+        # v1's convention: cosines first within a degree, then sines.
+        assert X.component_of(2, 0) == 4
+        assert X.component_of(2, 2) == 6
+        assert X.component_of(2, -1) == 7
+        with pytest.raises(ValueError, match="label"):
+            X.component_of(3, 4)
+        with pytest.raises(ValueError, match="label"):
+            X.component_of(7, 0)
+
+    def test_a_symbol_written_against_the_orders(self, rng):
+        """A zonal projection, which no function of the degree can express."""
+        X = Lebesgue(6)
+        zonal = X.spectral_operator(np.where(X.orders == 0, 1.0, 0.0))
+        x = X.random(rng=rng)
+        c = X.to_components(zonal(x))
+        assert np.allclose(c[X.orders != 0], 0.0)
+        assert np.allclose(c[X.orders == 0], X.to_components(x)[X.orders == 0])
+        # The zonal coefficient of degree three is where component_of says.
+        assert c[X.component_of(3, 0)] == pytest.approx(
+            X.to_components(x)[X.component_of(3, 0)]
+        )
+
+    @pytest.mark.parametrize("shape", [(8,), (6, 8), (4, 6, 8)])
+    def test_a_box_labels_every_component_once(self, shape):
+        X = BoxLebesgue(shape, lengths=tuple(float(n) for n in shape))
+        wavevectors, phases = X.wavevectors, X.phases
+        assert wavevectors.shape == (len(shape), X.dim)
+        assert phases.shape == (X.dim,)
+        labels = set(zip(map(tuple, wavevectors.T.tolist()), phases.tolist()))
+        assert len(labels) == X.dim
+        assert np.array_equal(
+            X.component_of(wavevectors, phase=phases), np.arange(X.dim)
+        )
+        for i in range(0, X.dim, 7):
+            assert X.component_of(wavevectors[:, i], phase=phases[i]) == i
+        # The degree is the magnitude, rounded down.
+        assert np.array_equal(
+            X.degrees,
+            np.floor(np.sqrt((wavevectors.astype(float) ** 2).sum(axis=0))).astype(int),
+        )
+        # The constant mode is self-conjugate: it has no sine.
+        zero = np.zeros(len(shape), dtype=int)
+        assert X.phases[X.component_of(zero)] == 0
+        with pytest.raises(ValueError, match="self-conjugate"):
+            X.component_of(zero, phase=1)
+        with pytest.raises(ValueError, match="wavevector on this box"):
+            X.component_of(np.zeros(len(shape) + 1, dtype=int))
+
+    def test_named_coefficients_as_a_property_operator(self, rng):
+        """The application: a linear operator from a field to a chosen set
+        of its coefficients, named by label, in the order asked for."""
+        X = Lebesgue(5)
+        positions = X.component_of([2, 2, 4], [0, -1, 3])
+        pick = X.coefficient_operator(components=positions)
+        assert pick.codomain.dim == 3
+        x = X.random(rng=rng)
+        assert np.allclose(pick(x), X.to_components(x)[positions])
+        check_operator(pick, rng=rng)
+        # Synthesis puts them back where they belong, and nowhere else.
+        place = X.from_coefficient_operator(components=positions)
+        c = np.array([1.0, -2.0, 0.5])
+        back = X.to_components(place(c))
+        assert np.allclose(back[positions], c)
+        assert np.allclose(np.delete(back, positions), 0.0)
+        check_operator(place, rng=rng)
+        with pytest.raises(ValueError, match="not both"):
+            X.coefficient_operator(lmax=2, components=positions)
+        with pytest.raises(ValueError, match="repeat"):
+            X.coefficient_operator(components=[1, 1])
+        with pytest.raises(ValueError, match="lie in"):
+            X.coefficient_operator(components=[X.dim])
+        # On a box, by wavevector.
+        Y = BoxLebesgue((8, 8), lengths=(1.0, 1.0))
+        modes = np.array([[1, 0], [0, 2], [3, 3]]).T
+        where = Y.component_of(modes, phase=[0, 1, 0])
+        y = Y.random(rng=rng)
+        assert np.allclose(
+            Y.coefficient_operator(components=where)(y), Y.to_components(y)[where]
+        )
+
+    def test_a_box_symbol_written_against_the_wavevectors(self, rng):
+        """An anisotropic filter, keeping modes that vary along one axis only."""
+        X = BoxLebesgue((8, 8), lengths=(1.0, 1.0))
+        along_x = X.spectral_operator(np.where(X.wavevectors[1] == 0, 1.0, 0.0))
+        x = X.random(rng=rng)
+        c = X.to_components(along_x(x))
+        assert np.allclose(c[X.wavevectors[1] != 0], 0.0)
+        assert np.allclose(
+            c[X.wavevectors[1] == 0], X.to_components(x)[X.wavevectors[1] == 0]
+        )
+
+
 class TestSpectralOperators:
     def test_an_explicit_symbol_becomes_a_diagonal_operator(self, rng):
         X = Sobolev(6, 2.0, 0.2)

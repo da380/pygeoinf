@@ -192,6 +192,80 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         )
 
     @property
+    def wavevectors(self) -> np.ndarray:
+        """The integer wavevector of each component, one column per component.
+
+        Shape ``(spatial_dimension, dim)``, signed, in the box's own grid
+        units: the mode ``exp(2 pi i k . x / L)`` with ``k`` the column. A
+        cosine and a sine component of one conjugate pair share a column and
+        differ in :attr:`phases`. With that array this is the packing made
+        public, as :attr:`degrees` is its magnitude rounded down.
+        """
+        return self._packing.wavenumbers
+
+    @property
+    def phases(self) -> np.ndarray:
+        """Zero for a cosine (or a self-conjugate mode), one for a sine."""
+        return self._packing.phases
+
+    @cached_property
+    def _label_keys(self) -> tuple[np.ndarray, np.ndarray]:
+        """Each component's label as one integer, sorted, with the sorting."""
+        keys = self._label_key(self._packing.wavenumbers, self._packing.phases)
+        order = np.argsort(keys)
+        return keys[order], order
+
+    def _label_key(self, wavevector: np.ndarray, phase: np.ndarray) -> np.ndarray:
+        shape = self._packing.shape
+        reduced = [
+            np.mod(np.asarray(wavevector[axis], dtype=int), n)
+            for axis, n in enumerate(shape)
+        ]
+        return np.ravel_multi_index(
+            [*reduced, np.asarray(phase, dtype=int)], (*shape, 2)
+        )
+
+    def component_of(self, wavevector: Any, /, *, phase: Any = 0) -> Any:
+        """The position of the component with a given wavevector and phase.
+
+        v1's ``index_to_integer``, vectorised: one wavevector of length
+        ``spatial_dimension`` gives an integer, an array of shape
+        ``(spatial_dimension, n)`` gives ``n`` positions. Wavevectors are
+        taken modulo the grid, so a mode may be named by either sign of its
+        aliased wavenumber.
+
+        Args:
+            wavevector: the integer wavevector, or several as columns.
+            phase: zero for the cosine, one for the sine; a scalar or one
+                per column.
+
+        Returns:
+            The index into the components.
+
+        Raises:
+            ValueError: for a label the space does not hold -- a sine of a
+                self-conjugate mode, or the wrong number of wavenumbers.
+        """
+        wavevector = np.asarray(wavevector, dtype=int)
+        if wavevector.shape[0] != len(self._packing.shape):
+            raise ValueError(
+                f"A wavevector on this box has {len(self._packing.shape)} "
+                f"components, got shape {wavevector.shape}."
+            )
+        phase = np.broadcast_to(np.asarray(phase, dtype=int), wavevector.shape[1:])
+        keys = self._label_key(wavevector, phase)
+        sorted_keys, order = self._label_keys
+        found = np.searchsorted(sorted_keys, keys)
+        found = np.minimum(found, sorted_keys.size - 1)
+        if np.any(sorted_keys[found] != keys):
+            raise ValueError(
+                "No component has that wavevector and phase; a self-conjugate "
+                "mode has no sine, and a wavevector outside the grid aliases."
+            )
+        position = order[found]
+        return int(position) if position.ndim == 0 else position
+
+    @property
     def gaussian_curvature(self) -> float:
         """Zero: a periodic box is flat."""
         return 0.0
