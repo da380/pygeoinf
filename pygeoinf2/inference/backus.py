@@ -1858,6 +1858,11 @@ class _FeasibleSupport(SupportFunction):
         super().__init__(feasible.domain)
         self._set = feasible
 
+    @property
+    def has_subgradient(self) -> bool:
+        """Only where the route exhibits the maximiser."""
+        return self._set.has_maximiser
+
     def _value(self, y: Any) -> float:
         return self._set.support(y)
 

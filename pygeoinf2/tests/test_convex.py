@@ -175,6 +175,26 @@ class TestSupportFunctions:
         y = space.random(rng=rng)
         assert h(y) == pytest.approx(space.inner_product(point, y))
 
+    def test_an_oracle_with_its_maximiser(self, rng):
+        """v1's ``CallableSupportFunction``: a callable for the value and,
+        when known, one for the point attaining it, which is the subgradient
+        a bundle method asks for."""
+        space = make_weighted_space()
+        ball = SupportFunction.of_ball(space, radius=2.0)
+        h = SupportFunction.of_oracle(
+            space, lambda q: 2.0 * space.norm(q), maximiser=ball.subgradient
+        )
+        y = space.random(rng=rng)
+        assert h(y) == pytest.approx(2.0 * space.norm(y))
+        assert h.has_subgradient
+        assert space.inner_product(h.subgradient(y), y) == pytest.approx(h(y))
+
+        values_only = SupportFunction.of_oracle(space, lambda q: 2.0 * space.norm(q))
+        assert values_only(y) == pytest.approx(h(y))
+        assert not values_only.has_subgradient
+        with pytest.raises(NotImplementedError, match="maximiser"):
+            values_only.subgradient(y)
+
     def test_a_minkowski_sum(self, rng):
         """The algebra is closed, which is why the class exists."""
         space = make_weighted_space()

@@ -351,6 +351,25 @@ class TestDeclaredCapabilities:
         assert self.flags(knowing) == (True, False, True, True, False)
         assert knowing.contains(space.zero())
 
+    def test_an_oracle_sets_support_function_keeps_its_maximiser(self, space, rng):
+        """The set was given a maximiser; the functional it hands back must
+        carry it, or the subgradient a minimiser asks for is lost."""
+        ball = Ball(space, radius=1.0)
+        knowing = ConvexSet.from_support_function(
+            space, ball.support_function(), maximiser=ball.support_maximiser
+        )
+        h = knowing.support_function()
+        q = space.random(rng=rng)
+        assert h.has_subgradient
+        assert (
+            space.norm(space.subtract(h.subgradient(q), ball.support_maximiser(q)))
+            < 1e-12
+        )
+        bare = ConvexSet.from_support_function(space, ball.support_function())
+        assert not bare.support_function().has_subgradient
+        with pytest.raises(NotImplementedError):
+            bare.support_function().subgradient(q)
+
     def test_a_polytopes_level_function_is_the_largest_excess(self, space, rng):
         from pygeoinf2.geometry.convex import Polytope
 

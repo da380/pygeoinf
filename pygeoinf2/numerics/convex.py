@@ -290,6 +290,33 @@ class SupportFunction(Functional):
         return _PointSupport(domain, point)
 
     @staticmethod
+    def of_oracle(
+        domain: HilbertSpace,
+        value: Callable[[Any], float],
+        /,
+        *,
+        maximiser: Callable[[Any], Any] | None = None,
+    ) -> SupportFunction:
+        """A support function given by a callable, with its maximiser if known.
+
+        v1's ``CallableSupportFunction``. The value alone gives a functional
+        that can be evaluated and added and scaled like any other; the
+        maximiser, ``q -> argmax (q, x)`` over the set, is what makes it a
+        *subgradient*-carrying functional, which is what a bundle method
+        needs of it. Without one, :attr:`has_subgradient` is false and
+        :meth:`subgradient` refuses, rather than returning nothing.
+
+        Args:
+            domain: the space.
+            value: ``q -> h(q)``.
+            maximiser: ``q -> x*(q)`` attaining it, if available.
+
+        Returns:
+            The support function.
+        """
+        return _OracleSupport(domain, value, maximiser=maximiser)
+
+    @staticmethod
     def of_half_space(
         domain: HilbertSpace,
         normal: Any,
@@ -409,6 +436,39 @@ class _BallSupport(SupportFunction):
         if norm == 0.0:
             return space.copy(self._centre)
         return space.axpy(self._radius / norm, y, space.copy(self._centre))
+
+
+class _OracleSupport(SupportFunction):
+    """A support function that is whatever the oracle says."""
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        value: Callable[[Any], float],
+        /,
+        *,
+        maximiser: Callable[[Any], Any] | None = None,
+    ) -> None:
+        super().__init__(domain)
+        self._oracle = value
+        self._maximiser_fn = maximiser
+
+    @property
+    def has_subgradient(self) -> bool:
+        """Only with a maximiser: a support value alone gives no subgradient."""
+        return self._maximiser_fn is not None
+
+    def _value(self, y: Any) -> float:
+        return float(self._oracle(y))
+
+    def _maximiser(self, y: Any) -> Any:
+        if self._maximiser_fn is None:
+            raise NotImplementedError(
+                "This support function was given its values only; a subgradient "
+                "is a maximiser, and none was supplied. Pass maximiser= to "
+                "SupportFunction.of_oracle or ConvexSet.from_support_function."
+            )
+        return self._maximiser_fn(y)
 
 
 class _HalfSpaceSupport(SupportFunction):

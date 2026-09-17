@@ -423,8 +423,10 @@ class _OracleSet(ConvexSet):
         return self._maximiser(direction)
 
     def support_function(self) -> SupportFunction:
-        """The oracle, as a functional."""
-        return _OracleSupport(self.domain, self._oracle)
+        """The oracle, as a functional, carrying the maximiser when one was given."""
+        return SupportFunction.of_oracle(
+            self.domain, self._oracle, maximiser=self._maximiser
+        )
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Membership, when the set was given a test for it; otherwise refused.
@@ -493,17 +495,6 @@ class _OracleSet(ConvexSet):
 
     def __repr__(self) -> str:
         return f"ConvexSet.from_support_function({self.domain!r})"
-
-
-class _OracleSupport(SupportFunction):
-    """A support function that is whatever the oracle says."""
-
-    def __init__(self, domain: HilbertSpace, oracle: Any, /) -> None:
-        super().__init__(domain)
-        self._oracle = oracle
-
-    def _value(self, y: Any) -> float:
-        return float(self._oracle(y))
 
 
 class _MinkowskiSum(ConvexSet):

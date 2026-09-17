@@ -6702,3 +6702,30 @@ support function object's subgradient being it; push-forward through the
 result with ``h_{TS}(q) == h_S(T* q)``; exclusion certificates and the
 outer polytope; emptiness answered by every route. Every earlier test
 runs against the result, and the example does too.
+
+## 61. A support function from callables keeps its maximiser (2026-09-17)
+
+Item 16 of `FUNCTIONALITY_AUDIT.md` §0.2: v1's `CallableSupportFunction`
+took a value callable and, optionally, a support-point callable, and the
+second is what makes the functional carry a subgradient. v2 let a *set*
+be built from an oracle with a maximiser, but the support function that
+set handed back kept the value only, so a bundle method minimising it
+had nothing to descend along, and `has_subgradient` said true while
+`subgradient` returned nothing.
+
+`SupportFunction.of_oracle(domain, value, maximiser=)` is the
+constructor, beside `of_ball`, `of_point` and `of_half_space`;
+`ConvexSet.from_support_function` hands its maximiser through to the
+functional it returns; and `has_subgradient` is true only when a
+maximiser was given, the refusal otherwise naming what to pass. The
+feasible property set's support function does the same, true on the
+routes that exhibit the extremal model. v1's fused
+`value_and_support_point` is not restored: the dual route's one-entry
+memo already shares the work between value and subgradient without a
+second protocol.
+
+**Checked.** An oracle with a ball's value and maximiser evaluates and
+subdifferentiates as the ball does; one with values only says it has no
+subgradient and refuses; a set built from an oracle with a maximiser
+returns a support function whose subgradient is that maximiser, and one
+built without says so.
