@@ -603,13 +603,13 @@ class TestLikelihoodMembership:
         prior = Ball(model, radius=3.0)
         estimator = BackusGilbertParker(problem, target, prior)
         assert estimator.membership == "likelihood"
-        # A sublevel set has no support function, so no route computes the
-        # support: the answer is known through its level function only.
-        assert estimator.route is None
+        # A sublevel set has no support function, but a differentiable level
+        # function is what the KKT route needs: it computes the support and
+        # exhibits the extremal model.
+        assert estimator.route == "kkt"
         feasible = estimator(data)
-        assert not feasible.has_support_function and feasible.has_level_function
-        with pytest.raises(NotImplementedError, match="level function only"):
-            feasible.support(target.codomain.basis_vector(0))
+        assert feasible.has_support_function and feasible.has_level_function
+        assert feasible.has_maximiser
         assert not feasible.is_empty()
         assert feasible.contains(target(truth))
         as_ball = BackusGilbertParker(
@@ -618,6 +618,8 @@ class TestLikelihoodMembership:
             prior,
             membership="reduced",
         )
+        q = target.codomain.basis_vector(0)
+        assert feasible.support(q) == pytest.approx(as_ball(data).support(q), rel=1e-4)
         for value in self.candidates(estimator, target, truth, data, rng, count=4):
             expected = as_ball(data).inclusion_norm(value)
             if np.isfinite(expected):
@@ -1090,10 +1092,10 @@ class TestGeneralMembership:
         )
         same_ball = SublevelSet(quartic, level=3.0**4)
         estimator = BackusGilbertParker(problem, target, same_ball)
-        assert estimator.membership == "likelihood" and estimator.route is None
+        assert estimator.membership == "likelihood" and estimator.route == "kkt"
         feasible = estimator(data)
         assert feasible.level == 3.0**4
-        assert not feasible.has_support_function and feasible.has_level_function
+        assert feasible.has_support_function and feasible.has_level_function
         with pytest.raises(NotImplementedError, match="inclusion_level"):
             feasible.inclusion_norm(target(truth))
         reference = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
@@ -1107,12 +1109,14 @@ class TestGeneralMembership:
             assert feasible.contains(value) == reference.contains(value)
         assert not feasible.is_empty()
         # The extent goes through membership alone, and lies within the
-        # ball's support interval, which is the same set's.
+        # ball's support interval, which is the same set's; the KKT route's
+        # support values agree with the ball route's.
         q = target.codomain.basis_vector(0)
         lower, upper = feasible.extent(q)
         assert lower < upper
         assert upper <= reference.support(q) * (1.0 + 1e-5) + 1e-9
         assert lower >= -reference.support(-q) * (1.0 + 1e-5) - 1e-9
+        assert feasible.support(q) == pytest.approx(reference.support(q), rel=1e-4)
 
     def test_an_ellipsoidal_prior_through_both_engines(self, pieces, rng):
         from pygeoinf2.geometry.convex import Ellipsoid
@@ -1169,6 +1173,118 @@ class TestGeneralMembership:
             feasible.support(target.codomain.basis_vector(0))
         with pytest.raises(NotImplementedError):
             feasible.contains(target(truth))
+
+
+class TestLevelKKT:
+    """The KKT solver on level functions: the quadratic solver's shape, a
+    convex minimisation per probe instead of its closed form, giving support
+    values and the extremal model for sets with no support function."""
+
+    @pytest.fixture
+    def pieces(self, setting):
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.1)
+        )
+        return model, forward, target, truth, data, problem
+
+    @staticmethod
+    def quartic_ball(space, radius):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.geometry import SublevelSet
+
+        return SublevelSet(
+            Functional.from_callables(
+                space,
+                lambda x: space.squared_norm(x) ** 2,
+                gradient=lambda x: space.scale(4.0 * space.squared_norm(x), x),
+            ),
+            level=radius**4,
+        )
+
+    def test_on_balls_it_agrees_with_the_bisection_route(self, pieces):
+        """The general solver run on balls, against the reduction's answers."""
+        from pygeoinf2.numerics.convex import LevelKKTSolver
+
+        model, forward, target, truth, data, problem = pieces
+        prior, noise = Ball(model, radius=3.0), Ball(forward.codomain, radius=0.1)
+        reference = BackusGilbertParker(problem, target, prior)(data)
+        solver = LevelKKTSolver(prior, noise, forward, data)
+        for direction in directions(target.codomain):
+            result = solver.solve(target.adjoint(direction))
+            assert result.converged
+            assert result.value == pytest.approx(reference.support(direction), rel=1e-6)
+            assert prior.contains(result.model, rtol=1e-6)
+            assert noise.contains(
+                forward.codomain.subtract(data, forward(result.model)), rtol=1e-6
+            )
+
+    def test_a_quartic_prior_takes_the_kkt_route(self, pieces):
+        model, forward, target, truth, data, problem = pieces
+        prior = self.quartic_ball(model, 3.0)
+        estimator = BackusGilbertParker(problem, target, prior)
+        assert estimator.route == "kkt"
+        feasible = estimator(data)
+        reference = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        for direction in directions(target.codomain):
+            assert feasible.support(direction) == pytest.approx(
+                reference.support(direction), rel=1e-4
+            )
+            extremal = feasible.extremal_model(direction)
+            assert model.norm(extremal) <= 3.0 * (1.0 + 1e-4)
+            assert forward.codomain.norm(
+                forward.codomain.subtract(data, forward(extremal))
+            ) <= 0.1 * (1.0 + 1e-4)
+            assert target.codomain.inner_product(
+                direction, target(extremal)
+            ) == pytest.approx(feasible.support(direction), rel=1e-6)
+        outer = feasible.polytope(directions(target.codomain))
+        assert outer.is_outer and outer.contains(target(truth))
+
+    def test_a_quartic_confidence_set_takes_the_kkt_route(self, pieces):
+        model, forward, target, truth, data, problem = pieces
+        noise = self.quartic_ball(forward.codomain, 0.1)
+        estimator = BackusGilbertParker(
+            problem, target, Ball(model, radius=3.0), noise=noise
+        )
+        assert estimator.route == "kkt" and estimator.membership == "likelihood"
+        feasible = estimator(data)
+        reference = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        for direction in directions(target.codomain)[:3]:
+            assert feasible.support(direction) == pytest.approx(
+                reference.support(direction), rel=1e-4
+            )
+
+    def test_slack_data_leave_the_priors_own_support_point(self, pieces):
+        """A confidence set wide enough that the data never bite: one
+        multiplier, and the answer is the prior's support point."""
+        from pygeoinf2.numerics.convex import LevelKKTSolver
+
+        model, forward, target, truth, data, problem = pieces
+        prior = self.quartic_ball(model, 0.05)
+        noise = Ball(forward.codomain, radius=1e3)
+        solver = LevelKKTSolver(prior, noise, forward, data)
+        direction = target.codomain.basis_vector(0)
+        result = solver.solve(target.adjoint(direction))
+        assert result.converged and result.multipliers[1] == 0.0
+        assert model.norm(result.model) == pytest.approx(0.05, rel=1e-6)
+        pulled = target.adjoint(direction)
+        assert result.value == pytest.approx(0.05 * model.norm(pulled), rel=1e-6)
+
+    def test_a_set_without_a_gradient_is_refused(self, pieces):
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+        from pygeoinf2.numerics.convex import LevelKKTSolver
+
+        model, forward, target, truth, data, problem = pieces
+        box = Polytope(
+            model,
+            [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(2)],
+            outer=True,
+        )
+        with pytest.raises(TypeError, match="gradient"):
+            LevelKKTSolver(box, Ball(forward.codomain, radius=0.1), forward, data)
+        with pytest.raises(ValueError, match="KKT route"):
+            BackusGilbertParker(problem, target, box, route="kkt")
 
 
 class TestBundleMethod:

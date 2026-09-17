@@ -1525,15 +1525,7 @@ class _DualRoute(SetEstimator):
             return np.array(values)
 
         if route == "kkt":
-            from ..numerics.convex import PrimalKKTSolver
-
-            solver = PrimalKKTSolver(
-                self._prior,
-                self._noise,
-                self._problem.forward_operator,
-                data,
-                **kwargs,
-            )
+            solver = self._kkt_solver(data, **kwargs)
             return np.array(
                 [
                     solver.solve(self._target.adjoint(direction)).value
@@ -1575,6 +1567,27 @@ class _DualRoute(SetEstimator):
             if warm_start:
                 start = result.minimiser
         return np.array(values)
+
+    def _kkt_solver(self, data: Any, /, **kwargs: Any) -> Any:
+        """The KKT solver for these sets: closed form on quadratics, level functions otherwise."""
+        from ..numerics.convex import LevelKKTSolver, PrimalKKTSolver
+
+        quadratic = isinstance(self._prior, (Ball, Ellipsoid)) and isinstance(
+            self._noise, (Ball, Ellipsoid)
+        )
+        solver = PrimalKKTSolver if quadratic else LevelKKTSolver
+        return solver(
+            self._prior, self._noise, self._problem.forward_operator, data, **kwargs
+        )
+
+    def extremal_model(self, direction: Any, data: Any, /) -> Any:
+        """The model attaining the support in a direction, from the KKT conditions.
+
+        The one thing the bundle minimisation does not give: the KKT solvers
+        find the maximiser itself, on quadratic sets in closed form and on
+        any level-function sets by a convex minimisation per probe.
+        """
+        return self._kkt_solver(data).solve(self._target.adjoint(direction)).model
 
     def support(self, direction: Any, data: Any, /, *, start: Any = None) -> float:
         """The support value in one direction, by minimising the dual cost.
@@ -2094,7 +2107,7 @@ class FeasiblePropertySet(ConvexSet):
     @property
     def has_maximiser(self) -> bool:
         """Whether the route exhibits the maximiser."""
-        return self.route in ("closed_form", "bisection")
+        return self.route in ("closed_form", "bisection", "kkt")
 
     @property
     def has_level_function(self) -> bool:
@@ -2103,11 +2116,11 @@ class FeasiblePropertySet(ConvexSet):
 
     @cached_property
     def _nonempty(self) -> bool:
-        engine = (
-            self._algorithm
-            if self._algorithm is not None
-            else self._estimator._inclusion
-        )
+        # The membership engine decides exactly where it exists; the support
+        # route's own test is the fallback for sets known by support only.
+        engine = self._estimator._inclusion
+        if engine is None:
+            engine = self._algorithm
         return bool(engine.is_feasible(self._data))
 
     def is_empty(self) -> bool:
@@ -2211,13 +2224,13 @@ class FeasiblePropertySet(ConvexSet):
             ValueError: if the set is empty.
         """
         route = self.route
-        if route == "bisection":
+        if route in ("bisection", "kkt"):
             return self._algorithm.extremal_model(direction, self._data)
         if route != "closed_form":
             raise NotImplementedError(
                 f"The {route!r} route finds support values by duality and does "
-                "not exhibit the model attaining them; the closed form and the "
-                "bisection do."
+                "not exhibit the model attaining them; the closed form, the "
+                "bisection and the KKT route do."
             )
         space = self._estimator.problem.model_space
         budget = self._algorithm.budget(self._data)
@@ -2737,6 +2750,15 @@ class BackusGilbertParker(SetEstimator):
         )
 
     @property
+    def _differentiable(self) -> bool:
+        """Both sets have differentiable level functions: the KKT solver's case."""
+        return (
+            _has_level_function(self._prior)
+            and not self._exact
+            and _has_level_function(self._noise)
+        )
+
+    @property
     def _prior_level(self) -> float:
         """The prior's level: what its level function is bounded by."""
         return float(self._prior.level)
@@ -2747,6 +2769,8 @@ class BackusGilbertParker(SetEstimator):
                 return "closed_form"
             if self._quadratic:
                 return "bisection"
+            if self._differentiable:
+                return "kkt"
             if _has_support_function(self._prior) and _has_support_function(
                 self._noise
             ):
@@ -2759,6 +2783,11 @@ class BackusGilbertParker(SetEstimator):
                 "The closed form needs a ball prior and exact data (a confidence "
                 "set of radius zero); with these sets the route is "
                 f"{self._choose('auto')!r}."
+            )
+        if route == "kkt" and not (self._quadratic or self._differentiable):
+            raise ValueError(
+                "The KKT route needs a differentiable level function on each side "
+                "-- a ball, an ellipsoid or a smooth sublevel set."
             )
         if route == "bisection":
             if not self._quadratic:

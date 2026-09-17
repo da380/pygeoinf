@@ -7161,3 +7161,50 @@ prior through the likelihood engine agreeing with the reduced engine's
 inclusion levels to 1e-5; a polytope having neither characterisation.
 Every earlier test passes, including the agreement of the two engines
 on a ball to 1e-5 that the warm-start defect had broken.
+
+## 71. The KKT solver on level functions (2026-09-17)
+
+The support half of the general case, and the last line of the lost
+capabilities group. A set given by a differentiable convex level
+function alone -- a smooth sublevel set on either side -- had membership
+after §70 and no support values, since the dual route needs support
+functions and the bisection route quadratic ones.
+
+**The solver.** `LevelKKTSolver` keeps the quadratic KKT solver's shape,
+David's choice over a joint Newton on the bordered system: two
+multipliers, one per active constraint, found by a two-variable root
+find in log coordinates on the two constraint residuals; the closed-form
+model at each pair is replaced by a convex minimisation of ``lambda
+f(m) + mu g(d - A m) - (c, m)``, the membership engine's objective with
+the pairing added, scaled by the multipliers' sum so the optimiser's
+tolerances mean the same thing everywhere, Newton-CG when both level
+functions have Hessians and L-BFGS otherwise, each probe started cold
+for the reason §70 records. The quadratic solver's two branches carry
+over: the prior alone first, by one multiplier and a monotone root find
+on the prior's level function, and only if its support point misses the
+data the two-variable search, started from that multiplier with the
+quadratic solver's list of second guesses. Its known weakness carries
+over too and is documented: a confidence set so small that its
+constraint is nearly an equality drives the second multiplier to the
+clip, and the answer is then good to about a thousandth, which is why
+the bisection route stays preferred on quadratic sets.
+
+**Where it sits.** The dual route's ``route="kkt"`` option now chooses
+the quadratic solver for balls and ellipsoids and this one otherwise,
+and gains an `extremal_model` from either. The estimator's ``auto``
+takes ``"kkt"`` for a pair of differentiable level-function sets that
+are not both quadratic, before falling back to the dual for sets with
+support functions and to no route at all for the rest; the result
+declares a maximiser on it. A prior or confidence set given as a smooth
+sublevel set now has both characterisations, which closes the question
+§58 opened: a convex set carries what it was given, and the routes
+follow.
+
+**Checked.** On balls the general solver agrees with the reduction's
+support values to 1e-6 with feasible maximisers; a quartic prior equal
+to a ball takes the KKT route and agrees with the ball route to 1e-4 on
+every direction, its extremal models in both sets and attaining the
+bounds, its outer polytope containing the truth; a quartic confidence
+set likewise; slack data leave the prior's own support point with a
+zero second multiplier; a polytope, whose level function has no
+gradient, is refused by the solver and by the route.

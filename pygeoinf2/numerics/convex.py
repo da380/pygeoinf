@@ -38,11 +38,13 @@ from numpy.random import Generator
 
 from ..algebra.operators import Functional, LinearFunctional, LinearOperator
 from ..algebra.spaces import HilbertSpace
+from ..traits import Traits
 from .optimisation import OptimisationResult, Optimiser
 
 __all__ = [
     "ChambollePockSolver",
     "PrimalKKTSolver",
+    "LevelKKTSolver",
     "KKTResult",
     "SaddlePointResult",
     "ProximalBundleMethod",
@@ -2319,3 +2321,243 @@ class PrimalKKTSolver:
             int(info["nfev"]),
             status == 1,
         )
+
+
+class LevelKKTSolver:
+    """The exact maximum over two sets with level functions, from the KKT conditions.
+
+    :class:`PrimalKKTSolver` writes the maximiser down when both constraints
+    are quadratic. This keeps its shape -- two multipliers, one per active
+    constraint, found by a two-variable root find in log coordinates on the
+    two constraint residuals -- and replaces the closed form by a convex
+    minimisation: at a multiplier pair ``(lambda, mu)`` the model minimises
+
+    .. code-block:: text
+
+        lambda f(m) + mu g(d - A m) - (c, m)
+
+    with ``f`` the prior's level function and ``g`` the confidence set's,
+    which is the membership engine's objective with the pairing added. Any
+    convex differentiable level functions will do: a ball, an ellipsoid, a
+    smooth sublevel set. Nothing is assembled; the operators are applied.
+
+    **Two branches**, as for the quadratic solver. If the prior's own
+    support point already satisfies the data constraint, the data never bit:
+    that point is the answer, found by one multiplier alone, and ``mu`` is
+    zero. Only when both constraints are active is the two-variable root
+    find run, started from the prior-only multiplier and a list of guesses
+    for the second, since a hybrid root find with a poor start can return
+    its own starting point.
+
+    **Where it is weak**, as the quadratic solver is: with a confidence set
+    so small that its constraint is nearly an equality the second
+    multiplier runs away, and the root find ends at the clip that keeps the
+    exponential finite, good to about ``1e-3``. The bisection route has no
+    such trouble on quadratic sets and is preferred there; this solver is
+    for the sets it cannot take.
+
+    Each probe's minimisation starts cold, from zero: warm-starting from the
+    previous probe's minimiser let Newton stop one step short and froze the
+    residuals across the root find (DESIGN §70).
+    """
+
+    def __init__(
+        self,
+        prior: Any,
+        noise: Any,
+        forward: LinearOperator,
+        data: Any,
+        /,
+        *,
+        optimiser: Optimiser | None = None,
+        tolerance: float = 1e-10,
+        evaluations: int = 200,
+    ) -> None:
+        """
+        Args:
+            prior: a set on the model space with a differentiable convex
+                level function -- a ball, an ellipsoid, a sublevel set.
+            noise: likewise on the data space, as a set of residuals
+                ``d - A m``.
+            forward: ``A``.
+            data: the observations.
+            optimiser: the minimiser for each probe. Newton-CG when both
+                level functions have Hessians, L-BFGS otherwise.
+            tolerance: for the root find on the multipliers.
+            evaluations: its cap.
+
+        Raises:
+            TypeError: if either set has no differentiable level function.
+            ValueError: if the sets do not live in the operator's spaces.
+        """
+        self._forward = forward
+        self._data = data
+        self._prior, self._prior_level = _level_function_of(prior, "prior")
+        self._noise, self._noise_level = _level_function_of(noise, "noise")
+        for name, given, space in (
+            ("prior", prior, forward.domain),
+            ("noise", noise, forward.codomain),
+        ):
+            if given.domain != space:
+                raise ValueError(f"The {name} set must live in {space!r}.")
+        if optimiser is None:
+            from .optimisation import LBFGS, NewtonCG
+
+            optimiser = (
+                NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
+                if self._prior.has_hessian and self._noise.has_hessian
+                else LBFGS(rtol=1e-12, gtol=0.0, max_iterations=2000)
+            )
+        self._optimiser = optimiser
+        self._tolerance = tolerance
+        self._evaluations = evaluations
+        self._previous: tuple[float, float] | None = None
+
+    def _objective(self, lam: float, mu: float, objective: Any) -> Functional:
+        """``lambda f(m) + mu g(d - A m) - (c, m)``, scaled by ``1 / (lambda + mu)``.
+
+        The scaling leaves the minimiser alone and keeps the value of order
+        one, so that the optimiser's tolerances mean the same thing at every
+        multiplier pair.
+        """
+        space, data_space = self._forward.domain, self._forward.codomain
+        forward, data = self._forward, self._data
+        f, g = self._prior, self._noise
+        total = lam + mu
+        wf, wg, wc = lam / total, mu / total, 1.0 / total
+
+        def residual(m: Any) -> Any:
+            return data_space.subtract(data, forward(m))
+
+        def value(m: Any) -> float:
+            fit = wg * g(residual(m)) if mu > 0.0 else 0.0
+            return wf * f(m) + fit - wc * space.inner_product(objective, m)
+
+        def gradient(m: Any) -> Any:
+            total_gradient = space.axpy(-wc, objective, space.scale(wf, f.gradient(m)))
+            if mu > 0.0:
+                pulled = forward.adjoint(g.gradient(residual(m)))
+                total_gradient = space.axpy(-wg, pulled, total_gradient)
+            return total_gradient
+
+        hessian = None
+        if f.has_hessian and g.has_hessian:
+
+            def hessian(m: Any) -> LinearOperator:
+                own = f.hessian(m) * wf
+                if mu > 0.0:
+                    curvature = g.hessian(residual(m))
+                    own = own + (forward.adjoint @ curvature @ forward) * wg
+                return own.with_traits(Traits.POSITIVE_SEMIDEFINITE)
+
+        return Functional.from_callables(
+            space, value, gradient=gradient, hessian=hessian
+        )
+
+    def _model(self, lam: float, mu: float, objective: Any) -> Any:
+        return self._optimiser.minimise(
+            self._objective(lam, mu, objective), self._forward.domain.zero()
+        ).minimiser
+
+    def solve(self, objective: Any, /) -> KKTResult:
+        """Maximise ``(objective, m)`` over the two sets.
+
+        Args:
+            objective: ``c``, in the model space.
+
+        Returns:
+            The maximiser and its multipliers.
+        """
+        from scipy.optimize import fsolve
+
+        from .root_find import Evaluation, monotone_root
+
+        space, data_space = self._forward.domain, self._forward.codomain
+        f, g = self._prior, self._noise
+        a, b = self._prior_level, self._noise_level
+
+        # The prior alone: one multiplier, f(m_lambda) decreasing in lambda.
+        alone = monotone_root(
+            lambda lam, _: Evaluation(float(f(self._model(lam, 0.0, objective)))),
+            a,
+            decreasing=True,
+            iterations=80,
+            rtol=1e-9,
+            atol=0.0,
+            warm_start=False,
+        )
+        scale = float(alone.argument)
+        best = self._model(scale, 0.0, objective)
+        residual = data_space.subtract(self._data, self._forward(best))
+        if alone.converged and float(g(residual)) <= b * (1.0 + 1e-9):
+            return KKTResult(
+                float(space.inner_product(objective, best)),
+                best,
+                (scale, 0.0),
+                alone.evaluations,
+                True,
+            )
+
+        def residuals(logged: np.ndarray) -> np.ndarray:
+            lam, mu = np.exp(np.clip(logged, -30.0, 25.0))
+            model = self._model(float(lam), float(mu), objective)
+            return np.array(
+                [
+                    float(f(model)) - a,
+                    float(g(data_space.subtract(self._data, self._forward(model)))) - b,
+                ]
+            )
+
+        def attempt(guess: tuple[float, float]) -> tuple[np.ndarray, dict, int]:
+            logged = np.log(np.array([max(guess[0], 1e-8), max(guess[1], 1e-8)]))
+            found, info, status, _ = fsolve(
+                residuals,
+                logged,
+                full_output=True,
+                xtol=self._tolerance,
+                maxfev=self._evaluations,
+            )
+            return found, info, status
+
+        found, info, status = attempt(self._previous or (scale, 1e-3 * scale))
+        if status != 1:
+            for guess in (
+                (scale, 1e-3 * scale),
+                (scale, 1e-2 * scale),
+                (scale, 0.5 * scale),
+                (scale, 2.0 * scale),
+                (0.5 * scale, 1e-2 * scale),
+                (0.5 * scale, scale),
+            ):
+                found, info, status = attempt(guess)
+                if status == 1:
+                    break
+        multipliers = tuple(float(v) for v in np.exp(np.clip(found, -30.0, 25.0)))
+        self._previous = multipliers if status == 1 else None
+        model = self._model(multipliers[0], multipliers[1], objective)
+        return KKTResult(
+            float(space.inner_product(objective, model)),
+            model,
+            multipliers,
+            int(info["nfev"]),
+            status == 1,
+        )
+
+
+def _level_function_of(subset: Any, name: str) -> tuple[Functional, float]:
+    """A set read as ``{ x : f(x) <= level }`` with ``f`` differentiable and convex."""
+    if hasattr(subset, "functional") and not hasattr(subset, "level_function"):
+        functional, level = subset.functional, float(subset.level)  # a SublevelSet
+    elif getattr(subset, "has_level_function", False):
+        functional, level = subset.level_function(), float(subset.level)
+    else:
+        raise TypeError(
+            f"The {name} must have a level function -- a Ball, an Ellipsoid or "
+            f"a SublevelSet -- got {type(subset).__name__}."
+        )
+    if not getattr(functional, "has_derivative", False):
+        raise TypeError(
+            f"The {name}'s level function has no gradient; the KKT solver minimises "
+            "with one."
+        )
+    return functional, level
