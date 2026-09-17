@@ -7770,3 +7770,81 @@ diagonal metric equal to the product of the two diagonals; a subclass
 keeps its class; the selection operator passes the operator check on a
 weighted space with the metric in its adjoint and refuses repeats and
 positions outside the space.
+
+## 84. The dynamical-system interface waits for its first user (2026-09-17)
+
+v1's ``dynamical_system.py`` was four interface classes and no
+algorithm: a rule ``F(t, .)`` on a state space with an autonomy flag,
+its autonomous and linear specialisations, and nothing consuming them,
+the teaching assimilation module included. David's note in the
+catalogue stands: planned, not a priority, a common interface for
+sequential problems that Kalman filters would build on.
+
+**Deferred, not dropped.** An interface with no consumer gets designed
+twice, once now and once when the integrator or the filter arrives and
+wants something slightly different: a rule that returns a linearisation
+rather than an operator, or a time-stepping contract. So it waits for
+the sequential-assimilation session, and that session starts from what
+v2 already has: a rule ``F(t, .)`` is an `Operator`, whose `at` gives
+the value and the derivative together and whose `derivative` is
+derivative-only (§77); a linear rule is a `LinearOperator`; and a
+Kalman step is the Gaussian inversion's push-forward through the
+propagator and conditioning on the data, iterated in time, which §18
+already says. The catalogue rows keep their "Planned (later)".
+
+## 85. The sphere's grid is a strategy, and Gauss-Legendre is the second (2026-09-17)
+
+The sphere was Driscoll-Healy throughout, and the grid entered in six
+places: the analysis and synthesis calls, the colatitudes and
+longitudes, the row weights of the quadrature, calibrated against the
+transform with a zero-weight pole row that the adjoint of synthesis
+added back by hand, the double Fourier sphere behind the fast point
+evaluation, and the coordinate key. David asked for Gauss-Legendre
+grids as their own session, with the nodes, transforms, weights and
+point-evaluation route abstracted, because at the truncations he works
+at they are the cheaper grid.
+
+**One grid object, asked rather than assumed.** A `_Grid` per
+``(kind, lmax, sampling)``, shared by every space on it, supplies the
+core shape, the extended shape, the angles, the analysis and synthesis
+calls, whether there is a pole row, and the row weights where the grid
+has them in closed form. The sphere holds one and reads it at each of
+the six places. Driscoll-Healy is unchanged in behaviour: its weights
+are still calibrated by one probe, its pole row still carried by the
+south-pole kernel. Gauss-Legendre has ``lmax + 1`` rows at the Legendre
+zeros and ``2 lmax + 1`` columns, the transforms ``SHExpandGLQ`` and
+``MakeGridGLQ``, row weights ``w_j`` times the longitude spacing times
+the area scale, exact to degree ``2 lmax`` and equal to what the
+transform-probing route measures, and no pole row, so the adjoint of
+synthesis needs no correction and ``extend`` adds the wrap column
+alone, as pyshtools does. ``sampling`` belongs to Driscoll-Healy and is
+refused with the other grid rather than ignored.
+
+**The fast point evaluation is borrowed.** The double Fourier sphere
+needs equispaced colatitudes, which the Legendre zeros are not. Above
+the size threshold a Gauss-Legendre space synthesises the same
+components on a Driscoll-Healy sibling of the same truncation and takes
+the fast route there, one analysis and one synthesis more; the adjoint
+returns derivative components, which are the same on either grid, so
+the sibling's answer is the space's. David: "a good idea. That is a
+useful operation, but not always critical, and GLQ grids offer a range
+of computational advantages."
+
+**Same space, two grids.** The components are the coefficients on
+either grid, so a field moves between them by components and the
+degree transfer already does that; `with_order` and `with_degree` keep
+the grid; the two spaces compare unequal, because a field's shape
+differs, and their fields wrap as pyshtools' own grid classes of each
+kind.
+
+**Checked.** At two truncations the Gauss-Legendre space has the
+expected shapes, extended and not, with monotone interior colatitudes;
+passes the space and coordinate checks and round-trips its components;
+integrates the constant to the sphere's area with weights equal to the
+transform-probed ones; holds the same norms and point values as the
+Driscoll-Healy space of the same components, which transfer into it
+exactly; agrees between its direct and its borrowed fast evaluation
+route, with the accumulation the adjoint; keeps its grid through
+`with_order` and `with_degree`; refuses ``sampling=2`` and an unknown
+grid; draws, extended or not; and the Sobolev variant passes the space
+check.

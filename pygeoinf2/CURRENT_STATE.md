@@ -35,7 +35,7 @@ what most of the rest follows from:
 | `probability` | `GaussianMeasure`, mixtures, push-forwards, conditioning |
 | `geometry` | convex sets, subspaces, projectors, support functions |
 | `numerics` | solvers, preconditioners, randomized linear algebra (`randomized.py`), functional calculus, optimization (`optimization.py`), convex methods, quadratic programming, root finding |
-| `symmetric_space` | sphere, periodic box, bounded box, circle, torus, line, plane |
+| `symmetric_space` | sphere (Driscoll–Healy or Gauss–Legendre grids), periodic box, bounded box, circle, torus, line, plane |
 | `inference` | forward problems, Gaussian inversion, point estimators, Backus–Gilbert, the Laplace/MAP route, preconditioners |
 | `plotting` | field maps, points, paths, balls and networks on every geometry, convex sets, marginals, corner plots, error bounds |
 | `backends` | MFEM, two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps it a plain `HilbertSpace` and lets MFEM do every computation (DESIGN §15.3) |

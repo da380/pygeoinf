@@ -1078,3 +1078,15 @@ class TestSphereNetworkAndCaps:
         # A cap over the dateline is split, as a path is.
         ax, collection = plotting.plot_balls(space, [np.array([0.0, 179.0])], 0.3)
         assert len(collection.get_segments()) == 2
+
+
+class TestGaussLegendreFields:
+    def test_a_field_on_a_gauss_legendre_grid_draws(self):
+        pytest.importorskip("cartopy")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        for extend in (False, True):
+            X = SphereLebesgue(10, grid="GLQ", extend=extend)
+            field = X.project_function(lambda p: np.cos(np.radians(p[0])))
+            ax, mappable = plotting.plot(X, field)
+            assert mappable is not None

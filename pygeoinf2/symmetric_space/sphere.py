@@ -76,12 +76,147 @@ _NO_CONDON_SHORTLEY = 1
 # longitude sampling and the radius -- but not the Sobolev order, which is the
 # whole point, since with_order is what makes new spaces in a hot loop. A plain
 # dict rather than an lru_cache because the value is computed from an instance.
-_QUADRATURES: dict[tuple[int, int, float], np.ndarray] = {}
+_QUADRATURES: dict[tuple, np.ndarray] = {}
 
 # The south pole row weights, on the same key and for the same reason: they
 # are built from the quadrature and from Legendre values, neither of which
 # knows the Sobolev order.
-_SOUTH_POLE_KERNELS: dict[tuple[int, int, float], np.ndarray] = {}
+_SOUTH_POLE_KERNELS: dict[tuple, np.ndarray] = {}
+
+_GRIDS = ("DH", "GLQ")
+
+
+class _Grid:
+    """The sampling grid behind a sphere: shape, angles, transforms, weights.
+
+    Two kinds, and everything that depends on which one is here so that the
+    space asks rather than assumes (DESIGN §85):
+
+    * ``"DH"``, Driscoll-Healy: ``2 (lmax + 1)`` equispaced colatitude rows
+      from the north pole, ``sampling`` times as many longitude columns, the
+      transforms ``SHExpandDH``/``MakeGridDH``, row weights calibrated
+      against the transform by the space, a north-pole row of zero weight,
+      and the double Fourier sphere for the fast point evaluation.
+    * ``"GLQ"``, Gauss-Legendre: ``lmax + 1`` rows at the Legendre zeros,
+      ``2 lmax + 1`` columns, the transforms ``SHExpandGLQ``/``MakeGridGLQ``,
+      row weights in closed form and exact to degree ``2 lmax``, no pole row,
+      and no double Fourier sphere -- the fast point evaluation goes through
+      a Driscoll-Healy sibling of the same truncation.
+
+    ``extend`` adds the wrap column at 360 degrees on both, and the
+    south-pole row on Driscoll-Healy only, as pyshtools does.
+    """
+
+    def __init__(self, kind: str, lmax: int, sampling: int) -> None:
+        self.kind = kind
+        self.lmax = int(lmax)
+        self.sampling = int(sampling)
+        if kind == "DH":
+            self.rows = 2 * (self.lmax + 1)
+            self.columns = self.sampling * self.rows
+            self.core_colatitudes = np.arange(self.rows) * np.pi / self.rows
+            self.has_pole_row = True
+            self._zeros: np.ndarray | None = None
+            self._weights: np.ndarray | None = None
+        else:
+            from pyshtools.expand import SHGLQ
+
+            zeros, weights = SHGLQ(self.lmax)
+            self.rows = self.lmax + 1
+            self.columns = 2 * self.lmax + 1
+            self.core_colatitudes = np.arccos(np.clip(np.asarray(zeros), -1.0, 1.0))
+            self.has_pole_row = False
+            self._zeros = np.asarray(zeros)
+            self._weights = np.asarray(weights)
+        self.core_longitudes = np.arange(self.columns) * 2.0 * np.pi / self.columns
+        for array in (self.core_colatitudes, self.core_longitudes):
+            array.flags.writeable = False
+
+    @property
+    def core_shape(self) -> tuple[int, int]:
+        """The grid the transforms and the quadrature act on."""
+        return (self.rows, self.columns)
+
+    def shape(self, extend: bool, /) -> tuple[int, int]:
+        """A field's shape: the core, plus the wrap column and, on
+        Driscoll-Healy, the south-pole row when extended."""
+        if not extend:
+            return self.core_shape
+        return (self.rows + (1 if self.has_pole_row else 0), self.columns + 1)
+
+    def colatitudes(self, extend: bool, /) -> np.ndarray:
+        """The row colatitudes in radians, with the south pole when extended and present."""
+        if extend and self.has_pole_row:
+            return np.append(self.core_colatitudes, np.pi)
+        return self.core_colatitudes
+
+    def longitudes(self, extend: bool, /) -> np.ndarray:
+        """The column longitudes in radians, with the wrap at 360 degrees when extended."""
+        if extend:
+            return np.append(self.core_longitudes, 2.0 * np.pi)
+        return self.core_longitudes
+
+    def analysis(self, field: np.ndarray, /) -> np.ndarray:
+        """Core grid values to the ``(2, lmax + 1, lmax + 1)`` coefficients."""
+        if self.kind == "DH":
+            from pyshtools.expand import SHExpandDH
+
+            return SHExpandDH(
+                field,
+                norm=_ORTHONORMAL,
+                sampling=self.sampling,
+                csphase=_NO_CONDON_SHORTLEY,
+                lmax_calc=self.lmax,
+            )
+        from pyshtools.expand import SHExpandGLQ
+
+        return SHExpandGLQ(
+            field,
+            self._weights,
+            self._zeros,
+            norm=_ORTHONORMAL,
+            csphase=_NO_CONDON_SHORTLEY,
+            lmax_calc=self.lmax,
+        )
+
+    def synthesis(self, coefficients: np.ndarray, extend: bool, /) -> np.ndarray:
+        """Coefficients to grid values, extended or not."""
+        if self.kind == "DH":
+            from pyshtools.expand import MakeGridDH
+
+            return MakeGridDH(
+                coefficients,
+                norm=_ORTHONORMAL,
+                sampling=self.sampling,
+                csphase=_NO_CONDON_SHORTLEY,
+                lmax=self.lmax,
+                extend=extend,
+            )
+        from pyshtools.expand import MakeGridGLQ
+
+        return MakeGridGLQ(
+            coefficients,
+            self._zeros,
+            lmax=self.lmax,
+            norm=_ORTHONORMAL,
+            csphase=_NO_CONDON_SHORTLEY,
+            extend=extend,
+        )
+
+    def row_weights(self, radius: float, /) -> np.ndarray | None:
+        """The quadrature's row weights in closed form, where the grid has
+        them: Gauss-Legendre's ``w_j`` times the longitude spacing times the
+        area scale. ``None`` on Driscoll-Healy, whose weights the space
+        calibrates against the transform."""
+        if self._weights is None:
+            return None
+        return self._weights * (2.0 * np.pi / self.columns) * radius**2
+
+
+@lru_cache(maxsize=32)
+def _grid_for(kind: str, lmax: int, sampling: int) -> _Grid:
+    """One grid object per ``(kind, lmax, sampling)``, shared by every space on it."""
+    return _Grid(kind, lmax, sampling)
 
 
 @lru_cache(maxsize=8)
@@ -184,10 +319,14 @@ class Sphere(SymmetricSpace[Any]):
     Components are the real harmonic coefficients, scaled so that the Lebesgue
     basis is orthonormal on a sphere of the given radius.
 
-    The grid has ``n == 2 (lmax + 1)`` rows and ``sampling * n`` columns.
-    ``sampling`` defaults to 1, the square grid, which is pyshtools' default
-    and halves the memory of every field and the cost of every pointwise
-    operation against the rectangular one.
+    The grid is Driscoll-Healy by default, ``n == 2 (lmax + 1)`` rows and
+    ``sampling * n`` columns, ``sampling`` defaulting to 1, the square grid
+    that is pyshtools' default and halves the memory of every field against
+    the rectangular one. ``grid="GLQ"`` gives the Gauss-Legendre grid instead,
+    ``lmax + 1`` rows at the Legendre zeros and ``2 lmax + 1`` columns: fewer
+    points for the same truncation, a quadrature exact to degree ``2 lmax``
+    in closed form, and no pole row. The two hold the same components, so a
+    space is the same space on either; only the fields' shape differs.
     """
 
     def __init__(
@@ -200,6 +339,7 @@ class Sphere(SymmetricSpace[Any]):
         length_scale: float = 1.0,
         sampling: int = 1,
         extend: bool = False,
+        grid: str = "DH",
     ) -> None:
         """
         Args:
@@ -222,11 +362,16 @@ class Sphere(SymmetricSpace[Any]):
                 weight and are not seen by the transforms; they are there for
                 plotting and interchange, where a closed grid is what is
                 wanted. Same components, same space; a statement about the
-                grid, like ``sampling``.
+                grid, like ``sampling``. On a Gauss-Legendre grid only the
+                wrap column is added, there being no pole row to add.
+            grid: ``"DH"`` for Driscoll-Healy, ``"GLQ"`` for Gauss-Legendre.
+                See the class docstring. ``sampling`` applies to the first
+                only.
 
         Raises:
             ValueError: if lmax is negative, the radius or length scale is not
-                positive, or the sampling is not 1 or 2.
+                positive, the sampling is not 1 or 2, the grid is not one of
+                the two, or a sampling of 2 is asked of a Gauss-Legendre grid.
         """
         if lmax < 0:
             raise ValueError("lmax must be non-negative.")
@@ -236,6 +381,13 @@ class Sphere(SymmetricSpace[Any]):
             raise ValueError("length_scale must be positive.")
         if sampling not in (1, 2):
             raise ValueError(f"sampling is 1 or 2, got {sampling}.")
+        if grid not in _GRIDS:
+            raise ValueError(f"The grid is 'DH' or 'GLQ', got {grid!r}.")
+        if grid == "GLQ" and sampling != 1:
+            raise ValueError(
+                "A Gauss-Legendre grid has 2 lmax + 1 columns; sampling applies "
+                "to the Driscoll-Healy grid only."
+            )
         _require_pyshtools()
 
         self._lmax = int(lmax)
@@ -244,7 +396,7 @@ class Sphere(SymmetricSpace[Any]):
         self._length_scale = float(length_scale)
         self._sampling = int(sampling)
         self._extend = bool(extend)
-        self._latitudes = 2 * (self._lmax + 1)
+        self._grid = _grid_for(grid, self._lmax, self._sampling)
 
         degrees = self._degree_of_component
         eigenvalues = degrees * (degrees + 1.0) / self._radius**2
@@ -287,15 +439,17 @@ class Sphere(SymmetricSpace[Any]):
         One row and one column more than the transform's grid when the space
         is extended; see :attr:`extend`.
         """
-        rows, columns = self._core_shape
-        if self._extend:
-            return (rows + 1, columns + 1)
-        return (rows, columns)
+        return self._grid.shape(self._extend)
 
     @property
     def _core_shape(self) -> tuple[int, int]:
-        """The Driscoll-Healy grid the transforms and the quadrature act on."""
-        return (self._latitudes, self._sampling * self._latitudes)
+        """The grid the transforms and the quadrature act on."""
+        return self._grid.core_shape
+
+    @property
+    def grid(self) -> str:
+        """``"DH"`` or ``"GLQ"``: which sampling grid the fields live on."""
+        return self._grid.kind
 
     @property
     def extend(self) -> bool:
@@ -384,6 +538,7 @@ class Sphere(SymmetricSpace[Any]):
             self._order,
             self._length_scale,
             self._sampling,
+            self._grid.kind,
         )
 
     def _coordinate_key(self) -> Hashable:
@@ -393,11 +548,20 @@ class Sphere(SymmetricSpace[Any]):
         ``Sobolev`` are thin subclasses over the same grid, and keying on the
         concrete class would say two views of one field were different fields.
         """
-        return ("sphere", self._lmax, self._radius, self._sampling, self._extend)
+        return (
+            "sphere",
+            self._lmax,
+            self._radius,
+            self._sampling,
+            self._extend,
+            self._grid.kind,
+        )
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
         grid = ", extended" if self._extend else ""
+        if self._grid.kind != "DH":
+            grid = f", {self._grid.kind}" + grid
         return f"Sphere(lmax={self._lmax}, radius={self._radius}, {kind}{grid})"
 
     # ----------------------------------------------------------------- #
@@ -495,7 +659,8 @@ class Sphere(SymmetricSpace[Any]):
         padded = np.empty(self.grid_shape)
         padded[:rows, :columns] = core
         padded[:rows, columns] = core[:, 0]
-        padded[rows, :] = float(self._south_pole_kernel @ core.mean(axis=1))
+        if self._grid.has_pole_row:
+            padded[rows, :] = float(self._south_pole_kernel @ core.mean(axis=1))
         return self._own_grid_values(padded)
 
     def from_grid_values(self, values: np.ndarray, /) -> Any:
@@ -528,7 +693,7 @@ class Sphere(SymmetricSpace[Any]):
         array = np.asarray(values, dtype=float)
         if array.shape != self.grid_shape:
             raise ValueError(f"A field has shape {self.grid_shape}, got {array.shape}.")
-        return SHGrid.from_array(array, grid="DH", copy=False)
+        return SHGrid.from_array(array, grid=self._grid.kind, copy=False)
 
     def copy(self, x: Any) -> Any:
         """An independent copy of the field."""
@@ -622,16 +787,7 @@ class Sphere(SymmetricSpace[Any]):
         Raises:
             ValueError: if the grid is not this sphere's shape.
         """
-        from pyshtools.expand import SHExpandDH
-
-        field = self._core_values(x)
-        coefficients = SHExpandDH(
-            field,
-            norm=_ORTHONORMAL,
-            sampling=self._sampling,
-            csphase=_NO_CONDON_SHORTLEY,
-            lmax_calc=self._lmax,
-        )
+        coefficients = self._grid.analysis(self._core_values(x))
         parts, degrees, orders = self._packing
         return self._radius * coefficients[parts, degrees, orders]
 
@@ -647,24 +803,13 @@ class Sphere(SymmetricSpace[Any]):
         Raises:
             ValueError: if the component count is not the dimension.
         """
-        from pyshtools.expand import MakeGridDH
-
         components = np.asarray(c, dtype=float)
         if components.shape != (self.dim,):
             raise ValueError(f"Expected {self.dim} components, got {components.shape}.")
         coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
         parts, degrees, orders = self._packing
         coefficients[parts, degrees, orders] = components / self._radius
-        return self._own_grid_values(
-            MakeGridDH(
-                coefficients,
-                norm=_ORTHONORMAL,
-                sampling=self._sampling,
-                csphase=_NO_CONDON_SHORTLEY,
-                lmax=self._lmax,
-                extend=self._extend,
-            )
-        )
+        return self._own_grid_values(self._grid.synthesis(coefficients, self._extend))
 
     @staticmethod
     def truncation_degree_for(
@@ -761,17 +906,9 @@ class Sphere(SymmetricSpace[Any]):
             ValueError: if the grid is not this sphere's shape.
         """
         from pyshtools import SHCoeffs
-        from pyshtools.expand import SHExpandDH
 
-        field = self._core_values(x)
         return SHCoeffs.from_array(
-            SHExpandDH(
-                field,
-                norm=_ORTHONORMAL,
-                sampling=self._sampling,
-                csphase=_NO_CONDON_SHORTLEY,
-                lmax_calc=self._lmax,
-            ),
+            self._grid.analysis(self._core_values(x)),
             normalization="ortho",
             csphase=_NO_CONDON_SHORTLEY,
         )
@@ -813,26 +950,22 @@ class Sphere(SymmetricSpace[Any]):
 
         Ends at the south pole on an extended space.
         """
-        rows = self._latitudes + (1 if self._extend else 0)
-        return np.arange(rows) * np.pi / self._latitudes
+        return self._grid.colatitudes(self._extend)
 
     @cached_property
     def longitudes(self) -> np.ndarray:
         """The grid longitudes, in radians. Ends at 360 degrees on an extended space."""
-        columns = self._sampling * self._latitudes
-        count = columns + (1 if self._extend else 0)
-        return np.arange(count) * 2.0 * np.pi / columns
+        return self._grid.longitudes(self._extend)
 
     @cached_property
     def _core_colatitudes(self) -> np.ndarray:
         """The transform grid's colatitudes, without the pole row."""
-        return np.arange(self._latitudes) * np.pi / self._latitudes
+        return self._grid.core_colatitudes
 
     @cached_property
     def _core_longitudes(self) -> np.ndarray:
         """The transform grid's longitudes, without the wrap column."""
-        columns = self._sampling * self._latitudes
-        return np.arange(columns) * 2.0 * np.pi / columns
+        return self._grid.core_longitudes
 
     def basis_at(self, point: Any, /) -> np.ndarray:
         """The value of each orthonormal harmonic at a point.
@@ -958,10 +1091,19 @@ class Sphere(SymmetricSpace[Any]):
         # Sobolev order is not among them -- the weights are the transform's,
         # and the transform does not know the metric -- so with_order(0.0),
         # which every multiplication_operator call makes, gets them free.
-        key = (self._lmax, self._sampling, self._radius)
+        key = (self._grid.kind, self._lmax, self._sampling, self._radius)
         cached = _QUADRATURES.get(key)
         if cached is not None:
             return cached
+
+        closed_form = self._grid.row_weights(self._radius)
+        if closed_form is not None:
+            # Gauss-Legendre: the weights are the quadrature's own, exact to
+            # degree 2 lmax, and no calibration is needed.
+            weights = np.array(closed_form)
+            weights.flags.writeable = False
+            _QUADRATURES[key] = weights
+            return weights
 
         rows, columns = self._core_shape
         shape = DHaj(rows)
@@ -1043,7 +1185,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         from pyshtools.legendre import PlmON
 
-        key = (self._lmax, self._sampling, self._radius)
+        key = (self._grid.kind, self._lmax, self._sampling, self._radius)
         cached = _SOUTH_POLE_KERNELS.get(key)
         if cached is not None:
             return cached
@@ -1193,6 +1335,17 @@ class Sphere(SymmetricSpace[Any]):
                 ]
             )
 
+        if not self._grid.has_pole_row:
+            # No double Fourier sphere on a Gauss-Legendre grid: the same
+            # components synthesised on the Driscoll-Healy sibling take the
+            # fast route there, one analysis and one synthesis more.
+            sibling = self._driscoll_healy
+            return sibling.evaluate(
+                sibling.from_components(self.to_components(x)),
+                points,
+                eps=eps,
+                nthreads=nthreads,
+            )
         import finufft
 
         rows, columns = self._core_shape
@@ -1252,6 +1405,12 @@ class Sphere(SymmetricSpace[Any]):
                 offset = end
             return total
 
+        if not self._grid.has_pole_row:
+            # Derivative components are the same on either grid, so the
+            # sibling's answer is this space's.
+            return self._driscoll_healy.accumulate(
+                weights, points, eps=eps, nthreads=nthreads
+            )
         import finufft
 
         rows, columns = self._core_shape
@@ -2070,6 +2229,14 @@ class Sphere(SymmetricSpace[Any]):
     #                            Resolution                             #
     # ----------------------------------------------------------------- #
 
+    @cached_property
+    def _driscoll_healy(self) -> "Sphere":
+        """The Lebesgue space of this truncation on the square Driscoll-Healy
+        grid, which carries the double Fourier sphere a Gauss-Legendre grid
+        lacks. The components are the same, so it stands in for the fast
+        point-evaluation routes."""
+        return Lebesgue(self._lmax, radius=self._radius)
+
     def _rebuilt(
         self,
         /,
@@ -2104,7 +2271,11 @@ class Sphere(SymmetricSpace[Any]):
         scale = self._length_scale if length_scale is None else float(length_scale)
         if order == 0.0:
             return Lebesgue(
-                lmax, radius=self._radius, sampling=self._sampling, extend=self._extend
+                lmax,
+                radius=self._radius,
+                sampling=self._sampling,
+                extend=self._extend,
+                grid=self._grid.kind,
             )
         return Sobolev(
             lmax,
@@ -2113,6 +2284,7 @@ class Sphere(SymmetricSpace[Any]):
             radius=self._radius,
             sampling=self._sampling,
             extend=self._extend,
+            grid=self._grid.kind,
         )
 
     def _extended_to(self, lmax: int, /) -> Sphere:
@@ -2250,6 +2422,7 @@ class Lebesgue(Sphere):
         radius: float = 1.0,
         sampling: int = 1,
         extend: bool = False,
+        grid: str = "DH",
     ) -> None:
         """
         Args:
@@ -2257,9 +2430,15 @@ class Lebesgue(Sphere):
             radius: the sphere's radius.
             sampling: grid columns per row, 1 or 2.
             extend: whether fields carry the wrap column and the pole row.
+            grid: ``"DH"`` or ``"GLQ"``; see :class:`Sphere`.
         """
         super().__init__(
-            lmax, radius=radius, order=0.0, sampling=sampling, extend=extend
+            lmax,
+            radius=radius,
+            order=0.0,
+            sampling=sampling,
+            extend=extend,
+            grid=grid,
         )
 
 
@@ -2281,6 +2460,7 @@ class Sobolev(Sphere):
         radius: float = 1.0,
         sampling: int = 1,
         extend: bool = False,
+        grid: str = "DH",
     ) -> None:
         """
         Args:
@@ -2290,6 +2470,7 @@ class Sobolev(Sphere):
             radius: the sphere's radius.
             sampling: grid columns per row, 1 or 2.
             extend: whether fields carry the wrap column and the pole row.
+            grid: ``"DH"`` or ``"GLQ"``; see :class:`Sphere`.
         """
         super().__init__(
             lmax,
@@ -2298,4 +2479,5 @@ class Sobolev(Sphere):
             length_scale=length_scale,
             sampling=sampling,
             extend=extend,
+            grid=grid,
         )

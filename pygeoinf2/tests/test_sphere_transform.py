@@ -478,3 +478,87 @@ class TestRandomDomainPoints:
         assert X.random_domain_points(0) == []
         with pytest.raises(ValueError, match="negative"):
             X.random_domain_points(-1)
+
+
+class TestGaussLegendreGrid:
+    """The same space on a Gauss-Legendre grid: fewer points, exact weights,
+    no pole row, and the fast point evaluation borrowed from a Driscoll-Healy
+    sibling (DESIGN §85)."""
+
+    @pytest.fixture(params=[4, 9])
+    def pair(self, request):
+        lmax = request.param
+        return Lebesgue(lmax, radius=2.0), Lebesgue(lmax, radius=2.0, grid="GLQ")
+
+    def test_the_shapes_and_the_angles(self, pair):
+        dh, glq = pair
+        lmax = glq.lmax
+        assert glq.grid == "GLQ" and dh.grid == "DH"
+        assert glq.grid_shape == (lmax + 1, 2 * lmax + 1)
+        assert glq.dim == dh.dim
+        extended = Lebesgue(lmax, radius=2.0, grid="GLQ", extend=True)
+        assert extended.grid_shape == (lmax + 1, 2 * lmax + 2)
+        assert extended.longitudes[-1] == pytest.approx(2.0 * np.pi)
+        assert extended.colatitudes.size == lmax + 1
+        assert np.all(np.diff(glq.colatitudes) > 0.0)
+        assert 0.0 < glq.colatitudes[0] and glq.colatitudes[-1] < np.pi
+
+    def test_it_is_a_space_with_coordinates(self, pair, rng):
+        from pygeoinf2.testing import check_coordinates, check_space
+
+        _, glq = pair
+        check_space(glq, rng=rng)
+        check_coordinates(glq, rng=rng)
+        x = glq.random(rng=rng)
+        assert np.allclose(
+            glq.to_components(glq.from_components(glq.to_components(x))),
+            glq.to_components(x),
+        )
+
+    def test_the_quadrature_is_exact_and_is_the_transforms_own(self, pair):
+        _, glq = pair
+        ones = glq.from_grid_values(np.ones(glq.grid_shape))
+        assert glq.inner_product(ones, ones) == pytest.approx(glq.area)
+        assert np.allclose(glq._quadrature, glq._quadrature_from_transform())
+
+    def test_the_two_grids_hold_the_same_space(self, pair, rng):
+        dh, glq = pair
+        components = rng.normal(size=glq.dim)
+        x_dh, x_glq = dh.from_components(components), glq.from_components(components)
+        assert dh.norm(x_dh) == pytest.approx(glq.norm(x_glq))
+        transfer = dh.degree_transfer_operator(glq)
+        assert np.allclose(glq.to_components(transfer(x_dh)), components)
+        point = np.array([37.0, -122.0])
+        assert dh.evaluate(x_dh, [point])[0] == pytest.approx(
+            glq.evaluate(x_glq, [point])[0]
+        )
+        assert glq.with_order(1.5).grid == "GLQ"
+        assert glq.with_degree(glq.lmax + 3).grid == "GLQ"
+        assert glq != dh
+
+    def test_both_evaluation_routes_agree_and_are_adjoint(self, pair, rng):
+        _, glq = pair
+        x = glq.random(rng=rng)
+        points = glq.random_points(30, rng=rng)
+        with forced(False):
+            direct = glq.evaluate(x, points)
+        with forced(True):
+            fast = glq.evaluate(x, points)
+        assert np.allclose(direct, fast, atol=1e-8)
+        weights = rng.normal(size=30)
+        with forced(True):
+            pulled = glq.accumulate(weights, points)
+        assert np.dot(fast, weights) == pytest.approx(
+            np.dot(pulled, glq.to_components(x)), rel=1e-8
+        )
+
+    def test_the_sobolev_space_and_the_refusals(self, rng):
+        from pygeoinf2.testing import check_space
+
+        space = Sobolev(6, 2.0, 0.2, grid="GLQ")
+        check_space(space, rng=rng)
+        assert "GLQ" in repr(space)
+        with pytest.raises(ValueError, match="sampling"):
+            Lebesgue(6, grid="GLQ", sampling=2)
+        with pytest.raises(ValueError, match="grid"):
+            Lebesgue(6, grid="Gauss")
