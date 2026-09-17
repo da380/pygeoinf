@@ -488,7 +488,7 @@ different metric. So the union of method names is the honest comparison.
 | `invariant_covariance_function` | Ported | `SymmetricSpace.covariance_function`: the covariance as a function of geodesic distance | Worth having, I thought. Need a reason to drop. |
 | `sample_power_measure` | Ported | Sampling from a prescribed power spectrum | Needed |
 | `vector_multiply`, `vector_sqrt` | Ported | `space.multiply` and `space.sqrt` on `HilbertModule` — see `HilbertModuleMixin` in Part 1 | Needed in some form|
-| `from_covariance`, `from_heat_kernel_prior`, `from_sobolev_kernel_prior`, `from_sobolev_parameters` | Subsumed | Constructors on the measures rather than on the space | |
+| `from_covariance`, `from_heat_kernel_prior`, `from_sobolev_kernel_prior`, `from_sobolev_parameters` | Subsumed | Constructors on the measures rather than on the space; the degree they chose comes from `sufficient_degree(symbol, rtol=, min_degree=, max_degree=)` on any space, v1's unbounded walk, and `with_degree` on the answer builds the space (DESIGN §76) | |
 
 ### Geometry and data
 

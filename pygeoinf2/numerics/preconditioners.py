@@ -234,6 +234,20 @@ class SpectralPreconditioner(LinearSolver):
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
 
 
+def _sparse_factorisation(
+    matrix: Any, /, *, incomplete: bool, drop_tol: float, fill_factor: float
+) -> Any:
+    """An exact or an incomplete LU of a sparse matrix, as SciPy gives them.
+
+    Shared by the three sparse preconditioners. The incomplete factorisation
+    is for when even the sparse factors fill in too much; its ``drop_tol``
+    and ``fill_factor`` are SciPy's own.
+    """
+    if incomplete:
+        return sparse_linalg.spilu(matrix, drop_tol=drop_tol, fill_factor=fill_factor)
+    return sparse_linalg.splu(matrix)
+
+
 def _sparse_inverse_traits(operator: LinearOperator, /, *, galerkin: bool) -> Traits:
     """What a sparse approximate inverse of *operator* may honestly claim.
 
@@ -308,6 +322,9 @@ class BandedPreconditioner(LinearSolver):
         *,
         form: Literal["auto", "components", "galerkin"] = "auto",
         probe: Literal["exact", "banded"] = "exact",
+        incomplete: bool = False,
+        drop_tol: float = 1e-4,
+        fill_factor: float = 10.0,
         n_jobs: int | None = None,
     ) -> None:
         """
@@ -325,6 +342,10 @@ class BandedPreconditioner(LinearSolver):
                 operator that is *not* banded that turns a merely unhelpful
                 preconditioner into an actively harmful one. Use ``"banded"``
                 when the operator really is banded, where the two agree.
+            incomplete: factorise with an incomplete LU rather than an exact
+                sparse one, for when even the banded factors fill in too much.
+            drop_tol: the ILU drop tolerance, used only when *incomplete*.
+            fill_factor: the ILU fill limit, used only when *incomplete*.
             n_jobs: workers for the exact probe's columns. Serial by default.
         """
         if bandwidth < 0:
@@ -332,6 +353,9 @@ class BandedPreconditioner(LinearSolver):
         self._bandwidth = bandwidth
         self._form = form
         self._probe = probe
+        self._incomplete = incomplete
+        self._drop_tol = drop_tol
+        self._fill_factor = fill_factor
         self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
@@ -343,7 +367,12 @@ class BandedPreconditioner(LinearSolver):
         banded = sparse.dia_array(
             (diagonals, offsets), shape=(space.dim, space.dim)
         ).tocsc()
-        factorisation = sparse_linalg.splu(banded)
+        factorisation = _sparse_factorisation(
+            banded,
+            incomplete=self._incomplete,
+            drop_tol=self._drop_tol,
+            fill_factor=self._fill_factor,
+        )
         galerkin = self._form == "galerkin" or (
             self._form == "auto" and bool(Traits.SELF_ADJOINT & operator.traits)
         )
@@ -610,6 +639,9 @@ class BlockPreconditioner(LinearSolver):
         /,
         *,
         form: Literal["auto", "components", "galerkin"] = "auto",
+        incomplete: bool = False,
+        drop_tol: float = 1e-4,
+        fill_factor: float = 10.0,
         n_jobs: int | None = None,
     ) -> None:
         """
@@ -624,6 +656,11 @@ class BlockPreconditioner(LinearSolver):
                 :class:`BandedPreconditioner`, only the Galerkin form lets the
                 resulting inverse claim self-adjointness on a space whose
                 metric is not the identity; see :func:`_sparse_inverse_traits`.
+            incomplete: factorise with an incomplete LU rather than an exact
+                sparse one, for when the block pattern's factors fill in too
+                much -- large overlapping blocks do.
+            drop_tol: the ILU drop tolerance, used only when *incomplete*.
+            fill_factor: the ILU fill limit, used only when *incomplete*.
             n_jobs: workers for the column probes. Serial by default.
 
         Raises:
@@ -635,6 +672,9 @@ class BlockPreconditioner(LinearSolver):
         if any(block.size and block.min() < 0 for block in self._blocks):
             raise ValueError("Component indices are non-negative.")
         self._form = form
+        self._incomplete = incomplete
+        self._drop_tol = drop_tol
+        self._fill_factor = fill_factor
         self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
@@ -689,7 +729,12 @@ class BlockPreconditioner(LinearSolver):
         assembled = sparse.coo_matrix(
             (values, (rows, columns)), shape=(space.dim, space.dim)
         ).tocsc()
-        factorised = sparse_linalg.splu(assembled)
+        factorised = _sparse_factorisation(
+            assembled,
+            incomplete=self._incomplete,
+            drop_tol=self._drop_tol,
+            fill_factor=self._fill_factor,
+        )
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             components = space.to_components(y)
@@ -1112,14 +1157,12 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         del dimension
         thresholded = _thresholded_matrix(operator, self._keep, n_jobs=self._n_jobs)
 
-        if self._incomplete:
-            factorised = sparse_linalg.spilu(
-                thresholded,
-                drop_tol=self._drop_tol,
-                fill_factor=self._fill_factor,
-            )
-        else:
-            factorised = sparse_linalg.splu(thresholded)
+        factorised = _sparse_factorisation(
+            thresholded,
+            incomplete=self._incomplete,
+            drop_tol=self._drop_tol,
+            fill_factor=self._fill_factor,
+        )
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             weighted = domain.apply_gram(domain.to_components(y))

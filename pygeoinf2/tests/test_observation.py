@@ -396,9 +396,11 @@ class TestCoefficients:
         assert representer[0] == pytest.approx(1.0 / space.metric_values[0])
         assert np.allclose(representer[1:], 0.0)
 
-    def test_degrees_outside_the_space_are_refused(self, space):
-        with pytest.raises(ValueError, match="Degrees must satisfy"):
-            space.coefficient_operator(lmax=space.lmax + 1)
+    def test_degrees_outside_the_space_are_padded_with_zeros(self, space, rng):
+        """v1 zero-padded to any lmax; the band past the space reports zeros."""
+        padded = space.coefficient_operator(lmax=space.lmax + 1)
+        assert padded.codomain.dim == (space.lmax + 2) ** 2
+        assert np.allclose(padded(space.random(rng=rng))[space.dim :], 0.0)
 
 
 class TestResolution:

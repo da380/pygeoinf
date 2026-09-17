@@ -1173,6 +1173,7 @@ class Ellipsoid(ConvexSet):
         *,
         centre: Any = None,
         covariance: LinearOperator | None = None,
+        factor: LinearOperator | None = None,
     ) -> None:
         """
         Args:
@@ -1181,6 +1182,16 @@ class Ellipsoid(ConvexSet):
             centre: the centre. Defaults to zero.
             covariance: the inverse of the precision, if it is known. Supplying
                 it is what makes the support function available.
+            factor: a factor ``L`` of the covariance, ``C == L L*``, if one
+                is known -- a Gaussian measure usually carries one. The
+                support function then costs one adjoint application of the
+                factor rather than one of the covariance, which is v1's
+                ``inverse_sqrt_operator`` route in a form any factor can
+                take. The maximiser still needs the covariance.
+
+        Raises:
+            ValueError: if the precision does not claim to be self-adjoint
+                and positive definite, or an operator is on the wrong space.
         """
         super().__init__(domain)
         required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
@@ -1191,8 +1202,11 @@ class Ellipsoid(ConvexSet):
             )
         if precision.domain != domain or precision.codomain != domain:
             raise ValueError(f"The precision must be an operator on {domain!r}.")
+        if factor is not None and factor.codomain != domain:
+            raise ValueError(f"The factor must map into {domain!r}.")
         self._precision = precision
         self._covariance = covariance
+        self._factor = factor
         self._centre = domain.zero() if centre is None else centre
 
     def support_maximiser(self, direction: Any, /) -> Any:
@@ -1227,12 +1241,18 @@ class Ellipsoid(ConvexSet):
             self._precision,
             centre=self.domain.add(self._centre, vector),
             covariance=self._covariance,
+            factor=self._factor,
         )
 
     @property
     def covariance(self) -> LinearOperator | None:
         """The inverse of the precision, if it was given; ``None`` otherwise."""
         return self._covariance
+
+    @property
+    def factor(self) -> LinearOperator | None:
+        """A factor ``L`` of the covariance, ``C == L L*``, if one was given."""
+        return self._factor
 
     @property
     def precision(self) -> LinearOperator:
@@ -1406,27 +1426,44 @@ class Ellipsoid(ConvexSet):
                 "An ellipsoid's support function needs its covariance, the "
                 "inverse of the precision. Pass covariance= to supply it."
             )
-        return _EllipsoidSupport(self._domain, self._covariance, self._centre)
+        return _EllipsoidSupport(
+            self._domain, self._covariance, self._centre, factor=self._factor
+        )
 
     def __repr__(self) -> str:
         return f"Ellipsoid({self._domain!r})"
 
 
 class _EllipsoidSupport(SupportFunction):
-    """The support function of an ellipsoid given by its covariance."""
+    """The support function of an ellipsoid given by its covariance.
+
+    ``(centre, y) + sqrt((C y, y))``; with a factor ``C == L L*`` in hand the
+    root is ``||L* y||``, one adjoint application of the factor and no
+    clamp, since a norm cannot go negative by rounding.
+    """
 
     def __init__(
-        self, domain: HilbertSpace, covariance: LinearOperator, centre: Any, /
+        self,
+        domain: HilbertSpace,
+        covariance: LinearOperator,
+        centre: Any,
+        /,
+        *,
+        factor: LinearOperator | None = None,
     ) -> None:
         super().__init__(domain)
         self._covariance = covariance
         self._centre = centre
+        self._factor = factor
 
     def _value(self, y: Any) -> float:
-        quadratic = self._domain.inner_product(self._covariance(y), y)
-        return self._domain.inner_product(self._centre, y) + float(
-            np.sqrt(max(quadratic, 0.0))
-        )
+        if self._factor is not None:
+            pulled = self._factor.adjoint(y)
+            root = self._factor.domain.norm(pulled)
+        else:
+            quadratic = self._domain.inner_product(self._covariance(y), y)
+            root = float(np.sqrt(max(quadratic, 0.0)))
+        return self._domain.inner_product(self._centre, y) + root
 
     def _maximiser(self, y: Any) -> Any:
         space = self._domain

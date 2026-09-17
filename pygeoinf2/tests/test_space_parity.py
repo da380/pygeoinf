@@ -599,10 +599,15 @@ class TestCoefficientAccess:
         mine = synthesis(coefficients)
         assert space.norm(space.subtract(theirs, mine)) > 1e-8 * space.norm(mine)
 
-    def test_a_band_outside_the_space_is_refused(self, geometry):
+    def test_a_band_outside_the_space_is_padded(self, geometry, rng):
+        """v1 zero-padded past the truncation; an inverted band is still refused."""
         _, space = geometry
-        with pytest.raises(ValueError, match="lmin <= lmax"):
-            space.coefficient_operator(lmax=space.degrees.max() + 1)
+        beyond = int(space.degrees.max()) + 1
+        padded = space.coefficient_operator(lmax=beyond)
+        within = space.coefficient_operator()
+        assert padded.codomain.dim > within.codomain.dim
+        out = padded(space.random(rng=rng))
+        assert np.count_nonzero(np.abs(out) > 1e-12) <= within.codomain.dim
         with pytest.raises(ValueError, match="lmin <= lmax"):
             space.from_coefficient_operator(lmin=3, lmax=2)
 

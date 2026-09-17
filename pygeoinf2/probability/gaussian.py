@@ -1481,6 +1481,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # along for whoever wants it. So a measure described by a precision
         # alone has a perfectly good credible set, and used to raise.
         covariance = None if self._covariance is None else self._covariance * threshold
+        factor = (
+            None
+            if self._covariance_factor is None
+            else self._covariance_factor * float(np.sqrt(threshold))
+        )
         if self._precision is not None:
             precision = self._precision * (1.0 / threshold)
         else:
@@ -1501,6 +1506,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             precision,
             centre=self.expectation,
             covariance=covariance,
+            factor=factor,
         )
 
     def weakened_ellipsoid(

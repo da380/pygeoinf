@@ -7375,3 +7375,72 @@ determinant, the closed-form, bisection, KKT and dual sweeps, and the
 sphere's dense point, path, average and cap operators with the box's
 generic basis matrix. The KKT route's single-direction support now
 agrees with the bisection on the direction that failed.
+
+## 76. The escape hatches, four restored and one dropped (2026-09-17)
+
+The audit's knobs group (§0.3) listed five options v1 offered for the
+case where the default does not fit and v2 had closed.
+
+**Incomplete LU on the banded and block preconditioners: restored.**
+The column-thresholded preconditioner had kept ``incomplete=``,
+``drop_tol=`` and ``fill_factor=``; the other two sparse-LU classes
+factorise the same way and had lost them. All three now share one
+factorisation helper and the three keywords, defaults unchanged. A
+lossless incomplete factorisation reproduces the exact one, which is
+what pins the plumbing.
+
+**The factor route on the ellipsoid's support function: restored.**
+v1 evaluated ``sqrt((C q, q))`` as ``||C^{1/2} q||`` when an inverse
+square root was given. `Ellipsoid` takes ``factor=``, any ``L`` with
+``C == L L*``, and the support function then costs one adjoint
+application of the factor and needs no clamp, a norm being
+non-negative by construction; the maximiser still needs the covariance.
+A Gaussian measure carrying a covariance factor passes it, scaled by the
+root of the chi-squared threshold, into its credible set.
+
+**Zero-padding in the coefficient operators: restored.** A band whose
+``lmax`` lies past the space's truncation used to be refused; v1
+reported zeros for the missing degrees. It is back as a composition,
+not a hand-written pad: the operator on a space resolved to that
+degree, composed with the prolongation into it, so the adjoint carries
+the metric on its own and synthesis drops the extra coefficients the
+same way. The geometry names the resolved space: ``with_degree(lmax)``
+on the sphere, and one wavenumber more on a box, where a mode at the
+Nyquist wavenumber is a single component rather than a pair and would
+cut the shell. This is what lets two spaces of different resolution
+report into one coefficient space.
+
+**A truncation degree beyond the space: restored.** v1's
+``estimate_truncation_degree`` walked the degrees upward without bound,
+summing variance times multiplicity, and stopped when the newest degree
+added less than ``rtol`` of the running total; v2's method of that name
+ranks the degrees a space already holds and cannot answer past them,
+and only the sphere had a static rule, for the Sobolev spectrum alone.
+`sufficient_degree(symbol, rtol=, min_degree=, max_degree=)` on every
+symmetric space is v1's walk, over the modes a degree *would* have:
+``2l + 1`` copies of one eigenvalue on the sphere, the integer lattice
+shell ``degree <= |k| < degree + 1`` on a box, where each lattice point
+is one component because a conjugate pair gives a cosine and a sine.
+``with_degree`` on the answer builds the space, which is what v1's
+``from_covariance`` and ``from_sobolev_parameters`` did in one step.
+The in-space ranking keeps its name and its question.
+
+**Lazy quadrature on the path operators: dropped** (David, 2026-09-17).
+v1 could recompute the quadrature nodes and the weight matrix on every
+application rather than hold them. The stored geometry is one point and
+one weight per node, a few megabytes for a million nodes, and the
+recomputation is a geodesic walk per path on every solve. Nothing
+reaches the scale where the node set itself does not fit before the
+operator's own applications are the problem.
+
+**Checked.** A lossless incomplete LU matches the exact one on both
+preconditioners and a lossy one still applies; the factor and covariance
+routes agree on support values and maximisers, a factor on the wrong
+space is refused, and a measure's credible set carries its factor; the
+sphere pads to ``(lmax + 1)^2`` coefficients with zeros past its own
+and the synthesis drops them, both passing the operator check, a band
+starting past the space is all zeros, the box pads to the band of the
+resolved space, and an inverted band is still refused; the sphere's walk
+equals the weighted sum by hand and respects the floor and the ceiling,
+the box's enumerated shells match a box holding them eigenvalue for
+eigenvalue, and its walk goes past the space it was asked on.

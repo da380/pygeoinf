@@ -326,7 +326,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Args:
             lmax: the highest degree to report. The largest present if
-                omitted.
+                omitted. Beyond the largest present, the coefficients of the
+                missing degrees are reported as zero: the operator is the
+                one on a space resolved to that degree, composed with the
+                prolongation into it, so two spaces of different resolution
+                can report into one coefficient space. That is v1's
+                zero-padding, with the adjoint derived rather than written.
             lmin: the lowest.
             components: instead of a band, the positions of the components
                 to report, in the order they are to come out -- typically
@@ -338,10 +343,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             The operator into a Euclidean space of the selected components.
 
         Raises:
-            ValueError: for a band outside the space, a position outside
-                it or repeated, or a band and positions both given.
+            ValueError: for a band with ``lmin`` above ``lmax`` or negative,
+                a position outside the space or repeated, or a band and
+                positions both given.
         """
         from ..algebra.spaces import EuclideanSpace
+
+        if self._beyond(lmin, lmax, components):
+            larger = self._extended_to(int(lmax))
+            return larger.coefficient_operator(
+                lmax=lmax, lmin=lmin
+            ) @ self.degree_transfer_operator(larger)
 
         selected = self._selection(lmin, lmax, components)
 
@@ -377,6 +389,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Args:
             lmax: the highest degree accepted. The largest present if omitted.
+                Beyond it, the coefficients of the missing degrees are
+                accepted and dropped, the counterpart of the zero-padding in
+                :meth:`coefficient_operator`.
             lmin: the lowest.
             components: instead of a band, the positions the incoming
                 coefficients go to, as for :meth:`coefficient_operator`.
@@ -388,6 +403,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             ValueError: as for :meth:`coefficient_operator`.
         """
         from ..algebra.spaces import EuclideanSpace
+
+        if self._beyond(lmin, lmax, components):
+            larger = self._extended_to(int(lmax))
+            return larger.degree_transfer_operator(
+                self
+            ) @ larger.from_coefficient_operator(lmax=lmax, lmin=lmin)
 
         selected = self._selection(lmin, lmax, components)
 
@@ -402,6 +423,93 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         return LinearOperator.from_derivative_callables(
             EuclideanSpace(selected.size), self, value, derivative_components
         )
+
+    def _beyond(self, lmin: int, lmax: int | None, components: Any, /) -> bool:
+        """Whether a band reaches past the degrees this space holds."""
+        if components is not None or lmax is None:
+            return False
+        if not 0 <= lmin <= int(lmax):
+            raise ValueError(
+                f"Degrees must satisfy 0 <= lmin <= lmax, got lmin={lmin}, "
+                f"lmax={lmax}."
+            )
+        return int(lmax) > int(self.degrees.max())
+
+    def _extended_to(self, lmax: int, /) -> "SymmetricSpace":
+        """The same domain, resolved so that every mode of degree ``lmax`` is present.
+
+        The geometry supplies it: on a sphere ``with_degree(lmax)``, on a box
+        one wavenumber more so the shell is not cut by the Nyquist modes.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not say how to resolve a higher degree."
+        )
+
+    def _degree_eigenvalues(self, degree: int, /) -> np.ndarray:
+        """The Laplacian eigenvalue of every mode of one degree, present or not.
+
+        What :meth:`sufficient_degree` walks over. One entry per component
+        the degree would have on this geometry, whatever this space's own
+        truncation.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not enumerate the modes of a degree."
+        )
+
+    def sufficient_degree(
+        self,
+        symbol: Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: int | None = None,
+    ) -> int:
+        """The degree at which a spectrum has run out, this space's truncation aside.
+
+        Walks the degrees upward, summing the symbol over every mode of each
+        -- the modes the degree *would* have, not the ones this space holds
+        -- and stops when the newest degree adds less than ``rtol`` of the
+        running total. v1's ``estimate_truncation_degree``, which is what
+        chooses a truncation from a prior before there is a space at that
+        truncation: build one with ``with_degree`` on the answer.
+        :meth:`estimate_truncation_degree` is the other question, how much
+        of the power *this* space holds lies below a degree, and cannot
+        answer past its own truncation.
+
+        Args:
+            symbol: the spectral variances, as a callable on an array of
+                Laplacian eigenvalues.
+            rtol: the relative increment to stop at.
+            min_degree: a floor on the answer.
+            max_degree: a ceiling, returned if the walk reaches it.
+
+        Returns:
+            The degree.
+
+        Raises:
+            ValueError: for a tolerance outside ``(0, 1)`` or a negative floor.
+            RuntimeError: if the walk passes degree 100000 without stopping.
+        """
+        if not 0.0 < rtol < 1.0:
+            raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
+        if min_degree < 0:
+            raise ValueError(f"The floor must be non-negative, got {min_degree}.")
+        total, degree = 0.0, 0
+        while True:
+            if max_degree is not None and degree >= max_degree:
+                return max(int(max_degree), min_degree)
+            term = float(np.sum(symbol(self._degree_eigenvalues(degree))))
+            total += term
+            relative = term / total if total > 0.0 else 1.0
+            if relative <= rtol:
+                break
+            degree += 1
+            if degree > 100_000:
+                raise RuntimeError(
+                    "No truncation below degree 100000 reaches this tolerance."
+                )
+        return max(degree, min_degree)
 
     def _selection(self, lmin: int, lmax: int | None, components: Any, /) -> np.ndarray:
         """The positions a coefficient operator works on: a band, or as given."""

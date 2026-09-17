@@ -793,6 +793,30 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             )
         return self._rebuilt(shape=shape)
 
+    def _extended_to(self, lmax: int, /) -> "PeriodicBox":
+        # One wavenumber more than the band asks for: the modes of degree
+        # ``lmax`` have every |k_i| <= lmax, and at exactly the Nyquist
+        # wavenumber a mode is a single component rather than a pair.
+        return self.with_degree(lmax + 1)
+
+    def _degree_eigenvalues(self, degree: int, /) -> np.ndarray:
+        """``|k|^2`` over the integer lattice shell ``degree <= |k| < degree + 1``.
+
+        One entry per lattice point: a conjugate pair gives a cosine and a
+        sine component, two components for its two points, and no mode of
+        the shell is a fixed point of conjugation, so the count is the
+        packing's own.
+        """
+        axis = np.arange(-degree, degree + 1)
+        grids = np.meshgrid(*[axis] * self.spatial_dimension, indexing="ij")
+        wavenumbers = np.stack([g.ravel() for g in grids]).astype(float)
+        magnitude = np.floor(np.sqrt(np.sum(wavenumbers**2, axis=0))).astype(int)
+        shell = wavenumbers[:, magnitude == degree]
+        squared = np.zeros(shell.shape[1])
+        for index, length in enumerate(self._lengths):
+            squared += (2.0 * np.pi * shell[index] / length) ** 2
+        return squared
+
     def with_degree(self, degree: int, /) -> "PeriodicBox":
         """The same domain, resolved to a given wavenumber on every axis.
 

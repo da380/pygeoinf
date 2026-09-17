@@ -2109,6 +2109,13 @@ class Sphere(SymmetricSpace[Any]):
             extend=self._extend,
         )
 
+    def _extended_to(self, lmax: int, /) -> Sphere:
+        return self.with_degree(lmax)
+
+    def _degree_eigenvalues(self, degree: int, /) -> np.ndarray:
+        """``2l + 1`` copies of ``l (l + 1) / radius^2``."""
+        return np.full(2 * degree + 1, degree * (degree + 1) / self._radius**2)
+
     def with_degree(self, lmax: int, /) -> Sphere:
         """The same space, truncated at or extended to a different degree.
 
