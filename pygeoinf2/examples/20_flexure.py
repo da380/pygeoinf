@@ -28,7 +28,7 @@ rng = np.random.default_rng(0)
 
 X = Lebesgue(64)
 
-# Poisson's ratio, a normalised restoring force, and an oceanic rigidity.
+# Poisson's ratio, a normalized restoring force, and an oceanic rigidity.
 POISSON, BUOYANCY, OCEANIC = 0.25, 1.0, 1.0e-4
 
 # ---------------------------------------------------------------------------

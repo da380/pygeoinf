@@ -3,7 +3,7 @@
 
 An operator carries traits -- self-adjoint, positive definite, and so on. They
 propagate through sums, scalings and compositions by rule, so a covariance
-pushforward is *recognised* as positive semidefinite rather than asserted.
+pushforward is *recognized* as positive semidefinite rather than asserted.
 
 Traits are claims. ``check_traits`` verifies them.
 """
@@ -35,7 +35,7 @@ print("A @ A*     ", (A @ A.adjoint).traits, " <- a Gramian is always semidefini
 print("A @ Q @ A* ", (A @ Q @ A.adjoint).traits, " <- a congruence preserves it")
 print()
 
-# The operator every Bayesian inversion inverts, recognised with nothing claimed.
+# The operator every Bayesian inversion inverts, recognized with nothing claimed.
 normal = A @ Q @ A.adjoint + R
 print("A Q A* + R ", normal.traits)
 print()

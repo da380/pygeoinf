@@ -311,12 +311,12 @@ class TestConvergenceReporting:
     def test_failure_raises_by_default(self, spd_problem):
         A, b, _ = spd_problem
         with pytest.raises(ConvergenceError, match="did not converge"):
-            CGSolver(rtol=1e-16, maxiter=1)(A).solve(b)
+            CGSolver(rtol=1e-16, max_iterations=1)(A).solve(b)
 
     def test_failure_can_be_downgraded(self, spd_problem):
         A, b, _ = spd_problem
         with pytest.warns(RuntimeWarning, match="did not converge"):
-            result = CGSolver(rtol=1e-16, maxiter=1, strict=False)(A).solve(b)
+            result = CGSolver(rtol=1e-16, max_iterations=1, strict=False)(A).solve(b)
         assert not result.converged
 
     def test_diagnostics_come_back_with_the_answer(self, spd_problem):
@@ -398,7 +398,7 @@ class TestLSQRWarmStart:
         )
 
     def test_a_damped_warm_start_is_refused(self, least_squares):
-        """Shifting moves the penalty onto the correction, which minimises
+        """Shifting moves the penalty onto the correction, which minimizes
         something else. v1 does it anyway; this says so instead."""
         operator, data = least_squares
         inverse = LSQRSolver(damping=0.5)(operator)
@@ -459,7 +459,7 @@ class TestLeastSquares:
             result.solution, np.linalg.lstsq(matrix, b, rcond=None)[0], atol=1e-8
         )
 
-    def test_damping_solves_the_regularised_problem(self, rng):
+    def test_damping_solves_the_regularized_problem(self, rng):
         n, m, damping = 12, 7, 0.7
         X, Y = EuclideanSpace(n), EuclideanSpace(m)
         matrix = rng.normal(size=(m, n))
@@ -484,11 +484,11 @@ class TestLeastSquares:
 
 
 class TestDirectInverseAdjoint:
-    """The adjoint of a factorised inverse must reuse the factorisation."""
+    """The adjoint of a factorized inverse must reuse the factorization."""
 
-    def test_it_does_not_refactorise(self, rng):
+    def test_it_does_not_refactorize(self, rng):
         """``inv.adjoint`` inverted ``A*`` from scratch: a second matrix
-        extraction and a second factorisation of what is, up to a transpose,
+        extraction and a second factorization of what is, up to a transpose,
         the same matrix. And ``_adjoint_value`` went through a *second* cache,
         so both paths built their own.
         """
@@ -571,38 +571,38 @@ class TestIterativeInverseAdjoint:
         recovered = operator.adjoint(adjoint.solution)
         assert space.norm(space.subtract(recovered, probe)) < 1e-8 * space.norm(probe)
 
-    def test_a_deferred_direct_preconditioner_is_factorised_once(
+    def test_a_deferred_direct_preconditioner_is_factorized_once(
         self, rng, monkeypatch
     ):
         """``P*`` is one transposed solve away from ``P``; the adjoint used to
-        rebuild the preconditioner from ``A*`` and factorise it again."""
+        rebuild the preconditioner from ``A*`` and factorize it again."""
         space = EuclideanSpace(30)
         matrix = rng.normal(size=(30, 30)) + 30.0 * np.identity(30)
         operator = LinearOperator.from_matrix(space, space, matrix, form="galerkin")
-        factorisations = 0
-        original = LUSolver._factorise
+        factorizations = 0
+        original = LUSolver._factorize
 
         def counting(self, *args, **kwargs):
-            nonlocal factorisations
-            factorisations += 1
+            nonlocal factorizations
+            factorizations += 1
             return original(self, *args, **kwargs)
 
-        monkeypatch.setattr(LUSolver, "_factorise", counting)
+        monkeypatch.setattr(LUSolver, "_factorize", counting)
         inverse = BiCGStabSolver(rtol=1e-10, preconditioner=LUSolver())(operator)
         probe = space.random(rng=rng)
         inverse(probe)
         recovered = operator.adjoint(inverse.adjoint(probe))
-        assert factorisations == 1
+        assert factorizations == 1
         assert space.norm(space.subtract(recovered, probe)) < 1e-8 * space.norm(probe)
 
 
 class TestADirectSolverFactorisesOnFirstUse:
-    """``solver(A)`` is free; the matrix is extracted and factorised on the
+    """``solver(A)`` is free; the matrix is extracted and factorized on the
     first solve and kept. An inversion built with a direct solver used to pay
-    the O(dim) extraction and O(dim^3) factorisation at construction, before
+    the O(dim) extraction and O(dim^3) factorization at construction, before
     anyone applied it -- 0.40 s at dimension 1500 to build an estimator that
     was then reduced, swept or made a surrogate of. v1 went the other way and
-    factorised inside every posterior call."""
+    factorized inside every posterior call."""
 
     @pytest.mark.parametrize("Solver", [LUSolver, CholeskySolver, EigenSolver])
     def test_nothing_happens_until_the_first_solve(self, Solver, rng, monkeypatch):
@@ -615,12 +615,12 @@ class TestADirectSolverFactorisesOnFirstUse:
             traits=Traits.POSITIVE_DEFINITE,
             form="galerkin",
         )
-        factorisations = []
-        original = Solver._factorise
+        factorizations = []
+        original = Solver._factorize
         monkeypatch.setattr(
             Solver,
-            "_factorise",
-            lambda self, m: (factorisations.append(1), original(self, m))[1],
+            "_factorize",
+            lambda self, m: (factorizations.append(1), original(self, m))[1],
         )
         extractions = []
         matrix = LinearOperator.matrix
@@ -633,14 +633,14 @@ class TestADirectSolverFactorisesOnFirstUse:
         monkeypatch.setattr(LinearOperator, "matrix", counting_matrix)
 
         inverse = Solver()(operator)
-        assert factorisations == [] and extractions == []
+        assert factorizations == [] and extractions == []
         y = space.random(rng=rng)
         first = inverse(y)
-        assert len(factorisations) == 1 and len(extractions) == 1
+        assert len(factorizations) == 1 and len(extractions) == 1
         inverse(y)
         inverse.adjoint(y)
         inverse.matrix()
-        assert len(factorisations) == 1 and len(extractions) == 1
+        assert len(factorizations) == 1 and len(extractions) == 1
         assert np.allclose(operator(first), y)
 
 
@@ -888,7 +888,7 @@ class TestPreconditionedMinRes:
         wanted = space.random(rng=rng)
 
         result = (
-            MinResSolver(rtol=1e-10, maxiter=3000)
+            MinResSolver(rtol=1e-10, max_iterations=3000)
             .with_preconditioner(JacobiPreconditioner())(operator)
             .solve(operator(wanted))
         )
@@ -911,11 +911,11 @@ class TestPreconditionedMinRes:
         wanted = space.random(rng=rng)
         right_hand_side = operator(wanted)
 
-        plain = MinResSolver(rtol=1e-10, maxiter=3000, strict=False)(operator).solve(
-            right_hand_side
-        )
+        plain = MinResSolver(rtol=1e-10, max_iterations=3000, strict=False)(
+            operator
+        ).solve(right_hand_side)
         preconditioned = (
-            MinResSolver(rtol=1e-10, maxiter=3000)
+            MinResSolver(rtol=1e-10, max_iterations=3000)
             .with_preconditioner(JacobiPreconditioner())(operator)
             .solve(right_hand_side)
         )
@@ -949,7 +949,7 @@ class TestPreconditionedMinRes:
             space, lambda x: -x, traits=Traits.SELF_ADJOINT
         )
 
-        solver = MinResSolver(maxiter=50).with_preconditioner(flipped)
+        solver = MinResSolver(max_iterations=50).with_preconditioner(flipped)
         with pytest.raises(ValueError, match="positive-definite"):
             solver(operator).solve(space.random(rng=rng))
 
@@ -1078,14 +1078,16 @@ class TestJacobiCanEstimate:
             ),
         ]:
             result = (
-                CGSolver(rtol=1e-10, maxiter=2000)
+                CGSolver(rtol=1e-10, max_iterations=2000)
                 .with_preconditioner(preconditioner)(operator)
                 .solve(right_hand_side)
             )
             assert result.converged
             counts[label] = result.iterations
 
-        plain = CGSolver(rtol=1e-10, maxiter=2000)(operator).solve(right_hand_side)
+        plain = CGSolver(rtol=1e-10, max_iterations=2000)(operator).solve(
+            right_hand_side
+        )
         assert counts["estimated"] <= counts["exact"] + 5
         assert counts["estimated"] < plain.iterations / 2
 
@@ -1238,7 +1240,7 @@ class TestSparsePreconditionerTraits:
 
 
 class TestDampedSolvesExtractsItsMatricesOnce:
-    """A direct solver factorises a matrix, and it gets one by asking the
+    """A direct solver factorizes a matrix, and it gets one by asking the
     member of the family for it. Where the member cannot write its own matrix
     down that costs ``dim`` applications, and the sweep used to pay it again
     at every multiplier although only the scalar had changed: measured, a
@@ -1322,7 +1324,7 @@ class TestDampedSolvesExtractsItsMatricesOnce:
         assert solves._matrices() is None
 
     def test_an_iterative_solver_is_left_alone(self):
-        """Nothing to factorise, so nothing to extract: an iterative solver
+        """Nothing to factorize, so nothing to extract: an iterative solver
         must keep the member it can precondition against."""
         space = EuclideanSpace(20)
         _, solves = self.family(space, CGSolver())
@@ -1330,7 +1332,7 @@ class TestDampedSolvesExtractsItsMatricesOnce:
 
 
 class TestAdaptiveKnobs:
-    """The randomised routines underneath always stopped on a tolerance; the
+    """The randomized routines underneath always stopped on a tolerance; the
     callers passed fixed counts only. The knobs are threaded through, with
     the fixed defaults unchanged."""
 

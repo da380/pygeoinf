@@ -12,7 +12,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from ..symmetric_space.sphere import Sphere
-from .base import colour_limits, plot, subplots
+from .base import color_limits, plot, subplots
 
 __all__ = ["plot_points", "plot_paths"]
 
@@ -98,19 +98,19 @@ def _(
             grid values.
         ax: axes to draw on. A new figure is made if omitted, on a
             ``PlateCarree`` projection.
-        cmap: colour map. ``RdBu`` by default, as in v1: most fields drawn
+        cmap: color map. ``RdBu`` by default, as in v1: most fields drawn
             here are signed anomalies, and a diverging map is what those want.
-        symmetric: put zero at the middle of the colour scale. Use it for
+        symmetric: put zero at the middle of the color scale. Use it for
             anything signed. Off by default.
-        vmin: lower colour limit; the field's minimum if omitted.
-        vmax: upper colour limit; the field's maximum if omitted.
-        colorbar: attach a colourbar. Off by default, as in v1 -- a bar takes
+        vmin: lower color limit; the field's minimum if omitted.
+        vmax: upper color limit; the field's maximum if omitted.
+        colorbar: attach a colorbar. Off by default, as in v1 -- a bar takes
             room from the map, and a panel in a grid usually shares one --
             unless a *colorbar_label* is given, since asking for a label is
             asking for the bar it goes on. Pass ``False`` to override that. The
             bar is left on the returned mappable as ``.colorbar``, so it can be
             restyled afterwards.
-        colorbar_label: label for the colourbar, which turns one on.
+        colorbar_label: label for the colorbar, which turns one on.
         coasts: draw coastlines. Off by default.
         borders: draw national borders. Off by default.
         rivers: draw rivers. Off by default.
@@ -148,7 +148,7 @@ def _(
         np.degrees(space._core_longitudes), values
     )
 
-    low, high = colour_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
+    low, high = color_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
     common = dict(transform=crs.PlateCarree(), cmap=cmap, vmin=low, vmax=high)
 
     if contour or contour_lines:
@@ -180,7 +180,7 @@ def _(
         )
     if contour_lines:
         # Left on the axes rather than returned, since the mappable a caller
-        # wants for a colourbar is the filled one.
+        # wants for a colorbar is the filled one.
         ax.contour_set = ax.contour(
             closed_longitudes,
             latitudes,
@@ -243,23 +243,23 @@ def _rolled_to_the_dateline(
     return rolled, np.roll(values, -crossing, axis=1)
 
 
-def _cell_edges(centres: np.ndarray, /) -> np.ndarray:
-    """The edges of the cells centred on given points.
+def _cell_edges(centers: np.ndarray, /) -> np.ndarray:
+    """The edges of the cells centered on given points.
 
     What ``shading="auto"`` computes internally when it is handed as many
     values as coordinates, made explicit so that the longitude edges can be
     placed by hand at the antimeridian.
 
     Args:
-        centres: the cell centres, monotonic.
+        centers: the cell centers, monotonic.
 
     Returns:
-        One more edge than there were centres.
+        One more edge than there were centers.
     """
-    centres = np.asarray(centres, dtype=float)
-    middle = 0.5 * (centres[:-1] + centres[1:])
+    centers = np.asarray(centers, dtype=float)
+    middle = 0.5 * (centers[:-1] + centers[1:])
     return np.concatenate(
-        [[2.0 * centres[0] - middle[0]], middle, [2.0 * centres[-1] - middle[-1]]]
+        [[2.0 * centers[0] - middle[0]], middle, [2.0 * centers[-1] - middle[-1]]]
     )
 
 
@@ -268,7 +268,7 @@ def _cell_edges_across_the_dateline(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Longitude cell edges that close the seam without straddling it.
 
-    The first column's cell is centred on the antimeridian, so it lies half on
+    The first column's cell is centered on the antimeridian, so it lies half on
     each side of the map. Drawn as one cell it straddles the cut and costs the
     whole mesh its fast path; dropped, it leaves the blank wedge down the
     dateline that the wrap was there to close. So it is drawn as its two
@@ -327,32 +327,32 @@ def plot_points(
     colorbar_kwargs: dict | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Scatter a set of points on a map, optionally coloured by a value.
+    """Scatter a set of points on a map, optionally colored by a value.
 
     A scatter of stations is one thing; a scatter of *measurements* is the
     other, and it is the one an altimetry or gravity figure is made of. Passing
-    the values as *data* colours the markers by them and gives them a bar to be
+    the values as *data* colors the markers by them and gives them a bar to be
     read against, which is v1's ``plot_points(points, data=...)``. Without it
     every marker is the one flat *color*.
 
     Args:
         space: the sphere.
         points: ``(latitude, longitude)`` pairs in degrees.
-        data: one value per point, to colour the markers by. Without it they
+        data: one value per point, to color the markers by. Without it they
             are all *color*.
         ax: axes to draw on. A new map is made if omitted.
         marker: matplotlib marker.
         size: marker area.
-        color: marker colour, used when there is no *data*.
-        cmap: colour map for *data*. ``RdBu`` by default, as in v1.
-        symmetric: put zero at the middle of the colour scale. Use it for
+        color: marker color, used when there is no *data*.
+        cmap: color map for *data*. ``RdBu`` by default, as in v1.
+        symmetric: put zero at the middle of the color scale. Use it for
             anything signed. Off by default.
-        vmin: lower colour limit; the data's minimum if omitted.
-        vmax: upper colour limit; the data's maximum if omitted.
-        colorbar: attach a colourbar, which needs *data* to mean anything. Off
+        vmin: lower color limit; the data's minimum if omitted.
+        vmax: upper color limit; the data's maximum if omitted.
+        colorbar: attach a colorbar, which needs *data* to mean anything. Off
             by default unless a *colorbar_label* is given; pass ``False`` to
             override that. Left on the returned collection as ``.colorbar``.
-        colorbar_label: label for the colourbar, which turns one on.
+        colorbar_label: label for the colorbar, which turns one on.
         colorbar_kwargs: passed to ``figure.colorbar``, over the defaults.
         **kwargs: passed to ``scatter``.
 
@@ -361,7 +361,7 @@ def plot_points(
 
     Raises:
         ValueError: if *data* is given with a value per point missing or
-            spare. Silently colouring the first few would be worse.
+            spare. Silently coloring the first few would be worse.
     """
     crs = _require_cartopy()
     if ax is None:
@@ -369,15 +369,15 @@ def plot_points(
     positions = np.atleast_2d(np.asarray(list(points), dtype=float))
 
     if data is None:
-        colours: Any = color
+        colors: Any = color
     else:
-        colours = np.asarray(data, dtype=float).ravel()
-        if colours.size != positions.shape[0]:
+        colors = np.asarray(data, dtype=float).ravel()
+        if colors.size != positions.shape[0]:
             raise ValueError(
-                f"There are {positions.shape[0]} points and {colours.size} "
-                "values to colour them by."
+                f"There are {positions.shape[0]} points and {colors.size} "
+                "values to color them by."
             )
-        low, high = colour_limits(colours, vmin=vmin, vmax=vmax, symmetric=symmetric)
+        low, high = color_limits(colors, vmin=vmin, vmax=vmax, symmetric=symmetric)
         kwargs.setdefault("cmap", cmap)
         kwargs.setdefault("vmin", low)
         kwargs.setdefault("vmax", high)
@@ -388,7 +388,7 @@ def plot_points(
         transform=crs.PlateCarree(),
         marker=marker,
         s=size,
-        c=colours,
+        c=colors,
         **kwargs,
     )
     wanted = colorbar or (colorbar is None and colorbar_label is not None)
@@ -430,7 +430,7 @@ def plot_paths(
         paths: ``(start, end)`` pairs of points.
         ax: axes to draw on.
         count: samples along each path.
-        color: line colour.
+        color: line color.
         linewidth: line width.
         alpha: opacity, low by default because these overlap heavily.
         **kwargs: passed to ``LineCollection``.

@@ -14,7 +14,7 @@ genuinely independent and each expensive:
 * drawing samples from a measure, where each draw may be a solve;
 * filling in a matrix column by column, and everything built on that --
   assembling an operator, extracting its diagonals, forming a dense covariance;
-* the probes of a randomised estimator;
+* the probes of a randomized estimator;
 * pointwise variance at a list of points;
 * the support values of a feasible set in many directions.
 
@@ -34,7 +34,7 @@ Measured in ``review/parallel.md``:
   OpenMP settings, so a threading backend must not be used there.
 * *An operator that is itself parallel* -- MPI, a threaded PDE solver --
   cannot be shipped to worker processes at all. Leave ``n_jobs`` unset and
-  parallelise across the scheduler instead: ``SeedSequence(seed).spawn(N)[k]``
+  parallelize across the scheduler instead: ``SeedSequence(seed).spawn(N)[k]``
   gives job ``k`` an independent, reproducible stream, and every sampling
   routine here takes an explicit ``rng``.
 
@@ -70,7 +70,7 @@ another without ever producing threads.
 **What a process backend asks of you.** The work has to be picklable. Bound
 methods of ordinary objects are, and so are closures over them, which is why
 the loops here can pass small lambdas; a function defined in ``__main__`` is
-serialised *by value* and drags its module globals with it, so one that has a
+serialized *by value* and drags its module globals with it, so one that has a
 Fortran extension in scope fails with ``cannot pickle 'fortran' object``. That
 is the reason v1 keeps its workers in a module of top-level functions. Large
 arrays reached through the closure -- a dense forward operator inside a
@@ -161,15 +161,15 @@ def parallel_map(
         The results, in the order of *items*.
     """
     workers = resolve_jobs(n_jobs)
-    materialised: Sequence[Any] = list(items)
-    if workers == 1 or len(materialised) < 2 or _inside_a_worker():
-        return [function(item) for item in materialised]
+    materialized: Sequence[Any] = list(items)
+    if workers == 1 or len(materialized) < 2 or _inside_a_worker():
+        return [function(item) for item in materialized]
 
     from joblib import Parallel, delayed, parallel_config
 
     def run() -> list[Any]:
         return list(
-            Parallel(n_jobs=workers)(delayed(function)(item) for item in materialised)
+            Parallel(n_jobs=workers)(delayed(function)(item) for item in materialized)
         )
 
     if _context_is_set():

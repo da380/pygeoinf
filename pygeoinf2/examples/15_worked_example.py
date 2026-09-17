@@ -35,7 +35,7 @@ noise = GaussianMeasure.from_standard_deviation(Y, noise_level)
 truth = prior.sample(rng=rng)
 data = Y.add(A(truth), noise.sample(rng=rng))
 
-# --- the normal operator, recognised rather than asserted ----------------
+# --- the normal operator, recognized rather than asserted ----------------
 normal = A @ prior.covariance @ A.adjoint + noise.covariance
 print(f"normal operator: {normal.traits}")
 print("  so CG accepts it without anyone claiming anything.")

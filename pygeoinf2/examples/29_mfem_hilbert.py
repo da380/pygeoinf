@@ -2,7 +2,7 @@
 29. MFEM as a plain Hilbert space: this library conducts, MFEM computes.
 
 Examples 16 and 27 present a finite element space through its coordinates: the
-mass matrix is read out of MFEM, factorised here, and every assembled form
+mass matrix is read out of MFEM, factorized here, and every assembled form
 becomes a Galerkin matrix this library multiplies and inverts. That is a fine
 arrangement for a serial problem of modest size.
 
@@ -131,26 +131,26 @@ print()
 
 
 class Bump(mfem.PyCoefficient):
-    """A normalised Gaussian window, standing for a sensor's footprint."""
+    """A normalized Gaussian window, standing for a sensor's footprint."""
 
-    def __init__(self, centre, width):
+    def __init__(self, center, width):
         super().__init__()
-        self._centre = np.asarray(centre, float)
+        self._center = np.asarray(center, float)
         self._width = float(width)
 
     def EvalValue(self, x):
-        offset = np.asarray([x[0], x[1]]) - self._centre
+        offset = np.asarray([x[0], x[1]]) - self._center
         return float(
             np.exp(-0.5 * offset @ offset / self._width**2)
             / (2.0 * np.pi * self._width**2)
         )
 
 
-def sensor_forms(centres, width):
+def sensor_forms(centers, width):
     forms = []
-    for centre in centres:
+    for center in centers:
         form = mfem.LinearForm(elements)
-        form.AddDomainIntegrator(mfem.DomainLFIntegrator(Bump(centre, width)))
+        form.AddDomainIntegrator(mfem.DomainLFIntegrator(Bump(center, width)))
         form.Assemble()
         forms.append(form)
     return forms

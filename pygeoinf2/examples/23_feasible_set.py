@@ -39,12 +39,12 @@ paths = X.source_receiver_paths(
 forward = X.path_average_operator(paths, count=12, dense=True)
 print(f"{len(paths)} paths -> data space of dimension {forward.codomain.dim}")
 
-centres = [
+centers = [
     np.array([np.radians(90.0 - lat), np.radians(lon % 360.0)])
     for lat, lon in [(-60.0, 0.0), (5.0, 143.0), (0.0, -120.0), (46.0, 104.0)]
 ]
-target = X.geodesic_ball_average_operator(centres, 0.15, dense=True)
-print(f"{len(centres)} spherical caps as the property operator")
+target = X.geodesic_ball_average_operator(centers, 0.15, dense=True)
+print(f"{len(centers)} spherical caps as the property operator")
 print()
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ problem = LinearForwardProblem(forward, error=Ball(data_space, radius=NOISE_RADI
 prior = Ball(X, radius=PRIOR_RADIUS)
 
 # ---------------------------------------------------------------------------
-# Route (c): the exact bounds, one constrained optimisation per direction.
+# Route (c): the exact bounds, one constrained optimization per direction.
 # ---------------------------------------------------------------------------
 
 exact = BackusGilbertParker(problem, target, prior)
@@ -132,12 +132,12 @@ print()
 # should be, and is, unconstrained by them.
 print("interval width against ray coverage:")
 coverage = []
-for index, centre in enumerate(centres):
+for index, center in enumerate(centers):
     near = sum(
         1
         for start, end in paths
         for node in X.geodesic_quadrature(start, end, count=12)[0]
-        if X.geodesic_distance(node, centre) < 0.3
+        if X.geodesic_distance(node, center) < 0.3
     )
     coverage.append(near)
     print(
@@ -197,8 +197,8 @@ ax, _ = plotting.plot(
     coasts=True,
     colorbar_label="d ln c",
 )
-plotting.plot_points(X, centres, ax=ax, color="black", marker="o", size=40.0)
-ax.set_title("The model that maximises cap 0")
+plotting.plot_points(X, centers, ax=ax, color="black", marker="o", size=40.0)
+ax.set_title("The model that maximizes cap 0")
 
 print("two panels drawn")
 plotting.show()

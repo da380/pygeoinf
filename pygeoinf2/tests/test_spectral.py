@@ -43,7 +43,7 @@ class TestDegrees:
 
 
 class TestSpectralLabels:
-    """The packing made public, vectorised: v1's ``indices``,
+    """The packing made public, vectorized: v1's ``indices``,
     ``index_to_integer`` and ``integer_to_index`` as arrays of labels and
     one method placing a label."""
 
@@ -202,7 +202,7 @@ class TestOrderInclusion:
     def test_its_adjoint_is_not_the_identity(self, rng):
         """Which is the whole content: the metrics differ, so the adjoint does.
 
-        Reading a function in a different Sobolev order is a relabelling of the
+        Reading a function in a different Sobolev order is a relabeling of the
         vector and a genuine change to every inner product it takes part in.
         """
         X = Sobolev(6, 2.0, 0.2)
@@ -541,7 +541,7 @@ class TestNormCalibration:
 
 class TestPowerMeasure:
     def test_each_degree_holds_the_power_it_was_given(self):
-        """The spectrum a modeller writes down is per degree, not per mode.
+        """The spectrum a modeler writes down is per degree, not per mode.
 
         The two differ by the multiplicity, which is the whole of the method.
         """
@@ -753,7 +753,7 @@ class TestAdaptiveDiagonals:
     tolerance on to the estimator underneath."""
 
     def test_the_deflated_diagonal_passes_the_tolerance_on(self, rng, monkeypatch):
-        from pygeoinf2.numerics import randomised
+        from pygeoinf2.numerics import randomized
 
         X = EuclideanSpace(16)
         raw = rng.normal(size=(16, 16))
@@ -765,18 +765,18 @@ class TestAdaptiveDiagonals:
             traits=Traits.POSITIVE_DEFINITE,
         )
         seen = []
-        real = randomised.random_diagonal
+        real = randomized.random_diagonal
 
         def spy(operator, **kwargs):
             seen.append(dict(kwargs))
             return real(operator, **kwargs)
 
-        monkeypatch.setattr(randomised, "random_diagonal", spy)
-        randomised.deflated_diagonal(
+        monkeypatch.setattr(randomized, "random_diagonal", spy)
+        randomized.deflated_diagonal(
             A, rank=3, samples=10, rtol=1e-2, max_samples=300, rng=rng
         )
         assert seen[-1]["rtol"] == 1e-2 and seen[-1]["max_samples"] == 300
-        randomised.deflated_diagonal(A, rank=0, samples=10, rtol=5e-3, rng=rng)
+        randomized.deflated_diagonal(A, rank=0, samples=10, rtol=5e-3, rng=rng)
         assert seen[-1]["rtol"] == 5e-3
 
     def test_a_tolerance_takes_the_sampled_route_for_the_pointwise_variance(
@@ -784,20 +784,20 @@ class TestAdaptiveDiagonals:
     ):
         """``rtol`` alone selects the sampled route, with the default first
         batch, where ``samples=None`` alone means exact."""
-        from pygeoinf2.numerics import randomised
+        from pygeoinf2.numerics import randomized
 
         X = Sobolev(6, 2.0, 0.3)
         measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
         points = [X.random_point(rng=rng) for _ in range(3)]
         exact = X.pointwise_variance_at(measure, points)
         seen = {}
-        real = randomised.deflated_diagonal
+        real = randomized.deflated_diagonal
 
         def spy(operator, **kwargs):
             seen.update(kwargs)
             return real(operator, **kwargs)
 
-        monkeypatch.setattr(randomised, "deflated_diagonal", spy)
+        monkeypatch.setattr(randomized, "deflated_diagonal", spy)
         sampled = X.pointwise_variance_at(
             measure, points, rtol=1e-2, max_samples=4000, rng=rng
         )
@@ -816,7 +816,7 @@ class TestPriorWeightedProbes:
     it does (DESIGN §74)."""
 
     def test_the_prior_weighted_range_captures_what_the_data_can_see(self, rng):
-        from pygeoinf2.numerics.randomised import random_range
+        from pygeoinf2.numerics.randomized import random_range
 
         X = BoxLebesgue((64,), lengths=(1.0,))
         prior = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
@@ -851,8 +851,8 @@ class TestPriorWeightedProbes:
             ]
         )
         assert weighted < 0.5 * white
-        # And it is the range finder's option on every factorisation.
-        from pygeoinf2.numerics.randomised import random_svd
+        # And it is the range finder's option on every factorization.
+        from pygeoinf2.numerics.randomized import random_svd
 
         assert random_svd(forward, rank=4, measure=prior, rng=rng) is not None
         with pytest.raises(ValueError, match="probe measure"):

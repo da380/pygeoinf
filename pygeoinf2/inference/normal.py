@@ -65,7 +65,7 @@ def choose_formalism(
     ``auto`` is offered and is *not* the default anywhere. Comparing dimensions
     says nothing about whether the model-space route is available at all: it
     needs ``Q^-1``, and a function-space prior often has none. It also reads a
-    discretisation's size as though it were the problem's. Data spaces can be
+    discretization's size as though it were the problem's. Data spaces can be
     large; model spaces are usually larger still, so the data space is where
     the normal equations belong unless there is a reason otherwise, and the
     model-space formalism is kept for when there *is* one — an overdetermined
@@ -82,7 +82,7 @@ def choose_formalism(
         The formalism to use.
 
     Raises:
-        ValueError: for an unrecognised formalism.
+        ValueError: for an unrecognized formalism.
     """
     if formalism not in ("auto", "model_space", "data_space"):
         raise ValueError(
@@ -422,7 +422,7 @@ class NormalOperator(FactoredNormalOperator):
         """The same normal operator with any of its factors replaced.
 
         The point of a surrogate is to be *cheap*: a smoother forward operator,
-        a coarser discretisation, a stationary prior standing in for a
+        a coarser discretization, a stationary prior standing in for a
         non-stationary one, a diagonal error covariance. Its inverse is then a
         preconditioner for the true operator, and correctness never depends on
         how close the surrogate is — only the iteration count does.
@@ -498,8 +498,8 @@ class NormalOperator(FactoredNormalOperator):
             )
         return self._forward.adjoint @ precision
 
-    def gain(self, inverse: LinearOperator, /) -> LinearOperator:
-        """The Kalman gain, given an inverse of this operator.
+    def kalman_operator(self, inverse: LinearOperator, /) -> LinearOperator:
+        """The Kalman operator, given an inverse of this operator.
 
         ``Q A* N^-1`` in the data-space formalism, ``N^-1 A* R^-1`` in the
         model-space one. Both map data residuals to model updates, and they are

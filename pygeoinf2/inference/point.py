@@ -69,7 +69,7 @@ def _error_measure(problem: LinearForwardProblem) -> Any:
 
 
 class LeastSquares(LinearPointEstimator):
-    """Tikhonov-regularised least squares: minimise ``|A u - d|^2_R + t |u|^2``.
+    """Tikhonov-regularized least squares: minimize ``|A u - d|^2_R + t |u|^2``.
 
     The estimator *is* the mapping from data to the fitted model, so it is an
     affine operator and joins the algebra. The damping is fixed here; to let
@@ -169,7 +169,7 @@ class LeastSquares(LinearPointEstimator):
         return self._damping
 
     @property
-    def problem(self) -> LinearForwardProblem:
+    def forward_problem(self) -> LinearForwardProblem:
         """The forward problem being inverted."""
         return self._problem
 
@@ -253,17 +253,17 @@ class LeastSquares(LinearPointEstimator):
             forward=forward, error=error, damping=damping, formalism=formalism
         )
 
-    def parameterised(self, parameterisation: LinearOperator, /) -> "LeastSquares":
+    def parameterized(self, parameterization: LinearOperator, /) -> "LeastSquares":
         """The same estimator restricted to a parameter space.
 
         Args:
-            parameterisation: maps the parameter space into the model space.
+            parameterization: maps the parameter space into the model space.
 
         Returns:
-            An estimator of the same kind on the parameterised problem.
+            An estimator of the same kind on the parameterized problem.
         """
         return type(self)(
-            self._problem.parameterised(parameterisation),
+            self._problem.parameterized(parameterization),
             damping=self._damping,
             solver=self._solver,
             formalism=self._normal.formalism,
@@ -337,7 +337,7 @@ class MinimumNorm(LeastSquares):
     """The smallest model fitting the data, at a damping chosen in advance.
 
     Identical to :class:`LeastSquares` in construction — the two differ in
-    intent rather than in algebra, since minimising ``|A u - d|^2_R + t |u|^2``
+    intent rather than in algebra, since minimizing ``|A u - d|^2_R + t |u|^2``
     is trading misfit against norm either way. It is a separate name because
     the question it answers is "how small can the model be", and because
     :meth:`for_data` is what makes that question well posed.
@@ -349,7 +349,7 @@ class MinimumNorm(LeastSquares):
         /,
         *,
         level: float = 0.95,
-        iterations: int = 60,
+        max_iterations: int = 60,
         rtol: float = 1e-6,
         atol: float = 0.0,
         minimum_damping: float = 0.0,
@@ -380,7 +380,7 @@ class MinimumNorm(LeastSquares):
         Args:
             data: the data vector.
             level: the confidence level setting the misfit target.
-            iterations: the search's budget.
+            max_iterations: the search's budget.
             rtol: the search's bracket tolerance.
             atol: its absolute half, for a root near zero damping.
             minimum_damping: a floor on the damping; see :func:`misfit_search`.
@@ -396,7 +396,7 @@ class MinimumNorm(LeastSquares):
             self._problem,
             data,
             level=level,
-            iterations=iterations,
+            max_iterations=max_iterations,
             rtol=rtol,
             atol=atol,
             minimum_damping=minimum_damping,
@@ -414,7 +414,7 @@ class MinimumNorm(LeastSquares):
         /,
         *,
         level: float = 0.95,
-        iterations: int = 60,
+        max_iterations: int = 60,
         rtol: float = 1e-6,
         atol: float = 0.0,
         minimum_damping: float = 0.0,
@@ -428,7 +428,7 @@ class MinimumNorm(LeastSquares):
         Args:
             data: the observations.
             level: the confidence level setting the misfit target.
-            iterations: bisection steps once the root is bracketed.
+            max_iterations: bisection steps once the root is bracketed.
             rtol: how tightly to close the bracket.
             atol: its absolute half, for a root near zero damping.
             minimum_damping: a floor on the damping; see :func:`misfit_search`.
@@ -442,7 +442,7 @@ class MinimumNorm(LeastSquares):
             self._problem,
             data,
             level=level,
-            iterations=iterations,
+            max_iterations=max_iterations,
             rtol=rtol,
             atol=atol,
             minimum_damping=minimum_damping,
@@ -456,7 +456,7 @@ def misfit_search(
     target: float,
     /,
     *,
-    iterations: int = 60,
+    max_iterations: int = 60,
     rtol: float = 1e-6,
     atol: float = 0.0,
     minimum_damping: float = 0.0,
@@ -476,7 +476,7 @@ def misfit_search(
         right_hand_side: the family's right-hand side for the data.
         misfit: of a model, increasing in the damping.
         target: the value the misfit is to reach.
-        iterations: the search's budget.
+        max_iterations: the search's budget.
         rtol: the search's bracket tolerance.
         atol: its absolute half, for a root near zero damping.
         minimum_damping: a floor on the damping; the search stops there and
@@ -499,7 +499,7 @@ def misfit_search(
         evaluate,
         target,
         decreasing=False,
-        iterations=iterations,
+        max_iterations=max_iterations,
         rtol=rtol,
         atol=atol,
         minimum=minimum_damping,
@@ -513,7 +513,7 @@ def _discrepancy_search(
     /,
     *,
     level: float = 0.95,
-    iterations: int = 60,
+    max_iterations: int = 60,
     rtol: float = 1e-6,
     atol: float = 0.0,
     minimum_damping: float = 0.0,
@@ -524,7 +524,7 @@ def _discrepancy_search(
         family.right_hand_side(data),
         lambda model: problem.chi_squared(model, data),
         problem.critical_chi_squared(level=level),
-        iterations=iterations,
+        max_iterations=max_iterations,
         rtol=rtol,
         atol=atol,
         minimum_damping=minimum_damping,
@@ -538,7 +538,7 @@ def _searched_damping(
     /,
     *,
     level: float = 0.95,
-    iterations: int = 60,
+    max_iterations: int = 60,
     rtol: float = 1e-6,
     atol: float = 0.0,
     minimum_damping: float = 0.0,
@@ -559,7 +559,7 @@ def _searched_damping(
         problem,
         data,
         level=level,
-        iterations=iterations,
+        max_iterations=max_iterations,
         rtol=rtol,
         atol=atol,
         minimum_damping=minimum_damping,
@@ -616,7 +616,7 @@ class DiscrepancyPrinciple(Operator):
         level: float = 0.95,
         solver: LinearSolver | None = None,
         formalism: Formalism = "data_space",
-        iterations: int = 60,
+        max_iterations: int = 60,
         rtol: float = 1e-6,
         atol: float = 0.0,
         minimum_damping: float = 0.0,
@@ -628,7 +628,7 @@ class DiscrepancyPrinciple(Operator):
             level: the confidence level setting the misfit target.
             solver: how to invert each ``N(t)``.
             formalism: which space to solve in.
-            iterations, rtol: the discrepancy search's budget and tolerance.
+            max_iterations, rtol: the discrepancy search's budget and tolerance.
             atol: the absolute half of that tolerance, for a damping near
                 zero, where a relative test never closes.
             minimum_damping: a floor on the damping. Data that no model fits
@@ -647,7 +647,7 @@ class DiscrepancyPrinciple(Operator):
         self._level = level
         self._solver = solver
         self._formalism = formalism
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._rtol = rtol
         self._atol = atol
         self._minimum_damping = minimum_damping
@@ -659,7 +659,7 @@ class DiscrepancyPrinciple(Operator):
         )
 
     @property
-    def problem(self) -> LinearForwardProblem:
+    def forward_problem(self) -> LinearForwardProblem:
         """The forward problem."""
         return self._problem
 
@@ -675,7 +675,7 @@ class DiscrepancyPrinciple(Operator):
             self._problem,
             data,
             level=self._level,
-            iterations=self._iterations,
+            max_iterations=self._max_iterations,
             rtol=self._rtol,
             atol=self._atol,
             minimum_damping=self._minimum_damping,
@@ -698,7 +698,7 @@ class DiscrepancyPrinciple(Operator):
             self._problem,
             data,
             level=self._level,
-            iterations=self._iterations,
+            max_iterations=self._max_iterations,
             rtol=self._rtol,
             atol=self._atol,
             minimum_damping=self._minimum_damping,
@@ -713,18 +713,18 @@ class DiscrepancyPrinciple(Operator):
         model, _, _ = self._resolve(data)
         return model
 
-    def _linearise(self, data: Any) -> Any:
+    def _linearize(self, data: Any) -> Any:
         """The model and its derivative from a *single* damping search.
 
         ``at(data)`` otherwise called :meth:`_value` and :meth:`_derivative`
         in turn, and each of those runs :meth:`_resolve` -- so the root find
         over the damping, which is the whole cost of this operator, ran twice
-        for one linearisation. Nothing else about the two paths differs.
+        for one linearization. Nothing else about the two paths differs.
         """
-        from ..algebra.operators import Linearisation
+        from ..algebra.operators import Linearization
 
         resolved = self._resolve(data)
-        return Linearisation(data, resolved[0], self._derivative_from(data, *resolved))
+        return Linearization(data, resolved[0], self._derivative_from(data, *resolved))
 
     def estimator_at(self, damping: float, /) -> LeastSquares:
         """The fixed-damping estimator this collapses to at one damping."""
@@ -904,25 +904,25 @@ class ConstrainedLeastSquares(LinearPointEstimator):
             formalism=formalism,
         )
 
-    def parameterised(
-        self, parameterisation: LinearOperator, /
+    def parameterized(
+        self, parameterization: LinearOperator, /
     ) -> "ConstrainedLeastSquares":
         """The same estimator restricted to a parameter space.
 
         The constraint is pulled back with the problem: ``B u == w`` in the
         model space becomes ``(B M) p == w`` in the parameter space, where
-        ``M`` is the parameterisation. That is v1's construction, and it works
+        ``M`` is the parameterization. That is v1's construction, and it works
         because a constraint written as an equation says what it means about
         any model, including one built from parameters.
 
-        This used to refuse outright, on the grounds that the parameterisation
+        This used to refuse outright, on the grounds that the parameterization
         alone does not determine the constraint. It does when the subspace
         remembers the equation it was built from -- which is what
         :attr:`~pygeoinf2.geometry.subspaces.AffineSubspace.has_explicit_equation`
         reports -- and only then, which is what the refusal below is for.
 
         Args:
-            parameterisation: ``M``, from the parameter space into the model
+            parameterization: ``M``, from the parameter space into the model
                 space.
 
         Returns:
@@ -936,26 +936,26 @@ class ConstrainedLeastSquares(LinearPointEstimator):
             ValueError: if the parameter space is too small to carry the
                 constraints.
         """
-        subspace = _parameterised_subspace(self._subspace, parameterisation)
+        subspace = _parameterized_subspace(self._subspace, parameterization)
         return type(self)(
-            self._problem.parameterised(parameterisation),
+            self._problem.parameterized(parameterization),
             subspace,
             damping=self._damping,
             solver=self._solver,
             formalism=self._formalism,
         )
 
-    def _parameterised_subspace(
-        self, parameterisation: LinearOperator, /
+    def _parameterized_subspace(
+        self, parameterization: LinearOperator, /
     ) -> AffineSubspace:
         """The constraint, read in the parameter space."""
-        return _parameterised_subspace(self._subspace, parameterisation)
+        return _parameterized_subspace(self._subspace, parameterization)
 
     def data_reduced(self, *args: Any, **kwargs: Any) -> "ConstrainedLeastSquares":
         """The same estimator on a reduced set of data.
 
         The constraint lives in the *model* space and a data reduction does not
-        touch it, so unlike :meth:`parameterised` there is nothing to pull
+        touch it, so unlike :meth:`parameterized` there is nothing to pull
         back: the reduction applies to the problem alone.
         """
         return type(self)(
@@ -967,10 +967,10 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         )
 
 
-def _parameterised_subspace(
-    subspace: AffineSubspace, parameterisation: LinearOperator, /
+def _parameterized_subspace(
+    subspace: AffineSubspace, parameterization: LinearOperator, /
 ) -> AffineSubspace:
-    """A constraint pulled back through a parameterisation.
+    """A constraint pulled back through a parameterization.
 
     ``B u == w`` in the model space becomes ``(B M) p == w`` in the parameter
     space. That is v1's construction, and it works because a constraint written
@@ -979,7 +979,7 @@ def _parameterised_subspace(
 
     Args:
         subspace: the constraint, which must remember its equation.
-        parameterisation: ``M``, from the parameter space into the model space.
+        parameterization: ``M``, from the parameter space into the model space.
 
     Returns:
         The constraint in the parameter space.
@@ -994,19 +994,19 @@ def _parameterised_subspace(
     """
     if not subspace.has_explicit_equation:
         raise NotImplementedError(
-            "Parameterising a constrained inversion needs the constraint as "
+            "Parameterizing a constrained inversion needs the constraint as "
             "an equation, and this subspace was built from a basis. Rebuild "
             "it with AffineSubspace.from_linear_equation, or use "
             "to_hyperplanes() for an equation with the same solution set."
         )
     constraint = subspace.constraint_operator
-    if constraint.codomain.dim > parameterisation.domain.dim:
+    if constraint.codomain.dim > parameterization.domain.dim:
         raise ValueError(
-            f"The parameter space has dimension {parameterisation.domain.dim}, "
+            f"The parameter space has dimension {parameterization.domain.dim}, "
             f"which cannot carry {constraint.codomain.dim} constraints."
         )
     return AffineSubspace.from_linear_equation(
-        constraint @ parameterisation, subspace.constraint_value
+        constraint @ parameterization, subspace.constraint_value
     )
 
 
@@ -1046,7 +1046,7 @@ class ConstrainedMinimumNorm(Operator):
         level: float = 0.95,
         solver: LinearSolver | None = None,
         formalism: Formalism = "data_space",
-        iterations: int = 60,
+        max_iterations: int = 60,
         rtol: float = 1e-6,
     ) -> None:
         """
@@ -1056,7 +1056,7 @@ class ConstrainedMinimumNorm(Operator):
             level: the confidence level setting the misfit target.
             solver: how to invert each reduced ``N(t)``.
             formalism: which space to solve in.
-            iterations, rtol: the discrepancy search's budget and tolerance.
+            max_iterations, rtol: the discrepancy search's budget and tolerance.
         """
         if subspace.domain != problem.model_space:
             raise ValueError("The subspace must live in the model space.")
@@ -1070,11 +1070,11 @@ class ConstrainedMinimumNorm(Operator):
             level=level,
             solver=solver,
             formalism=formalism,
-            iterations=iterations,
+            max_iterations=max_iterations,
             rtol=rtol,
         )
         self._offset = problem.forward_operator(self._translation)
-        # Kept so parameterised() and data_reduced() can rebuild with the
+        # Kept so parameterized() and data_reduced() can rebuild with the
         # same settings; the inner method does not expose all of them.
         self._level = level
         self._solver = solver
@@ -1090,18 +1090,18 @@ class ConstrainedMinimumNorm(Operator):
         """The unconstrained method on the reduced problem."""
         return self._inner
 
-    def parameterised(
-        self, parameterisation: LinearOperator, /
+    def parameterized(
+        self, parameterization: LinearOperator, /
     ) -> "ConstrainedMinimumNorm":
         """The same method restricted to a parameter space.
 
-        As :meth:`ConstrainedLeastSquares.parameterised`: the constraint
+        As :meth:`ConstrainedLeastSquares.parameterized`: the constraint
         ``B u == w`` is pulled back to ``(B M) p == w``, which needs the
         subspace to remember the equation it was built from.
         """
         return type(self)(
-            self._problem.parameterised(parameterisation),
-            _parameterised_subspace(self._subspace, parameterisation),
+            self._problem.parameterized(parameterization),
+            _parameterized_subspace(self._subspace, parameterization),
             level=self._level,
             solver=self._solver,
             formalism=self._formalism,

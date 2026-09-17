@@ -45,7 +45,7 @@ def _self_adjoint_spectrum(operator: LinearOperator) -> tuple[np.ndarray, np.nda
     """Eigenvalues, and eigenvectors orthonormal in the space's own metric.
 
     The *Galerkin* matrix ``G N_c`` is the symmetric one (§5.6), not the
-    component matrix, so the eigenproblem is the generalised ``M v == lambda G
+    component matrix, so the eigenproblem is the generalized ``M v == lambda G
     v``. Its vectors satisfy ``v_j^T G v_k == delta_jk`` — orthonormal in the
     inner product of the space rather than in whichever coordinates happen to
     be in use. On a Euclidean space this is the ordinary symmetric
@@ -133,7 +133,7 @@ class BackusGilbert(LinearPointEstimator):
     """The optimally-averaged estimate of a property, with its error set.
 
     A *linear certificate*, in the sense of §18.3(b): the estimator is a fixed
-    operator ``X`` applied to the data, chosen by minimising a quadratic
+    operator ``X`` applied to the data, chosen by minimizing a quadratic
     surrogate for the width of the resulting bound,
 
     .. code-block:: text
@@ -153,7 +153,7 @@ class BackusGilbert(LinearPointEstimator):
     def __init__(
         self,
         problem: LinearForwardProblem,
-        target: LinearOperator,
+        property_operator: LinearOperator,
         prior: Ball,
         /,
         *,
@@ -164,14 +164,14 @@ class BackusGilbert(LinearPointEstimator):
         """
         Args:
             problem: the forward problem.
-            target: the property operator ``T``.
+            property_operator: ``T``, the property operator.
             prior: a norm ball on the model space.
             noise: a norm ball on the data space. Taken from the problem's
                 error if omitted, hardening a Gaussian one at ``level``.
             level: the confidence level used if a Gaussian error is hardened.
             solver: how to invert the data-space normal operator.
         """
-        if target.domain != problem.model_space:
+        if property_operator.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         forward = problem.forward_operator
         model_radius = _ball_radius(prior, "The prior")
@@ -189,7 +189,7 @@ class BackusGilbert(LinearPointEstimator):
         inverse = (solver or CGSolver(rtol=1e-12))(
             normal.with_traits(Traits.POSITIVE_DEFINITE)
         )
-        operator = target @ forward.adjoint @ inverse
+        operator = property_operator @ forward.adjoint @ inverse
 
         super().__init__(
             operator,
@@ -201,7 +201,7 @@ class BackusGilbert(LinearPointEstimator):
             ),
         )
         self._problem = problem
-        self._target = target
+        self._property_operator = property_operator
         self._prior_radius = model_radius
         self._noise_radius = noise_radius
 
@@ -213,7 +213,7 @@ class BackusGilbert(LinearPointEstimator):
         first half of the error bound. An estimate is only as good as this is
         small.
         """
-        return self._target - self.resolution
+        return self._property_operator - self.resolution
 
     def uncertainty(self, data: Any, /) -> ConvexSet:
         """The set of property values consistent with the data.
@@ -224,10 +224,10 @@ class BackusGilbert(LinearPointEstimator):
         a noise term, added. Both are needed: shrinking one at the expense of
         the other is exactly what the choice of ``X`` trades.
         """
-        centre = self(data)
+        center = self(data)
         unresolved = self.unresolved
         prior_radius, noise_radius = self._prior_radius, self._noise_radius
-        space = self.target_space
+        space = self.property_space
         operator = self.operator
 
         def support(direction: Any) -> float:
@@ -237,7 +237,7 @@ class BackusGilbert(LinearPointEstimator):
             noise_term = noise_radius * self._problem.data_space.norm(
                 operator.adjoint(direction)
             )
-            return space.inner_product(centre, direction) + resolution_term + noise_term
+            return space.inner_product(center, direction) + resolution_term + noise_term
 
         return ConvexSet.from_support_function(space, support)
 
@@ -249,7 +249,7 @@ class BackusGilbert(LinearPointEstimator):
         coverage narrows the first, and a single number cannot say which is
         needed.
         """
-        space = self.target_space
+        space = self.property_space
         estimate = self(data)
         unresolved, operator = self.unresolved, self.operator
         resolution, noise = [], []
@@ -288,7 +288,7 @@ class _ClosedFormRoute(SetEstimator):
     def __init__(
         self,
         problem: LinearForwardProblem,
-        target: LinearOperator,
+        property_operator: LinearOperator,
         prior: Ball,
         /,
         *,
@@ -297,14 +297,14 @@ class _ClosedFormRoute(SetEstimator):
         """
         Args:
             problem: the forward problem. Its data are treated as exact.
-            target: the property operator ``T``.
-            prior: a norm ball on the model space, centred at the origin.
+            property_operator: ``T``, the property operator.
+            prior: a norm ball on the model space, centered at the origin.
             solver: how to invert ``A A*`` and the property Gram.
         """
-        if target.domain != problem.model_space:
+        if property_operator.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         self._problem = problem
-        self._target = target
+        self._property_operator = property_operator
         self._radius = _ball_radius(prior, "The prior")
         self._solver = solver or CGSolver(rtol=1e-12)
 
@@ -314,9 +314,9 @@ class _ClosedFormRoute(SetEstimator):
         self._kernel = OrthogonalProjector.onto_kernel(forward, solver=self._solver)
         # T P T*, the shape of the answer. Positive definite whenever the
         # property is not determined by the data alone.
-        self._shape = (target @ self._kernel @ target.adjoint).with_traits(
-            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
-        )
+        self._shape = (
+            property_operator @ self._kernel @ property_operator.adjoint
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
 
     @property
     def data_space(self) -> HilbertSpace:
@@ -324,15 +324,15 @@ class _ClosedFormRoute(SetEstimator):
         return self._problem.data_space
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The property space."""
-        return self._target.codomain
+        return self._property_operator.codomain
 
     @property
     def shape(self) -> LinearOperator:
         """``T P T*``: the shape of the answer, independent of the data.
 
-        Only the centre and the size depend on the data. That is the same
+        Only the center and the size depend on the data. That is the same
         structure as a Gaussian estimator's data-independent covariance, and it
         arrives for the same reason.
         """
@@ -389,12 +389,12 @@ class _ClosedFormRoute(SetEstimator):
                 f"one has norm {np.sqrt(self._radius**2 - budget):.4g} against "
                 f"a bound of {self._radius:.4g}."
             )
-        centre = self._target(self.minimum_norm_model(data))
+        center = self._property_operator(self.minimum_norm_model(data))
         covariance = budget * self._shape
         return Ellipsoid(
-            self.target_space,
+            self.property_space,
             self._solver(covariance.with_traits(Traits.POSITIVE_DEFINITE)),
-            centre=centre,
+            center=center,
             covariance=covariance,
         )
 
@@ -402,7 +402,7 @@ class _ClosedFormRoute(SetEstimator):
     def _joint_spectrum(self) -> tuple[Any, np.ndarray, np.ndarray]:
         """The spectrum of ``C C*`` for Parker's joint map ``C == (A, T)``.
 
-        Depends only on the problem and the target, not on the data or the
+        Depends only on the problem and the property operator, not on the data or the
         value -- so it is formed once, as
         :attr:`_BisectionRoute._reduced` already is for the reduced problem.
         Rebuilding it per call made every sweep over property values pay for a
@@ -410,7 +410,9 @@ class _ClosedFormRoute(SetEstimator):
         """
         from ..algebra.direct_sum import ColumnLinearOperator
 
-        joint = ColumnLinearOperator([self._problem.forward_operator, self._target])
+        joint = ColumnLinearOperator(
+            [self._problem.forward_operator, self._property_operator]
+        )
         values, vectors = _self_adjoint_spectrum(joint @ joint.adjoint)
         return joint.codomain, values, vectors
 
@@ -436,7 +438,7 @@ class _ClosedFormRoute(SetEstimator):
             np.concatenate(
                 [
                     self.data_space.to_components(data),
-                    self.target_space.to_components(value),
+                    self.property_space.to_components(value),
                 ]
             )
         )
@@ -477,7 +479,7 @@ class _ClosedFormRoute(SetEstimator):
         """The same inference about a further property of the model."""
         return _ClosedFormRoute(
             self._problem,
-            operator @ self._target,
+            operator @ self._property_operator,
             Ball(self._problem.model_space, radius=self._radius),
             solver=self._solver,
         )
@@ -490,10 +492,10 @@ class _ClosedFormRoute(SetEstimator):
         answer for exactly that reason.
         """
         covariance = self._radius**2 * (
-            self._target @ self._target.adjoint
+            self._property_operator @ self._property_operator.adjoint
         ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
         return Ellipsoid(
-            self.target_space,
+            self.property_space,
             self._solver(covariance),
             covariance=covariance,
         )
@@ -507,7 +509,7 @@ def _minimum_norm_fits(
     noise_radius: float,
     prior_radius: float,
     solver: LinearSolver | None = None,
-    iterations: int = 60,
+    max_iterations: int = 60,
     rtol: float = 1e-6,
 ) -> bool:
     """Whether a model within the prior ball fits the data within the noise ball.
@@ -537,7 +539,7 @@ def _minimum_norm_fits(
             solver's residual floor to be answerable.
         prior_radius: how large a model may be.
         solver: for the data-space solves. Conjugate gradients by default.
-        iterations: the root search's budget.
+        max_iterations: the root search's budget.
         rtol: the root search's bracket tolerance.
 
     Returns:
@@ -556,7 +558,7 @@ def _minimum_norm_fits(
         family.right_hand_side(data),
         lambda model: data_space.norm(data_space.subtract(data, forward(model))),
         noise_radius,
-        iterations=iterations,
+        max_iterations=max_iterations,
         rtol=rtol,
     )
     if found.value > noise_radius * (1.0 + rtol) and found.exhausted is not None:
@@ -571,10 +573,10 @@ class _Quadratic:
 
     The primal route works in the inner product a set defines, and a
     quadratic level function defines one: ``Q`` its precision, ``C == Q^-1``
-    its covariance, ``a`` its centre. A ball of radius ``r`` has ``Q == I /
+    its covariance, ``a`` its center. A ball of radius ``r`` has ``Q == I /
     r^2``; its distances are reported in the space's own norm, so
     :attr:`scale` is ``r`` there and one for an ellipsoid, whose level
-    function is already normalised. An ellipsoid built without its
+    function is already normalized. An ellipsoid built without its
     covariance gets one through the solver, an inverse applied by conjugate
     gradients wherever the route needs ``C``.
     """
@@ -588,7 +590,7 @@ class _Quadratic:
                 raise ValueError(f"{name} needs a positive radius for this route.")
             self.is_ball = True
             self.scale = radius
-            self.centre = subset.centre
+            self.center = subset.center
             self.precision = (
                 LinearOperator.identity(space) * (1.0 / radius**2)
             ).with_traits(Traits.POSITIVE_DEFINITE)
@@ -598,7 +600,7 @@ class _Quadratic:
         elif isinstance(subset, Ellipsoid):
             self.is_ball = False
             self.scale = 1.0
-            self.centre = subset.centre
+            self.center = subset.center
             self.precision = subset.precision.with_traits(Traits.POSITIVE_DEFINITE)
             covariance = subset.covariance
             if covariance is None:
@@ -616,7 +618,7 @@ class _BisectionRoute(SetEstimator):
 
     Route (c) of §18.3, BGP's primal route, for a prior and a confidence set
     that are each a ball or an ellipsoid -- sets with a quadratic level
-    function. The support value in a direction is a concave maximisation
+    function. The support value in a direction is a concave maximization
     over the intersection of the two, and attaching multipliers to the two
     constraints turns its stationarity condition into
 
@@ -625,15 +627,15 @@ class _BisectionRoute(SetEstimator):
         (s Q + t A* P A) u == T* q + t A* P d'
 
     with ``Q`` the prior's precision, ``P`` the confidence set's, ``u`` the
-    model relative to the prior's centre and ``d'`` the data relative to
-    both centres: a damped least-squares solve in the two sets' own inner
+    model relative to the prior's center and ``d'`` the data relative to
+    both centers: a damped least-squares solve in the two sets' own inner
     products, the same primitive as §18.6. The multipliers are fixed by the
     two level functions reaching their levels, both monotone in their own
     multiplier, so nested bisection converges. A ball is the case ``Q == I
     / M^2``; nothing here needs it to be.
 
     The route is written in those inner products rather than by whitening
-    the problem: the reduction to the data space diagonalises ``A C A*`` in
+    the problem: the reduction to the data space diagonalizes ``A C A*`` in
     the inner product ``P`` defines, through the Cholesky factor of ``P``
     on the data components, and the model side carries ``C == Q^-1`` as an
     operator. For balls both are scalings and the arithmetic is v1's.
@@ -647,31 +649,31 @@ class _BisectionRoute(SetEstimator):
     def __init__(
         self,
         problem: LinearForwardProblem,
-        target: LinearOperator,
+        property_operator: LinearOperator,
         prior: ConvexSet,
         /,
         *,
         noise: ConvexSet | None = None,
         level: float = 0.95,
         solver: LinearSolver | None = None,
-        iterations: int = 60,
+        max_iterations: int = 60,
     ) -> None:
         """
         Args:
             problem: the forward problem.
-            target: the property operator ``T``.
+            property_operator: ``T``, the property operator.
             prior: a ball or an ellipsoid on the model space.
             noise: a ball or an ellipsoid on the data space; taken from the
                 problem if omitted.
             level: the level at which a Gaussian error is hardened.
             solver: how to invert the damped normal operator, and the prior's
                 precision when its covariance is not given.
-            iterations: bisection steps, on each of the two multipliers.
+            max_iterations: bisection steps, on each of the two multipliers.
         """
-        if target.domain != problem.model_space:
+        if property_operator.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         self._problem = problem
-        self._target = target
+        self._property_operator = property_operator
         self._solver = solver or CGSolver(rtol=1e-12)
         self._prior = _Quadratic(prior, self._solver, "The prior")
         self._noise = _Quadratic(
@@ -679,7 +681,7 @@ class _BisectionRoute(SetEstimator):
             self._solver,
             "The noise",
         )
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         # Reported in the prior's units: a ball's radius, an ellipsoid's one.
         self._radius = self._prior.scale
         self._noise_radius = self._noise.scale
@@ -690,9 +692,9 @@ class _BisectionRoute(SetEstimator):
         return self._problem.data_space
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The property space."""
-        return self._target.codomain
+        return self._property_operator.codomain
 
     # ----------------------------------------------------------------- #
     #                      The two inner products                       #
@@ -731,12 +733,12 @@ class _BisectionRoute(SetEstimator):
         return self.data_space.from_components(self._whitening.T @ components)
 
     def _shifted(self, data: Any) -> Any:
-        """``d - A a - b``: the data relative to both centres."""
+        """``d - A a - b``: the data relative to both centers."""
         space = self.data_space
         shifted = space.subtract(
-            data, self._problem.forward_operator(self._prior.centre)
+            data, self._problem.forward_operator(self._prior.center)
         )
-        return space.subtract(shifted, self._noise.centre)
+        return space.subtract(shifted, self._noise.center)
 
     def _misfit(self, residual: Any) -> float:
         """``sqrt((P r, r))``, the confidence set's level function's root."""
@@ -759,7 +761,7 @@ class _BisectionRoute(SetEstimator):
 
         into one on the data space, so every quantity the bisection tests --
         the model's level function and the misfit -- becomes an ``O(dim(D))``
-        expression once ``W (A C A*)_c W^T`` is diagonalised, ``W`` the
+        expression once ``W (A C A*)_c W^T`` is diagonalized, ``W`` the
         factor of :attr:`_whitening`. Without it each of the four thousand
         bisection steps per direction would be a fresh Krylov solve.
 
@@ -779,7 +781,7 @@ class _BisectionRoute(SetEstimator):
         return self._reduce(gram)
 
     def _reduce(self, gram: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Diagonalise a data-space Gram in the confidence set's inner product."""
+        """Diagonalize a data-space Gram in the confidence set's inner product."""
         gram = 0.5 * (gram + gram.T)
         if self._whitening is None:
             gram = gram / self._noise.scale**2
@@ -810,7 +812,7 @@ class _BisectionRoute(SetEstimator):
 
     def _prepare(self, direction: Any, data: Any) -> dict:
         forward = self._problem.forward_operator
-        pulled = self._target.adjoint(direction)
+        pulled = self._property_operator.adjoint(direction)
         shifted = self._shifted(data)
         adjoint_data = forward.adjoint(self._noise.precision(shifted))
         whitened = self._whiten(shifted)
@@ -830,7 +832,7 @@ class _BisectionRoute(SetEstimator):
     def _state(self, prepared: dict, damping: float, weight: float) -> tuple:
         """The model's level function's root and the misfit at ``(gamma, t)``.
 
-        Parameterised by ``gamma == s / t`` rather than by ``s``, which is
+        Parameterized by ``gamma == s / t`` rather than by ``s``, which is
         what BGP §2.6 calls it and which is the only stable choice: with
         ``s``, the norm is a ratio of two large numbers as ``t`` grows and
         the whole expression cancels. Here
@@ -859,7 +861,7 @@ class _BisectionRoute(SetEstimator):
         return np.sqrt(model_squared), float(np.linalg.norm(residual))
 
     def _model(self, prepared: dict, damping: float, weight: float) -> Any:
-        """The model at ``(gamma, t)``, relative to the prior's centre."""
+        """The model at ``(gamma, t)``, relative to the prior's center."""
         space = self._problem.model_space
         values, vectors = self._data_gram
         inverse_weight = 1.0 / weight
@@ -898,7 +900,7 @@ class _BisectionRoute(SetEstimator):
             lambda multiplier, _: Evaluation(quantity(multiplier)),
             target,
             decreasing=decreasing,
-            iterations=self._iterations,
+            max_iterations=self._max_iterations,
             rtol=0.0,
             atol=0.0,
             warm_start=False,
@@ -925,18 +927,18 @@ class _BisectionRoute(SetEstimator):
         the bound it attains is.
         """
         space = self._problem.model_space
-        pulled = self._target.adjoint(direction)
+        pulled = self._property_operator.adjoint(direction)
         image = self._prior.covariance(pulled)
         length = float(np.sqrt(max(space.inner_product(image, pulled), 0.0)))
         if length == 0.0:
-            return space.copy(self._prior.centre)
+            return space.copy(self._prior.center)
 
         # Prior-only: if the prior's own support point already fits the data,
         # the data constraint is slack and there is nothing to solve.
-        flat = space.axpy(1.0 / length, image, space.copy(self._prior.centre))
+        flat = space.axpy(1.0 / length, image, space.copy(self._prior.center))
         residual = self.data_space.subtract(
             self._shifted(data),
-            self._problem.forward_operator(space.subtract(flat, self._prior.centre)),
+            self._problem.forward_operator(space.subtract(flat, self._prior.center)),
         )
         if self._misfit(residual) <= 1.0:
             return flat
@@ -948,13 +950,13 @@ class _BisectionRoute(SetEstimator):
 
         weight = self._bisect(misfit, 1.0)
         relative = self._model(prepared, self._fit_norm(prepared, weight), weight)
-        return space.add(self._prior.centre, relative)
+        return space.add(self._prior.center, relative)
 
     def support(self, direction: Any, data: Any, /) -> float:
         """The support value of the feasible property set in one direction."""
         model = self.extremal_model(direction, data)
         return self._problem.model_space.inner_product(
-            self._target.adjoint(direction), model
+            self._property_operator.adjoint(direction), model
         )
 
     # ----------------------------------------------------------------- #
@@ -962,7 +964,7 @@ class _BisectionRoute(SetEstimator):
     # ----------------------------------------------------------------- #
 
     def fitting_model(self, data: Any, /) -> Any | None:
-        """The model nearest the prior's centre that fits the data, or None.
+        """The model nearest the prior's center that fits the data, or None.
 
         In the prior's own inner product. For two balls this is v1's
         ``test_data_compatibility`` computation, matrix-free: the damped
@@ -982,7 +984,7 @@ class _BisectionRoute(SetEstimator):
 
             forward = self._problem.forward_operator
             if self.data_space.norm(shifted) <= self._noise.scale:
-                return space.copy(self._prior.centre)
+                return space.copy(self._prior.center)
             family = TikhonovFamily(
                 forward, solver=self._solver, formalism="data_space"
             )
@@ -993,7 +995,7 @@ class _BisectionRoute(SetEstimator):
                     self.data_space.subtract(shifted, forward(model))
                 ),
                 self._noise.scale,
-                iterations=self._iterations,
+                max_iterations=self._max_iterations,
             )
             if (
                 found.value > self._noise.scale * (1.0 + 1e-6)
@@ -1003,12 +1005,12 @@ class _BisectionRoute(SetEstimator):
             model = family.model_from(found.solution)
             if space.norm(model) > self._prior.scale:
                 return None
-            return space.add(self._prior.centre, model)
+            return space.add(self._prior.center, model)
 
         values, vectors = self._data_gram
         whitened = self._whiten(shifted)
         if float(np.linalg.norm(whitened)) <= 1.0:
-            return space.copy(self._prior.centre)
+            return space.copy(self._prior.center)
         projected = vectors.T @ whitened
         live = self._live(values)
         unreachable = float(np.linalg.norm(projected[~live]))
@@ -1029,7 +1031,7 @@ class _BisectionRoute(SetEstimator):
         dual = self._problem.forward_operator.adjoint(
             self._unwhiten(vectors @ weighted)
         )
-        return space.add(self._prior.centre, self._prior.covariance(dual))
+        return space.add(self._prior.center, self._prior.covariance(dual))
 
     def is_feasible(self, data: Any, /) -> bool:
         """Whether any model lies in both the prior set and the noise set."""
@@ -1038,9 +1040,9 @@ class _BisectionRoute(SetEstimator):
     def __call__(self, data: Any) -> ConvexSet:
         """The feasible property set, as a support-function oracle."""
         return ConvexSet.from_support_function(
-            self.target_space,
+            self.property_space,
             lambda direction: self.support(direction, data),
-            maximiser=lambda direction: self._target(
+            maximizer=lambda direction: self._property_operator(
                 self.extremal_model(direction, data)
             ),
         )
@@ -1051,16 +1053,22 @@ class _BisectionRoute(SetEstimator):
 
     @cached_property
     def _property_pseudo_inverse(self) -> LinearOperator:
-        """``C T* (T C T*)^-1``: the model nearest the prior's centre with a given property.
+        """``C T* (T C T*)^-1``: the model nearest the prior's center with a given property.
 
         Factored rather than iterated. The property space is
         finite-dimensional and small -- that is what makes it a *property*
         space (§18.1) -- so ``T C T*`` is a handful of rows.
         """
         normal = (
-            self._target @ self._prior.covariance @ self._target.adjoint
+            self._property_operator
+            @ self._prior.covariance
+            @ self._property_operator.adjoint
         ).with_traits(Traits.POSITIVE_DEFINITE)
-        return self._prior.covariance @ self._target.adjoint @ CholeskySolver()(normal)
+        return (
+            self._prior.covariance
+            @ self._property_operator.adjoint
+            @ CholeskySolver()(normal)
+        )
 
     @cached_property
     def _reduced(self) -> tuple[np.ndarray, np.ndarray]:
@@ -1075,7 +1083,7 @@ class _BisectionRoute(SetEstimator):
         space = self._problem.model_space
         projector = (
             LinearOperator.identity(space)
-            - self._property_pseudo_inverse @ self._target
+            - self._property_pseudo_inverse @ self._property_operator
         )
         forward = self._problem.forward_operator
         reduced = (
@@ -1093,7 +1101,7 @@ class _BisectionRoute(SetEstimator):
         not a failure to find one.
 
         The reduction is Al-Attar (2021) §3.3. Writing ``m == m~ + u`` with
-        ``m~`` the model nearest the prior's centre having the property and
+        ``m~`` the model nearest the prior's center having the property and
         ``u`` in the kernel of ``T``, the level function separates and what
         is left is a discrepancy problem in the subspace, closed form in the
         reduced spectrum: the misfit is ``gamma ||z||`` and the model's level
@@ -1103,7 +1111,9 @@ class _BisectionRoute(SetEstimator):
         space = self._problem.model_space
         forward = self._problem.forward_operator
         values, vectors = self._reduced
-        offset = self.target_space.subtract(value, self._target(self._prior.centre))
+        offset = self.property_space.subtract(
+            value, self._property_operator(self._prior.center)
+        )
         relative = self._property_pseudo_inverse(offset)
         anchor_squared = space.inner_product(self._prior.precision(relative), relative)
         residual = self.data_space.subtract(self._shifted(data), forward(relative))
@@ -1150,11 +1160,11 @@ class _BisectionRoute(SetEstimator):
         """The same inference about a further property."""
         return _BisectionRoute(
             self._problem,
-            operator @ self._target,
+            operator @ self._property_operator,
             self._prior.subset,
             noise=self._noise.subset,
             solver=self._solver,
-            iterations=self._iterations,
+            max_iterations=self._max_iterations,
         )
 
 
@@ -1176,14 +1186,14 @@ class _DualRoute(SetEstimator):
 
     It uses only the two sets' *support functions*, so it accepts anything
     convex — an ellipsoid, a box, an intersection — where routes (a) and (c)
-    accept norm balls. What it costs is a nonsmooth convex minimisation per
+    accept norm balls. What it costs is a nonsmooth convex minimization per
     direction, which is why the cheaper routes exist at all.
     """
 
     def __init__(
         self,
         problem: LinearForwardProblem,
-        target: LinearOperator,
+        property_operator: LinearOperator,
         prior: ConvexSet,
         /,
         *,
@@ -1193,19 +1203,19 @@ class _DualRoute(SetEstimator):
         """
         Args:
             problem: the forward problem.
-            target: the property operator ``T``.
+            property_operator: ``T``, the property operator.
             prior: any convex set on the model space with a support function
-                and a support maximiser.
+                and a support maximizer.
             noise: likewise on the data space; taken from the problem if
                 omitted.
-            method: the minimiser. A proximal bundle method by default.
+            method: the minimizer. A proximal bundle method by default.
         """
         from ..numerics.convex import ProximalBundleMethod
 
-        if target.domain != problem.model_space:
+        if property_operator.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         self._problem = problem
-        self._target = target
+        self._property_operator = property_operator
         self._prior = prior
         if noise is None:
             if not problem.has_error or not isinstance(problem.error, ConvexSet):
@@ -1215,7 +1225,9 @@ class _DualRoute(SetEstimator):
                 )
             noise = problem.error
         self._noise = noise
-        self._method = method or ProximalBundleMethod(tolerance=1e-10, iterations=300)
+        self._method = method or ProximalBundleMethod(
+            tolerance=1e-10, max_iterations=300
+        )
 
     @property
     def data_space(self) -> HilbertSpace:
@@ -1223,9 +1235,9 @@ class _DualRoute(SetEstimator):
         return self._problem.data_space
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The property space."""
-        return self._target.codomain
+        return self._property_operator.codomain
 
     def dual_cost(self, direction: Any, data: Any, /) -> Any:
         """The functional whose infimum is the support value.
@@ -1234,14 +1246,14 @@ class _DualRoute(SetEstimator):
         support functions and nothing else. Its subgradient is
         ``d - A x_prior - x_noise`` with each ``x`` the point of its set
         attaining the corresponding support — so a set that can exhibit its own
-        maximiser is all this route ever asks for.
+        maximizer is all this route ever asks for.
         """
         from ..algebra.operators import Functional
 
         space = self.data_space
         model_space = self._problem.model_space
         forward = self._problem.forward_operator
-        pulled = self._target.adjoint(direction)
+        pulled = self._property_operator.adjoint(direction)
         prior_support = self._prior.support_function()
         noise_support = self._noise.support_function()
 
@@ -1277,8 +1289,8 @@ class _DualRoute(SetEstimator):
 
         def gradient(certificate: Any) -> Any:
             residual, negated = prepare(certificate)
-            from_prior = forward(self._prior.support_maximiser(residual))
-            from_noise = self._noise.support_maximiser(negated)
+            from_prior = forward(self._prior.support_maximizer(residual))
+            from_noise = self._noise.support_maximizer(negated)
             return space.subtract(space.subtract(data, from_prior), from_noise)
 
         return Functional.from_callables(space, value, gradient=gradient)
@@ -1314,34 +1326,34 @@ class _DualRoute(SetEstimator):
         squared = epsilon * epsilon
 
         if isinstance(given, Ball):
-            radius, centre = given.radius, given.centre
+            radius, center = given.radius, given.center
 
             def value(z: Any) -> float:
-                return space.inner_product(z, centre) + radius * float(
+                return space.inner_product(z, center) + radius * float(
                     np.sqrt(space.squared_norm(z) + squared)
                 )
 
             def gradient(z: Any) -> Any:
                 scale = radius / float(np.sqrt(space.squared_norm(z) + squared))
-                return space.add(centre, space.scale(scale, z))
+                return space.add(center, space.scale(scale, z))
 
             return value, gradient
 
         if isinstance(given, Ellipsoid):
             if given._covariance is None:
                 raise ValueError("A smoothed ellipsoid support needs the covariance.")
-            covariance, centre = given._covariance, given.centre
+            covariance, center = given._covariance, given.center
 
             def value(z: Any) -> float:
                 weighted = covariance(z)
-                return space.inner_product(z, centre) + float(
+                return space.inner_product(z, center) + float(
                     np.sqrt(space.inner_product(z, weighted) + squared)
                 )
 
             def gradient(z: Any) -> Any:
                 weighted = covariance(z)
                 scale = 1.0 / float(np.sqrt(space.inner_product(z, weighted) + squared))
-                return space.add(centre, space.scale(scale, weighted))
+                return space.add(center, space.scale(scale, weighted))
 
             return value, gradient
 
@@ -1386,7 +1398,7 @@ class _DualRoute(SetEstimator):
         space = self.data_space
         model_space = self._problem.model_space
         forward = self._problem.forward_operator
-        pulled = self._target.adjoint(direction)
+        pulled = self._property_operator.adjoint(direction)
         prior_value, prior_gradient = self._smoothed_support(self._prior, epsilon)
         noise_value, noise_gradient = self._smoothed_support(self._noise, epsilon)
 
@@ -1411,9 +1423,9 @@ class _DualRoute(SetEstimator):
     def primal_solver(self, data: Any, /, **kwargs: Any) -> Any:
         """The same problem set up for the *primal* route.
 
-        :class:`~pygeoinf2.numerics.convex.ChambollePockSolver` maximises
+        :class:`~pygeoinf2.numerics.convex.ChambollePockSolver` maximizes
         ``(c, m)`` over the feasible set directly, where everything else here
-        minimises the dual. The two answer the same question and meet at the
+        minimizes the dual. The two answer the same question and meet at the
         same number -- measured, they agree to 1e-10, which is strong duality
         checked rather than assumed -- but they cost differently: the dual
         route takes few expensive bundle iterations, the primal many cheap
@@ -1455,7 +1467,7 @@ class _DualRoute(SetEstimator):
         """The support values in many directions, sweeping with a warm start.
 
         Restores v1's ``solve_support_values``. Neighbouring directions have
-        neighbouring certificates, so each minimisation started from the last
+        neighboring certificates, so each minimization started from the last
         one's answer is a correction rather than a fresh problem -- which is
         the whole reason to sweep rather than to call :meth:`support` in a
         loop, and the part :class:`ProximalBundleMethod` does not supply on
@@ -1465,7 +1477,7 @@ class _DualRoute(SetEstimator):
         before it. Passing ``n_jobs`` runs the directions in parallel instead,
         on whichever route was asked for, and gives the warm start up, which
         is the right trade only when the directions are few and each
-        minimisation is dear.
+        minimization is dear.
 
         Args:
             directions: the directions to evaluate.
@@ -1473,9 +1485,9 @@ class _DualRoute(SetEstimator):
             route: which solver answers the question. All three agree, and
                 differ only in cost:
 
-                * ``"dual"`` minimises the dual cost with a bundle method.
+                * ``"dual"`` minimizes the dual cost with a bundle method.
                   Works for any convex sets, and is the most expensive.
-                * ``"primal"`` maximises over the feasible set directly with
+                * ``"primal"`` maximizes over the feasible set directly with
                   :class:`~pygeoinf2.numerics.convex.ChambollePockSolver`.
                   Also works for any convex sets, and is cheap per step when
                   they project cheaply. This is v1's
@@ -1485,7 +1497,7 @@ class _DualRoute(SetEstimator):
                   Needs both sets to be balls or ellipsoids, and is by far the
                   cheapest where it applies -- tens of function evaluations
                   against hundreds of splitting steps or a bundle
-                  minimisation. It also never discretises the model space.
+                  minimization. It also never discretizes the model space.
 
                 Measured agreement between the three: 1.7e-8 relative between
                 dual and primal, and 2.7e-11 between primal and KKT.
@@ -1526,24 +1538,24 @@ class _DualRoute(SetEstimator):
             return np.array(parallel_map(one, directions, n_jobs=n_jobs))
 
         if route == "smoothed":
-            from ..numerics.optimisation import LBFGS
+            from ..numerics.optimization import LBFGS
 
-            optimiser = kwargs.pop("optimiser", None) or LBFGS(max_iterations=500)
+            optimizer = kwargs.pop("optimizer", None) or LBFGS(max_iterations=500)
             values, start = [], None
             for direction in directions:
                 cost = self.smoothed_dual_cost(direction, data, **kwargs)
                 origin = self.data_space.zero() if start is None else start
-                result = optimiser.minimise(cost, origin)
+                result = optimizer.minimize(cost, origin)
                 values.append(result.value)
                 if warm_start:
-                    start = result.minimiser
+                    start = result.minimizer
             return np.array(values)
 
         if route == "kkt":
             solver = self._kkt_solver(data, **kwargs)
             return np.array(
                 [
-                    solver.solve(self._target.adjoint(direction)).value
+                    solver.solve(self._property_operator.adjoint(direction)).value
                     for direction in directions
                 ]
             )
@@ -1553,7 +1565,7 @@ class _DualRoute(SetEstimator):
             values, start = [], None
             for direction in directions:
                 result = solver.solve(
-                    self._target.adjoint(direction),
+                    self._property_operator.adjoint(direction),
                     start=start if warm_start else None,
                 )
                 values.append(result.value)
@@ -1565,11 +1577,11 @@ class _DualRoute(SetEstimator):
         for direction in directions:
             cost = self.dual_cost(direction, data)
             origin = self.data_space.zero() if start is None else start
-            result = self._method.minimise(cost, origin)
+            result = self._method.minimize(cost, origin)
             self._check_bounded(result)
             values.append(result.value)
             if warm_start:
-                start = result.minimiser
+                start = result.minimizer
         return np.array(values)
 
     def _kkt_solver(self, data: Any, /, **kwargs: Any) -> Any:
@@ -1587,17 +1599,21 @@ class _DualRoute(SetEstimator):
     def extremal_model(self, direction: Any, data: Any, /) -> Any:
         """The model attaining the support in a direction, from the KKT conditions.
 
-        The one thing the bundle minimisation does not give: the KKT solvers
-        find the maximiser itself, on quadratic sets in closed form and on
-        any level-function sets by a convex minimisation per probe.
+        The one thing the bundle minimization does not give: the KKT solvers
+        find the maximizer itself, on quadratic sets in closed form and on
+        any level-function sets by a convex minimization per probe.
         """
-        return self._kkt_solver(data).solve(self._target.adjoint(direction)).model
+        return (
+            self._kkt_solver(data)
+            .solve(self._property_operator.adjoint(direction))
+            .model
+        )
 
     def support(self, direction: Any, data: Any, /, *, start: Any = None) -> float:
-        """The support value in one direction, by minimising the dual cost.
+        """The support value in one direction, by minimizing the dual cost.
 
         **An unbounded infimum means the feasible set is empty**, not that the
-        minimisation failed: with no model both inside the prior and fitting
+        minimization failed: with no model both inside the prior and fitting
         the data, the primal supremum is over nothing and the dual falls away
         without limit. That is reported rather than returned, because a large
         negative number is a perfectly plausible-looking support value.
@@ -1605,7 +1621,7 @@ class _DualRoute(SetEstimator):
         Args:
             direction: the direction to evaluate in.
             data: the observations.
-            start: where to begin the minimisation. Used by
+            start: where to begin the minimization. Used by
                 :meth:`support_values` to carry each direction's certificate
                 into the next.
 
@@ -1618,7 +1634,7 @@ class _DualRoute(SetEstimator):
         """
         cost = self.dual_cost(direction, data)
         origin = self.data_space.zero() if start is None else start
-        result = self._method.minimise(cost, origin)
+        result = self._method.minimize(cost, origin)
         self._check_bounded(result)
         return result.value
 
@@ -1641,7 +1657,7 @@ class _DualRoute(SetEstimator):
         a valid one (§18.3(b)). This is the best of them.
         """
         cost = self.dual_cost(direction, data)
-        return self._method.minimise(cost, self.data_space.zero()).minimiser
+        return self._method.minimize(cost, self.data_space.zero()).minimizer
 
     def is_feasible(self, data: Any, /) -> bool:
         """Whether any model lies in both the prior set and the noise set.
@@ -1651,9 +1667,9 @@ class _DualRoute(SetEstimator):
         warm-started Krylov solves in the data space. For general convex
         sets it is the dual's own diagnosis: an unbounded dual *is* an empty
         primal, which is why :meth:`support` refuses rather than returning
-        the large negative number the minimisation was heading towards, and
+        the large negative number the minimization was heading towards, and
         this asks the same question without the exception, at the cost of
-        one minimisation and with the caveat that a dual which has not yet
+        one minimization and with the caveat that a dual which has not yet
         fallen far enough is read as feasible.
 
         Args:
@@ -1670,7 +1686,7 @@ class _DualRoute(SetEstimator):
                 prior_radius=self._prior.radius,
             )
         try:
-            self.support(self.target_space.basis_vector(0), data)
+            self.support(self.property_space.basis_vector(0), data)
         except ValueError:
             return False
         return True
@@ -1682,14 +1698,14 @@ class _DualRoute(SetEstimator):
         tests that in advance.
         """
         return ConvexSet.from_support_function(
-            self.target_space, lambda direction: self.support(direction, data)
+            self.property_space, lambda direction: self.support(direction, data)
         )
 
     def push_forward(self, operator: LinearOperator, /) -> "_DualRoute":
         """The same inference about a further property."""
         return _DualRoute(
             self._problem,
-            operator @ self._target,
+            operator @ self._property_operator,
             self._prior,
             noise=self._noise,
             method=self._method,
@@ -1705,7 +1721,7 @@ def _level_function_of(subset: Any, name: str) -> tuple[Functional, float]:
     """A set read as ``{ x : f(x) <= level }`` with ``f`` convex and differentiable.
 
     The form Al-Attar (2021) §3.3 works in: a ball is the squared distance
-    to its centre at the squared radius, an ellipsoid its Mahalanobis form at
+    to its center at the squared radius, an ellipsoid its Mahalanobis form at
     one, a sublevel set is already in the form, and any convex set that
     declares a level function supplies its own.
     """
@@ -1729,7 +1745,7 @@ class _LikelihoodRoute:
     that shape otherwise. The smallest model, in the prior's own sense, that
     has a given property and fits the data is found by a Lagrange multiplier
     on the confidence constraint: for each ``eta > 0`` the convex functional
-    ``f(m) + eta g(d - A m)`` has one minimiser over the models with that
+    ``f(m) + eta g(d - A m)`` has one minimizer over the models with that
     property, and its misfit ``g`` is non-increasing in ``eta`` -- Lemma 3.1
     for a squared norm, and the same monotonicity for any convex ``f`` -- so
     the ``eta`` at which it meets ``b`` is a monotone scalar root find, the
@@ -1738,11 +1754,11 @@ class _LikelihoodRoute:
     fits at all. The value is then ``f`` at that model, against ``a``.
 
     A fixed property confines the model to an affine subspace, ``m~ + ker T``
-    with ``m~`` any model having that property; the minimisation runs over
+    with ``m~`` any model having that property; the minimization runs over
     the kernel through its orthogonal projector, which needs no metric of the
-    prior's since the optimiser, not the projector, finds the minimum.
+    prior's since the optimizer, not the projector, finds the minimum.
 
-    Each probe is one convex minimisation, warm-started from the last. For
+    Each probe is one convex minimization, warm-started from the last. For
     quadratic ``f`` and ``g``, balls and ellipsoids, that is a linear solve
     and Newton takes it in a step or two; for general ones it is Newton or
     L-BFGS proper, whichever the functionals' derivatives allow. Nothing is
@@ -1752,51 +1768,53 @@ class _LikelihoodRoute:
     def __init__(
         self,
         problem: LinearForwardProblem,
-        target: LinearOperator,
+        property_operator: LinearOperator,
         prior: Any,
         noise: Any,
         /,
         *,
         solver: LinearSolver | None = None,
-        optimiser: Any = None,
-        iterations: int = 60,
+        optimizer: Any = None,
+        max_iterations: int = 60,
         rtol: float = 1e-6,
     ) -> None:
-        from ..numerics.optimisation import LBFGS, NewtonCG
+        from ..numerics.optimization import LBFGS, NewtonCG
 
         self._problem = problem
-        self._target = target
+        self._property_operator = property_operator
         self._prior_set = prior
         self._prior, self._prior_level = _level_function_of(prior, "The prior")
         self._likelihood, self._level = _level_function_of(noise, "The confidence set")
         self._solver = solver or CGSolver(rtol=1e-12)
         self._quadratic_prior = isinstance(prior, (Ball, Ellipsoid))
-        if optimiser is None:
+        if optimizer is None:
             # The forcing term is tight because for quadratic level functions
-            # one *exact* Newton step is the minimiser: with the inexact
+            # one *exact* Newton step is the minimizer: with the inexact
             # default of 1e-3 the step carried a relative error of a
             # thousandth into the model, and the value-decrease test then
             # stopped the iteration there, warm start after warm start.
-            optimiser = (
+            optimizer = (
                 NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
                 if self._likelihood.has_hessian and self._prior.has_hessian
                 else LBFGS(rtol=1e-10, gtol=0.0)
             )
-        self._optimiser = optimiser
-        self._iterations = iterations
+        self._optimizer = optimizer
+        self._max_iterations = max_iterations
         self._rtol = rtol
 
     @cached_property
     def _kernel(self) -> LinearOperator:
-        return OrthogonalProjector.onto_kernel(self._target, solver=self._solver)
+        return OrthogonalProjector.onto_kernel(
+            self._property_operator, solver=self._solver
+        )
 
     @cached_property
     def _property_pseudo_inverse(self) -> LinearOperator:
         """``T* (T T*)^-1``: some model with a given property, to start from."""
-        normal = (self._target @ self._target.adjoint).with_traits(
-            Traits.POSITIVE_DEFINITE
-        )
-        return self._target.adjoint @ CholeskySolver()(normal)
+        normal = (
+            self._property_operator @ self._property_operator.adjoint
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        return self._property_operator.adjoint @ CholeskySolver()(normal)
 
     def _objective(
         self,
@@ -1824,9 +1842,9 @@ class _LikelihoodRoute:
             return data_space.subtract(base, forward(m))
 
         # Scaled by the multiplier: ``f / eta + g`` rather than ``f + eta g``.
-        # The two have the same minimiser, but at a large multiplier the
+        # The two have the same minimizer, but at a large multiplier the
         # unscaled objective is dominated by the misfit term and the
-        # optimiser's value-decrease test fires while the prior term is
+        # optimizer's value-decrease test fires while the prior term is
         # still moving, which left the fitted misfit 0.8 per cent above the
         # level on one seed in twenty-five. Scaled, the misfit is order one
         # throughout and the prior term is what the last decreases are.
@@ -1864,13 +1882,13 @@ class _LikelihoodRoute:
         )
 
     def _fit(self, data: Any, anchor: Any, projector: LinearOperator) -> Any | None:
-        """The model ``anchor + P v`` minimising ``f`` with ``g(d - A m) <= b``, or None.
+        """The model ``anchor + P v`` minimizing ``f`` with ``g(d - A m) <= b``, or None.
 
         Decided in three steps, as the paper's remark after Lemma 3.1
         suggests: the misfit's limit as the multiplier grows is the
         unconstrained minimum of ``g(d - A m)`` over the subspace, so that is
-        minimised first. A limit above the level proves nothing reaches the
-        set; a limit at the level, to tolerance, makes that minimiser the
+        minimized first. A limit above the level proves nothing reaches the
+        set; a limit at the level, to tolerance, makes that minimizer the
         answer; and a limit below it guarantees a root at a finite
         multiplier, which the monotone search then brackets without ever
         needing a multiplier large enough to overflow the Newton system.
@@ -1879,29 +1897,29 @@ class _LikelihoodRoute:
         self._base = data
         level = self._level
         start = space.zero()
-        limit = self._optimiser.minimise(
+        limit = self._optimizer.minimize(
             self._objective(anchor, projector, None), start
         )
         floor = float(limit.value)
         if floor > level * (1.0 + self._rtol):
             return None
         if floor >= level * (1.0 - self._rtol):
-            return space.add(anchor, projector(limit.minimiser))
+            return space.add(anchor, projector(limit.minimizer))
 
         # Every probe starts from zero. Warm-starting each from the last
-        # probe's minimiser -- the obvious saving, and what the first version
+        # probe's minimizer -- the obvious saving, and what the first version
         # did -- returned a misfit 0.7 per cent above the level on one seed
         # in twenty-five while reporting convergence: Newton-CG from a
-        # nearby point stopped after one step short of the minimiser, the
+        # nearby point stopped after one step short of the minimizer, the
         # quantity froze across the closing bracket, and the search closed
         # on a false root. Cold, a quadratic objective is one exact Newton
-        # step, so the saving was small; the optimiser's stopping rules on
+        # step, so the saving was small; the optimizer's stopping rules on
         # warm starts are an open point recorded in DESIGN §70.
         def probe(multiplier: float, previous: Any) -> Evaluation:
-            result = self._optimiser.minimise(
+            result = self._optimizer.minimize(
                 self._objective(anchor, projector, multiplier), start
             )
-            v = result.minimiser
+            v = result.minimizer
             m = space.add(anchor, projector(v))
             misfit = float(
                 self._likelihood(
@@ -1916,7 +1934,7 @@ class _LikelihoodRoute:
             probe,
             level,
             decreasing=True,
-            iterations=self._iterations,
+            max_iterations=self._max_iterations,
             rtol=self._rtol,
             expansions=40,
             warm_start=False,
@@ -1935,7 +1953,7 @@ class _LikelihoodRoute:
 
         ``None`` when no model does, eq. (3.15) with an infinite infimum. The
         prior's *level* plays no part: this is the data against the
-        confidence set alone, minimised in the prior's shape.
+        confidence set alone, minimized in the prior's shape.
         """
         space = self._problem.model_space
         if self._likelihood(data) <= self._level:
@@ -1967,7 +1985,7 @@ class _LikelihoodRoute:
     def inclusion_norm(self, value: Any, data: Any, /) -> float:
         """The root of the level function, for a quadratic prior only.
 
-        A ball's level function is the squared distance to its centre and an
+        A ball's level function is the squared distance to its center and an
         ellipsoid's the Mahalanobis form, so the root is the model's norm
         against the radius, or the Mahalanobis root against one.
 
@@ -2005,14 +2023,14 @@ class _FeasibleSupport(SupportFunction):
 
     @property
     def has_subgradient(self) -> bool:
-        """Only where the route exhibits the maximiser."""
-        return self._set.has_maximiser
+        """Only where the route exhibits the maximizer."""
+        return self._set.has_maximizer
 
     def _value(self, y: Any) -> float:
         return self._set.support(y)
 
-    def _maximiser(self, y: Any) -> Any:
-        return self._set.support_maximiser(y)
+    def _maximizer(self, y: Any) -> Any:
+        return self._set.support_maximizer(y)
 
 
 class FeasiblePropertySet(ConvexSet):
@@ -2029,7 +2047,7 @@ class FeasiblePropertySet(ConvexSet):
     ellipsoid or a sublevel set): :meth:`contains` and :meth:`admits`,
     :meth:`inclusion_norm` and :meth:`level_function`, :meth:`extent` for
     inner bounds along a line, :meth:`inner_hull` for an inner polytope. It
-    has a **maximiser** on the closed form and the bisection, with
+    has a **maximizer** on the closed form and the bisection, with
     :meth:`extremal_model` the model attaining it, and a **projection** on
     the closed form alone, where it is an ellipsoid and :attr:`ellipsoid`
     hands that over with everything an ellipsoid has.
@@ -2041,7 +2059,7 @@ class FeasiblePropertySet(ConvexSet):
     """
 
     def __init__(self, estimator: "BackusGilbertParker", data: Any, /) -> None:
-        super().__init__(estimator.target_space)
+        super().__init__(estimator.property_space)
         self._estimator = estimator
         self._data = data
 
@@ -2109,8 +2127,8 @@ class FeasiblePropertySet(ConvexSet):
         return self._estimator.route is not None
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether the route exhibits the maximiser."""
+    def has_maximizer(self) -> bool:
+        """Whether the route exhibits the maximizer."""
         return self.route in ("closed_form", "bisection", "kkt")
 
     @property
@@ -2174,7 +2192,7 @@ class FeasiblePropertySet(ConvexSet):
         """The support values in many directions.
 
         On a general route this is the dual engine's sweep, with its warm
-        start across neighbouring directions and its ``route=``,
+        start across neighboring directions and its ``route=``,
         ``warm_start=`` and ``n_jobs=`` options, the route defaulting to
         this set's. The closed form and the bisection have no state to
         carry between directions and evaluate each in turn, or in parallel
@@ -2208,7 +2226,7 @@ class FeasiblePropertySet(ConvexSet):
         """The support function, answered by :meth:`support`."""
         return _FeasibleSupport(self)
 
-    def support_maximiser(self, direction: Any, /) -> Any:
+    def support_maximizer(self, direction: Any, /) -> Any:
         """The property value attaining the support: the extremal model's.
 
         Raises:
@@ -2216,8 +2234,8 @@ class FeasiblePropertySet(ConvexSet):
                 by duality and exhibits no point.
         """
         if self.route == "closed_form":
-            return self.ellipsoid.support_maximiser(direction)
-        return self._estimator.target(self.extremal_model(direction))
+            return self.ellipsoid.support_maximizer(direction)
+        return self._estimator.property_operator(self.extremal_model(direction))
 
     def extremal_model(self, direction: Any, /) -> Any:
         """The model of the feasible set furthest along a direction.
@@ -2240,12 +2258,14 @@ class FeasiblePropertySet(ConvexSet):
                 "not exhibit the model attaining them; the closed form, the "
                 "bisection and the KKT route do."
             )
-        space = self._estimator.problem.model_space
+        space = self._estimator.forward_problem.model_space
         budget = self._algorithm.budget(self._data)
         if budget < 0.0:
             raise ValueError("The feasible set is empty; there is no extremal model.")
         anchor = self._algorithm.minimum_norm_model(self._data)
-        pulled = self._algorithm._kernel(self._estimator.target.adjoint(direction))
+        pulled = self._algorithm._kernel(
+            self._estimator.property_operator.adjoint(direction)
+        )
         length = space.norm(pulled)
         if length == 0.0:
             return anchor
@@ -2351,7 +2371,7 @@ class FeasiblePropertySet(ConvexSet):
     def admits(self, value: Any, /, *, rtol: float = 1e-8) -> bool:
         """Whether a property value is consistent with the data and the prior.
 
-        The membership characterisation of the set, computed without forming
+        The membership characterization of the set, computed without forming
         it; it agrees with ``contains``, which calls it.
 
         Args:
@@ -2380,7 +2400,7 @@ class FeasiblePropertySet(ConvexSet):
     def level_function(self) -> Functional:
         """``p -> inclusion_level(p)``, whose sublevel set at :attr:`level` is this set.
 
-        The sublevel-set characterisation, as :meth:`support_function` is
+        The sublevel-set characterization, as :meth:`support_function` is
         the other: convex on the property space (Al-Attar 2021 §2.3).
         """
         self._inclusion("The level function")
@@ -2413,7 +2433,9 @@ class FeasiblePropertySet(ConvexSet):
             )
         return model
 
-    def extent(self, direction: Any, /, *, iterations: int = 40) -> tuple[float, float]:
+    def extent(
+        self, direction: Any, /, *, max_iterations: int = 40
+    ) -> tuple[float, float]:
         """How far the set reaches along a line through an interior point.
 
         Al-Attar (2021) Fig. 8: along the line through the property of the
@@ -2429,7 +2451,7 @@ class FeasiblePropertySet(ConvexSet):
 
         Args:
             direction: the direction of the line.
-            iterations: bisection steps for each end.
+            max_iterations: bisection steps for each end.
 
         Returns:
             ``(lower, upper)``.
@@ -2440,7 +2462,7 @@ class FeasiblePropertySet(ConvexSet):
         """
         self._inclusion("An extent")
         space = self.domain
-        base = self._estimator.target(self.fitting_model())
+        base = self._estimator.property_operator(self.fitting_model())
         length = space.squared_norm(direction)
         if length == 0.0:
             value = space.inner_product(direction, base)
@@ -2459,7 +2481,7 @@ class FeasiblePropertySet(ConvexSet):
                 inside, outside = outside, 2.0 * outside
             else:
                 raise ValueError("The set appears unbounded along this direction.")
-            for _ in range(iterations):
+            for _ in range(max_iterations):
                 middle = 0.5 * (inside + outside)
                 if self.admits(space.axpy(middle, direction, space.copy(base))):
                     inside = middle
@@ -2467,8 +2489,8 @@ class FeasiblePropertySet(ConvexSet):
                     outside = middle
             return inside
 
-        centre = space.inner_product(direction, base)
-        return centre + crossing(-1.0) * length, centre + crossing(1.0) * length
+        center = space.inner_product(direction, base)
+        return center + crossing(-1.0) * length, center + crossing(1.0) * length
 
     def inner_hull(self, values: Any, /) -> Polytope:
         """The convex hull of whichever candidate values are admissible.
@@ -2542,7 +2564,7 @@ _MEMBERSHIPS = ("auto", "closed_form", "reduced", "likelihood")
 def _has_level_function(subset: Any) -> bool:
     """Whether a set describes itself by a *differentiable* level function.
 
-    The likelihood route minimises with gradients, so a polytope's level
+    The likelihood route minimizes with gradients, so a polytope's level
     function, the largest of its excesses with a subgradient only, does
     not qualify; a ball's, an ellipsoid's or a smooth sublevel set's does.
     """
@@ -2581,7 +2603,7 @@ class BackusGilbertParker(SetEstimator):
     * a ball prior and a ball confidence set: **bisection**, BGP's primal
       route, a damped least-squares solve inside two nested monotone root
       finds per direction, which also produces the extremal model;
-    * anything convex: the **dual**, BGP eq. (28), a nonsmooth minimisation
+    * anything convex: the **dual**, BGP eq. (28), a nonsmooth minimization
       over the data space per direction, with the primal splitting, the KKT
       and the smoothed solvers as alternatives where they apply.
 
@@ -2590,12 +2612,12 @@ class BackusGilbertParker(SetEstimator):
     where a cheaper one applies; the request is refused when the sets do not
     allow it, with a message saying which route does.
 
-    **Two characterisations of the answer.** A closed convex set is
+    **Two characterizations of the answer.** A closed convex set is
     determined by its support function (Rockafellar 13.1), and every route
     gives that: :meth:`support` in one direction, :meth:`support_values` in
     many, and :meth:`__call__` returns the set as an object carrying it, an
     :class:`~pygeoinf2.geometry.convex.Ellipsoid` from the closed form and a
-    support-function oracle otherwise. A set can also be characterised as
+    support-function oracle otherwise. A set can also be characterized as
     a **sublevel set**, by a function saying how far a proposed value is
     from acceptable: the minimum norm of a model reproducing the value and
     fitting the data, which is acceptable when within the prior radius
@@ -2604,7 +2626,7 @@ class BackusGilbertParker(SetEstimator):
     data, the data-space reduction for two balls, or the likelihood route
     for a confidence set given as a sublevel set of any differentiable
     convex functional, a ball, an ellipsoid or a ``SublevelSet``. It needs a
-    ball prior. Both characterisations live on the returned
+    ball prior. Both characterizations live on the returned
     :class:`FeasiblePropertySet`, which declares which it has: the support
     function bounds the set from outside, the level function decides points
     and gives inner bounds, and not both are required of every algorithm.
@@ -2615,7 +2637,7 @@ class BackusGilbertParker(SetEstimator):
 
     .. code-block:: python
 
-        feasible = BackusGilbertParker(problem, target, prior)(data)
+        feasible = BackusGilbertParker(problem, property_operator, prior)(data)
         feasible.is_empty()
         feasible.support(direction)          # the support-function side
         feasible.contains(value)             # the level-function side
@@ -2626,7 +2648,7 @@ class BackusGilbertParker(SetEstimator):
     def __init__(
         self,
         problem: LinearForwardProblem,
-        target: LinearOperator,
+        property_operator: LinearOperator,
         prior: ConvexSet,
         /,
         *,
@@ -2635,18 +2657,18 @@ class BackusGilbertParker(SetEstimator):
         route: str = "auto",
         membership: str = "auto",
         solver: LinearSolver | None = None,
-        iterations: int = 60,
+        max_iterations: int = 60,
         method: Any = None,
-        optimiser: Any = None,
+        optimizer: Any = None,
     ) -> None:
         """
         Args:
             problem: the forward problem.
-            target: the property operator ``T``, acting on the model space.
+            property_operator: ``T``, the property operator, acting on the model space.
             prior: the constraint set on the model space. A
                 :class:`~pygeoinf2.geometry.convex.Ball` admits the cheap
                 routes; any convex set with a support function and a
-                maximiser admits the dual.
+                maximizer admits the dual.
             noise: the confidence set on the data space: a convex set, or a
                 ``SublevelSet`` of a convex functional, which is taken as
                 convex on the caller's word since a sublevel set does not
@@ -2665,11 +2687,11 @@ class BackusGilbertParker(SetEstimator):
                 and the likelihood route applies to a ball as well.
             solver: how the closed form, the bisection and the likelihood
                 route invert their operators.
-            iterations: bisection steps, on each of the two multipliers,
+            max_iterations: bisection steps, on each of the two multipliers,
                 and the likelihood route's root find.
-            method: the general route's minimiser. A proximal bundle method
+            method: the general route's minimizer. A proximal bundle method
                 by default.
-            optimiser: the likelihood route's minimiser for each probe.
+            optimizer: the likelihood route's minimizer for each probe.
                 Newton-CG when the confidence set's functional has a
                 Hessian, L-BFGS otherwise.
 
@@ -2686,7 +2708,7 @@ class BackusGilbertParker(SetEstimator):
             raise ValueError(
                 f"membership must be one of {_MEMBERSHIPS}, got {membership!r}."
             )
-        if target.domain != problem.model_space:
+        if property_operator.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         if prior.domain != problem.model_space:
             raise ValueError("The constraint set must lie in the model space.")
@@ -2700,16 +2722,16 @@ class BackusGilbertParker(SetEstimator):
             raise ValueError("The confidence set must lie in the data space.")
 
         self._problem = problem
-        self._target = target
+        self._property_operator = property_operator
         self._prior = prior
         self._noise = noise
         self._level = level
         self._requested = route
         self._requested_membership = membership
         self._solver = solver
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._method = method
-        self._optimiser = optimiser
+        self._optimizer = optimizer
         self._route = self._choose(route)
         self._algorithm = None if self._route is None else self._build(self._route)
         self._membership = self._choose_membership(membership)
@@ -2815,20 +2837,20 @@ class BackusGilbertParker(SetEstimator):
     def _build(self, route: str) -> Any:
         if route == "closed_form":
             return _ClosedFormRoute(
-                self._problem, self._target, self._prior, solver=self._solver
+                self._problem, self._property_operator, self._prior, solver=self._solver
             )
         if route == "bisection":
             return _BisectionRoute(
                 self._problem,
-                self._target,
+                self._property_operator,
                 self._prior,
                 noise=self._noise,
                 solver=self._solver,
-                iterations=self._iterations,
+                max_iterations=self._max_iterations,
             )
         return _DualRoute(
             self._problem,
-            self._target,
+            self._property_operator,
             self._prior,
             noise=self._noise,
             method=self._method,
@@ -2902,12 +2924,12 @@ class BackusGilbertParker(SetEstimator):
     def _likelihood_engine(self) -> Any:
         return _LikelihoodRoute(
             self._problem,
-            self._target,
+            self._property_operator,
             self._prior,
             self._noise,
             solver=self._solver,
-            optimiser=self._optimiser,
-            iterations=self._iterations,
+            optimizer=self._optimizer,
+            max_iterations=self._max_iterations,
         )
 
     def _need_inclusion(self, what: str) -> Any:
@@ -2928,14 +2950,14 @@ class BackusGilbertParker(SetEstimator):
     # ----------------------------------------------------------------- #
 
     @property
-    def problem(self) -> LinearForwardProblem:
+    def forward_problem(self) -> LinearForwardProblem:
         """The forward problem."""
         return self._problem
 
     @property
-    def target(self) -> LinearOperator:
+    def property_operator(self) -> LinearOperator:
         """The property operator ``T``."""
-        return self._target
+        return self._property_operator
 
     @property
     def prior(self) -> ConvexSet:
@@ -2973,9 +2995,9 @@ class BackusGilbertParker(SetEstimator):
         return self._problem.data_space
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The property space."""
-        return self._target.codomain
+        return self._property_operator.codomain
 
     # ----------------------------------------------------------------- #
 
@@ -2996,16 +3018,16 @@ class BackusGilbertParker(SetEstimator):
         """The same inference about a further property of the model."""
         return BackusGilbertParker(
             self._problem,
-            operator @ self._target,
+            operator @ self._property_operator,
             self._prior,
             noise=self._noise,
             level=self._level,
             route=self._requested,
             membership=self._requested_membership,
             solver=self._solver,
-            iterations=self._iterations,
+            max_iterations=self._max_iterations,
             method=self._method,
-            optimiser=self._optimiser,
+            optimizer=self._optimizer,
         )
 
     def __repr__(self) -> str:

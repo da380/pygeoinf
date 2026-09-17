@@ -1,11 +1,11 @@
-"""Randomised linear algebra: range finding, factorisation, estimators."""
+"""Randomized linear algebra: range finding, factorization, estimators."""
 
 import numpy as np
 import pytest
 
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
-from pygeoinf2.numerics.randomised import (
+from pygeoinf2.numerics.randomized import (
     Estimate,
     LowRankCholesky,
     LowRankEig,
@@ -92,7 +92,7 @@ class TestRangeFinding:
             random_range(A, rank=0, rng=rng)
 
 
-class TestFactorisations:
+class TestFactorizations:
     def test_eig_recovers_an_exactly_low_rank_operator(self, exact_low_rank, rng):
         X, A, matrix = exact_low_rank
         decomposition = random_eig(A, rank=RANK, rng=rng)
@@ -146,17 +146,17 @@ class TestFactorisations:
 
     def test_cholesky_gives_a_usable_covariance_factor(self, exact_low_rank, rng):
         X, A, matrix = exact_low_rank
-        factorisation = random_cholesky(A, rank=RANK, rng=rng)
-        assert isinstance(factorisation, LowRankCholesky)
-        assert Traits.POSITIVE_SEMIDEFINITE & factorisation.traits
+        factorization = random_cholesky(A, rank=RANK, rng=rng)
+        assert isinstance(factorization, LowRankCholesky)
+        assert Traits.POSITIVE_SEMIDEFINITE & factorization.traits
 
         x = X.random(rng=rng)
-        assert np.allclose(factorisation(x), matrix @ x, atol=1e-8)
+        assert np.allclose(factorization(x), matrix @ x, atol=1e-8)
 
         # The factor is exactly what a Gaussian needs to sample from.
         from pygeoinf2.probability import GaussianMeasure
 
-        measure = GaussianMeasure(X, covariance_factor=factorisation.factor)
+        measure = GaussianMeasure(X, covariance_factor=factorization.factor)
         assert measure.can_sample
         assert np.allclose(measure.covariance(x), matrix @ x, atol=1e-8)
 
@@ -170,7 +170,7 @@ class TestFactorisations:
             random_cholesky(A, rank=3, rng=rng)
 
     def test_the_eig_factor_is_an_isometry(self, exact_low_rank, rng):
-        """Which is what makes U D U* recognisable as semidefinite."""
+        """Which is what makes U D U* recognizable as semidefinite."""
         _, A, _ = exact_low_rank
         factor = random_eig(A, rank=RANK, rng=rng).factor
         assert Traits.ISOMETRY & factor.traits
@@ -304,9 +304,9 @@ class TestCoordinateFreedom:
 
     def test_cholesky_is_coordinate_free(self, opaque_problem, rng):
         space, A, _ = opaque_problem
-        factorisation = random_cholesky(A, rank=2, rng=rng)
+        factorization = random_cholesky(A, rank=2, rng=rng)
         x = space.random(rng=rng)
-        assert space.norm(space.subtract(factorisation(x), A(x))) < 1e-8
+        assert space.norm(space.subtract(factorization(x), A(x))) < 1e-8
 
     def test_trace_is_coordinate_free(self, opaque_problem, rng):
         _, A, values = opaque_problem
@@ -328,7 +328,7 @@ def dense_metric(n, rng):
 
 class TestAdaptiveRangeIsIncremental:
     """The adaptive range finder rebuilt its whole basis every round, redoing
-    every earlier vector's orthogonalisation and throwing away the residuals it
+    every earlier vector's orthogonalization and throwing away the residuals it
     had just computed to test convergence."""
 
     @staticmethod
@@ -502,7 +502,7 @@ class TestSamplingToATolerance:
         assert achieved[1e-2] < achieved[4e-2]
         assert achieved[1e-2] < 2e-2
 
-    def test_the_ceiling_is_honoured(self, rng):
+    def test_the_ceiling_is_honored(self, rng):
         """A tolerance that cannot be met must stop somewhere, and say how
         many it drew."""
         _, operator = self.operator(60, rng)
@@ -543,7 +543,7 @@ class TestSamplingToATolerance:
 
 
 class TestComponentFastPaths:
-    """The randomised routines do their arithmetic on component arrays when
+    """The randomized routines do their arithmetic on component arrays when
     the space has them, converting each vector once each way.
 
     On a spectral space an inner product analyses both arguments, so the

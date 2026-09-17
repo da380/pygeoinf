@@ -42,33 +42,33 @@ def least_squares(space, matrix, data):
 class TestSquaredDistance:
     def test_value_and_gradient(self, rng):
         space = make_weighted_space()
-        centre = space.random(rng=rng)
-        f = SquaredDistance(space, centre=centre)
+        center = space.random(rng=rng)
+        f = SquaredDistance(space, center=center)
         x = space.random(rng=rng)
 
         assert f(x) == pytest.approx(
-            0.5 * space.squared_norm(space.subtract(x, centre))
+            0.5 * space.squared_norm(space.subtract(x, center))
         )
         assert (
-            space.norm(space.subtract(f.gradient(x), space.subtract(x, centre))) < 1e-12
+            space.norm(space.subtract(f.gradient(x), space.subtract(x, center))) < 1e-12
         )
 
     def test_its_hessian_is_the_identity(self, rng):
         """Whatever the metric, which is the whole point of DESIGN.md 5.6."""
         space = make_weighted_space()
-        f = SquaredDistance(space, centre=space.random(rng=rng))
+        f = SquaredDistance(space, center=space.random(rng=rng))
         x, v = space.random(rng=rng), space.random(rng=rng)
         assert space.norm(space.subtract(f.hessian(x)(v), v)) < 1e-12
 
-    def test_the_prox_is_a_contraction_towards_the_centre(self, rng):
+    def test_the_prox_is_a_contraction_towards_the_center(self, rng):
         space = make_weighted_space()
-        centre = space.random(rng=rng)
-        f = SquaredDistance(space, centre=centre)
+        center = space.random(rng=rng)
+        f = SquaredDistance(space, center=center)
         x = space.random(rng=rng)
         for step in (0.1, 1.0, 10.0):
             proximal = f.prox(x, step)
             expected = space.scale(
-                1.0 / (1.0 + step), space.axpy(step, centre, space.copy(x))
+                1.0 / (1.0 + step), space.axpy(step, center, space.copy(x))
             )
             assert space.norm(space.subtract(proximal, expected)) < 1e-12
 
@@ -164,9 +164,9 @@ class TestSupportFunctions:
         space = make_weighted_space()
         h = SupportFunction.of_ball(space, radius=3.0)
         y = space.random(rng=rng)
-        maximiser = h.subgradient(y)
-        assert space.norm(maximiser) == pytest.approx(3.0)
-        assert space.inner_product(maximiser, y) == pytest.approx(h(y))
+        maximizer = h.subgradient(y)
+        assert space.norm(maximizer) == pytest.approx(3.0)
+        assert space.inner_product(maximizer, y) == pytest.approx(h(y))
 
     def test_a_point(self, rng):
         space = make_weighted_space()
@@ -175,14 +175,14 @@ class TestSupportFunctions:
         y = space.random(rng=rng)
         assert h(y) == pytest.approx(space.inner_product(point, y))
 
-    def test_an_oracle_with_its_maximiser(self, rng):
+    def test_an_oracle_with_its_maximizer(self, rng):
         """v1's ``CallableSupportFunction``: a callable for the value and,
         when known, one for the point attaining it, which is the subgradient
         a bundle method asks for."""
         space = make_weighted_space()
         ball = SupportFunction.of_ball(space, radius=2.0)
         h = SupportFunction.of_oracle(
-            space, lambda q: 2.0 * space.norm(q), maximiser=ball.subgradient
+            space, lambda q: 2.0 * space.norm(q), maximizer=ball.subgradient
         )
         y = space.random(rng=rng)
         assert h(y) == pytest.approx(2.0 * space.norm(y))
@@ -192,20 +192,20 @@ class TestSupportFunctions:
         values_only = SupportFunction.of_oracle(space, lambda q: 2.0 * space.norm(q))
         assert values_only(y) == pytest.approx(h(y))
         assert not values_only.has_subgradient
-        with pytest.raises(NotImplementedError, match="maximiser"):
+        with pytest.raises(NotImplementedError, match="maximizer"):
             values_only.subgradient(y)
 
     def test_a_minkowski_sum(self, rng):
         """The algebra is closed, which is why the class exists."""
         space = make_weighted_space()
-        centre = space.random(rng=rng)
+        center = space.random(rng=rng)
         total = SupportFunction.of_ball(space, radius=2.0) + SupportFunction.of_point(
-            space, centre
+            space, center
         )
         assert isinstance(total, SupportFunction)
         y = space.random(rng=rng)
         assert total(y) == pytest.approx(
-            2.0 * space.norm(y) + space.inner_product(centre, y)
+            2.0 * space.norm(y) + space.inner_product(center, y)
         )
 
     def test_a_positive_scaling(self, rng):
@@ -235,18 +235,18 @@ class TestSupportFunctions:
 
 class TestProximalGradient:
     def test_it_solves_a_problem_with_a_known_answer(self, rng):
-        """min 0.5||x-c||^2 + w||x|| has the shrinkage of c as its minimiser."""
+        """min 0.5||x-c||^2 + w||x|| has the shrinkage of c as its minimizer."""
         space = make_weighted_space()
-        centre = space.random(rng=rng)
-        smooth = SquaredDistance(space, centre=centre)
+        center = space.random(rng=rng)
+        smooth = SquaredDistance(space, center=center)
         penalty = NormFunctional(space, weight=0.3)
 
-        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimise(
+        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
             smooth, space.random(rng=rng), nonsmooth=penalty
         )
         assert result.converged
-        expected = penalty.prox(centre, 1.0)
-        assert space.norm(space.subtract(result.minimiser, expected)) < 1e-8
+        expected = penalty.prox(center, 1.0)
+        assert space.norm(space.subtract(result.minimizer, expected)) < 1e-8
 
     def test_acceleration_helps_an_ill_conditioned_problem(self, rng):
         """Compared on a fixed budget, which is the meaningful comparison.
@@ -268,47 +268,47 @@ class TestProximalGradient:
         start = space.random(rng=rng)
 
         budget = dict(max_iterations=300, gtol=0.0)
-        plain = ProximalGradient(accelerated=False, **budget).minimise(
+        plain = ProximalGradient(accelerated=False, **budget).minimize(
             smooth, start, nonsmooth=penalty
         )
-        fast = ProximalGradient(accelerated=True, **budget).minimise(
+        fast = ProximalGradient(accelerated=True, **budget).minimize(
             smooth, start, nonsmooth=penalty
         )
         assert fast.value < plain.value
 
     def test_a_ball_constraint_is_respected(self, rng):
         space = make_weighted_space()
-        smooth = SquaredDistance(space, centre=space.random(rng=rng))
+        smooth = SquaredDistance(space, center=space.random(rng=rng))
         constraint = BallIndicator(space, radius=0.2)
-        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimise(
+        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
             smooth, space.random(rng=rng), nonsmooth=constraint
         )
-        assert space.norm(result.minimiser) <= 0.2 * (1.0 + 1e-8)
+        assert space.norm(result.minimizer) <= 0.2 * (1.0 + 1e-8)
 
     def test_it_works_with_no_nonsmooth_part(self, rng):
         space = make_weighted_space()
-        centre = space.random(rng=rng)
-        smooth = SquaredDistance(space, centre=centre)
-        result = ProximalGradient(max_iterations=500, gtol=1e-14).minimise(
+        center = space.random(rng=rng)
+        smooth = SquaredDistance(space, center=center)
+        result = ProximalGradient(max_iterations=500, gtol=1e-14).minimize(
             smooth, space.random(rng=rng)
         )
-        assert space.norm(space.subtract(result.minimiser, centre)) < 1e-8
+        assert space.norm(space.subtract(result.minimizer, center)) < 1e-8
 
     def test_a_nonsmooth_part_without_a_prox_is_refused(self, rng):
         space = EuclideanSpace(3)
         smooth = SquaredDistance(space)
         bad = Functional.from_callables(space, lambda x: float(abs(x).sum()))
         with pytest.raises(ValueError, match="proximal operator"):
-            ProximalGradient().minimise(smooth, space.zero(), nonsmooth=bad)
+            ProximalGradient().minimize(smooth, space.zero(), nonsmooth=bad)
 
 
 class TestSubgradientDescent:
-    def test_it_minimises_a_norm(self, rng):
+    def test_it_minimizes_a_norm(self, rng):
         space = make_weighted_space()
         f = NormFunctional(space, weight=1.0)
         result = SubgradientDescent(
             step_size=0.5, rule="sqrt", max_iterations=3000
-        ).minimise(f, space.random(rng=rng))
+        ).minimize(f, space.random(rng=rng))
         assert result.value < 1e-2
 
     def test_the_polyak_rule_is_faster_when_the_optimum_is_known(self, rng):
@@ -317,10 +317,10 @@ class TestSubgradientDescent:
         start = space.random(rng=rng)
         classical = SubgradientDescent(
             step_size=0.5, rule="sqrt", max_iterations=400
-        ).minimise(f, start)
+        ).minimize(f, start)
         polyak = SubgradientDescent(
             rule="polyak", target_value=0.0, max_iterations=400
-        ).minimise(f, start)
+        ).minimize(f, start)
         assert polyak.value < classical.value
 
     def test_polyak_needs_a_target(self):
@@ -335,11 +335,11 @@ class TestSubgradientDescent:
         space = EuclideanSpace(3)
         f = Functional.from_callables(space, lambda x: float(x @ x))
         with pytest.raises(ValueError, match="subgradient"):
-            SubgradientDescent(step_size=0.1).minimise(f, space.zero())
+            SubgradientDescent(step_size=0.1).minimize(f, space.zero())
 
     def test_a_smooth_functional_supplies_its_own_subgradient(self, rng):
         space = make_weighted_space()
-        f = SquaredDistance(space, centre=space.random(rng=rng))
+        f = SquaredDistance(space, center=space.random(rng=rng))
         assert f.has_subgradient
         assert (
             space.norm(
@@ -352,21 +352,21 @@ class TestSubgradientDescent:
 class TestProximalPoint:
     def test_it_converges_on_a_squared_distance(self, rng):
         space = make_weighted_space()
-        centre = space.random(rng=rng)
-        f = SquaredDistance(space, centre=centre)
-        result = ProximalPoint(step=1.0, max_iterations=500, gtol=1e-14).minimise(
+        center = space.random(rng=rng)
+        f = SquaredDistance(space, center=center)
+        result = ProximalPoint(step=1.0, max_iterations=500, gtol=1e-14).minimize(
             f, space.random(rng=rng)
         )
-        assert space.norm(space.subtract(result.minimiser, centre)) < 1e-8
+        assert space.norm(space.subtract(result.minimizer, center)) < 1e-8
 
     def test_a_larger_step_converges_in_fewer_iterations(self, rng):
         space = make_weighted_space()
-        f = SquaredDistance(space, centre=space.random(rng=rng))
+        f = SquaredDistance(space, center=space.random(rng=rng))
         start = space.random(rng=rng)
-        slow = ProximalPoint(step=0.1, max_iterations=2000, gtol=1e-12).minimise(
+        slow = ProximalPoint(step=0.1, max_iterations=2000, gtol=1e-12).minimize(
             f, start
         )
-        fast = ProximalPoint(step=10.0, max_iterations=2000, gtol=1e-12).minimise(
+        fast = ProximalPoint(step=10.0, max_iterations=2000, gtol=1e-12).minimize(
             f, start
         )
         assert fast.iterations < slow.iterations
@@ -379,7 +379,7 @@ class TestProximalPoint:
         space = EuclideanSpace(3)
         f = Functional.from_callables(space, lambda x: float(x @ x))
         with pytest.raises(ValueError, match="prox"):
-            ProximalPoint().minimise(f, space.zero())
+            ProximalPoint().minimize(f, space.zero())
 
 
 class TestCoordinateFreedom:
@@ -405,14 +405,14 @@ class TestCoordinateFreedom:
         assert opaque.norm(indicator.prox(far, 1.0)) == pytest.approx(0.3)
 
     def test_proximal_gradient_without_components(self, opaque, rng):
-        centre = opaque.random(rng=rng)
-        smooth = SquaredDistance(opaque, centre=centre)
+        center = opaque.random(rng=rng)
+        smooth = SquaredDistance(opaque, center=center)
         penalty = NormFunctional(opaque, weight=0.2)
-        result = ProximalGradient(max_iterations=1000, gtol=1e-14).minimise(
+        result = ProximalGradient(max_iterations=1000, gtol=1e-14).minimize(
             smooth, opaque.random(rng=rng), nonsmooth=penalty
         )
-        expected = penalty.prox(centre, 1.0)
-        assert opaque.norm(opaque.subtract(result.minimiser, expected)) < 1e-8
+        expected = penalty.prox(center, 1.0)
+        assert opaque.norm(opaque.subtract(result.minimizer, expected)) < 1e-8
 
     def test_support_functions_without_components(self, opaque, rng):
         h = SupportFunction.of_ball(opaque, radius=2.0)
@@ -421,8 +421,8 @@ class TestCoordinateFreedom:
 
 
 class TestTheBundleLearnsFromNullSteps:
-    """The subgradient used to be taken at the centre at the top of each
-    iteration. A null step leaves the centre where it is, so it added a cut
+    """The subgradient used to be taken at the center at the top of each
+    iteration. A null step leaves the center where it is, so it added a cut
     identical to one already in the bundle and learned nothing from the trial
     point it had just paid to evaluate -- and duplicate cuts make the model's
     Gram matrix exactly singular."""
@@ -451,7 +451,7 @@ class TestTheBundleLearnsFromNullSteps:
         from pygeoinf2.numerics.convex import ProximalBundleMethod
 
         space, functional = self.piecewise_linear(rng)
-        result = ProximalBundleMethod(iterations=300, tolerance=1e-8).minimise(
+        result = ProximalBundleMethod(max_iterations=300, tolerance=1e-8).minimize(
             functional, space.zero()
         )
         assert result.converged
@@ -470,7 +470,7 @@ class TestTheBundleLearnsFromNullSteps:
             seen.append(np.array(point))
             return original(point)
 
-        ProximalBundleMethod(iterations=40).minimise(
+        ProximalBundleMethod(max_iterations=40).minimize(
             functional, space.zero(), subgradient=watched
         )
         distinct = {tuple(np.round(point, 12)) for point in seen}
@@ -499,7 +499,7 @@ class TestTheBundleSubproblem:
         and the first version of this test picked one and claimed it.
         """
         from pygeoinf2.numerics.convex import (
-            _minimise_on_simplex,
+            _minimize_on_simplex,
             _project_on_simplex,
         )
 
@@ -520,8 +520,8 @@ class TestTheBundleSubproblem:
             plain = np.full(size, 1.0 / size)
             for _ in range(400):
                 plain = _project_on_simplex(plain - step * (quadratic @ plain - linear))
-            accelerated = _minimise_on_simplex(
-                quadratic, linear, iterations=400, tolerance=0.0, warn_above=np.inf
+            accelerated = _minimize_on_simplex(
+                quadratic, linear, max_iterations=400, tolerance=0.0, warn_above=np.inf
             )
             ratios.append(
                 residual(quadratic, linear, plain)
@@ -533,10 +533,10 @@ class TestTheBundleSubproblem:
         assert np.median(ratios) > 100.0
 
     def test_it_returns_a_point_of_the_simplex(self, rng):
-        from pygeoinf2.numerics.convex import _minimise_on_simplex
+        from pygeoinf2.numerics.convex import _minimize_on_simplex
 
         quadratic, linear = self.hard_problem(rng)
-        weights = _minimise_on_simplex(quadratic, linear, iterations=1000)
+        weights = _minimize_on_simplex(quadratic, linear, max_iterations=1000)
         assert weights.sum() == pytest.approx(1.0)
         assert np.all(weights >= 0.0)
 
@@ -544,12 +544,12 @@ class TestTheBundleSubproblem:
         """Silence used to be the only report, and a bundle calls this at
         every step -- so a failing subproblem showed up only as an outer
         method that would not settle."""
-        from pygeoinf2.numerics.convex import _minimise_on_simplex
+        from pygeoinf2.numerics.convex import _minimize_on_simplex
 
         quadratic, linear = self.hard_problem(rng)
         with pytest.warns(RuntimeWarning, match="did not converge"):
-            _minimise_on_simplex(
-                quadratic, linear, iterations=2, tolerance=1e-14, warn_above=1e-12
+            _minimize_on_simplex(
+                quadratic, linear, max_iterations=2, tolerance=1e-14, warn_above=1e-12
             )
 
     def test_a_small_residual_passes_without_a_warning(self, rng):
@@ -557,12 +557,12 @@ class TestTheBundleSubproblem:
         because the residual has a floor that no iteration count removes."""
         import warnings
 
-        from pygeoinf2.numerics.convex import _minimise_on_simplex
+        from pygeoinf2.numerics.convex import _minimize_on_simplex
 
         quadratic, linear = self.hard_problem(rng)
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            _minimise_on_simplex(quadratic, linear, iterations=1000)
+            _minimize_on_simplex(quadratic, linear, max_iterations=1000)
 
 
 class TestBundleResultReadsLikeAnOptimisationResult:
@@ -570,14 +570,14 @@ class TestBundleResultReadsLikeAnOptimisationResult:
         from dataclasses import fields
 
         from pygeoinf2.numerics.convex import BundleResult
-        from pygeoinf2.numerics.optimisation import OptimisationResult
+        from pygeoinf2.numerics.optimization import OptimisationResult
 
         shared = {f.name for f in fields(BundleResult)} & {
             f.name for f in fields(OptimisationResult)
         }
         assert {
             "value",
-            "minimiser",
+            "minimizer",
             "iterations",
             "evaluations",
             "converged",
@@ -590,7 +590,9 @@ class TestBundleResultReadsLikeAnOptimisationResult:
         space, functional = TestTheBundleLearnsFromNullSteps.piecewise_linear(
             rng, n=20, m=10
         )
-        result = ProximalBundleMethod(iterations=50).minimise(functional, space.zero())
+        result = ProximalBundleMethod(max_iterations=50).minimize(
+            functional, space.zero()
+        )
         assert result.evaluations >= result.iterations
         assert result.message
 
@@ -610,8 +612,8 @@ class TestReportedCounts:
                 )
 
         space = EuclideanSpace(3)
-        functional = SquaredDistance(space, centre=space.random(rng=rng))
-        result = LevelBundleMethod(iterations=50, qp_solver=Refusing()).minimise(
+        functional = SquaredDistance(space, center=space.random(rng=rng))
+        result = LevelBundleMethod(max_iterations=50, qp_solver=Refusing()).minimize(
             functional, space.zero()
         )
         assert not result.converged
@@ -633,7 +635,7 @@ class TestReportedCounts:
                 return base._value(x)
 
         functional = Counted(space)
-        result = SubgradientDescent(max_iterations=15, gtol=0.0).minimise(
+        result = SubgradientDescent(max_iterations=15, gtol=0.0).minimize(
             functional, space.random(rng=rng)
         )
         assert calls["value"] == result.iterations + 1  # used to be twice that

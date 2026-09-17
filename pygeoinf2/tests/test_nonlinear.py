@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from pygeoinf2.algebra.linearisation import Linearisation, QuadraticModel
+from pygeoinf2.algebra.linearization import Linearization, QuadraticModel
 from pygeoinf2.algebra.operators import (
     AffineOperator,
     Functional,
@@ -247,34 +247,34 @@ class TestSharedWork:
         calls = {"n": 0}
         M = rng.normal(size=(2, 3))
 
-        def linearise(x):
+        def linearize(x):
             calls["n"] += 1  # stands in for the PDE solve
             value = Y.from_components(M @ X.to_components(x))
-            return Linearisation(
+            return Linearization(
                 x, value, LinearOperator.from_matrix(X, Y, M, form="components")
             )
 
-        F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
+        F = Operator.from_callables(X, Y, lambda x: M @ x, linearize=linearize)
 
         model = F.at(X.random(rng=rng))
         _ = model.value, model.derivative
-        assert calls["n"] == 1, "at() should linearise once, not once per accessor"
+        assert calls["n"] == 1, "at() should linearize once, not once per accessor"
 
-    def test_call_does_not_linearise(self, rng):
+    def test_call_does_not_linearize(self, rng):
         """A line search does many value-only evaluations and must not pay."""
         X, Y = EuclideanSpace(3), EuclideanSpace(2)
         calls = {"n": 0}
         M = rng.normal(size=(2, 3))
 
-        def linearise(x):
+        def linearize(x):
             calls["n"] += 1
-            return Linearisation(
+            return Linearization(
                 x,
                 Y.from_components(M @ X.to_components(x)),
                 LinearOperator.from_matrix(X, Y, M, form="components"),
             )
 
-        F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
+        F = Operator.from_callables(X, Y, lambda x: M @ x, linearize=linearize)
         for _ in range(20):
             F(X.random(rng=rng))
         assert calls["n"] == 0
@@ -322,20 +322,20 @@ class TestDerivativeAlone:
         (F @ G).derivative(X.random(rng=rng))
         assert calls == {"Gv": 1, "Gd": 1, "Fd": 1}
 
-    def test_a_linearise_only_operator_still_answers(self, rng):
+    def test_a_linearize_only_operator_still_answers(self, rng):
         X, Y = EuclideanSpace(3), EuclideanSpace(2)
         M = rng.normal(size=(2, 3))
         calls = {"n": 0}
 
-        def linearise(x):
+        def linearize(x):
             calls["n"] += 1
-            return Linearisation(
+            return Linearization(
                 x,
                 Y.from_components(M @ X.to_components(x)),
                 LinearOperator.from_matrix(X, Y, M, form="components"),
             )
 
-        F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
+        F = Operator.from_callables(X, Y, lambda x: M @ x, linearize=linearize)
         assert F.has_derivative
         x = X.random(rng=rng)
         assert np.allclose(F.derivative(x)(x), M @ X.to_components(x))
@@ -383,15 +383,15 @@ class TestAffineCheck:
         b = Y.random(rng=rng)
 
         class WrongDerivative(AffineOperator):
-            # A derivative query goes through the linearisation, so both
+            # A derivative query goes through the linearization, so both
             # routes must lie for the claim to be testably false.
             def _derivative(self, x):
                 return A * 2.0
 
-            def _linearise(self, x):
-                from pygeoinf2.algebra.operators import Linearisation
+            def _linearize(self, x):
+                from pygeoinf2.algebra.operators import Linearization
 
-                return Linearisation(x, self._value(x), A * 2.0)
+                return Linearization(x, self._value(x), A * 2.0)
 
         with pytest.raises(AssertionError, match="derivative is the linear part"):
             check_affine(WrongDerivative(A, b), rng=rng)
@@ -460,7 +460,7 @@ class TestAffineOperator:
         x = Z.random(rng=rng)
         assert np.allclose((C @ F)(D(x)), C(F(D(x))))
 
-    def test_linearisation_as_affine(self, rng):
+    def test_linearization_as_affine(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(2)
         F = TestNonlinearOperator().build(X, Y, rng)
         x = X.random(rng=rng)
@@ -473,11 +473,11 @@ class TestTheFunctionalAlgebraIsClosed:
     """A sum of functionals is a functional, and so is a composition.
 
     It was not. ``phi + psi`` came back as a plain ``Operator``: no
-    ``.gradient``, no ``.hessian``, and ``at(x)`` a linearisation rather than a
+    ``.gradient``, no ``.hessian``, and ``at(x)`` a linearization rather than a
     quadratic model. So ``functional.at(x).gradient``, which is the first thing
-    every optimiser here asks for, raised ``AttributeError`` on any composed
+    every optimizer here asks for, raised ``AttributeError`` on any composed
     objective -- which is to say on every real one, since a misfit plus a
-    regulariser is a sum.
+    regularizer is a sum.
     """
 
     @pytest.fixture(params=["euclidean", "weighted"])
@@ -616,10 +616,10 @@ class TestTheFunctionalAlgebraIsClosed:
             numerical[:, column] = (forward - backward) / (2.0 * step)
         assert analytic == pytest.approx(numerical, abs=1e-6)
 
-    def test_an_optimiser_runs_on_a_composed_objective(self, rng):
+    def test_an_optimizer_runs_on_a_composed_objective(self, rng):
         """The payoff, and the thing that used to raise. A misfit plus a
-        regulariser is a sum of a composition and a scaling."""
-        from pygeoinf2.numerics.optimisation import LBFGS, NewtonCG
+        regularizer is a sum of a composition and a scaling."""
+        from pygeoinf2.numerics.optimization import LBFGS, NewtonCG
 
         domain, data_space = EuclideanSpace(12), EuclideanSpace(20)
         matrix = rng.normal(size=(20, 12))
@@ -644,10 +644,10 @@ class TestTheFunctionalAlgebraIsClosed:
         exact = np.linalg.solve(
             matrix.T @ matrix + 0.1 * np.identity(12), matrix.T @ observed
         )
-        for optimiser in (LBFGS(max_iterations=2000), NewtonCG(max_iterations=200)):
-            result = optimiser.minimise(objective, domain.zero())
+        for optimizer in (LBFGS(max_iterations=2000), NewtonCG(max_iterations=200)):
+            result = optimizer.minimize(objective, domain.zero())
             assert result.converged, result.message
-            assert result.minimiser == pytest.approx(exact, rel=1e-4)
+            assert result.minimizer == pytest.approx(exact, rel=1e-4)
 
 
 class TestTheLinearFunctionalAlgebraIsClosed:

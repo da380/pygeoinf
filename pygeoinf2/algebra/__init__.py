@@ -12,7 +12,7 @@ from .direct_sum import (
     RowLinearOperator,
     RowOperator,
 )
-from .linearisation import Linearisation, QuadraticModel
+from .linearization import Linearization, QuadraticModel
 from .operators import (
     AffineOperator,
     Functional,
@@ -54,7 +54,7 @@ __all__ = [
     "Functional",
     "HilbertModule",
     "HilbertSpace",
-    "Linearisation",
+    "Linearization",
     "LinearFunctional",
     "LinearOperator",
     "MassWeightedSpace",

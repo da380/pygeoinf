@@ -5,7 +5,7 @@ A preconditioner is only ever an approximate inverse, so most of what can be
 said about one is a matter of degree. The tests that are not are the ones worth
 writing, and there are three kinds here:
 
-* an identity that must hold exactly (Woodbury, and the localised
+* an identity that must hold exactly (Woodbury, and the localized
   preconditioner at full rank on a diagonal error);
 * two routes to the same number that were computed differently (the cheap
   diagonal identity against the generic Jacobi one);
@@ -289,13 +289,13 @@ class TestPreconditionedInversion:
     def test_every_preconditioner_gives_the_same_posterior(
         self, inversion, normal, rng
     ):
-        model, data = inversion.problem.model_space, inversion.data_space
+        model, data = inversion.forward_problem.model_space, inversion.data_space
         observed = data.random(rng=rng)
         reference = inversion(observed).expectation
         candidates = {
             "jacobi": JacobiPreconditioner(),
             "diagonal": NormalDiagonalPreconditioner(),
-            "localised": LocalisedPreconditioner(
+            "localized": LocalisedPreconditioner(
                 [list(range(data.dim))], rank=4, rng=np.random.default_rng(5)
             ),
             "woodbury": WoodburyPreconditioner.from_normal(
@@ -330,7 +330,7 @@ class TestPreconditionedInversion:
         """The point of the whole arrangement, on a small problem: a surrogate
         prior that is merely the true one's diagonal still gives the right
         answer, because a preconditioner cannot change the answer."""
-        model = inversion.problem.model_space
+        model = inversion.forward_problem.model_space
         data = inversion.data_space
         true_prior = inversion.prior
         coarse = GaussianMeasure(
@@ -402,17 +402,17 @@ class TestSurrogateFamily:
             == "data_space"
         )
 
-    def test_a_parameterised_inversion_lives_on_the_parameter_space(
+    def test_a_parameterized_inversion_lives_on_the_parameter_space(
         self, inversion, rng
     ):
-        model = inversion.problem.model_space
+        model = inversion.forward_problem.model_space
         parameters = EuclideanSpace(3)
-        parameterisation = LinearOperator.from_matrix(
+        parameterization = LinearOperator.from_matrix(
             parameters, model, rng.normal(size=(model.dim, 3)), form="galerkin"
         )
         prior = GaussianMeasure(parameters, covariance=positive(parameters, rng))
-        reduced = inversion.parameterised(parameterisation, prior=prior)
-        assert reduced.problem.model_space == parameters
+        reduced = inversion.parameterized(parameterization, prior=prior)
+        assert reduced.forward_problem.model_space == parameters
         observed = inversion.data_space.random(rng=rng)
         assert parameters.norm(reduced(observed).expectation) >= 0.0
 
@@ -529,7 +529,7 @@ class TestInvariantDistancePreconditioner:
         observed = data_space.random(rng=rng)
         reference = inversion(observed).expectation
         solved = inversion.with_solver(
-            CGSolver(rtol=1e-10, maxiter=4000).with_preconditioner(
+            CGSolver(rtol=1e-10, max_iterations=4000).with_preconditioner(
                 InvariantDistancePreconditioner(space, points, 0.3)
             )
         )(observed).expectation
@@ -851,14 +851,16 @@ class TestTheSharedSolve:
 
     def test_the_mean_is_the_one_the_affine_map_gives(self, inversion, rng):
         """The memo changes how the mean is reached, not what it is -- and
-        ``mean_map`` still computes it the plain way."""
+        ``expectation_operator`` still computes it the plain way."""
         estimator, _, space = inversion
         observed = space.random(rng=rng)
-        model = estimator.target_space
+        model = estimator.property_space
         difference = model.subtract(
-            estimator(observed).expectation, estimator.mean_map(observed)
+            estimator(observed).expectation, estimator.expectation_operator(observed)
         )
-        assert model.norm(difference) < 1e-10 * model.norm(estimator.mean_map(observed))
+        assert model.norm(difference) < 1e-10 * model.norm(
+            estimator.expectation_operator(observed)
+        )
 
     def test_the_posterior_and_the_evidence_share_one_solve(self, inversion, rng):
         estimator, counter, space = inversion
@@ -887,12 +889,12 @@ class TestTheSharedSolve:
         again = estimator(np.array(observed, copy=True)).expectation
         assert counter["solves"] == 0
         assert space.norm(observed) > 0.0
-        model = estimator.target_space
+        model = estimator.property_space
         assert model.norm(model.subtract(again, first)) < 1e-12
 
         for _ in range(50):
             other = space.random(rng=rng)
-            expected = estimator.mean_map(other)
+            expected = estimator.expectation_operator(other)
             got = estimator(other).expectation
             assert model.norm(model.subtract(got, expected)) < 1e-8 * model.norm(
                 expected
@@ -908,7 +910,7 @@ class TestTheSharedSolve:
         identical measure for nothing. Measured on example 21: 57.8 ms against
         0.2 ms, means agreeing to every printed digit."""
         estimator, counter, space = inversion
-        model = estimator.target_space
+        model = estimator.property_space
         target = EuclideanSpace(2)
         caps = LinearOperator.from_matrix(
             model, target, rng.normal(size=(2, model.dim)), form="galerkin"
@@ -1007,7 +1009,7 @@ class TestThePosteriorCovarianceAppliesThePriorTwice:
         estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
 
         posterior = estimator.covariance
-        # The direct solver extracts and factorises the normal matrix on its
+        # The direct solver extracts and factorizes the normal matrix on its
         # first use, one application of the prior per data-space column; the
         # count is of a steady-state action, so make that first use first.
         posterior(model.random(rng=rng))

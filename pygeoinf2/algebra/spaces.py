@@ -39,7 +39,7 @@ __all__ = [
 
 _DEFAULT_RNG = default_rng()
 
-# Reorthogonalise when a projection loses more than this fraction of the norm.
+# Reorthogonalize when a projection loses more than this fraction of the norm.
 # The classical Daniel-Gragg-Kaufman-Stewart criterion, with the usual value.
 _REORTHOGONALISATION_THRESHOLD = 1.0 / np.sqrt(2.0)
 
@@ -190,7 +190,7 @@ class HilbertSpace[V](ABC):
         return result
 
     def gram_schmidt(self, vectors: Sequence[V], /, *, rtol: float = 1e-12) -> list[V]:
-        """Orthonormalise a sequence of linearly independent vectors.
+        """Orthonormalize a sequence of linearly independent vectors.
 
         Args:
             vectors: the vectors, which must be independent.
@@ -208,7 +208,7 @@ class HilbertSpace[V](ABC):
         """
         result: list[V] = []
         for i, vector in enumerate(vectors):
-            v, norm, original = self._orthogonalise_against(vector, result)
+            v, norm, original = self._orthogonalize_against(vector, result)
             if norm <= rtol * original:
                 raise ValueError(
                     f"Vector {i} is linearly dependent on its predecessors "
@@ -222,7 +222,7 @@ class HilbertSpace[V](ABC):
     ) -> list[V]:
         """An orthonormal basis for the span, dropping dependent vectors.
 
-        What a rank-revealing method wants: a randomised range finder feeds in
+        What a rank-revealing method wants: a randomized range finder feeds in
         blocks of probes that may well be numerically dependent, and needs the
         independent part rather than an exception.
 
@@ -238,15 +238,15 @@ class HilbertSpace[V](ABC):
         """
         result: list[V] = []
         for vector in vectors:
-            v, norm, original = self._orthogonalise_against(vector, result)
+            v, norm, original = self._orthogonalize_against(vector, result)
             if norm > rtol * original:
                 result.append(self.scale_inplace(1.0 / norm, v))
         return result
 
-    def _orthogonalise_against(
+    def _orthogonalize_against(
         self, vector: V, basis: Sequence[V]
     ) -> tuple[V, float, float]:
-        """Project a vector off an orthonormal basis, reorthogonalising once.
+        """Project a vector off an orthonormal basis, reorthogonalizing once.
 
         A single modified Gram-Schmidt pass loses orthogonality when the new
         vector is nearly in the span, which is exactly the regime a
@@ -282,11 +282,11 @@ class HilbertSpace[V](ABC):
 
         Raises:
             NotImplementedError: unless the space provides one. The checks in
-                :mod:`pygeoinf2.testing` and the randomised algorithms need it.
+                :mod:`pygeoinf2.testing` and the randomized algorithms need it.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement random(). It is needed "
-            f"by the checks in pygeoinf2.testing and by randomised algorithms."
+            f"by the checks in pygeoinf2.testing and by randomized algorithms."
         )
 
     def white_noise(self, *, rng: Generator | None = None) -> V:
@@ -368,7 +368,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         ``Cov(c) == L^-T L^-1 == G^-1``. Note the transpose: ``L^-1 xi`` would
         be wrong for a non-symmetric factor.
 
-        The default forms the Gram matrix densely and factorises it once,
+        The default forms the Gram matrix densely and factorizes it once,
         caching the factor. Subclasses with a cheaper factor override this;
         both shipped ones do.
         """
@@ -436,9 +436,9 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     # Coordinate-free when it must be, and not otherwise. An inner product on
     # a spectral space transforms *both* of its arguments, so any routine that
     # takes O(k^2) inner products of k fixed vectors -- Gram-Schmidt, Lanczos
-    # reorthogonalisation, a low-rank factor's adjoint -- pays O(k^2)
+    # reorthogonalization, a low-rank factor's adjoint -- pays O(k^2)
     # transforms for arithmetic that needs k. Measured on a sphere at lmax 64:
-    # orthonormalising 50 fields cost 2650 analyses and 1.9 s through
+    # orthonormalizing 50 fields cost 2650 analyses and 1.9 s through
     # ``inner_product``, and 100 transforms and 0.1 s on component arrays;
     # a 30-step Lanczos run 1047 analyses against 152. The methods below do
     # that arithmetic on ``(dim, k)`` arrays, converting once each way, with
@@ -492,7 +492,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """``G`` applied to every column of an array.
 
         The default applies :meth:`apply_gram` column by column; a space with
-        a structured metric overrides it with one vectorised operation.
+        a structured metric overrides it with one vectorized operation.
         """
         if columns.shape[1] == 0:
             return columns.copy()
@@ -532,7 +532,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
             [self.solve_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1
         )
 
-    def _orthonormalise_columns(
+    def _orthonormalize_columns(
         self,
         columns: np.ndarray,
         /,
@@ -597,7 +597,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         return basis[:, start:count], kept
 
     def gram_schmidt(self, vectors: Sequence[V], /, *, rtol: float = 1e-12) -> list[V]:
-        """Orthonormalise independent vectors; see :meth:`HilbertSpace.gram_schmidt`.
+        """Orthonormalize independent vectors; see :meth:`HilbertSpace.gram_schmidt`.
 
         Done on component arrays when :attr:`uses_component_fast_paths`
         allows, converting each vector once each way.
@@ -614,7 +614,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """
         if not self.uses_component_fast_paths:
             return super().gram_schmidt(vectors, rtol=rtol)
-        orthonormal, _ = self._orthonormalise_columns(
+        orthonormal, _ = self._orthonormalize_columns(
             self.components_of(vectors), rtol=rtol, strict=True
         )
         return self.vectors_from(orthonormal)
@@ -636,7 +636,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """
         if not self.uses_component_fast_paths:
             return super().orthonormal_basis(vectors, rtol=rtol)
-        orthonormal, _ = self._orthonormalise_columns(
+        orthonormal, _ = self._orthonormalize_columns(
             self.components_of(vectors), rtol=rtol
         )
         return self.vectors_from(orthonormal)
@@ -961,7 +961,7 @@ class MassWeightedSpace[V](HilbertSpace[V]):
 
 
 class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
-    """A coordinate space whose basis is orthogonal but not normalised.
+    """A coordinate space whose basis is orthogonal but not normalized.
 
     The Gram matrix is ``diag(metric_values)``, so every metric operation is a
     pointwise multiply or divide. This is the shape of the harmonic bases used

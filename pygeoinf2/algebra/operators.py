@@ -2,13 +2,13 @@
 Operators between Hilbert spaces.
 
 ``Operator`` is the general, possibly nonlinear mapping; ``LinearOperator``
-specialises it and gains an adjoint, structural traits and matrix
+specializes it and gains an adjoint, structural traits and matrix
 representations. Scalar-valued operators are ``Functional`` and
 ``LinearFunctional``, which subsume what v1 calls forms.
 
 Two things are deliberate here. Operators are defined by **subclassing**, with
 ``from_callables`` for the quick path, rather than only by injecting callables.
-And the algebra consults a **specialisation protocol** before falling back to a
+And the algebra consults a **specialization protocol** before falling back to a
 generic expression node, so that a family closed under the algebra stays in its
 class.
 
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Self, Sequence
 import numpy as np
 
 from ..traits import Traits
-from .linearisation import Linearisation, QuadraticModel
+from .linearization import Linearization, QuadraticModel
 from .spaces import CoordinateSpace, EuclideanSpace, HilbertSpace, Reals
 
 if TYPE_CHECKING:
@@ -250,9 +250,9 @@ class Operator[X, Y]:
         """The value alone. The cheap path."""
         return self._value(x)
 
-    def at(self, x: X) -> Linearisation[X, Y]:
+    def at(self, x: X) -> Linearization[X, Y]:
         """The value and the derivative, sharing work where possible."""
-        return self._linearise(x)
+        return self._linearize(x)
 
     def derivative(self, x: X) -> LinearOperator[X, Y]:
         """The Fréchet derivative at ``x``, and nothing else.
@@ -260,7 +260,7 @@ class Operator[X, Y]:
         The derivative-only path: it calls the derivative alone, never the
         value. Where the two share a backend call -- a forward solve that the
         adjoint needs -- :meth:`at` is the one that shares it, and an operator
-        built from a single ``linearise`` callable answers this through that
+        built from a single ``linearize`` callable answers this through that
         callable, which may cache what it can. What this never does is
         evaluate a value the caller did not ask for.
         """
@@ -280,12 +280,12 @@ class Operator[X, Y]:
         """True when a derivative is available.
 
         Detected by whether the subclass overrode ``_derivative`` or
-        ``_linearise``; a subclass that decides at runtime overrides this.
+        ``_linearize``; a subclass that decides at runtime overrides this.
         """
         cls = type(self)
         return (
             cls._derivative is not Operator._derivative
-            or cls._linearise is not Operator._linearise
+            or cls._linearize is not Operator._linearize
         )
 
     @property
@@ -301,10 +301,10 @@ class Operator[X, Y]:
         raise NotImplementedError(f"{type(self).__name__} does not implement _value.")
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
-        # A subclass that supplies its derivative only through a linearisation
+        # A subclass that supplies its derivative only through a linearization
         # still answers a derivative-only query, through that.
-        if type(self)._linearise is not Operator._linearise:
-            return self._linearise(x).derivative
+        if type(self)._linearize is not Operator._linearize:
+            return self._linearize(x).derivative
         raise NotImplementedError(f"{type(self).__name__} carries no derivative.")
 
     def _second_derivative(self, x: X, dx: X) -> LinearOperator[X, Y]:
@@ -312,15 +312,15 @@ class Operator[X, Y]:
             f"{type(self).__name__} carries no second derivative."
         )
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
+    def _linearize(self, x: X) -> Linearization[X, Y]:
         """Override when one backend call yields both value and derivative."""
-        return Linearisation(x, self._value(x), self._derivative(x))
+        return Linearization(x, self._value(x), self._derivative(x))
 
     # ----------------------------------------------------------------- #
-    #                      Specialisation protocol                      #
+    #                      Specialization protocol                      #
     # ----------------------------------------------------------------- #
     #
-    # Returning None means "no specialisation, use a generic node". Both
+    # Returning None means "no specialization, use a generic node". Both
     # operands are asked, so the result does not depend on the order of the
     # arguments -- which for a commutative operation it must not.
 
@@ -425,11 +425,11 @@ class Operator[X, Y]:
         *,
         derivative: Callable[[X], LinearOperator[X, Y]] | None = None,
         second_derivative: Callable[[X, X], LinearOperator[X, Y]] | None = None,
-        linearise: Callable[[X], Linearisation[X, Y]] | None = None,
+        linearize: Callable[[X], Linearization[X, Y]] | None = None,
     ) -> Operator[X, Y]:
         """Build an operator from functions, for the quick path.
 
-        Supply ``linearise`` when a single call yields value and derivative
+        Supply ``linearize`` when a single call yields value and derivative
         together; that is the whole reason ``at()`` exists.
 
         Args:
@@ -438,7 +438,7 @@ class Operator[X, Y]:
             value: the action.
             derivative: ``x -> A'(x)``, a linear operator at each point.
             second_derivative: ``x -> A''(x)[.,.]``, for a Newton method.
-            linearise: ``x -> Linearisation``, when one backend call yields
+            linearize: ``x -> Linearization``, when one backend call yields
                 the value and the derivative together. Given this, the two
                 above are not needed.
 
@@ -451,7 +451,7 @@ class Operator[X, Y]:
             value,
             derivative=derivative,
             second_derivative=second_derivative,
-            linearise=linearise,
+            linearize=linearize,
         )
 
 
@@ -467,18 +467,18 @@ class _CallableOperator[X, Y](Operator[X, Y]):
         *,
         derivative: Callable[[X], LinearOperator[X, Y]] | None = None,
         second_derivative: Callable[[X, X], LinearOperator[X, Y]] | None = None,
-        linearise: Callable[[X], Linearisation[X, Y]] | None = None,
+        linearize: Callable[[X], Linearization[X, Y]] | None = None,
     ) -> None:
         super().__init__(domain, codomain)
         self._value_fn = value
         self._derivative_fn = derivative
         self._second_derivative_fn = second_derivative
-        self._linearise_fn = linearise
+        self._linearize_fn = linearize
 
     @property
     def has_derivative(self) -> bool:
-        """True when a derivative or a linearisation callable was supplied."""
-        return self._derivative_fn is not None or self._linearise_fn is not None
+        """True when a derivative or a linearization callable was supplied."""
+        return self._derivative_fn is not None or self._linearize_fn is not None
 
     @property
     def has_second_derivative(self) -> bool:
@@ -490,8 +490,8 @@ class _CallableOperator[X, Y](Operator[X, Y]):
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
         if self._derivative_fn is None:
-            if self._linearise_fn is not None:
-                return self._linearise_fn(x).derivative
+            if self._linearize_fn is not None:
+                return self._linearize_fn(x).derivative
             raise NotImplementedError("No derivative was supplied.")
         return self._derivative_fn(x)
 
@@ -500,10 +500,10 @@ class _CallableOperator[X, Y](Operator[X, Y]):
             raise NotImplementedError("No second derivative was supplied.")
         return self._second_derivative_fn(x, dx)
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
-        if self._linearise_fn is not None:
-            return self._linearise_fn(x)
-        return super()._linearise(x)
+    def _linearize(self, x: X) -> Linearization[X, Y]:
+        if self._linearize_fn is not None:
+            return self._linearize_fn(x)
+        return super()._linearize(x)
 
 
 class LinearOperator[X, Y](Operator[X, Y]):
@@ -549,7 +549,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """The same operator, carrying additional claimed traits.
 
         A shallow copy of *this class*, not a wrapper. That matters more than
-        it looks: the specialisation protocol of the algebra dispatches on
+        it looks: the specialization protocol of the algebra dispatches on
         type, so an operator that forgets what it is on the way through
         ``with_traits`` loses every fast path it had. A wrapper cost a
         ``DiagonalLinearOperator`` its exact log-determinant — sending a
@@ -558,7 +558,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         factors, so that every structure-aware preconditioner refused it.
 
         The copy shares the original's data, which is safe because operators
-        are immutable, but drops the memoised adjoint: the original may have
+        are immutable, but drops the memoized adjoint: the original may have
         cached an ``_Adjoint`` of itself, and the copy claiming SELF_ADJOINT
         must return *itself* instead.
 
@@ -593,9 +593,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
     @property
     def adjoint(self) -> LinearOperator[Y, X]:
-        """The adjoint, memoised so that ``A.adjoint is A.adjoint``.
+        """The adjoint, memoized so that ``A.adjoint is A.adjoint``.
 
-        The memoisation is not an optimisation: the structural recognition of
+        The memoization is not an optimization: the structural recognition of
         adjoint-palindromic compositions in ``nodes.py`` compares factors by
         identity, and would not fire without it.
         """
@@ -630,7 +630,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         Reads the memo; never fills it. That distinction is the whole point.
         Asking ``first.adjoint is second`` *constructs* the adjoint when it has
         not been built, and for the inverse of a direct solver that means
-        extracting a second matrix and factorising it — so testing whether a
+        extracting a second matrix and factorizing it — so testing whether a
         composition happened to be a palindrome cost an ``O(n^3)`` detour, at
         composition time, on an expression that may never be applied. Measured:
         ``solver(A) @ B`` cost 60 applications of ``A`` at dimension 60, while
@@ -688,11 +688,11 @@ class LinearOperator[X, Y](Operator[X, Y]):
         return _ProbedAdjointOperator(self)
 
     # ----------------------------------------------------------------- #
-    #                       Operator specialisation                     #
+    #                       Operator specialization                     #
     # ----------------------------------------------------------------- #
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
-        return Linearisation(x, self._value(x), self)
+    def _linearize(self, x: X) -> Linearization[X, Y]:
+        return Linearization(x, self._value(x), self)
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
         return self
@@ -966,7 +966,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         multiplies, an adjoint transposes the Galerkin form -- and answer
         ``None`` as soon as any part does, at which point :meth:`matrix`
         probes. So ``(A + t I).matrix()`` on a matrix-backed ``A`` costs a
-        read, and a direct solver handed it factorises without ``dim``
+        read, and a direct solver handed it factorizes without ``dim``
         applications first.
 
         *form* is ``"components"`` or ``"galerkin"``, already resolved.
@@ -994,7 +994,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """The operator applied to several vectors.
 
         One at a time by default, in parallel when asked -- this is where the
-        ``n_jobs`` of the randomised routines lands, as one probe per worker.
+        ``n_jobs`` of the randomized routines lands, as one probe per worker.
         An operator that can do better does: a matrix-backed one applies its
         array to all the components at once, a diagonal one broadcasts, and
         the expression nodes pass a block through their parts so a product
@@ -1157,12 +1157,12 @@ class LinearOperator[X, Y](Operator[X, Y]):
         — and the Galerkin form was then a further metric application down
         every column.
 
-        What the Galerkin form is good for is a symmetric factorisation, since
+        What the Galerkin form is good for is a symmetric factorization, since
         that is the representation in which a self-adjoint operator is
         symmetric. Nothing is lost there: a direct solver asks for the form it
         wants through :meth:`_known_matrix`, and the stored matrix is
-        converted once, at factorisation time, against the ``dim``
-        factorisation itself.
+        converted once, at factorization time, against the ``dim``
+        factorization itself.
 
         This is why no observation operator needs a ``matrix_free`` flag. Build
         it matrix-free, and assemble it here if it is small enough to be worth
@@ -1336,7 +1336,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         Its adjoint is ``y -> [(v_i, y)]``, so an orthonormal family gives an
         isometry — a trait worth claiming, because it is what makes
-        ``U D U*`` recognisable as positive semidefinite when ``D`` is.
+        ``U D U*`` recognizable as positive semidefinite when ``D`` is.
 
         Entirely coordinate-free: only the codomain's inner product and
         ``axpy`` are used, so this is how a low-rank factor is represented on a
@@ -1393,8 +1393,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """The map ``c -> sum_i c_i v_i`` with the ``v_i`` given by components.
 
         :meth:`from_vectors` with the vectors already in coordinates, which is
-        how a randomised factorisation has them; it saves synthesising ``k``
-        vectors only to analyse them again.
+        how a randomized factorization has them; it saves synthesizing ``k``
+        vectors only to analyze them again.
 
         Args:
             codomain: the coordinate space the vectors live in.
@@ -1465,7 +1465,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """Reuse an operator, and its adjoint, under a different inner product.
 
         The workflow this exists for: derive the action and the adjoint on the
-        space where both are easy — an L2 space, or whatever the discretisation
+        space where both are easy — an L2 space, or whatever the discretization
         naturally gives — and then use the operator on the weighted space the
         problem is actually posed in. Writing the weighted adjoint directly is
         usually much harder and is the step most often got wrong.
@@ -1635,7 +1635,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         ``matrix(form=f)`` returns is what ``from_matrix(..., form=f)`` takes.
 
         Which one you have depends on where it came from. A matrix of numbers
-        read off a discretisation is usually in components. A matrix assembled
+        read off a discretization is usually in components. A matrix assembled
         from a bilinear form, or handed back by a numerical adjoint method as
         rows of derivative components, is in Galerkin form — that is what makes
         a symmetric operator's matrix symmetric.
@@ -1650,7 +1650,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         Returns:
             A :class:`MatrixLinearOperator`, which keeps the array rather than
             capturing it in a closure, so :meth:`matrix`, :meth:`diagonals` and
-            :meth:`assembled` are reads and a direct solver factorises what it
+            :meth:`assembled` are reads and a direct solver factorizes what it
             was given instead of re-deriving it.
 
         Raises:
@@ -1762,7 +1762,7 @@ class _ColumnOperator[Y](LinearOperator[np.ndarray, Y]):
 
     @property
     def vectors(self) -> tuple[Y, ...]:
-        """The vectors themselves, synthesised once if built from columns."""
+        """The vectors themselves, synthesized once if built from columns."""
         if self._vectors is None:
             self._vectors = tuple(self.codomain.vectors_from(self._columns))
         return self._vectors
@@ -1922,7 +1922,7 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
     inside it, so an operator built *from* a matrix could not produce one:
     :meth:`matrix` re-derived it by ``dim`` applications, :meth:`diagonals`
     likewise, :meth:`assembled` extracted an already-assembled operator, and
-    every direct solver paid a full extraction before factorising something it
+    every direct solver paid a full extraction before factorizing something it
     had been given outright. At dimension 1200 that is 50-70 ms per call and
     grows as ``n^3``; here each is a read.
 
@@ -2118,9 +2118,9 @@ class Functional[X](Operator[X, float]):
 
     def at(self, x: X) -> QuadraticModel[X]:
         """The value, derivative and Hessian at ``x``, from one evaluation."""
-        return self._linearise(x)
+        return self._linearize(x)
 
-    def _linearise(self, x: X) -> QuadraticModel[X]:
+    def _linearize(self, x: X) -> QuadraticModel[X]:
         hessian = self._hessian(x) if self.has_hessian else None
         return QuadraticModel(x, self._value(x), self._derivative(x), hessian)
 
@@ -2182,7 +2182,7 @@ class Functional[X](Operator[X, float]):
         """The proximal operator ``argmin_y f(y) + ||y - x||^2 / (2 step)``.
 
         The norm is the **space's**, so the proximal step is taken in the
-        geometry the modeller chose rather than in a coordinate basis. That is
+        geometry the modeler chose rather than in a coordinate basis. That is
         what makes a proximal method mesh-independent, and it is why the
         closed forms in the convex module are written with norms and
         directions rather than with components.
@@ -2392,7 +2392,7 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
             self.__dict__["_representer_cache"] = cached
         return cached
 
-    def _linearise(self, x: X) -> QuadraticModel[X]:
+    def _linearize(self, x: X) -> QuadraticModel[X]:
         from .nodes import _Zero
 
         return QuadraticModel(x, self._value(x), self, _Zero(self.domain, self.domain))
@@ -2566,7 +2566,7 @@ class AffineOperator[X, Y](Operator[X, Y]):
     """``x -> linear_part(x) + translation``.
 
     Its derivative is constant, which is the whole of its structure. The
-    specialisation protocol keeps sums and compositions with linear operators
+    specialization protocol keeps sums and compositions with linear operators
     inside this class, so affineness survives the algebra without the
     string-based type check v1 uses in ``LinearOperator.__add__``.
     """
@@ -2606,10 +2606,10 @@ class AffineOperator[X, Y](Operator[X, Y]):
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
         return self._linear_part
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
-        return Linearisation(x, self._value(x), self._linear_part)
+    def _linearize(self, x: X) -> Linearization[X, Y]:
+        return Linearization(x, self._value(x), self._linear_part)
 
-    # --- specialisation: stay affine -----------------------------------
+    # --- specialization: stay affine -----------------------------------
 
     def _combine_add(self, other: Operator) -> Operator | None:
         if isinstance(other, AffineOperator):

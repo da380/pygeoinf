@@ -31,14 +31,14 @@ def setting(rng):
     """A model space, an under-determined map, a property, and a feasible truth."""
     model = make_weighted_space()
     data = EuclideanSpace(2)
-    target_space = EuclideanSpace(2)
+    property_space = EuclideanSpace(2)
     forward = LinearOperator.from_matrix(
         model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
     target = LinearOperator.from_matrix(
         model,
-        target_space,
-        rng.normal(size=(target_space.dim, model.dim)),
+        property_space,
+        rng.normal(size=(property_space.dim, model.dim)),
         form="galerkin",
     )
     raw = model.random(rng=rng)
@@ -63,13 +63,13 @@ class TestClosedForm:
         )
         assert inference(data).contains(target(truth))
 
-    def test_the_centre_is_the_minimum_norm_property(self, setting):
+    def test_the_center_is_the_minimum_norm_property(self, setting):
         model, forward, target, truth, data = setting
         inference = BackusGilbertParker(
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
         assert np.allclose(
-            inference(data).ellipsoid.centre, target(inference(data).fitting_model())
+            inference(data).ellipsoid.center, target(inference(data).fitting_model())
         )
 
     def test_every_feasible_model_lands_inside(self, setting, rng):
@@ -99,8 +99,8 @@ class TestClosedForm:
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
         answer, before = inference(data), inference.algorithm.prior_only()
-        assert before.contains(answer.ellipsoid.centre)
-        space = inference.target_space
+        assert before.contains(answer.ellipsoid.center)
+        space = inference.property_space
         for direction in directions(space):
             assert (
                 before.support_function()(direction)
@@ -120,7 +120,7 @@ class TestClosedForm:
             feasible.support(target.codomain.basis_vector(0))
 
     def test_the_shape_does_not_depend_on_the_data(self, setting, rng):
-        """Only the centre and the size do -- the same structure as a Gaussian
+        """Only the center and the size do -- the same structure as a Gaussian
         estimator's data-independent covariance."""
         model, forward, target, truth, data = setting
         inference = BackusGilbertParker(
@@ -143,11 +143,11 @@ class TestInclusionTest:
         )
         answer = inference(data)
         ellipsoid = answer.ellipsoid
-        space = inference.target_space
+        space = inference.property_space
         inside = 0
         for _ in range(200):
             candidate = space.from_components(
-                space.to_components(ellipsoid.centre) + rng.normal(size=space.dim) * 1.5
+                space.to_components(ellipsoid.center) + rng.normal(size=space.dim) * 1.5
             )
             by_set = ellipsoid.contains(candidate)
             inside += by_set
@@ -353,7 +353,7 @@ class TestOuterApproximation:
 class TestOneEstimator:
     """``BackusGilbertParker`` is the one public estimator: the sets decide
     the route, a route can be forced where the sets allow it, and the
-    answer carries both characterisations where both exist."""
+    answer carries both characterizations where both exist."""
 
     @pytest.fixture
     def pieces(self, setting):
@@ -452,7 +452,7 @@ class TestOneEstimator:
             assert not answer.contains(beyond)
 
     def test_general_sets_know_the_answer_by_its_support_only(self, pieces):
-        """A Minkowski sum of balls has a support function and a maximiser
+        """A Minkowski sum of balls has a support function and a maximizer
         but no level function, so it is the dual's and has no membership."""
         from pygeoinf2.inference import BackusGilbertParker
 
@@ -520,26 +520,26 @@ class TestOneEstimator:
         pushed = estimator.push_forward(further)
         assert pushed.route == "dual"
         assert pushed.prior is estimator.prior and pushed.noise is estimator.noise
-        assert pushed.target_space.dim == 1
-        assert pushed.problem is estimator.problem
+        assert pushed.property_space.dim == 1
+        assert pushed.forward_problem is estimator.forward_problem
 
 
 class TestLikelihoodMembership:
     """Al-Attar (2021) §3.3: membership by a Lagrange multiplier on the
     likelihood, for any confidence set that is a sublevel set of a
-    differentiable convex functional. The sublevel-set characterisation of
+    differentiable convex functional. The sublevel-set characterization of
     the answer, complementary to the support function."""
 
     @pytest.fixture
     def pieces(self, rng):
         model = make_weighted_space()
         data_space = EuclideanSpace(3)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.normal(size=(3, model.dim)), form="galerkin"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
+            model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         raw = model.random(rng=rng)
         truth = model.scale(2.0 / model.norm(raw), raw)
@@ -554,9 +554,9 @@ class TestLikelihoodMembership:
     @staticmethod
     def candidates(estimator, target, truth, data, rng, count=6):
         space = target.codomain
-        centre = target(truth)
-        return [centre] + [
-            space.axpy(0.5, space.random(rng=rng), space.copy(centre))
+        center = target(truth)
+        return [center] + [
+            space.axpy(0.5, space.random(rng=rng), space.copy(center))
             for _ in range(count - 1)
         ]
 
@@ -609,7 +609,7 @@ class TestLikelihoodMembership:
         assert estimator.route == "kkt"
         feasible = estimator(data)
         assert feasible.has_support_function and feasible.has_level_function
-        assert feasible.has_maximiser
+        assert feasible.has_maximizer
         assert not feasible.is_empty()
         assert feasible.contains(target(truth))
         as_ball = BackusGilbertParker(
@@ -751,7 +751,7 @@ class TestTheResultIsWhatGetsProbed:
         noisy = LinearForwardProblem(forward, error=Ball(forward.codomain, radius=0.05))
         return model, forward, target, truth, data, exact, noisy
 
-    def test_each_route_declares_its_characterisations(self, pieces):
+    def test_each_route_declares_its_characterizations(self, pieces):
         from pygeoinf2.inference import FeasiblePropertySet
 
         model, forward, target, truth, data, exact, noisy = pieces
@@ -762,7 +762,7 @@ class TestTheResultIsWhatGetsProbed:
             closed.has_membership,
             closed.has_projection,
             closed.has_support_function,
-            closed.has_maximiser,
+            closed.has_maximizer,
             closed.has_level_function,
         ) == (True, True, True, True, True)
         bisect = BackusGilbertParker(noisy, target, ball)(data)
@@ -770,7 +770,7 @@ class TestTheResultIsWhatGetsProbed:
             bisect.has_membership,
             bisect.has_projection,
             bisect.has_support_function,
-            bisect.has_maximiser,
+            bisect.has_maximizer,
             bisect.has_level_function,
         ) == (True, False, True, True, True)
         dual = BackusGilbertParker(noisy, target, ball, route="dual")(data)
@@ -778,13 +778,13 @@ class TestTheResultIsWhatGetsProbed:
             dual.has_membership,
             dual.has_projection,
             dual.has_support_function,
-            dual.has_maximiser,
+            dual.has_maximizer,
             dual.has_level_function,
         ) == (True, False, True, False, True)
         fat = Ball(model, radius=2.0) + Ball(model, radius=1.0)
         general = BackusGilbertParker(noisy, target, fat)(data)
         assert (general.has_membership, general.has_level_function) == (False, False)
-        assert general.has_support_function and not general.has_maximiser
+        assert general.has_support_function and not general.has_maximizer
         for refused in (
             lambda: general.contains(target(truth)),
             lambda: general.extent(target.codomain.basis_vector(0)),
@@ -812,12 +812,12 @@ class TestTheResultIsWhatGetsProbed:
             assert (
                 target.codomain.norm(
                     target.codomain.subtract(
-                        feasible.support_maximiser(q), target(extremal)
+                        feasible.support_maximizer(q), target(extremal)
                     )
                 )
                 < 1e-10
             )
-            # The support function object's subgradient is that maximiser.
+            # The support function object's subgradient is that maximizer.
             assert (
                 target.codomain.norm(
                     target.codomain.subtract(
@@ -982,7 +982,7 @@ class TestQuadraticSets:
             forward.codomain.subtract(data, forward(extremal))
         ) <= 0.1 * (1.0 + 1e-6)
 
-    def test_ellipsoids_on_both_sides_and_off_centre_sets(self, pieces, rng):
+    def test_ellipsoids_on_both_sides_and_off_center_sets(self, pieces, rng):
         from pygeoinf2.geometry.convex import Ellipsoid
 
         model, forward, target, truth, data, problem, credible = pieces
@@ -1002,8 +1002,8 @@ class TestQuadraticSets:
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
             form="galerkin",
         )
-        centre = model.scale(0.3, truth)
-        prior = Ellipsoid(model, precision, centre=centre, covariance=covariance)
+        center = model.scale(0.3, truth)
+        prior = Ellipsoid(model, precision, center=center, covariance=covariance)
         primal = BackusGilbertParker(problem, target, prior, noise=credible)(data)
         dual = BackusGilbertParker(
             problem, target, prior, noise=credible, route="dual"
@@ -1018,7 +1018,7 @@ class TestQuadraticSets:
                 or inside is False
             )
         # A ball prior off the origin, against the dual.
-        shifted = Ball(model, radius=2.0, centre=centre)
+        shifted = Ball(model, radius=2.0, center=center)
         primal = BackusGilbertParker(problem, target, shifted)(data)
         dual = BackusGilbertParker(problem, target, shifted, route="dual")(data)
         self.agree(primal, dual, directions(target.codomain), 1e-5)
@@ -1033,12 +1033,12 @@ class TestGeneralMembership:
     def pieces(self, rng):
         model = make_weighted_space()
         data_space = EuclideanSpace(3)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.normal(size=(3, model.dim)), form="galerkin"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
+            model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         raw = model.random(rng=rng)
         truth = model.scale(2.0 / model.norm(raw), raw)
@@ -1054,9 +1054,9 @@ class TestGeneralMembership:
     @staticmethod
     def candidates(target, truth, rng, count=5):
         space = target.codomain
-        centre = target(truth)
-        return [centre] + [
-            space.axpy(0.5, space.random(rng=rng), space.copy(centre))
+        center = target(truth)
+        return [center] + [
+            space.axpy(0.5, space.random(rng=rng), space.copy(center))
             for _ in range(count - 1)
         ]
 
@@ -1156,7 +1156,7 @@ class TestGeneralMembership:
         assert likelihood.is_empty() == reduced.is_empty()
         assert likelihood.contains(target(truth)) and reduced.contains(target(truth))
 
-    def test_a_polytope_has_neither_characterisation(self, pieces):
+    def test_a_polytope_has_neither_characterization(self, pieces):
         from pygeoinf2.geometry.convex import HalfSpace, Polytope
 
         model, data_space, forward, target, truth, data, problem = pieces
@@ -1177,7 +1177,7 @@ class TestGeneralMembership:
 
 class TestLevelKKT:
     """The KKT solver on level functions: the quadratic solver's shape, a
-    convex minimisation per probe instead of its closed form, giving support
+    convex minimization per probe instead of its closed form, giving support
     values and the extremal model for sets with no support function."""
 
     @pytest.fixture
@@ -1288,10 +1288,10 @@ class TestLevelKKT:
 
 
 class TestBundleMethod:
-    """The minimiser route (d) is built on."""
+    """The minimizer route (d) is built on."""
 
-    def test_it_minimises_a_nonsmooth_convex_function(self):
-        """``|x - a|_1 + |x|^2/2``, whose minimiser is ``clip(a, -1, 1)``.
+    def test_it_minimizes_a_nonsmooth_convex_function(self):
+        """``|x - a|_1 + |x|^2/2``, whose minimizer is ``clip(a, -1, 1)``.
 
         Not soft-thresholding, which is the answer to a different problem and
         was the first reference tried here.
@@ -1306,7 +1306,7 @@ class TestBundleMethod:
             lambda x: float(np.abs(x - anchor).sum() + 0.5 * x @ x),
             gradient=lambda x: np.sign(x - anchor) + x,
         )
-        result = ProximalBundleMethod(tolerance=1e-10, iterations=400).minimise(
+        result = ProximalBundleMethod(tolerance=1e-10, max_iterations=400).minimize(
             functional, space.zero()
         )
         best = np.clip(anchor, -1.0, 1.0)
@@ -1314,7 +1314,7 @@ class TestBundleMethod:
         assert result.value == pytest.approx(
             float(np.abs(best - anchor).sum() + 0.5 * best @ best), abs=1e-6
         )
-        assert np.allclose(result.minimiser, best, atol=1e-5)
+        assert np.allclose(result.minimizer, best, atol=1e-5)
 
     def test_the_gap_certifies_the_answer(self):
         from pygeoinf2.algebra.operators import Functional
@@ -1330,7 +1330,7 @@ class TestBundleMethod:
             lambda x: float(0.5 * x @ matrix @ x - offset @ x),
             gradient=lambda x: matrix @ x - offset,
         )
-        result = ProximalBundleMethod(tolerance=1e-12, iterations=600).minimise(
+        result = ProximalBundleMethod(tolerance=1e-12, max_iterations=600).minimize(
             functional, space.zero()
         )
         best = np.linalg.solve(matrix, offset)
@@ -1351,7 +1351,7 @@ class TestDualRoute:
         """Routes (c) and (d), with nothing in common.
 
         A bisection over two Lagrange multipliers against a nonsmooth convex
-        minimisation in the data space. They agree to nine figures.
+        minimization in the data space. They agree to nine figures.
         """
         from pygeoinf2.inference import BackusGilbertParker
 
@@ -1372,7 +1372,7 @@ class TestDualRoute:
         """Which is the whole reason it exists.
 
         An anisotropic prior has no radius, so routes (a) and (b) refuse it by
-        name; this one needs only a support function and a maximiser.
+        name; this one needs only a support function and a maximizer.
         """
         from pygeoinf2.geometry.convex import Ellipsoid
         from pygeoinf2.inference import BackusGilbertParker
@@ -1475,7 +1475,7 @@ class TestDualRoute:
 
 
 class TestInclusionWithErrors:
-    """Set inclusion as a constrained optimisation, with noisy data.
+    """Set inclusion as a constrained optimization, with noisy data.
 
     The complement of the support-function machinery: a support function bounds
     the set from outside one direction at a time, and this decides membership
@@ -1487,12 +1487,12 @@ class TestInclusionWithErrors:
     def noisy(self, rng):
         model = make_weighted_space()
         data_space = EuclideanSpace(3)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.normal(size=(3, model.dim)), form="galerkin"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
+            model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         raw = model.random(rng=rng)
         truth = model.scale(2.0 / model.norm(raw), raw)
@@ -1662,8 +1662,8 @@ class TestHardeningTheError:
 
 
 class TestSupportValuesSweep:
-    """v1's ``solve_support_values``: neighbouring directions have
-    neighbouring certificates, so each minimisation started from the last
+    """v1's ``solve_support_values``: neighboring directions have
+    neighboring certificates, so each minimization started from the last
     one's answer is a correction rather than a fresh problem."""
 
     @pytest.fixture
@@ -1672,18 +1672,18 @@ class TestSupportValuesSweep:
 
         model = EuclideanSpace(12)
         data_space = EuclideanSpace(5)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((5, 12)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((2, 12)), form="components"
+            model, property_space, rng.standard_normal((2, 12)), form="components"
         )
         data = forward(model.random(rng=rng))
         problem = LinearForwardProblem(forward, error=Ball(data_space, radius=0.05))
         return (
             BackusGilbertParker(problem, target, Ball(model, radius=5.0), route="dual"),
-            target_space,
+            property_space,
             data,
         )
 
@@ -1727,9 +1727,9 @@ class TestSupportValuesSweep:
 
         estimator, space, data = dual
         tight = BackusGilbertParker(
-            estimator.problem,
-            estimator.target,
-            Ball(estimator.problem.model_space, radius=1e-4),
+            estimator.forward_problem,
+            estimator.property_operator,
+            Ball(estimator.forward_problem.model_space, radius=1e-4),
             route="dual",
         )
         with pytest.raises(ValueError, match="no model lies"):
@@ -1753,19 +1753,19 @@ class TestTheDualOracleMemo:
 
         model = EuclideanSpace(8)
         data_space = EuclideanSpace(3)
-        target_space = EuclideanSpace(1)
+        property_space = EuclideanSpace(1)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((3, 8)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((1, 8)), form="components"
+            model, property_space, rng.standard_normal((1, 8)), form="components"
         )
         problem = LinearForwardProblem(forward, error=Ball(data_space, radius=0.1))
         dual = BackusGilbertParker(
             problem, target, Ball(model, radius=1.0), route="dual"
         )
         data = forward(model.random(rng=rng))
-        return dual, target_space.basis_vector(0), data
+        return dual, property_space.basis_vector(0), data
 
     def test_the_cache_keeps_the_certificate_alive(self, oracle):
         import gc

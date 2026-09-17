@@ -203,7 +203,7 @@ class TestSphere:
         check_coordinates(space, rng=rng)
 
     def test_basis_at_reproduces_the_field(self, rng):
-        """Which pins the harmonic conventions: normalisation and phase."""
+        """Which pins the harmonic conventions: normalization and phase."""
         space = sphere_module.Lebesgue(8)
         components = rng.normal(size=space.dim)
         field = space.from_components(components)

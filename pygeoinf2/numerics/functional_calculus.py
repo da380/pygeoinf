@@ -1,7 +1,7 @@
 """
 Functional calculus: ``f(A)`` for a self-adjoint operator.
 
-Entirely coordinate-free. Lanczos tridiagonalisation needs only the operator's
+Entirely coordinate-free. Lanczos tridiagonalization needs only the operator's
 action, an inner product and ``axpy``, so ``f(A)`` is available on a space with
 no component map — which matters, because a covariance square root is how a
 Gaussian gets sampled and a log-determinant is how evidence gets computed.
@@ -13,7 +13,7 @@ Two paths, chosen by structure rather than by hand:
 - anything else self-adjoint goes to **Lanczos**, which approximates ``f(A) x``
   from a small Krylov space without ever forming a matrix.
 
-That split is the specialisation protocol of DESIGN.md 5.4 applied to a unary
+That split is the specialization protocol of DESIGN.md 5.4 applied to a unary
 operation, and it is why "diagonal in a basis" is a class (it carries
 eigenvalues) while "self-adjoint" is a trait (it carries nothing).
 
@@ -40,13 +40,13 @@ from ..algebra.spaces import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .randomised import Estimate
+    from .randomized import Estimate
 from ..traits import Traits, close
 
 __all__ = [
     "log_determinant",
-    "lanczos_tridiagonalise",
-    "iter_lanczos_tridiagonalise",
+    "lanczos_tridiagonalize",
+    "iter_lanczos_tridiagonalize",
     "apply_operator_function",
     "operator_quadratic_form",
     "OperatorFunction",
@@ -118,13 +118,13 @@ def _guard_spectrum(
 # --------------------------------------------------------------------- #
 
 
-def iter_lanczos_tridiagonalise(
+def iter_lanczos_tridiagonalize(
     operator: LinearOperator,
     start: Any,
     max_iterations: int,
     /,
     *,
-    reorthogonalise: bool = True,
+    reorthogonalize: bool = True,
     breakdown_tol: float = 1e-12,
 ) -> Iterator[tuple[list[Any], np.ndarray]]:
     """Yield the Krylov basis and tridiagonal matrix after each iteration.
@@ -134,12 +134,12 @@ def iter_lanczos_tridiagonalise(
 
     Args:
         operator: a self-adjoint operator.
-        start: the vector generating the Krylov space. Need not be normalised.
+        start: the vector generating the Krylov space. Need not be normalized.
         max_iterations: the most Lanczos steps to take.
-        reorthogonalise: re-project each new vector against the whole basis.
+        reorthogonalize: re-project each new vector against the whole basis.
             Lanczos loses orthogonality in floating point after very few steps,
             and the cheap three-term recurrence alone is not usable for
-            spectral work; full reorthogonalisation costs ``O(k)`` inner
+            spectral work; full reorthogonalization costs ``O(k)`` inner
             products per step and is worth it at the small ``k`` used here.
         breakdown_tol: relative norm below which the Krylov space is taken to
             have closed, which is exact termination rather than failure.
@@ -153,7 +153,7 @@ def iter_lanczos_tridiagonalise(
             starting vector is zero -- which generates no Krylov space at all.
     """
     space: HilbertSpace = operator.domain
-    _require_self_adjoint(operator, "Lanczos tridiagonalisation")
+    _require_self_adjoint(operator, "Lanczos tridiagonalization")
 
     if isinstance(space, CoordinateSpace) and space.uses_component_fast_paths:
         yield from _iter_lanczos_on_components(
@@ -161,7 +161,7 @@ def iter_lanczos_tridiagonalise(
             space,
             start,
             max_iterations,
-            reorthogonalise=reorthogonalise,
+            reorthogonalize=reorthogonalize,
             breakdown_tol=breakdown_tol,
         )
         return
@@ -183,7 +183,7 @@ def iter_lanczos_tridiagonalise(
         w = space.axpy(-alpha, basis[-1], w)
         if step > 0:
             w = space.axpy(-previous_beta, basis[-2], w)
-        if reorthogonalise:
+        if reorthogonalize:
             # One pass, and *modified* Gram-Schmidt: each projection is taken
             # against the running w rather than the original, which is what
             # makes a single sweep enough here.
@@ -215,7 +215,7 @@ def _iter_lanczos_on_components(
     max_iterations: int,
     /,
     *,
-    reorthogonalise: bool,
+    reorthogonalize: bool,
     breakdown_tol: float,
 ) -> Iterator[tuple[list[Any], np.ndarray]]:
     """The same iteration with the Krylov basis kept as component columns.
@@ -223,7 +223,7 @@ def _iter_lanczos_on_components(
     One analysis and one synthesis per step -- the synthesis is the basis
     vector the operator is applied to, so it is not extra -- against ``2k + 4``
     analyses per step through ``inner_product`` on a spectral space. The
-    metric enters only through ``apply_gram``. Reorthogonalisation is
+    metric enters only through ``apply_gram``. Reorthogonalization is
     classical Gram-Schmidt against the whole basis with Kahan's second pass
     when the first removes more than ``1 - 1/sqrt(2)`` of the norm, which is
     one metric application per pass instead of one per basis vector.
@@ -245,7 +245,7 @@ def _iter_lanczos_on_components(
         w = np.array(space.to_components(operator(basis[-1])), dtype=float)
         weighted = space.apply_gram(w)
         current = columns[:, : step + 1]
-        if reorthogonalise:
+        if reorthogonalize:
             # The first pass's last coefficient is alpha itself, and its
             # second-to-last is beta; projecting off the whole basis at once
             # subsumes the three-term recurrence.
@@ -292,13 +292,13 @@ def _tridiagonal(
     return matrix
 
 
-def lanczos_tridiagonalise(
+def lanczos_tridiagonalize(
     operator: LinearOperator,
     start: Any,
     max_iterations: int,
     /,
     *,
-    reorthogonalise: bool = True,
+    reorthogonalize: bool = True,
     breakdown_tol: float = 1e-12,
 ) -> tuple[list[Any], np.ndarray]:
     """Run Lanczos to completion, returning the final basis and matrix.
@@ -307,20 +307,20 @@ def lanczos_tridiagonalise(
         operator: a self-adjoint operator.
         start: the vector whose Krylov space is built.
         max_iterations: the dimension to stop at.
-        reorthogonalise: keep the basis orthogonal against rounding. Worth
+        reorthogonalize: keep the basis orthogonal against rounding. Worth
             the cost: without it the Lanczos vectors lose orthogonality
             exactly as the method converges.
-        breakdown_tol: as for :func:`iter_lanczos_tridiagonalise`.
+        breakdown_tol: as for :func:`iter_lanczos_tridiagonalize`.
 
     Returns:
         The basis and the tridiagonal matrix.
     """
     basis, matrix = [], np.zeros((0, 0))
-    for basis, matrix in iter_lanczos_tridiagonalise(
+    for basis, matrix in iter_lanczos_tridiagonalize(
         operator,
         start,
         max_iterations,
-        reorthogonalise=reorthogonalise,
+        reorthogonalize=reorthogonalize,
         breakdown_tol=breakdown_tol,
     ):
         pass
@@ -340,7 +340,7 @@ def apply_operator_function(
     *,
     max_iterations: int | None = None,
     rtol: float = 1e-10,
-    reorthogonalise: bool = True,
+    reorthogonalize: bool = True,
 ) -> Any:
     """``f(A) x``, without forming ``f(A)``.
 
@@ -379,7 +379,7 @@ def apply_operator_function(
             dimensions under-reports the distance to the answer: ``1e-8``
             here was measured at ``1e-6`` in the result, ``1e-10`` at
             ``1e-10``.
-        reorthogonalise: keep the Krylov basis orthogonal.
+        reorthogonalize: keep the Krylov basis orthogonal.
 
     Returns:
         ``f(A) x``.
@@ -397,8 +397,8 @@ def apply_operator_function(
     previous: np.ndarray | None = None
     final_basis: Sequence[Any] = ()
     weights = np.ones(1)
-    for basis, matrix in iter_lanczos_tridiagonalise(
-        operator, x, max_iterations, reorthogonalise=reorthogonalise
+    for basis, matrix in iter_lanczos_tridiagonalize(
+        operator, x, max_iterations, reorthogonalize=reorthogonalize
     ):
         values, vectors = _eigh_tridiagonal(matrix)
         weights = vectors @ (np.asarray(function(values)) * vectors[0, :])
@@ -479,14 +479,14 @@ def operator_quadratic_form(
     *,
     max_iterations: int | None = None,
     rtol: float = 1e-10,
-    reorthogonalise: bool = True,
+    reorthogonalize: bool = True,
 ) -> float:
     """``(x, f(A) x)``, by Gauss quadrature on the Lanczos spectrum.
 
     Cheaper than forming ``f(A) x`` and pairing it, because only the first row
     of the eigenvector matrix is needed. This is the kernel of stochastic
     Lanczos quadrature, which is how a log-determinant gets estimated without
-    a factorisation.
+    a factorization.
 
     Stops when the quadrature settles, as v1 did. It used to run every one of
     ``max_iterations`` however early the value converged, which for the outer
@@ -500,7 +500,7 @@ def operator_quadratic_form(
         max_iterations: the Krylov dimension to stop at. The space's
             dimension if omitted; see :func:`apply_operator_function` on why.
         rtol: relative change in the value to stop at.
-        reorthogonalise: keep the Krylov basis orthogonal.
+        reorthogonalize: keep the Krylov basis orthogonal.
 
     Returns:
         ``(x, f(A) x)``.
@@ -517,8 +517,8 @@ def operator_quadratic_form(
 
     estimate = 0.0
     previous: float | None = None
-    for _, matrix in iter_lanczos_tridiagonalise(
-        operator, x, max_iterations, reorthogonalise=reorthogonalise
+    for _, matrix in iter_lanczos_tridiagonalize(
+        operator, x, max_iterations, reorthogonalize=reorthogonalize
     ):
         values, vectors = _eigh_tridiagonal(matrix)
         # The Gauss quadrature weights are the squared first components.
@@ -542,7 +542,7 @@ class OperatorFunction(LinearOperator):
     Nothing is precomputed: each application runs its own Krylov iteration.
     That is the right trade when ``f(A)`` is applied a few times to different
     vectors, and the wrong one when it is applied many times — in which case a
-    low-rank factorisation of ``A`` is the better tool.
+    low-rank factorization of ``A`` is the better tool.
     """
 
     def __init__(
@@ -554,7 +554,7 @@ class OperatorFunction(LinearOperator):
         traits: Traits = Traits.NONE,
         max_iterations: int | None = None,
         rtol: float = 1e-10,
-        reorthogonalise: bool = True,
+        reorthogonalize: bool = True,
     ) -> None:
         """
         Args:
@@ -564,7 +564,7 @@ class OperatorFunction(LinearOperator):
             max_iterations: the Krylov dimension each application stops at.
                 The space's dimension if omitted, so that *rtol* decides.
             rtol: relative change in the coefficients to stop at.
-            reorthogonalise: keep the Krylov basis orthogonal.
+            reorthogonalize: keep the Krylov basis orthogonal.
         """
         _require_self_adjoint(operator, "An operator function")
         super().__init__(
@@ -576,7 +576,7 @@ class OperatorFunction(LinearOperator):
         self._function = function
         self._max_iterations = max_iterations
         self._rtol = rtol
-        self._reorthogonalise = reorthogonalise
+        self._reorthogonalize = reorthogonalize
 
     @property
     def base_operator(self) -> LinearOperator:
@@ -590,7 +590,7 @@ class OperatorFunction(LinearOperator):
             x,
             max_iterations=self._max_iterations,
             rtol=self._rtol,
-            reorthogonalise=self._reorthogonalise,
+            reorthogonalize=self._reorthogonalize,
         )
 
     def _adjoint_value(self, y: Any) -> Any:
@@ -755,7 +755,7 @@ def log_determinant(
         operator: a positive definite self-adjoint operator.
         method: ``"dense"`` forms the matrix; ``"stochastic"`` never does;
             ``"auto"`` takes the dense route when the space has a component
-            map, is small enough to hold and factorise the matrix
+            map, is small enough to hold and factorize the matrix
             (*dense_limit*), and either the operator can hand its matrix over
             or probing it costs no more than the stochastic route's own
             budget of applications. The dense route is exact, so where the
@@ -764,8 +764,8 @@ def log_determinant(
             block of them when *sample_rtol* is given.
         rng: the generator for those probes.
         dense_limit: the largest dimension at which ``"auto"`` will form and
-            factorise a ``dim x dim`` matrix. It is a **memory and
-            factorisation** budget, not a statement about applications:
+            factorize a ``dim x dim`` matrix. It is a **memory and
+            factorization** budget, not a statement about applications:
             ``dim**2`` doubles is 128 MB at 4000 and the ``slogdet`` is
             ``O(dim**3)``, measured at 0.8 s on one thread. The default was
             512, which sent a 960-dimensional evidence to a stochastic
@@ -793,7 +793,7 @@ def log_determinant(
         max_samples: a ceiling on that.
 
     Returns:
-        An :class:`~pygeoinf2.numerics.randomised.Estimate`. The dense route
+        An :class:`~pygeoinf2.numerics.randomized.Estimate`. The dense route
         reports a standard error of zero, so a caller can treat the two
         uniformly and still see which it got.
 
@@ -803,7 +803,7 @@ def log_determinant(
             *logarithm* of one needs the definiteness.
     """
     from ..algebra.diagonal import DiagonalLinearOperator
-    from .randomised import Estimate, random_trace
+    from .randomized import Estimate, random_trace
 
     _require(operator, Traits.POSITIVE_DEFINITE, "A log determinant")
     if not operator.is_endomorphism:
@@ -854,7 +854,7 @@ def log_determinant(
                 "with testing.check_traits()."
             )
         # ``log det I == 0``. Worth the branch: at dimension 3000 the
-        # factorisation of the identity cost 0.37 s, as much as the operator's
+        # factorization of the identity cost 0.37 s, as much as the operator's
         # own, and doubled the memory.
         metric = 0.0
         if space.has_diagonal_metric:

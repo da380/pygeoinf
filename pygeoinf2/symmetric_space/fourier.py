@@ -228,7 +228,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     def component_of(self, wavevector: Any, /, *, phase: Any = 0) -> Any:
         """The position of the component with a given wavevector and phase.
 
-        v1's ``index_to_integer``, vectorised: one wavevector of length
+        v1's ``index_to_integer``, vectorized: one wavevector of length
         ``spatial_dimension`` gives an integer, an array of shape
         ``(spatial_dimension, n)`` gives ``n`` positions. Wavevectors are
         taken modulo the grid, so a mode may be named by either sign of its
@@ -726,7 +726,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         The other half of the seam that components open: components are this
         library's packed *real* vector, ordered by the packing and scaled to be
         orthonormal in ``L2``, and this is exactly what ``rfftn`` returns for
-        the same field -- half the spectrum, on the unnormalised scale numpy
+        the same field -- half the spectrum, on the unnormalized scale numpy
         and scipy share, shaped like the grid. The two differ by a factor: a
         component is its coefficient times ``_component_scale``, and times a
         further ``sqrt(2)`` where the coefficient has a conjugate partner that
@@ -907,7 +907,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         return self._wrap(vectors), np.asarray(self._lengths, dtype=float)
 
     def geodesic_ball_quadrature(
-        self, centre: Any, radius: float, /, *, count: int
+        self, center: Any, radius: float, /, *, count: int
     ) -> tuple[list[Any], np.ndarray]:
         """Nodes and weights integrating over a ball, so they sum to its volume.
 
@@ -918,7 +918,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         trigonometric polynomials it meets.
 
         Args:
-            centre: the ball's centre.
+            center: the ball's center.
             radius: its radius, in the units of the domain.
             count: roughly how many nodes. Split between radius and direction.
 
@@ -942,7 +942,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"this box has {dimension}. Integrate with an explicit set of "
                 f"nodes instead."
             )
-        first = self._as_point(centre)
+        first = self._as_point(center)
 
         if dimension == 1:
             abscissae, weights = _gauss_legendre(max(count, 1))

@@ -31,7 +31,7 @@ from ..algebra.spaces import (
     HilbertSpace,
     OrthonormalSpace,
 )
-from ..numerics.randomised import random_eig
+from ..numerics.randomized import random_eig
 from ..numerics.solvers import InverseOperator, LinearSolver, SolveResult
 from ..traits import Traits
 from .normal import FactoredNormalOperator
@@ -73,7 +73,7 @@ class NormalDiagonalPreconditioner(LinearSolver):
     operator at all.
 
     The saving that matters is *blocks*. Given a partition of the data indices,
-    the probe vector for a block is its normalised indicator, so the whole block
+    the probe vector for a block is its normalized indicator, so the whole block
     shares one adjoint application and is assigned one representative variance.
     A thousand data in fifty blocks costs fifty adjoint applications rather than
     a thousand, and for data that cluster — stations in a region, rays through a
@@ -183,11 +183,11 @@ class LocalisedPreconditioner(LinearSolver):
     sensible ordering, and a preconditioner can keep the blocks and drop the
     rest.
 
-    Each block is approximated by a randomised Nystrom decomposition of
+    Each block is approximated by a randomized Nystrom decomposition of
     ``P N P*`` at the given rank rather than by the exact sub-block, so a block
     of size 200 still costs only ``rank`` applications. The blocks are assembled
     into a sparse matrix, the noise diagonal is added, and the result is
-    factorised once with a sparse LU.
+    factorized once with a sparse LU.
 
     Unlike :class:`NormalDiagonalPreconditioner` the blocks may **overlap** and
     need not cover every index: this is an approximation to the operator, not a
@@ -227,7 +227,7 @@ class LocalisedPreconditioner(LinearSolver):
             blocks: index groups that couple strongly. May overlap.
             rank: the rank of the Nystrom approximation within each block,
                 capped at the block size.
-            rng: the generator for the randomised range finder.
+            rng: the generator for the randomized range finder.
         """
         self._blocks = [list(block) for block in blocks]
         if not self._blocks:
@@ -327,12 +327,12 @@ class LocalisedPreconditioner(LinearSolver):
             )
         # Assembled as the Gaussian reading; the operator is a multiple of it.
         assembled = normal.scale * assembled
-        factorised = sparse_linalg.splu(assembled.tocsc())
+        factorized = sparse_linalg.splu(assembled.tocsc())
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             weighted = data_space.apply_gram(data_space.to_components(y))
             return SolveResult(
-                data_space.from_components(factorised.solve(weighted)), 0, 0.0, True
+                data_space.from_components(factorized.solve(weighted)), 0, 0.0, True
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
@@ -374,7 +374,7 @@ def gaspari_cohn(distances: np.ndarray, length: float, /) -> np.ndarray:
 
     A compactly supported, positive definite function on ``[0, 2 * length]``.
     Its role here is not smoothing: truncating a covariance matrix to a
-    neighbourhood is not a positive definite operation, and multiplying by this
+    neighborhood is not a positive definite operation, and multiplying by this
     before truncating is what makes the result positive definite again — a
     Schur product with a positive definite function, cut off exactly where the
     truncation cuts off.
@@ -551,12 +551,12 @@ class InvariantDistancePreconditioner(LinearSolver):
         assembled = (
             normal.scale * (scaling @ assembled @ scaling + sparse.diags(noise))
         ).tocsc()
-        factorised = sparse_linalg.splu(assembled)
+        factorized = sparse_linalg.splu(assembled)
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             weighted = data_space.apply_gram(data_space.to_components(y))
             return SolveResult(
-                data_space.from_components(factorised.solve(weighted)), 0, 0.0, True
+                data_space.from_components(factorized.solve(weighted)), 0, 0.0, True
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)

@@ -1,5 +1,5 @@
 """
-Convex optimisation, coordinate-free where the geometry allows.
+Convex optimization, coordinate-free where the geometry allows.
 
 Which is further than one might expect. The proximal operators that matter in
 practice — of a norm, of the indicator of a ball, of a squared distance — all
@@ -11,15 +11,15 @@ statements about the space's geometry rather than about a basis:
 
 Both are metric-aware for free, and both mean the same thing under refinement.
 Written in components they would instead shrink in whatever basis the
-discretisation happened to supply.
+discretization happened to supply.
 
 What is *not* coordinate-free is the small dense subproblem a bundle method
 solves over its cut coefficients. That lives in ``R^k`` for a handful of cuts
-and is canonically Euclidean, so a SciPy-backed quadratic programme behind a
+and is canonically Euclidean, so a SciPy-backed quadratic program behind a
 protocol is the right shape there — coordinates are not a constraint when the
 space is genuinely finite-dimensional and has no metric of its own.
 
-Ported from v1's ``convex_optimisation`` and ``convex_analysis``, both of which
+Ported from v1's ``convex_optimization`` and ``convex_analysis``, both of which
 are free of any dependence on the inversion layer. The KKT, Chambolle-Pock and
 support-value machinery is entangled with it and is deliberately left behind.
 """
@@ -39,7 +39,7 @@ from numpy.random import Generator
 from ..algebra.operators import Functional, LinearFunctional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..traits import Traits
-from .optimisation import OptimisationResult, Optimiser
+from .optimization import OptimisationResult, Optimizer
 
 __all__ = [
     "ChambollePockSolver",
@@ -66,34 +66,34 @@ __all__ = [
 
 
 class SquaredDistance(Functional):
-    """``0.5 ||x - centre||^2`` in the space's own norm.
+    """``0.5 ||x - center||^2`` in the space's own norm.
 
-    Smooth, with gradient ``x - centre`` and Hessian the identity — so its
+    Smooth, with gradient ``x - center`` and Hessian the identity — so its
     condition number is one whatever the metric, which is the cleanest possible
     illustration of why the gradient is taken in the space rather than in the
     components.
     """
 
-    def __init__(self, domain: HilbertSpace, /, *, centre: Any = None) -> None:
+    def __init__(self, domain: HilbertSpace, /, *, center: Any = None) -> None:
         """
         Args:
             domain: the space.
-            centre: the point the distance is measured from. Defaults to zero.
+            center: the point the distance is measured from. Defaults to zero.
         """
         super().__init__(domain)
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
     @property
-    def centre(self) -> Any:
+    def center(self) -> Any:
         """The point the distance is measured from."""
-        return self._centre
+        return self._center
 
     def _value(self, x: Any) -> float:
-        return 0.5 * self.domain.squared_norm(self.domain.subtract(x, self._centre))
+        return 0.5 * self.domain.squared_norm(self.domain.subtract(x, self._center))
 
     def _derivative(self, x: Any) -> LinearFunctional:
         return LinearFunctional.from_representer(
-            self.domain, self.domain.subtract(x, self._centre)
+            self.domain, self.domain.subtract(x, self._center)
         )
 
     @property
@@ -109,9 +109,9 @@ class SquaredDistance(Functional):
         )
 
     def prox(self, x: Any, step: float, /) -> Any:
-        """``(x + step * centre) / (1 + step)``, in closed form."""
+        """``(x + step * center) / (1 + step)``, in closed form."""
         space = self.domain
-        shifted = space.axpy(step, self._centre, space.copy(x))
+        shifted = space.axpy(step, self._center, space.copy(x))
         return space.scale_inplace(1.0 / (1.0 + step), shifted)
 
 
@@ -182,15 +182,15 @@ class BallIndicator(Functional):
     """
 
     def __init__(
-        self, domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
+        self, domain: HilbertSpace, /, *, radius: float = 1.0, center: Any = None
     ) -> None:
         """
         Args:
             domain: the space.
             radius: the ball's radius, which must not be negative. Zero gives
                 the indicator of a single point, whose prox is the constant map
-                to the centre.
-            centre: the ball's centre. Defaults to zero.
+                to the center.
+            center: the ball's center. Defaults to zero.
 
         Raises:
             ValueError: if the radius is negative.
@@ -199,7 +199,7 @@ class BallIndicator(Functional):
             raise ValueError("radius must not be negative.")
         super().__init__(domain)
         self._radius = float(radius)
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
     @property
     def radius(self) -> float:
@@ -207,27 +207,27 @@ class BallIndicator(Functional):
         return self._radius
 
     @property
-    def centre(self) -> Any:
-        """The ball's centre."""
-        return self._centre
+    def center(self) -> Any:
+        """The ball's center."""
+        return self._center
 
     def _value(self, x: Any) -> float:
-        offset = self.domain.norm(self.domain.subtract(x, self._centre))
+        offset = self.domain.norm(self.domain.subtract(x, self._center))
         return 0.0 if offset <= self._radius * (1.0 + 1e-12) else float("inf")
 
     def prox(self, x: Any, step: float, /) -> Any:
         """The projection onto the ball, which does not depend on the step."""
         space = self.domain
-        offset = space.subtract(x, self._centre)
+        offset = space.subtract(x, self._center)
         norm = space.norm(offset)
         if norm <= self._radius:
             return space.copy(x)
-        return space.axpy(self._radius / norm, offset, space.copy(self._centre))
+        return space.axpy(self._radius / norm, offset, space.copy(self._center))
 
     def conjugate(self) -> Functional:
         """The support function of the ball."""
         return SupportFunction.of_ball(
-            self.domain, radius=self._radius, centre=self._centre
+            self.domain, radius=self._radius, center=self._center
         )
 
 
@@ -258,33 +258,33 @@ class SupportFunction(Functional):
 
     @property
     def has_subgradient(self) -> bool:
-        """True: a maximiser is a subgradient."""
+        """True: a maximizer is a subgradient."""
         return True
 
     def subgradient(self, y: Any) -> Any:
-        """A maximiser of the pairing, which is a subgradient of the support."""
-        return self._maximiser(y)
+        """A maximizer of the pairing, which is a subgradient of the support."""
+        return self._maximizer(y)
 
     @abstractmethod
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         """A point of the set attaining the supremum."""
 
     @staticmethod
     def of_ball(
-        domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
+        domain: HilbertSpace, /, *, radius: float = 1.0, center: Any = None
     ) -> SupportFunction:
-        """The support function of a ball: ``r ||y|| + (centre, y)``.
+        """The support function of a ball: ``r ||y|| + (center, y)``.
 
         Args:
             domain: the space the ball lives in.
             radius: its radius, in the space's own norm.
-            centre: its centre. The origin if omitted, which makes the
+            center: its center. The origin if omitted, which makes the
                 support function the norm alone.
 
         Returns:
             The support function.
         """
-        return _BallSupport(domain, radius=radius, centre=centre)
+        return _BallSupport(domain, radius=radius, center=center)
 
     @staticmethod
     def of_point(domain: HilbertSpace, point: Any, /) -> SupportFunction:
@@ -297,13 +297,13 @@ class SupportFunction(Functional):
         value: Callable[[Any], float],
         /,
         *,
-        maximiser: Callable[[Any], Any] | None = None,
+        maximizer: Callable[[Any], Any] | None = None,
     ) -> SupportFunction:
-        """A support function given by a callable, with its maximiser if known.
+        """A support function given by a callable, with its maximizer if known.
 
         v1's ``CallableSupportFunction``. The value alone gives a functional
         that can be evaluated and added and scaled like any other; the
-        maximiser, ``q -> argmax (q, x)`` over the set, is what makes it a
+        maximizer, ``q -> argmax (q, x)`` over the set, is what makes it a
         *subgradient*-carrying functional, which is what a bundle method
         needs of it. Without one, :attr:`has_subgradient` is false and
         :meth:`subgradient` refuses, rather than returning nothing.
@@ -311,12 +311,12 @@ class SupportFunction(Functional):
         Args:
             domain: the space.
             value: ``q -> h(q)``.
-            maximiser: ``q -> x*(q)`` attaining it, if available.
+            maximizer: ``q -> x*(q)`` attaining it, if available.
 
         Returns:
             The support function.
         """
-        return _OracleSupport(domain, value, maximiser=maximiser)
+        return _OracleSupport(domain, value, maximizer=maximizer)
 
     @staticmethod
     def of_half_space(
@@ -417,27 +417,27 @@ class _BallSupport(SupportFunction):
     """The support function of a ball."""
 
     def __init__(
-        self, domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
+        self, domain: HilbertSpace, /, *, radius: float = 1.0, center: Any = None
     ) -> None:
         if radius < 0.0:
             raise ValueError("radius must not be negative.")
         super().__init__(domain)
         self._radius = float(radius)
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
     def _value(self, y: Any) -> float:
-        # At radius zero this is the point support ``(centre, y)``, which is
+        # At radius zero this is the point support ``(center, y)``, which is
         # what it should be: the support function of a single point.
         return self._radius * self.domain.norm(y) + self.domain.inner_product(
-            self._centre, y
+            self._center, y
         )
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         space = self.domain
         norm = space.norm(y)
         if norm == 0.0:
-            return space.copy(self._centre)
-        return space.axpy(self._radius / norm, y, space.copy(self._centre))
+            return space.copy(self._center)
+        return space.axpy(self._radius / norm, y, space.copy(self._center))
 
 
 class _OracleSupport(SupportFunction):
@@ -449,28 +449,28 @@ class _OracleSupport(SupportFunction):
         value: Callable[[Any], float],
         /,
         *,
-        maximiser: Callable[[Any], Any] | None = None,
+        maximizer: Callable[[Any], Any] | None = None,
     ) -> None:
         super().__init__(domain)
         self._oracle = value
-        self._maximiser_fn = maximiser
+        self._maximizer_fn = maximizer
 
     @property
     def has_subgradient(self) -> bool:
-        """Only with a maximiser: a support value alone gives no subgradient."""
-        return self._maximiser_fn is not None
+        """Only with a maximizer: a support value alone gives no subgradient."""
+        return self._maximizer_fn is not None
 
     def _value(self, y: Any) -> float:
         return float(self._oracle(y))
 
-    def _maximiser(self, y: Any) -> Any:
-        if self._maximiser_fn is None:
+    def _maximizer(self, y: Any) -> Any:
+        if self._maximizer_fn is None:
             raise NotImplementedError(
                 "This support function was given its values only; a subgradient "
-                "is a maximiser, and none was supplied. Pass maximiser= to "
+                "is a maximizer, and none was supplied. Pass maximizer= to "
                 "SupportFunction.of_oracle or ConvexSet.from_support_function."
             )
-        return self._maximiser_fn(y)
+        return self._maximizer_fn(y)
 
 
 class _HalfSpaceSupport(SupportFunction):
@@ -486,7 +486,7 @@ class _HalfSpaceSupport(SupportFunction):
     same quantity from ``||y||^2 - alpha^2 ||a||^2`` cancels to noise exactly
     when the two are nearly parallel, which is the case being decided.
 
-    The maximiser, when the value is finite, is not unique -- every point of
+    The maximizer, when the value is finite, is not unique -- every point of
     the boundary plane attains it. The one returned is the plane's point of
     least norm, ``(b / (a, a)) a``, as v1 chose; any other would serve a
     subgradient method equally, and this one is the canonical choice.
@@ -529,7 +529,7 @@ class _HalfSpaceSupport(SupportFunction):
         alpha = self._multiple(y)
         return float("inf") if alpha is None else alpha * self._offset
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         if self._multiple(y) is None:
             raise ValueError(
                 "The support is infinite in this direction: the set is "
@@ -550,7 +550,7 @@ class _PointSupport(SupportFunction):
     def _value(self, y: Any) -> float:
         return self.domain.inner_product(self._point, y)
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         return self.domain.copy(self._point)
 
 
@@ -569,7 +569,7 @@ class _MinkowskiSupport(SupportFunction):
     def _value(self, y: Any) -> float:
         return float(sum(part(y) for part in self._parts))
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         space = self.domain
         result = space.zero()
         for part in self._parts:
@@ -588,7 +588,7 @@ class _ScaledSupport(SupportFunction):
     def _value(self, y: Any) -> float:
         return self._alpha * self._base(y)
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         return self.domain.scale(self._alpha, self._base.subgradient(y))
 
 
@@ -603,7 +603,7 @@ class _ImageSupport(SupportFunction):
     def _value(self, y: Any) -> float:
         return self._base(self._operator.adjoint(y))
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         return self._operator(self._base.subgradient(self._operator.adjoint(y)))
 
 
@@ -612,7 +612,7 @@ class _ImageSupport(SupportFunction):
 # --------------------------------------------------------------------- #
 
 
-class SubgradientDescent(Optimiser):
+class SubgradientDescent(Optimizer):
     """Subgradient descent with a diminishing step.
 
     v1's implementation uses a *constant* step and says in its own docstring
@@ -645,7 +645,7 @@ class SubgradientDescent(Optimiser):
             step_size: the scale ``a`` in the step rule.
             rule: which diminishing rule to use.
             target_value: the known optimal value, required by ``"polyak"``.
-            **kwargs: passed to :class:`~pygeoinf2.numerics.optimisation.Optimiser`.
+            **kwargs: passed to :class:`~pygeoinf2.numerics.optimization.Optimizer`.
         """
         if step_size <= 0.0:
             raise ValueError("step_size must be positive.")
@@ -658,8 +658,8 @@ class SubgradientDescent(Optimiser):
         self._target_value = target_value
         super().__init__(**kwargs)
 
-    def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring only a subgradient.
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+        """Minimize, requiring only a subgradient.
 
         Args:
             functional: convex, and able to supply a subgradient. It need not
@@ -667,7 +667,7 @@ class SubgradientDescent(Optimiser):
             x0: where to start.
 
         Returns:
-            The optimisation result.
+            The optimization result.
 
         Raises:
             ValueError: if the functional cannot supply a subgradient.
@@ -677,7 +677,7 @@ class SubgradientDescent(Optimiser):
                 "SubgradientDescent needs a functional with a subgradient. "
                 "A smooth functional supplies one from its gradient."
             )
-        return self._minimise(functional, x0)
+        return self._minimize(functional, x0)
 
     def _step(self, iteration: int, value: float, subgradient_norm: float) -> float:
         if self._rule == "constant":
@@ -691,7 +691,7 @@ class SubgradientDescent(Optimiser):
             return 0.0
         return max(gap, 0.0) / subgradient_norm**2
 
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         space = functional.domain
         x = space.copy(x0)
         value = functional(x)
@@ -738,7 +738,7 @@ class SubgradientDescent(Optimiser):
         )
 
 
-class ProximalGradient(Optimiser):
+class ProximalGradient(Optimizer):
     """Proximal gradient descent for ``f + g``, optionally accelerated.
 
     ``f`` must be smooth and ``g`` must have a proximal operator; either may be
@@ -748,7 +748,7 @@ class ProximalGradient(Optimiser):
     The step is the reciprocal of a Lipschitz constant for ``grad f``, found by
     backtracking when none is given. Because the proximal operator is taken in
     the space's norm, the whole method is metric-aware: the same problem
-    discretised twice takes the same number of iterations.
+    discretized twice takes the same number of iterations.
     """
 
     def __init__(
@@ -767,7 +767,7 @@ class ProximalGradient(Optimiser):
             accelerated: use the FISTA momentum sequence.
             backtracking: the factor a rejected step is multiplied by.
             max_backtracks: give up after this many contractions.
-            **kwargs: passed to :class:`~pygeoinf2.numerics.optimisation.Optimiser`.
+            **kwargs: passed to :class:`~pygeoinf2.numerics.optimization.Optimizer`.
         """
         self._step = step
         self._accelerated = accelerated
@@ -775,7 +775,7 @@ class ProximalGradient(Optimiser):
         self._max_backtracks = max_backtracks
         super().__init__(**kwargs)
 
-    def minimise(
+    def minimize(
         self,
         smooth: Functional,
         x0: Any,
@@ -783,7 +783,7 @@ class ProximalGradient(Optimiser):
         *,
         nonsmooth: Functional | None = None,
     ) -> OptimisationResult:
-        """Minimise ``smooth + nonsmooth`` from ``x0``.
+        """Minimize ``smooth + nonsmooth`` from ``x0``.
 
         Args:
             smooth: the differentiable part ``f``.
@@ -792,7 +792,7 @@ class ProximalGradient(Optimiser):
                 this is plain gradient descent with a backtracked step.
 
         Returns:
-            The optimisation result.
+            The optimization result.
 
         Raises:
             ValueError: if the two parts live on different spaces, or the
@@ -808,7 +808,7 @@ class ProximalGradient(Optimiser):
             )
         return self._run(smooth, nonsmooth, x0)
 
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         return self._run(functional, None, x0)
 
     def _run(
@@ -927,7 +927,7 @@ class ProximalGradient(Optimiser):
         # Growing it each iteration looks appealing but is unsafe: as the
         # gradient vanishes the sufficient-decrease test degenerates, so any
         # step passes, the step runs away, and the proximal operator then
-        # slams the iterate to the minimiser of the non-smooth part alone.
+        # slams the iterate to the minimizer of the non-smooth part alone.
         for _ in range(self._max_backtracks):
             trial = proximal(space.axpy(-step, gradient, space.copy(y)), step)
             difference = space.subtract(trial, y)
@@ -942,7 +942,7 @@ class ProximalGradient(Optimiser):
         return step, None
 
 
-class ProximalPoint(Optimiser):
+class ProximalPoint(Optimizer):
     """The proximal point method: repeated proximal steps on the objective.
 
     Unconditionally stable for any positive step, and the conceptual parent of
@@ -956,15 +956,15 @@ class ProximalPoint(Optimiser):
         Args:
             step: the proximal parameter. Larger steps converge in fewer
                 iterations and make each one harder.
-            **kwargs: passed to :class:`~pygeoinf2.numerics.optimisation.Optimiser`.
+            **kwargs: passed to :class:`~pygeoinf2.numerics.optimization.Optimizer`.
         """
         if step <= 0.0:
             raise ValueError("step must be positive.")
         self._step = step
         super().__init__(**kwargs)
 
-    def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring a proximal operator.
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+        """Minimize, requiring a proximal operator.
 
         Args:
             functional: convex, with a proximal operator. A set's indicator
@@ -972,16 +972,16 @@ class ProximalPoint(Optimiser):
             x0: where to start.
 
         Returns:
-            The optimisation result.
+            The optimization result.
 
         Raises:
             ValueError: if the functional has no proximal operator.
         """
         if not functional.has_prox:
             raise ValueError("ProximalPoint needs a functional with a prox.")
-        return self._minimise(functional, x0)
+        return self._minimize(functional, x0)
 
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         space = functional.domain
         x = space.copy(x0)
         history = [functional(x)]
@@ -1017,10 +1017,10 @@ class ProximalPoint(Optimiser):
 
 @dataclass(frozen=True)
 class BundleResult:
-    """The outcome of a bundle minimisation.
+    """The outcome of a bundle minimization.
 
     The field names are
-    :class:`~pygeoinf2.numerics.optimisation.OptimisationResult`'s, so a caller
+    :class:`~pygeoinf2.numerics.optimization.OptimisationResult`'s, so a caller
     can read either without looking up which it has. ``value`` used to be
     ``minimum``, which said the same thing in a different word and made the two
     gratuitously incompatible.
@@ -1029,7 +1029,7 @@ class BundleResult:
     value: float
     """The least value found."""
 
-    minimiser: Any
+    minimizer: Any
     """Where it was found."""
 
     iterations: int
@@ -1048,9 +1048,9 @@ class BundleResult:
     """The model's predicted decrease at the last step.
 
     A *practical* stopping criterion, and stated as one. The cutting-plane
-    model lies below the function everywhere, so the unregularised gap would
-    bound ``f(centre) - f*``; this one includes the proximal term, so it is
-    the decrease predicted under that regularisation and is generally smaller.
+    model lies below the function everywhere, so the unregularized gap would
+    bound ``f(center) - f*``; this one includes the proximal term, so it is
+    the decrease predicted under that regularization and is generally smaller.
     It behaves like a bound and is the right thing to stop on, but it is not
     certified. A certified global bound is what the level bundle method's LP
     gives, and that is D-13.
@@ -1065,7 +1065,7 @@ class BundleResult:
     """
 
     serious_steps: int = 0
-    """How many iterations moved the stability centre."""
+    """How many iterations moved the stability center."""
 
     def __repr__(self) -> str:
         return (
@@ -1075,11 +1075,11 @@ class BundleResult:
 
 
 class ProximalBundleMethod:
-    """Minimise a convex function from values and subgradients alone.
+    """Minimize a convex function from values and subgradients alone.
 
     A subgradient is a *lower* bound on a convex function everywhere, not just
     near where it was taken. A bundle method keeps the ones it has seen and
-    minimises their upper envelope — the best piecewise-linear model the
+    minimizes their upper envelope — the best piecewise-linear model the
     information so far supports — with a proximal term to stop it running away
     from where the model is trustworthy.
 
@@ -1096,7 +1096,7 @@ class ProximalBundleMethod:
         *,
         weight: float = 1.0,
         tolerance: float = 1e-8,
-        iterations: int = 200,
+        max_iterations: int = 200,
         capacity: int = 40,
         descent: float = 0.1,
         qp_solver: Any = None,
@@ -1105,7 +1105,7 @@ class ProximalBundleMethod:
         Args:
             weight: the proximal weight. Larger keeps steps shorter.
             tolerance: stop when the model's gap falls below this.
-            iterations: the cap.
+            max_iterations: the cap.
             capacity: how many cuts to keep; the oldest are dropped.
             descent: the fraction of the predicted decrease a step must
                 deliver to be accepted as a serious step.
@@ -1126,7 +1126,7 @@ class ProximalBundleMethod:
             raise ValueError(f"The descent fraction lies in (0, 1), got {descent}.")
         self._weight = weight
         self._tolerance = tolerance
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._capacity = capacity
         self._descent = descent
         self._qp_solver = qp_solver
@@ -1147,10 +1147,10 @@ class ProximalBundleMethod:
                     continue
         return None if self._qp_solver == "builtin" else self._qp_solver
         # The cuts a stored Gram matrix was built from, and the matrix. Reset
-        # at the start of each minimisation.
+        # at the start of each minimization.
         self._cache: tuple[list[int], np.ndarray] = ([], np.empty((0, 0)))
 
-    def minimise(
+    def minimize(
         self,
         functional: Functional,
         start: Any,
@@ -1158,7 +1158,7 @@ class ProximalBundleMethod:
         *,
         subgradient: Any = None,
     ) -> BundleResult:
-        """Minimise a convex functional from a starting point.
+        """Minimize a convex functional from a starting point.
 
         Args:
             functional: convex, and able to supply a subgradient.
@@ -1167,18 +1167,18 @@ class ProximalBundleMethod:
                 subgradient. Defaults to the functional's own.
 
         Returns:
-            The minimum, a minimiser, and the gap that certifies it.
+            The minimum, a minimizer, and the gap that certifies it.
         """
         space = functional.domain
         slope = subgradient or functional.subgradient
 
         self._cache = ([], np.empty((0, 0)))
         self._warm = None
-        centre = space.copy(start)
-        best = float(functional(centre))
+        center = space.copy(start)
+        best = float(functional(center))
         # Each cut is (gradient, value, point). The point matters: a cut taken
         # elsewhere bounds f from below everywhere, but its offset *at the
-        # current centre* is f(x_i) + (g_i, c - x_i), and dropping the second
+        # current center* is f(x_i) + (g_i, c - x_i), and dropping the second
         # term makes every cut look tight and the method stop at once.
         cuts: list[tuple[Any, float, Any]] = []
         weight = self._weight
@@ -1188,8 +1188,8 @@ class ProximalBundleMethod:
         # cut is taken at the *candidate*.
         #
         # This is the part that was wrong. The subgradient used to be taken at
-        # the centre at the top of each iteration, and a null step leaves the
-        # centre where it was -- so a null step added a cut identical to one
+        # the center at the top of each iteration, and a null step leaves the
+        # center where it was -- so a null step added a cut identical to one
         # already in the bundle and learned nothing from the trial point it had
         # just paid to evaluate. Duplicate cuts also make the model's Gram
         # matrix exactly singular, and it showed: across the Backus tests the
@@ -1197,15 +1197,15 @@ class ProximalBundleMethod:
         # why the subproblem could not be solved to any useful tolerance.
         # Taking the cut where the candidate is, which is what makes a null
         # step informative, is the textbook arrangement.
-        cuts.append((space.copy(slope(centre)), best, space.copy(centre)))
+        cuts.append((space.copy(slope(center)), best, space.copy(center)))
         evaluations = 1
 
-        for iteration in range(1, self._iterations + 1):
-            candidate, gap = self._solve_model(space, centre, best, cuts, weight)
+        for iteration in range(1, self._max_iterations + 1):
+            candidate, gap = self._solve_model(space, center, best, cuts, weight)
             if gap <= self._tolerance * max(abs(best), 1.0):
                 return BundleResult(
                     best,
-                    centre,
+                    center,
                     iteration,
                     evaluations,
                     True,
@@ -1220,15 +1220,15 @@ class ProximalBundleMethod:
                 cuts.pop(0)
 
             if best - value >= self._descent * gap:
-                centre, best = candidate, value  # a serious step
+                center, best = candidate, value  # a serious step
                 weight = max(weight * 0.5, 1e-8)
             else:
                 weight = min(weight * 2.0, 1e12)  # a null step: trust less
 
         return BundleResult(
             best,
-            centre,
-            self._iterations,
+            center,
+            self._max_iterations,
             evaluations,
             False,
             "iteration limit reached",
@@ -1271,12 +1271,12 @@ class ProximalBundleMethod:
     def _solve_model(
         self,
         space: Any,
-        centre: Any,
+        center: Any,
         value: float,
         cuts: Any,
         weight: float,
     ) -> tuple[Any, float]:
-        """Minimise the cutting-plane model plus a proximal term.
+        """Minimize the cutting-plane model plus a proximal term.
 
         The dual of that quadratic program is a simplex-constrained least
         squares in the *number of cuts*, which is small — so it is solved
@@ -1293,7 +1293,7 @@ class ProximalBundleMethod:
                 max(
                     value
                     - taken
-                    - space.inner_product(gradient, space.subtract(centre, point)),
+                    - space.inner_product(gradient, space.subtract(center, point)),
                     0.0,
                 )
                 for gradient, taken, point in cuts
@@ -1306,7 +1306,7 @@ class ProximalBundleMethod:
         combination = space.zero()
         for coefficient, (gradient, _, _) in zip(weights, cuts):
             combination = space.axpy(coefficient, gradient, combination)
-        candidate = space.add(centre, space.scale(-step_size, combination))
+        candidate = space.add(center, space.scale(-step_size, combination))
         decrease = 0.5 * step_size * space.squared_norm(combination) + float(
             weights @ errors
         )
@@ -1322,7 +1322,7 @@ class ProximalBundleMethod:
         size = errors.size
         backend = self.qp_solver
         if backend is None:
-            return _minimise_on_simplex(quadratic, -errors)
+            return _minimize_on_simplex(quadratic, -errors)
         warm = None
         if self._warm is not None and self._warm.size in (size, size - 1):
             warm = np.zeros(size)
@@ -1338,7 +1338,7 @@ class ProximalBundleMethod:
         upper = np.concatenate([[1.0], np.full(size, np.inf)])
         result = backend.solve(quadratic, errors, rows, lower, upper, x0=warm)
         if not result.solved:
-            weights = _minimise_on_simplex(quadratic, -errors)
+            weights = _minimize_on_simplex(quadratic, -errors)
         else:
             weights = _project_on_simplex(np.asarray(result.x, dtype=float))
         self._warm = weights
@@ -1359,20 +1359,20 @@ def _project_on_simplex(vector: np.ndarray) -> np.ndarray:
     return np.clip(vector - running[count - 1], 0.0, None)
 
 
-def _minimise_on_simplex(
+def _minimize_on_simplex(
     quadratic: np.ndarray,
     linear: np.ndarray,
     /,
     *,
-    iterations: int = 1000,
+    max_iterations: int = 1000,
     tolerance: float = 1e-8,
     warn_above: float = 1e-4,
 ) -> np.ndarray:
-    """Minimise ``w' Q w / 2 - l' w`` over the unit simplex.
+    """Minimize ``w' Q w / 2 - l' w`` over the unit simplex.
 
     Accelerated projected gradient -- FISTA -- with a step from the largest
     eigenvalue. Handing this to a general nonlinear solver instead cost fifty
-    seconds per bundle minimisation, almost all of it in setting up problems
+    seconds per bundle minimization, almost all of it in setting up problems
     this small.
 
     **Accelerated, because plain projected gradient was not converging here.**
@@ -1415,14 +1415,14 @@ def _minimise_on_simplex(
     Args:
         quadratic: the ``Q`` above, symmetric positive semidefinite.
         linear: the ``l`` above.
-        iterations: the cap.
+        max_iterations: the cap.
         tolerance: the KKT residual to stop at, relative to the gradient's
             scale.
         warn_above: warn when the iterations run out with the residual still
             above this. Set to infinity to silence it.
 
     Returns:
-        The minimising weights.
+        The minimizing weights.
     """
     size = linear.size
     step = 1.0 / max(float(np.linalg.eigvalsh(quadratic).max()), 1e-12)
@@ -1436,7 +1436,7 @@ def _minimise_on_simplex(
     # random bundles it did end worse than the plain method on 2 of them.
     best, residual = weights.copy(), float("inf")
 
-    for _ in range(iterations):
+    for _ in range(max_iterations):
         gradient = quadratic @ weights - linear
         support = weights > 0.0
         current = float(gradient[support].max() - gradient.min())
@@ -1462,7 +1462,7 @@ def _minimise_on_simplex(
     scale = max(float(np.abs(quadratic @ weights - linear).max()), 1.0)
     if residual > warn_above * scale:
         warnings.warn(
-            f"The bundle subproblem did not converge in {iterations} "
+            f"The bundle subproblem did not converge in {max_iterations} "
             f"iterations; the KKT residual is {residual / scale:.3g} relative. "
             "The outer method will still make progress, but its gap is only "
             "as good as this solve.",
@@ -1473,7 +1473,7 @@ def _minimise_on_simplex(
 
 
 class LevelBundleMethod:
-    """Minimise a convex function, with a *certified* bound on how far off it is.
+    """Minimize a convex function, with a *certified* bound on how far off it is.
 
     The other bundle method here, :class:`ProximalBundleMethod`, stops on its
     model's predicted decrease, which behaves like a bound and is not one. This
@@ -1484,17 +1484,17 @@ class LevelBundleMethod:
     The bound comes from the cutting-plane model itself. Every cut is an affine
     *under*-estimate of a convex function everywhere, so the model
     ``max_j [f_j + (g_j, x - x_j)]`` lies below ``f``, and *its* minimum lies
-    below ``f*``. That minimum is a linear programme -- minimise ``t`` subject
+    below ``f*``. That minimum is a linear program -- minimize ``t`` subject
     to every cut being at or below it -- and it is solved as one, by the
     simplex method, which is more reliable on a nearly unbounded LP than
     handing it to a QP solver.
 
     Each step then asks for a point that reaches a *level* between the bound
-    and the best value, and is as close as possible to the stability centre:
+    and the best value, and is as close as possible to the stability center:
 
     .. code-block:: text
 
-        minimise    ||x - centre||^2 / 2
+        minimize    ||x - center||^2 / 2
         subject to  f_j + (g_j, x - x_j) <= t   for every cut
                     t <= level
 
@@ -1502,7 +1502,7 @@ class LevelBundleMethod:
     close to the lower bound and makes fast progress when it succeeds; the QP
     can then be infeasible, because no point reaches that level. That is
     handled rather than raised: ``alpha`` is widened towards one and retried,
-    and if it still fails a proximal step is taken instead, so the centre and
+    and if it still fails a proximal step is taken instead, so the center and
     the bundle always advance.
 
     **Needs a coordinate space.** The master problem is a QP in the domain's
@@ -1520,7 +1520,7 @@ class LevelBundleMethod:
         *,
         alpha: float = 0.1,
         tolerance: float = 1e-6,
-        iterations: int = 500,
+        max_iterations: int = 500,
         capacity: int = 100,
         qp_solver: Any = None,
     ) -> None:
@@ -1531,7 +1531,7 @@ class LevelBundleMethod:
                 towards one is cautious. In ``(0, 1)``.
             tolerance: stop when the gap falls to this fraction of the best
                 value. **Relative**, unlike a bare number would suggest.
-            iterations: the cap on oracle calls.
+            max_iterations: the cap on oracle calls.
             capacity: how many cuts to keep. The oldest are dropped.
             qp_solver: the backend for the master problem. Defaults to
                 :func:`~pygeoinf2.numerics.quadratic_programming.best_available_qp_solver`.
@@ -1543,7 +1543,7 @@ class LevelBundleMethod:
             raise ValueError(f"alpha lies in (0, 1), got {alpha}.")
         self._alpha = alpha
         self._tolerance = tolerance
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._capacity = capacity
         self._qp_solver = qp_solver
 
@@ -1572,20 +1572,20 @@ class LevelBundleMethod:
             bounds.append(float(components @ space.to_components(point)) - value)
         return np.asarray(rows, dtype=float), np.asarray(bounds, dtype=float)
 
-    def _lower_bound(self, space: Any, cuts: list, centre: np.ndarray) -> float:
+    def _lower_bound(self, space: Any, cuts: list, center: np.ndarray) -> float:
         """The cutting-plane model's own minimum: a global lower bound.
 
-        A linear programme, and solved as one. The model underestimates the
+        A linear program, and solved as one. The model underestimates the
         function everywhere, so this underestimates the minimum -- which is
         what makes the gap a bound rather than an indication.
 
-        The variable is kept inside a box ``|x_i - centre_i| <= R`` with
-        ``R == 1e3 (1 + max |centre|)``, as v1 did. Without it the LP is
+        The variable is kept inside a box ``|x_i - center_i| <= R`` with
+        ``R == 1e3 (1 + max |center|)``, as v1 did. Without it the LP is
         unbounded whenever the cuts do not span the space, which early on
         they never do, and the method then has no bound and no level to aim
         at and takes proximal steps instead; with it there is a finite bound
         from the first cut. The box is so large relative to the iterates
-        that it never binds at a minimiser the method could reach, so it
+        that it never binds at a minimizer the method could reach, so it
         does not bias the bound; it only keeps it finite.
 
         Returns ``-inf`` when the LP is infeasible or the solver fails.
@@ -1596,8 +1596,8 @@ class LevelBundleMethod:
         size = space.dim
         objective = np.zeros(size + 1)
         objective[size] = 1.0
-        radius = 1e3 * (1.0 + float(np.max(np.abs(centre))))
-        box = [(float(c - radius), float(c + radius)) for c in centre]
+        radius = 1e3 * (1.0 + float(np.max(np.abs(center))))
+        box = [(float(c - radius), float(c + radius)) for c in center]
 
         outcome = linprog(
             objective,
@@ -1612,28 +1612,28 @@ class LevelBundleMethod:
         self,
         space: Any,
         cuts: list,
-        centre: np.ndarray,
+        center: np.ndarray,
         level: float | None,
         warm: float,
     ) -> np.ndarray | None:
         """The level QP, or the proximal fallback when *level* is ``None``.
 
-        Warm-started at the centre with ``t == warm``, as v1 did: a feasible
+        Warm-started at the center with ``t == warm``, as v1 did: a feasible
         start for the ``t`` variable is what lets an active-set or ADMM
         backend begin from a point that satisfies the cuts.
 
-        Returns the new point's components, or ``None`` if the programme was
+        Returns the new point's components, or ``None`` if the program was
         infeasible -- which for the level problem is expected and handled, and
         for the fallback means something has gone properly wrong.
         """
         rows, bounds = self._cut_rows(space, cuts)
         size = space.dim
 
-        # 0.5 ||x - centre||^2 == 0.5 x'x - centre'x + const, and t is free of
+        # 0.5 ||x - center||^2 == 0.5 x'x - center'x + const, and t is free of
         # the quadratic; the fallback adds t to the linear part instead.
         quadratic = np.zeros((size + 1, size + 1))
         quadratic[:size, :size] = np.eye(size)
-        linear = np.append(-centre, 0.0 if level is not None else 1.0)
+        linear = np.append(-center, 0.0 if level is not None else 1.0)
 
         if level is not None:
             level_row = np.zeros(size + 1)
@@ -1647,13 +1647,13 @@ class LevelBundleMethod:
             rows,
             np.full(bounds.size, -np.inf),
             bounds,
-            x0=np.append(centre, warm),
+            x0=np.append(center, warm),
         )
         if not result.solved:
             return None
         return np.asarray(result.x[:size], dtype=float)
 
-    def minimise(
+    def minimize(
         self,
         functional: Functional,
         start: Any,
@@ -1661,7 +1661,7 @@ class LevelBundleMethod:
         *,
         subgradient: Callable[[Any], Any] | None = None,
     ) -> BundleResult:
-        """Minimise a convex functional from a starting point.
+        """Minimize a convex functional from a starting point.
 
         Args:
             functional: convex, and able to supply a subgradient.
@@ -1670,7 +1670,7 @@ class LevelBundleMethod:
                 subgradient. Defaults to the functional's own.
 
         Returns:
-            The minimum, a minimiser, and a gap that is a genuine bound on the
+            The minimum, a minimizer, and a gap that is a genuine bound on the
             distance to the true minimum.
 
         Raises:
@@ -1682,22 +1682,22 @@ class LevelBundleMethod:
         require_coordinates(space, space)
         slope = subgradient or functional.subgradient
 
-        centre = space.copy(start)
-        centre_value = float(functional(centre))
+        center = space.copy(start)
+        center_value = float(functional(center))
         best_point = space.copy(start)
-        upper = centre_value
+        upper = center_value
         evaluations = 1
         cuts: list[tuple[Any, float, Any]] = [
-            (space.copy(slope(centre)), upper, space.copy(centre))
+            (space.copy(slope(center)), upper, space.copy(center))
         ]
         lower = -np.inf
         serious = 0
         message = "iteration limit reached"
         iteration = 0
 
-        for iteration in range(1, self._iterations + 1):
-            centre_components = space.to_components(centre)
-            lower = max(lower, self._lower_bound(space, cuts, centre_components))
+        for iteration in range(1, self._max_iterations + 1):
+            center_components = space.to_components(center)
+            lower = max(lower, self._lower_bound(space, cuts, center_components))
             gap = upper - lower
             if gap <= self._tolerance * max(abs(upper), 1.0):
                 return BundleResult(
@@ -1726,17 +1726,17 @@ class LevelBundleMethod:
                     else upper
                 )
                 candidate = self._master(
-                    space, cuts, centre_components, level, min(level, centre_value)
+                    space, cuts, center_components, level, min(level, center_value)
                 )
                 if candidate is not None:
                     break
                 alpha = min(alpha * 1.5, 0.9)
             if candidate is None:
                 # No reachable level. A proximal step still improves the
-                # centre and the bundle, which is what the next lower bound
+                # center and the bundle, which is what the next lower bound
                 # is built from.
                 candidate = self._master(
-                    space, cuts, centre_components, None, centre_value
+                    space, cuts, center_components, None, center_value
                 )
             if candidate is None:
                 message = "the master problem could not be solved"
@@ -1751,13 +1751,13 @@ class LevelBundleMethod:
 
             if value < upper:
                 upper, best_point = value, space.copy(point)
-            # A serious step moves the stability centre; a null step leaves
-            # it and lets the new cut sharpen the model there. The centre
+            # A serious step moves the stability center; a null step leaves
+            # it and lets the new cut sharpen the model there. The center
             # used to move every iteration, which turned the proximal term
             # into a penalty on the distance from wherever the last trial
             # landed rather than from the best point the method trusts.
-            if value < centre_value:
-                centre, centre_value = point, value
+            if value < center_value:
+                center, center_value = point, value
                 serious += 1
 
         # ``iteration`` rather than the cap: a break on a failed master
@@ -1783,7 +1783,7 @@ class SaddlePointResult:
     """``(c, m)`` at the point found: the support value being sought."""
 
     model: Any
-    """The maximising model."""
+    """The maximizing model."""
 
     discrepancy: Any
     """The data-error vector ``v`` that goes with it."""
@@ -1807,13 +1807,13 @@ class SaddlePointResult:
 
 
 class ChambollePockSolver:
-    """Maximise a linear functional over a feasible set, by primal-dual splitting.
+    """Maximize a linear functional over a feasible set, by primal-dual splitting.
 
     The primal form of the same question the dual route answers:
 
     .. code-block:: text
 
-        maximise    (c, m)
+        maximize    (c, m)
         subject to  m in prior, v in noise, G m + v == d
 
     Chambolle and Pock's first-order method (2011) on the saddle-point form,
@@ -1857,7 +1857,7 @@ class ChambollePockSolver:
         sigma: float | None = None,
         tau: float | None = None,
         theta: float = 1.0,
-        iterations: int = 1000,
+        max_iterations: int = 1000,
         tolerance: float = 1e-6,
         rng: Generator | None = None,
     ) -> None:
@@ -1870,7 +1870,7 @@ class ChambollePockSolver:
             sigma: the dual step. Chosen with *tau* from ``||G||`` if unset.
             tau: the primal step.
             theta: the over-relaxation, one being the standard choice.
-            iterations: the cap.
+            max_iterations: the cap.
             tolerance: on the feasibility residual.
             rng: for the power iteration that estimates ``||G||``.
 
@@ -1890,7 +1890,7 @@ class ChambollePockSolver:
         self._forward = forward
         self._data = data
         self._theta = theta
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._tolerance = tolerance
 
         if sigma is None or tau is None:
@@ -1927,7 +1927,7 @@ class ChambollePockSolver:
         return step, step
 
     def solve(self, objective: Any, /, *, start: Any = None) -> SaddlePointResult:
-        """Maximise ``(objective, m)`` over the feasible set.
+        """Maximize ``(objective, m)`` over the feasible set.
 
         Args:
             objective: ``c``, in the model space. Typically ``T* q``.
@@ -1947,7 +1947,7 @@ class ChambollePockSolver:
         model_bar, discrepancy_bar = model, discrepancy
         residual = float("inf")
 
-        for iteration in range(1, self._iterations + 1):
+        for iteration in range(1, self._max_iterations + 1):
             # Dual ascent on the extrapolated primal point.
             gap = data_space.subtract(
                 data_space.add(self._forward(model_bar), discrepancy_bar), self._data
@@ -2003,7 +2003,7 @@ class ChambollePockSolver:
             discrepancy,
             certificate,
             residual,
-            self._iterations,
+            self._max_iterations,
             False,
         )
 
@@ -2013,10 +2013,10 @@ class KKTResult:
     """The outcome of a KKT solve for a quadratically constrained maximum."""
 
     value: float
-    """``(c, m)`` at the maximiser."""
+    """``(c, m)`` at the maximizer."""
 
     model: Any
-    """The maximiser."""
+    """The maximizer."""
 
     multipliers: tuple[float, float]
     """``(lambda, mu)``, on the prior and the data constraint. A zero second
@@ -2044,7 +2044,7 @@ class PrimalKKTSolver:
 
     .. code-block:: text
 
-        maximise    (c, m)
+        maximize    (c, m)
         subject to  (m - m0, B (m - m0)) <= eta^2
                     (G m - d, V (G m - d)) <= r^2
 
@@ -2052,7 +2052,7 @@ class PrimalKKTSolver:
     constraints give two equations in ``(lambda, mu)``, solved in log
     coordinates so both stay positive.
 
-    **The model space is never discretised.** The closed form needs
+    **The model space is never discretized.** The closed form needs
     ``(1/mu) V^-1 + (1/lambda) G B^-1 G*``, which acts on the *data* space --
     finite-dimensional by construction -- so the Woodbury identity moves the
     only matrix that is formed onto the small side. That is the whole reason
@@ -2094,7 +2094,7 @@ class PrimalKKTSolver:
             prior: a :class:`~pygeoinf2.geometry.convex.Ball` or
                 :class:`~pygeoinf2.geometry.convex.Ellipsoid` on the model
                 space. An ellipsoid must know its covariance.
-            noise: likewise on the data space, and centred at the origin --
+            noise: likewise on the data space, and centered at the origin --
                 the data itself is the offset.
             forward: ``G``.
             data: the observations.
@@ -2149,23 +2149,23 @@ class PrimalKKTSolver:
 
     @staticmethod
     def _quadratic(space: Any, given: Any) -> tuple[Any, Any, float, Any]:
-        """A set as ``(weight, inverse weight, radius, centre)``.
+        """A set as ``(weight, inverse weight, radius, center)``.
 
         A ball's weight is the identity and its radius is its own; an
         ellipsoid's are its precision and covariance, with radius one, since
-        its constraint is already normalised.
+        its constraint is already normalized.
         """
         from ..geometry.convex import Ball
 
         identity = LinearOperator.identity(space)
         if isinstance(given, Ball):
-            return identity, identity, given.radius, given.centre
+            return identity, identity, given.radius, given.center
         if given._covariance is None:
             raise ValueError(
                 "An ellipsoid needs its covariance for the KKT route: the "
                 "closed form inverts the constraint's weight."
             )
-        return given._precision, given._covariance, 1.0, given.centre
+        return given._precision, given._covariance, 1.0, given.center
 
     def _model(self, multipliers: tuple[float, float], objective: Any) -> Any:
         """``m*(lambda, mu)`` from stationarity, through Woodbury.
@@ -2175,11 +2175,11 @@ class PrimalKKTSolver:
         lam, mu = multipliers
         model_space = self._forward.domain
         data_space = self._forward.codomain
-        prior_weight, prior_inverse, _, centre = self._prior_parts
+        prior_weight, prior_inverse, _, center = self._prior_parts
         _, noise_inverse, _, _ = self._noise_parts
 
         # r = c + lambda B m0 + mu G* V d.
-        right = model_space.add(objective, model_space.scale(lam, prior_weight(centre)))
+        right = model_space.add(objective, model_space.scale(lam, prior_weight(center)))
         right = model_space.add(
             right,
             model_space.scale(
@@ -2213,13 +2213,13 @@ class PrimalKKTSolver:
         return self._noise_covariance_matrix / mu + self._gram / lam
 
     def solve(self, objective: Any, /) -> KKTResult:
-        """Maximise ``(objective, m)`` over the two sets.
+        """Maximize ``(objective, m)`` over the two sets.
 
         Args:
             objective: ``c``, in the model space.
 
         Returns:
-            The maximiser and its multipliers.
+            The maximizer and its multipliers.
         """
         from scipy.optimize import fsolve
 
@@ -2228,7 +2228,7 @@ class PrimalKKTSolver:
 
         # The prior's own support point, which is the answer when the data
         # constraint does not bite.
-        best = self._prior.support_maximiser(objective)
+        best = self._prior.support_maximizer(objective)
         residual = data_space.subtract(self._forward(best), self._data)
         if float(
             data_space.inner_product(self._noise_weight(residual), residual)
@@ -2338,11 +2338,11 @@ class PrimalKKTSolver:
 class LevelKKTSolver:
     """The exact maximum over two sets with level functions, from the KKT conditions.
 
-    :class:`PrimalKKTSolver` writes the maximiser down when both constraints
+    :class:`PrimalKKTSolver` writes the maximizer down when both constraints
     are quadratic. This keeps its shape -- two multipliers, one per active
     constraint, found by a two-variable root find in log coordinates on the
     two constraint residuals -- and replaces the closed form by a convex
-    minimisation: at a multiplier pair ``(lambda, mu)`` the model minimises
+    minimization: at a multiplier pair ``(lambda, mu)`` the model minimizes
 
     .. code-block:: text
 
@@ -2368,8 +2368,8 @@ class LevelKKTSolver:
     such trouble on quadratic sets and is preferred there; this solver is
     for the sets it cannot take.
 
-    Each probe's minimisation starts cold, from zero: warm-starting from the
-    previous probe's minimiser let Newton stop one step short and froze the
+    Each probe's minimization starts cold, from zero: warm-starting from the
+    previous probe's minimizer let Newton stop one step short and froze the
     residuals across the root find (DESIGN §70).
     """
 
@@ -2381,7 +2381,7 @@ class LevelKKTSolver:
         data: Any,
         /,
         *,
-        optimiser: Optimiser | None = None,
+        optimizer: Optimizer | None = None,
         tolerance: float = 1e-10,
         evaluations: int = 200,
     ) -> None:
@@ -2393,7 +2393,7 @@ class LevelKKTSolver:
                 ``d - A m``.
             forward: ``A``.
             data: the observations.
-            optimiser: the minimiser for each probe. Newton-CG when both
+            optimizer: the minimizer for each probe. Newton-CG when both
                 level functions have Hessians, L-BFGS otherwise.
             tolerance: for the root find on the multipliers.
             evaluations: its cap.
@@ -2412,15 +2412,15 @@ class LevelKKTSolver:
         ):
             if given.domain != space:
                 raise ValueError(f"The {name} set must live in {space!r}.")
-        if optimiser is None:
-            from .optimisation import LBFGS, NewtonCG
+        if optimizer is None:
+            from .optimization import LBFGS, NewtonCG
 
-            optimiser = (
+            optimizer = (
                 NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
                 if self._prior.has_hessian and self._noise.has_hessian
                 else LBFGS(rtol=1e-12, gtol=0.0, max_iterations=2000)
             )
-        self._optimiser = optimiser
+        self._optimizer = optimizer
         self._tolerance = tolerance
         self._evaluations = evaluations
         self._previous: tuple[float, float] | None = None
@@ -2428,8 +2428,8 @@ class LevelKKTSolver:
     def _objective(self, lam: float, mu: float, objective: Any) -> Functional:
         """``lambda f(m) + mu g(d - A m) - (c, m)``, scaled by ``1 / (lambda + mu)``.
 
-        The scaling leaves the minimiser alone and keeps the value of order
-        one, so that the optimiser's tolerances mean the same thing at every
+        The scaling leaves the minimizer alone and keeps the value of order
+        one, so that the optimizer's tolerances mean the same thing at every
         multiplier pair.
         """
         space, data_space = self._forward.domain, self._forward.codomain
@@ -2467,18 +2467,18 @@ class LevelKKTSolver:
         )
 
     def _model(self, lam: float, mu: float, objective: Any) -> Any:
-        return self._optimiser.minimise(
+        return self._optimizer.minimize(
             self._objective(lam, mu, objective), self._forward.domain.zero()
-        ).minimiser
+        ).minimizer
 
     def solve(self, objective: Any, /) -> KKTResult:
-        """Maximise ``(objective, m)`` over the two sets.
+        """Maximize ``(objective, m)`` over the two sets.
 
         Args:
             objective: ``c``, in the model space.
 
         Returns:
-            The maximiser and its multipliers.
+            The maximizer and its multipliers.
         """
         from scipy.optimize import fsolve
 
@@ -2493,7 +2493,7 @@ class LevelKKTSolver:
             lambda lam, _: Evaluation(float(f(self._model(lam, 0.0, objective)))),
             a,
             decreasing=True,
-            iterations=80,
+            max_iterations=80,
             rtol=1e-9,
             atol=0.0,
             warm_start=False,
@@ -2574,7 +2574,7 @@ def _level_function_of(subset: Any, name: str) -> tuple[Functional, float]:
         )
     if not getattr(functional, "has_derivative", False):
         raise TypeError(
-            f"The {name}'s level function has no gradient; the KKT solver minimises "
+            f"The {name}'s level function has no gradient; the KKT solver minimizes "
             "with one."
         )
     return functional, level

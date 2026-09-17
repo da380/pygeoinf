@@ -72,9 +72,34 @@ bite on a real problem; the small restorations below matter less in practice.
 
 ## 6. Naming (§0.4) — one pass, last, with `compat` carrying the old names
 
-- [ ] decide each row of the §0.4 table
-- [ ] apply in one commit
-- [ ] settle `maxiter` / `max_iterations` / `iterations`
+- [x] decide each row of the §0.4 table — **decided** 2026-09-17: the proposal below with two changes from David: `mean_map` → `expectation_operator` (expectation over mean) and `gain` → `kalman_operator` (v1's name); and American spelling for every identifier, library-wide ("we are using other libraries that are American and we can't get away from that"). DESIGN §79.
+
+  | v1 | v2 | proposal | why |
+  |---|---|---|---|
+  | `LinearBayesianInversion` | `LinearGaussianInversion` | keep, alias in `compat` | the mixture inversion is Bayesian too; "Gaussian" says which |
+  | `model_prior_measure`, `data_prior_measure`, `joint_prior_measure` | `prior`, `data_prior`, `joint_prior` | keep | the suffix named the type, not the role, and in v2 the prior slot also holds a convex set |
+  | `data_error_measure=` | `error=` | keep | the error is a measure or a convex set; "measure" would be wrong half the time |
+  | `forward_problem` | `problem` | **revert** to `forward_problem` | no strong reason for the shorter name; v1's is unambiguous and matches `LinearForwardProblem` |
+  | `property_operator`, `property_space` | `target`, `target_space` | **revert** to `property_operator`, `property_space` | "property" is the Backus–Gilbert term and David's own; "target" collides with the target misfit in the discrepancy code |
+  | `kalman_operator(solver, …)` | `gain` (property) | **revert** to `kalman_operator` (David: "very engineeringy") | a property still, since the solver is fixed at construction |
+  | `model_posterior_measure(data, solver, …)` | `__call__(data)` | keep (agreed) | callable estimators |
+  | `posterior_expectation_operator` | `mean_map` | **`expectation_operator`** (David: expectation over mean) | on the estimator, where "posterior" is implied |
+  | `get_normal_equations_rhs` | `NormalOperator.right_hand_side` | keep | it belongs to the normal operator |
+  | `mahalanobis_evidence_term`, `estimate_log_determinant` | `mahalanobis`, `normal_log_determinant` | keep | both say what they are; the second is no longer an estimate when dense |
+  | `LinearLeastSquaresInversion`, `LinearMinimumNormInversion`, `Constrained…` | `LeastSquares`, `MinimumNorm` + `DiscrepancyPrinciple`, `ConstrainedLeastSquares`, `ConstrainedMinimumNorm` | keep, aliases in `compat` | `Linear…Inversion` is noise inside `inference`; the principle is its own operator |
+  | `inverse_covariance`, `inverse_covariance_factor` | `precision`, `precision_factor` | keep, alias properties | the standard term; DESIGN §66 records the metric bug `inverse_covariance` invited |
+  | `sample_set`, `covariance_factor_set`, … | `can_sample`, `… is not None` | keep | a flag reads as a question |
+  | `affine_mapping(…)` | `affine_map` / `push_forward` / `translate` | keep | three operations that v1 packed into one signature |
+  | `from_direct_sum` (measures) | `from_product` | keep | the measure is a product measure on a direct-sum space |
+  | `credible_set(probability, geometry=…)` | `credible_set(level=)`, `ambient_ball(level=, method=)` | keep | two sets, two methods |
+  | `significance_level` (positional) | `level=` (keyword, 0.95) | keep | 0.95 is a confidence level, not a significance level; the keyword corrects the misnomer |
+  | `parameterized_*`, `data_reduced_*` | `parameterised`, `data_reduced` | **`parameterized`**, `data_reduced` | David: American spelling in code, library-wide (`minimize`, `Optimizer`, `center=`, `randomized.py`, …) |
+
+  Iteration counts: every `iterations`/`max_iterations`/`maxiter` argument is a cap on an iterative method, so one name for the budget going in — `max_iterations` (73 uses already) — and `iterations` kept only for the count coming out on results (`SolveResult.iterations`). `maxiter` (two Krylov signatures, mirroring SciPy's spelling) goes. About thirty signatures rename.
+
+  `compat`: class-name aliases only. A renamed keyword raises `TypeError` at the call, which is the loud, easy failure; a shim would hide it.
+- [x] apply in one commit — done, with the spelling switch. DESIGN §79.
+- [x] settle `maxiter` / `max_iterations` / `iterations` — `max_iterations` for every budget going in, `iterations` only for the count on a result; `maxiter` gone. DESIGN §79.
 
 ## 7. Big-ticket items needing a decision, not a session
 

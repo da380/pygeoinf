@@ -7518,3 +7518,53 @@ unfittable data both searches report the range exhausted, the floored
 one at the floor and in fewer evaluations, and both the principle and
 ``for_data`` still refuse; an absolute tolerance reaches the root
 finder and closes on the same root.
+
+## 79. The names, decided in one pass (2026-09-17)
+
+The audit's §0.4 table listed the inference-layer renames from v1 to
+v2. David's rule was v1 terminology unless there is a strong reason,
+and he reviewed a proposal row by row. The outcome, applied in one
+commit with the spelling switch below:
+
+**Kept, with the reason.** `LinearGaussianInversion` (the mixture
+inversion is Bayesian too); `prior`, `data_prior`, `joint_prior` and
+`error=` (the slot holds a measure or a convex set, so a ``_measure``
+suffix would be wrong half the time); `precision` (the standard term,
+and §66 records the metric bug `inverse_covariance` invited);
+`can_sample`; `affine_map`/`push_forward`/`translate` (three
+operations v1 packed into one); `from_product`; `credible_set(level=)`
+and `ambient_ball` (0.95 is a confidence level, not a significance
+level); the short estimator class names, with v1's carried as aliases
+in `compat`; callable estimators.
+
+**Reverted to v1.** `forward_problem`, not `problem` (no strong reason
+for the short name). `property_operator` and `property_space`, not
+`target` (Backus–Gilbert's term and David's own; "target" collided with
+the target misfit in the discrepancy code). `kalman_operator`, not
+`gain` (David: "very engineeringy"), still a property since the solver
+is fixed at construction.
+
+**Changed to neither.** `expectation_operator` for the posterior mean
+map, v1's `posterior_expectation_operator` with the implied "posterior"
+dropped, because David prefers expectation to mean.
+
+**Iteration budgets.** Every ``iterations``, ``max_iterations`` and
+``maxiter`` argument was a cap on an iterative method, so there was no
+distinction to keep. One name for the budget going in,
+``max_iterations``; ``iterations`` only for the count coming out on a
+result. ``maxiter`` is gone from the Krylov solvers.
+
+**Spelling.** David, on the one British-spelling row: "Let's switch for
+consistency on the spelling. We are using other libraries that are
+American and we can't get away from that." So every identifier in the
+library is American now: `Optimizer`, `minimize`, `Linearization`,
+`factorize`, `normalize=`, `center=`, `randomized.py`,
+`optimization.py`, `linearization.py`, and the -our, -lled and other
+families with them; 172 distinct words, applied to the docstrings too
+so that a docstring and the identifier it names agree. The design
+notes and the audit keep their prose as written.
+
+**Migration.** `compat` carries the five v1 inversion class names.
+Nothing carries a renamed keyword: a renamed keyword raises
+``TypeError`` at the call, the loud and easily fixed failure, and a shim
+would hide it.

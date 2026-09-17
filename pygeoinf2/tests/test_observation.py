@@ -102,7 +102,7 @@ class TestGeodesics:
         """The negative control for atan2 over arccos.
 
         The cosine is flat near zero separation, so ``acos(u . v)`` throws away
-        half its digits exactly where a localisation radius needs them.
+        half its digits exactly where a localization radius needs them.
         """
         pole = np.array([90.0, 0.0])
         separation = 1.0e-6  # radians of arc
@@ -121,20 +121,20 @@ class TestGeodesics:
             space.geodesic_quadrature(pole, other, count=4)
 
     def test_ball_weights_sum_to_the_cap_area(self, space, rng):
-        centre = space.random_point(rng=rng)
+        center = space.random_point(rng=rng)
         radius = 0.3 * RADIUS
-        _, weights = space.geodesic_ball_quadrature(centre, radius, count=200)
+        _, weights = space.geodesic_ball_quadrature(center, radius, count=200)
         exact = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(radius / RADIUS))
         assert weights.sum() == pytest.approx(exact, rel=1e-12)
 
     def test_ball_nodes_lie_inside_the_ball(self, space, rng):
         """The rule is now built as one array rather than ring by ring, so
         this pins that the rings and their azimuths still line up."""
-        centre = space.random_point(rng=rng)
+        center = space.random_point(rng=rng)
         radius = 0.3 * RADIUS
-        nodes, weights = space.geodesic_ball_quadrature(centre, radius, count=200)
+        nodes, weights = space.geodesic_ball_quadrature(center, radius, count=200)
         assert len(nodes) == weights.size == 200
-        distances = np.array([space.geodesic_distance(centre, node) for node in nodes])
+        distances = np.array([space.geodesic_distance(center, node) for node in nodes])
         assert distances.max() <= radius + 1e-12
         assert distances.max() > 0.5 * radius
 
@@ -158,36 +158,36 @@ class TestAverages:
 
     def test_the_cap_average_of_one_is_one(self, lebesgue, rng):
         one = lebesgue.project_function(lambda point: 1.0)
-        centre = lebesgue.random_point(rng=rng)
-        assert lebesgue.spherical_cap_average(centre, 0.15)(one) == pytest.approx(1.0)
+        center = lebesgue.random_point(rng=rng)
+        assert lebesgue.spherical_cap_average(center, 0.15)(one) == pytest.approx(1.0)
 
     def test_the_cap_integral_of_one_is_the_area(self, lebesgue, rng):
         one = lebesgue.project_function(lambda point: 1.0)
-        centre = lebesgue.random_point(rng=rng)
+        center = lebesgue.random_point(rng=rng)
         angular = 8.6  # degrees, as every angle on a sphere now is
         area = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(np.radians(angular)))
-        assert lebesgue.spherical_cap_integral(centre, angular)(one) == pytest.approx(
+        assert lebesgue.spherical_cap_integral(center, angular)(one) == pytest.approx(
             area
         )
 
     def test_the_closed_form_agrees_with_the_rotated_indicator(self, lebesgue, rng):
         """REVIEW2 4.2.5. The components used to come from
         ``SHCoeffs.from_cap``, which builds the cap at the pole and rotates it
-        -- 8.5 ms a centre at lmax 128, against 0.2 ms for the addition
+        -- 8.5 ms a center at lmax 128, against 0.2 ms for the addition
         theorem. This is the check that they are the same components."""
         from pyshtools import SHCoeffs
 
         from pygeoinf2.symmetric_space.sphere import _NO_CONDON_SHORTLEY
 
-        centres = lebesgue.random_points(5, rng=rng)
+        centers = lebesgue.random_points(5, rng=rng)
         for angular in (2.0, 37.0, 90.0, 172.0):
             rotated = []
-            for centre in centres:
+            for center in centers:
                 cap = SHCoeffs.from_cap(
                     angular,
                     lebesgue.lmax,
-                    clat=float(centre[0]),
-                    clon=float(centre[1]),
+                    clat=float(center[0]),
+                    clon=float(center[1]),
                     normalization="ortho",
                     csphase=_NO_CONDON_SHORTLEY,
                     kind="real",
@@ -202,32 +202,32 @@ class TestAverages:
                     * lebesgue.area
                     * fraction
                 )
-            closed = lebesgue.cap_integral_components(centres, angular)
+            closed = lebesgue.cap_integral_components(centers, angular)
             assert np.allclose(closed, np.stack(rotated), atol=1e-10)
 
-    def test_the_closed_form_normalises_by_the_cap_area(self, lebesgue, rng):
-        centres = lebesgue.random_points(3, rng=rng)
+    def test_the_closed_form_normalizes_by_the_cap_area(self, lebesgue, rng):
+        centers = lebesgue.random_points(3, rng=rng)
         angular = 24.0
         area = 2.0 * np.pi * lebesgue.radius**2 * (1.0 - np.cos(np.radians(angular)))
-        integrals = lebesgue.cap_integral_components(centres, angular)
-        averages = lebesgue.cap_integral_components(centres, angular, normalise=True)
+        integrals = lebesgue.cap_integral_components(centers, angular)
+        averages = lebesgue.cap_integral_components(centers, angular, normalize=True)
         assert np.allclose(averages * area, integrals)
 
     def test_a_cap_of_zero_area_has_no_average(self, lebesgue):
         assert np.allclose(lebesgue.cap_integral_components([[0.0, 0.0]], 0.0), 0.0)
         with pytest.raises(ValueError, match="no average"):
-            lebesgue.cap_integral_components([[0.0, 0.0]], 0.0, normalise=True)
+            lebesgue.cap_integral_components([[0.0, 0.0]], 0.0, normalize=True)
         with pytest.raises(ValueError, match=r"\[0, 180\]"):
             lebesgue.cap_integral_components([[0.0, 0.0]], 181.0)
 
     def test_exact_and_quadrature_cap_averages_agree(self, lebesgue, rng):
         """The whole reason for the exact route is that it is cheaper."""
-        centre = lebesgue.random_point(rng=rng)
+        center = lebesgue.random_point(rng=rng)
         radius = 0.2 * RADIUS
         field = lebesgue.random(rng=rng)
-        exact = lebesgue.geodesic_ball_average_operator([centre], radius)
+        exact = lebesgue.geodesic_ball_average_operator([center], radius)
         quadrature = lebesgue.geodesic_ball_average_operator(
-            [centre], radius, count=4000
+            [center], radius, count=4000
         )
         assert exact(field)[0] == pytest.approx(quadrature(field)[0], rel=1e-4)
 
@@ -235,7 +235,7 @@ class TestAverages:
         one = lebesgue.project_function(lambda point: 1.0)
         a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
         # unsafe: L2 on a sphere admits no path integral (see TestPathGuard);
-        # this checks the quadrature's normalisation on a smooth field.
+        # this checks the quadrature's normalization on a smooth field.
         A = lebesgue.path_average_operator([(a, b)], count=12, unsafe=True)
         assert A(one)[0] == pytest.approx(1.0)
 
@@ -282,7 +282,7 @@ class TestAverages:
         assert doubled(one)[0] == pytest.approx(2.0 * plain(one)[0])
 
     def test_the_path_average_is_the_quadrature_sum(self, space, rng):
-        """The W E factorisation must agree with doing it by hand."""
+        """The W E factorization must agree with doing it by hand."""
         a, b = space.random_point(rng=rng), space.random_point(rng=rng)
         nodes, weights = space.geodesic_quadrature(a, b, count=10)
         field = space.random(rng=rng)
@@ -292,13 +292,13 @@ class TestAverages:
 
     def test_the_averaging_operators_have_working_adjoints(self, space, rng):
         a, b = space.random_point(rng=rng), space.random_point(rng=rng)
-        centre = space.random_point(rng=rng)
+        center = space.random_point(rng=rng)
         check_operator(space.path_average_operator([(a, b)], count=8), rng=rng)
         check_operator(
-            space.geodesic_ball_average_operator([centre], 0.2 * RADIUS), rng=rng
+            space.geodesic_ball_average_operator([center], 0.2 * RADIUS), rng=rng
         )
         check_operator(
-            space.geodesic_ball_average_operator([centre], 0.2 * RADIUS, count=120),
+            space.geodesic_ball_average_operator([center], 0.2 * RADIUS, count=120),
             rng=rng,
         )
 
@@ -348,9 +348,9 @@ class TestPathGuard:
 
     def test_a_ball_average_needs_no_order(self, lebesgue, rng):
         """An average over a set of positive measure is bounded on L2."""
-        centre = lebesgue.random_point(rng=rng)
+        center = lebesgue.random_point(rng=rng)
         assert (
-            lebesgue.geodesic_ball_average_operator([centre], 0.2 * RADIUS) is not None
+            lebesgue.geodesic_ball_average_operator([center], 0.2 * RADIUS) is not None
         )
 
     def test_one_dimension_needs_no_order_either(self):
@@ -484,7 +484,7 @@ class TestAcquisitionGeometry:
 
 
 class TestPointwiseVariance:
-    """The parameterisation a modeller actually has an opinion about."""
+    """The parameterization a modeler actually has an opinion about."""
 
     def test_it_matches_the_covariance_of_a_dirac(self, space):
         """Independent computation: (C u, u) with u the Dirac's representer."""
@@ -603,7 +603,7 @@ class TestPointwiseVariance:
 
 
 class TestWeightOperator:
-    """The sparse half of the W E factorisation."""
+    """The sparse half of the W E factorization."""
 
     def test_it_is_its_own_transpose_adjoint(self, rng):
         from pygeoinf2.symmetric_space.base import _weight_matrix, _weight_operator
@@ -702,15 +702,15 @@ class TestPointConvention:
         units of the sphere's radius. Mixing them was how the ball average
         first disagreed with the exact cap."""
         one = space.with_order(0.0).project_function(lambda p: 1.0)
-        centre = np.array([12.0, 34.0])
+        center = np.array([12.0, 34.0])
         lebesgue = space.with_order(0.0)
 
         half_angle = 8.0  # degrees
-        by_angle = lebesgue.spherical_cap_integral(centre, half_angle)(one)
+        by_angle = lebesgue.spherical_cap_integral(center, half_angle)(one)
         expected = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(np.radians(half_angle)))
         assert by_angle == pytest.approx(expected)
 
         # The same cap, reached through the physical radius.
         distance = np.radians(half_angle) * RADIUS
-        by_distance = lebesgue.geodesic_ball_average_operator([centre], distance)
+        by_distance = lebesgue.geodesic_ball_average_operator([center], distance)
         assert by_distance(one)[0] == pytest.approx(1.0, rel=1e-6)

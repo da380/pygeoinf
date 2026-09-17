@@ -180,7 +180,7 @@ class TestStructuralPatterns:
         assert congruence_traits(T.NONE, outer_invertible=True) == T.NONE
 
 
-def test_bayesian_normal_operator_is_recognised():
+def test_bayesian_normal_operator_is_recognized():
     """A Q A* + R, the operator CG is asked to invert throughout the library."""
     pushforward = congruence_traits(T.POSITIVE_SEMIDEFINITE, outer_invertible=False)
     noise = close(T.POSITIVE_DEFINITE)

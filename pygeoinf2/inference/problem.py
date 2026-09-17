@@ -187,9 +187,9 @@ class ForwardProblem:
                 "A chi-squared statistic needs a Gaussian error measure; this "
                 f"one is a {type(measure).__name__}."
             )
-        centred = self.data_space.subtract(residual, measure.expectation)
+        centered = self.data_space.subtract(residual, measure.expectation)
         return measure.mahalanobis_squared(
-            self.data_space.add(centred, measure.expectation)
+            self.data_space.add(centered, measure.expectation)
         )
 
     def critical_chi_squared(self, /, *, level: float = 0.95) -> float:
@@ -240,7 +240,7 @@ class ForwardProblem:
         separate, named step rather than something a constructor does quietly.
 
         Args:
-            model: the model whose predictions the set is centred on.
+            model: the model whose predictions the set is centered on.
             level: the confidence level.
 
         Returns:
@@ -390,25 +390,25 @@ class LinearForwardProblem(ForwardProblem):
     #                        Transformed problems                       #
     # ----------------------------------------------------------------- #
 
-    def parameterised(
-        self, parameterisation: LinearOperator, /
+    def parameterized(
+        self, parameterization: LinearOperator, /
     ) -> LinearForwardProblem:
         """The same data, seen through a restricted model space.
 
         Args:
-            parameterisation: from the parameter space into the model space.
+            parameterization: from the parameter space into the model space.
 
         Returns:
             The problem on the parameter space, with the same error.
 
         Raises:
-            ValueError: if the parameterisation does not map into the model
+            ValueError: if the parameterization does not map into the model
                 space.
         """
-        if parameterisation.codomain != self.model_space:
-            raise ValueError("The parameterisation must map into the model space.")
+        if parameterization.codomain != self.model_space:
+            raise ValueError("The parameterization must map into the model space.")
         return LinearForwardProblem(
-            self._forward_operator @ parameterisation, error=self._error
+            self._forward_operator @ parameterization, error=self._error
         )
 
     def data_reduced(

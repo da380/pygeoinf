@@ -73,7 +73,7 @@ def _require_mfem() -> Any:
 def _to_scipy(matrix: Any) -> sp.csr_matrix:
     """An MFEM sparse matrix as a SciPy one, sharing nothing.
 
-    Refuses an unfinalised matrix. Before ``Finalize`` an MFEM sparse matrix is
+    Refuses an unfinalized matrix. Before ``Finalize`` an MFEM sparse matrix is
     held as linked lists and has no CSR arrays at all, so asking for them does
     not return something wrong — it returns pointers into nothing, and reading
     them segfaults the interpreter with no traceback. A check costs one call
@@ -81,7 +81,7 @@ def _to_scipy(matrix: Any) -> sp.csr_matrix:
     """
     if hasattr(matrix, "Finalized") and not matrix.Finalized():
         raise ValueError(
-            "This MFEM matrix has not been finalised, so it has no CSR arrays "
+            "This MFEM matrix has not been finalized, so it has no CSR arrays "
             "to read. Call Finalize() on the form after Assemble(). (Reading "
             "them anyway segfaults rather than raising, which is why this is "
             "checked.)"
@@ -399,8 +399,8 @@ class MfemSpace(CoordinateSpace):
         return sp.csr_matrix(full[self._free][:, self._free])
 
     @cached_property
-    def _mass_factorisation(self) -> Any:
-        """A sparse factorisation of the mass matrix, computed once.
+    def _mass_factorization(self) -> Any:
+        """A sparse factorization of the mass matrix, computed once.
 
         The mass matrix is well conditioned and its factors stay sparse, which
         is why a direct solve is the right choice here and an iterative one
@@ -414,7 +414,7 @@ class MfemSpace(CoordinateSpace):
 
     def solve_gram(self, c: np.ndarray) -> np.ndarray:
         """``M^-1 c``: the mass solve that turns a load vector into a function."""
-        return self._mass_factorisation(np.asarray(c, dtype=float))
+        return self._mass_factorization(np.asarray(c, dtype=float))
 
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, M^-1)``.
@@ -425,7 +425,7 @@ class MfemSpace(CoordinateSpace):
 
         Done by MFEM. Its ``WhiteGaussianNoiseDomainLFIntegrator`` assembles a
         *load vector* whose covariance is the mass matrix, element by element
-        and with no factorisation at all; one mass solve then turns that into
+        and with no factorization at all; one mass solve then turns that into
         components with covariance ``M^-1``. The obvious alternative — factor
         ``M`` and solve against a standard normal — needs a Cholesky of the
         mass matrix, which for a real finite element space means densifying it,
@@ -452,7 +452,7 @@ def operator_from_bilinear_form(
 
     Args:
         space: the finite element space.
-        form: an assembled and finalised ``mfem.BilinearForm``.
+        form: an assembled and finalized ``mfem.BilinearForm``.
         traits: claims about the operator. A symmetric integrator gives a
             self-adjoint operator, but nothing here can check the integrator,
             so the claim is the caller's and ``testing.check_traits`` verifies
@@ -563,7 +563,7 @@ def solver_from_bilinear_form(
             with ``SetOperator`` already called. Conjugate gradients with a
             Gauss-Seidel smoother if omitted. This is where an application
             supplies something better — a multigrid cycle, a direct
-            factorisation — without anything else changing. Keep a reference to
+            factorization — without anything else changing. Keep a reference to
             anything the solver does not own; MFEM will not.
         rtol: the relative residual for the default solver; ignored when
             *make_solver* is given. An operator defined by an inexact solve is
@@ -625,7 +625,7 @@ def functional_from_linear_form(space: MfemSpace, form: Any, /) -> LinearFunctio
     ``from_derivative_components``, and ``.representer`` is ``M^-1 b`` — the
     mass solve that recovers the function representing the functional.
 
-    Handing the load vector to an optimiser as if it were a gradient is the
+    Handing the load vector to an optimizer as if it were a gradient is the
     error of DESIGN.md 5.6, in the setting where it is most often made.
     """
     return LinearFunctional.from_derivative_components(
@@ -686,7 +686,7 @@ def _white_noise_integrator(seed: int) -> Any:
     ``WhiteGaussianNoiseDomainLFIntegrator.__init__`` in PyMFEM ends with
     ``self._coeff = QG``, and ``QG`` is not defined anywhere — so the
     constructor raises ``NameError`` every time, after the underlying C++
-    object has already been made. This does the SWIG initialisation directly
+    object has already been made. This does the SWIG initialization directly
     and skips the line that fails.
 
     A workaround for an upstream bug, and narrow on purpose: if PyMFEM fixes
@@ -710,10 +710,10 @@ def white_noise_load(
 ) -> np.ndarray:
     """A load vector whose covariance is the mass matrix.
 
-    The finite element discretisation of white noise: the right-hand side of
+    The finite element discretization of white noise: the right-hand side of
     ``(W, phi_i)`` for white noise ``W``, whose covariance is
     ``(phi_i, phi_j) == M``. MFEM assembles it directly, which is the reason to
-    ask MFEM rather than to build one here — no factorisation of ``M`` is
+    ask MFEM rather than to build one here — no factorization of ``M`` is
     involved anywhere.
 
     Args:
@@ -760,7 +760,7 @@ def matern_measure(
         (I - div Theta grad)^a u = eta W,    a = (nu + d/2) / 2
 
     with ``W`` white noise. That is worth far more than a change of formula: a
-    Matern covariance *matrix* is dense and needs a factorisation to sample
+    Matern covariance *matrix* is dense and needs a factorization to sample
     from, while the differential operator is sparse and local, so a field on a
     million-cell mesh costs a few elliptic solves and never an eigenvalue.
 
@@ -770,7 +770,7 @@ def matern_measure(
     ``WhiteGaussianNoiseDomainLFIntegrator`` — which is the piece worth
     borrowing rather than rebuilding, since the right-hand side of a weak form
     driven by white noise has covariance ``M`` rather than the identity, and
-    assembling it directly avoids factorising the mass matrix at all.
+    assembling it directly avoids factorizing the mass matrix at all.
 
     This layer supplies the composition and says what the result *is*: with
     ``S`` the solve and ``A`` the operator,
@@ -827,7 +827,7 @@ def matern_measure(
     from ..probability.gaussian import GaussianMeasure
 
     dimension = space.finite_element_space.GetMesh().Dimension()
-    theta, normalisation, order = _matern_parameters(
+    theta, normalization, order = _matern_parameters(
         dimension, smoothness, correlation_length, rotation
     )
 
@@ -845,7 +845,7 @@ def matern_measure(
         space, form, make_solver=solver, rtol=rtol, max_iterations=max_iterations
     )
 
-    scale = float(amplitude) * normalisation
+    scale = float(amplitude) * normalization
     factor = solve
     powered = operator
     for _ in range(order - 1):
@@ -870,7 +870,7 @@ def _matern_parameters(
     two kinds of space.
 
     Returns:
-        MFEM's anisotropy matrix ``Theta``, the normalisation ``eta``, and the
+        MFEM's anisotropy matrix ``Theta``, the normalization ``eta``, and the
         integer exponent ``(nu + d/2) / 2``.
     """
     lengths = np.atleast_1d(np.asarray(correlation_length, dtype=float))
@@ -897,8 +897,8 @@ def _matern_parameters(
             f"{', '.join(str(2 * k - dimension / 2) for k in (1, 2, 3))}."
         )
     theta = _anisotropy(lengths, rotation, smoothness, dimension)
-    normalisation = _matern_normalisation(smoothness, lengths, dimension)
-    return theta, normalisation, order
+    normalization = _matern_normalization(smoothness, lengths, dimension)
+    return theta, normalization, order
 
 
 def _anisotropy(
@@ -923,7 +923,7 @@ def _anisotropy(
     return np.diag(scaled)
 
 
-def _matern_normalisation(
+def _matern_normalization(
     smoothness: float, lengths: np.ndarray, dimension: int
 ) -> float:
     """The ``eta`` that makes the pointwise variance one.

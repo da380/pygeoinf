@@ -352,7 +352,7 @@ def check_representer(
     numerical adjoint method returns, acting as ``x -> g . c_x`` — its Riesz
     representer ``v`` must satisfy ``(v, x) == g . c_x`` for every ``x``.
 
-    Handing ``g`` straight to an optimiser as if it were the gradient fails this
+    Handing ``g`` straight to an optimizer as if it were the gradient fails this
     identity by a factor of the Gram matrix, which is exactly the classic
     adjoint-method error. On an orthonormal basis the two coincide and there is
     nothing to catch. See DESIGN.md section 5.6.
@@ -495,7 +495,7 @@ def check_operator(
             f"{adjoint.domain!r} -> {adjoint.codomain!r}",
         )
     if operator.adjoint is not adjoint:
-        _fail("the adjoint is memoised", "A.adjoint is not A.adjoint")
+        _fail("the adjoint is memoized", "A.adjoint is not A.adjoint")
     if adjoint.adjoint is not operator:
         _fail("the adjoint is an involution", "A.adjoint.adjoint is not A")
 
@@ -646,8 +646,8 @@ def check_derivative(
         )
 
     domain, codomain = operator.domain, operator.codomain
-    linearisation = operator.at(point)
-    derivative = linearisation.derivative
+    linearization = operator.at(point)
+    derivative = linearization.derivative
 
     for _ in range(trials):
         direction = _draw(domain, rng, measure)
@@ -852,8 +852,8 @@ def check_measure(
         return
 
     covariance = measure.covariance
-    centred = projections - projections.mean(axis=0, keepdims=True)
-    empirical = centred.T @ centred / (samples - 1)
+    centered = projections - projections.mean(axis=0, keepdims=True)
+    empirical = centered.T @ centered / (samples - 1)
     diagonal = [space.inner_product(covariance(u), u) for u in probes]
 
     for i, u in enumerate(probes):
@@ -1001,7 +1001,7 @@ def check_affine(
     Three identities, then the linear part's own axioms. The translation is
     recovered by applying the operator to zero; affine combinations are
     preserved, ``F(a x + (1 - a) y) == a F(x) + (1 - a) F(y)`` for any
-    ``a``, which is linearity with the translation cancelling; and the
+    ``a``, which is linearity with the translation canceling; and the
     derivative at a random point is the linear part, applied to a random
     direction. Then :func:`check_operator` on the linear part, which is
     where a mass matrix in the wrong place shows up as a failed adjoint

@@ -100,7 +100,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         return self._prior
 
     @property
-    def problem(self) -> LinearForwardProblem:
+    def forward_problem(self) -> LinearForwardProblem:
         """The forward problem."""
         return self._problem
 
@@ -120,7 +120,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         return self._problem.data_space
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The space the posterior lives on."""
         return self._problem.model_space
 
@@ -133,7 +133,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
 
         The quantity that reweights the mixture, and separately the quantity a
         model comparison between the components would report. A component with
-        a wide prior is penalised for it here, which is what stops the widest
+        a wide prior is penalized for it here, which is what stops the widest
         component from always winning.
         """
         return np.array(
@@ -146,7 +146,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
     def weights(self, data: Any, /) -> np.ndarray:
         """The posterior mixing weights.
 
-        ``w_k p(d | k)``, normalised — computed through a softmax on the logs,
+        ``w_k p(d | k)``, normalized — computed through a softmax on the logs,
         because the evidences of competing components routinely differ by
         hundreds of nats and the ratio is the only part that matters.
         """
@@ -200,7 +200,7 @@ class _PushedMixture(MeasureEstimator):
         return self._base.data_space
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The property space."""
         return self._operator.codomain
 

@@ -70,7 +70,7 @@ print()
 
 # The normal equations go in the data space by default, and here that is also
 # the smaller side. It is the default because it is nearly always the smaller
-# side -- a model space is a discretised function and grows with resolution,
+# side -- a model space is a discretized function and grows with resolution,
 # while the data are however many observations there are.
 estimator = LinearGaussianInversion(problem, prior)
 print(

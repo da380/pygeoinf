@@ -45,7 +45,7 @@ from .base import PreparedPoints, SymmetricSpace, _distribute, _gauss_legendre
 
 __all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
-# pyshtools' low-level normalisation code for orthonormal harmonics.
+# pyshtools' low-level normalization code for orthonormal harmonics.
 _ORTHONORMAL = 4
 # One basis matrix at a time is held in memory; this bounds its entry count,
 # so a chunk is about 30 MB whatever the truncation.
@@ -335,7 +335,7 @@ class Sphere(SymmetricSpace[Any]):
     def component_of(self, degree: Any, order: Any, /) -> Any:
         """The position of the component with a given degree and signed order.
 
-        v1's ``index_to_integer``, vectorised: scalars give an integer,
+        v1's ``index_to_integer``, vectorized: scalars give an integer,
         arrays give an array, so a whole set of labels is placed at once.
 
         Args:
@@ -867,7 +867,7 @@ class Sphere(SymmetricSpace[Any]):
         acquisition geometry reaches. Calling ``basis_at`` in a loop spends
         almost all of its time in per-point Python: at ``lmax == 64`` the
         Legendre evaluation itself is 3% of it, and the other 97% is indexing
-        and trigonometry that vectorises.
+        and trigonometry that vectorizes.
 
         Rows are ordered as ``points``, columns as the components.
 
@@ -942,7 +942,7 @@ class Sphere(SymmetricSpace[Any]):
         correction in :meth:`_synthesis_adjoint` carries no weight of its own,
         so a common factor on these does not cancel against it. And one rather
         than a closed-form constant, because that constant is pyshtools'
-        normalisation convention, which is exactly the kind of thing this
+        normalization convention, which is exactly the kind of thing this
         class should not be asserting from memory.
 
         One probe rather than ``rows`` of them is the whole saving: 2.9 ms
@@ -1033,7 +1033,7 @@ class Sphere(SymmetricSpace[Any]):
             f(pi) == K . row_means(f)
 
         The zonal harmonics come from one ``PlmON`` call at ``z == 1``, which
-        is exactly their normalisation since ``P_l(1) == 1``, times a Legendre
+        is exactly their normalization since ``P_l(1) == 1``, times a Legendre
         Vandermonde over the grid's cosines -- so the convention is pyshtools'
         own rather than one asserted here, and no per-row transform is needed.
         Agrees with the analysis route to 6e-14 at every truncation, radius and
@@ -1052,7 +1052,7 @@ class Sphere(SymmetricSpace[Any]):
         degrees = np.arange(self._lmax + 1)
         # PlmIndex(l, 0), the zonal entries of the packed Legendre array.
         zonal_indices = degrees * (degrees + 1) // 2
-        # P_l(1) == 1, so this is the normalisation of each zonal harmonic.
+        # P_l(1) == 1, so this is the normalization of each zonal harmonic.
         norms = PlmON(self._lmax, 1.0, csphase=_NO_CONDON_SHORTLEY)[zonal_indices]
         at_pole = norms * (-1.0) ** degrees
         legendre = np.polynomial.legendre.legvander(
@@ -1516,7 +1516,7 @@ class Sphere(SymmetricSpace[Any]):
         paths made 64 000 (REVIEW2 4.2.6).
 
         Args:
-            vectors: an ``(n, 3)`` array. Need not be normalised.
+            vectors: an ``(n, 3)`` array. Need not be normalized.
 
         Returns:
             An ``(n, 2)`` array of points.
@@ -1533,16 +1533,16 @@ class Sphere(SymmetricSpace[Any]):
         )
 
     @staticmethod
-    def _tangent_frame(centre: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _tangent_frame(center: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """An orthonormal basis for the tangent plane at a unit vector."""
         reference = (
             np.array([0.0, 0.0, 1.0])
-            if abs(centre[2]) < 0.9
+            if abs(center[2]) < 0.9
             else np.array([1.0, 0.0, 0.0])
         )
-        first = np.cross(reference, centre)
+        first = np.cross(reference, center)
         first /= np.linalg.norm(first)
-        second = np.cross(centre, first)
+        second = np.cross(center, first)
         return first, second / np.linalg.norm(second)
 
     def geodesic_distance(self, start: Any, end: Any, /) -> float:
@@ -1553,7 +1553,7 @@ class Sphere(SymmetricSpace[Any]):
         loses about half its digits for nearby points, because the cosine is
         flat there. At a separation of ``1e-6`` radians its relative error is
         around ``4e-5``, and it does not return exactly zero for a point
-        against itself. Nearby points are the case a localised covariance is
+        against itself. Nearby points are the case a localized covariance is
         entirely about.
         """
         first, second = self._to_vector(start), self._to_vector(end)
@@ -1614,7 +1614,7 @@ class Sphere(SymmetricSpace[Any]):
         return list(self._to_points(vectors)), weights * (0.5 * arc_length)
 
     def geodesic_ball_quadrature(
-        self, centre: Any, radius: float, /, *, count: int
+        self, center: Any, radius: float, /, *, count: int
     ) -> tuple[list[np.ndarray], np.ndarray]:
         """Nodes and weights integrating over a spherical cap.
 
@@ -1623,7 +1623,7 @@ class Sphere(SymmetricSpace[Any]):
         The weights carry the area element, so they sum to the cap's area.
 
         Args:
-            centre: the cap's centre, in degrees.
+            center: the cap's center, in degrees.
             radius: its *physical* radius along the sphere, not an angle.
             count: how many nodes to place.
 
@@ -1642,7 +1642,7 @@ class Sphere(SymmetricSpace[Any]):
                 f"[0, pi * {self._radius}], got {radius}."
             )
         if radius == 0.0:
-            return [np.asarray(centre, dtype=float)] * count, np.zeros(count)
+            return [np.asarray(center, dtype=float)] * count, np.zeros(count)
 
         angular_radius = radius / self._radius
         cosine = np.cos(angular_radius)
@@ -1654,12 +1654,12 @@ class Sphere(SymmetricSpace[Any]):
         ring_radii = np.sqrt(np.clip(1.0 - heights**2, 0.0, None))
         counts = _distribute(count, ring_radii)
 
-        centre_vector = self._to_vector(centre)
-        first, second = self._tangent_frame(centre_vector)
+        center_vector = self._to_vector(center)
+        first, second = self._tangent_frame(center_vector)
 
         # Every ring's azimuths at once, then every node converted at once:
         # the rings differ only in how many points they hold, so the whole
-        # rule is three concatenations and one vectorised conversion.
+        # rule is three concatenations and one vectorized conversion.
         azimuths = np.concatenate(
             [
                 2.0 * np.pi * np.arange(points_here, dtype=float) / points_here
@@ -1667,7 +1667,7 @@ class Sphere(SymmetricSpace[Any]):
             ]
         )
         ring_of_node = np.repeat(np.arange(counts.size), counts)
-        vectors = heights[ring_of_node, None] * centre_vector[None, :] + ring_radii[
+        vectors = heights[ring_of_node, None] * center_vector[None, :] + ring_radii[
             ring_of_node, None
         ] * (
             np.cos(azimuths)[:, None] * first[None, :]
@@ -1681,7 +1681,7 @@ class Sphere(SymmetricSpace[Any]):
     # ----------------------------------------------------------------- #
 
     def spherical_cap_integral(
-        self, centre: Any, angular_radius: float, /, *, normalise: bool = False
+        self, center: Any, angular_radius: float, /, *, normalize: bool = False
     ) -> LinearFunctional:
         """The exact integral over a spherical cap, as a functional.
 
@@ -1693,12 +1693,12 @@ class Sphere(SymmetricSpace[Any]):
         anything that is not a cap.
 
         Args:
-            centre: the cap's centre, as ``(latitude, longitude)`` in degrees.
+            center: the cap's center, as ``(latitude, longitude)`` in degrees.
             angular_radius: the cap's half-angle, **in degrees**. An angle, not
                 a distance: :meth:`geodesic_ball_quadrature` takes a *physical*
                 radius, in the same units as :attr:`radius`, and the two are
                 related by the radius of the sphere.
-            normalise: divide by the cap's area, giving the average rather than
+            normalize: divide by the cap's area, giving the average rather than
                 the integral.
 
         Returns:
@@ -1709,30 +1709,30 @@ class Sphere(SymmetricSpace[Any]):
                 average over a cap of zero area is asked for.
         """
         rows = self.cap_integral_components(
-            [centre], angular_radius, normalise=normalise
+            [center], angular_radius, normalize=normalize
         )
         return LinearFunctional.from_derivative_components(self, rows[0])
 
     def cap_integral_components(
         self,
-        centres: Sequence[Any],
+        centers: Sequence[Any],
         angular_radius: float,
         /,
         *,
-        normalise: bool = False,
+        normalize: bool = False,
         n_jobs: int | None = None,
     ) -> np.ndarray:
         r"""The derivative components of many cap integrals, in closed form.
 
         The row of an observation operator that averages over a cap, for every
-        centre at once. What the functional needs is
+        center at once. What the functional needs is
         ``g_k == integral over the cap of phi_k``, and the addition theorem
         gives that in one line: rotate the cap to the pole, where only the
         zonal harmonic survives the azimuthal integral, and rotate back.
 
         .. code-block:: text
 
-            g_k == 2 pi R^2 I_l(cos alpha) phi_k(centre)
+            g_k == 2 pi R^2 I_l(cos alpha) phi_k(center)
 
             I_0(x) == 1 - x
             I_l(x) == (P_{l-1}(x) - P_{l+1}(x)) / (2l + 1)
@@ -1741,20 +1741,20 @@ class Sphere(SymmetricSpace[Any]):
         and one :meth:`basis_matrix`.
 
         This replaces ``SHCoeffs.from_cap``, which builds the indicator at the
-        pole and *rotates* it to the centre -- 8.5 ms a centre at ``lmax`` 128
-        -- and then a functional whose representer had to be synthesised for
-        nobody to read. Measured at ``lmax`` 128 over 100 centres: 21 ms
+        pole and *rotates* it to the center -- 8.5 ms a center at ``lmax`` 128
+        -- and then a functional whose representer had to be synthesized for
+        nobody to read. Measured at ``lmax`` 128 over 100 centers: 21 ms
         against 1437 ms, agreeing to 1e-12 (REVIEW2 4.2.5).
 
         Args:
-            centres: the cap centres, ``(latitude, longitude)`` in degrees.
+            centers: the cap centers, ``(latitude, longitude)`` in degrees.
             angular_radius: the caps' common half-angle, **in degrees**.
-            normalise: divide by the cap's area, giving the average rather
+            normalize: divide by the cap's area, giving the average rather
                 than the integral.
-            n_jobs: workers for the basis at the centres. Serial by default.
+            n_jobs: workers for the basis at the centers. Serial by default.
 
         Returns:
-            A ``(len(centres), dim)`` array, one row per centre.
+            A ``(len(centers), dim)`` array, one row per center.
 
         Raises:
             ValueError: if the angular radius is outside ``[0, 180]``, or if an
@@ -1765,12 +1765,12 @@ class Sphere(SymmetricSpace[Any]):
                 f"A cap's angular radius lies in [0, 180] degrees, got "
                 f"{angular_radius}."
             )
-        centres = tuple(centres)
+        centers = tuple(centers)
         cosine = float(np.cos(np.radians(angular_radius)))
         if 1.0 - cosine <= 0.0:
-            if normalise:
+            if normalize:
                 raise ValueError("A cap of zero area has no average.")
-            return np.zeros((len(centres), self.dim))
+            return np.zeros((len(centers), self.dim))
 
         # P_0 ... P_{lmax+1} at the single point cos(alpha).
         legendre = np.polynomial.legendre.legvander(np.array([cosine]), self._lmax + 1)[
@@ -1784,35 +1784,35 @@ class Sphere(SymmetricSpace[Any]):
             integrals[1:] = (legendre[rest - 1] - legendre[rest + 1]) / (2 * rest + 1)
 
         scale = 2.0 * np.pi * self._radius**2
-        rows = self.basis_matrix(centres, n_jobs=n_jobs) * (
+        rows = self.basis_matrix(centers, n_jobs=n_jobs) * (
             scale * integrals[self.degrees]
         )
-        if normalise:
+        if normalize:
             rows = rows / (scale * (1.0 - cosine))
         return rows
 
     def spherical_cap_average(
-        self, centre: Any, angular_radius: float, /
+        self, center: Any, angular_radius: float, /
     ) -> LinearFunctional:
         """The exact average over a spherical cap, as a functional.
 
         Args:
-            centre: the cap's centre, as ``(latitude, longitude)`` in degrees.
+            center: the cap's center, as ``(latitude, longitude)`` in degrees.
             angular_radius: the cap's half-angle, in degrees.
 
         Returns:
             The functional.
         """
-        return self.spherical_cap_integral(centre, angular_radius, normalise=True)
+        return self.spherical_cap_integral(center, angular_radius, normalize=True)
 
     def geodesic_ball_average_operator(
         self,
-        centres: Sequence[Any],
+        centers: Sequence[Any],
         radius: float,
         /,
         *,
         count: int | None = None,
-        normalise: bool = True,
+        normalize: bool = True,
         dense: bool = False,
         n_jobs: int | None = None,
     ) -> LinearOperator:
@@ -1824,15 +1824,15 @@ class Sphere(SymmetricSpace[Any]):
         other.
 
         Args:
-            centres: the cap centres, in degrees.
+            centers: the cap centers, in degrees.
             radius: the *physical* cap radius, not an angle.
             count: nodes per cap for the quadrature route. Ignored on the
                 exact harmonic route.
-            normalise: divide by the cap's area, giving an average rather
+            normalize: divide by the cap's area, giving an average rather
                 than an integral.
             dense: assemble the derivative matrix rather than staying
                 matrix-free.
-            n_jobs: workers for the basis evaluations at the centres on the
+            n_jobs: workers for the basis evaluations at the centers on the
                 exact route, and for the dense assembly on the quadrature
                 route. Serial by default.
 
@@ -1840,17 +1840,17 @@ class Sphere(SymmetricSpace[Any]):
             The operator.
 
         Raises:
-            ValueError: for a non-positive radius or count, or no centres.
+            ValueError: for a non-positive radius or count, or no centers.
         """
-        centres = tuple(centres)
-        if not centres:
-            raise ValueError("At least one centre is needed.")
+        centers = tuple(centers)
+        if not centers:
+            raise ValueError("At least one center is needed.")
         if count is not None:
             return super().geodesic_ball_average_operator(
-                centres,
+                centers,
                 radius,
                 count=count,
-                normalise=normalise,
+                normalize=normalize,
                 dense=dense,
                 n_jobs=n_jobs,
             )
@@ -1861,10 +1861,10 @@ class Sphere(SymmetricSpace[Any]):
         # cap_integral_components takes the half-angle in degrees.
         angular_radius = np.degrees(radius / self._radius)
         rows = self.cap_integral_components(
-            centres, angular_radius, normalise=normalise, n_jobs=n_jobs
+            centers, angular_radius, normalize=normalize, n_jobs=n_jobs
         )
         return LinearOperator.from_matrix(
-            self, EuclideanSpace(len(centres)), rows, form="galerkin"
+            self, EuclideanSpace(len(centers)), rows, form="galerkin"
         )
 
     # ----------------------------------------------------------------- #
@@ -1905,7 +1905,7 @@ class Sphere(SymmetricSpace[Any]):
         minimum_magnitude: float = 0.0,
         rng: Generator | None = None,
     ) -> list[np.ndarray]:
-        """Earthquake epicentres from a cached USGS catalogue.
+        """Earthquake epicenters from a cached USGS catalogue.
 
         Sources cluster along plate boundaries, so the ray coverage they give
         is strongly anisotropic. That is the point of using them.
@@ -1917,7 +1917,7 @@ class Sphere(SymmetricSpace[Any]):
             rng: the generator for the draw.
 
         Returns:
-            ``(latitude, longitude)`` epicentres in degrees.
+            ``(latitude, longitude)`` epicenters in degrees.
         """
         table = _read_table("usgs_event_cache.csv")
         keep = table["mag"] >= minimum_magnitude

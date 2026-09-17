@@ -47,6 +47,11 @@ from .algebra.spaces import CoordinateSpace, _resolve_rng
 from .traits import Traits
 
 __all__ = [
+    "LinearBayesianInversion",
+    "LinearLeastSquaresInversion",
+    "LinearMinimumNormInversion",
+    "ConstrainedLinearLeastSquaresInversion",
+    "ConstrainedLinearMinimumNormInversion",
     "AdaptedSpace",
     "AdaptedOperator",
     "adapt_space",
@@ -93,9 +98,9 @@ class AdaptedSpace(CoordinateSpace):
         """
         Args:
             space: the v1 space to wrap.
-            gram: how to factorise the Gram matrix for ``white_noise``.
+            gram: how to factorize the Gram matrix for ``white_noise``.
                 ``"diagonal"`` assumes a diagonal Gram and costs one
-                application; ``"dense"`` forms and factorises it, which is
+                application; ``"dense"`` forms and factorizes it, which is
                 ``O(dim^2)`` in memory and unusable on a large space;
                 ``"auto"`` probes for diagonality and picks. See
                 :meth:`_detect_diagonal_gram`.
@@ -140,8 +145,8 @@ class AdaptedSpace(CoordinateSpace):
     def inner_product(self, x: Any, y: Any) -> float:
         """Delegated to v1, not rederived from the Gram matrix."""
         # Delegated rather than rederived from the Gram: v1's implementations
-        # are often specialised, and going through the Gram would be slower and
-        # would lose whatever accuracy the specialisation buys.
+        # are often specialized, and going through the Gram would be slower and
+        # would lose whatever accuracy the specialization buys.
         return float(self._space.inner_product(x, y))
 
     def axpy(self, a: float, x: Any, y: Any) -> Any:
@@ -217,7 +222,7 @@ class AdaptedSpace(CoordinateSpace):
         if self._gram_strategy == "auto":
             warnings.warn(
                 f"{self!r} has a non-diagonal Gram matrix, so white noise "
-                f"requires forming and factorising it densely "
+                f"requires forming and factorizing it densely "
                 f"({self.dim} x {self.dim}). Pass gram='dense' to silence this, "
                 f"or implement white_noise_components natively.",
                 RuntimeWarning,
@@ -372,3 +377,26 @@ def adapt_form(
     """
     space = adapt_space(form.domain) if domain is None else domain
     return LinearFunctional.from_derivative_components(space, form.components)
+
+
+# ----------------------------------------------------------------------- #
+#                         v1 names for v2 classes                         #
+# ----------------------------------------------------------------------- #
+#
+# The inference-layer renames of DESIGN §79, carried here so that code
+# written against v1's class names imports. Only class names: a renamed
+# keyword raises TypeError at the call, which is the loud, easy failure.
+
+from .inference import (  # noqa: E402
+    ConstrainedLeastSquares,
+    ConstrainedMinimumNorm,
+    LeastSquares,
+    LinearGaussianInversion,
+    MinimumNorm,
+)
+
+LinearBayesianInversion = LinearGaussianInversion
+LinearLeastSquaresInversion = LeastSquares
+LinearMinimumNormInversion = MinimumNorm
+ConstrainedLinearLeastSquaresInversion = ConstrainedLeastSquares
+ConstrainedLinearMinimumNormInversion = ConstrainedMinimumNorm

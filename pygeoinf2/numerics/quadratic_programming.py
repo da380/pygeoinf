@@ -1,6 +1,6 @@
-"""Quadratic programmes, and the backends that solve them.
+"""Quadratic programs, and the backends that solve them.
 
-A bundle method's subproblem is a small dense QP: minimise a quadratic over a
+A bundle method's subproblem is a small dense QP: minimize a quadratic over a
 simplex, or over a level set, in as many variables as there are cuts. It is
 tiny compared with the space the outer problem lives in, and it is solved many
 times, so what matters is that it is solved *accurately* and without setup
@@ -26,7 +26,7 @@ All three take the OSQP standard form, which is the most permissive of the
 three: ``l <= A x <= u`` covers equalities (``l == u``), one-sided inequalities
 (an infinite bound) and box constraints without a separate case for each.
 
-This module is a port of v1's ``convex_optimisation.py``, whose author's view
+This module is a port of v1's ``convex_optimization.py``, whose author's view
 on the API is to be sought before it is changed beyond the port.
 """
 
@@ -52,10 +52,10 @@ _OSQP_INFINITY = 1e30
 
 @dataclass(frozen=True)
 class QPResult:
-    """The outcome of one quadratic programme solve."""
+    """The outcome of one quadratic program solve."""
 
     x: np.ndarray
-    """The minimiser, in components."""
+    """The minimizer, in components."""
 
     objective: float
     """``x' P x / 2 + q' x`` there."""
@@ -86,7 +86,7 @@ class QPSolver(Protocol):
 
     .. code-block:: text
 
-        minimise    x' P x / 2 + q' x
+        minimize    x' P x / 2 + q' x
         subject to  l <= A x <= u
 
     with ``-inf`` and ``+inf`` allowed in the bounds, and ``l_i == u_i``
@@ -107,7 +107,7 @@ class QPSolver(Protocol):
         *,
         x0: np.ndarray | None = None,
     ) -> QPResult:
-        """Solve the programme.
+        """Solve the program.
 
         Args:
             P: symmetric positive semidefinite, ``(n, n)``.
@@ -160,18 +160,20 @@ class SciPyQPSolver:
     than a QP solver proper -- fine for a few dozen variables, which is what a
     bundle subproblem has, and not the thing to reach for at a few hundred.
 
-    Warm starts are honoured: SLSQP takes a starting point like any other
+    Warm starts are honored: SLSQP takes a starting point like any other
     descent method.
     """
 
-    def __init__(self, /, *, tolerance: float = 1e-9, iterations: int = 1000) -> None:
+    def __init__(
+        self, /, *, tolerance: float = 1e-9, max_iterations: int = 1000
+    ) -> None:
         """
         Args:
             tolerance: SLSQP's ``ftol``.
-            iterations: its iteration cap.
+            max_iterations: its iteration cap.
         """
         self._tolerance = tolerance
-        self._iterations = iterations
+        self._max_iterations = max_iterations
 
     def solve(
         self,
@@ -184,10 +186,10 @@ class SciPyQPSolver:
         *,
         x0: np.ndarray | None = None,
     ) -> QPResult:
-        """Solve the programme with SLSQP.
+        """Solve the program with SLSQP.
 
         Args:
-            P, q, A, lower, upper: the programme, as
+            P, q, A, lower, upper: the program, as
                 :meth:`QPSolver.solve` describes it.
             x0: a starting point. SLSQP is a descent method and uses it.
 
@@ -222,7 +224,7 @@ class SciPyQPSolver:
             jac=lambda x: P @ x + q,
             method="SLSQP",
             constraints=constraints,
-            options={"ftol": self._tolerance, "maxiter": self._iterations},
+            options={"ftol": self._tolerance, "maxiter": self._max_iterations},
         )
         return QPResult(
             x=np.asarray(outcome.x, dtype=float),
@@ -251,7 +253,7 @@ class OSQPQPSolver:
         *,
         absolute_tolerance: float = 1e-6,
         relative_tolerance: float = 1e-6,
-        iterations: int = 10_000,
+        max_iterations: int = 10_000,
         polish: bool = True,
         verbose: bool = False,
     ) -> None:
@@ -259,7 +261,7 @@ class OSQPQPSolver:
         Args:
             absolute_tolerance: OSQP's ``eps_abs``.
             relative_tolerance: its ``eps_rel``.
-            iterations: the ADMM iteration cap.
+            max_iterations: the ADMM iteration cap.
             polish: run OSQP's polishing step, which recovers a high-accuracy
                 solution from the ADMM one and is usually worth its cost on
                 problems this small.
@@ -274,7 +276,7 @@ class OSQPQPSolver:
             ) from error
         self._absolute_tolerance = absolute_tolerance
         self._relative_tolerance = relative_tolerance
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._polish = polish
         self._verbose = verbose
 
@@ -289,10 +291,10 @@ class OSQPQPSolver:
         *,
         x0: np.ndarray | None = None,
     ) -> QPResult:
-        """Solve the programme with OSQP.
+        """Solve the program with OSQP.
 
         Args:
-            P, q, A, lower, upper: the programme.
+            P, q, A, lower, upper: the program.
             x0: a warm start, which OSQP uses directly.
 
         Returns:
@@ -317,7 +319,7 @@ class OSQPQPSolver:
             eps_abs=self._absolute_tolerance,
             eps_rel=self._relative_tolerance,
             polishing=self._polish,
-            max_iter=self._iterations,
+            max_iter=self._max_iterations,
             warm_starting=True,
         )
         if x0 is not None:
@@ -354,14 +356,14 @@ class ClarabelQPSolver:
         *,
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-8,
-        iterations: int = 200,
+        max_iterations: int = 200,
         verbose: bool = False,
     ) -> None:
         """
         Args:
             absolute_tolerance: Clarabel's ``tol_gap_abs`` and ``tol_feas``.
             relative_tolerance: its ``tol_gap_rel``.
-            iterations: the interior-point iteration cap.
+            max_iterations: the interior-point iteration cap.
             verbose: let Clarabel print.
         """
         try:
@@ -373,7 +375,7 @@ class ClarabelQPSolver:
             ) from error
         self._absolute_tolerance = absolute_tolerance
         self._relative_tolerance = relative_tolerance
-        self._iterations = iterations
+        self._max_iterations = max_iterations
         self._verbose = verbose
 
     def solve(
@@ -387,10 +389,10 @@ class ClarabelQPSolver:
         *,
         x0: np.ndarray | None = None,
     ) -> QPResult:
-        """Solve the programme with Clarabel.
+        """Solve the program with Clarabel.
 
         Args:
-            P, q, A, lower, upper: the programme.
+            P, q, A, lower, upper: the program.
             x0: accepted and ignored, so that the three backends remain
                 interchangeable. An interior-point method starts from its own
                 central point and has no use for someone else's.
@@ -399,7 +401,7 @@ class ClarabelQPSolver:
             The result.
 
         Raises:
-            ValueError: for a malformed programme, or one with no constraints
+            ValueError: for a malformed program, or one with no constraints
                 at all -- Clarabel needs at least one cone.
         """
         import clarabel
@@ -441,7 +443,7 @@ class ClarabelQPSolver:
 
         settings = clarabel.DefaultSettings()
         settings.verbose = self._verbose
-        settings.max_iter = self._iterations
+        settings.max_iter = self._max_iterations
         settings.tol_gap_abs = self._absolute_tolerance
         settings.tol_gap_rel = self._relative_tolerance
         settings.tol_feas = self._absolute_tolerance
@@ -476,7 +478,7 @@ def best_available_qp_solver() -> QPSolver:
     proximal method's simplex QP over a Backus dual, Clarabel took 0.37 s
     against OSQP's 0.89 s and was a thousand times closer to the primal
     reference. An interior-point method suits these small, badly conditioned
-    programmes better than ADMM does.
+    programs better than ADMM does.
 
     Returns:
         An instance of the best available backend.

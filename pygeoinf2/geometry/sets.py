@@ -296,7 +296,7 @@ class SublevelSet(Subset):
     A set given by an inequality on any functional, convex or not: a misfit
     below a threshold, a norm within a budget, a nonlinear constraint. It
     knows membership and its boundary, the level set, and nothing more; a
-    projection onto it would be a constrained minimisation, which is what
+    projection onto it would be a constrained minimization, which is what
     the convex sets in :mod:`.convex` have in closed form and this does not.
     For a convex ``f`` with a closed-form projection, use one of those.
 

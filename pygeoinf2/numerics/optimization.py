@@ -1,5 +1,5 @@
 """
-Unconstrained optimisation, coordinate-free.
+Unconstrained optimization, coordinate-free.
 
 Written against the space's own inner product rather than wrapped around
 SciPy. That is not purism. v1's wrapper passes SciPy the **gradient**
@@ -9,7 +9,7 @@ passing the Hessian correctly as the Galerkin matrix. The two are therefore in
 different conventions within a single call, so a Newton-CG step solves
 ``H p = -G^-1 g`` instead of ``H p = -g``. The same file's ``line_search`` gets
 it right, with a comment explaining why; the comment protects one function and
-not its neighbour.
+not its neighbor.
 
 Here the confusion is unavailable. A gradient is a vector, a direction is a
 vector, and the slope along a direction is their inner product. There is no
@@ -46,7 +46,7 @@ from .line_search import (
 __all__ = [
     "truncated_cg",
     "OptimisationResult",
-    "Optimiser",
+    "Optimizer",
     "SteepestDescent",
     "NonlinearCG",
     "LBFGS",
@@ -58,9 +58,9 @@ __all__ = [
 
 @dataclass(frozen=True)
 class OptimisationResult:
-    """Where an optimiser stopped, and why."""
+    """Where an optimizer stopped, and why."""
 
-    minimiser: Any
+    minimizer: Any
     value: float
     gradient_norm: float
     iterations: int
@@ -77,8 +77,8 @@ class OptimisationResult:
         )
 
 
-class Optimiser(ABC):
-    """Minimises a functional on a Hilbert space."""
+class Optimizer(ABC):
+    """Minimizes a functional on a Hilbert space."""
 
     def __init__(
         self,
@@ -104,21 +104,21 @@ class Optimiser(ABC):
                 and report *failure* after 19 iterations, nonlinear CG do the
                 same at ``1.1e-6``, and steepest descent spend 2000 iterations
                 and 5330 value evaluations arriving at the same verdict. But
-                the cure is to recognise the two ways a method legitimately
+                the cure is to recognize the two ways a method legitimately
                 finishes short of the gradient tolerance — see *ftol* and the
                 precision-loss outcome — not to lower the bar. With those, the
                 same four runs converge in 16 to 25 iterations and 40 to 119
                 value evaluations.
             ftol: stop when one iteration decreases the value by no more than
                 ``ftol * |f|``. The criterion that says "no further progress",
-                which a gradient test alone cannot: near a minimiser the
+                which a gradient test alone cannot: near a minimizer the
                 gradient is small everywhere the value is flat.
 
                 Relative to ``|f|`` with no absolute floor, deliberately. A
                 floor makes the test absolute wherever the minimum value is
                 near zero, and there a slow method in a narrow valley — the
                 Rosenbrock function is the standard example — takes steps
-                smaller than the floor while still far from the minimiser, so
+                smaller than the floor while still far from the minimizer, so
                 the floor stops it early and calls that convergence. Set it to
                 zero to rely on the gradient test alone.
             max_iterations: iteration cap.
@@ -134,17 +134,17 @@ class Optimiser(ABC):
         """The line search this method wants when none is supplied."""
         return ArmijoLineSearch()
 
-    def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise ``functional`` starting from ``x0``.
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+        """Minimize ``functional`` starting from ``x0``.
 
         Args:
-            functional: what to minimise. What it must supply -- a gradient, a
+            functional: what to minimize. What it must supply -- a gradient, a
                 Hessian, a subgradient, a proximal operator -- depends on the
                 method; each says so.
             x0: where to start.
 
         Returns:
-            The optimisation result, whose ``converged`` and ``message`` say
+            The optimization result, whose ``converged`` and ``message`` say
             how it stopped.
 
         Raises:
@@ -155,10 +155,10 @@ class Optimiser(ABC):
                 f"{type(self).__name__} needs a functional with a derivative. "
                 f"Supply one to Functional.from_callables."
             )
-        return self._minimise(functional, x0)
+        return self._minimize(functional, x0)
 
     @abstractmethod
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         """Run the method, having passed validation."""
 
     # -- shared machinery ----------------------------------------------
@@ -170,7 +170,7 @@ class Optimiser(ABC):
         """Whether the gradient is as small as double precision allows here.
 
         A line search fails when no step along a descent direction improves the
-        value. Near a minimiser that is not a defect: the decrease a step is
+        value. Near a minimizer that is not a defect: the decrease a step is
         predicted to make, ``c1 * alpha * slope``, eventually falls below the
         rounding error in the value itself, which is ``eps * |f|`` rather than
         ``eps``. Past that point the search is comparing noise.
@@ -209,14 +209,14 @@ class Optimiser(ABC):
         )
 
 
-class _DescentMethod(Optimiser):
+class _DescentMethod(Optimizer):
     """A method that repeatedly picks a direction and searches along it.
 
     The loop is identical across steepest descent, nonlinear CG and L-BFGS;
     only the direction rule differs, so only that is left to subclasses.
     """
 
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -351,7 +351,7 @@ class SteepestDescent(_DescentMethod):
     """The negative gradient direction.
 
     Note this is the gradient in the *space's* metric, so the direction is
-    steepest with respect to the inner product the modeller chose rather than
+    steepest with respect to the inner product the modeler chose rather than
     with respect to an arbitrary coordinate basis. That difference is the whole
     of DESIGN.md 5.6, and it is why this converges at a mesh-independent rate
     where the component version does not.
@@ -402,7 +402,7 @@ class NonlinearCG(_DescentMethod):
         """
         Args:
             variant: the formula for the conjugacy parameter.
-            **kwargs: passed to :class:`Optimiser`.
+            **kwargs: passed to :class:`Optimizer`.
         """
         if variant not in ("polak-ribiere", "fletcher-reeves"):
             raise ValueError(f"Unknown variant {variant!r}.")
@@ -450,7 +450,7 @@ class LBFGS(_DescentMethod):
     it runs on a space with no component map — and, more importantly, the
     implicit inverse Hessian it accumulates is expressed in the space's metric.
     A component-space L-BFGS builds curvature information in whatever basis the
-    discretisation happened to supply, which is the ill-conditioning that makes
+    discretization happened to supply, which is the ill-conditioning that makes
     the same problem converge differently under refinement.
     """
 
@@ -460,7 +460,7 @@ class LBFGS(_DescentMethod):
             memory: how many correction pairs to keep. Five to twenty is usual;
                 more helps a badly scaled problem and costs one inner product
                 per pair per iteration.
-            **kwargs: passed to :class:`Optimiser`.
+            **kwargs: passed to :class:`Optimizer`.
         """
         if memory < 1:
             raise ValueError("memory must be at least one.")
@@ -510,7 +510,7 @@ class LBFGS(_DescentMethod):
         return state
 
 
-class NewtonCG(Optimiser):
+class NewtonCG(Optimizer):
     """Newton's method with the step computed by truncated CG.
 
     The Newton system ``H p == -g`` is solved with conjugate gradients, stopped
@@ -538,21 +538,21 @@ class NewtonCG(Optimiser):
                 once the residual falls below this fraction of the gradient
                 norm, so early iterations are cheap and later ones exact.
             max_cg_iterations: cap on the inner iteration.
-            **kwargs: passed to :class:`Optimiser`.
+            **kwargs: passed to :class:`Optimizer`.
         """
         self._forcing = forcing
         self._max_cg_iterations = max_cg_iterations
         super().__init__(**kwargs)
 
-    def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring a Hessian as well as a gradient.
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+        """Minimize, requiring a Hessian as well as a gradient.
 
         Args:
-            functional: what to minimise, which must supply both.
+            functional: what to minimize, which must supply both.
             x0: where to start.
 
         Returns:
-            The optimisation result.
+            The optimization result.
 
         Raises:
             ValueError: if the functional carries no Hessian.
@@ -563,9 +563,9 @@ class NewtonCG(Optimiser):
                 "only a gradient is available, or supply a Gauss-Newton "
                 "approximation with gauss_newton_hessian."
             )
-        return super().minimise(functional, x0)
+        return super().minimize(functional, x0)
 
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -644,7 +644,7 @@ class NewtonCG(Optimiser):
         )
 
 
-class TrustRegionNewton(Optimiser):
+class TrustRegionNewton(Optimizer):
     """Newton's method with a trust region, solved by Steihaug-CG.
 
     Preferred to a line search when the Hessian is badly indefinite: the region
@@ -667,31 +667,31 @@ class TrustRegionNewton(Optimiser):
             max_radius: cap on the radius.
             acceptance: reject a step whose actual-to-predicted reduction ratio
                 falls below this.
-            **kwargs: passed to :class:`Optimiser`.
+            **kwargs: passed to :class:`Optimizer`.
         """
         self._initial_radius = initial_radius
         self._max_radius = max_radius
         self._acceptance = acceptance
         super().__init__(**kwargs)
 
-    def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring a Hessian as well as a gradient.
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+        """Minimize, requiring a Hessian as well as a gradient.
 
         Args:
-            functional: what to minimise, which must supply both.
+            functional: what to minimize, which must supply both.
             x0: where to start.
 
         Returns:
-            The optimisation result.
+            The optimization result.
 
         Raises:
             ValueError: if the functional carries no Hessian.
         """
         if not functional.has_hessian:
             raise ValueError("TrustRegionNewton needs a functional with a Hessian.")
-        return super().minimise(functional, x0)
+        return super().minimize(functional, x0)
 
-    def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -872,7 +872,7 @@ def gauss_newton_hessian(
 
     Args:
         operator: the forward map ``F``.
-        point: where to linearise.
+        point: where to linearize.
         weighting: ``W``, typically an inverse data covariance. Defaults to the
             identity on the codomain.
 

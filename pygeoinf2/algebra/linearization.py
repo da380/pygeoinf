@@ -1,7 +1,7 @@
 """
 What an operator knows about itself at a point.
 
-``Operator.at(x)`` returns a :class:`Linearisation`: the value and the
+``Operator.at(x)`` returns a :class:`Linearization`: the value and the
 derivative together, computed in one call where the operator can manage it.
 That is the whole point of separating ``at`` from ``__call__`` — a PDE solve
 usually yields both, while a line search wants only the value and must not be
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .operators import AffineOperator, LinearFunctional, LinearOperator
 
-__all__ = ["Linearisation", "QuadraticModel"]
+__all__ = ["Linearization", "QuadraticModel"]
 
 
 # ``eq=False``, so both of these keep object identity for ``==`` and ``hash``.
@@ -29,10 +29,10 @@ __all__ = ["Linearisation", "QuadraticModel"]
 # which on every array-backed space are NumPy arrays, so ``==`` returned an
 # array and ``bool()`` of it raised, and the ``__hash__`` that ``frozen=True``
 # generates alongside ``eq=True`` raised ``TypeError: unhashable type:
-# 'numpy.ndarray'``. A linearisation is a record of one evaluation at one
+# 'numpy.ndarray'``. A linearization is a record of one evaluation at one
 # point; identity is the only equality it can honestly offer.
 @dataclass(frozen=True, eq=False)
-class Linearisation[X, Y]:
+class Linearization[X, Y]:
     """An operator's value and derivative at a point."""
 
     point: X
@@ -52,7 +52,7 @@ class Linearisation[X, Y]:
 
 
 @dataclass(frozen=True, eq=False)
-class QuadraticModel[X](Linearisation[X, float]):
+class QuadraticModel[X](Linearization[X, float]):
     """A scalar-valued operator's local quadratic model.
 
     The **derivative is the stored primitive and the gradient is derived**,

@@ -268,8 +268,8 @@ class TestPointsAreConvertedOnce:
 
 class TestAnInvariantDrawIsTakenInComponents:
     """REVIEW2 4.2.3. The draw went through the covariance factor, which
-    synthesised white noise onto the grid so that a diagonal operator could
-    analyse it again and synthesise the result: three transforms for numbers
+    synthesized white noise onto the grid so that a diagonal operator could
+    analyze it again and synthesize the result: three transforms for numbers
     that are `sqrt(s / g) * standard normal` in components."""
 
     def test_it_is_the_draw_the_factor_would_have_given(self, geometry):
@@ -421,7 +421,7 @@ class TestNeighbourSearchAndClustering:
 
     def test_the_pattern_is_symmetric_and_has_a_diagonal(self, geometry, rng):
         """It is the sparsity pattern of a symmetric matrix, which is what a
-        localised covariance is assembled into."""
+        localized covariance is assembled into."""
         _, space = geometry
         points = space.random_points(20, rng=rng)
         scale = 1.01 * space.geodesic_distance(points[0], points[1])
@@ -433,7 +433,7 @@ class TestNeighbourSearchAndClustering:
 
     def test_clustering_by_count_gives_that_many(self, geometry, rng):
         """The mode that sizes preconditioner blocks to a budget, and the one
-        v2 dropped in favour of a greedy rule seeded by the lowest remaining
+        v2 dropped in favor of a greedy rule seeded by the lowest remaining
         index -- which is not stable under reordering the points."""
         _, space = geometry
         points = space.random_points(20, rng=rng)
@@ -748,7 +748,7 @@ class TestSphereTables:
     """Shared between spaces of the same truncation, and still correct."""
 
     def test_they_are_what_the_loops_built(self):
-        """Vectorised, so this is the check that the vectorisation is exact."""
+        """Vectorized, so this is the check that the vectorization is exact."""
         pytest.importorskip("pyshtools")
         from pyshtools.legendre import PlmIndex
 

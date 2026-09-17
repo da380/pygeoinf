@@ -44,7 +44,7 @@ def _normal_inverse(
     The kernel projector, the minimum-norm solution of ``A x == b`` and the
     pseudo-inverse are three uses of the same operator, and each used to build
     its own. With an iterative solver that is only a wasted object; with a
-    direct one it is the matrix of ``A A*`` extracted and factorised again,
+    direct one it is the matrix of ``A A*`` extracted and factorized again,
     three times over, and for a subspace built from an equation two of those
     happen in the one constructor call.
 
@@ -102,7 +102,7 @@ class OrthogonalProjector(LinearOperator):
     def basis(self) -> list[Any]:
         """An orthonormal basis for the range, in the ambient space.
 
-        Recovered by projecting the ambient basis and orthonormalising, which
+        Recovered by projecting the ambient basis and orthonormalizing, which
         needs coordinates. It is *an* orthonormal basis, not *the* one: a
         subspace has many, and every question a projector answers is
         independent of the choice.
@@ -145,7 +145,7 @@ class OrthogonalProjector(LinearOperator):
         Args:
             domain: the space.
             vectors: the family spanning the subspace.
-            orthonormal: skip the orthonormalisation, if the family is already
+            orthonormal: skip the orthonormalization, if the family is already
                 orthonormal. Unverified — ``testing.check_traits`` on the
                 resulting projector catches a false claim.
         """
@@ -340,7 +340,7 @@ class AffineSubspace(ConvexSet):
         """The subspace spanned by given vectors, offset by a translation.
 
         The vectors need not be orthonormal;
-        :meth:`OrthogonalProjector.from_basis` orthonormalises them and drops
+        :meth:`OrthogonalProjector.from_basis` orthonormalizes them and drops
         any that were dependent, so the dimension is the rank rather than the
         count.
 
@@ -504,7 +504,7 @@ class AffineSubspace(ConvexSet):
         The translation moves to the new minimum-norm solution and the tangent
         space, being the kernel, does not move at all -- so the projector and
         the ``(A A*)^-1`` behind it are carried over rather than rebuilt, which
-        with a direct solver is a factorisation saved.
+        with a direct solver is a factorization saved.
 
         Args:
             value: the new right-hand side.
@@ -601,7 +601,7 @@ class LinearSubspace(AffineSubspace):
             domain: the space.
             vectors: the spanning set, which need not be independent.
             orthonormal: assert that they already are, skipping the
-                orthonormalisation. Wrong if they are not, and not checked --
+                orthonormalization. Wrong if they are not, and not checked --
                 which is why it is not the default.
 
         Returns:
@@ -620,7 +620,7 @@ class LinearSubspace(AffineSubspace):
         The equation is recorded: a kernel *is* ``A x == 0``, so the subspace
         knows which equation defines it and everything that needs one --
         :meth:`with_constraint_value`, and the constraint pull-back a
-        parameterised inversion does -- works on it. It did not before, and a
+        parameterized inversion does -- works on it. It did not before, and a
         kernel is the commonest way such a subspace gets built.
 
         Args:

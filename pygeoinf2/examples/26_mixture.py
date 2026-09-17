@@ -7,7 +7,7 @@ either-or is the honest state of a great deal of prior knowledge: either the
 structure is smooth or it is rough, either the anomaly is in the crust or in
 the mantle, either this fault slipped or the other one did.
 
-A Gaussian mixture says it. Couple a parameterised Gaussian with a distribution
+A Gaussian mixture says it. Couple a parameterized Gaussian with a distribution
 over the parameter — here a discrete choice between two scenarios — and the
 data do the rest: under a linear Gaussian likelihood the posterior is again a
 mixture, with the same components updated in the usual way and the weights
@@ -42,7 +42,7 @@ X = EuclideanSpace(2)
 chol = CholeskySolver()
 
 
-def scenario(centre, spread):
+def scenario(center, spread):
     """A Gaussian around one scenario's expected model."""
     covariance = LinearOperator.from_matrix(
         X,
@@ -58,7 +58,7 @@ def scenario(centre, spread):
         covariance_factor=LinearOperator.from_matrix(
             X, X, np.sqrt(spread) * np.identity(2), form="galerkin"
         ),
-        expectation=X.from_components(np.asarray(centre, float)),
+        expectation=X.from_components(np.asarray(center, float)),
     )
 
 

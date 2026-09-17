@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["plot", "subplots", "colour_limits", "show"]
+__all__ = ["plot", "subplots", "color_limits", "show"]
 
 
 def show() -> bool:
@@ -44,7 +44,7 @@ def show() -> bool:
 
         blind = rcsetup.non_interactive_bk
     # Not "does the name end in agg": TkAgg and QtAgg do, and both have a
-    # window. An unrecognised backend -- somebody's module:// -- is assumed to
+    # window. An unrecognized backend -- somebody's module:// -- is assumed to
     # be able to show, which is the way round that fails visibly.
     if matplotlib.get_backend().lower() in {name.lower() for name in blind}:
         return False
@@ -89,7 +89,7 @@ def plot(space: Any, field: Any, /, **kwargs: Any) -> Any:
 
     Returns:
         An ``(axes, mappable)`` pair, so the caller can set a title, restyle
-        the colourbar, or add to the axes afterwards.
+        the colorbar, or add to the axes afterwards.
 
     Raises:
         NotImplementedError: for a space with no registered renderer.
@@ -97,7 +97,7 @@ def plot(space: Any, field: Any, /, **kwargs: Any) -> Any:
     raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
 
 
-def colour_limits(
+def color_limits(
     values: np.ndarray,
     /,
     *,
@@ -105,10 +105,10 @@ def colour_limits(
     vmax: float | None = None,
     symmetric: bool = False,
 ) -> tuple[float, float]:
-    """Colour limits for a field, optionally symmetric about zero.
+    """Color limits for a field, optionally symmetric about zero.
 
     Symmetric limits are what a signed field almost always wants: with a
-    diverging colour map, limits that are not symmetric put the neutral colour
+    diverging color map, limits that are not symmetric put the neutral color
     somewhere other than zero, and the eye reads the resulting picture as
     having a bias the data does not have.
 

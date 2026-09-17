@@ -153,12 +153,12 @@ class TestProjections:
             check_operator(S.projection(key), rng=rng)
             assert S.projection(key).adjoint is S.inclusion(key)
 
-    def test_projections_are_memoised(self, S):
-        """So that P @ C @ P.adjoint is recognisable as a congruence."""
+    def test_projections_are_memoized(self, S):
+        """So that P @ C @ P.adjoint is recognizable as a congruence."""
         assert S.projection("model") is S.projection("model")
         assert S.projection(0) is S.projection("model")
 
-    def test_a_congruence_through_a_projection_is_recognised(self, S, rng):
+    def test_a_congruence_through_a_projection_is_recognized(self, S, rng):
         C = LinearOperator.self_adjoint(
             S, lambda x: S.scale(2.0, x), traits=Traits.POSITIVE_DEFINITE
         )
@@ -201,7 +201,7 @@ class TestBlockOperators:
         assert op.adjoint.block(0, 1) is A.adjoint
         assert op.adjoint.adjoint is op
 
-    def test_a_symmetric_grid_is_recognised_as_self_adjoint(self, rng):
+    def test_a_symmetric_grid_is_recognized_as_self_adjoint(self, rng):
         X, Y = EuclideanSpace(3), EuclideanSpace(2)
         A = LinearOperator.from_matrix(X, Y, rng.normal(size=(2, 3)), form="components")
         C = LinearOperator.self_adjoint(X, lambda x: 2.0 * x)
@@ -334,7 +334,7 @@ class TestNonlinearBlocks:
         assert np.allclose(data, F(m) + e)
 
     def test_the_derivative_is_the_block_of_derivatives(self, pieces, rng):
-        """[[I, 0], [F'(m), I]] -- the linearised joint model, from the same object."""
+        """[[I, 0], [F'(m), I]] -- the linearized joint model, from the same object."""
         X, Y, F = pieces
         op = BlockOperator(
             [

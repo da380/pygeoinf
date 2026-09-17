@@ -118,7 +118,7 @@ class TestSobolevMetric:
         assert np.allclose(lebesgue.to_components(x), sobolev.to_components(x))
         assert sobolev.squared_norm(x) > lebesgue.squared_norm(x)
 
-    def test_a_higher_order_penalises_roughness_more(self, rng):
+    def test_a_higher_order_penalizes_roughness_more(self, rng):
         rough = np.cos(8.0 * np.pi * np.arange(32) / 32.0)
         gentle = Sobolev((32,), 1.0, 0.3)
         strict = Sobolev((32,), 3.0, 0.3)

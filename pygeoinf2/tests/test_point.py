@@ -109,7 +109,7 @@ class TestMonotoneRoot:
             result = monotone_root(
                 lambda t, _: Evaluation(1.0 / t),
                 0.3,
-                iterations=iterations,
+                max_iterations=iterations,
                 rtol=0.0,
                 atol=0.0,
             )
@@ -118,12 +118,12 @@ class TestMonotoneRoot:
             assert not result.converged
         # After a single step the bracket is still wide open.
         low, high = monotone_root(
-            lambda t, _: Evaluation(1.0 / t), 0.3, iterations=1, rtol=0.0, atol=0.0
+            lambda t, _: Evaluation(1.0 / t), 0.3, max_iterations=1, rtol=0.0, atol=0.0
         ).bracket
         assert high - low > 1.0
 
         # With a reachable tolerance it still converges, and to the right root.
-        found = monotone_root(lambda t, _: Evaluation(1.0 / t), 0.3, iterations=60)
+        found = monotone_root(lambda t, _: Evaluation(1.0 / t), 0.3, max_iterations=60)
         assert found.converged
         assert found.argument == pytest.approx(10.0 / 3.0, rel=1e-4)
 
@@ -152,7 +152,7 @@ class TestMonotoneRoot:
             seen.append(previous)
             return Evaluation(1.0 / multiplier, solution=multiplier, iterations=3)
 
-        result = monotone_root(evaluate, 1.0, iterations=4)
+        result = monotone_root(evaluate, 1.0, max_iterations=4)
         assert seen[0] is None
         assert all(entry is not None for entry in seen[1:])
         assert result.inner_iterations == 3 * result.evaluations
@@ -165,7 +165,7 @@ class TestMonotoneRoot:
             seen.append(previous)
             return Evaluation(1.0 / multiplier, solution=multiplier)
 
-        result = monotone_root(evaluate, 1.0, iterations=4, warm_start=False)
+        result = monotone_root(evaluate, 1.0, max_iterations=4, warm_start=False)
         assert all(entry is None for entry in seen)
         assert not result.warm_started
 
@@ -173,7 +173,7 @@ class TestMonotoneRoot:
         with pytest.raises(ValueError, match="must be positive"):
             monotone_root(constant(1.0), 1.0, initial=0.0)
         with pytest.raises(ValueError, match="[Aa]t least one"):
-            monotone_root(constant(1.0), 1.0, iterations=0)
+            monotone_root(constant(1.0), 1.0, max_iterations=0)
 
 
 class TestRootFloorAndCeiling:
@@ -224,7 +224,7 @@ class TestDampedSolves:
         return space, DampedSolves(
             base,
             LinearOperator.identity(space),
-            CGSolver(rtol=1e-12, maxiter=5000).with_preconditioner(
+            CGSolver(rtol=1e-12, max_iterations=5000).with_preconditioner(
                 JacobiPreconditioner()
             ),
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
@@ -413,7 +413,7 @@ class TestTikhonovNormalOperator:
 
     def test_the_data_space_preconditioners_carry_the_scale_too(self, setup, rng):
         """The normal diagonal must agree with the generic Jacobi preconditioner
-        on the assembled operator, and a full-rank localised block must be the
+        on the assembled operator, and a full-rank localized block must be the
         exact inverse; both held on a Gaussian operator and failed by ``t``
         on a Tikhonov one."""
         from pygeoinf2.inference.preconditioners import LocalisedPreconditioner
@@ -678,7 +678,7 @@ class TestDiscrepancyPrinciple:
         problem = setup
         observed = problem.data_space.random(rng=rng)
         result = MinimumNorm(
-            problem, solver=CGSolver(rtol=1e-12, maxiter=5000)
+            problem, solver=CGSolver(rtol=1e-12, max_iterations=5000)
         ).discrepancy_search(observed)
         assert result.evaluations > 1
         assert result.inner_iterations > 0
@@ -700,7 +700,7 @@ class TestDiscrepancyPrinciple:
             forward, error=GaussianMeasure.from_standard_deviation(data, 0.01)
         )
         observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
-        solver = CGSolver(rtol=1e-10, maxiter=20000)
+        solver = CGSolver(rtol=1e-10, max_iterations=20000)
         estimator = MinimumNorm(problem, solver=solver)
         warm = estimator.discrepancy_search(observed)
 
@@ -735,7 +735,7 @@ class TestDiscrepancyPrinciple:
         # inner solve's. A direct solver removes the second so the test is
         # about the derivative rather than about conjugate gradients.
         method = DiscrepancyPrinciple(
-            problem, rtol=1e-14, iterations=200, solver=CholeskySolver()
+            problem, rtol=1e-14, max_iterations=200, solver=CholeskySolver()
         )
         derivative = method.derivative(observed)
         for _ in range(3):
@@ -811,7 +811,7 @@ class TestConstrained:
         model, data = setup.model_space, setup.data_space
         observed = self.fittable(setup, constraint, rng)
         method = ConstrainedMinimumNorm(
-            setup, constraint, rtol=1e-14, iterations=200, solver=CholeskySolver()
+            setup, constraint, rtol=1e-14, max_iterations=200, solver=CholeskySolver()
         )
         derivative = method.derivative(observed)
         direction = data.random(rng=rng)
@@ -857,7 +857,7 @@ class TestConstrained:
         model = setup.model_space
         observed = self.fittable(setup, constraint, rng)
         method = ConstrainedMinimumNorm(
-            setup, constraint, rtol=1e-14, iterations=200, solver=CholeskySolver()
+            setup, constraint, rtol=1e-14, max_iterations=200, solver=CholeskySolver()
         )
         mapping = method.constraint_value_mapping(observed)
         space = constraint.constraint_operator.codomain

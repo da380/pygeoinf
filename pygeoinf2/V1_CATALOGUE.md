@@ -535,7 +535,7 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `model_prior_measure`, `data_prior_measure`, `joint_prior_measure` | Ported | M5 stage 5.4 | |
 | `normal_operator`, `get_normal_equations_rhs`, `kalman_operator` | Ported | M5 stage 5.4 | |
 | `model_posterior_measure` | Ported | M5 stage 5.4, but as `Bayesian(problem, prior, solver)(data)` — a mapping, not a method taking both data and configuration (§18.7) | |
-| `posterior_expectation_operator` | Subsumed | `GaussianEstimator.mean_map` | |
+| `posterior_expectation_operator` | Ported | `GaussianEstimator.expectation_operator` (DESIGN §79: David prefers expectation to mean) | |
 | `with_formalism` | Ported | A constructor argument defaulting to `data_space` as v1 does, *and* a `with_formalism` method on every estimator. `"auto"` (the smaller space) is opt-in, not the default: model spaces are usually the larger, and a dimension says nothing about whether `Q^-1` exists (DESIGN §27.2) | |
 | `log_evidence`, `mahalanobis_evidence_term` | Ported | `LinearGaussianInversion.log_evidence` / `.mahalanobis`, both matrix-free: the misfit through whatever solver and preconditioner the estimator holds, the volume through SLQ, with Sylvester's identity in the model-space formalism (DESIGN §26) | |
 | `estimate_log_determinant`, `_trace_log_slq` | Ported | `numerics.functional_calculus.log_determinant`, dense or stochastic Lanczos behind one signature, returning an `Estimate` so the error is never dropped | |

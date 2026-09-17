@@ -175,7 +175,9 @@ class TestGMRES:
         X = EuclideanSpace(12)
         operator, matrix = nonsymmetric(X, rng)
         b = X.random(rng=rng)
-        result = GMRESSolver(rtol=1e-12, restart=3, maxiter=400)(operator).solve(b)
+        result = GMRESSolver(rtol=1e-12, restart=3, max_iterations=400)(operator).solve(
+            b
+        )
         assert result.converged
         assert result.iterations > X.dim  # restarting costs iterations
         assert np.allclose(result.solution, np.linalg.solve(matrix, b))
@@ -208,7 +210,7 @@ class TestFlexibleCG:
     def test_it_converges_with_a_changing_preconditioner(self, rng):
         X = make_weighted_space()
         operator = positive_definite(X, rng)
-        inner = CGSolver(rtol=0.3, maxiter=1, strict=False)(operator)
+        inner = CGSolver(rtol=0.3, max_iterations=1, strict=False)(operator)
         preconditioner = LinearOperator.from_callables(X, X, inner, adjoint=inner)
         b = X.random(rng=rng)
         with pytest.warns(RuntimeWarning, match="did not converge in 1 iteration"):
@@ -240,9 +242,9 @@ class TestSolverDiagnostics:
         X = make_weighted_space()
         operator = positive_definite(X, rng)
         with pytest.warns(RuntimeWarning, match="did not converge in 2 iter"):
-            result = CGSolver(rtol=1e-16, maxiter=2, strict=False)(operator).solve(
-                X.random(rng=rng)
-            )
+            result = CGSolver(rtol=1e-16, max_iterations=2, strict=False)(
+                operator
+            ).solve(X.random(rng=rng))
         assert not result.converged
         assert len(result.history) >= 2
 
@@ -318,7 +320,7 @@ class TestMeasureAdjustments:
         """An entry that is a large fraction of the *smaller* variance but a
         small correlation: v1's test, the correlation, drops it; the
         preconditioner's per-column magnitude test keeps it, since in the
-        small-variance column it dominates the diagonal, and the symmetrised
+        small-variance column it dominates the diagonal, and the symmetrized
         pattern then carries it to the other column too."""
         from pygeoinf2.numerics.preconditioners import sparse_approximation
 
@@ -536,7 +538,7 @@ class TestSurfaces:
         assert surface.contains(point)
         assert X.norm(point) == pytest.approx(2.0)
 
-    def test_the_centre_has_no_nearest_point(self):
+    def test_the_center_has_no_nearest_point(self):
         from pygeoinf2.geometry.convex import BallSurface
 
         X = make_weighted_space()
@@ -553,7 +555,7 @@ class TestSurfaces:
         # white noise, not `random`: only the former is isotropic in a metric
         assert X.norm(X.mean(draws)) < 0.3 * surface.radius
 
-    def test_an_ellipsoid_surface_recognises_its_own_points(self, rng):
+    def test_an_ellipsoid_surface_recognizes_its_own_points(self, rng):
         from pygeoinf2.geometry.convex import EllipsoidSurface
 
         X = make_weighted_space()
@@ -703,7 +705,7 @@ class TestDeflatedDiagonal:
     def test_deflation_reduces_the_error(self, form, rng):
         """The whole point: the estimator's variance is set by the operator's
         size, not by the size of what it is failing to resolve."""
-        from pygeoinf2.numerics.randomised import deflated_diagonal
+        from pygeoinf2.numerics.randomized import deflated_diagonal
 
         X = make_weighted_space()
         operator = self.operator(X, rng)
@@ -727,7 +729,7 @@ class TestDeflatedDiagonal:
         assert error(X.dim - 1) < 0.2 * error(0)
 
     def test_full_rank_deflation_is_essentially_exact(self, rng):
-        from pygeoinf2.numerics.randomised import deflated_diagonal
+        from pygeoinf2.numerics.randomized import deflated_diagonal
 
         X = make_weighted_space()
         operator = self.operator(X, rng)
@@ -736,7 +738,7 @@ class TestDeflatedDiagonal:
         assert np.allclose(estimate, truth, rtol=1e-6)
 
     def test_zero_rank_is_the_undeflated_estimator(self, rng):
-        from pygeoinf2.numerics.randomised import deflated_diagonal, random_diagonal
+        from pygeoinf2.numerics.randomized import deflated_diagonal, random_diagonal
 
         X = make_weighted_space()
         operator = self.operator(X, rng)
@@ -747,7 +749,7 @@ class TestDeflatedDiagonal:
         assert np.allclose(first, second)
 
     def test_a_negative_rank_is_refused(self, rng):
-        from pygeoinf2.numerics.randomised import deflated_diagonal
+        from pygeoinf2.numerics.randomized import deflated_diagonal
 
         X = make_weighted_space()
         with pytest.raises(ValueError, match="non-negative"):
@@ -1072,7 +1074,7 @@ class TestHardening:
         """No dense inverse: the covariance is inverted by conjugate gradients
         as an operator in the space's metric, so nothing is assembled and the
         set still covers what it claims on every metric. A direct solver,
-        passed by name, factorises once and gives the same region."""
+        passed by name, factorizes once and gives the same region."""
         from pygeoinf2.numerics.solvers import CholeskySolver
 
         for space in (
@@ -1450,7 +1452,7 @@ class TestWoodburyPreconditioner:
         ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
         vector = model.random(rng=rng)
 
-        plain = CGSolver(rtol=1e-10, maxiter=2000)(normal).solve(vector)
+        plain = CGSolver(rtol=1e-10, max_iterations=2000)(normal).solve(vector)
         # A coarse staircase in place of the true exponential decay.
         staircase = np.exp(-(np.arange(120) // 10) * 10 / 6.0) + 1e-4
         surrogate = WoodburyPreconditioner(
@@ -1460,7 +1462,7 @@ class TestWoodburyPreconditioner:
             solver=CholeskySolver(),
         )
         helped = (
-            CGSolver(rtol=1e-10, maxiter=2000)
+            CGSolver(rtol=1e-10, max_iterations=2000)
             .with_preconditioner(surrogate)(normal)
             .solve(vector)
         )
@@ -1593,7 +1595,7 @@ class TestColumnThresholdedPreconditioner:
 class TestImhofOnATrapezoid:
     """Adaptive quadrature on a scalar integrand exhausted its subdivisions,
     warned, and took 106 ms at three weights -- the slowest-decaying case.
-    v1's vectorised trapezoid is both faster and quieter."""
+    v1's vectorized trapezoid is both faster and quieter."""
 
     def test_it_is_exact_where_there_is_a_closed_form(self):
         """Equal weights make it a scaled chi-squared. Perturbed by 1e-12 so
@@ -1768,7 +1770,7 @@ class TestARootFindSaysWhyItStopped:
 class TestSpectralBlockOperator:
     """REVIEW2 4.2.9: a correlated measure's operators act on all their
     fields at once -- one analysis and one synthesis per field -- and its
-    draws are synthesised straight from white-noise components."""
+    draws are synthesized straight from white-noise components."""
 
     @staticmethod
     def space():
@@ -1824,7 +1826,7 @@ class TestSpectralBlockOperator:
         assert np.allclose(action(space.to_components(x)), space.to_components(fast(x)))
         check_operator(fast, rng=rng)
 
-    def test_an_application_analyses_each_field_once(self, rng):
+    def test_an_application_analyzes_each_field_once(self, rng):
         X = self.space()
         measure = X.correlated_measure_from_correlations(
             [X.heat_symbol(0.14), X.sobolev_symbol(-2.0, 0.2)],

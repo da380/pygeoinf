@@ -1,5 +1,5 @@
 """
-Spaces whose basis diagonalises the Laplacian.
+Spaces whose basis diagonalizes the Laplacian.
 
 A symmetric space is a coordinate space with a distinguished spectral basis:
 one in which the Laplace-Beltrami operator is diagonal. The space is symmetric;
@@ -109,7 +109,7 @@ class PreparedPoints:
 
 
 class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
-    """A coordinate space whose basis diagonalises the Laplacian.
+    """A coordinate space whose basis diagonalizes the Laplacian.
 
     Subclasses supply :meth:`to_components`, :meth:`from_components`,
     :attr:`laplacian_eigenvalues`, :meth:`basis_at` and ``_key``. Everything
@@ -558,7 +558,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         *operator's*, in that space's metric, so a draw's coefficients have
         variance ``eigenvalue / gram_diagonal`` and the spectrum comes out
         divided by the Sobolev symbol. Whether ``power_measure`` should mean
-        the ``H^s`` spectrum it currently means, or the ``L2`` one a modeller
+        the ``H^s`` spectrum it currently means, or the ``L2`` one a modeler
         more often writes down, is a question for the API and not for this
         method, which reports what is there.
         """
@@ -574,7 +574,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         The same function, viewed in a different metric. It is *not* the
         identity operator: its adjoint carries the ratio of the two metrics,
         which is exactly what makes ``H^s -> H^t`` a bounded inclusion rather
-        than a relabelling.
+        than a relabeling.
 
         Args:
             target: the space to read into, of the same dimension.
@@ -683,9 +683,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def heat_symbol(self, length_scale: float, /) -> np.ndarray:
         r"""``exp(-length_scale^2 lambda)``, the heat kernel's spectral weight.
 
-        Parameterised by a **length**, not by a diffusion time. The two differ
+        Parameterized by a **length**, not by a diffusion time. The two differ
         by a square — ``time == length_scale^2`` — and the length is the one a
-        modeller has an opinion about: it is the distance over which the field
+        modeler has an opinion about: it is the distance over which the field
         decorrelates, in the units of the domain, and it sits beside
         :meth:`sobolev_symbol`'s length scale meaning the same thing.
 
@@ -737,7 +737,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> float:
         """The variance of ``x(p)`` under the corresponding invariant measure.
 
-        This is the number a modeller actually has an opinion about: nobody
+        This is the number a modeler actually has an opinion about: nobody
         knows what spectral amplitude they want, and everybody knows roughly
         how big the field should be.
 
@@ -817,8 +817,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         The factor is the exact square root of the covariance, and the draw is
         taken in components: ``sqrt(s / g)`` times a standard normal, which is
-        one synthesis. Going through the factor synthesises white noise onto
-        the grid only for a diagonal operator to analyse it again, at three
+        one synthesis. Going through the factor synthesizes white noise onto
+        the grid only for a diagonal operator to analyze it again, at three
         transforms for the same numbers. The ``1/sqrt(g)`` is the metric's,
         and it is white noise's rather than this method's invention: white
         noise has components ``N(0, G^-1)``.
@@ -876,7 +876,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         factor = DiagonalLinearOperator(self, np.sqrt(variances))
         # A precision exists only when every variance is strictly positive; a
         # measure supported on a subspace has none, and should say so rather
-        # than carry a regularised stand-in.
+        # than carry a regularized stand-in.
         precision = (
             DiagonalLinearOperator(self, 1.0 / variances)
             if np.all(variances > 0.0)
@@ -1092,7 +1092,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> GaussianMeasure:
         """The same, from marginal spectra and a correlation matrix.
 
-        The parameterisation anyone actually has an opinion about: each field's
+        The parameterization anyone actually has an opinion about: each field's
         own spectrum, and how strongly they are correlated. The correlation may
         be a single matrix, applying at every scale, or one per component if it
         varies with scale.
@@ -1145,7 +1145,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Args:
             measure: a measure from :meth:`correlated_measure` or its
-                correlation-parameterised sibling.
+                correlation-parameterized sibling.
             first: the summand on the left.
             second: the summand on the right.
 
@@ -1316,7 +1316,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             n_jobs: workers: for the points on the exact route, and for the
                 operator applications on the sampling one. Not used where the
                 measure is invariant and the closed form applies, which is
-                vectorised over the points already.
+                vectorized over the points already.
 
         Returns:
             One variance per point.
@@ -1351,7 +1351,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                     ]
                 )
             # One covariance application per point, and the points are
-            # independent: the loop parallelises even though nothing inside it
+            # independent: the loop parallelizes even though nothing inside it
             # does. The operator below is not built on this path -- it was,
             # and was dead work.
             from ..parallel import parallel_map
@@ -1367,7 +1367,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             )
         evaluation = self.point_evaluation_operator(points)
         operator = evaluation @ measure.covariance @ evaluation.adjoint
-        from ..numerics.randomised import deflated_diagonal
+        from ..numerics.randomized import deflated_diagonal
 
         return deflated_diagonal(
             operator,
@@ -1383,7 +1383,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
         """The points as vectors whose Euclidean distance tracks the geodesic.
 
-        The hook the neighbour search is built on. Returns the coordinates and,
+        The hook the neighbor search is built on. Returns the coordinates and,
         for a periodic domain, the box a KD-tree should wrap in. On a sphere the
         embedding is into R^3 and Euclidean distance is the *chord*, which is a
         monotone function of the geodesic -- see :meth:`_embedded_radius`.
@@ -1393,7 +1393,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide an embedding, so it has "
-            f"no neighbour search."
+            f"no neighbor search."
         )
 
     def _embedded_radius(self, distance: float, /) -> float:
@@ -1414,7 +1414,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> tuple[np.ndarray, ...]:
         """Index pairs closer together than a given geodesic distance.
 
-        What a localised covariance needs: the sparsity pattern of "these two
+        What a localized covariance needs: the sparsity pattern of "these two
         data see overlapping parts of the model". Returned as two index arrays,
         ready for ``scipy.sparse``, and with ``with_distances`` a third array
         of the separations themselves -- which is what an invariant covariance
@@ -1448,16 +1448,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             return (empty, empty, np.zeros(0)) if with_distances else (empty, empty)
 
         tree = cKDTree(vectors, boxsize=boxsize)
-        neighbours = tree.query_pairs(
+        neighbors = tree.query_pairs(
             self._embedded_radius(distance), output_type="ndarray"
         )
         # query_pairs gives each unordered pair once and no diagonal; the
         # caller wants the symmetric pattern, so both orderings and the
         # diagonal go back in.
         diagonal = np.arange(count)
-        if neighbours.size:
-            rows = np.concatenate([neighbours[:, 0], neighbours[:, 1], diagonal])
-            columns = np.concatenate([neighbours[:, 1], neighbours[:, 0], diagonal])
+        if neighbors.size:
+            rows = np.concatenate([neighbors[:, 0], neighbors[:, 1], diagonal])
+            columns = np.concatenate([neighbors[:, 1], neighbors[:, 0], diagonal])
         else:
             rows = columns = diagonal
         if not with_distances:
@@ -1612,7 +1612,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Sobolev embedding: point evaluation is a bounded functional on ``H^s``
         exactly when ``s > d/2``. At or below that the Dirac has no representer
         in the space, and what the code returns instead is not an approximation
-        to one — it is a grid-scale artefact that shrinks as the truncation
+        to one — it is a grid-scale artifact that shrinks as the truncation
         rises and has no limit.
 
         Nothing downstream can detect this. The adjoint of an observation
@@ -1640,7 +1640,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 f"{self.spatial_dimension}-dimensional domain, and this space "
                 f"has order {self.order:g}. Below that a point evaluation is "
                 f"not a bounded functional: it has no representer, and the "
-                f"one this would return is a grid-scale artefact with no limit "
+                f"one this would return is a grid-scale artifact with no limit "
                 f"as the truncation rises. Raise the order, or pass "
                 f"unsafe=True if you want to see that for yourself."
             )
@@ -1679,7 +1679,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 f"has order {self.order:g}. At or below that the integral "
                 f"along a curve is not a bounded functional: it has no "
                 f"representer, and the one this would return is a grid-scale "
-                f"artefact with no limit as the truncation rises. Raise the "
+                f"artifact with no limit as the truncation rises. Raise the "
                 f"order, or pass unsafe=True if you want to see that for "
                 f"yourself."
             )
@@ -1950,7 +1950,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         synthesis, and *loses* the part of the product the grid could still
         have carried. Every consumer that leaves the grid analyses anyway —
         analysis is linear, so it sees the same components either way — and
-        the choice of discretisation is the caller's to make, not this method's
+        the choice of discretization is the caller's to make, not this method's
         to make for them.
 
         A caller who needs the band-limited representative asks for it with
@@ -2172,7 +2172,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Raises:
             TypeError: for a direct solver. The flexure operator is applied
-                matrix-free, so there is nothing to factorise.
+                matrix-free, so there is nothing to factorize.
         """
         constant = all(
             isinstance(value, (int, float, np.floating, np.integer))
@@ -2304,14 +2304,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     @abstractmethod
     def geodesic_ball_quadrature(
-        self, centre: Any, radius: float, /, *, count: int
+        self, center: Any, radius: float, /, *, count: int
     ) -> tuple[list[Any], np.ndarray]:
         """Nodes and weights integrating over a geodesic ball.
 
         The weights carry the area element, so they sum to the ball's measure.
 
         Args:
-            centre: the ball's centre.
+            center: the ball's center.
             radius: its *physical* radius.
             count: how many nodes to place.
 
@@ -2362,7 +2362,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         The tomographic forward map: a travel time is an integral along a ray,
         not an average over one. v1 computes exactly this and calls it
         ``path_average_operator``, saying in its own docstring that the name is
-        wrong; :meth:`path_average_operator` here is the normalised variant,
+        wrong; :meth:`path_average_operator` here is the normalized variant,
         and the two now differ by what they are called rather than by which
         version you are using.
 
@@ -2406,7 +2406,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             count=count,
             weight=weight,
             dense=dense,
-            normalise=False,
+            normalize=False,
             eps=eps,
             nthreads=nthreads,
             unsafe=unsafe,
@@ -2458,7 +2458,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             count=count,
             weight=weight,
             dense=dense,
-            normalise=True,
+            normalize=True,
             eps=eps,
             nthreads=nthreads,
             unsafe=unsafe,
@@ -2473,7 +2473,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         count: int | None,
         weight: Callable[[Any], float] | None,
         dense: bool,
-        normalise: bool,
+        normalize: bool,
         eps: float | None = None,
         nthreads: int | None = None,
         unsafe: bool = False,
@@ -2481,7 +2481,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> LinearOperator:
         """The integral or the average, which differ only by a scaling."""
         self._require_path_evaluation(
-            "A path average" if normalise else "A path integral", unsafe=unsafe
+            "A path average" if normalize else "A path integral", unsafe=unsafe
         )
         paths = tuple(paths)
         if not paths:
@@ -2492,7 +2492,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         for index, (start, end) in enumerate(paths):
             path_nodes, path_weights = self._path_nodes(start, end, count)
             path_weights = np.asarray(path_weights, dtype=float)
-            if normalise:
+            if normalize:
                 total = float(np.sum(path_weights))
                 if total <= 0.0:
                     raise ValueError(
@@ -2530,12 +2530,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     def geodesic_ball_average_operator(
         self,
-        centres: Sequence[Any],
+        centers: Sequence[Any],
         radius: float,
         /,
         *,
         count: int = 100,
-        normalise: bool = True,
+        normalize: bool = True,
         dense: bool = False,
         n_jobs: int | None = None,
     ) -> LinearOperator:
@@ -2546,10 +2546,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``W E`` construction as :meth:`path_average_operator`.
 
         Args:
-            centres: the ball centres.
+            centers: the ball centers.
             radius: the *physical* ball radius.
             count: quadrature nodes per ball.
-            normalise: divide by the ball's measure, giving an average rather
+            normalize: divide by the ball's measure, giving an average rather
                 than an integral.
             dense: assemble the derivative matrix rather than staying
                 matrix-free.
@@ -2559,19 +2559,19 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             The operator.
 
         Raises:
-            ValueError: for a non-positive radius or count, or no centres.
+            ValueError: for a non-positive radius or count, or no centers.
         """
-        centres = tuple(centres)
-        if not centres:
-            raise ValueError("At least one centre is needed.")
+        centers = tuple(centers)
+        if not centers:
+            raise ValueError("At least one center is needed.")
 
         nodes: list[Any] = []
         rows, columns, values = [], [], []
-        for index, centre in enumerate(centres):
+        for index, center in enumerate(centers):
             ball_nodes, ball_weights = self.geodesic_ball_quadrature(
-                centre, radius, count=count
+                center, radius, count=count
             )
-            if normalise:
+            if normalize:
                 total = float(np.sum(ball_weights))
                 if total <= 0.0:
                     raise ValueError(f"Ball {index} has zero measure.")
@@ -2582,14 +2582,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             columns.extend(range(offset, offset + len(ball_nodes)))
             values.extend(np.asarray(ball_weights, dtype=float).tolist())
 
-        sparse = _weight_matrix(len(centres), len(nodes), rows, columns, values)
+        sparse = _weight_matrix(len(centers), len(nodes), rows, columns, values)
         if dense:
             from ..algebra.spaces import EuclideanSpace
 
             # Sparse, for the reason given in _path_operator.
             matrix = sparse @ self.basis_matrix(nodes, n_jobs=n_jobs)
             return LinearOperator.from_matrix(
-                self, EuclideanSpace(len(centres)), matrix, form="galerkin"
+                self, EuclideanSpace(len(centers)), matrix, form="galerkin"
             )
         # unsafe: the *quadrature* samples points, but the functional it
         # computes is an average over a set of positive measure, which is
@@ -2604,7 +2604,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """The field obtained by sampling a function on the space's grid.
 
         Sampling, not projection in the ``L2`` sense: the result interpolates
-        the function at the grid points rather than minimising a residual.
+        the function at the grid points rather than minimizing a residual.
 
         Args:
             function: called with one point of the domain at a time.
@@ -2648,8 +2648,8 @@ class SpectralBlockLinearOperator(BlockLinearOperator):
     which is what a correlated measure on several fields is. It is a
     :class:`~pygeoinf2.algebra.direct_sum.BlockLinearOperator`, so a
     marginal or a cross-covariance is still read off a block; but it is
-    applied as a whole: every field is analysed once, the slices act on the
-    ``(dim, n)`` array of components, and every field is synthesised once.
+    applied as a whole: every field is analyzed once, the slices act on the
+    ``(dim, n)`` array of components, and every field is synthesized once.
     As a grid of blocks it cost ``n^2`` analyses and ``n^2 + n`` syntheses
     per application. It acts on components directly, so it fuses into
     products and Krylov loops like a diagonal operator does.
@@ -2757,7 +2757,7 @@ class SpectralBlockLinearOperator(BlockLinearOperator):
     def apply_block(
         self, vectors: Sequence[tuple], /, *, n_jobs: int | None = None
     ) -> list[tuple]:
-        """Every field of every vector analysed once, then one product.
+        """Every field of every vector analyzed once, then one product.
 
         Args:
             vectors: tuples with one field per summand.
@@ -2780,9 +2780,9 @@ class _FlexureOperator(LinearOperator):
     them under one Laplacian and one under two. Applied term by term it
     cost fifty transforms per application: every ``multiply`` truncated
     back into the space (an analysis and a synthesis), and every Laplacian
-    re-analyses what was just synthesised. Analysis is linear, so the
+    re-analyses what was just synthesized. Analysis is linear, so the
     products under a common multiplier can be summed on the grid and
-    analysed once. Written out, with ``L`` the positive Laplacian, ``K`` the
+    analyzed once. Written out, with ``L`` the positive Laplacian, ``K`` the
     curvature, ``D`` the rigidity, ``E == D (1 - nu)``, ``rho`` the buoyancy
     and ``w`` the field:
 
@@ -2829,11 +2829,11 @@ class _FlexureOperator(LinearOperator):
         self._bilaplacian_effective = np.asarray(bilaplacian_effective, dtype=float)
         self._buoyancy = np.asarray(buoyancy, dtype=float)
 
-    def _analyse(self, grid: np.ndarray) -> np.ndarray:
+    def _analyze(self, grid: np.ndarray) -> np.ndarray:
         space = self._space
         return space.to_components(space._own_grid_values(grid))
 
-    def _synthesise(self, components: np.ndarray) -> np.ndarray:
+    def _synthesize(self, components: np.ndarray) -> np.ndarray:
         space = self._space
         return space.grid_values(space.from_components(components))
 
@@ -2845,9 +2845,9 @@ class _FlexureOperator(LinearOperator):
             self._bilaplacian_effective,
             self._buoyancy,
         )
-        w = self._synthesise(components)
-        Lw = self._synthesise(lam * components)
-        L2w = self._synthesise(lam**2 * components)
+        w = self._synthesize(components)
+        Lw = self._synthesize(lam * components)
+        L2w = self._synthesize(lam**2 * components)
         G0 = rho * w - 0.5 * LE * Lw + 0.25 * L2E * w + 0.25 * E * L2w
         if K != 0.0:
             G0 = G0 - 0.5 * K * E * Lw + 0.5 * K * LE * w
@@ -2855,7 +2855,7 @@ class _FlexureOperator(LinearOperator):
         if K != 0.0:
             G1 = G1 - 0.5 * K * E * w
         G2 = 0.25 * E * w
-        return self._analyse(G0) + lam * self._analyse(G1) + lam**2 * self._analyse(G2)
+        return self._analyze(G0) + lam * self._analyze(G1) + lam**2 * self._analyze(G2)
 
     def _value(self, x: Any) -> Any:
         space = self._space
@@ -2928,7 +2928,7 @@ def _weight_matrix(
     column_indices: Sequence[int],
     values: Sequence[float],
 ) -> Any:
-    """The sparse quadrature weights of a ``W E`` factorisation, as a CSR."""
+    """The sparse quadrature weights of a ``W E`` factorization, as a CSR."""
     from scipy.sparse import coo_matrix
 
     return coo_matrix(
@@ -2942,7 +2942,7 @@ def _weight_operator(matrix: Any, /) -> LinearOperator:
 
     Both spaces are orthonormal, so the adjoint *is* the transpose and there is
     no metric to get wrong. That is the only place in this module where that is
-    true, and it is why the ``W E`` factorisation is worth having: all the
+    true, and it is why the ``W E`` factorization is worth having: all the
     metric lives in ``E``, which is built from derivative components.
     """
     from ..algebra.spaces import EuclideanSpace

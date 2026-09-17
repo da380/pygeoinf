@@ -9,7 +9,7 @@ them separately means solving twice. ``F.at(x)`` returns both from one call;
 import numpy as np
 
 from pygeoinf2 import EuclideanSpace, LinearOperator, Operator
-from pygeoinf2.algebra.linearisation import Linearisation
+from pygeoinf2.algebra.linearization import Linearization
 from pygeoinf2.testing import check_derivative
 
 rng = np.random.default_rng(0)
@@ -24,17 +24,17 @@ def expensive_solve(m):
     return m @ m, 2.0 * m
 
 
-def linearise(m):
+def linearize(m):
     squared, jacobian_row = expensive_solve(m)
     value = np.array([squared, float(m[0])])
     rows = np.vstack([jacobian_row, np.eye(3)[0]])
-    return Linearisation(
+    return Linearization(
         m, value, LinearOperator.from_matrix(X, Y, rows, form="components")
     )
 
 
 F = Operator.from_callables(
-    X, Y, lambda m: np.array([m @ m, m[0]]), linearise=linearise
+    X, Y, lambda m: np.array([m @ m, m[0]]), linearize=linearize
 )
 
 m = X.random(rng=rng)

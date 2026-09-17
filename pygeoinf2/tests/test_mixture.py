@@ -84,12 +84,12 @@ class TestGaussianMixture:
             0.3
             * np.exp(
                 mix.components[0].log_density(point)
-                + mix.components[0].log_normalising_constant()
+                + mix.components[0].log_normalizing_constant()
             )
             + 0.7
             * np.exp(
                 mix.components[1].log_density(point)
-                + mix.components[1].log_normalising_constant()
+                + mix.components[1].log_normalizing_constant()
             )
         )
         assert mix.log_density(point) == pytest.approx(expected)
@@ -98,7 +98,7 @@ class TestGaussianMixture:
         """Against scipy, with components of *unequal* width.
 
         Each component's ``-1/2 log det C`` differs, so it does not cancel out
-        of the sum. Omitting it makes the broad component as tall at its centre
+        of the sum. Omitting it makes the broad component as tall at its center
         as the narrow one; sampling never notices, because sampling does not
         consult the density.
         """
@@ -155,7 +155,7 @@ class TestGaussianMixture:
         assert len(mix) == 3
         assert mix.weights == pytest.approx([0.2, 0.5, 0.3])
 
-    def test_a_continuous_parameter_is_discretised_by_sampling(self):
+    def test_a_continuous_parameter_is_discretized_by_sampling(self):
         space = EuclideanSpace(2)
         parameters = GaussianMeasure.from_standard_deviation(EuclideanSpace(1), 1.0)
         mix = GaussianMixture.from_parameter_samples(

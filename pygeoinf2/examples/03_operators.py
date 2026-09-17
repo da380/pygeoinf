@@ -40,6 +40,6 @@ check_operator(A, rng=rng)
 print("check_operator passed: linear, and the adjoint identity holds.")
 print()
 
-# Adjoints are memoised, which matters more than it looks -- see example 4.
+# Adjoints are memoized, which matters more than it looks -- see example 4.
 print("A.adjoint is A.adjoint      :", A.adjoint is A.adjoint)
 print("A.adjoint.adjoint is A      :", A.adjoint.adjoint is A)

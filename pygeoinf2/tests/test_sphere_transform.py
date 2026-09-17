@@ -130,7 +130,7 @@ class TestTheLebesgueInnerProductIsTheQuadrature:
         X._quadrature  # the weights probe the transform once, then are cached
 
         def refuse(*args, **kwargs):
-            raise AssertionError("the inner product analysed a field")
+            raise AssertionError("the inner product analyzed a field")
 
         monkeypatch.setattr(type(X), "to_components", refuse)
         assert X.inner_product(x, y) != 0.0
@@ -218,7 +218,7 @@ class TestDoubling:
         X._double(field)  # warm the cached kernel, which does probe once
 
         def refuse(*args, **kwargs):
-            raise AssertionError("_double analysed the field")
+            raise AssertionError("_double analyzed the field")
 
         monkeypatch.setattr(type(X), "to_components", refuse)
         assert X._double(field) is not None

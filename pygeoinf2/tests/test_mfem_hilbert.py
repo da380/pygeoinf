@@ -88,7 +88,7 @@ def reference(elements, essential):
 
 
 def bilinear(elements, assembly, *integrators):
-    """An assembled form at the given level. Not finalised: FormSystemMatrix
+    """An assembled form at the given level. Not finalized: FormSystemMatrix
     does that itself, and the opaque backend never reads ``SpMat``."""
     form = mfem.BilinearForm(elements)
     if assembly == "partial":
@@ -99,7 +99,7 @@ def bilinear(elements, assembly, *integrators):
     return form
 
 
-def finalised(elements, *integrators):
+def finalized(elements, *integrators):
     """The same form for the coordinate backend, which reads the matrix."""
     form = bilinear(elements, "full", *integrators)
     form.Finalize()
@@ -205,7 +205,7 @@ class TestOperators:
         )
         B = coordinate.operator_from_bilinear_form(
             reference,
-            finalised(elements, mfem.DiffusionIntegrator(), mfem.MassIntegrator()),
+            finalized(elements, mfem.DiffusionIntegrator(), mfem.MassIntegrator()),
             traits=DEFINITE,
         )
         x = V.random(rng=rng)
@@ -221,7 +221,7 @@ class TestOperators:
             V, bilinear(elements, assembly, convection(), mfem.MassIntegrator())
         )
         B = coordinate.operator_from_bilinear_form(
-            reference, finalised(elements, convection(), mfem.MassIntegrator())
+            reference, finalized(elements, convection(), mfem.MassIntegrator())
         )
         check_operator(A, rng=rng)
         x = V.random(rng=rng)
@@ -439,15 +439,15 @@ class TestAWholeInversion:
     @staticmethod
     def sensors(elements, positions):
         class Bump(mfem.PyCoefficient):
-            def __init__(self, centre):
+            def __init__(self, center):
                 super().__init__()
-                self._centre = np.asarray(centre, float)
+                self._center = np.asarray(center, float)
 
             def EvalValue(self, x):
-                offset = np.asarray([x[0], x[1]]) - self._centre
+                offset = np.asarray([x[0], x[1]]) - self._center
                 return float(np.exp(-0.5 * offset @ offset / 0.1**2))
 
-        return [linear(elements, Bump(centre)) for centre in positions]
+        return [linear(elements, Bump(center)) for center in positions]
 
     def test_the_posterior_mean_agrees_with_the_coordinate_backend(
         self, V, reference, elements, assembly, positions
@@ -460,7 +460,7 @@ class TestAWholeInversion:
             reference,
             coordinate,
             forms,
-            finalised(elements, mfem.DiffusionIntegrator()),
+            finalized(elements, mfem.DiffusionIntegrator()),
         )
         rng = np.random.default_rng(7)
         truth = theirs.prior.sample(rng=rng)

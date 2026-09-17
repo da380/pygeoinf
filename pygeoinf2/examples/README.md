@@ -22,10 +22,10 @@ failing test rather than a surprise later.
 | 6 | `nonlinear` | `at()`, and why value and derivative come together |
 | 7 | `solvers` | coordinate-free Krylov; declared preconditions |
 | 8 | `functional_calculus` | `f(A)` without a matrix |
-| 9 | `randomised` | low-rank factorisation and trace estimation |
+| 9 | `randomized` | low-rank factorisation and trace estimation |
 | 10 | `measures` | Gaussians, sampling, pushforward |
 | 11 | `direct_sums` | the joint model, linear and nonlinear |
-| 12 | `optimisation` | why working in the metric changes the iteration count |
+| 12 | `optimization` | why working in the metric changes the iteration count |
 | 13 | `convex` | proximal operators as geometry |
 | 14 | `fields` | circles, tori, boxes, spheres |
 | 15 | `worked_example` | all of it, on a small inverse problem |

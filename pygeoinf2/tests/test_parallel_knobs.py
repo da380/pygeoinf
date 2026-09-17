@@ -175,18 +175,18 @@ class TestSupportSweeps:
     @pytest.fixture
     def setting(self, rng):
         model = make_weighted_space()
-        data_space, target_space = EuclideanSpace(2), EuclideanSpace(2)
+        data_space, property_space = EuclideanSpace(2), EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
+            model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         raw = model.random(rng=rng)
         truth = model.scale(2.0 / model.norm(raw), raw)
         angles = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
         directions = [
-            target_space.from_components(np.array([np.cos(a), np.sin(a)]))
+            property_space.from_components(np.array([np.cos(a), np.sin(a)]))
             for a in angles
         ]
         return model, forward, target, forward(truth), directions
@@ -216,7 +216,7 @@ class TestSupportSweeps:
     @pytest.mark.parametrize("route", ["kkt", "dual"])
     def test_the_general_routes_honour_the_workers(self, setting, route):
         """Cold starts in parallel, so the comparison is with the cold
-        sweep; the dual's bundle minimisation is converged to its own
+        sweep; the dual's bundle minimization is converged to its own
         tolerance and agrees to that."""
         model, forward, target, data, directions = setting
         result = BackusGilbertParker(

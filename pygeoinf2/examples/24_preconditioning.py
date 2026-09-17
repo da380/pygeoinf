@@ -2,7 +2,7 @@
 24. Preconditioning a large inversion with a surrogate.
 
 Example 21 solved a tomographic inversion in one line and said nothing about
-how. That is fine while the normal equations fit in a Cholesky factorisation.
+how. That is fine while the normal equations fit in a Cholesky factorization.
 When they do not, the solve becomes iterative, and an iterative solve on an
 ill-conditioned normal operator is where a real inversion actually spends its
 time.
@@ -124,11 +124,13 @@ residual = problem.data_space.subtract(data, shift)
 
 def iterations(preconditioner, label):
     """How long the solve takes, and whether it lands in the same place."""
-    solver = CGSolver(rtol=1e-10, maxiter=5000)
+    solver = CGSolver(rtol=1e-10, max_iterations=5000)
     if preconditioner is not None:
         solver = solver.with_preconditioner(preconditioner)
     result = solver(normal).solve(normal.right_hand_side(residual))
-    recovered = X.add(prior.expectation, normal.gain(solver(normal))(residual))
+    recovered = X.add(
+        prior.expectation, normal.kalman_operator(solver(normal))(residual)
+    )
     drift = X.norm(X.subtract(recovered, reference)) / X.norm(reference)
     print(f"  {label:<34s} {result.iterations:>5d} iterations   (answer {drift:.1e})")
     return result.iterations

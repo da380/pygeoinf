@@ -1,9 +1,9 @@
 """
-12. Optimisation in the space, not in the components.
+12. Optimization in the space, not in the components.
 
 The methods here are written against the inner product, so the gradient they
 step along is the one your metric defines. The consequence is practical: the
-iteration count does not change when the discretisation is rescaled.
+iteration count does not change when the discretization is rescaled.
 """
 
 import numpy as np
@@ -53,7 +53,7 @@ phi = quadratic(X, root @ root.T + 20.0 * np.identity(20), rng.normal(size=20))
 start = X.random(rng=rng)
 
 for method in (SteepestDescent(max_iterations=3000), LBFGS(), NewtonCG()):
-    result = method.minimise(phi, start)
+    result = method.minimize(phi, start)
     print(f"{type(method).__name__:16s} {result.iterations:4d} iterations")
 print()
 
@@ -62,9 +62,9 @@ print()
 print("the same problem, with the metric spread over four decades:")
 for spread in (1.0, 100.0, 10000.0):
     space = Sobolev((16,), 2.0, spread)
-    centre = space.random(rng=rng)
-    objective = SquaredDistance(space, centre=centre)
-    result = SteepestDescent(max_iterations=2000).minimise(
+    center = space.random(rng=rng)
+    objective = SquaredDistance(space, center=center)
+    result = SteepestDescent(max_iterations=2000).minimize(
         objective, space.random(rng=rng)
     )
     condition = space.metric_values.max() / space.metric_values.min()

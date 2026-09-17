@@ -124,23 +124,23 @@ print()
 
 
 class Bump(mfem.PyCoefficient):
-    """A normalised Gaussian window, standing for a sensor's footprint."""
+    """A normalized Gaussian window, standing for a sensor's footprint."""
 
-    def __init__(self, centre, width):
+    def __init__(self, center, width):
         super().__init__()
-        self._centre = np.asarray(centre, float)
+        self._center = np.asarray(center, float)
         self._width = float(width)
 
     def EvalValue(self, x):
-        offset = np.asarray([x[0], x[1]]) - self._centre
+        offset = np.asarray([x[0], x[1]]) - self._center
         return float(
             np.exp(-0.5 * offset @ offset / self._width**2)
             / (2.0 * np.pi * self._width**2)
         )
 
 
-def sensor_operator(space, centres, width):
-    """Local averages at each centre, assembled by MFEM and wrapped as one
+def sensor_operator(space, centers, width):
+    """Local averages at each center, assembled by MFEM and wrapped as one
     operator.
 
     A sensor is a linear form, so MFEM assembles it exactly as it assembles
@@ -149,9 +149,9 @@ def sensor_operator(space, centres, width):
     *derivative* components, and the mass solve the adjoint needs stays inside.
     """
     forms = []
-    for centre in centres:
+    for center in centers:
         form = mfem.LinearForm(space.finite_element_space)
-        form.AddDomainIntegrator(mfem.DomainLFIntegrator(Bump(centre, width)))
+        form.AddDomainIntegrator(mfem.DomainLFIntegrator(Bump(center, width)))
         form.Assemble()
         forms.append(form)
     return operator_from_linear_forms(space, forms)
@@ -181,7 +181,7 @@ prior = SOURCE_STRENGTH * matern_measure(
     V, smoothness=1.0, correlation_length=CORRELATION
 )
 print(f"prior: Matern, correlation length {CORRELATION}, smoothness 1")
-print(f"  amplitude {SOURCE_STRENGTH}, since the method normalises the")
+print(f"  amplitude {SOURCE_STRENGTH}, since the method normalizes the")
 print("  pointwise variance to one away from the boundary")
 print("  covariance, sampling factor and precision are all elliptic solves;")
 print("  nothing about it is ever assembled")
@@ -250,12 +250,12 @@ print()
 
 
 # ---------------------------------------------------------------------------
-# And it does not depend on the discretisation.
+# And it does not depend on the discretization.
 # ---------------------------------------------------------------------------
 
 # The same question at three polynomial orders, on the *same* data. Where the
 # space is fine enough to represent what the prior describes, the answer should
-# not move; where it is not, the discretisation is quietly doing the work of a
+# not move; where it is not, the discretization is quietly doing the work of a
 # prior, and the error bar is the place that shows.
 print("the same property, at three polynomial orders:")
 for order in (1, 2, 3):
@@ -277,7 +277,7 @@ for order in (1, 2, 3):
     order_region.AddDomainIntegrator(mfem.DomainLFIntegrator(Region()))
     order_region.Assemble()
     order_property = operator_from_linear_forms(space, [order_region])
-    # The *same* data, inverted on a different discretisation.
+    # The *same* data, inverted on a different discretization.
     order_answer = LinearGaussianInversion(order_problem, order_prior).push_forward(
         order_property
     )(data)
@@ -288,11 +288,11 @@ print("  orders 2 and 3 agree closely, which is what makes the answer a")
 print("  statement about the problem rather than about the mesh -- and they")
 print("  can agree because the metric is the mass matrix, so the prior means")
 print("  the same thing on both spaces rather than being rescaled by the")
-print("  discretisation.")
+print("  discretization.")
 print()
 print("  order 1 is the interesting one. It differs, and its error bar is")
 print("  *smaller* than the finer spaces' -- which is not better information")
 print("  but overconfidence: a coarse space cannot represent the sources it")
-print("  is therefore certain do not exist. The discretisation is acting as a")
+print("  is therefore certain do not exist. The discretization is acting as a")
 print("  prior nobody wrote down, which is the failure mode this whole")
 print("  arrangement exists to make visible.")

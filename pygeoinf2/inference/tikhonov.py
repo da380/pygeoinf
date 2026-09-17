@@ -22,7 +22,7 @@ An object whose point is the sweep should say so in its type, and the warm
 starting that makes a sweep affordable has nowhere to live on a single
 assembly.
 
-Reading ``t`` as a prior variance is also a claim about what regularisation
+Reading ``t`` as a prior variance is also a claim about what regularization
 means, and one that a damping does not have to make.
 
 See DESIGN.md section 24.
@@ -191,7 +191,7 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         Supplied so that the preconditioners written for a Gaussian normal
         operator apply here unchanged — the identity of the module docstring,
         used rather than argued about. Undefined at zero damping, which is the
-        unregularised case and has no prior reading.
+        unregularized case and has no prior reading.
 
         Returns:
             The covariance operator.
@@ -353,7 +353,7 @@ class TikhonovFamily:
             error: the data error measure ``R``.
             solver: how to invert ``N(t)``. Cholesky by default. An *iterative*
                 solver is what makes warm starting mean anything; a direct one
-                refactorises at every damping and reports zero iterations,
+                refactorizes at every damping and reports zero iterations,
                 which is the honest signal that it is doing so.
             formalism: which space to assemble in.
         """

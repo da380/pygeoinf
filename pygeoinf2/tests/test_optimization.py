@@ -1,4 +1,4 @@
-"""Optimisation: correctness, coordinate freedom, and metric awareness."""
+"""Optimization: correctness, coordinate freedom, and metric awareness."""
 
 import numpy as np
 import pytest
@@ -16,7 +16,7 @@ from pygeoinf2.numerics.line_search import (
     ArmijoLineSearch,
     StrongWolfeLineSearch,
 )
-from pygeoinf2.numerics.optimisation import (
+from pygeoinf2.numerics.optimization import (
     LBFGS,
     NewtonCG,
     NonlinearCG,
@@ -106,10 +106,10 @@ class TestQuadratics:
     @pytest.mark.parametrize("method", FIRST_ORDER + SECOND_ORDER)
     def test_the_minimum_is_found(self, method, spd_problem, rng):
         space, phi, offset = spd_problem
-        result = method(max_iterations=3000).minimise(phi, space.random(rng=rng))
+        result = method(max_iterations=3000).minimize(phi, space.random(rng=rng))
         assert isinstance(result, OptimisationResult)
         assert result.converged, result.message
-        assert np.allclose(result.minimiser, offset, atol=1e-6)
+        assert np.allclose(result.minimizer, offset, atol=1e-6)
 
     @pytest.mark.parametrize("method", FIRST_ORDER + SECOND_ORDER)
     def test_it_works_on_a_weighted_space(self, method, rng):
@@ -120,9 +120,9 @@ class TestQuadratics:
         offset = rng.normal(size=space.dim)
         phi = quadratic(space, matrix, offset)
 
-        result = method(max_iterations=3000).minimise(phi, space.random(rng=rng))
+        result = method(max_iterations=3000).minimize(phi, space.random(rng=rng))
         assert result.converged, result.message
-        assert np.allclose(space.to_components(result.minimiser), offset, atol=1e-6)
+        assert np.allclose(space.to_components(result.minimizer), offset, atol=1e-6)
 
     @pytest.mark.parametrize("method", FIRST_ORDER)
     def test_a_solved_quadratic_is_reported_as_solved(self, method, rng):
@@ -142,11 +142,11 @@ class TestQuadratics:
         offset = rng.normal(size=60)
         phi = quadratic(space, matrix, offset)
 
-        result = method(max_iterations=2000).minimise(phi, space.zero())
+        result = method(max_iterations=2000).minimize(phi, space.zero())
 
         assert result.converged, result.message
         assert result.evaluations < 200
-        assert np.allclose(result.minimiser, offset, atol=1e-4)
+        assert np.allclose(result.minimizer, offset, atol=1e-4)
 
     def test_a_flat_functional_stops_rather_than_grinding(self):
         """``ftol`` is relative to ``|f|`` with no absolute floor: a floor
@@ -157,7 +157,7 @@ class TestQuadratics:
         constant = Functional.from_callables(
             space, lambda x: 3.0, gradient=lambda x: np.zeros(2)
         )
-        result = SteepestDescent(max_iterations=5000).minimise(
+        result = SteepestDescent(max_iterations=5000).minimize(
             constant, np.array([1.0, 1.0])
         )
         assert result.converged
@@ -166,13 +166,13 @@ class TestQuadratics:
     def test_newton_beats_steepest_descent(self, spd_problem, rng):
         space, phi, _ = spd_problem
         start = space.random(rng=rng)
-        newton = NewtonCG().minimise(phi, start)
-        steepest = SteepestDescent(max_iterations=3000).minimise(phi, start)
+        newton = NewtonCG().minimize(phi, start)
+        steepest = SteepestDescent(max_iterations=3000).minimize(phi, start)
         assert newton.iterations < steepest.iterations
 
     def test_the_history_decreases(self, spd_problem, rng):
         space, phi, _ = spd_problem
-        result = LBFGS().minimise(phi, space.random(rng=rng))
+        result = LBFGS().minimize(phi, space.random(rng=rng))
         assert np.all(np.diff(result.history) <= 1e-12)
 
 
@@ -182,7 +182,7 @@ class TestRosenbrock:
     Steepest descent is excluded, and deliberately. It is famously unable to
     traverse this valley in a reasonable number of iterations -- the count runs
     to tens of thousands -- so including it would mean either a slow test or a
-    tolerance loose enough to prove nothing. Its behaviour is pinned separately
+    tolerance loose enough to prove nothing. Its behavior is pinned separately
     below instead.
     """
 
@@ -191,15 +191,15 @@ class TestRosenbrock:
         space = EuclideanSpace(2)
         phi = rosenbrock(space)
         start = np.array([-1.2, 1.0])
-        result = method(max_iterations=5000, gtol=1e-8).minimise(phi, start)
-        assert np.allclose(result.minimiser, [1.0, 1.0], atol=1e-4), result
+        result = method(max_iterations=5000, gtol=1e-8).minimize(phi, start)
+        assert np.allclose(result.minimizer, [1.0, 1.0], atol=1e-4), result
 
     def test_steepest_descent_makes_progress_but_does_not_finish(self):
-        """Pinning the known behaviour rather than pretending otherwise."""
+        """Pinning the known behavior rather than pretending otherwise."""
         space = EuclideanSpace(2)
         phi = rosenbrock(space)
         start = np.array([-1.2, 1.0])
-        result = SteepestDescent(max_iterations=2000).minimise(phi, start)
+        result = SteepestDescent(max_iterations=2000).minimize(phi, start)
         assert result.value < 0.01 * phi(start)
         assert np.all(np.diff(result.history) <= 1e-12)
 
@@ -215,12 +215,12 @@ class TestRosenbrock:
         start = np.array([0.0, 1.0])
         assert np.linalg.eigvalsh(phi.hessian(start).matrix()).min() < 0.0
 
-        result = TrustRegionNewton(max_iterations=2000).minimise(phi, start)
-        assert np.allclose(result.minimiser, [1.0, 1.0], atol=1e-4), result
+        result = TrustRegionNewton(max_iterations=2000).minimize(phi, start)
+        assert np.allclose(result.minimizer, [1.0, 1.0], atol=1e-4), result
 
 
 class TestMetricAwareness:
-    """The decisive difference from a component-space optimiser.
+    """The decisive difference from a component-space optimizer.
 
     Take ``phi(x) == 0.5 ||x - a||^2`` in the *space's* norm. Its gradient is
     ``x - a``, so the Hessian is the identity on the space and steepest descent
@@ -229,30 +229,30 @@ class TestMetricAwareness:
     In components the same function is ``0.5 (c - a)^T G (c - a)``, whose
     Hessian is the Gram matrix. A component-space method therefore sees a
     condition number equal to the spread of the metric values, and takes more
-    iterations the worse the discretisation is scaled. That is the conditioning
+    iterations the worse the discretization is scaled. That is the conditioning
     half of DESIGN.md 5.6, and it is why this is worth writing rather than
     wrapping.
     """
 
     @staticmethod
-    def _space_metric_functional(space, centre):
+    def _space_metric_functional(space, center):
         def value(x):
-            return 0.5 * space.squared_norm(space.subtract(x, centre))
+            return 0.5 * space.squared_norm(space.subtract(x, center))
 
         def gradient(x):
-            return space.subtract(x, centre)
+            return space.subtract(x, center)
 
         return Functional.from_callables(space, value, gradient=gradient)
 
     @staticmethod
-    def _component_metric_functional(space, centre):
+    def _component_metric_functional(space, center):
         """The same function, but with the gradient taken in the components.
 
-        This is what a component-space optimiser effectively minimises, and it
+        This is what a component-space optimizer effectively minimizes, and it
         is a genuinely different problem whenever the metric is not the
         identity.
         """
-        offset = space.to_components(centre)
+        offset = space.to_components(center)
 
         def value(x):
             c = space.to_components(x) - offset
@@ -265,36 +265,36 @@ class TestMetricAwareness:
 
     def test_the_metric_aware_problem_is_perfectly_conditioned(self, rng):
         space = make_weighted_space()
-        centre = space.random(rng=rng)
-        phi = self._space_metric_functional(space, centre)
+        center = space.random(rng=rng)
+        phi = self._space_metric_functional(space, center)
 
-        result = SteepestDescent(max_iterations=500).minimise(
+        result = SteepestDescent(max_iterations=500).minimize(
             phi, space.random(rng=rng)
         )
         assert result.converged
-        assert space.norm(space.subtract(result.minimiser, centre)) < 1e-6
+        assert space.norm(space.subtract(result.minimizer, center)) < 1e-6
         # A Hessian of identity means very few iterations, whatever the metric.
         assert result.iterations <= 40
 
     def test_the_two_functionals_really_differ(self, rng):
         """Otherwise the previous test would be proving nothing."""
         space = make_weighted_space()
-        centre = space.random(rng=rng)
+        center = space.random(rng=rng)
         x = space.random(rng=rng)
-        space_metric = self._space_metric_functional(space, centre)
-        component = self._component_metric_functional(space, centre)
+        space_metric = self._space_metric_functional(space, center)
+        component = self._component_metric_functional(space, center)
         assert not np.isclose(space_metric(x), component(x))
 
     def test_convergence_does_not_degrade_with_the_metric(self, rng):
-        """Refining a discretisation should not change the iteration count."""
+        """Refining a discretization should not change the iteration count."""
         from .conftest import WeightedSpace
 
         counts = []
         for spread in (1.0, 100.0, 10000.0):
             space = WeightedSpace(np.array([1.0, spread, spread**0.5, 1.0]))
-            centre = space.random(rng=rng)
-            phi = self._space_metric_functional(space, centre)
-            result = SteepestDescent(max_iterations=2000).minimise(
+            center = space.random(rng=rng)
+            phi = self._space_metric_functional(space, center)
+            result = SteepestDescent(max_iterations=2000).minimize(
                 phi, space.random(rng=rng)
             )
             assert result.converged
@@ -331,19 +331,19 @@ class TestLineSearches:
 
     def test_the_zoom_interpolates(self, setup):
         """On a quadratic the interpolant is exact: a step that overshoots the
-        minimiser along the line is followed by one evaluation at the
-        minimiser itself, where the slope is zero and both conditions hold.
+        minimizer along the line is followed by one evaluation at the
+        minimizer itself, where the slope is zero and both conditions hold.
         Bisection needed several halvings to get there. This is what v1 had
         through SciPy's search, and what the port replaced with bisection."""
         space, phi, x, model, direction, slope = setup
-        # Put the line minimiser at 0.3 of the unit step, so the unit step
+        # Put the line minimizer at 0.3 of the unit step, so the unit step
         # overshoots and the search must zoom. The curvature along the line is
         # exact by second differences on a quadratic.
         ahead = phi(space.axpy(1.0, direction, space.copy(x)))
         behind = phi(space.axpy(-1.0, direction, space.copy(x)))
         curvature = ahead - 2.0 * model.value + behind
-        minimiser = -slope / curvature
-        scaled = space.scale(minimiser / 0.3, direction)
+        minimizer = -slope / curvature
+        scaled = space.scale(minimizer / 0.3, direction)
         scaled_slope = space.inner_product(model.gradient, scaled)
 
         result = StrongWolfeLineSearch()(
@@ -351,7 +351,7 @@ class TestLineSearches:
         )
         assert result.converged
         assert result.step == pytest.approx(0.3, rel=1e-6)
-        # Two: the overshoot and the minimiser. A third would be the wasted
+        # Two: the overshoot and the minimizer. A third would be the wasted
         # re-evaluation of the bracket's low end that the zoom used to make.
         assert result.evaluations == 2
 
@@ -427,7 +427,7 @@ class TestTruncatedCG:
 
 class TestGaussNewton:
     def test_it_is_positive_semidefinite_by_construction(self, rng):
-        """J* J, recognised by the palindrome rule with nothing asserted."""
+        """J* J, recognized by the palindrome rule with nothing asserted."""
         X, Y = EuclideanSpace(5), EuclideanSpace(8)
         matrix = rng.normal(size=(8, 5))
 
@@ -484,7 +484,7 @@ class TestRequirements:
         space = EuclideanSpace(3)
         phi = Functional.from_callables(space, lambda x: float(x @ x))
         with pytest.raises(ValueError, match="needs a functional with a derivative"):
-            LBFGS().minimise(phi, space.zero())
+            LBFGS().minimize(phi, space.zero())
 
     def test_newton_needs_a_hessian(self, rng):
         space = EuclideanSpace(3)
@@ -492,7 +492,7 @@ class TestRequirements:
             space, lambda x: float(x @ x), gradient=lambda x: 2.0 * x
         )
         with pytest.raises(ValueError, match="needs a functional with a Hessian"):
-            NewtonCG().minimise(phi, space.random(rng=rng))
+            NewtonCG().minimize(phi, space.random(rng=rng))
 
     def test_the_message_suggests_an_alternative(self, rng):
         space = EuclideanSpace(3)
@@ -500,7 +500,7 @@ class TestRequirements:
             space, lambda x: float(x @ x), gradient=lambda x: 2.0 * x
         )
         with pytest.raises(ValueError, match="LBFGS"):
-            NewtonCG().minimise(phi, space.random(rng=rng))
+            NewtonCG().minimize(phi, space.random(rng=rng))
 
     def test_lbfgs_memory_must_be_positive(self):
         with pytest.raises(ValueError, match="at least one"):
@@ -517,13 +517,13 @@ class TestCoordinateFreedom:
     @pytest.fixture
     def opaque_problem(self, rng):
         space = OpaqueSpace(np.array([1.0, 4.0, 9.0, 0.25]))
-        centre = space.random(rng=rng)
+        center = space.random(rng=rng)
 
         def value(x):
-            return 0.5 * space.squared_norm(space.subtract(x, centre))
+            return 0.5 * space.squared_norm(space.subtract(x, center))
 
         def gradient(x):
-            return space.subtract(x, centre)
+            return space.subtract(x, center)
 
         def hessian(x):
             return LinearOperator.self_adjoint(
@@ -533,14 +533,14 @@ class TestCoordinateFreedom:
         phi = Functional.from_callables(
             space, value, gradient=gradient, hessian=hessian
         )
-        return space, phi, centre
+        return space, phi, center
 
     @pytest.mark.parametrize("method", FIRST_ORDER + SECOND_ORDER)
-    def test_it_minimises_without_components(self, method, opaque_problem, rng):
-        space, phi, centre = opaque_problem
-        result = method(max_iterations=500).minimise(phi, space.random(rng=rng))
+    def test_it_minimizes_without_components(self, method, opaque_problem, rng):
+        space, phi, center = opaque_problem
+        result = method(max_iterations=500).minimize(phi, space.random(rng=rng))
         assert result.converged, result.message
-        assert space.norm(space.subtract(result.minimiser, centre)) < 1e-6
+        assert space.norm(space.subtract(result.minimizer, center)) < 1e-6
 
     def test_the_space_really_has_no_coordinates(self, opaque_problem):
         from pygeoinf2.algebra.spaces import CoordinateSpace
@@ -626,9 +626,9 @@ class TestTheLineSearchHandsBackWhatItKnows:
         space = EuclideanSpace(40)
         functional, wanted = quadratic_on(space, rng)
 
-        result = LBFGS(max_iterations=500).minimise(functional, space.zero())
+        result = LBFGS(max_iterations=500).minimize(functional, space.zero())
         assert result.converged
-        assert np.linalg.norm(result.minimiser - wanted) < 1e-4 * np.linalg.norm(wanted)
+        assert np.linalg.norm(result.minimizer - wanted) < 1e-4 * np.linalg.norm(wanted)
         # One evaluation per iteration went on recomputing a known model.
         assert result.evaluations < 2 * result.iterations
 
@@ -661,7 +661,7 @@ class TestSteepestDescentUsesAWolfeSearch:
             ("armijo", ArmijoLineSearch()),
             ("wolfe", StrongWolfeLineSearch()),
         ]:
-            result = SteepestDescent(max_iterations=5000, line_search=search).minimise(
+            result = SteepestDescent(max_iterations=5000, line_search=search).minimize(
                 functional, space.zero()
             )
             counts[label] = result.evaluations
@@ -678,10 +678,10 @@ class TestOptimisersOnADenseMetric:
         space = dense_metric_space(15, rng)
         functional, wanted = quadratic_on(space, rng)
 
-        result = method(max_iterations=5000).minimise(functional, space.zero())
+        result = method(max_iterations=5000).minimize(functional, space.zero())
         assert result.converged
         assert space.norm(
-            space.subtract(result.minimiser, space.from_components(wanted))
+            space.subtract(result.minimizer, space.from_components(wanted))
         ) < 1e-4 * space.norm(space.from_components(wanted))
 
 

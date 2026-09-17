@@ -19,8 +19,8 @@ from .convex import (
 from .functional_calculus import (
     OperatorFunction,
     apply_operator_function,
-    iter_lanczos_tridiagonalise,
-    lanczos_tridiagonalise,
+    iter_lanczos_tridiagonalize,
+    lanczos_tridiagonalize,
     log_determinant,
     operator_exp,
     operator_function,
@@ -31,7 +31,7 @@ from .functional_calculus import (
     operator_sqrt,
 )
 
-from .randomised import (
+from .randomized import (
     Estimate,
     LowRankCholesky,
     LowRankEig,
@@ -50,12 +50,12 @@ from .line_search import (
     LineSearchResult,
     StrongWolfeLineSearch,
 )
-from .optimisation import (
+from .optimization import (
     LBFGS,
     NewtonCG,
     NonlinearCG,
     OptimisationResult,
-    Optimiser,
+    Optimizer,
     SteepestDescent,
     TrustRegionNewton,
     gauss_newton_hessian,
@@ -149,7 +149,7 @@ __all__ = [
     "NewtonCG",
     "NonlinearCG",
     "OptimisationResult",
-    "Optimiser",
+    "Optimizer",
     "SteepestDescent",
     "StrongWolfeLineSearch",
     "TrustRegionNewton",
@@ -167,8 +167,8 @@ __all__ = [
     "random_trace",
     "OperatorFunction",
     "apply_operator_function",
-    "iter_lanczos_tridiagonalise",
-    "lanczos_tridiagonalise",
+    "iter_lanczos_tridiagonalize",
+    "lanczos_tridiagonalize",
     "log_determinant",
     "operator_exp",
     "operator_function",

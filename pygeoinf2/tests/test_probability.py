@@ -27,7 +27,7 @@ def spd(rng, n):
 
 class TestConstruction:
     def test_a_factor_gives_a_covariance_with_traits_for_free(self, rng):
-        """L L* is recognised as positive semidefinite by the palindrome rule."""
+        """L L* is recognized as positive semidefinite by the palindrome rule."""
         X, Y = EuclideanSpace(3), EuclideanSpace(5)
         factor = LinearOperator.from_matrix(
             X, Y, rng.normal(size=(5, 3)), form="components"
@@ -90,7 +90,7 @@ class TestConstruction:
         "build",
         [lambda: EuclideanSpace(3), make_weighted_space, make_dense_metric_space],
     )
-    def test_the_normalising_constant_uses_the_component_determinant(self, build, rng):
+    def test_the_normalizing_constant_uses_the_component_determinant(self, build, rng):
         """``det C_c``, not ``det(G C_c)``: the metric's own determinant is not
         part of the measure, and the density is with respect to the space's
         volume measure."""
@@ -101,7 +101,7 @@ class TestConstruction:
 
         _, logdet = np.linalg.slogdet(components)
         expected = -0.5 * X.dim * np.log(2.0 * np.pi) - 0.5 * logdet
-        assert mu.log_normalising_constant() == pytest.approx(expected)
+        assert mu.log_normalizing_constant() == pytest.approx(expected)
 
     @pytest.mark.parametrize(
         "build",
@@ -203,12 +203,12 @@ class TestConstruction:
         null = rotation[:, 2:]
         assert np.max(np.abs(draws @ gram @ null)) < 1e-6
 
-    def test_the_normalising_constant_is_exact_for_a_diagonal_covariance(self):
+    def test_the_normalizing_constant_is_exact_for_a_diagonal_covariance(self):
         """The diagonal route is taken before any retraiting, so it stays exact."""
         X = make_weighted_space()
         mu = GaussianMeasure.from_standard_deviation(X, 2.0)
         expected = -0.5 * X.dim * np.log(2.0 * np.pi) - X.dim * np.log(2.0)
-        assert mu.log_normalising_constant() == pytest.approx(expected)
+        assert mu.log_normalizing_constant() == pytest.approx(expected)
 
 
 class TestMomentsMatchSamples:
@@ -310,7 +310,7 @@ class TestPushForward:
         assert isinstance(nu, GaussianMeasure)
         check_measure(nu, rng=rng, samples=SAMPLES)
 
-    def test_the_pushforward_covariance_is_recognised_as_semidefinite(self, rng):
+    def test_the_pushforward_covariance_is_recognized_as_semidefinite(self, rng):
         """A C A*, with nothing asserted."""
         X, Y = make_weighted_space(), EuclideanSpace(3)
         A = LinearOperator.from_matrix(
@@ -385,7 +385,7 @@ class TestAlgebra:
         assert np.allclose(X.to_components(mu.expectation), X.to_components(shift))
 
     def test_a_subclass_stays_in_its_class(self, rng):
-        """The specialisation protocol, for measures."""
+        """The specialization protocol, for measures."""
         X = EuclideanSpace(4)
 
         class Tagged(GaussianMeasure):
@@ -885,7 +885,7 @@ class TestConditioningAppliesTheCovarianceTwice:
 class TestTheAmbientBall:
     """It formed the dense component matrix and took a non-symmetric
     eigendecomposition, whatever the covariance was: cubic, and reached on
-    every Backus route with a Gaussian error. v1 had a randomised spectrum and
+    every Backus route with a Gaussian error. v1 had a randomized spectrum and
     a sampling radius; both are back, and a diagonal covariance now costs
     nothing at all."""
 
@@ -925,7 +925,7 @@ class TestTheAmbientBall:
         assert sampled.radius == pytest.approx(expected, rel=0.05)
 
     def test_a_truncated_spectrum_is_a_lower_bound(self, rng):
-        """Which is the honest reading of a randomised route: the tail it
+        """Which is the honest reading of a randomized route: the tail it
         drops is positive, so the ball it gives is too small."""
         X = make_dense_metric_space(20)
         mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20))
@@ -1010,7 +1010,7 @@ class TestDenseCovariance:
         assert X.norm(X.subtract(dense.expectation, measure.expectation)) < 1e-14
 
     def test_the_result_can_be_sampled_and_has_a_density(self, opaque, rng):
-        """Which the original could do neither of: the factorisation that
+        """Which the original could do neither of: the factorization that
         assembling makes possible supplies both."""
         X, components, measure = opaque
         dense = measure.with_dense_covariance()
@@ -1228,7 +1228,7 @@ class TestParallelLoops:
                 )
 
     def test_a_trace_estimate_does_not_depend_on_the_job_count(self, rng):
-        from pygeoinf2.numerics.randomised import random_trace
+        from pygeoinf2.numerics.randomized import random_trace
 
         space = make_dense_metric_space(5)
         operator = LinearOperator.from_matrix(

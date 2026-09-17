@@ -83,7 +83,7 @@ class ProbabilityMeasure[X](ABC):
         """Draw ``n`` independent samples.
 
         The loop is embarrassingly parallel and each draw can be expensive --
-        a posterior sample under the randomise-then-optimise scheme is a linear
+        a posterior sample under the randomize-then-optimize scheme is a linear
         solve -- so it takes an ``n_jobs``. Serial by default; see
         :mod:`pygeoinf2.parallel`.
 
@@ -282,9 +282,9 @@ class ProbabilityMeasure[X](ABC):
                 f"Cannot map: the operator's domain {operator.domain!r} is not "
                 f"the measure's domain {self._domain!r}."
             )
-        specialised = self._combine_affine(operator, translation)
-        if specialised is not None:
-            return specialised
+        specialized = self._combine_affine(operator, translation)
+        if specialized is not None:
+            return specialized
         return PushForwardMeasure(
             self,
             operator if translation is None else AffineOperator(operator, translation),
@@ -332,10 +332,10 @@ class ProbabilityMeasure[X](ABC):
         )
 
     # ----------------------------------------------------------------- #
-    #                      Specialisation protocol                      #
+    #                      Specialization protocol                      #
     # ----------------------------------------------------------------- #
     #
-    # As for operators: returning None means "no specialisation, fall back".
+    # As for operators: returning None means "no specialization, fall back".
     # A measure family that is closed under these operations -- an invariant
     # Gaussian on a symmetric space, say -- overrides them to stay in its
     # class, because degrading to a generic measure loses the closed-form
@@ -344,7 +344,7 @@ class ProbabilityMeasure[X](ABC):
     def _combine_affine(
         self, operator: LinearOperator, translation: object | None
     ) -> ProbabilityMeasure | None:
-        """Specialise ``A X + b``. Return None to fall back to a pushforward."""
+        """Specialize ``A X + b``. Return None to fall back to a pushforward."""
         return None
 
     def _combine_add(self, other: ProbabilityMeasure) -> ProbabilityMeasure | None:
@@ -377,9 +377,9 @@ class ProbabilityMeasure[X](ABC):
         """The law of ``alpha X``, so the covariance scales by ``alpha^2``."""
         if not isinstance(alpha, (int, float)):
             return NotImplemented
-        specialised = self._combine_scale(float(alpha))
-        if specialised is not None:
-            return specialised
+        specialized = self._combine_scale(float(alpha))
+        if specialized is not None:
+            return specialized
         return self.affine_map(float(alpha) * LinearOperator.identity(self._domain))
 
     def __rmul__(self, alpha: float) -> ProbabilityMeasure:

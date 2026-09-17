@@ -78,13 +78,13 @@ print(
 print()
 
 # --- so a hard constraint costs one argument -----------------------------
-centre = X.random(rng=rng)
-constrained = ProximalGradient(max_iterations=2000, gtol=1e-14).minimise(
-    SquaredDistance(X, centre=centre),
+center = X.random(rng=rng)
+constrained = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+    SquaredDistance(X, center=center),
     X.random(rng=rng),
     nonsmooth=Ball(X, radius=0.25).indicator(),
 )
 print("min ||x - c||^2/2 subject to ||x|| <= 0.25")
 print(
-    f"  ||x*|| = {X.norm(constrained.minimiser):.6f}, in {constrained.iterations} iterations"
+    f"  ||x*|| = {X.norm(constrained.minimizer):.6f}, in {constrained.iterations} iterations"
 )

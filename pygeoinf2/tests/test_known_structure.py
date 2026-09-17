@@ -21,7 +21,7 @@ from pygeoinf2.algebra.direct_sum import (
 )
 from pygeoinf2.algebra.operators import LinearOperator, MatrixLinearOperator
 from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
-from pygeoinf2.numerics.randomised import (
+from pygeoinf2.numerics.randomized import (
     deflated_diagonal,
     random_diagonal,
     random_eig,
@@ -166,8 +166,8 @@ class TestKnownMatrix:
                 )
             check_operator(inverse, rng=rng)
 
-    def test_an_lu_solver_factorises_once(self, family, monkeypatch, rng):
-        """The fix for the adjoint reuse factorised *twice*: O(n^3), doubled,
+    def test_an_lu_solver_factorizes_once(self, family, monkeypatch, rng):
+        """The fix for the adjoint reuse factorized *twice*: O(n^3), doubled,
         for a solver whose point is to do it once (REVIEW2 3.5)."""
         import pygeoinf2.numerics.solvers as solvers
 
@@ -283,7 +283,7 @@ class TestApplyBlock:
         for a, b in zip(serial, parallel):
             assert np.allclose(a, b)
 
-    def test_the_randomised_routines_do_not_move_with_the_job_count(self, family, rng):
+    def test_the_randomized_routines_do_not_move_with_the_job_count(self, family, rng):
         space, expressions = family
         S = probed(expressions["S + 0.5 I"]).with_traits(Traits.POSITIVE_DEFINITE)
         serial = random_eig(S, rank=3, rng=np.random.default_rng(1))
@@ -517,7 +517,7 @@ class TestKrylovInComponents:
         inverse = CGSolver(rtol=1e-12)(opaque)
         space.reset()
         result = inverse.solve(b)
-        # Per application: the view synthesises the iterate for the opaque
+        # Per application: the view synthesizes the iterate for the opaque
         # operator and analyses its image, and the probed operator converts
         # once each way inside -- two of each; plus the right-hand side in and
         # the solution out. Nothing for the norms and inner products, which
@@ -542,7 +542,7 @@ class TestALowRankProductIsNeverExpanded:
     """A composition's known matrix is the product of its factors' -- but only
     when the product is no larger than the largest factor. A rank-k factor
     times its adjoint holds 2nk numbers and its product n^2: at n == 3000 and
-    k == 10 that is 72 MB, materialised by any caller that asked whether a
+    k == 10 that is 72 MB, materialized by any caller that asked whether a
     matrix was known, which the Hilbert-Schmidt shortcut, the log-determinant's
     routing and the damped-solve check all do. Its main diagonal is O(nk)."""
 

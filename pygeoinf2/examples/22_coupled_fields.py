@@ -139,7 +139,9 @@ print()
 # Unpreconditioned conjugate gradients loses orthogonality on that and reports
 # a residual of nan. Jacobi is the whole fix, because a scaling problem is
 # exactly what a diagonal preconditioner is for.
-solver = CGSolver(rtol=1e-10, maxiter=5000).with_preconditioner(JacobiPreconditioner())
+solver = CGSolver(rtol=1e-10, max_iterations=5000).with_preconditioner(
+    JacobiPreconditioner()
+)
 estimator = LinearGaussianInversion(problem, prior, solver=solver)
 print(f"assembled in the {estimator.formalism}")
 posterior = estimator(data)
@@ -167,7 +169,7 @@ def coupling_of(estimator):
 
     This *forms* three covariance blocks, so it applies the inverse normal
     operator about three thousand times. That is the case where a direct solver
-    earns its keep: one factorisation, then three thousand cheap triangular
+    earns its keep: one factorization, then three thousand cheap triangular
     solves, against three thousand independent Krylov runs. The posterior above
     is iterative because a posterior mean is one solve and the problem might be
     large; this diagnostic is dense because a dense answer is what it asks for.

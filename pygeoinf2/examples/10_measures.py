@@ -3,7 +3,7 @@
 
 A covariance built from a factor gets its structure for free, sampling uses
 white noise on the space, and the pushforward under an operator stays Gaussian
-with ``A C A*`` recognised as positive semidefinite.
+with ``A C A*`` recognized as positive semidefinite.
 """
 
 import numpy as np

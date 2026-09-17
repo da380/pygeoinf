@@ -176,15 +176,15 @@ class TestForwardProblem:
         assert LinearForwardProblem.from_direct_sum([problem, problem]).has_error
         assert not LinearForwardProblem.from_direct_sum([exact, exact]).has_error
 
-    def test_a_parameterisation_restricts_the_model_space(self, problem, rng):
+    def test_a_parameterization_restricts_the_model_space(self, problem, rng):
         small = EuclideanSpace(2)
-        parameterisation = LinearOperator.from_matrix(
+        parameterization = LinearOperator.from_matrix(
             small,
             problem.model_space,
             rng.normal(size=(problem.model_space.dim, 2)),
             form="galerkin",
         )
-        reduced = problem.parameterised(parameterisation)
+        reduced = problem.parameterized(parameterization)
         assert reduced.model_space == small
         assert reduced.data_space == problem.data_space
 
@@ -271,15 +271,15 @@ class TestBayesian:
     ):
         """The same statement as the covariance being data-independent.
 
-        A randomise-then-optimise draw written about the mean never touches
+        A randomize-then-optimize draw written about the mean never touches
         the data vector, so two estimators differing only in their data give
         the same fluctuation from the same seed.
         """
         from numpy.random import default_rng
 
         estimator = LinearGaussianInversion(problem, prior)
-        first = estimator._centred_sample(default_rng(11))
-        second = estimator._centred_sample(default_rng(11))
+        first = estimator._centered_sample(default_rng(11))
+        second = estimator._centered_sample(default_rng(11))
         assert np.allclose(first, second)
 
     def test_the_sampler_is_not_double_counting_the_mean(self, problem, prior, rng):
@@ -290,11 +290,11 @@ class TestBayesian:
         """
         estimator = LinearGaussianInversion(problem, prior)
         model = problem.model_space
-        centred = [estimator._centred_sample(rng) for _ in range(2000)]
-        assert np.allclose(model.to_components(model.mean(centred)), 0.0, atol=0.2)
+        centered = [estimator._centered_sample(rng) for _ in range(2000)]
+        assert np.allclose(model.to_components(model.mean(centered)), 0.0, atol=0.2)
 
     def test_the_posterior_can_be_sampled(self, problem, prior, rng):
-        """Randomise-then-optimise, whose mean must be the posterior mean."""
+        """Randomize-then-optimize, whose mean must be the posterior mean."""
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
         posterior = LinearGaussianInversion(problem, prior)(data)
         assert posterior.can_sample
@@ -316,14 +316,14 @@ class TestBayesian:
         shifted = GaussianMeasure.from_standard_deviation(
             model, 2.0, expectation=model.random(rng=rng)
         )
-        centred = GaussianMeasure.from_standard_deviation(model, 2.0)
+        centered = GaussianMeasure.from_standard_deviation(model, 2.0)
         data = problem.data_space.random(rng=rng)
         assert not np.allclose(
             model.to_components(
                 LinearGaussianInversion(problem, shifted)(data).expectation
             ),
             model.to_components(
-                LinearGaussianInversion(problem, centred)(data).expectation
+                LinearGaussianInversion(problem, centered)(data).expectation
             ),
         )
 
@@ -345,7 +345,7 @@ class TestPointEstimators:
         assert isinstance(estimator, PointEstimator)
         assert isinstance(estimator, LinearPointEstimator)
         assert estimator.data_space == problem.data_space
-        assert estimator.target_space == problem.model_space
+        assert estimator.property_space == problem.model_space
 
     def test_the_resolution_operator_is_available(self, problem):
         estimator = LeastSquares(problem, damping=1e-2)
@@ -414,7 +414,7 @@ class TestEvidence:
         assert mahalanobis > 0.0
         assert np.isfinite(volume)
 
-    def test_a_wilder_prior_is_penalised_on_data_it_did_not_need(self, problem, rng):
+    def test_a_wilder_prior_is_penalized_on_data_it_did_not_need(self, problem, rng):
         """The whole point of an evidence: fitting is not the same as
         explaining."""
         model = problem.model_space
@@ -572,7 +572,7 @@ class TestEvidenceWithoutAssembling:
     def test_the_misfit_is_matrix_free(self, gaussian, rng):
         """It goes through whatever solver the estimator was given, so an
         iterative preconditioned solve must land in the same place as a
-        factorisation — that is the whole claim."""
+        factorization — that is the whole claim."""
         from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
         from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 
@@ -612,7 +612,7 @@ class TestEvidenceWithoutAssembling:
 
 
 class TestPosteriorSampling:
-    """Randomise-then-optimise, and that it survives a push-forward.
+    """Randomize-then-optimize, and that it survives a push-forward.
 
     v1 attaches the sampler when it builds the posterior measure. v2 did the
     same, in an override of ``__call__`` — which ``push_forward`` then threw
@@ -666,7 +666,7 @@ class TestPosteriorSampling:
     @pytest.mark.slow
     def test_the_draws_have_the_posterior_covariance(self, setup, rng):
         """The check that the sampler is the *right* sampler and not merely
-        present: randomise-then-optimise never forms a factor of the posterior
+        present: randomize-then-optimize never forms a factor of the posterior
         covariance, so nothing about the draw makes this true by construction.
         """
         problem, prior = setup
@@ -849,27 +849,27 @@ class TestConstrainedEstimatorsCanBeReduced:
             forward,
             error=gi.GaussianMeasure.from_standard_deviation(data_space, 0.05),
         )
-        parameterisation = LinearOperator.from_matrix(
+        parameterization = LinearOperator.from_matrix(
             EuclideanSpace(6), model, rng.standard_normal((20, 6)), form="components"
         )
         data = forward(model.random(rng=rng))
-        return problem, subspace, constraint, values, parameterisation, data
+        return problem, subspace, constraint, values, parameterization, data
 
     def test_the_constraint_still_holds_in_the_parameter_space(self, setting):
         from pygeoinf2.inference.point import ConstrainedLeastSquares
 
-        problem, subspace, constraint, values, parameterisation, data = setting
+        problem, subspace, constraint, values, parameterization, data = setting
         estimator = ConstrainedLeastSquares(problem, subspace, damping=1e-3)
 
-        reduced = estimator.parameterised(parameterisation)
+        reduced = estimator.parameterized(parameterization)
         parameters = reduced(data)
-        assert (constraint @ parameterisation)(parameters) == pytest.approx(
+        assert (constraint @ parameterization)(parameters) == pytest.approx(
             values, abs=1e-8
         )
 
     def test_the_minimum_norm_route_too(self, setting, rng):
         """With data the reduced problem can actually fit -- generated from a
-        model inside the parameterisation's range, since a discrepancy search
+        model inside the parameterization's range, since a discrepancy search
         on data outside it has no root to find and says so."""
         from pygeoinf2.inference.point import ConstrainedMinimumNorm
 
@@ -877,18 +877,18 @@ class TestConstrainedEstimatorsCanBeReduced:
         # Enough parameters to fit: 8 data and 2 constraints, so 6 would leave
         # only 4 free and the discrepancy target would be unreachable -- which
         # is a fact about the reduced problem, not about the pull-back.
-        parameterisation = LinearOperator.from_matrix(
+        parameterization = LinearOperator.from_matrix(
             EuclideanSpace(14),
             problem.model_space,
             rng.standard_normal((20, 14)),
             form="components",
         )
-        reachable = parameterisation(parameterisation.domain.random(rng=rng))
+        reachable = parameterization(parameterization.domain.random(rng=rng))
         data = problem.forward_operator(subspace.project(reachable))
 
         method = ConstrainedMinimumNorm(problem, subspace)
-        parameters = method.parameterised(parameterisation)(data)
-        assert (constraint @ parameterisation)(parameters) == pytest.approx(
+        parameters = method.parameterized(parameterization)(data)
+        assert (constraint @ parameterization)(parameters) == pytest.approx(
             values, abs=1e-6
         )
 
@@ -900,14 +900,14 @@ class TestConstrainedEstimatorsCanBeReduced:
 
         from pygeoinf2.geometry.subspaces import OrthogonalProjector
 
-        problem, _, _, _, parameterisation, _ = setting
+        problem, _, _, _, parameterization, _ = setting
         model = problem.model_space
         basis = [model.basis_vector(index) for index in range(3)]
         from_basis = AffineSubspace(OrthogonalProjector.from_basis(model, basis))
 
         estimator = ConstrainedLeastSquares(problem, from_basis, damping=1e-3)
         with pytest.raises(NotImplementedError, match="built from a basis"):
-            estimator.parameterised(parameterisation)
+            estimator.parameterized(parameterization)
 
     def test_too_few_parameters_for_the_constraints_is_refused(self, setting, rng):
         from pygeoinf2.inference.point import ConstrainedLeastSquares
@@ -921,10 +921,10 @@ class TestConstrainedEstimatorsCanBeReduced:
         )
         estimator = ConstrainedLeastSquares(problem, subspace, damping=1e-3)
         with pytest.raises(ValueError, match="cannot carry"):
-            estimator.parameterised(tiny)
+            estimator.parameterized(tiny)
 
-    def test_parameterised_advertises_no_keywords_it_cannot_take(self):
-        """The reduced problem's own ``parameterised`` accepts none, so a
+    def test_parameterized_advertises_no_keywords_it_cannot_take(self):
+        """The reduced problem's own ``parameterized`` accepts none, so a
         ``**kwargs`` here promised a pass-through that was always a
         ``TypeError``."""
         import inspect
@@ -938,7 +938,7 @@ class TestConstrainedEstimatorsCanBeReduced:
             kinds = [
                 parameter.kind
                 for parameter in inspect.signature(
-                    cls.parameterised
+                    cls.parameterized
                 ).parameters.values()
             ]
             assert inspect.Parameter.VAR_KEYWORD not in kinds
@@ -963,9 +963,9 @@ class TestConstrainedEstimatorsCanBeReduced:
 
 class TestConstructionIsFree:
     """Building an inversion with a direct solver used to extract and
-    factorise the normal matrix before anyone applied it, because the mean
+    factorize the normal matrix before anyone applied it, because the mean
     map's constant term is one application of the gain. Now the solver
-    factorises on first use and the constant term is deferred, so an
+    factorizes on first use and the constant term is deferred, so an
     estimator built to be reduced, swept or made a surrogate of costs
     nothing: 0.40 s to 0.001 s at data dimension 1500, measured."""
 
@@ -980,23 +980,23 @@ class TestConstructionIsFree:
             forward, error=GaussianMeasure.from_standard_deviation(data, 0.1)
         )
         prior = GaussianMeasure.from_standard_deviation(model, 1.0)
-        factorisations = []
-        original = CholeskySolver._factorise
+        factorizations = []
+        original = CholeskySolver._factorize
         monkeypatch.setattr(
             CholeskySolver,
-            "_factorise",
-            lambda self, m: (factorisations.append(1), original(self, m))[1],
+            "_factorize",
+            lambda self, m: (factorizations.append(1), original(self, m))[1],
         )
         estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
         estimator.surrogate(prior=GaussianMeasure.from_standard_deviation(model, 2.0))
         estimator.normal_operator
-        assert factorisations == []
+        assert factorizations == []
         observed = data.random(rng=rng)
         first = estimator(observed).expectation
-        assert len(factorisations) == 1
+        assert len(factorizations) == 1
         estimator(observed)
-        estimator.mean_map.translation
-        assert len(factorisations) == 1
+        estimator.expectation_operator.translation
+        assert len(factorizations) == 1
         assert model.norm(first) > 0.0
 
 
@@ -1009,12 +1009,12 @@ class TestFeasibilityIsAskable:
     def setting(self, rng):
         model = EuclideanSpace(12)
         data_space = EuclideanSpace(5)
-        target_space = EuclideanSpace(1)
+        property_space = EuclideanSpace(1)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((5, 12)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((1, 12)), form="components"
+            model, property_space, rng.standard_normal((1, 12)), form="components"
         )
         return model, forward, target, forward(model.random(rng=rng))
 

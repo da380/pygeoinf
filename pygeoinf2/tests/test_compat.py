@@ -460,7 +460,7 @@ class TestMeasuresOnAdaptedSpaces:
         assert v2_moment == pytest.approx(exact, rel=0.12)
 
     def test_pushforward_to_the_data_space(self, X, prior, rng):
-        """A C A* on a real forward operator, recognised and verified."""
+        """A C A* on a real forward operator, recognized and verified."""
         from pygeoinf2.testing import check_measure, check_traits
 
         _, mu, _ = prior

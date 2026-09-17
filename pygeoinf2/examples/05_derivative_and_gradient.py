@@ -3,7 +3,7 @@
 
 An adjoint solve gives you dJ/dm_i: the components of the *derivative*, in the
 basis you chose. Step along that and you are not going downhill in the metric
-you chose -- you are going downhill in an artefact of the discretisation, and
+you chose -- you are going downhill in an artifact of the discretization, and
 the direction changes when the mesh does.
 
 The gradient is the derivative with the inverse metric applied. In pygeoinf 2

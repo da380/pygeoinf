@@ -42,7 +42,7 @@ def spd(space, rng, *, banded=False):
     )
 
 
-class TestIncompleteFactorisation:
+class TestIncompleteFactorization:
     """``incomplete=True`` on all three sparse preconditioners, not one."""
 
     @pytest.mark.parametrize(
@@ -55,7 +55,7 @@ class TestIncompleteFactorisation:
         ],
         ids=["banded", "block"],
     )
-    def test_a_lossless_incomplete_factorisation_is_the_exact_one(self, build, rng):
+    def test_a_lossless_incomplete_factorization_is_the_exact_one(self, build, rng):
         space = make_dense_metric_space(8)
         operator = spd(space, rng)
         exact = build()(operator)
@@ -99,13 +99,13 @@ class TestEllipsoidFactor:
 
     def test_the_two_routes_agree(self, pieces, rng):
         space, precision, covariance, factor = pieces
-        centre = space.random(rng=rng)
-        plain = Ellipsoid(space, precision, centre=centre, covariance=covariance)
+        center = space.random(rng=rng)
+        plain = Ellipsoid(space, precision, center=center, covariance=covariance)
         factored = Ellipsoid(
-            space, precision, centre=centre, covariance=covariance, factor=factor
+            space, precision, center=center, covariance=covariance, factor=factor
         )
         assert factored.factor is factor
-        assert factored.translate(centre).factor is factor
+        assert factored.translate(center).factor is factor
         for _ in range(5):
             direction = space.random(rng=rng)
             assert factored.support_function()(direction) == pytest.approx(
@@ -113,8 +113,8 @@ class TestEllipsoidFactor:
             )
             assert space.norm(
                 space.subtract(
-                    factored.support_maximiser(direction),
-                    plain.support_maximiser(direction),
+                    factored.support_maximizer(direction),
+                    plain.support_maximizer(direction),
                 )
             ) == pytest.approx(0.0, abs=1e-10)
 
@@ -136,7 +136,7 @@ class TestEllipsoidFactor:
         without = Ellipsoid(
             space,
             ellipsoid.precision,
-            centre=ellipsoid.centre,
+            center=ellipsoid.center,
             covariance=ellipsoid.covariance,
         )
         for _ in range(5):

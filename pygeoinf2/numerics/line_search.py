@@ -269,10 +269,10 @@ class StrongWolfeLineSearch(LineSearch):
         values at both ends and the slope at ``low`` arrive from the
         bracketing phase, so nothing is re-evaluated on entry.
 
-        The trial step is the minimiser of a cubic through the two ends and
+        The trial step is the minimizer of a cubic through the two ends and
         the most recently discarded point, or of a quadratic through the two
         ends when there is no third, and bisection only when the interpolant
-        puts its minimiser within a tenth of the bracket of either end, where
+        puts its minimizer within a tenth of the bracket of either end, where
         it is not to be trusted (Nocedal and Wright §3.5). It used to be
         bisection alone, which converges linearly to a point that
         interpolation finds in one or two steps: on a quadratic model the
@@ -322,23 +322,23 @@ class StrongWolfeLineSearch(LineSearch):
         width = abs(high - low)
         lower, upper = min(low, high), max(low, high)
         if rec_step is not None:
-            step = _cubic_minimiser(
+            step = _cubic_minimizer(
                 low, low_value, low_slope, high, high_value, rec_step, rec_value
             )
             margin = 0.2 * width
             if step is not None and lower + margin <= step <= upper - margin:
                 return step
-        step = _quadratic_minimiser(low, low_value, low_slope, high, high_value)
+        step = _quadratic_minimizer(low, low_value, low_slope, high, high_value)
         margin = 0.1 * width
         if step is not None and lower + margin <= step <= upper - margin:
             return step
         return 0.5 * (low + high)
 
 
-def _quadratic_minimiser(
+def _quadratic_minimizer(
     a: float, fa: float, fpa: float, b: float, fb: float
 ) -> float | None:
-    """Minimiser of the quadratic through ``(a, fa)`` with slope ``fpa`` and
+    """Minimizer of the quadratic through ``(a, fa)`` with slope ``fpa`` and
     ``(b, fb)``, or None where it has none."""
     db = b - a
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
@@ -347,10 +347,10 @@ def _quadratic_minimiser(
     return float(step) if np.isfinite(step) and curvature > 0.0 else None
 
 
-def _cubic_minimiser(
+def _cubic_minimizer(
     a: float, fa: float, fpa: float, b: float, fb: float, c: float, fc: float
 ) -> float | None:
-    """Minimiser of the cubic through ``(a, fa)`` with slope ``fpa``,
+    """Minimizer of the cubic through ``(a, fa)`` with slope ``fpa``,
     ``(b, fb)`` and ``(c, fc)``, or None where it has none."""
     db, dc = b - a, c - a
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):

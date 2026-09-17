@@ -1,5 +1,5 @@
 """
-9. Randomised linear algebra, on the space's own geometry.
+9. Randomized linear algebra, on the space's own geometry.
 
 The probes are white noise *on the space*: a draw whose covariance is the
 identity there, not in the components. On a weighted space those are different
@@ -36,7 +36,7 @@ print(
     ),
 )
 print("the factor is an isometry:", Traits.ISOMETRY & decomposition.factor.traits)
-print("so U D U* is recognised as:", decomposition.traits)
+print("so U D U* is recognized as:", decomposition.traits)
 print()
 
 # The trace, on a space where the metric is not the identity.

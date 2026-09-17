@@ -269,17 +269,17 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
             solver: the solver that produced this inverse.
             solve_fn: ``(y, x0) -> SolveResult``. Note that **each application
                 runs the solve again**: an ``InverseOperator`` is a recipe, not
-                a stored factorisation, so applying one ``n`` times costs ``n``
+                a stored factorization, so applying one ``n`` times costs ``n``
                 solves.
             traits: claims about the inverse. Deduced from the operator's when
                 omitted.
             adjoint_solve_fn: how to solve ``A* w == x``, when the solver can
                 do it without redoing its work. A direct solver can: the same
-                factorisation solves the transposed system. Without it the
+                factorization solves the transposed system. Without it the
                 adjoint has to be inverted from scratch, which for LU means a
-                second matrix extraction and a second factorisation.
+                second matrix extraction and a second factorization.
             known_matrix: ``form -> dense matrix`` of the *inverse*, for a
-                solver holding a factorisation that can produce it -- a
+                solver holding a factorization that can produce it -- a
                 direct solver applies its factors to the identity. Lets
                 ``inverse.matrix()`` and everything built on it (a
                 preconditioner reading it, a composition assembling) skip
@@ -364,7 +364,7 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         """``(A^-1)* == (A*)^-1``, built as an inverse rather than a wrapper.
 
         Reuses the solver's own transposed solve where there is one, so a
-        direct factorisation is not repeated for the adjoint.
+        direct factorization is not repeated for the adjoint.
         """
         if self._adjoint_solve_fn is not None:
             known_adjoint = None
@@ -508,16 +508,16 @@ class SolutionTrackingCallback(ProgressCallback):
 _Factors = tuple[
     Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray] | None
 ]
-"""What a direct solver's factorisation yields: ``(apply_inverse,
+"""What a direct solver's factorization yields: ``(apply_inverse,
 apply_transposed)``, the second ``None`` when the factors cannot give it."""
 
 
 class DirectSolver(LinearSolver):
-    """A solver that factorises a matrix representation.
+    """A solver that factorizes a matrix representation.
 
     These need coordinates, and they need the *right* representation. Which one
     is right follows from the operator's traits: self-adjointness shows up as
-    matrix symmetry only in the Galerkin form, so a symmetric factorisation
+    matrix symmetry only in the Galerkin form, so a symmetric factorization
     must be handed that one. v1 threads a ``galerkin=`` flag by hand through
     every call site instead.
     """
@@ -525,7 +525,7 @@ class DirectSolver(LinearSolver):
     requires_coordinates: ClassVar[bool] = True
     form: ClassVar[str] = "components"
     transposes: ClassVar[bool] = False
-    """Whether :meth:`_factorise` returns a transposed solve as well."""
+    """Whether :meth:`_factorize` returns a transposed solve as well."""
 
     def __init__(self, /, *, n_jobs: int | None = None) -> None:
         """
@@ -542,23 +542,23 @@ class DirectSolver(LinearSolver):
         domain: CoordinateSpace = operator.domain
         codomain: CoordinateSpace = operator.codomain
 
-        # The matrix is extracted and factorised on the first solve, not
+        # The matrix is extracted and factorized on the first solve, not
         # here. ``solver(A)`` is then free, and an inverse that is built and
         # never applied -- an inversion constructed to be reduced, swept or
         # made a surrogate of, a preconditioner that is compared but not
-        # used -- costs nothing. Once done it is kept: v1 factorised inside
+        # used -- costs nothing. Once done it is kept: v1 factorized inside
         # every posterior call and so paid the O(n^3) step per use, which is
         # what this deferral must not reintroduce (DESIGN §52).
         factors: list[_Factors] = []
 
-        def factorised() -> _Factors:
+        def factorized() -> _Factors:
             if not factors:
                 matrix = operator.matrix(form=self.form, n_jobs=self._n_jobs)
-                factors.append(self._factorise(matrix))
+                factors.append(self._factorize(matrix))
             return factors[0]
 
         def solve_fn(y, x0):
-            apply_inverse, _ = factorised()
+            apply_inverse, _ = factorized()
             cy = codomain.to_components(y)
             if self.form == "galerkin":
                 # M c_x == G_Y c_y, since M == G_Y A_c.
@@ -569,7 +569,7 @@ class DirectSolver(LinearSolver):
         def known_matrix(form: str) -> np.ndarray:
             # (A^-1)_c is M^-1 for M the components form, and M^-1 G_Y for M
             # the Galerkin form G_Y A_c: the factors applied to a matrix.
-            apply_inverse, _ = factorised()
+            apply_inverse, _ = factorized()
             if self.form == "components":
                 inverse = apply_inverse(np.identity(domain.dim))
             else:
@@ -579,19 +579,19 @@ class DirectSolver(LinearSolver):
             return domain.apply_gram_to_columns(inverse)
 
         def components_action(cy: np.ndarray) -> np.ndarray:
-            apply_inverse, _ = factorised()
+            apply_inverse, _ = factorized()
             if self.form == "galerkin":
                 cy = codomain.apply_gram(cy)
             return apply_inverse(cy)
 
-        # Whether the factorisation will offer a transposed solve is a
+        # Whether the factorization will offer a transposed solve is a
         # property of the solver, known before it runs.
         adjoint_solve_fn = None
         components_adjoint_action = None
         if self.transposes:
 
             def components_adjoint_action(cx: np.ndarray) -> np.ndarray:
-                _, apply_transposed = factorised()
+                _, apply_transposed = factorized()
                 cw = apply_transposed(domain.apply_gram(cx))
                 if self.form == "components":
                     cw = codomain.solve_gram(cw)
@@ -602,7 +602,7 @@ class DirectSolver(LinearSolver):
                 # form, A* has component matrix G_X^-1 M^T G_Y, so
                 # c_w == G_Y^-1 M^-T G_X c_x; with M the Galerkin form the
                 # trailing G_Y is already in M and the last solve drops out.
-                _, apply_transposed = factorised()
+                _, apply_transposed = factorized()
                 cx = domain.apply_gram(domain.to_components(x))
                 cw = apply_transposed(cx)
                 if self.form == "components":
@@ -623,36 +623,36 @@ class DirectSolver(LinearSolver):
         )
 
     @abstractmethod
-    def _factorise(self, matrix: np.ndarray) -> _Factors:
-        """Factorise **once**, returning ``(apply_inverse, apply_transposed)``.
+    def _factorize(self, matrix: np.ndarray) -> _Factors:
+        """Factorize **once**, returning ``(apply_inverse, apply_transposed)``.
 
         Both accept a vector or a matrix of columns. The second applies
-        ``M^-T`` from the same factors and is ``None`` when the factorisation
+        ``M^-T`` from the same factors and is ``None`` when the factorization
         cannot, which means "invert the adjoint from scratch"; a symmetric
-        factorisation needs no second: its operator is self-adjoint, so the
+        factorization needs no second: its operator is self-adjoint, so the
         inverse is too and its adjoint is itself.
 
         One call, deliberately. The first version had a second method for the
-        transposed solve and it factorised again -- the O(n^3) step, twice,
+        transposed solve and it factorized again -- the O(n^3) step, twice,
         for a solver whose whole point is to do it once.
         """
 
 
 class LUSolver(DirectSolver):
-    """LU factorisation. Makes no structural demands beyond squareness."""
+    """LU factorization. Makes no structural demands beyond squareness."""
 
     form: ClassVar[str] = "components"
     transposes: ClassVar[bool] = True
 
-    def _factorise(self, matrix: np.ndarray) -> _Factors:
+    def _factorize(self, matrix: np.ndarray) -> _Factors:
         factor = lu_factor(matrix)
         # ``trans=1`` is M^-T from the same factors: the adjoint of an LU
-        # inverse costs no second factorisation.
+        # inverse costs no second factorization.
         return (lambda c: lu_solve(factor, c), lambda c: lu_solve(factor, c, trans=1))
 
 
 class CholeskySolver(DirectSolver):
-    """Cholesky factorisation of the Galerkin matrix.
+    """Cholesky factorization of the Galerkin matrix.
 
     Requires positive-definiteness, which by closure implies self-adjointness —
     and the Galerkin form is what makes that visible as symmetry.
@@ -661,7 +661,7 @@ class CholeskySolver(DirectSolver):
     requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
     form: ClassVar[str] = "galerkin"
 
-    def _factorise(self, matrix: np.ndarray) -> _Factors:
+    def _factorize(self, matrix: np.ndarray) -> _Factors:
         symmetric = 0.5 * (matrix + matrix.T)
         factor = cho_factor(symmetric)
         return (lambda c: cho_solve(factor, c), None)
@@ -684,7 +684,7 @@ class EigenSolver(DirectSolver):
         super().__init__(n_jobs=n_jobs)
         self._rtol = rtol
 
-    def _factorise(self, matrix: np.ndarray) -> _Factors:
+    def _factorize(self, matrix: np.ndarray) -> _Factors:
         symmetric = 0.5 * (matrix + matrix.T)
         values, vectors = eigh(symmetric)
         largest = np.max(np.abs(values)) if values.size else 0.0
@@ -713,8 +713,8 @@ class _ComponentOperator(LinearOperator):
 
     Acts on component arrays. Where the operator can act on components
     directly it does, and a product of such operators stays in components
-    end to end; otherwise the array is synthesised, the operator applied,
-    and the image analysed -- which is what the operator would have cost
+    end to end; otherwise the array is synthesized, the operator applied,
+    and the image analyzed -- which is what the operator would have cost
     anyway. Traits carry over: they are statements about the metric, and the
     view has the same one.
     """
@@ -784,7 +784,7 @@ class IterativeSolver(LinearSolver):
         *,
         rtol: float = 1e-8,
         atol: float = 0.0,
-        maxiter: int | None = None,
+        max_iterations: int | None = None,
         preconditioner: LinearSolver | LinearOperator | None = None,
         strict: bool = True,
         callback: Callable[[SolveStep], None] | None = None,
@@ -806,7 +806,7 @@ class IterativeSolver(LinearSolver):
                 usable answer into an exception. That combination is what broke
                 one of the examples during the port.
             atol: absolute floor on the same test.
-            maxiter: iteration cap. Defaults to ``max(2 * dim, 20)``: a Krylov
+            max_iterations: iteration cap. Defaults to ``max(2 * dim, 20)``: a Krylov
                 method terminates within ``dim`` steps in exact arithmetic, but
                 rounding routinely costs a step or two more.
             preconditioner: either a ready-made approximate inverse, or a
@@ -818,14 +818,14 @@ class IterativeSolver(LinearSolver):
                 carrying the iteration count, the residual norm, and the
                 iterate on request. For watching a long solve, and for
                 finding out *where* a stalled one stalled — which the final
-                residual alone cannot say. Every iterative solver here honours
+                residual alone cannot say. Every iterative solver here honors
                 it, and records the same residuals in
                 :attr:`SolveResult.history`. :class:`ProgressCallback` and
                 :class:`SolutionTrackingCallback` are ready-made ones.
         """
         self._rtol = rtol
         self._atol = atol
-        self._maxiter = maxiter
+        self._max_iterations = max_iterations
         self._preconditioner = preconditioner
         self._strict = strict
         self._callback = callback
@@ -883,7 +883,7 @@ class IterativeSolver(LinearSolver):
         preconditioner is applied to *operator* once and the result carried as
         a fixed operator, so that a caller sweeping a family of related
         operators can build it once instead of once per member. Whether that is
-        a good trade is the caller's judgement — a preconditioner is an
+        a good trade is the caller's judgment — a preconditioner is an
         approximation, so reusing one across a family costs accuracy, never
         correctness.
         """
@@ -912,8 +912,8 @@ class IterativeSolver(LinearSolver):
         tight a default to be safe. A generous cap is paid for only by a solve
         that was going to fail anyway.
         """
-        if self._maxiter is not None:
-            return self._maxiter
+        if self._max_iterations is not None:
+            return self._max_iterations
         return max(2 * operator.domain.dim, 20)
 
     def _record(
@@ -971,7 +971,7 @@ class IterativeSolver(LinearSolver):
         # inverse was built by handing ``A*`` back to this solver, which
         # preconditioned it with ``P`` itself -- the right answer, reached
         # slowly (an exact ``P == A^-1`` took 13 iterations on ``A*`` instead
-        # of one) -- and, for a deferred direct preconditioner, factorised
+        # of one) -- and, for a deferred direct preconditioner, factorized
         # ``A*`` a second time when ``P*`` was one transposed solve away.
         adjoint_solve_fn = None
         if preconditioner is not None:
@@ -1168,7 +1168,7 @@ class FlexibleCGSolver(IterativeSolver):
 
     Ordinary CG assumes a fixed preconditioner; its short recurrence relies on
     it. When the preconditioner is itself an iterative solve — or is rebuilt as
-    the iteration proceeds, which is what a localised preconditioner does — the
+    the iteration proceeds, which is what a localized preconditioner does — the
     recurrence no longer produces conjugate directions and CG stalls.
 
     The fix is one term: Polak-Ribiere in place of Fletcher-Reeves, so that
@@ -1233,10 +1233,10 @@ class FlexibleCGSolver(IterativeSolver):
 
 
 class GMRESSolver(IterativeSolver):
-    """Generalised minimal residual, for an operator with no symmetry at all.
+    """Generalized minimal residual, for an operator with no symmetry at all.
 
     The only solver here that asks nothing of its operator. Arnoldi builds an
-    orthonormal Krylov basis and the residual is minimised over it by a small
+    orthonormal Krylov basis and the residual is minimized over it by a small
     least-squares problem, kept triangular by Givens rotations applied as each
     column arrives — so the residual norm is known at every step without
     forming the iterate.
@@ -1302,7 +1302,7 @@ class GMRESSolver(IterativeSolver):
                 # Kept aside: the rotations below overwrite the subdiagonal
                 # entry with zero, which is the point of them, and it is still
                 # needed both as the breakdown test and as the next basis
-                # vector's normalisation.
+                # vector's normalization.
                 subdiagonal = space.norm(w)
                 hessenberg[column + 1, column] = subdiagonal
 
@@ -1364,7 +1364,7 @@ class GMRESSolver(IterativeSolver):
 class MinResSolver(IterativeSolver):
     """MINRES for a self-adjoint, possibly indefinite, operator.
 
-    The Paige-Saunders recurrences: Lanczos tridiagonalisation with Givens
+    The Paige-Saunders recurrences: Lanczos tridiagonalization with Givens
     rotations applied on the fly, so the least-squares problem over the Krylov
     space is solved without storing it.
 
@@ -1437,7 +1437,7 @@ class MinResSolver(IterativeSolver):
         beta_prev = 1.0
 
         for iteration in range(1, self._limit(operator) + 1):
-            # --- Lanczos step: extend the tridiagonalisation ----------
+            # --- Lanczos step: extend the tridiagonalization ----------
             # The recurrence is carried on the residuals rather than on the
             # M-orthonormal vectors: p is the next unpreconditioned residual,
             # and M p is what gives both the next vector and its norm.
@@ -1570,7 +1570,7 @@ class LeastSquaresSolver(ABC):
     A **sibling** of :class:`LinearSolver`, not a subclass. In v1 ``LSQRSolver``
     sits under ``IterativeLinearSolver``, whose ``__call__`` asserts the
     operator is an automorphism — so the one solver written for rectangular
-    systems inherits a squareness check. Solving ``A x == b`` and minimising
+    systems inherits a squareness check. Solving ``A x == b`` and minimizing
     ``||A x - b||`` are different operations and get different types.
     """
 
@@ -1588,9 +1588,9 @@ class LeastSquaresSolver(ABC):
 
 
 class LSQRSolver(LeastSquaresSolver):
-    """Golub-Kahan bidiagonalisation, applied to the normal equations implicitly.
+    """Golub-Kahan bidiagonalization, applied to the normal equations implicitly.
 
-    Coordinate-free, and damped when asked: with ``damping > 0`` it minimises
+    Coordinate-free, and damped when asked: with ``damping > 0`` it minimizes
     ``||A x - b||^2 + damping^2 ||x||^2``, both norms being the spaces' own.
     """
 
@@ -1600,18 +1600,18 @@ class LSQRSolver(LeastSquaresSolver):
         *,
         damping: float = 0.0,
         rtol: float = 1e-10,
-        maxiter: int | None = None,
+        max_iterations: int | None = None,
         strict: bool = True,
         callback: Callable[[SolveStep], None] | None = None,
     ) -> None:
         """
         Args:
-            damping: minimise ``||A x - b||^2 + damping^2 ||x||^2`` when
+            damping: minimize ``||A x - b||^2 + damping^2 ||x||^2`` when
                 positive. See :meth:`_solve` on what this means with a warm
                 start.
             rtol: relative tolerance, applied to both the residual and the
                 normal residual.
-            maxiter: iteration cap. Four times the domain dimension by default.
+            max_iterations: iteration cap. Four times the domain dimension by default.
             strict: raise :class:`ConvergenceError` rather than warn when the
                 cap is reached.
             callback: called with a :class:`SolveStep` each step, whose
@@ -1625,7 +1625,7 @@ class LSQRSolver(LeastSquaresSolver):
             raise ValueError("damping must be non-negative.")
         self._damping = damping
         self._rtol = rtol
-        self._maxiter = maxiter
+        self._max_iterations = max_iterations
         self._strict = strict
         self._callback = callback
 
@@ -1654,28 +1654,32 @@ class LSQRSolver(LeastSquaresSolver):
             self._callback(SolveStep(iteration, float(residual), form))
 
     def _solve(self, operator: LinearOperator, b: Any, x0: Any | None) -> SolveResult:
-        """The bidiagonalisation, started from *x0* when one is given.
+        """The bidiagonalization, started from *x0* when one is given.
 
         The warm start solves for the *correction*: the iteration runs on the
         residual ``b - A x0`` and accumulates into a copy of ``x0``, which is
         what v1 does. With no damping that is exactly equivalent to starting
         from zero, so a warm start can only save iterations. With damping it is
         not: the penalty then falls on the correction rather than on the whole
-        solution, which is a different minimisation. Damped warm starts are
+        solution, which is a different minimization. Damped warm starts are
         therefore refused rather than quietly answering a different question.
 
         Raises:
             ValueError: if both a warm start and a damping are given.
         """
         domain, codomain = operator.domain, operator.codomain
-        limit = self._maxiter if self._maxiter is not None else 4 * max(domain.dim, 1)
+        limit = (
+            self._max_iterations
+            if self._max_iterations is not None
+            else 4 * max(domain.dim, 1)
+        )
         history: list[float] = []
 
         if x0 is not None and self._damping > 0.0:
             raise ValueError(
                 "A damped LSQR cannot be warm-started: the iteration would "
-                "penalise the correction rather than the solution, which "
-                "minimises something else. Start from zero, or damp by "
+                "penalize the correction rather than the solution, which "
+                "minimizes something else. Start from zero, or damp by "
                 "composing with the shift yourself."
             )
 
@@ -1713,7 +1717,7 @@ class LSQRSolver(LeastSquaresSolver):
             normal_target = self._rtol * domain.norm(operator.adjoint(b))
 
         for iteration in range(1, limit + 1):
-            # --- Golub-Kahan bidiagonalisation step -------------------
+            # --- Golub-Kahan bidiagonalization step -------------------
             u_next = operator(v)
             u_next = codomain.axpy(-alpha, u, u_next)
             beta = codomain.norm(u_next)

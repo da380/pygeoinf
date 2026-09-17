@@ -36,7 +36,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
-from ..numerics.randomised import random_svd
+from ..numerics.randomized import random_svd
 from ..geometry.sets import Subset
 from ..numerics.solvers import LinearSolver, resolve_solver
 from ..probability.base import ProbabilityMeasure
@@ -47,7 +47,7 @@ from .normal import Formalism, NormalOperator
 from .problem import LinearForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ..numerics.randomised import Estimate
+    from ..numerics.randomized import Estimate
 
 __all__ = ["LinearGaussianInversion"]
 
@@ -112,13 +112,13 @@ class LinearGaussianInversion(GaussianEstimator):
         )
         solver = resolve_solver(solver, normal)
         inverse = solver(normal)
-        gain = normal.gain(inverse)
+        gain = normal.kalman_operator(inverse)
         covariance = normal.posterior_covariance(inverse, gain)
 
         shift = self._data_shift(problem, prior)
         # The constant term of the posterior mean is one application of the
         # gain -- one solve -- so it is deferred until the estimator is used.
-        # With a direct solver that solve is the factorisation, and an
+        # With a direct solver that solve is the factorization, and an
         # estimator built to be reduced, swept or made a surrogate of would
         # otherwise pay O(n^3) at construction for an inverse it never applies.
         model_space = problem.model_space
@@ -131,7 +131,7 @@ class LinearGaussianInversion(GaussianEstimator):
         super().__init__(
             AffineOperator(gain, translation),
             covariance,
-            centred_sample=(
+            centered_sample=(
                 self._draw_fluctuation
                 if self._prior_and_noise_can_be_drawn(problem, prior)
                 else None
@@ -163,10 +163,10 @@ class LinearGaussianInversion(GaussianEstimator):
         return shift
 
     @property
-    def gain(self) -> LinearOperator:
-        """The Kalman gain: data residuals to model updates.
+    def kalman_operator(self) -> LinearOperator:
+        """The Kalman operator: data residuals to model updates.
 
-        v1's ``kalman_operator``, as a property rather than a method because
+        v1's name; a property rather than a method because
         the solver it needs was given at construction. ``Q A* N^-1`` in the
         data-space formalism and ``N^-1 A* R^-1`` in the model-space one, which
         are the same operator written two ways; the test suite checks it
@@ -222,7 +222,7 @@ class LinearGaussianInversion(GaussianEstimator):
         return self._prior
 
     @property
-    def problem(self) -> LinearForwardProblem:
+    def forward_problem(self) -> LinearForwardProblem:
         """The forward problem being inverted."""
         return self._problem
 
@@ -298,17 +298,17 @@ class LinearGaussianInversion(GaussianEstimator):
         """A surrogate built by truncating each factor to a low-rank version.
 
         The general-purpose way to get a cheap surrogate when no cheaper
-        *physics* is available: randomised SVD for the forward operator and
-        randomised eigendecomposition for the measures. A problem-specific
+        *physics* is available: randomized SVD for the forward operator and
+        randomized eigendecomposition for the measures. A problem-specific
         surrogate — a coarser mesh, a smoother kernel — is usually better, and
         this is what to reach for when there isn't one.
 
         Args:
-            forward_rank: the rank to truncate ``A`` to, by randomised SVD.
-            prior_rank: the rank for ``Q``, by randomised eigendecomposition.
+            forward_rank: the rank to truncate ``A`` to, by randomized SVD.
+            prior_rank: the rank for ``Q``, by randomized eigendecomposition.
             error_rank: the rank for ``R``, likewise.
             rng: the generator for the probes.
-            **kwargs: passed to the randomised routines -- oversampling and
+            **kwargs: passed to the randomized routines -- oversampling and
                 power iterations.
 
         Returns:
@@ -338,9 +338,9 @@ class LinearGaussianInversion(GaussianEstimator):
             )
         return self.surrogate(forward=forward, prior=prior, error=error)
 
-    def parameterised(
+    def parameterized(
         self,
-        parameterisation: LinearOperator,
+        parameterization: LinearOperator,
         /,
         *,
         prior: GaussianMeasure,
@@ -353,15 +353,15 @@ class LinearGaussianInversion(GaussianEstimator):
         one that fits in memory.
 
         Args:
-            parameterisation: maps the parameter space into the model space.
+            parameterization: maps the parameter space into the model space.
             prior: the prior on the parameters. Required: pulling the model
-                prior back through the parameterisation is not a pull-back and
+                prior back through the parameterization is not a pull-back and
                 would be a different measure.
 
         Returns:
-            The inversion of the parameterised problem.
+            The inversion of the parameterized problem.
         """
-        reduced = self._problem.parameterised(parameterisation)
+        reduced = self._problem.parameterized(parameterization)
         return LinearGaussianInversion(
             reduced, prior, solver=self._solver, formalism=self._formalism
         )
@@ -399,7 +399,7 @@ class LinearGaussianInversion(GaussianEstimator):
         is one ``to_components`` and one buffer copy per call, which on the
         Euclidean data space this is nearly always used with is a few
         microseconds against a solve of tens of milliseconds. A space with no
-        coordinate map cannot be summarised, and there the memo is simply off.
+        coordinate map cannot be summarized, and there the memo is simply off.
 
         Args:
             data: the data vector.
@@ -453,7 +453,7 @@ class LinearGaussianInversion(GaussianEstimator):
 
         As :meth:`~pygeoinf2.inference.estimators.GaussianEstimator.__call__`,
         but reaching the mean through :meth:`_residual_solve` so that the solve
-        is shared with :meth:`mahalanobis`. :attr:`mean_map` still computes it
+        is shared with :meth:`mahalanobis`. :attr:`expectation_operator` still computes it
         the plain way, for a caller who wants the affine operator itself.
 
         Args:
@@ -468,16 +468,16 @@ class LinearGaussianInversion(GaussianEstimator):
             self._prior.expectation, self._normal.model_update(solved)
         )
         return GaussianMeasure(
-            self.target_space,
+            self.property_space,
             expectation=mean,
             covariance=self.covariance,
-            sample=self._centred_sample,
+            sample=self._centered_sample,
         )
 
     def mahalanobis(self, data: Any, /) -> float:
         """``<v, N_d^-1 v>``, the misfit half of the evidence.
 
-        The optimal, penalty-balanced data misfit: the unnormalised log
+        The optimal, penalty-balanced data misfit: the unnormalized log
         posterior at the posterior mean. Computed **matrix-free**, through the
         solver and preconditioner this estimator was given, so it costs one
         solve of the normal equations and never assembles anything.
@@ -564,7 +564,7 @@ class LinearGaussianInversion(GaussianEstimator):
                 tolerance rather than a count.
 
         Returns:
-            An estimate, memoised on these settings -- the volume term does
+            An estimate, memoized on these settings -- the volume term does
             not depend on the data, and a mixture asks for it once per
             component per datum.
 
@@ -598,7 +598,7 @@ class LinearGaussianInversion(GaussianEstimator):
             self._log_determinants[key] = result
             return result
 
-        from ..numerics.randomised import Estimate
+        from ..numerics.randomized import Estimate
 
         # Positive definiteness is claimed here rather than deduced: in this
         # formalism Q and R are inverted anyway, so a caller who has got this
@@ -625,7 +625,7 @@ class LinearGaussianInversion(GaussianEstimator):
         ``log p(d) == -(mahalanobis + log det N + dim log 2pi) / 2`` with ``N``
         the *data* prior covariance ``A Q A* + R``. Returned separately because
         they answer different questions: the first says whether the data are
-        surprising under this model, the second penalises a model flexible
+        surprising under this model, the second penalizes a model flexible
         enough that they would not have been.
 
         Keyword arguments go to :meth:`normal_log_determinant`; pass
@@ -647,10 +647,10 @@ class LinearGaussianInversion(GaussianEstimator):
     def _prior_and_noise_can_be_drawn(
         problem: LinearForwardProblem, prior: GaussianMeasure
     ) -> bool:
-        """Whether randomise-then-optimise has anything to randomise.
+        """Whether randomize-then-optimize has anything to randomize.
 
         The draw needs a sample of the prior and a sample of the noise; the
-        posterior covariance itself is never factorised, which is the point.
+        posterior covariance itself is never factorized, which is the point.
         A static check because it is asked during construction, before the
         attributes it would otherwise read have been set.
         """
@@ -659,15 +659,15 @@ class LinearGaussianInversion(GaussianEstimator):
         return not problem.has_error or problem.error_measure.can_sample
 
     def _draw_fluctuation(self, rng: Generator | None, /) -> Any:
-        """One draw of the posterior *fluctuation*, by randomise-then-optimise.
+        """One draw of the posterior *fluctuation*, by randomize-then-optimize.
 
         Draw a model and a noise vector, form the residual they would have
-        produced, and correct with the gain. Written centred, which makes
+        produced, and correct with the gain. Written centered, which makes
         something worth seeing explicit: **the fluctuation does not depend on
         the data.** Only the mean does — the same statement as the covariance
         being data-independent, which is why this estimator is a pair.
 
-        Centred also because a ``sample`` callable handed to
+        Centered also because a ``sample`` callable handed to
         :class:`~pygeoinf2.probability.gaussian.GaussianMeasure` supplies the
         draw *about* the mean; the measure adds the expectation itself.
         """

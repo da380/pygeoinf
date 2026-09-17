@@ -100,14 +100,14 @@ class TestOperatorsWithoutCoordinates:
 
     def test_gradient_check_without_components(self, rng):
         X = make_opaque_space()
-        centre = X.random(rng=rng)
+        center = X.random(rng=rng)
 
         def value(x):
-            d = X.subtract(x, centre)
+            d = X.subtract(x, center)
             return 0.5 * X.squared_norm(d)
 
         def gradient(x):
-            return X.subtract(x, centre)
+            return X.subtract(x, center)
 
         phi = Functional.from_callables(X, value, gradient=gradient)
         check_gradient(phi, X.random(rng=rng), rng=rng)
@@ -160,12 +160,12 @@ class TestStrictSpaceProvesCoordinateFreedom:
     def test_gradient_checking_is_coordinate_free(self, rng):
         base = make_weighted_space()
         strict = StrictSpace(base)
-        centre = strict.random(rng=rng)
+        center = strict.random(rng=rng)
 
         phi = Functional.from_callables(
             strict,
-            lambda x: 0.5 * strict.squared_norm(strict.subtract(x, centre)),
-            gradient=lambda x: strict.subtract(x, centre),
+            lambda x: 0.5 * strict.squared_norm(strict.subtract(x, center)),
+            gradient=lambda x: strict.subtract(x, center),
         )
         check_gradient(phi, strict.random(rng=rng), rng=rng)
 

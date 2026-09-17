@@ -28,7 +28,7 @@ def backends():
 
 
 @pytest.fixture
-def programme(rng):
+def program(rng):
     """A strictly convex QP with one equality and some one-sided bounds."""
     size, rows = 8, 5
     root = rng.standard_normal((size, size))
@@ -44,16 +44,16 @@ class TestTheBackendsAgree:
     """Three solvers, one answer. They are interchangeable or they are not."""
 
     @pytest.mark.parametrize("backend", backends())
-    def test_each_solves_it_feasibly(self, backend, programme):
-        quadratic, linear, constraint, lower, upper = programme
+    def test_each_solves_it_feasibly(self, backend, program):
+        quadratic, linear, constraint, lower, upper = program
         result = backend().solve(quadratic, linear, constraint, lower, upper)
 
         assert result.solved
         assert np.all(constraint @ result.x >= lower - 1e-6)
         assert np.all(constraint @ result.x <= upper + 1e-6)
 
-    def test_they_reach_the_same_minimum(self, programme):
-        quadratic, linear, constraint, lower, upper = programme
+    def test_they_reach_the_same_minimum(self, program):
+        quadratic, linear, constraint, lower, upper = program
         objectives = [
             backend().solve(quadratic, linear, constraint, lower, upper).objective
             for backend in backends()
@@ -69,10 +69,10 @@ class TestTheBackendsAgree:
         assert isinstance(best_available_qp_solver(), QPSolver)
 
     @pytest.mark.parametrize("backend", backends())
-    def test_a_warm_start_is_accepted(self, backend, programme, rng):
+    def test_a_warm_start_is_accepted(self, backend, program, rng):
         """Clarabel has no use for one and must still take it, or the three
         are not interchangeable."""
-        quadratic, linear, constraint, lower, upper = programme
+        quadratic, linear, constraint, lower, upper = program
         result = backend().solve(
             quadratic, linear, constraint, lower, upper, x0=rng.standard_normal(8)
         )
@@ -119,7 +119,7 @@ class TestTheLevelBundleBoundIsABound:
         """At every stage, not just at the end -- an invalid bound part way
         through is still an invalid bound."""
         space, functional, exact = quadratic_problem
-        result = LevelBundleMethod(tolerance=1e-14, iterations=iterations).minimise(
+        result = LevelBundleMethod(tolerance=1e-14, max_iterations=iterations).minimize(
             functional, space.zero()
         )
 
@@ -131,7 +131,7 @@ class TestTheLevelBundleBoundIsABound:
         # Relative to the value, which here is small: 1e-6 of 0.056 is already
         # 5.6e-8 absolute, and asking for 1e-8 of it would be asking the
         # bundle for ten significant figures.
-        result = LevelBundleMethod(tolerance=1e-6).minimise(functional, space.zero())
+        result = LevelBundleMethod(tolerance=1e-6).minimize(functional, space.zero())
         assert result.converged
         assert result.value == pytest.approx(exact, abs=1e-5)
 
@@ -140,19 +140,19 @@ class TestTheLevelBundleBoundIsABound:
         on its own, and without the box the method had no level to aim at
         and took proximal steps until the cuts happened to span the space."""
         space, functional, exact = quadratic_problem
-        result = LevelBundleMethod(tolerance=1e-14, iterations=1).minimise(
+        result = LevelBundleMethod(tolerance=1e-14, max_iterations=1).minimize(
             functional, space.zero()
         )
         assert np.isfinite(result.lower_bound)
         assert result.lower_bound <= exact + 1e-9
         assert result.gap == pytest.approx(result.value - result.lower_bound)
 
-    def test_the_centre_moves_only_on_serious_steps(self, quadratic_problem):
-        """v1's rule, restored: a trial that does not improve on the centre
+    def test_the_center_moves_only_on_serious_steps(self, quadratic_problem):
+        """v1's rule, restored: a trial that does not improve on the center
         is a null step, which sharpens the model there and leaves the
         proximal term anchored to the best point the method trusts."""
         space, functional, exact = quadratic_problem
-        result = LevelBundleMethod(tolerance=1e-6).minimise(functional, space.zero())
+        result = LevelBundleMethod(tolerance=1e-6).minimize(functional, space.zero())
         assert result.converged
         assert 0 < result.serious_steps < result.iterations
 
@@ -169,10 +169,10 @@ class TestTheLevelBundleBoundIsABound:
                 space, matrix.T @ np.sign(matrix @ c - offset) + 0.2 * c
             ),
         )
-        level = LevelBundleMethod(tolerance=1e-6, iterations=300).minimise(
+        level = LevelBundleMethod(tolerance=1e-6, max_iterations=300).minimize(
             functional, space.zero()
         )
-        proximal = ProximalBundleMethod(tolerance=1e-6, iterations=300).minimise(
+        proximal = ProximalBundleMethod(tolerance=1e-6, max_iterations=300).minimize(
             functional, space.zero()
         )
         assert level.value == pytest.approx(proximal.value, abs=1e-4)
@@ -187,10 +187,10 @@ class TestTheLevelBundleBoundIsABound:
                 space, np.array([2 * c[0] + 2.0])
             ),
         )
-        result = LevelBundleMethod(tolerance=1e-8).minimise(
+        result = LevelBundleMethod(tolerance=1e-8).minimize(
             functional, space.from_components(np.array([2.0]))
         )
-        assert result.minimiser == pytest.approx([-1.0], abs=1e-3)
+        assert result.minimizer == pytest.approx([-1.0], abs=1e-3)
         assert result.value == pytest.approx(-1.0, abs=1e-6)
 
     def test_an_alpha_outside_the_unit_interval_is_refused(self):
@@ -208,7 +208,7 @@ class TestTheLevelBundleBoundIsABound:
             space, lambda x: space.squared_norm(x), derivative=None
         )
         with pytest.raises(Exception):
-            LevelBundleMethod().minimise(functional, space.zero())
+            LevelBundleMethod().minimize(functional, space.zero())
 
 
 class TestTheProximalSubproblemBackend:
@@ -265,12 +265,12 @@ class TestTheProximalSubproblemBackend:
                 space, matrix.T @ np.sign(matrix @ c - offset) + 0.2 * c
             ),
         )
-        exact = ProximalBundleMethod(tolerance=1e-8, iterations=300).minimise(
+        exact = ProximalBundleMethod(tolerance=1e-8, max_iterations=300).minimize(
             functional, space.zero()
         )
         builtin = ProximalBundleMethod(
-            tolerance=1e-8, iterations=300, qp_solver="builtin"
-        ).minimise(functional, space.zero())
+            tolerance=1e-8, max_iterations=300, qp_solver="builtin"
+        ).minimize(functional, space.zero())
         assert exact.value == pytest.approx(builtin.value, abs=1e-5)
 
 
@@ -281,8 +281,8 @@ class TestTheBackendOrder:
 
 
 class TestTheTwoRoutesMeet:
-    """Chambolle-Pock maximises over the feasible set; the bundle method
-    minimises the dual. Strong duality says they meet, and two unrelated
+    """Chambolle-Pock maximizes over the feasible set; the bundle method
+    minimizes the dual. Strong duality says they meet, and two unrelated
     algorithms agreeing is the strongest check either one gets."""
 
     @pytest.fixture
@@ -293,12 +293,12 @@ class TestTheTwoRoutesMeet:
 
         model = EuclideanSpace(12)
         data_space = EuclideanSpace(5)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((5, 12)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((2, 12)), form="components"
+            model, property_space, rng.standard_normal((2, 12)), form="components"
         )
         truth = model.random(rng=rng)
         data = forward(truth)
@@ -311,7 +311,7 @@ class TestTheTwoRoutesMeet:
             prior,
             route="dual",
         )
-        return estimator, target_space, data
+        return estimator, property_space, data
 
     @staticmethod
     def directions(space, count):
@@ -329,16 +329,18 @@ class TestTheTwoRoutesMeet:
 
         dual = estimator(data).support_values(directions)
         primal = estimator(data).support_values(
-            directions, route="primal", tolerance=1e-9, iterations=50_000
+            directions, route="primal", tolerance=1e-9, max_iterations=50_000
         )
         assert primal == pytest.approx(dual, rel=1e-5)
 
     def test_the_primal_route_converges(self, setting):
         estimator, space, data = setting
         solver = estimator.algorithm.primal_solver(
-            data, tolerance=1e-9, iterations=50_000
+            data, tolerance=1e-9, max_iterations=50_000
         )
-        result = solver.solve(estimator._target.adjoint(space.basis_vector(0)))
+        result = solver.solve(
+            estimator._property_operator.adjoint(space.basis_vector(0))
+        )
 
         assert result.converged
         assert result.residual < 1e-8
@@ -350,9 +352,11 @@ class TestTheTwoRoutesMeet:
         the set with a residual that would not go below 0.9."""
         estimator, space, data = setting
         solver = estimator.algorithm.primal_solver(
-            data, tolerance=1e-9, iterations=50_000
+            data, tolerance=1e-9, max_iterations=50_000
         )
-        result = solver.solve(estimator._target.adjoint(space.basis_vector(0)))
+        result = solver.solve(
+            estimator._property_operator.adjoint(space.basis_vector(0))
+        )
 
         model_space = estimator._problem.model_space
         data_space = estimator.data_space
@@ -410,7 +414,7 @@ class TestTheTwoRoutesMeet:
 class TestTheKKTRouteAgreesWhereItApplies:
     """The third route: for balls and ellipsoids the KKT conditions give the
     answer in closed form, up to a two-variable root find on the multipliers,
-    and the model space is never discretised."""
+    and the model space is never discretized."""
 
     @pytest.fixture
     def setting(self, rng):
@@ -461,7 +465,7 @@ class TestTheKKTRouteAgreesWhereItApplies:
             noise,
             forward,
             data,
-            iterations=100_000,
+            max_iterations=100_000,
             tolerance=1e-11,
             rng=np.random.default_rng(1),
         )
@@ -494,7 +498,7 @@ class TestTheKKTRouteAgreesWhereItApplies:
         result = solver.solve(objective)
         assert result.multipliers[1] == 0.0
         assert result.value == pytest.approx(
-            forward.domain.inner_product(objective, prior.support_maximiser(objective))
+            forward.domain.inner_product(objective, prior.support_maximizer(objective))
         )
 
     def test_a_general_convex_set_is_refused(self, setting):
@@ -525,12 +529,12 @@ class TestTheKKTRouteAgreesWhereItApplies:
 
         model = EuclideanSpace(12)
         data_space = EuclideanSpace(5)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((5, 12)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((2, 12)), form="components"
+            model, property_space, rng.standard_normal((2, 12)), form="components"
         )
         truth = model.random(rng=rng)
         data = forward(truth)
@@ -540,11 +544,11 @@ class TestTheKKTRouteAgreesWhereItApplies:
             Ball(model, radius=2.0 * model.norm(truth)),
             route="dual",
         )
-        directions = [target_space.basis_vector(0), target_space.basis_vector(1)]
+        directions = [property_space.basis_vector(0), property_space.basis_vector(1)]
 
         dual = estimator(data).support_values(directions)
         primal = estimator(data).support_values(
-            directions, route="primal", tolerance=1e-9, iterations=50_000
+            directions, route="primal", tolerance=1e-9, max_iterations=50_000
         )
         exact = estimator(data).support_values(directions, route="kkt")
 
@@ -566,12 +570,12 @@ class TestTheSmoothedRoute:
 
         model = EuclideanSpace(12)
         data_space = EuclideanSpace(5)
-        target_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((5, 12)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((2, 12)), form="components"
+            model, property_space, rng.standard_normal((2, 12)), form="components"
         )
         truth = model.random(rng=rng)
         return (
@@ -581,7 +585,7 @@ class TestTheSmoothedRoute:
                 Ball(model, radius=2.0 * model.norm(truth)),
                 route="dual",
             ),
-            target_space,
+            property_space,
             forward(truth),
         )
 
@@ -600,7 +604,7 @@ class TestTheSmoothedRoute:
         est, space, data = estimator
         directions = self.directions(space, 4)
         reference = est(data).support_values(
-            directions, route="primal", tolerance=1e-10, iterations=100_000
+            directions, route="primal", tolerance=1e-10, max_iterations=100_000
         )
 
         coarse = est(data).support_values(directions, route="smoothed", epsilon=1e-1)
@@ -620,13 +624,13 @@ class TestTheSmoothedRoute:
 
         smoothed = est(data).support_values(directions, route="smoothed", epsilon=1e-4)
         primal = est(data).support_values(
-            directions, route="primal", tolerance=1e-10, iterations=100_000
+            directions, route="primal", tolerance=1e-10, max_iterations=100_000
         )
         assert smoothed == pytest.approx(primal, rel=1e-6)
 
     def test_the_smoothed_cost_is_differentiable_where_the_dual_is_not(self, estimator):
         """At the origin, which is where a support function has its corner and
-        where the minimisation spends its time."""
+        where the minimization spends its time."""
         est, space, data = estimator
         direction = space.basis_vector(0)
         cost = est.algorithm.smoothed_dual_cost(direction, data, epsilon=1e-2)
@@ -663,12 +667,12 @@ class TestTheSmoothedRoute:
 
         model = EuclideanSpace(6)
         data_space = EuclideanSpace(3)
-        target_space = EuclideanSpace(1)
+        property_space = EuclideanSpace(1)
         forward = LinearOperator.from_matrix(
             model, data_space, rng.standard_normal((3, 6)), form="components"
         )
         target = LinearOperator.from_matrix(
-            model, target_space, rng.standard_normal((1, 6)), form="components"
+            model, property_space, rng.standard_normal((1, 6)), form="components"
         )
         box = Polytope(
             model,
@@ -683,7 +687,7 @@ class TestTheSmoothedRoute:
         )
         with pytest.raises(TypeError, match="unsmoothed dual route"):
             est.algorithm.smoothed_dual_cost(
-                target_space.basis_vector(0), data_space.zero()
+                property_space.basis_vector(0), data_space.zero()
             )
 
     def test_an_unknown_route_names_all_four(self, estimator):

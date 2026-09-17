@@ -84,7 +84,7 @@ class TestItIsExactWhenTheProblemIsLinear:
 class TestOnANonlinearProblem:
     def test_it_finds_a_stationary_point(self, nonlinear_setting):
         """Which is what a mode is. Checked on the objective's own gradient,
-        not on the optimiser's report of itself."""
+        not on the optimizer's report of itself."""
         forward, prior, error, truth, data = nonlinear_setting
         estimator = MaximumAPosteriori(ForwardProblem(forward, error=error), prior)
         found = estimator(data)

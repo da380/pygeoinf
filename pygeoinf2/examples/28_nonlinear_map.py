@@ -8,10 +8,10 @@ altogether. None of that survives a nonlinear map.
 
 What survives is the *recipe*. The posterior is still proportional to
 ``exp(-chi^2/2)`` times the prior, so its logarithm is still a sum of a misfit
-and a prior term — and finding where that is largest is an optimisation, which
+and a prior term — and finding where that is largest is an optimization, which
 is a thing this library can already do. Expanding it to second order about the
 answer gives a Gaussian, and the curvature of a misfit at a point is the normal
-operator of the problem *linearised there*. So the linear machinery is not
+operator of the problem *linearized there*. So the linear machinery is not
 discarded; it is evaluated at the mode instead of assumed everywhere.
 
 That is the Laplace approximation. This example shows it working, and then
@@ -77,8 +77,8 @@ result = estimator(data)
 
 print(f"the search converged: {result.converged}")
 print(
-    f"  in {result.optimisation.iterations} iterations, "
-    f"{result.optimisation.evaluations} evaluations"
+    f"  in {result.optimization.iterations} iterations, "
+    f"{result.optimization.evaluations} evaluations"
 )
 print(f"  truth     {np.round(X.to_components(truth), 4)}")
 print(f"  recovered {np.round(X.to_components(result.model), 4)}")
@@ -89,7 +89,7 @@ print()
 gradient = estimator.objective(data).gradient(result.model)
 print(f"gradient at the mode: {X.norm(gradient):.2e}")
 
-# The covariance is the inverse of the linearised normal operator -- the same
+# The covariance is the inverse of the linearized normal operator -- the same
 # construction the linear estimator makes, evaluated here rather than assumed.
 covariance = result.measure.covariance.matrix(form="components")
 deviations = np.sqrt(np.diag(covariance))
@@ -175,7 +175,7 @@ print("  of the method -- and they part company as the contours widen, because")
 print("  an exponential forward map is not quadratic and the true posterior is")
 print("  skewed. The approximation is exact only for a linear map.")
 print()
-print("that skew is why the mode is not the mean here: an optimiser finds the")
+print("that skew is why the mode is not the mean here: an optimizer finds the")
 print("  peak, and for an asymmetric density the peak and the average are")
 print("  different points. Every linear method in this library returns a mean.")
 print("  This one returns a mode, and says so.")

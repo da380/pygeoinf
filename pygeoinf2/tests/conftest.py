@@ -57,7 +57,7 @@ class DenseMetricSpace(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
 
         self._gram = np.asarray(gram, dtype=float)
         self._chol = np.linalg.cholesky(self._gram)
-        # Factorised once: ``solve_gram`` used to call ``np.linalg.solve`` on
+        # Factorized once: ``solve_gram`` used to call ``np.linalg.solve`` on
         # the full matrix every time, which at dimension 2000 made a
         # ``solve_gram_to_columns`` -- 2000 solves -- run for hours, and made
         # the fixture useless for measuring anything the metric enters.

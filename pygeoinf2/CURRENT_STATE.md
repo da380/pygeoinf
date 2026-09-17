@@ -34,7 +34,7 @@ what most of the rest follows from:
 | `traits` | the trait flags and their closure rules |
 | `probability` | `GaussianMeasure`, mixtures, push-forwards, conditioning |
 | `geometry` | convex sets, subspaces, projectors, support functions |
-| `numerics` | solvers, preconditioners, randomised linear algebra, functional calculus, optimisation, convex methods, quadratic programming, root finding |
+| `numerics` | solvers, preconditioners, randomized linear algebra (`randomized.py`), functional calculus, optimization (`optimization.py`), convex methods, quadratic programming, root finding |
 | `symmetric_space` | sphere, periodic box, bounded box, circle, torus, line, plane |
 | `inference` | forward problems, Gaussian inversion, point estimators, Backus–Gilbert, the Laplace/MAP route, preconditioners |
 | `plotting` | field maps, marginals, corner plots, error bounds |

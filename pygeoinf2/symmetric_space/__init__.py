@@ -1,4 +1,4 @@
-"""Symmetric spaces: homogeneous domains whose basis diagonalises the Laplacian.
+"""Symmetric spaces: homogeneous domains whose basis diagonalizes the Laplacian.
 
 The circle, the torus and the N-dimensional periodic box are homogeneous under
 a group action; intervals, rectangles and boxes are built by embedding into
@@ -21,7 +21,7 @@ The available geometries are :mod:`~pygeoinf2.symmetric_space.sphere`,
 :mod:`~pygeoinf2.symmetric_space.plane` and
 :mod:`~pygeoinf2.symmetric_space.box`. The names exported here without
 qualification are the N-dimensional periodic box's, which is the general case
-the periodic geometries specialise.
+the periodic geometries specialize.
 
 The Fourier-based spaces are always available. The sphere needs ``pyshtools``,
 so its module is imported on demand rather than here.

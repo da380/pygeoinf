@@ -1,8 +1,8 @@
 """
-Randomised linear algebra: range finding, low-rank factorisation, estimators.
+Randomized linear algebra: range finding, low-rank factorization, estimators.
 
 Coordinate-free wherever the mathematics allows. Range finding, the low-rank
-factorisations and trace estimation need only the operator's action, its
+factorizations and trace estimation need only the operator's action, its
 adjoint, an inner product and ``axpy``. Only the diagonal estimator needs
 components, because a diagonal is a statement about a basis.
 
@@ -14,10 +14,10 @@ anisotropic in the space's own geometry, exactly where ``random_range``
 documents a "geometric safety guard" for. Drawing from
 ``HilbertSpace.white_noise`` fixes it at the source.
 
-The other change is orthogonalisation. A single Gram-Schmidt pass loses
+The other change is orthogonalization. A single Gram-Schmidt pass loses
 orthogonality precisely when the new vector nearly lies in the span, which is
 the regime a rank-revealing method spends its time in; the basis routines here
-use the reorthogonalising ``orthonormal_basis``.
+use the reorthogonalizing ``orthonormal_basis``.
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def _power_iterate(
 ) -> list[Any]:
     """Sharpen a range basis by alternating with the adjoint.
 
-    Each half step is reorthonormalised. Without that the vectors collapse onto
+    Each half step is reorthonormalized. Without that the vectors collapse onto
     the dominant direction in floating point, which is the well-known failure
     of naive subspace iteration.
     """
@@ -134,7 +134,7 @@ def _power_iterate(
 
 
 def _range_options(kwargs: dict) -> dict:
-    """The ``random_range`` options a factorisation forwards, with defaults."""
+    """The ``random_range`` options a factorization forwards, with defaults."""
     unknown = set(kwargs) - {
         "oversampling",
         "power",
@@ -164,7 +164,7 @@ def _fast(space: Any) -> bool:
 
 def _orthonormal_columns(space: CoordinateSpace, vectors: Sequence[Any]) -> np.ndarray:
     """``orthonormal_basis`` on components, returning the columns."""
-    columns, _ = space._orthonormalise_columns(space.components_of(vectors), rtol=1e-10)
+    columns, _ = space._orthonormalize_columns(space.components_of(vectors), rtol=1e-10)
     return columns
 
 
@@ -185,9 +185,9 @@ def _range_with_columns(
     """``random_range``, also returning the basis as component columns.
 
     On a coordinate space the basis is carried as columns through the power
-    iteration, so each application's result is analysed exactly once and the
-    basis is never re-analysed by the factorisation that follows; the vectors
-    are synthesised once. Elsewhere the columns are ``None`` and the
+    iteration, so each application's result is analyzed exactly once and the
+    basis is never re-analyzed by the factorization that follows; the vectors
+    are synthesized once. Elsewhere the columns are ``None`` and the
     coordinate-free loops run.
     """
     domain, codomain = operator.domain, operator.codomain
@@ -265,7 +265,7 @@ def random_range(
             drawn in one block. When None, blocks are drawn until the residual
             falls below ``rtol``.
         oversampling: extra probes beyond the target rank, which is what makes
-            the randomised bound hold with high probability.
+            the randomized bound hold with high probability.
         power: subspace iteration steps. One or two sharpen a slowly decaying
             spectrum considerably; zero is right only when the decay is fast.
         block_size: probes per block in the adaptive mode.
@@ -308,7 +308,7 @@ def random_range(
 
     # --- adaptive: grow until a fresh block is nearly in the span ------
     #
-    # Only the *new* block is orthogonalised, against a basis that is already
+    # Only the *new* block is orthogonalized, against a basis that is already
     # orthonormal, and the residuals that test tells us are kept and reused as
     # the vectors to extend by. Rebuilding the whole basis each round instead
     # -- orthonormal_basis(basis + block) -- redoes every earlier vector's work
@@ -345,7 +345,7 @@ def random_range(
 
         residuals, largest = [], 0.0
         for probe in block:
-            residual, norm, _ = codomain._orthogonalise_against(probe, basis)
+            residual, norm, _ = codomain._orthogonalize_against(probe, basis)
             largest = max(largest, norm)
             if norm > 1e-12 * scale:
                 residuals.append(codomain.scale_inplace(1.0 / norm, residual))
@@ -371,10 +371,10 @@ def _adaptive_range_on_components(
 ) -> np.ndarray:
     """The adaptive loop with the basis kept as component columns.
 
-    Each probe is analysed once; the residual test and the extension are
+    Each probe is analyzed once; the residual test and the extension are
     arithmetic on ``(dim, k)`` arrays with the metric through ``apply_gram``.
-    Returns the columns; the caller synthesises vectors once. Same algorithm
-    as the coordinate-free loop above: only the new block is orthogonalised
+    Returns the columns; the caller synthesizes vectors once. Same algorithm
+    as the coordinate-free loop above: only the new block is orthogonalized
     against a basis that is already orthonormal, and the residuals are what
     extend it.
     """
@@ -412,7 +412,7 @@ def _adaptive_range_on_components(
 
         keep = residual_norms > 1e-12 * scale
         # The residuals are orthogonal to the basis but not yet to each other.
-        fresh, _ = codomain._orthonormalise_columns(
+        fresh, _ = codomain._orthonormalize_columns(
             residual[:, keep] / np.where(keep, residual_norms, 1.0)[keep],
             rtol=1e-10,
             against=columns[:, :count] if count > 0 else None,
@@ -583,7 +583,7 @@ class LowRankCholesky(LinearOperator):
 
 
 # --------------------------------------------------------------------- #
-#                          Factorisations                               #
+#                          Factorizations                               #
 # --------------------------------------------------------------------- #
 
 
@@ -595,11 +595,11 @@ def random_eig(
     rng: Generator | None = None,
     **kwargs: Any,
 ) -> LowRankEig:
-    """A randomised eigendecomposition of a self-adjoint operator.
+    """A randomized eigendecomposition of a self-adjoint operator.
 
     Builds a range basis ``Q``, forms the small matrix ``T`` with
     ``T_ij == (A q_i, q_j)`` — a ``k x k`` array assembled from inner products
-    alone — and diagonalises it. The eigenvectors come back as ``Q S``.
+    alone — and diagonalizes it. The eigenvectors come back as ``Q S``.
 
     Args:
         operator: a self-adjoint endomorphism.
@@ -618,7 +618,7 @@ def random_eig(
     """
     if Traits.SELF_ADJOINT & operator.traits != Traits.SELF_ADJOINT:
         raise ValueError(
-            f"A randomised eigendecomposition needs a self-adjoint operator; "
+            f"A randomized eigendecomposition needs a self-adjoint operator; "
             f"this one claims {operator.traits!s}. Use random_svd otherwise."
         )
     space = operator.domain
@@ -667,7 +667,7 @@ def random_svd(
     rng: Generator | None = None,
     **kwargs: Any,
 ) -> LowRankSVD:
-    """A randomised singular value decomposition.
+    """A randomized singular value decomposition.
 
     With ``Q`` a range basis, ``A ~ Q Q* A``, so the singular values of ``A``
     are those of ``B == Q* A``. Rather than forming ``B``, this assembles the
@@ -750,7 +750,7 @@ def random_cholesky(
     rng: Generator | None = None,
     **kwargs: Any,
 ) -> LowRankCholesky:
-    """A randomised factorisation ``A ~ L L*`` of a positive semidefinite operator.
+    """A randomized factorization ``A ~ L L*`` of a positive semidefinite operator.
 
     Obtained from :func:`random_eig` by folding the square root of the
     eigenvalues into the factor, so ``L == U D^(1/2)``. The result is directly
@@ -773,7 +773,7 @@ def random_cholesky(
     """
     if Traits.POSITIVE_SEMIDEFINITE & operator.traits != Traits.POSITIVE_SEMIDEFINITE:
         raise ValueError(
-            f"A Cholesky-type factorisation needs a positive semidefinite "
+            f"A Cholesky-type factorization needs a positive semidefinite "
             f"operator; this one claims {operator.traits!s}."
         )
     decomposition = random_eig(operator, rank=rank, rng=rng, **kwargs)
@@ -1018,7 +1018,7 @@ def random_diagonal(
             The norm, rather than the worst entry: a diagonal is a vector, a
             per-entry relative test never passes on a near-zero entry, and the
             worst entry's own standard error does not predict the worst
-            realised error -- the maximum over many entries runs several
+            realized error -- the maximum over many entries runs several
             standard errors out. The norm ratio does predict it. Measured
             against the truth on a 120-dimensional operator, the ratio and the
             achieved relative error track each other within a few per cent all

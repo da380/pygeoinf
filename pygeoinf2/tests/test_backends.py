@@ -278,7 +278,7 @@ class TestEssentialBoundaryConditions:
 class TestSolvingWithMfem:
     """The PDE solve left to MFEM and wrapped as one of our operators.
 
-    The division of labour: MFEM assembles, preconditions and solves; this
+    The division of labor: MFEM assembles, preconditions and solves; this
     library says what the result *is* — an operator in the right metric, with
     an adjoint, that composes. So the tests are that it really is the inverse,
     that it really is in the metric, and that MFEM's objects come back
@@ -340,7 +340,7 @@ class TestSolvingWithMfem:
         solver_from_bilinear_form(space, form, rtol=1e-12)
         assert np.allclose(_to_scipy(form.SpMat()).toarray(), before)
 
-    def test_an_unfinalised_form_is_refused_rather_than_crashing(self):
+    def test_an_unfinalized_form_is_refused_rather_than_crashing(self):
         """Before ``Finalize`` there are no CSR arrays to read, and reading
         them anyway segfaults with no traceback."""
         elements = square()
@@ -349,7 +349,7 @@ class TestSolvingWithMfem:
         form.AddDomainIntegrator(mfem.MassIntegrator())
         form.Assemble()
         assert not form.SpMat().Finalized()
-        with pytest.raises(ValueError, match="not been finalised"):
+        with pytest.raises(ValueError, match="not been finalized"):
             operator_from_bilinear_form(space, form)
 
     def test_a_solve_that_does_not_converge_is_reported(self, constrained, rng):
@@ -404,7 +404,7 @@ class TestObservationOperators:
 
 
 class TestWhiteNoise:
-    """White noise through MFEM rather than through a factorisation."""
+    """White noise through MFEM rather than through a factorization."""
 
     def test_the_load_has_the_mass_matrix_as_its_covariance(self):
         """Which is the whole content of a finite element white noise: the
@@ -481,7 +481,7 @@ class TestMaternMeasure:
     def test_the_pointwise_variance_is_one_away_from_the_boundary(
         self, field, smoothness
     ):
-        """MFEM's normalisation coefficient, checked rather than trusted. Away
+        """MFEM's normalization coefficient, checked rather than trusted. Away
         from the boundary, because the SPDE on a bounded domain is not
         stationary near it — which the docstring says and this respects."""
         space, _, interior = field

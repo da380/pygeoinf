@@ -435,7 +435,7 @@ def term_by_term(X, rigidity, poisson_ratio, buoyancy, w):
 
 class TestFusedFlexure:
     """REVIEW2 4.2.2: the operator as one sum of grid products under each
-    Laplacian power, analysed once each, instead of fifty transforms."""
+    Laplacian power, analyzed once each, instead of fifty transforms."""
 
     @pytest.fixture(params=["sphere", "circle"])
     def case(self, request, rng):

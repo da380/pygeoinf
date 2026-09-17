@@ -19,7 +19,7 @@ from numpy.random import Generator
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits
-from .randomised import random_diagonal, random_eig
+from .randomized import random_diagonal, random_eig
 from .solvers import (
     CGSolver,
     InverseOperator,
@@ -57,7 +57,7 @@ class JacobiPreconditioner(LinearSolver):
     so its diagonal is the one a symmetric preconditioner wants.
 
     The diagonal is read exactly by default, and can be *estimated* from a few
-    random probes instead -- v1's behaviour, and what makes this usable on a
+    random probes instead -- v1's behavior, and what makes this usable on a
     large matrix-free operator, where exact costs one application per
     component. See ``samples``.
     """
@@ -151,7 +151,7 @@ class JacobiPreconditioner(LinearSolver):
 class SpectralPreconditioner(LinearSolver):
     """Invert the dominant eigenmodes exactly, and damp the rest.
 
-    A randomised eigendecomposition finds the leading ``rank`` modes; those are
+    A randomized eigendecomposition finds the leading ``rank`` modes; those are
     inverted properly and the unresolved tail is replaced by a single scalar.
     That is the right shape for an operator whose spectrum decays: the modes
     that make it ill-conditioned are exactly the ones the decomposition finds.
@@ -187,7 +187,7 @@ class SpectralPreconditioner(LinearSolver):
             rtol: the adaptive route's stopping tolerance.
             max_rank: its cap.
             block_size: modes added per step on the adaptive route.
-            rng: the generator for the randomised range finder.
+            rng: the generator for the randomized range finder.
             n_jobs: workers for the range finder's probes. Serial by default.
         """
         if rank is not None and rank < 1:
@@ -234,12 +234,12 @@ class SpectralPreconditioner(LinearSolver):
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
 
 
-def _sparse_factorisation(
+def _sparse_factorization(
     matrix: Any, /, *, incomplete: bool, drop_tol: float, fill_factor: float
 ) -> Any:
     """An exact or an incomplete LU of a sparse matrix, as SciPy gives them.
 
-    Shared by the three sparse preconditioners. The incomplete factorisation
+    Shared by the three sparse preconditioners. The incomplete factorization
     is for when even the sparse factors fill in too much; its ``drop_tol``
     and ``fill_factor`` are SciPy's own.
     """
@@ -301,7 +301,7 @@ class BandedPreconditioner(LinearSolver):
 
     The cheapest structural approximation there is: an operator whose
     correlations are local has a matrix that is nearly banded in a basis
-    ordered by position, and the band is what a sparse factorisation can
+    ordered by position, and the band is what a sparse factorization can
     invert quickly.
 
     **Only worth it when the operator has that structure.** On a dense operator
@@ -342,7 +342,7 @@ class BandedPreconditioner(LinearSolver):
                 operator that is *not* banded that turns a merely unhelpful
                 preconditioner into an actively harmful one. Use ``"banded"``
                 when the operator really is banded, where the two agree.
-            incomplete: factorise with an incomplete LU rather than an exact
+            incomplete: factorize with an incomplete LU rather than an exact
                 sparse one, for when even the banded factors fill in too much.
             drop_tol: the ILU drop tolerance, used only when *incomplete*.
             fill_factor: the ILU fill limit, used only when *incomplete*.
@@ -367,7 +367,7 @@ class BandedPreconditioner(LinearSolver):
         banded = sparse.dia_array(
             (diagonals, offsets), shape=(space.dim, space.dim)
         ).tocsc()
-        factorisation = _sparse_factorisation(
+        factorization = _sparse_factorization(
             banded,
             incomplete=self._incomplete,
             drop_tol=self._drop_tol,
@@ -382,7 +382,7 @@ class BandedPreconditioner(LinearSolver):
             if galerkin:
                 components = space.apply_gram(components)
             return SolveResult(
-                space.from_components(factorisation.solve(components)), 1, 0.0, True
+                space.from_components(factorization.solve(components)), 1, 0.0, True
             )
 
         return InverseOperator(
@@ -501,10 +501,10 @@ def sparse_approximation(
 
     Built by probing the operator's Galerkin matrix one column at a time and
     keeping, in each column, the entries that pass a test against the
-    diagonal; the pattern is symmetrised and the diagonal is always kept.
+    diagonal; the pattern is symmetrized and the diagonal is always kept.
     The result is a :class:`~pygeoinf2.algebra.operators.LinearOperator`
     backed by a ``scipy.sparse`` matrix in Galerkin form, which is what a
-    sparse solver, a localised preconditioner or a plotting routine wants
+    sparse solver, a localized preconditioner or a plotting routine wants
     from a covariance whose correlations are genuinely local. It is an
     operator, not a measure: thresholding does not preserve positive
     definiteness, so nothing here claims it -- ``testing.check_traits`` can
@@ -526,8 +526,8 @@ def sparse_approximation(
             by the same measure. The diagonal is always among them.
         criterion: which test.
         diagonal: the Galerkin diagonal, when the caller has it -- from
-            :func:`~pygeoinf2.numerics.randomised.random_diagonal` or
-            :func:`~pygeoinf2.numerics.randomised.deflated_diagonal` as an
+            :func:`~pygeoinf2.numerics.randomized.random_diagonal` or
+            :func:`~pygeoinf2.numerics.randomized.deflated_diagonal` as an
             estimate on an operator too large to probe twice. Read exactly
             from the operator when omitted, which is free where the operator
             knows its diagonal and one application per column otherwise.
@@ -656,7 +656,7 @@ class BlockPreconditioner(LinearSolver):
                 :class:`BandedPreconditioner`, only the Galerkin form lets the
                 resulting inverse claim self-adjointness on a space whose
                 metric is not the identity; see :func:`_sparse_inverse_traits`.
-            incomplete: factorise with an incomplete LU rather than an exact
+            incomplete: factorize with an incomplete LU rather than an exact
                 sparse one, for when the block pattern's factors fill in too
                 much -- large overlapping blocks do.
             drop_tol: the ILU drop tolerance, used only when *incomplete*.
@@ -729,7 +729,7 @@ class BlockPreconditioner(LinearSolver):
         assembled = sparse.coo_matrix(
             (values, (rows, columns)), shape=(space.dim, space.dim)
         ).tocsc()
-        factorised = _sparse_factorisation(
+        factorized = _sparse_factorization(
             assembled,
             incomplete=self._incomplete,
             drop_tol=self._drop_tol,
@@ -741,7 +741,7 @@ class BlockPreconditioner(LinearSolver):
             if galerkin:
                 components = space.apply_gram(components)
             return SolveResult(
-                space.from_components(factorised.solve(components)), 1, 0.0, True
+                space.from_components(factorized.solve(components)), 1, 0.0, True
             )
 
         return InverseOperator(
@@ -860,7 +860,7 @@ class WoodburyPreconditioner(LinearSolver):
             )
         if prior_damping > 0.0 and prior_inverse is not None:
             raise ValueError(
-                "prior_damping regularises the solve for Q^-1, and prior_inverse "
+                "prior_damping regularizes the solve for Q^-1, and prior_inverse "
                 "says Q^-1 is already known; give one or the other."
             )
         if forward.domain.dim != prior_covariance.domain.dim:
@@ -976,7 +976,7 @@ class WoodburyPreconditioner(LinearSolver):
         # *strict* inner solver turns a slow inner convergence into an
         # exception that aborts the whole outer solve -- a preconditioner
         # failing should cost iterations, never the answer.
-        return CGSolver(rtol=1e-3, maxiter=200, strict=False)
+        return CGSolver(rtol=1e-3, max_iterations=200, strict=False)
 
     def _resolve(
         self,
@@ -1060,7 +1060,7 @@ class WoodburyPreconditioner(LinearSolver):
 
 
 class ColumnThresholdedPreconditioner(LinearSolver):
-    """Keep the large entries of each column, and factorise what is left.
+    """Keep the large entries of each column, and factorize what is left.
 
     Where :class:`BandedPreconditioner` assumes the significant entries sit
     near the diagonal, this one finds them: a column's entries are kept when
@@ -1074,7 +1074,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
     Measured at ``dim`` 2000 with a threshold of 0.1, the whole build peaks at
     1.2 MB against 97 MB to form the dense matrix alone, and grows linearly in
     the dimension rather than quadratically. It is for the case
-    where those applications are affordable and a dense factorisation is not --
+    where those applications are affordable and a dense factorization is not --
     which is the case it was written for, and the case that forming the dense
     matrix ruled out.
 
@@ -1082,7 +1082,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         Thresholding column by column does not produce a symmetric matrix —
         entry ``(i, j)`` can pass its column's test while ``(j, i)`` fails its
         own — and conjugate gradients needs a symmetric preconditioner. So the
-        *pattern* is symmetrised, by keeping a position when either column
+        *pattern* is symmetrized, by keeping a position when either column
         wants it, and the values are then read off the Galerkin matrix, which
         is symmetric to begin with. v1 did not do this. It is the same failure
         as the untapered truncation of
@@ -1110,7 +1110,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
                 column are dropped. Zero keeps everything.
             max_per_column: a hard cap on retained entries per column, keeping
                 the largest. The diagonal is always among them.
-            incomplete: factorise with an incomplete LU rather than an exact
+            incomplete: factorize with an incomplete LU rather than an exact
                 sparse one, for when even the sparse factors fill in too much.
             drop_tol: the ILU drop tolerance, used only when *incomplete*.
             fill_factor: the ILU fill limit, used only when *incomplete*.
@@ -1157,7 +1157,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         del dimension
         thresholded = _thresholded_matrix(operator, self._keep, n_jobs=self._n_jobs)
 
-        factorised = _sparse_factorisation(
+        factorized = _sparse_factorization(
             thresholded,
             incomplete=self._incomplete,
             drop_tol=self._drop_tol,
@@ -1167,7 +1167,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             weighted = domain.apply_gram(domain.to_components(y))
             return SolveResult(
-                domain.from_components(factorised.solve(weighted)), 0, 0.0, True
+                domain.from_components(factorized.solve(weighted)), 0, 0.0, True
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)

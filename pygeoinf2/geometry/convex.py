@@ -12,7 +12,7 @@ object seen from three directions, and this module makes that explicit:
 
 v1 keeps these in three places: the sets in ``subsets``, the support functions
 in ``convex_analysis``, and nothing that ties an indicator to a proximal
-method. Tying them together is most of the modernisation.
+method. Tying them together is most of the modernization.
 
 ``project`` here means the **metric projection**: the nearest point of the set,
 which leaves a point already inside where it is. That is what a proximal method
@@ -58,8 +58,8 @@ class ConvexSet(Subset):
     A convex set has up to four descriptions, and a given set has some of
     them: **membership**, whether a point is in it; a **projection**, its
     nearest point; a **support function**, ``sup (q, x)`` over the set, with
-    a **maximiser** attaining it; and a **level function** ``f`` with the set
-    ``{ x : f(x) <= level }``. The last two are the characterisations that
+    a **maximizer** attaining it; and a **level function** ``f`` with the set
+    ``{ x : f(x) <= level }``. The last two are the characterizations that
     matter for a set known through algorithms rather than formulas -- a
     support function bounds the set from outside one direction at a time, a
     level function decides points and gives inner bounds -- and a set may
@@ -89,8 +89,8 @@ class ConvexSet(Subset):
         return False
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
         return False
 
     @property
@@ -101,8 +101,8 @@ class ConvexSet(Subset):
     def level_function(self) -> Functional:
         """``f`` with the set ``{ x : f(x) <= level }``, convex.
 
-        The sublevel-set characterisation: a ball is the squared distance to
-        its centre, an ellipsoid its Mahalanobis form, a half-space its linear
+        The sublevel-set characterization: a ball is the squared distance to
+        its center, an ellipsoid its Mahalanobis form, a half-space its linear
         form, an intersection the largest of its parts' excesses, and a
         feasible property set the minimum norm of a model with that property.
 
@@ -174,21 +174,21 @@ class ConvexSet(Subset):
             NotImplementedError: for a set without one; see
                 :attr:`has_support_function`. An intersection has none in
                 closed form, and the Backus-Gilbert-Parker estimator computes
-                the feasible property set's by minimisation.
+                the feasible property set's by minimization.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support function."
         )
 
-    def support_maximiser(self, direction: Any, /) -> Any:
+    def support_maximizer(self, direction: Any, /) -> Any:
         """The point of the set attaining ``h(direction)``.
 
         A *subgradient* of the support function, and the reason it is worth
-        having: a nonsmooth minimisation of a support function needs one at
+        having: a nonsmooth minimization of a support function needs one at
         every step, and for the sets that have closed forms so does this.
 
         Args:
-            direction: the direction to maximise along.
+            direction: the direction to maximize along.
 
         Returns:
             A point of the set attaining the support value.
@@ -197,7 +197,7 @@ class ConvexSet(Subset):
             NotImplementedError: for a set with no closed form.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} does not provide a support maximiser."
+            f"{type(self).__name__} does not provide a support maximizer."
         )
 
     def indicator(self) -> Functional:
@@ -215,7 +215,7 @@ class ConvexSet(Subset):
         oracle: Any,
         /,
         *,
-        maximiser: Any = None,
+        maximizer: Any = None,
         membership: Any = None,
     ) -> "ConvexSet":
         """A convex set given only by its support function.
@@ -223,16 +223,16 @@ class ConvexSet(Subset):
         A closed convex set is *determined* by its support function
         (Rockafellar 13.1-13.2), so this loses nothing in principle. What it
         loses in practice is cheapness: every question has to go through the
-        oracle, and one call may be an optimisation.
+        oracle, and one call may be an optimization.
 
         This is how the feasible property set of §18.3 arrives. Its support
-        function is a dual minimisation and there is no other description of
+        function is a dual minimization and there is no other description of
         it, so the set is the oracle.
 
         Args:
             domain: the space.
             oracle: called with a direction, returning ``h(q)``.
-            maximiser: optionally, called with a direction and returning the
+            maximizer: optionally, called with a direction and returning the
                 point of the set attaining the supremum. Supplying it is what
                 makes an *inner* approximation available as well as an outer
                 one.
@@ -243,7 +243,7 @@ class ConvexSet(Subset):
                 property set has one when its constraint sets are balls --
                 hands it in here, and then answers both questions.
         """
-        return _OracleSet(domain, oracle, maximiser=maximiser, membership=membership)
+        return _OracleSet(domain, oracle, maximizer=maximizer, membership=membership)
 
     def __add__(self, other: Any) -> Any:
         """The Minkowski sum, whose support function is the sum of theirs.
@@ -280,9 +280,9 @@ class _Translated(ConvexSet):
         """``h_{K+v}(q) == h_K(q) + (v, q)``."""
         return _ShiftedSupport(self._base.support_function(), self._vector)
 
-    def support_maximiser(self, direction: Any, /) -> Any:
-        """The base's maximiser, moved."""
-        return self.domain.add(self._base.support_maximiser(direction), self._vector)
+    def support_maximizer(self, direction: Any, /) -> Any:
+        """The base's maximizer, moved."""
+        return self.domain.add(self._base.support_maximizer(direction), self._vector)
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Membership of the moved point in the base.
@@ -312,9 +312,9 @@ class _Translated(ConvexSet):
         return self._base.has_support_function
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
-        return self._base.has_maximiser
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
+        return self._base.has_maximizer
 
     @property
     def has_level_function(self) -> bool:
@@ -369,12 +369,12 @@ class _OracleSet(ConvexSet):
         oracle: Any,
         /,
         *,
-        maximiser: Any,
+        maximizer: Any,
         membership: Any = None,
     ) -> None:
         super().__init__(domain)
         self._oracle = oracle
-        self._maximiser = maximiser
+        self._maximizer = maximizer
         self._membership = membership
 
     @property
@@ -393,39 +393,39 @@ class _OracleSet(ConvexSet):
         return True
 
     @property
-    def has_maximiser(self) -> bool:
+    def has_maximizer(self) -> bool:
         """Whether a point attaining the supremum can be produced."""
-        return self._maximiser is not None
+        return self._maximizer is not None
 
-    def support_maximiser(self, direction: Any, /) -> Any:
-        """The maximiser, under the base's name."""
-        return self.maximiser(direction)
+    def support_maximizer(self, direction: Any, /) -> Any:
+        """The maximizer, under the base's name."""
+        return self.maximizer(direction)
 
-    def maximiser(self, direction: Any, /) -> Any:
+    def maximizer(self, direction: Any, /) -> Any:
         """The point of the set furthest along a direction.
 
         Args:
-            direction: the direction to maximise along.
+            direction: the direction to maximize along.
 
         Returns:
-            The maximising point.
+            The maximizing point.
 
         Raises:
             NotImplementedError: unless the support function was built with a
-                maximiser. A support *value* does not determine the point that
+                maximizer. A support *value* does not determine the point that
                 attains it.
         """
-        if self._maximiser is None:
+        if self._maximizer is None:
             raise AttributeError(
-                "This set was given a support function but no maximiser, so it "
+                "This set was given a support function but no maximizer, so it "
                 "can bound itself from outside but not exhibit a point."
             )
-        return self._maximiser(direction)
+        return self._maximizer(direction)
 
     def support_function(self) -> SupportFunction:
-        """The oracle, as a functional, carrying the maximiser when one was given."""
+        """The oracle, as a functional, carrying the maximizer when one was given."""
         return SupportFunction.of_oracle(
-            self.domain, self._oracle, maximiser=self._maximiser
+            self.domain, self._oracle, maximizer=self._maximizer
         )
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
@@ -514,11 +514,11 @@ class _MinkowskiSum(ConvexSet):
         """``h_A + h_B``, exactly."""
         return self._first.support_function() + self._second.support_function()
 
-    def support_maximiser(self, direction: Any, /) -> Any:
-        """The sum of the parts' maximisers, which attains the sum of supports."""
+    def support_maximizer(self, direction: Any, /) -> Any:
+        """The sum of the parts' maximizers, which attains the sum of supports."""
         return self.domain.add(
-            self._first.support_maximiser(direction),
-            self._second.support_maximiser(direction),
+            self._first.support_maximizer(direction),
+            self._second.support_maximizer(direction),
         )
 
     @property
@@ -537,16 +537,16 @@ class _MinkowskiSum(ConvexSet):
         return self._first.has_support_function and self._second.has_support_function
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
-        return self._first.has_maximiser and self._second.has_maximiser
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
+        return self._first.has_maximizer and self._second.has_maximizer
 
     def project(self, x: Any, /) -> Any:
         """Not generally available: the sum of two projections is not one.
 
         Raises:
             NotImplementedError: always. Projecting onto a Minkowski sum is
-                its own optimisation, not a composition of the parts'.
+                its own optimization, not a composition of the parts'.
         """
         raise NotImplementedError(
             "A Minkowski sum has no projection in closed form, even when its "
@@ -554,7 +554,7 @@ class _MinkowskiSum(ConvexSet):
         )
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Not generally decidable without an optimisation.
+        """Not generally decidable without an optimization.
 
         Args:
             x: a vector of the space.
@@ -565,7 +565,7 @@ class _MinkowskiSum(ConvexSet):
                 one from each part is a feasibility problem.
         """
         raise NotImplementedError(
-            "Membership of a Minkowski sum needs an optimisation over the "
+            "Membership of a Minkowski sum needs an optimization over the "
             "splitting of the point between the summands."
         )
 
@@ -573,7 +573,7 @@ class _MinkowskiSum(ConvexSet):
         return f"MinkowskiSum({self._first!r}, {self._second!r})"
 
 
-def _dykstra(space: Any, parts: Sequence[Any], x: Any, iterations: int) -> Any:
+def _dykstra(space: Any, parts: Sequence[Any], x: Any, max_iterations: int) -> Any:
     """The nearest point of an intersection, by Dykstra's algorithm.
 
     Cycling the projections on their own -- alternating projection -- reaches
@@ -586,14 +586,14 @@ def _dykstra(space: Any, parts: Sequence[Any], x: Any, iterations: int) -> Any:
         space: the space the sets live in.
         parts: the sets, each of which must project.
         x: the point to project.
-        iterations: the maximum number of cycles, each one projection per part.
+        max_iterations: the maximum number of cycles, each one projection per part.
 
     Returns:
         The nearest point, to the accuracy the cycle reached.
     """
     corrections = [space.zero() for _ in parts]
     current = space.copy(x)
-    for _ in range(iterations):
+    for _ in range(max_iterations):
         start = space.copy(current)
         for index, part in enumerate(parts):
             shifted = space.add(current, corrections[index])
@@ -692,7 +692,7 @@ class Polytope(ConvexSet):
             for plane in self._half_spaces
         )
 
-    def project(self, x: Any, /, *, iterations: int = 1000) -> Any:
+    def project(self, x: Any, /, *, max_iterations: int = 1000) -> Any:
         """The nearest point of the polytope, by Dykstra's algorithm.
 
         Cycling the half-space projections on their own — alternating
@@ -710,7 +710,7 @@ class Polytope(ConvexSet):
 
         Args:
             x: the point to project.
-            iterations: the maximum number of cycles. Each is one projection
+            max_iterations: the maximum number of cycles. Each is one projection
                 per half-space. A thousand rather than the two hundred this
                 used to allow: measured on a ball cut by a half-space in a
                 sixteen-dimensional Sobolev space, two hundred cycles leave
@@ -723,7 +723,7 @@ class Polytope(ConvexSet):
             The nearest point of the polytope, to the accuracy the cycle
             reached.
         """
-        return _dykstra(self.domain, self._half_spaces, x, iterations)
+        return _dykstra(self.domain, self._half_spaces, x, max_iterations)
 
     def __and__(self, other: "Polytope") -> "Polytope":
         """Both sets of constraints, which tightens an outer bound."""
@@ -776,7 +776,7 @@ class _SetIndicator(Functional):
 
 
 class Ball(ConvexSet):
-    """``{ x : ||x - centre|| <= radius }``."""
+    """``{ x : ||x - center|| <= radius }``."""
 
     def __init__(
         self,
@@ -784,18 +784,18 @@ class Ball(ConvexSet):
         /,
         *,
         radius: float = 1.0,
-        centre: Any = None,
+        center: Any = None,
     ) -> None:
         """
         Args:
             domain: the space.
             radius: the radius, which must not be negative. Zero is allowed and
-                gives the single point at the centre — the degenerate case that
+                gives the single point at the center — the degenerate case that
                 says "exactly this", which is what error-free data are. Every
                 method below already does the right thing there: ``project``
-                and ``support_maximiser`` return the centre and ``contains``
+                and ``support_maximizer`` return the center and ``contains``
                 admits it alone.
-            centre: the centre. Defaults to zero.
+            center: the center. Defaults to zero.
 
         Raises:
             ValueError: if the radius is negative.
@@ -804,15 +804,15 @@ class Ball(ConvexSet):
             raise ValueError("radius must not be negative.")
         super().__init__(domain)
         self._radius = float(radius)
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
-    def support_maximiser(self, direction: Any, /) -> Any:
-        """``centre + radius * direction / ||direction||``."""
+    def support_maximizer(self, direction: Any, /) -> Any:
+        """``center + radius * direction / ||direction||``."""
         length = self.domain.norm(direction)
         if length == 0.0:
-            return self._centre
+            return self._center
         return self.domain.add(
-            self._centre, self.domain.scale(self._radius / length, direction)
+            self._center, self.domain.scale(self._radius / length, direction)
         )
 
     def translate(self, vector: Any, /) -> "Ball":
@@ -820,7 +820,7 @@ class Ball(ConvexSet):
         return Ball(
             self.domain,
             radius=self._radius,
-            centre=self.domain.add(self._centre, vector),
+            center=self.domain.add(self._center, vector),
         )
 
     @property
@@ -829,9 +829,9 @@ class Ball(ConvexSet):
         return self._radius
 
     @property
-    def centre(self) -> Any:
-        """The centre."""
-        return self._centre
+    def center(self) -> Any:
+        """The center."""
+        return self._center
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Cheaper than the default: one norm rather than a projection.
@@ -844,17 +844,17 @@ class Ball(ConvexSet):
         Returns:
             Whether the set contains the point.
         """
-        offset = self._domain.norm(self._domain.subtract(x, self._centre))
+        offset = self._domain.norm(self._domain.subtract(x, self._center))
         return offset <= self._radius * (1.0 + rtol)
 
     def project(self, x: Any, /) -> Any:
-        """Rescale the offset from the centre to the radius, if it exceeds it."""
+        """Rescale the offset from the center to the radius, if it exceeds it."""
         space = self._domain
-        offset = space.subtract(x, self._centre)
+        offset = space.subtract(x, self._center)
         distance = space.norm(offset)
         if distance <= self._radius:
             return space.copy(x)
-        return space.axpy(self._radius / distance, offset, space.copy(self._centre))
+        return space.axpy(self._radius / distance, offset, space.copy(self._center))
 
     @property
     def boundary(self) -> "BallSurface":
@@ -869,16 +869,16 @@ class Ball(ConvexSet):
 
         Raises:
             ValueError: for a ball of zero radius. That set is the single
-                point at the centre, and its boundary in the ambient space is
+                point at the center, and its boundary in the ambient space is
                 itself -- not a surface, which is why this refuses rather than
                 returning something with a radius of zero.
         """
-        return BallSurface(self._domain, radius=self._radius, centre=self._centre)
+        return BallSurface(self._domain, radius=self._radius, center=self._center)
 
     def support_function(self) -> SupportFunction:
-        """``radius ||y|| + (centre, y)``."""
+        """``radius ||y|| + (center, y)``."""
         return SupportFunction.of_ball(
-            self._domain, radius=self._radius, centre=self._centre
+            self._domain, radius=self._radius, center=self._center
         )
 
     @property
@@ -887,8 +887,8 @@ class Ball(ConvexSet):
         return True
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
         return True
 
     @property
@@ -897,12 +897,12 @@ class Ball(ConvexSet):
         return True
 
     def level_function(self) -> Functional:
-        """The squared distance to the centre, at level ``radius^2``."""
-        space, centre = self._domain, self._centre
+        """The squared distance to the center, at level ``radius^2``."""
+        space, center = self._domain, self._center
         return Functional.from_callables(
             space,
-            lambda x: space.squared_norm(space.subtract(x, centre)),
-            gradient=lambda x: space.scale(2.0, space.subtract(x, centre)),
+            lambda x: space.squared_norm(space.subtract(x, center)),
+            gradient=lambda x: space.scale(2.0, space.subtract(x, center)),
             hessian=lambda x: (LinearOperator.identity(space) * 2.0).with_traits(
                 Traits.POSITIVE_DEFINITE
             ),
@@ -917,7 +917,7 @@ class Ball(ConvexSet):
         """The ball's indicator, with its closed-form proximal operator."""
         from ..numerics.convex import BallIndicator
 
-        return BallIndicator(self._domain, radius=self._radius, centre=self._centre)
+        return BallIndicator(self._domain, radius=self._radius, center=self._center)
 
     def __repr__(self) -> str:
         return f"Ball(radius={self._radius})"
@@ -1004,11 +1004,11 @@ class Hyperplane(ConvexSet):
         return True
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
         return True
 
-    def support_maximiser(self, direction: Any, /) -> Any:
+    def support_maximizer(self, direction: Any, /) -> Any:
         """The plane's point of least norm, ``(offset / (normal, normal)) normal``.
 
         Every point of the plane attains the support when it is finite; this
@@ -1117,8 +1117,8 @@ class HalfSpace(ConvexSet):
         return True
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
         return True
 
     @property
@@ -1137,7 +1137,7 @@ class HalfSpace(ConvexSet):
         """The level the level function is bounded by."""
         return self._offset
 
-    def support_maximiser(self, direction: Any, /) -> Any:
+    def support_maximizer(self, direction: Any, /) -> Any:
         """The boundary plane's point of least norm, ``(offset / (normal, normal)) normal``.
 
         Every point of the boundary attains the support when it is finite;
@@ -1153,7 +1153,7 @@ class HalfSpace(ConvexSet):
 
 
 class Ellipsoid(ConvexSet):
-    """``{ x : (x - centre, P (x - centre)) <= 1 }`` for a positive definite ``P``.
+    """``{ x : (x - center, P (x - center)) <= 1 }`` for a positive definite ``P``.
 
     Given by its **precision** rather than its covariance, because that is what
     a membership test needs and what a credible region is naturally expressed
@@ -1171,7 +1171,7 @@ class Ellipsoid(ConvexSet):
         precision: LinearOperator,
         /,
         *,
-        centre: Any = None,
+        center: Any = None,
         covariance: LinearOperator | None = None,
         factor: LinearOperator | None = None,
     ) -> None:
@@ -1179,7 +1179,7 @@ class Ellipsoid(ConvexSet):
         Args:
             domain: the space.
             precision: a positive definite operator on it.
-            centre: the centre. Defaults to zero.
+            center: the center. Defaults to zero.
             covariance: the inverse of the precision, if it is known. Supplying
                 it is what makes the support function available.
             factor: a factor ``L`` of the covariance, ``C == L L*``, if one
@@ -1187,7 +1187,7 @@ class Ellipsoid(ConvexSet):
                 support function then costs one adjoint application of the
                 factor rather than one of the covariance, which is v1's
                 ``inverse_sqrt_operator`` route in a form any factor can
-                take. The maximiser still needs the covariance.
+                take. The maximizer still needs the covariance.
 
         Raises:
             ValueError: if the precision does not claim to be self-adjoint
@@ -1207,13 +1207,13 @@ class Ellipsoid(ConvexSet):
         self._precision = precision
         self._covariance = covariance
         self._factor = factor
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
-    def support_maximiser(self, direction: Any, /) -> Any:
-        """``centre + C q / sqrt((C q, q))``, which needs the covariance.
+    def support_maximizer(self, direction: Any, /) -> Any:
+        """``center + C q / sqrt((C q, q))``, which needs the covariance.
 
         Args:
-            direction: the direction to maximise along.
+            direction: the direction to maximize along.
 
         Returns:
             The point of the ellipsoid furthest along it.
@@ -1231,15 +1231,15 @@ class Ellipsoid(ConvexSet):
         image = self._covariance(direction)
         scale = np.sqrt(self.domain.inner_product(image, direction))
         if scale == 0.0:
-            return self._centre
-        return self.domain.add(self._centre, self.domain.scale(1.0 / scale, image))
+            return self._center
+        return self.domain.add(self._center, self.domain.scale(1.0 / scale, image))
 
     def translate(self, vector: Any, /) -> "Ellipsoid":
         """The same ellipsoid, moved by a vector."""
         return Ellipsoid(
             self.domain,
             self._precision,
-            centre=self.domain.add(self._centre, vector),
+            center=self.domain.add(self._center, vector),
             covariance=self._covariance,
             factor=self._factor,
         )
@@ -1260,22 +1260,22 @@ class Ellipsoid(ConvexSet):
         return self._precision
 
     @property
-    def centre(self) -> Any:
-        """The centre."""
-        return self._centre
+    def center(self) -> Any:
+        """The center."""
+        return self._center
 
     @property
     def boundary(self) -> "EllipsoidSurface":
         """The surface ``(P (x - c), x - c) == 1``, as a set in its own right.
 
-        v1 had this. The surface carries the same precision and centre, so it
+        v1 had this. The surface carries the same precision and center, so it
         needs no covariance and exists whether or not this ellipsoid was given
         one.
 
         Returns:
             The bounding surface.
         """
-        return EllipsoidSurface(self._domain, self._precision, centre=self._centre)
+        return EllipsoidSurface(self._domain, self._precision, center=self._center)
 
     @property
     def has_support_function(self) -> bool:
@@ -1283,8 +1283,8 @@ class Ellipsoid(ConvexSet):
         return self._covariance is not None
 
     @property
-    def has_maximiser(self) -> bool:
-        """Whether :meth:`support_maximiser` can exhibit a point."""
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
         return self._covariance is not None
 
     @property
@@ -1294,11 +1294,11 @@ class Ellipsoid(ConvexSet):
 
     def level_function(self) -> Functional:
         """The Mahalanobis form ``(P (x - c), x - c)``, at level one."""
-        space, precision, centre = self._domain, self._precision, self._centre
+        space, precision, center = self._domain, self._precision, self._center
         return Functional.from_callables(
             space,
             self.mahalanobis_squared,
-            gradient=lambda x: space.scale(2.0, precision(space.subtract(x, centre))),
+            gradient=lambda x: space.scale(2.0, precision(space.subtract(x, center))),
             hessian=lambda x: (precision * 2.0).with_traits(Traits.POSITIVE_DEFINITE),
         )
 
@@ -1308,8 +1308,8 @@ class Ellipsoid(ConvexSet):
         return 1.0
 
     def mahalanobis_squared(self, x: Any, /) -> float:
-        """``(x - centre, P (x - centre))``."""
-        offset = self._domain.subtract(x, self._centre)
+        """``(x - center, P (x - center))``."""
+        offset = self._domain.subtract(x, self._center)
         return self._domain.inner_product(self._precision(offset), offset)
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
@@ -1332,7 +1332,7 @@ class Ellipsoid(ConvexSet):
         *,
         solver: Any = None,
         rtol: float = 1e-12,
-        iterations: int = 100,
+        max_iterations: int = 100,
     ) -> Any:
         """The nearest point of the ellipsoid, by Newton on the secular equation.
 
@@ -1358,8 +1358,8 @@ class Ellipsoid(ConvexSet):
         positive definite: applications of ``P`` and nothing formed. The
         second solve starts from the first-order predictor ``y + d lambda
         y'``, which is what the derivative solve just computed, so it is
-        usually a correction. A Cholesky factorisation used to be the default,
-        which extracted and factorised ``I + lambda P`` twice per step: at
+        usually a correction. A Cholesky factorization used to be the default,
+        which extracted and factorized ``I + lambda P`` twice per step: at
         dimension 1500, 3.5 s with a matrix-backed precision and 31 s with
         54 000 applications of one that had to be probed (DESIGN §53). It is
         still available by name for a small space.
@@ -1371,7 +1371,7 @@ class Ellipsoid(ConvexSet):
                 gradients at ``rtol=1e-12`` by default, so that the constraint
                 can be met to *rtol*.
             rtol: on the constraint residual.
-            iterations: the Newton cap.
+            max_iterations: the Newton cap.
 
         Returns:
             The nearest point of the ellipsoid.
@@ -1381,7 +1381,7 @@ class Ellipsoid(ConvexSet):
         from ..traits import Traits
 
         space = self.domain
-        offset = space.subtract(x, self._centre)
+        offset = space.subtract(x, self._center)
         if float(space.inner_product(self._precision(offset), offset)) <= 1.0:
             return space.copy(x)
 
@@ -1395,7 +1395,7 @@ class Ellipsoid(ConvexSet):
 
         multiplier = 0.0
         point = offset
-        for _ in range(iterations):
+        for _ in range(max_iterations):
             weighted = self._precision(point)
             residual = float(space.inner_product(weighted, point)) - 1.0
             if abs(residual) <= rtol:
@@ -1410,10 +1410,10 @@ class Ellipsoid(ConvexSet):
             point = chosen(shifted(advanced)).solve(offset, x0=guess).solution
             multiplier = advanced
 
-        return space.add(self._centre, point)
+        return space.add(self._center, point)
 
     def support_function(self) -> SupportFunction:
-        """``(centre, y) + sqrt((y, C y))`` with ``C`` the covariance.
+        """``(center, y) + sqrt((y, C y))`` with ``C`` the covariance.
 
         Returns:
             The support function.
@@ -1427,7 +1427,7 @@ class Ellipsoid(ConvexSet):
                 "inverse of the precision. Pass covariance= to supply it."
             )
         return _EllipsoidSupport(
-            self._domain, self._covariance, self._centre, factor=self._factor
+            self._domain, self._covariance, self._center, factor=self._factor
         )
 
     def __repr__(self) -> str:
@@ -1437,7 +1437,7 @@ class Ellipsoid(ConvexSet):
 class _EllipsoidSupport(SupportFunction):
     """The support function of an ellipsoid given by its covariance.
 
-    ``(centre, y) + sqrt((C y, y))``; with a factor ``C == L L*`` in hand the
+    ``(center, y) + sqrt((C y, y))``; with a factor ``C == L L*`` in hand the
     root is ``||L* y||``, one adjoint application of the factor and no
     clamp, since a norm cannot go negative by rounding.
     """
@@ -1446,14 +1446,14 @@ class _EllipsoidSupport(SupportFunction):
         self,
         domain: HilbertSpace,
         covariance: LinearOperator,
-        centre: Any,
+        center: Any,
         /,
         *,
         factor: LinearOperator | None = None,
     ) -> None:
         super().__init__(domain)
         self._covariance = covariance
-        self._centre = centre
+        self._center = center
         self._factor = factor
 
     def _value(self, y: Any) -> float:
@@ -1463,15 +1463,15 @@ class _EllipsoidSupport(SupportFunction):
         else:
             quadratic = self._domain.inner_product(self._covariance(y), y)
             root = float(np.sqrt(max(quadratic, 0.0)))
-        return self._domain.inner_product(self._centre, y) + root
+        return self._domain.inner_product(self._center, y) + root
 
-    def _maximiser(self, y: Any) -> Any:
+    def _maximizer(self, y: Any) -> Any:
         space = self._domain
         mapped = self._covariance(y)
         norm = np.sqrt(max(space.inner_product(mapped, y), 0.0))
         if norm == 0.0:
-            return space.copy(self._centre)
-        return space.axpy(1.0 / norm, mapped, space.copy(self._centre))
+            return space.copy(self._center)
+        return space.axpy(1.0 / norm, mapped, space.copy(self._center))
 
 
 class BallSurface(Subset):
@@ -1479,25 +1479,25 @@ class BallSurface(Subset):
 
     Not convex, so it has no support function and no projection in the sense
     :class:`ConvexSet` means — but the nearest point on it is still well
-    defined everywhere except the centre, and it is what a norm constraint of
-    the form ``||x|| == r`` describes. Constrained optimisation is where this
+    defined everywhere except the center, and it is what a norm constraint of
+    the form ``||x|| == r`` describes. Constrained optimization is where this
     is wanted: an equality constraint, not an inequality.
     """
 
     def __init__(
-        self, domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
+        self, domain: HilbertSpace, /, *, radius: float = 1.0, center: Any = None
     ) -> None:
         """
         Args:
             domain: the space.
             radius: the radius, which must be positive.
-            centre: the centre. Defaults to zero.
+            center: the center. Defaults to zero.
         """
         super().__init__(domain)
         if radius <= 0.0:
             raise ValueError(f"The radius must be positive, got {radius}.")
         self._radius = float(radius)
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
     @property
     def radius(self) -> float:
@@ -1505,9 +1505,9 @@ class BallSurface(Subset):
         return self._radius
 
     @property
-    def centre(self) -> Any:
-        """The centre."""
-        return self._centre
+    def center(self) -> Any:
+        """The center."""
+        return self._center
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Whether a point lies on the surface, to a relative tolerance.
@@ -1529,13 +1529,13 @@ class BallSurface(Subset):
         Returns:
             True when the point lies on the surface to that tolerance.
         """
-        distance = self.domain.norm(self.domain.subtract(x, self._centre))
+        distance = self.domain.norm(self.domain.subtract(x, self._center))
         return abs(distance - self._radius) <= rtol * self._radius
 
     def project(self, x: Any, /) -> Any:
         """The nearest point on the surface.
 
-        Undefined at the centre, where every point of the surface is equally
+        Undefined at the center, where every point of the surface is equally
         near, and that is raised rather than resolved by an arbitrary choice.
 
         Args:
@@ -1545,18 +1545,18 @@ class BallSurface(Subset):
             The nearest point of the surface.
 
         Raises:
-            ValueError: at the centre, where every point of the surface is
+            ValueError: at the center, where every point of the surface is
                 equally near and there is no nearest one to return.
         """
-        offset = self.domain.subtract(x, self._centre)
+        offset = self.domain.subtract(x, self._center)
         distance = self.domain.norm(offset)
         if distance == 0.0:
             raise ValueError(
-                "The centre is equidistant from the whole surface, so it has "
+                "The center is equidistant from the whole surface, so it has "
                 "no nearest point."
             )
         return self.domain.add(
-            self._centre, self.domain.scale(self._radius / distance, offset)
+            self._center, self.domain.scale(self._radius / distance, offset)
         )
 
     def sample(self, /, *, rng: Any = None) -> Any:
@@ -1567,7 +1567,7 @@ class BallSurface(Subset):
         is isotropic in a space with a non-trivial metric.
         """
         return self.project(
-            self.domain.add(self._centre, self.domain.white_noise(rng=rng))
+            self.domain.add(self._center, self.domain.white_noise(rng=rng))
         )
 
     @property
@@ -1588,13 +1588,13 @@ class EllipsoidSurface(Subset):
         precision: LinearOperator,
         /,
         *,
-        centre: Any = None,
+        center: Any = None,
     ) -> None:
         """
         Args:
             domain: the space.
             precision: a positive definite operator on it.
-            centre: the centre. Defaults to zero.
+            center: the center. Defaults to zero.
         """
         super().__init__(domain)
         required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
@@ -1604,7 +1604,7 @@ class EllipsoidSurface(Subset):
                 f"{precision.traits!s}."
             )
         self._precision = precision
-        self._centre = domain.zero() if centre is None else centre
+        self._center = domain.zero() if center is None else center
 
     @property
     def precision(self) -> LinearOperator:
@@ -1612,9 +1612,9 @@ class EllipsoidSurface(Subset):
         return self._precision
 
     @property
-    def centre(self) -> Any:
-        """The centre."""
-        return self._centre
+    def center(self) -> Any:
+        """The center."""
+        return self._center
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Whether a point lies on the surface, to a relative tolerance.
@@ -1629,7 +1629,7 @@ class EllipsoidSurface(Subset):
         Returns:
             True when the point lies on the surface to that tolerance.
         """
-        offset = self.domain.subtract(x, self._centre)
+        offset = self.domain.subtract(x, self._center)
         value = self.domain.inner_product(self._precision(offset), offset)
         return abs(value - 1.0) <= rtol
 
@@ -1656,7 +1656,7 @@ class ConvexIntersection(ConvexSet):
     being the special case where every part is a half-space.
 
     **The support function is only an upper bound.** ``min_i h_i`` bounds the
-    intersection's support from above and is not equal to it: the minimising
+    intersection's support from above and is not equal to it: the minimizing
     point of one set need not lie in the others. v1 offered that as the support
     function; here it is :meth:`support_bound`, under a name that says what it
     is, and :meth:`support_function` raises rather than return it as the truth.
@@ -1710,12 +1710,12 @@ class ConvexIntersection(ConvexSet):
         """
         return all(part.contains(x, rtol=rtol) for part in self._subsets)
 
-    def project(self, x: Any, /, *, iterations: int = 1000) -> Any:
+    def project(self, x: Any, /, *, max_iterations: int = 1000) -> Any:
         """The nearest point of the intersection, by Dykstra's algorithm.
 
         Args:
             x: the point to project.
-            iterations: the maximum number of cycles, each one projection per
+            max_iterations: the maximum number of cycles, each one projection per
                 part. A part that projects iteratively -- an ellipsoid, say --
                 makes each of those a small solve of its own. The default is
                 a thousand for the reason given in :meth:`Polytope.project`.
@@ -1723,7 +1723,7 @@ class ConvexIntersection(ConvexSet):
         Returns:
             The nearest point, to the accuracy the cycle reached.
         """
-        return _dykstra(self.domain, self._subsets, x, iterations)
+        return _dykstra(self.domain, self._subsets, x, max_iterations)
 
     def support_bound(self, direction: Any, /) -> float:
         """``min_i h_i(direction)``: an *upper bound* on the support value.
@@ -1809,7 +1809,7 @@ class ConvexIntersection(ConvexSet):
                 function of an intersection. :meth:`support_bound` gives the
                 upper bound ``min_i h_i``, which is what v1 returned under this
                 name, and the Backus-Gilbert-Parker estimator computes the true
-                value by minimisation.
+                value by minimization.
         """
         raise NotImplementedError(
             "An intersection has no closed-form support function. Use "

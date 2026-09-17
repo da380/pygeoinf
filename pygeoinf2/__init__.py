@@ -23,7 +23,7 @@ from .algebra.direct_sum import (
     RowLinearOperator,
     RowOperator,
 )
-from .algebra.linearisation import Linearisation, QuadraticModel
+from .algebra.linearization import Linearization, QuadraticModel
 from .algebra.operators import (
     AffineOperator,
     Functional,
@@ -208,8 +208,8 @@ __all__ = [
     "DirectSum",
     "RowLinearOperator",
     "RowOperator",
-    # algebra.linearisation
-    "Linearisation",
+    # algebra.linearization
+    "Linearization",
     "QuadraticModel",
     # geometry
     "AffineSubspace",

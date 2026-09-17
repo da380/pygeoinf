@@ -3,7 +3,7 @@ Gaussian measures on Hilbert spaces.
 
 A Gaussian is determined by an expectation and a covariance, and stays Gaussian
 under an affine map. Both facts are carried structurally here: the pushforward
-covariance ``A C A*`` is recognised as positive semidefinite by the
+covariance ``A C A*`` is recognized as positive semidefinite by the
 adjoint-palindrome rule of the algebra, with nothing asserted and no
 special-casing (DESIGN.md 4.1).
 
@@ -29,7 +29,7 @@ from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
-    from ..numerics.randomised import Estimate
+    from ..numerics.randomized import Estimate
     from ..geometry.convex import Ellipsoid
 from .base import ProbabilityMeasure
 
@@ -44,7 +44,7 @@ def _semidefinite_factors(
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """A square root of a symmetric PSD matrix, and its inverse when it exists.
 
-    Cholesky first, because it is the cheaper factorisation and because
+    Cholesky first, because it is the cheaper factorization and because
     succeeding is a proof that the matrix is numerically definite. When it
     fails the matrix is singular or has drifted slightly negative, and a
     symmetric eigendecomposition decides which: eigenvalues below
@@ -53,7 +53,7 @@ def _semidefinite_factors(
     warning, exactly as v1 did.
 
     Args:
-        symmetric: the matrix, already symmetrised.
+        symmetric: the matrix, already symmetrized.
         rtol: how negative an eigenvalue may be, relative to the largest in
             magnitude, before the matrix is refused rather than clipped.
 
@@ -229,7 +229,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         self._precision = precision
         self._precision_factor = precision_factor
         self._sample_fn = sample
-        self._log_normalisation: float | None = None
+        self._log_normalization: float | None = None
         self._dense: GaussianMeasure[X] | None = None
 
     # ----------------------------------------------------------------- #
@@ -292,7 +292,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """A measure with a different standard deviation in each direction.
 
         The covariance is ``diag(sigma^2)`` **as an operator on the space**,
-        which is the generalisation of :meth:`from_standard_deviation` and not
+        which is the generalization of :meth:`from_standard_deviation` and not
         of v1's method of this name: v1 built its factor as a map from a
         Euclidean coefficient space, making the array a statement about
         components rather than about directions. The two agree on an
@@ -471,7 +471,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         is symmetric.
 
         A covariance is required to be positive *semi*definite, so a Cholesky
-        factorisation alone is not enough: it refuses every singular
+        factorization alone is not enough: it refuses every singular
         covariance — a measure supported on a subspace, an empirical
         covariance from fewer samples than dimensions, a pushforward through a
         rank-deficient map — and it refuses a matrix that is semidefinite in
@@ -551,7 +551,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 form="components",
             )
             # The palindrome rule gives Li* Li only semidefiniteness, but the
-            # factorisation earned more than that: it returned an inverse
+            # factorization earned more than that: it returned an inverse
             # root, which it does only for a covariance that is numerically
             # nonsingular. Definiteness is what a credible set asks for.
             precision = (precision_factor.adjoint @ precision_factor).with_traits(
@@ -648,12 +648,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         A diagonal factor applies its eigenvalues to components, so ``L xi``
         is ``from_components(lambda * xi_c)`` with ``xi_c`` white noise's
         components, ``N(0, G^-1)``. Going through ``L`` as an operator
-        synthesises ``xi`` onto the grid only to analyse it again and
-        synthesise the result: three spectral transforms for one draw. v1
+        synthesizes ``xi`` onto the grid only to analyze it again and
+        synthesize the result: three spectral transforms for one draw. v1
         carried a Karhunen-Loeve closure on its invariant measure class to
         avoid that, and lost it whenever the algebra rebuilt the measure.
         Here the short cut lives on the structure, so a scaled, summed,
-        marginalised or conditioned measure whose factor is still diagonal
+        marginalized or conditioned measure whose factor is still diagonal
         draws in one transform without anyone carrying anything.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
@@ -712,7 +712,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Returns:
             The estimated trace.
         """
-        from ..numerics.randomised import random_trace
+        from ..numerics.randomized import random_trace
 
         return float(
             random_trace(
@@ -812,7 +812,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         A correlated measure on several fields has one small matrix per mode
         (:class:`~pygeoinf2.symmetric_space.base.SpectralBlockLinearOperator`),
         from which both norms follow in ``O(dim n^2)``; v1 had these formulas
-        on its correlated measure. Recognised by shape rather than by type, so
+        on its correlated measure. Recognized by shape rather than by type, so
         that this module does not import the symmetric spaces.
         """
         slices = getattr(self._covariance, "slices", None)
@@ -917,7 +917,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return self._covariance
 
     def _symmetric_matrix(self) -> np.ndarray:
-        """The covariance's Galerkin matrix, symmetrised against round-off."""
+        """The covariance's Galerkin matrix, symmetrized against round-off."""
         matrix = self._require_covariance("This route").matrix(form="galerkin")
         return 0.5 * (matrix + matrix.T)
 
@@ -1003,11 +1003,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         ``"spectral"``
             Both covariances diagonal in the space's own basis, so everything
-            is a sum over the spectrum: ``O(dim)``, exact, and no factorisation
+            is a sum over the spectrum: ``O(dim)``, exact, and no factorization
             at all. Every invariant measure on a symmetric space is of this
             kind, so it is the common case and the one ``"auto"`` takes first.
         ``"dense"``
-            Form both matrices and factorise. Exact, and confined to a space
+            Form both matrices and factorize. Exact, and confined to a space
             small enough to hold two of them.
         ``"stochastic"``
             One Hutchinson estimate of ``tr(g(M))`` with ``M`` similar to
@@ -1054,7 +1054,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 which is where *max_iterations* and the Lanczos *rtol* live.
 
         Returns:
-            An :class:`~pygeoinf2.numerics.randomised.Estimate`. The exact
+            An :class:`~pygeoinf2.numerics.randomized.Estimate`. The exact
             routes report a standard error of zero.
 
         Raises:
@@ -1066,7 +1066,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 estimate whose standard error exceeds it is refused too,
                 though the non-negativity of ``g`` makes that unreachable.
         """
-        from ..numerics.randomised import Estimate, random_trace
+        from ..numerics.randomized import Estimate, random_trace
 
         if other.domain != self._domain:
             raise ValueError("Both measures must live on the same space.")
@@ -1287,8 +1287,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 "cannot be rescaled."
             )
         factor = float(standard_deviation) / np.sqrt(current)
-        centred = self.translate(self._domain.negative(self.expectation))
-        return (factor * centred).translate(self.expectation)
+        centered = self.translate(self._domain.negative(self.expectation))
+        return (factor * centered).translate(self.expectation)
 
     def low_rank_approximation(
         self,
@@ -1300,7 +1300,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> "GaussianMeasure[X]":
         """The same expectation, with the covariance truncated to *rank* modes.
 
-        Obtained as a randomised Cholesky factorisation ``C ~ L L*``, so the
+        Obtained as a randomized Cholesky factorization ``C ~ L L*``, so the
         result comes with a covariance *factor* and is therefore samplable even
         when the original was not. Its precision does not survive — a
         rank-deficient covariance has none — which means a low-rank measure can
@@ -1314,7 +1314,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Args:
             rank: how many eigenpairs to keep.
             rng: the generator for the probes.
-            **kwargs: passed to the randomised routine.
+            **kwargs: passed to the randomized routine.
 
         Returns:
             A measure whose covariance has that rank, and which can be
@@ -1324,7 +1324,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             ValueError: for a rank above the dimension, or a measure with no
                 covariance to approximate.
         """
-        from ..numerics.randomised import random_cholesky
+        from ..numerics.randomized import random_cholesky
 
         covariance = self._covariance
         if covariance is None:
@@ -1332,7 +1332,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 "A low-rank approximation needs the covariance, and this "
                 "measure was given only a precision."
             )
-        factorised = random_cholesky(
+        factorized = random_cholesky(
             covariance.with_traits(Traits.POSITIVE_SEMIDEFINITE),
             rank=rank,
             rng=rng,
@@ -1341,7 +1341,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return GaussianMeasure(
             self._domain,
             expectation=self._expectation,
-            covariance_factor=factorised.factor,
+            covariance_factor=factorized.factor,
         )
 
     def with_dense_covariance(
@@ -1360,7 +1360,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The assembly is ``dim`` applications of the covariance, run in
         parallel when *n_jobs* asks. The result carries a matrix-backed
         covariance, and the factor and precision factor that come out of
-        factorising it -- so the returned measure can be sampled and has a
+        factorizing it -- so the returned measure can be sampled and has a
         density even when this one could do neither.
 
         The dense measure is kept, so a second call is free and a later
@@ -1452,7 +1452,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         inverse *through a solver*, conjugate gradients by default: nothing is
         assembled, and each membership test or support value then costs one
         solve, which is what the question costs on a space too large to
-        invert. Pass a direct solver, ``CholeskySolver()``, to factorise the
+        invert. Pass a direct solver, ``CholeskySolver()``, to factorize the
         covariance once on a space small enough to hold it; that is the dense
         route, and it is taken only by name. It used to be taken silently,
         with an ``O(N^3)`` inverse of the Galerkin matrix (DESIGN §49).
@@ -1504,7 +1504,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return Ellipsoid(
             self.domain,
             precision,
-            centre=self.expectation,
+            center=self.expectation,
             covariance=covariance,
             factor=factor,
         )
@@ -1550,7 +1550,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 :meth:`ambient_ball`; there is no sampling route, since the
                 fractional gauge of a draw costs a Lanczos application each.
             quantile_method: how the weighted chi-square is inverted.
-            rank: eigenpairs on the randomised route.
+            rank: eigenpairs on the randomized route.
             dense_limit: the dimension above which ``"auto"`` stops forming
                 matrices.
             rng: the generator for the probes.
@@ -1628,7 +1628,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 **calculus,
             )
         return Ellipsoid(
-            self._domain, precision, centre=self.expectation, covariance=covariance
+            self._domain, precision, center=self.expectation, covariance=covariance
         )
 
     def _spectrum(
@@ -1665,12 +1665,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             else:
                 raise ValueError(
                     f"No affordable route to the spectrum on a space of dimension "
-                    f"{self._domain.dim}: pass rank= for a randomised spectrum, "
+                    f"{self._domain.dim}: pass rank= for a randomized spectrum, "
                     "or raise dense_limit."
                 )
         covariance = self._require_covariance("The spectrum")
         if method == "spectral":
-            from ..numerics.randomised import random_eig
+            from ..numerics.randomized import random_eig
 
             decomposition = random_eig(covariance, rank=rank, rng=rng, n_jobs=n_jobs)
             return np.asarray(decomposition.eigenvalues, dtype=float)
@@ -1722,10 +1722,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
         if samples < 1:
             raise ValueError("At least one draw is needed.")
-        centre = self.expectation
+        center = self.expectation
         total = space.zero()
         for draw in self.samples(samples, rng=rng, n_jobs=n_jobs):
-            deviation = space.subtract(draw, centre)
+            deviation = space.subtract(draw, center)
             total = space.axpy(1.0, space.multiply(deviation, deviation), total)
         return space.scale(1.0 / samples, total)
 
@@ -1790,11 +1790,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             any invariant measure on a symmetric space — and it used to go the
             long way round like everything else.
         ``"dense"``
-            The generalised symmetric eigenproblem ``C_gal v == lambda G v``,
+            The generalized symmetric eigenproblem ``C_gal v == lambda G v``,
             whose eigenvalues are the operator's. Exact, ``O(dim^3)``, and it
             holds two dense matrices.
         ``"spectral"``
-            A randomised eigendecomposition truncated to *rank*, as v1's
+            A randomized eigendecomposition truncated to *rank*, as v1's
             ``LowRankEig`` route. The dropped tail is positive, so the radius
             comes out **too small**: this is a lower bound on the true one, and
             a rank has to be large enough that what it leaves out is
@@ -1810,11 +1810,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 ``"sampling"``. ``"auto"`` reads a diagonal spectrum if there
                 is one, then goes dense if the space has coordinates and is no
                 larger than *dense_limit*, then samples if the measure can be
-                sampled, then takes the randomised spectrum if a *rank* was
+                sampled, then takes the randomized spectrum if a *rank* was
                 given, and otherwise says which of those to supply.
             quantile_method: how to invert the weighted chi-squared -- see
                 :func:`~pygeoinf2.numerics.quadratic_forms.weighted_chi2_quantile`.
-            rank: eigenpairs to keep on the randomised route.
+            rank: eigenpairs to keep on the randomized route.
             samples: draws for the sampling route.
             dense_limit: the dimension above which ``"auto"`` stops forming
                 matrices.
@@ -1857,7 +1857,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     f"and taking its eigenvalues is cubic, and the two "
                     f"matrix-free routes need something this measure does not "
                     f"have. Give it a covariance factor so it can be sampled, "
-                    f"pass rank= for a randomised spectrum, or raise "
+                    f"pass rank= for a randomized spectrum, or raise "
                     f"dense_limit if the space can afford two dense matrices."
                 )
 
@@ -1867,20 +1867,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     "The sampling route needs a measure that can be drawn "
                     "from; supply a covariance factor or a sample callable."
                 )
-            centre = self.expectation
+            center = self.expectation
             draws = self.samples(samples, rng=rng, n_jobs=n_jobs)
             squared = np.array(
                 [
-                    self._domain.squared_norm(self._domain.subtract(x, centre))
+                    self._domain.squared_norm(self._domain.subtract(x, center))
                     for x in draws
                 ]
             )
             radius = float(np.sqrt(max(float(np.quantile(squared, level)), 0.0)))
-            return Ball(self._domain, radius=radius, centre=centre)
+            return Ball(self._domain, radius=radius, center=center)
 
         covariance = self._require_covariance("An ambient ball")
         if method == "spectral":
-            from ..numerics.randomised import random_eig
+            from ..numerics.randomized import random_eig
 
             decomposition = random_eig(covariance, rank=rank, rng=rng, n_jobs=n_jobs)
             return self._ambient_ball_from_spectrum(
@@ -1896,7 +1896,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         require_coordinates(self._domain)
         # The eigenvalues of the *operator* are those of C_c == G^-1 C_gal,
         # which is not symmetric on a space whose basis is not orthonormal.
-        # They are the generalised eigenvalues of the symmetric pair
+        # They are the generalized eigenvalues of the symmetric pair
         # (C_gal, G), which is both cheaper and better conditioned than a
         # non-symmetric decomposition of C_c: 0.05 s against 0.26 s at
         # dimension 1000, 4.0 s against 15.2 s at 4000.
@@ -1931,7 +1931,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if quantile_method == "auto":
             quantile_method = self._quantile_method_for(weights)
         radius = np.sqrt(weighted_chi2_quantile(weights, level, method=quantile_method))
-        return Ball(self._domain, radius=float(radius), centre=self.expectation)
+        return Ball(self._domain, radius=float(radius), center=self.expectation)
 
     @staticmethod
     def _quantile_method_for(weights: np.ndarray, /) -> str:
@@ -2024,7 +2024,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         this measure and ``e`` from the noise, and return
         ``x + K(value - A x - e)``. That has the posterior's mean and, by the
         usual cancellation, exactly its covariance — at the cost of one prior
-        draw and one solve, with no factorisation of the posterior covariance.
+        draw and one solve, with no factorization of the posterior covariance.
         It matters because conditioning is how an exact linear constraint — a
         conserved mass, a removed degree — is imposed on a prior, and a prior
         that cannot be sampled cannot generate synthetic data or be checked
@@ -2076,9 +2076,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self.can_sample and (noise is None or noise.can_sample):
 
             def sample(rng: Generator | None, _noise=noise) -> Any:
-                """A *centred* posterior draw: ``(I - K A) dx - K de``.
+                """A *centered* posterior draw: ``(I - K A) dx - K de``.
 
-                Centred because :meth:`sample` adds the expectation itself, and
+                Centered because :meth:`sample` adds the expectation itself, and
                 because it is true: the posterior's spread does not depend on
                 the data, only its mean does. So this is built from the prior
                 and noise *deviations* rather than from the draws.
@@ -2257,7 +2257,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         deviation = self._deviation(x)
         return self._domain.inner_product(self._precision(deviation), deviation)
 
-    def log_normalising_constant(self) -> float:
+    def log_normalizing_constant(self) -> float:
         """``-(n/2) log(2 pi) - (1/2) log det C``, the constant in the density.
 
         The piece :meth:`log_density` leaves out. It depends on the covariance,
@@ -2278,11 +2278,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             NotImplementedError: if the measure has no covariance, so there is
                 no determinant to take.
         """
-        if self._log_normalisation is None:
-            self._log_normalisation = self._compute_log_normalisation()
-        return self._log_normalisation
+        if self._log_normalization is None:
+            self._log_normalization = self._compute_log_normalization()
+        return self._log_normalization
 
-    def _compute_log_normalisation(self) -> float:
+    def _compute_log_normalization(self) -> float:
         """The constant, exactly for a diagonal covariance and otherwise not."""
         from ..numerics.functional_calculus import log_determinant
 
@@ -2296,7 +2296,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         if self._covariance is None:
             raise NotImplementedError(
-                "This measure has no covariance, so no normalising constant. "
+                "This measure has no covariance, so no normalizing constant. "
                 "Supply covariance or covariance_factor."
             )
         definite = self._covariance.with_traits(
@@ -2307,7 +2307,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     def log_density(self, x: X) -> float:
         """The log density up to an additive constant.
 
-        The constant is :meth:`log_normalising_constant`, which depends on the
+        The constant is :meth:`log_normalizing_constant`, which depends on the
         covariance. Differences of this quantity are meaningful only *within*
         one measure; comparing two measures means adding each one's constant.
         """
@@ -2391,7 +2391,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Built from the eigenvalues rather than through
         :attr:`DiagonalLinearOperator.sqrt` and :attr:`inverse`, which gate on
         *traits* that are never deduced on a space whose metric is not
-        diagonal. The functional calculus of a diagonalisable operator does not
+        diagonal. The functional calculus of a diagonalizable operator does not
         depend on the metric, so the eigenvalues are the honest thing to gate
         on.
         """
@@ -2543,7 +2543,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Works from whichever of the two the measure has. Requiring a factor
         turned a measure described by a covariance and a precision — which is
-        every conditioned or explicitly-built one — into an unspecialised
+        every conditioned or explicitly-built one — into an unspecialized
         pushforward under a scalar multiple.
         """
         if (

@@ -1,7 +1,7 @@
 """
 Gaussian mixtures: a Gaussian whose parameters are themselves random.
 
-A mixture couples a *parameterised* Gaussian, ``theta -> N(m(theta),
+A mixture couples a *parameterized* Gaussian, ``theta -> N(m(theta),
 C(theta))``, with a measure on the parameter. The parameter space is
 low-dimensional in practice and often finite — a handful of candidate
 correlation lengths, a discrete choice between two geological scenarios — and
@@ -65,8 +65,8 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         """
         Args:
             components: the Gaussian components, all on the same space.
-            weights: the mixing weights. Normalised here, so they may be given
-                unnormalised — which is what a reweighting produces. Equal
+            weights: the mixing weights. Normalized here, so they may be given
+                unnormalized — which is what a reweighting produces. Equal
                 weights if omitted.
         """
         components = list(components)
@@ -112,9 +112,9 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         *,
         weights: Any = None,
     ) -> "GaussianMixture[X]":
-        """A mixture from a parameterised Gaussian and a finite parameter set.
+        """A mixture from a parameterized Gaussian and a finite parameter set.
 
-        The literal reading of "a parameterised Gaussian measure coupled with a
+        The literal reading of "a parameterized Gaussian measure coupled with a
         distribution on the parameter space", when that distribution is
         discrete: *build* is the family and *parameters* carries its support.
 
@@ -160,7 +160,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         """
         if not parameters.can_sample:
             raise ValueError(
-                "The parameter measure must be samplable to discretise the "
+                "The parameter measure must be samplable to discretize the "
                 "mixture over it. Supply the support explicitly with "
                 "from_family if it is finite."
             )
@@ -180,7 +180,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
 
     @property
     def weights(self) -> np.ndarray:
-        """The mixing weights, normalised."""
+        """The mixing weights, normalized."""
         return self._weights.copy()
 
     def __len__(self) -> int:
@@ -291,11 +291,11 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
     def log_density(self, x: X) -> float:
         """``log sum_k w_k p_k(x)``, by log-sum-exp.
 
-        Each component contributes its *fully normalised* log density. The
+        Each component contributes its *fully normalized* log density. The
         constant a component's own :meth:`~GaussianMeasure.log_density` omits
         depends on its covariance, so it differs between components and cannot
         be left out of a sum over them: dropping it makes a broad component
-        look as tall at its centre as a narrow one.
+        look as tall at its center as a narrow one.
 
         Summed in the exponent rather than by exponentiating and adding, since
         a mixture's whole point is that one component may be many orders of
@@ -305,11 +305,11 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             x: where to evaluate it.
 
         Returns:
-            The log density, fully normalised.
+            The log density, fully normalized.
 
         Raises:
             NotImplementedError: if any component cannot supply its own
-                normalising constant -- which needs a log-determinant, and so
+                normalizing constant -- which needs a log-determinant, and so
                 a covariance the component can decompose.
         """
         from scipy.special import logsumexp
@@ -322,7 +322,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             )
         densities = np.array(
             [
-                component.log_density(x) + component.log_normalising_constant()
+                component.log_density(x) + component.log_normalizing_constant()
                 for component, weight in zip(self._components, self._weights)
                 if weight > 0.0
             ]
@@ -370,7 +370,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
 
         Raises:
             NotImplementedError: if any component cannot supply its
-                normalising constant, as for :meth:`log_density`.
+                normalizing constant, as for :meth:`log_density`.
         """
         from scipy.special import softmax
 
@@ -383,11 +383,11 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             zip(self._components, self._weights)
         ):
             if weight > 0.0:
-                # The normalising constant is per-component, so it does not
+                # The normalizing constant is per-component, so it does not
                 # cancel in the softmax the way a shared one would.
                 logs[index] = (
                     np.log(weight)
                     + component.log_density(x)
-                    + component.log_normalising_constant()
+                    + component.log_normalizing_constant()
                 )
         return softmax(logs)

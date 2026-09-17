@@ -3,7 +3,7 @@ The rendering layer.
 
 Not much can be asserted about a picture, so these check the two things that
 can be: that dispatch reaches the right renderer, and that the arithmetic done
-*before* matplotlib sees anything is right — the colour limits and the seam
+*before* matplotlib sees anything is right — the color limits and the seam
 that a longitude grid leaves open.
 """
 
@@ -28,22 +28,22 @@ def _close_figures():
     plt.close("all")
 
 
-class TestColourLimits:
+class TestColorLimits:
     def test_it_takes_the_range_by_default(self):
         values = np.array([-1.0, 4.0])
-        assert plotting.colour_limits(values) == (-1.0, 4.0)
+        assert plotting.color_limits(values) == (-1.0, 4.0)
 
     def test_symmetric_limits_put_zero_in_the_middle(self):
         values = np.array([-1.0, 4.0])
-        assert plotting.colour_limits(values, symmetric=True) == (-4.0, 4.0)
+        assert plotting.color_limits(values, symmetric=True) == (-4.0, 4.0)
 
     def test_explicit_limits_win(self):
         values = np.array([-1.0, 4.0])
-        assert plotting.colour_limits(values, vmin=0.0, vmax=1.0) == (0.0, 1.0)
+        assert plotting.color_limits(values, vmin=0.0, vmax=1.0) == (0.0, 1.0)
 
     def test_symmetric_applies_to_explicit_limits_too(self):
         values = np.array([0.0])
-        assert plotting.colour_limits(values, vmin=-1.0, vmax=3.0, symmetric=True) == (
+        assert plotting.color_limits(values, vmin=-1.0, vmax=3.0, symmetric=True) == (
             -3.0,
             3.0,
         )
@@ -92,7 +92,7 @@ class TestSphereRenderer:
     def test_a_map_is_drawn_with_a_closed_seam(self):
         """Without the wrap a blank wedge appears down the dateline.
 
-        The mesh is given explicit cell edges rather than centres, and they run
+        The mesh is given explicit cell edges rather than centers, and they run
         from -180 to +180 with the antimeridian cell drawn as its two halves.
         That is what closes the seam *and* keeps every cell on one side of
         cartopy's cut: a cell straddling the cut sends the whole mesh down a
@@ -383,7 +383,7 @@ class TestDensityResolution:
             space, np.array([[1.0, 0.4], [0.4, 0.6]])
         )
 
-        def centre_minus_corner(**kwargs):
+        def center_minus_corner(**kwargs):
             axes = plotting.plot_corner(measure, fill=True, **kwargs)
             panel = axes[1, 0]
             figure = panel.figure
@@ -401,8 +401,8 @@ class TestDensityResolution:
             plt.close("all")
             return value
 
-        exact = centre_minus_corner()
-        sampled = centre_minus_corner(samples=4000, rng=rng)
+        exact = center_minus_corner()
+        sampled = center_minus_corner(samples=4000, rng=rng)
         assert exact != pytest.approx(0.0, abs=5.0)
         assert (exact > 0.0) == (sampled > 0.0)
 
@@ -524,7 +524,7 @@ class TestSampledDensity:
 class TestPyslfpNeeds:
     """The keywords the review found every pyslfp call passing, and v2 not
     accepting. A caller who cannot title a plot has to reach past the return
-    value to do it, and a corner plot with no legend has three unlabelled
+    value to do it, and a corner plot with no legend has three unlabeled
     marks on it."""
 
     @pytest.fixture
@@ -631,7 +631,7 @@ class TestSphereMapOptions:
         )
         assert axis.gridliner is not None
 
-    def test_the_colourbar_takes_its_own_options(self, field):
+    def test_the_colorbar_takes_its_own_options(self, field):
         from pygeoinf2.plotting import plot
 
         space, values = field
@@ -644,8 +644,8 @@ class TestSphereMapOptions:
         assert mappable.colorbar.orientation == "horizontal"
 
     def test_the_defaults_are_v1s(self, field):
-        """v2 had flipped four of them with no reason recorded: the colour map
-        from RdBu to viridis, the colourbar on, the graticule off, and the
+        """v2 had flipped four of them with no reason recorded: the color map
+        from RdBu to viridis, the colorbar on, the graticule off, and the
         projection from PlateCarree to Robinson. A signed field on a
         sequential map reads as though it had a sign it does not have, so this
         is not only a matter of taste."""
@@ -668,9 +668,9 @@ class TestSphereMapOptions:
         from pygeoinf2.plotting import plot
 
         space, values = field
-        _, labelled = plot(space, values, colorbar_label="metres")
-        assert labelled.colorbar is not None
-        assert labelled.colorbar.ax.get_ylabel() == "metres"
+        _, labeled = plot(space, values, colorbar_label="metres")
+        assert labeled.colorbar is not None
+        assert labeled.colorbar.ax.get_ylabel() == "metres"
         _, refused = plot(space, values, colorbar=False, colorbar_label="metres")
         assert refused.colorbar is None
 
@@ -683,7 +683,7 @@ class TestSphereMapOptions:
 
 
 class TestScatteringPoints:
-    """``plot_points``, which pyslfp's altimetry figures colour by value.
+    """``plot_points``, which pyslfp's altimetry figures color by value.
 
     v2 hard-coded ``c=color``, so ``c=values`` was a duplicate keyword and
     ``data=values`` was not a keyword at all: there was no way to draw the
@@ -705,14 +705,14 @@ class TestScatteringPoints:
     def points():
         return [(10.0, -30.0), (-45.0, 100.0), (60.0, 170.0), (0.0, 0.0)]
 
-    def test_a_flat_colour_by_default(self, sphere):
+    def test_a_flat_color_by_default(self, sphere):
         from pygeoinf2.plotting import plot_points
 
         _, collection = plot_points(sphere, self.points())
         assert collection.get_array() is None
         assert collection.get_offsets().shape == (4, 2)
 
-    def test_it_colours_by_data(self, sphere):
+    def test_it_colors_by_data(self, sphere):
         from pygeoinf2.plotting import plot_points
 
         values = np.array([-2.0, 0.5, 1.0, 3.0])
@@ -721,7 +721,7 @@ class TestScatteringPoints:
         assert collection.get_clim() == (-2.0, 3.0)
         assert collection.get_cmap().name == "RdBu"
 
-    def test_symmetric_limits_and_a_labelled_bar(self, sphere):
+    def test_symmetric_limits_and_a_labeled_bar(self, sphere):
         from pygeoinf2.plotting import plot_points
 
         values = np.array([-2.0, 0.5, 1.0, 3.0])
@@ -828,9 +828,9 @@ class TestErrorBounds:
         from pygeoinf2.plotting import plot_error_bounds
 
         space, low, middle, high = setting
-        axis, band = plot_error_bounds(space, low, high, centre=middle)
+        axis, band = plot_error_bounds(space, low, high, center=middle)
         assert band is not None
-        assert hasattr(axis, "centre_line")
+        assert hasattr(axis, "center_line")
 
     def test_crossed_bounds_are_drawn_not_refused(self, setting):
         """A band that crosses over is what an inconsistent bound looks like,

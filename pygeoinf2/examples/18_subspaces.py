@@ -47,7 +47,7 @@ print()
 A = LinearOperator.from_matrix(X, Y, rng.normal(size=(4, X.dim)), form="components")
 kernel = LinearSubspace.from_kernel(A)
 print("kernel of A:")
-print("  P x = x - A* (A A*)^-1 A x, and A A* is recognised as")
+print("  P x = x - A* (A A*)^-1 A x, and A A* is recognized as")
 print("  semidefinite by the palindrome rule, so CG is admissible")
 print("  with nothing claimed.")
 print("  A P x == 0 ?", np.max(np.abs(A(kernel.project(X.random(rng=rng))))) < 1e-8)
@@ -72,14 +72,14 @@ print("  its tangent space is the kernel:", type(solutions.tangent).__name__)
 print()
 
 # --- and so a linear constraint is just another indicator ----------------
-result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimise(
-    SquaredDistance(X, centre=X.random(rng=rng)),
+result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+    SquaredDistance(X, center=X.random(rng=rng)),
     X.random(rng=rng),
     nonsmooth=solutions.indicator(),
 )
 print("min ||x - c||^2/2 subject to A x == b")
 print(f"  converged in {result.iterations} iterations")
-print("  and the constraint holds:", np.allclose(A(result.minimiser), data, atol=1e-7))
+print("  and the constraint holds:", np.allclose(A(result.minimizer), data, atol=1e-7))
 print()
 print("Nothing above needed a matrix, a basis, or a mass matrix written out.")
 print("The one thing that does need coordinates is dimension(), being a trace.")

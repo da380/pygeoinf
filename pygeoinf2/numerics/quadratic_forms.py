@@ -27,7 +27,7 @@ __all__ = ["weighted_chi2_cdf", "weighted_chi2_quantile"]
 # ``numerics`` package, so every session paid for them, and measured on this
 # machine the two cost 0.26 s of a 0.48 s import -- more than half of it --
 # for functions most sessions never call. ``scipy.integrate.quad`` was
-# imported here too and never used: the Imhof integral is a vectorised
+# imported here too and never used: the Imhof integral is a vectorized
 # trapezoid rule, for the reason ``_imhof`` gives.
 #
 # One other module still imports ``scipy.stats`` eagerly --
@@ -88,7 +88,7 @@ def _imhof_integrand(grid: np.ndarray, weights: np.ndarray, value: float) -> np.
 def _imhof(weights: np.ndarray, value: float, /, *, tolerance: float) -> float:
     """Imhof's inversion of the characteristic function.
 
-    A vectorised trapezoid rule, which is v1's, rather than adaptive
+    A vectorized trapezoid rule, which is v1's, rather than adaptive
     quadrature on a scalar integrand. The integrand oscillates with a period
     set by *value* and decays like a power of the variable, and adaptive
     quadrature handles neither well: it spent its subdivisions near the origin,
@@ -297,7 +297,7 @@ def weighted_chi2_quantile(
             here as an *empirical* quantile of one sample rather than a root
             find on a noisy CDF, which would not converge: brentq on a
             function that returns a different value each call has no root to
-            find. That is v1's behaviour too.
+            find. That is v1's behavior too.
         tolerance: the accuracy asked of the CDF at each probe.
         samples: draws for ``method="monte_carlo"``.
         rng: the generator for those draws.

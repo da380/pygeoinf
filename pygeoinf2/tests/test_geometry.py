@@ -215,7 +215,7 @@ class TestBoundaryOnTheBase:
 
 
 class TestConvexityCheck:
-    """v1's randomised ``ConvexSubset.check``, now on the functional in
+    """v1's randomized ``ConvexSubset.check``, now on the functional in
     ``testing``, where the other sampled axioms live."""
 
     def test_a_convex_functional_passes(self, X, rng):
@@ -248,7 +248,7 @@ class TestConvexityCheck:
 
 class TestDeclaredCapabilities:
     """A convex set says what it can do -- membership, projection, support
-    function, maximiser, level function -- so generic code asks rather than
+    function, maximizer, level function -- so generic code asks rather than
     catches. The closed forms have all of them; the combinators carry what
     their parts allow."""
 
@@ -262,14 +262,14 @@ class TestDeclaredCapabilities:
             subset.has_membership,
             subset.has_projection,
             subset.has_support_function,
-            subset.has_maximiser,
+            subset.has_maximizer,
             subset.has_level_function,
         )
 
     def test_the_closed_forms_have_everything(self, space, rng):
         precision = LinearOperator.identity(space) * 0.25
         for subset in (
-            Ball(space, radius=1.5, centre=space.random(rng=rng)),
+            Ball(space, radius=1.5, center=space.random(rng=rng)),
             HalfSpace(space, space.random(rng=rng), offset=0.3),
             Ellipsoid(
                 space, precision, covariance=LinearOperator.identity(space) * 4.0
@@ -292,7 +292,7 @@ class TestDeclaredCapabilities:
         boundary included."""
         precision = LinearOperator.identity(space) * 0.25
         for subset in (
-            Ball(space, radius=1.5, centre=space.random(rng=rng)),
+            Ball(space, radius=1.5, center=space.random(rng=rng)),
             HalfSpace(space, space.random(rng=rng), offset=0.3),
             Ellipsoid(space, precision),
         ):
@@ -330,7 +330,7 @@ class TestDeclaredCapabilities:
         total = ball + Ball(space, radius=2.0)
         assert self.flags(total) == (False, False, True, True, False)
         q = space.random(rng=rng)
-        assert space.inner_product(total.support_maximiser(q), q) == pytest.approx(
+        assert space.inner_product(total.support_maximizer(q), q) == pytest.approx(
             total.support_function()(q)
         )
         half = HalfSpace(space, space.random(rng=rng), offset=0.3)
@@ -345,24 +345,24 @@ class TestDeclaredCapabilities:
         knowing = ConvexSet.from_support_function(
             space,
             ball.support_function(),
-            maximiser=ball.support_maximiser,
+            maximizer=ball.support_maximizer,
             membership=lambda z, rtol: ball.contains(z, rtol=rtol),
         )
         assert self.flags(knowing) == (True, False, True, True, False)
         assert knowing.contains(space.zero())
 
-    def test_an_oracle_sets_support_function_keeps_its_maximiser(self, space, rng):
-        """The set was given a maximiser; the functional it hands back must
-        carry it, or the subgradient a minimiser asks for is lost."""
+    def test_an_oracle_sets_support_function_keeps_its_maximizer(self, space, rng):
+        """The set was given a maximizer; the functional it hands back must
+        carry it, or the subgradient a minimizer asks for is lost."""
         ball = Ball(space, radius=1.0)
         knowing = ConvexSet.from_support_function(
-            space, ball.support_function(), maximiser=ball.support_maximiser
+            space, ball.support_function(), maximizer=ball.support_maximizer
         )
         h = knowing.support_function()
         q = space.random(rng=rng)
         assert h.has_subgradient
         assert (
-            space.norm(space.subtract(h.subgradient(q), ball.support_maximiser(q)))
+            space.norm(space.subtract(h.subgradient(q), ball.support_maximizer(q)))
             < 1e-12
         )
         bare = ConvexSet.from_support_function(space, ball.support_function())
@@ -399,7 +399,7 @@ class TestConvexProjections:
         normal = X.random(rng=rng)
         return [
             ("ball", Ball(X, radius=1.5)),
-            ("offset ball", Ball(X, radius=1.0, centre=X.random(rng=rng))),
+            ("offset ball", Ball(X, radius=1.0, center=X.random(rng=rng))),
             ("half-space", HalfSpace(X, normal, offset=0.4)),
             ("hyperplane", Hyperplane(X, normal, offset=0.4)),
         ]
@@ -435,21 +435,21 @@ class TestConvexProjections:
         with pytest.raises(ValueError, match="not be negative"):
             Ball(X, radius=-1.0)
 
-    def test_a_zero_radius_is_the_single_point_at_the_centre(self, X, rng):
+    def test_a_zero_radius_is_the_single_point_at_the_center(self, X, rng):
         """The degenerate ball says "exactly this", which is what error-free
         data are. Refusing it is what stopped the Backus routes running with no
         error measure at all."""
-        centre = X.random(rng=rng)
-        point = Ball(X, radius=0.0, centre=centre)
-        elsewhere = X.add(centre, X.random(rng=rng))
+        center = X.random(rng=rng)
+        point = Ball(X, radius=0.0, center=center)
+        elsewhere = X.add(center, X.random(rng=rng))
 
-        assert point.contains(centre)
+        assert point.contains(center)
         assert not point.contains(elsewhere)
-        assert X.norm(X.subtract(point.project(elsewhere), centre)) < 1e-12
-        # Its support function is the point support (centre, y).
+        assert X.norm(X.subtract(point.project(elsewhere), center)) < 1e-12
+        # Its support function is the point support (center, y).
         direction = X.random(rng=rng)
         assert point.support_function()(direction) == pytest.approx(
-            X.inner_product(centre, direction)
+            X.inner_product(center, direction)
         )
 
 
@@ -490,15 +490,15 @@ class TestThreeViewsOfOneSet:
 
     def test_a_set_drops_into_a_proximal_method(self, X, rng):
         """The payoff: a hard constraint needs no extra machinery."""
-        centre = X.random(rng=rng)
+        center = X.random(rng=rng)
         constraint = Ball(X, radius=0.25)
-        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimise(
-            SquaredDistance(X, centre=centre),
+        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+            SquaredDistance(X, center=center),
             X.random(rng=rng),
             nonsmooth=constraint.indicator(),
         )
-        assert constraint.contains(result.minimiser, rtol=1e-6)
-        assert X.norm(result.minimiser) == pytest.approx(0.25, rel=1e-6)
+        assert constraint.contains(result.minimizer, rtol=1e-6)
+        assert X.norm(result.minimizer) == pytest.approx(0.25, rel=1e-6)
 
 
 class TestEllipsoid:
@@ -521,12 +521,12 @@ class TestEllipsoid:
         expected = np.sqrt(X.inner_product(ellipsoid.precision.inverse(y), y))
         assert support(y) == pytest.approx(expected)
 
-    def test_the_maximiser_attains_the_supremum(self, X, ellipsoid, rng):
+    def test_the_maximizer_attains_the_supremum(self, X, ellipsoid, rng):
         support = ellipsoid.support_function()
         y = X.random(rng=rng)
-        maximiser = support.subgradient(y)
-        assert ellipsoid.contains(maximiser, rtol=1e-8)
-        assert X.inner_product(maximiser, y) == pytest.approx(support(y))
+        maximizer = support.subgradient(y)
+        assert ellipsoid.contains(maximizer, rtol=1e-8)
+        assert X.inner_product(maximizer, y) == pytest.approx(support(y))
 
     def test_the_projection_lands_on_the_boundary(self, X, ellipsoid, rng):
         """It used to raise. A set that cannot project cannot be used by
@@ -541,24 +541,24 @@ class TestEllipsoid:
             if ellipsoid.contains(point):
                 continue
             projected = ellipsoid.project(point)
-            offset = X.subtract(projected, ellipsoid.centre)
+            offset = X.subtract(projected, ellipsoid.center)
             assert X.inner_product(
                 ellipsoid._precision(offset), offset
             ) == pytest.approx(1.0, abs=1e-10)
 
     def test_a_point_inside_is_left_where_it_is(self, X, ellipsoid):
-        centre = ellipsoid.centre
-        assert X.norm(X.subtract(ellipsoid.project(centre), centre)) < 1e-14
+        center = ellipsoid.center
+        assert X.norm(X.subtract(ellipsoid.project(center), center)) < 1e-14
 
     def test_it_is_the_nearest_point(self, X, ellipsoid, rng):
-        """Checked against a constrained optimiser, not merely against the
+        """Checked against a constrained optimizer, not merely against the
         constraint: landing on the boundary is necessary and not sufficient."""
         from scipy.optimize import minimize
 
         def constraint(components):
             """The ellipsoid's own, through the space's inner product -- which
             on a non-diagonal metric is not the component dot product."""
-            offset = X.subtract(X.from_components(components), ellipsoid.centre)
+            offset = X.subtract(X.from_components(components), ellipsoid.center)
             return 1.0 - X.inner_product(ellipsoid._precision(offset), offset)
 
         for _ in range(3):
@@ -579,7 +579,7 @@ class TestEllipsoid:
 
     def test_the_projection_is_matrix_free_by_default(self, rng, monkeypatch):
         """Conjugate gradients on ``I + lambda P``, nothing extracted. A
-        Cholesky factorisation used to be the default, twice per Newton step:
+        Cholesky factorization used to be the default, twice per Newton step:
         3.5 s at dimension 1500, and 31 s with 54 000 applications when the
         precision had to be probed for its matrix. A direct solver by name
         gives the same point."""
@@ -636,28 +636,28 @@ class TestBoundaries:
     def test_a_balls_boundary_is_its_surface(self, X, rng):
         from pygeoinf2.geometry.convex import BallSurface
 
-        centre = X.random(rng=rng)
-        ball = Ball(X, radius=1.3, centre=centre)
+        center = X.random(rng=rng)
+        ball = Ball(X, radius=1.3, center=center)
         surface = ball.boundary
         assert isinstance(surface, BallSurface)
         assert surface.radius == ball.radius
-        assert X.norm(X.subtract(surface.centre, centre)) < 1e-14
+        assert X.norm(X.subtract(surface.center, center)) < 1e-14
 
         # It is the boundary in the sense that matters: on it, not in it.
-        outside = X.add(centre, X.scale(4.0, X.random(rng=rng)))
+        outside = X.add(center, X.scale(4.0, X.random(rng=rng)))
         landed = surface.project(outside)
         assert surface.contains(landed)
         assert ball.contains(landed, rtol=1e-9)
         assert surface.contains(surface.sample(rng=rng))
-        # and the centre is in the ball but not on its boundary.
-        assert ball.contains(centre) and not surface.contains(centre)
+        # and the center is in the ball but not on its boundary.
+        assert ball.contains(center) and not surface.contains(center)
 
     def test_a_point_has_no_surface(self, X, rng):
-        """A ball of zero radius is the single point at its centre. Its
+        """A ball of zero radius is the single point at its center. Its
         boundary in the ambient space is itself, which is not a surface, so
         this refuses rather than returning a radius of zero."""
         with pytest.raises(ValueError, match="must be positive"):
-            Ball(X, radius=0.0, centre=X.random(rng=rng)).boundary
+            Ball(X, radius=0.0, center=X.random(rng=rng)).boundary
 
     def test_an_ellipsoids_boundary_is_its_surface(self, X, rng):
         from pygeoinf2.geometry.convex import EllipsoidSurface
@@ -671,7 +671,7 @@ class TestBoundaries:
         point = X.random(rng=rng)
         landed = ellipsoid.project(X.scale(4.0, point))
         assert surface.contains(landed, rtol=1e-8)
-        assert not surface.contains(ellipsoid.centre)
+        assert not surface.contains(ellipsoid.center)
 
     def test_it_needs_no_covariance(self, X):
         """The surface is defined by the precision, so an ellipsoid built
@@ -796,12 +796,12 @@ class TestSubspaces:
         X, Y, A = problem
         value = Y.random(rng=rng)
         subspace = AffineSubspace.from_linear_equation(A, value)
-        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimise(
-            SquaredDistance(X, centre=X.random(rng=rng)),
+        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+            SquaredDistance(X, center=X.random(rng=rng)),
             X.random(rng=rng),
             nonsmooth=subspace.indicator(),
         )
-        assert np.allclose(A(result.minimiser), value, atol=1e-7)
+        assert np.allclose(A(result.minimizer), value, atol=1e-7)
 
 
 class TestOneNormalInverse:
@@ -810,7 +810,7 @@ class TestOneNormalInverse:
     Three constructions need it -- the kernel projector, the minimum-norm
     translation and the pseudo-inverse -- and each used to build its own. With
     an iterative solver that is a wasted object; with a direct one it is the
-    matrix of ``A A*`` extracted and factorised again each time, and a subspace
+    matrix of ``A A*`` extracted and factorized again each time, and a subspace
     built from an equation did that twice in one constructor call.
     """
 
@@ -881,7 +881,7 @@ class TestTheMetricEntersEveryProjection:
     """The metric rule, applied to the sets.
 
     Everything in this module -- a projection, a support function, a support
-    maximiser, a subspace's dimension -- is written with ``inner_product``,
+    maximizer, a subspace's dimension -- is written with ``inner_product``,
     ``norm`` and adjoints, and every one of those expressions is also correct
     on components when the Gram matrix is the identity. Only a non-diagonal
     Gram tells the two apart, and the rest of this file runs on a Sobolev
@@ -903,24 +903,24 @@ class TestTheMetricEntersEveryProjection:
     def test_the_ball(self, space, rng):
         """``h(y) = r ||y|| + (c, y)`` in the *space's* norm, and the point
         attaining it is on the sphere of that norm."""
-        centre = space.random(rng=rng)
-        ball = Ball(space, radius=1.4, centre=centre)
+        center = space.random(rng=rng)
+        ball = Ball(space, radius=1.4, center=center)
         check_projection(ball, rng=rng)
 
         direction = space.random(rng=rng)
         support = ball.support_function()
-        expected = 1.4 * space.norm(direction) + space.inner_product(centre, direction)
+        expected = 1.4 * space.norm(direction) + space.inner_product(center, direction)
         assert support(direction) == pytest.approx(expected)
 
-        maximiser = ball.support_maximiser(direction)
-        assert space.inner_product(maximiser, direction) == pytest.approx(expected)
-        assert space.norm(space.subtract(maximiser, centre)) == pytest.approx(1.4)
+        maximizer = ball.support_maximizer(direction)
+        assert space.inner_product(maximizer, direction) == pytest.approx(expected)
+        assert space.norm(space.subtract(maximizer, center)) == pytest.approx(1.4)
 
         # And the projection is the closed form, not the component one: on a
         # dense Gram those differ.
-        far = space.add(centre, space.scale(9.0, direction))
-        offset = space.subtract(far, centre)
-        landed = space.axpy(1.4 / space.norm(offset), offset, space.copy(centre))
+        far = space.add(center, space.scale(9.0, direction))
+        offset = space.subtract(far, center)
+        landed = space.axpy(1.4 / space.norm(offset), offset, space.copy(center))
         assert space.norm(space.subtract(ball.project(far), landed)) < 1e-12
 
     def test_the_half_space_and_the_hyperplane(self, space, normal, rng):
@@ -945,7 +945,7 @@ class TestTheMetricEntersEveryProjection:
         the only isotropic draw on a space with a metric."""
         from pygeoinf2.geometry.convex import BallSurface
 
-        surface = BallSurface(space, radius=2.0, centre=space.random(rng=rng))
+        surface = BallSurface(space, radius=2.0, center=space.random(rng=rng))
         for _ in range(5):
             assert surface.contains(surface.sample(rng=rng))
             assert surface.contains(surface.project(space.random(rng=rng)))
@@ -971,9 +971,9 @@ class TestTheMetricEntersEveryProjection:
         expected = np.sqrt(space.inner_product(covariance(direction), direction))
         assert support(direction) == pytest.approx(expected)
 
-        maximiser = ellipsoid.support_maximiser(direction)
-        assert space.inner_product(maximiser, direction) == pytest.approx(expected)
-        assert ellipsoid.contains(maximiser, rtol=1e-8)
+        maximizer = ellipsoid.support_maximizer(direction)
+        assert space.inner_product(maximizer, direction) == pytest.approx(expected)
+        assert ellipsoid.contains(maximizer, rtol=1e-8)
 
         # Newton on the secular equation, with a solve per step, on a dense
         # Gram: the projection lands on the boundary and is the nearest point.
@@ -1106,7 +1106,7 @@ class TestPolytopeProjection:
 class TestHalfSpaceSupport:
     """v1's ``HalfSpaceSupportFunction``: extended-real valued, finite only
     along the outward normal, with the boundary's least-norm point as the
-    maximiser. v2's ``HalfSpace`` inherited the base refusal."""
+    maximizer. v2's ``HalfSpace`` inherited the base refusal."""
 
     @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
     def space(self, request):
@@ -1145,11 +1145,11 @@ class TestHalfSpaceSupport:
             "inf"
         )
 
-    def test_the_maximiser_is_the_least_norm_boundary_point(self, space, rng):
+    def test_the_maximizer_is_the_least_norm_boundary_point(self, space, rng):
         normal = space.random(rng=rng)
         half = HalfSpace(space, normal, offset=0.4)
         direction = space.scale(3.0, normal)
-        point = half.support_maximiser(direction)
+        point = half.support_maximizer(direction)
 
         assert half.boundary.contains(point)
         assert space.inner_product(point, direction) == pytest.approx(
@@ -1168,10 +1168,10 @@ class TestHalfSpaceSupport:
             < 1e-12
         )
 
-    def test_an_unbounded_direction_has_no_maximiser(self, space, rng):
+    def test_an_unbounded_direction_has_no_maximizer(self, space, rng):
         half = HalfSpace(space, space.random(rng=rng), offset=0.4)
         with pytest.raises(ValueError, match="infinite"):
-            half.support_maximiser(space.random(rng=rng))
+            half.support_maximizer(space.random(rng=rng))
 
     def test_the_hyperplane_is_finite_both_ways(self, space, rng):
         normal = space.random(rng=rng)
@@ -1180,7 +1180,7 @@ class TestHalfSpaceSupport:
         assert h(normal) == pytest.approx(0.4)
         assert h(space.scale(-2.0, normal)) == pytest.approx(-0.8)
         assert h(space.random(rng=rng)) == float("inf")
-        point = plane.support_maximiser(space.scale(-2.0, normal))
+        point = plane.support_maximizer(space.scale(-2.0, normal))
         assert plane.contains(point)
         assert space.inner_product(point, space.scale(-2.0, normal)) == pytest.approx(
             -0.8
@@ -1230,7 +1230,7 @@ class TestConvexIntersection:
         return Ball(X, radius=1.0), HalfSpace(X, X.basis_vector(0), offset=-0.2)
 
     def test_it_projects(self, X, parts, rng):
-        """Against a constrained optimiser. Dykstra, not alternating
+        """Against a constrained optimizer. Dykstra, not alternating
         projection: the latter reaches a point of the intersection, not the
         nearest one."""
         from scipy.optimize import minimize

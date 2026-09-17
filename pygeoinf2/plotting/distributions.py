@@ -18,7 +18,7 @@ v1                           v2
 ``fill_density``             ``fill``
 ``num_sigmas``               ``sigmas``
 ``width_scaling``            ``width``
-``contour_color``            ``colour``
+``contour_color``            ``color``
 ``plot_1d_distributions``    :func:`plot_densities`
 ``plot_corner_distributions`` :func:`plot_corner`
 ============================ =====================
@@ -29,7 +29,7 @@ Two entry points, and both take either kind of measure:
   from its mean and covariance;
 * any measure that can be *sampled* is drawn from draws instead — histograms
   and kernel density in place of curves and ellipses. That covers the posterior
-  of a non-linear problem, and the randomise-then-optimise sampler of §18.7,
+  of a non-linear problem, and the randomize-then-optimize sampler of §18.7,
   neither of which has a covariance to hand.
 
 **Components, not fields.** Everything here is about the components of a
@@ -295,7 +295,7 @@ def _density(
     deviation: float,
     draws: np.ndarray | None,
     *,
-    colour: str,
+    color: str,
     label: str | None,
     style: str,
     fill: bool,
@@ -318,9 +318,9 @@ def _density(
         # uniform one and read off it.
         uniform = np.linspace(values[0], values[-1], max(values.size, 512))
         density = np.interp(values, uniform, _binned_density(draws, uniform))
-    axis.plot(values, density, color=colour, lw=2, linestyle=style, label=label)
+    axis.plot(values, density, color=color, lw=2, linestyle=style, label=label)
     if fill:
-        axis.fill_between(values, density, color=colour, alpha=0.15)
+        axis.fill_between(values, density, color=color, alpha=0.15)
 
 
 def plot_densities(
@@ -390,7 +390,7 @@ def plot_densities(
         else (list(prior) if isinstance(prior, (list, tuple)) else [prior])
     )
 
-    def summarise(measures: Sequence[Any]) -> list[tuple[float, float, Any]]:
+    def summarize(measures: Sequence[Any]) -> list[tuple[float, float, Any]]:
         summary = []
         for one in measures:
             mean, covariance, draws = moments(one, samples=samples, rng=rng)
@@ -408,8 +408,8 @@ def plot_densities(
             )
         return summary
 
-    posterior_summary = summarise(posteriors)
-    prior_summary = summarise(priors)
+    posterior_summary = summarize(posteriors)
+    prior_summary = summarize(priors)
     every = posterior_summary + prior_summary
     live = [(m, s) for m, s, _ in every if s > 0.0]
     if not live:
@@ -448,7 +448,7 @@ def plot_densities(
                 mean,
                 deviation,
                 draws,
-                colour=_PRIOR_COLOURS[position % len(_PRIOR_COLOURS)],
+                color=_PRIOR_COLOURS[position % len(_PRIOR_COLOURS)],
                 label=label,
                 style=":",
                 fill=fill,
@@ -469,7 +469,7 @@ def plot_densities(
             mean,
             deviation,
             draws,
-            colour=_POSTERIOR_COLOURS[position % len(_POSTERIOR_COLOURS)],
+            color=_POSTERIOR_COLOURS[position % len(_POSTERIOR_COLOURS)],
             label=label,
             style="-",
             fill=fill,
@@ -530,7 +530,7 @@ def plot_corner(
     width: float = 3.75,
     fill: bool = False,
     colormap: str = "Blues",
-    colour: str = "darkblue",
+    color: str = "darkblue",
     samples: int = 20000,
     rng: Any = None,
     density: str = "binned",
@@ -558,8 +558,8 @@ def plot_corner(
         sigmas: how many contours to draw, before opening up for the truth.
         width: half-width of each panel, in standard deviations.
         fill: shade the contours rather than drawing them as lines.
-        colormap: the filled case's colour map.
-        colour: the unfilled case's line colour, and the mean marker's.
+        colormap: the filled case's color map.
+        color: the unfilled case's line color, and the mean marker's.
         samples: draws to take when the measure has no covariance to read.
         rng: the generator for those draws.
         density: how a *sampled* measure's density is estimated, which is what
@@ -576,7 +576,7 @@ def plot_corner(
         title: a title for the figure. Every pyslfp call passes one.
         legend: draw a key in the empty upper triangle, which is otherwise
             wasted space -- and without it the dotted prior, the solid
-            posterior and the starred truth are three unlabelled marks. v1
+            posterior and the starred truth are three unlabeled marks. v1
             had one; v2 lost it.
         posterior_label: what the key calls the posterior.
         prior_label: what it calls the prior.
@@ -644,7 +644,7 @@ def plot_corner(
                     mean[row],
                     deviation[row],
                     None if draws is None else draws[:, row],
-                    colour=colour,
+                    color=color,
                     label=None,
                     style="-",
                     fill=fill,
@@ -663,7 +663,7 @@ def plot_corner(
                             prior_mean[row],
                             prior_deviation[row],
                             None if prior_draws is None else prior_draws[:, row],
-                            colour=_PRIOR_COLOURS[0],
+                            color=_PRIOR_COLOURS[0],
                             label=None,
                             style=":",
                             fill=False,
@@ -748,10 +748,10 @@ def plot_corner(
                         mesh_y,
                         field,
                         levels=contour_levels,
-                        colors=colour,
+                        colors=color,
                         linewidths=1.0,
                     )
-                axis.plot(mean[column], mean[row], "o", color=colour, ms=3)
+                axis.plot(mean[column], mean[row], "o", color=color, ms=3)
                 if truth_values is not None:
                     axis.plot(
                         truth_values[column],
@@ -777,7 +777,7 @@ def plot_corner(
         # space. The top-right panel is the furthest from the data.
         _corner_legend(
             axes[0, size - 1],
-            colour=colour,
+            color=color,
             with_prior=prior_summary is not None,
             with_truth=truth_values is not None,
             posterior_label=posterior_label,
@@ -796,7 +796,7 @@ def _corner_legend(
     axis: Any,
     /,
     *,
-    colour: str,
+    color: str,
     with_prior: bool,
     with_truth: bool,
     posterior_label: str,
@@ -807,11 +807,11 @@ def _corner_legend(
 
     The handles are made rather than collected: the panels draw densities and
     contours in several calls each, so gathering real artists would give a
-    legend of whichever happened to be labelled.
+    legend of whichever happened to be labeled.
     """
     from matplotlib.lines import Line2D
 
-    handles = [Line2D([], [], color=colour, ls="-", label=posterior_label)]
+    handles = [Line2D([], [], color=color, ls="-", label=posterior_label)]
     if with_prior:
         handles.append(
             Line2D([], [], color=_PRIOR_COLOURS[0], ls=":", label=prior_label)

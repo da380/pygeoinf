@@ -4,7 +4,7 @@ Expression nodes for the operator algebra.
 An algebraic operation builds a small node holding its operands, rather than a
 closure that has forgotten them. That is what lets traits propagate by rule,
 lets ``A.adjoint.adjoint is A``, and lets an adjoint-palindromic composition
-such as ``L @ L.adjoint`` or ``A @ C @ A.adjoint`` be recognised as positive
+such as ``L @ L.adjoint`` or ``A @ C @ A.adjoint`` be recognized as positive
 semidefinite *after the fact* rather than only at the moment it is built.
 
 Simplification is limited to the obviously safe and locally decidable:
@@ -31,7 +31,7 @@ from ..traits import (
     scale_traits,
     sum_traits,
 )
-from .linearisation import Linearisation, QuadraticModel
+from .linearization import Linearization, QuadraticModel
 from .operators import (
     REALS,
     Functional,
@@ -129,7 +129,7 @@ class _Identity[X](LinearOperator[X, X]):
         """A multiple of the identity is a diagonal operator, and saying so
         is what lets it keep folding.
 
-        ``sigma * I`` was a scaled node, which nothing downstream recognises,
+        ``sigma * I`` was a scaled node, which nothing downstream recognizes,
         so ``(sigma I) (sigma I)`` -- the covariance every
         ``from_standard_deviation`` measure has -- stayed a composition and
         had to be probed a column at a time to give up its own diagonal. As a
@@ -606,7 +606,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
 
     That single rule covers both patterns that matter:
     ``L @ L.adjoint`` (a Gramian) and ``A @ C @ A.adjoint`` (a congruence, i.e.
-    the covariance pushforward). It works only because ``adjoint`` is memoised,
+    the covariance pushforward). It works only because ``adjoint`` is memoized,
     so identity comparison is meaningful.
     """
 
@@ -715,7 +715,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # product is "known" only when forming it creates nothing larger than
         # what is already stored: a rank-k factor times its adjoint on a
         # space of dimension n holds 2nk numbers, and its product n^2, which
-        # at n == 3000 and k == 10 is 72 MB materialised by any caller that
+        # at n == 3000 and k == 10 is 72 MB materialized by any caller that
         # so much as asked whether a matrix was known (DESIGN §51). Such a
         # product is declined, and the operator is probed like any other.
         known = self._known_factors()
@@ -814,14 +814,14 @@ class _OperatorSum[X, Y](Operator[X, Y]):
             result = self.codomain.add(result, term(x))
         return result
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
+    def _linearize(self, x: X) -> Linearization[X, Y]:
         parts = [term.at(x) for term in self._terms]
         value = parts[0].value
         derivative = parts[0].derivative
         for part in parts[1:]:
             value = self.codomain.add(value, part.value)
             derivative = derivative + part.derivative
-        return Linearisation(x, value, derivative)
+        return Linearization(x, value, derivative)
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
         # Each term's derivative alone: no term's value is asked for.
@@ -856,9 +856,9 @@ class _OperatorScaled[X, Y](Operator[X, Y]):
     def _value(self, x: X) -> Y:
         return self.codomain.scale(self._alpha, self._base(x))
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
+    def _linearize(self, x: X) -> Linearization[X, Y]:
         part = self._base.at(x)
-        return Linearisation(
+        return Linearization(
             x,
             self.codomain.scale(self._alpha, part.value),
             part.derivative * self._alpha,
@@ -905,14 +905,14 @@ class _OperatorComposition[X, Y](Operator[X, Y]):
     def _value(self, x: X) -> Y:
         return self._outer(self._inner(x))
 
-    def _linearise(self, x: X) -> Linearisation[X, Y]:
+    def _linearize(self, x: X) -> Linearization[X, Y]:
         inner = self._inner.at(x)
         outer = self._outer.at(inner.value)
-        return Linearisation(x, outer.value, outer.derivative @ inner.derivative)
+        return Linearization(x, outer.value, outer.derivative @ inner.derivative)
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
         # The chain rule needs the inner value, so the inner operator is
-        # linearised -- its value and derivative share work -- and the outer
+        # linearized -- its value and derivative share work -- and the outer
         # is asked for its derivative alone. The outer value is never taken.
         inner = self._inner.at(x)
         return self._outer.derivative(inner.value) @ inner.derivative
@@ -944,7 +944,7 @@ def linear_sum(terms: Sequence[LinearOperator]) -> LinearOperator:
     The node classes carry the *value* of a functional correctly whatever they
     are called; what they lose is the type, and with it ``representer``,
     ``derivative_components``, and an ``at()`` that returns a quadratic model
-    rather than a linearisation. Nothing here computes anything new -- all
+    rather than a linearization. Nothing here computes anything new -- all
     three of those are already derivable from the adjoint -- but they live on
     :class:`LinearFunctional`, so the type is what makes them reachable.
     """
@@ -973,12 +973,12 @@ def linear_composition(factors: Sequence[LinearOperator]) -> LinearOperator:
 #
 # A functional is an operator into Reals, so the nodes above already carry its
 # *value* correctly. What they lose is its type, and with it everything a
-# functional adds: at() returns a Linearisation rather than a QuadraticModel,
+# functional adds: at() returns a Linearization rather than a QuadraticModel,
 # so there is no `.gradient`; there is no `.hessian`; and `isinstance(_,
-# Functional)` is False, which is what an optimiser checks.
+# Functional)` is False, which is what an optimizer checks.
 #
-# That mattered concretely. A misfit plus a regulariser is a sum of
-# functionals, and `numerics.optimisation` asks for `functional.at(x).gradient`
+# That mattered concretely. A misfit plus a regularizer is a sum of
+# functionals, and `numerics.optimization` asks for `functional.at(x).gradient`
 # — so every composed objective, which is to say every real one, raised
 # AttributeError.
 #
@@ -989,7 +989,7 @@ def linear_composition(factors: Sequence[LinearOperator]) -> LinearOperator:
 class _FunctionalSum[X](_OperatorSum[X, float], Functional[X]):
     """``phi + psi``, still a functional."""
 
-    def _linearise(self, x: X) -> QuadraticModel[X]:
+    def _linearize(self, x: X) -> QuadraticModel[X]:
         parts = [term.at(x) for term in self._terms]
         value = parts[0].value
         derivative = parts[0].derivative
@@ -1017,7 +1017,7 @@ class _FunctionalSum[X](_OperatorSum[X, float], Functional[X]):
 class _FunctionalScaled[X](_OperatorScaled[X, float], Functional[X]):
     """``alpha * phi``, still a functional."""
 
-    def _linearise(self, x: X) -> QuadraticModel[X]:
+    def _linearize(self, x: X) -> QuadraticModel[X]:
         part = self._base.at(x)
         hessian = self._hessian(x) if self.has_hessian else None
         return QuadraticModel(
@@ -1040,7 +1040,7 @@ class _FunctionalScaled[X](_OperatorScaled[X, float], Functional[X]):
 class _FunctionalComposition[X](_OperatorComposition[X, float], Functional[X]):
     """``phi @ F``, still a functional."""
 
-    def _linearise(self, x: X) -> QuadraticModel[X]:
+    def _linearize(self, x: X) -> QuadraticModel[X]:
         inner = self._inner.at(x)
         outer = self._outer.at(inner.value)
         hessian = None
@@ -1075,7 +1075,7 @@ class _FunctionalComposition[X](_OperatorComposition[X, float], Functional[X]):
         return self._compose_hessian(inner, self._outer.at(inner.value))
 
     def _compose_hessian(
-        self, inner: Linearisation, outer: QuadraticModel
+        self, inner: Linearization, outer: QuadraticModel
     ) -> LinearOperator[X, X]:
         r"""``F'* H F' + F''[.]* grad``, the chain rule differentiated once more.
 

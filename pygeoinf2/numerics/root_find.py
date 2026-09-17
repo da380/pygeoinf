@@ -135,7 +135,7 @@ def monotone_root(
     *,
     decreasing: bool = True,
     initial: float = 1.0,
-    iterations: int = 60,
+    max_iterations: int = 60,
     rtol: float = 1e-6,
     atol: float = 0.0,
     expansions: int = 200,
@@ -155,7 +155,7 @@ def monotone_root(
             an increasing one, so both are the same code and neither is a
             special case.
         initial: where to start bracketing.
-        iterations: Brent iterations once bracketed, each one solve.
+        max_iterations: Brent iterations once bracketed, each one solve.
         rtol: the bracket is closed when its width falls below
             ``atol + rtol * (low + high)``.
         atol: the absolute half of that criterion, which matters when the
@@ -187,8 +187,10 @@ def monotone_root(
     """
     if initial <= 0.0:
         raise ValueError(f"The starting multiplier must be positive, got {initial}.")
-    if not 0 < iterations:
-        raise ValueError(f"At least one bisection step is needed, got {iterations}.")
+    if not 0 < max_iterations:
+        raise ValueError(
+            f"At least one bisection step is needed, got {max_iterations}."
+        )
     if not 0.0 <= minimum <= initial <= maximum:
         raise ValueError(
             f"The start must lie between the floor and the ceiling: got "
@@ -304,7 +306,7 @@ def monotone_root(
     # 23-28 solves per root with bisection, 10-13 with this. Each solve is a
     # linear system, so that is the whole cost of a discrepancy sweep.
     #
-    # Probes are memoised by their log-multiplier so the two endpoints, already
+    # Probes are memoized by their log-multiplier so the two endpoints, already
     # solved by the bracketing, are not solved again, and the multiplier
     # Brent returns is read back rather than re-solved.
     from scipy.optimize import brentq
@@ -331,7 +333,7 @@ def monotone_root(
         float(np.log(high)),
         xtol=xtol,
         rtol=4.0 * eps,
-        maxiter=iterations,
+        maxiter=max_iterations,
         full_output=True,
         disp=False,
     )
@@ -368,12 +370,12 @@ class DampedSolves:
     converge on each other, so each solve becomes a correction rather than a
     fresh problem. A direct solver cannot be warm started — it does not iterate
     — so the guess is ignored there and ``iterations`` comes back zero, which is
-    the honest report that the family is being factorised afresh each step.
+    the honest report that the family is being factorized afresh each step.
 
     **The preconditioner is kept.** A preconditioner supplied as a
     :class:`LinearSolver` is otherwise rebuilt against every member of the
     family, which for an expensive one — a Woodbury surrogate with its own
-    inner factorisation — costs more than the solves it is accelerating. It is
+    inner factorization — costs more than the solves it is accelerating. It is
     built once and reused while the multiplier stays within :attr:`refresh` of
     where it was built, and rebuilt when it wanders further. A preconditioner
     is an approximation, so reuse costs accuracy rather than correctness; the
@@ -433,7 +435,7 @@ class DampedSolves:
     def _sum_member(self, multiplier: float) -> LinearOperator:
         """``base + multiplier * shift``, as a matrix where that pays.
 
-        A direct solver factorises a *matrix*, and it gets one by asking the
+        A direct solver factorizes a *matrix*, and it gets one by asking the
         member for it. Where the member cannot write its own matrix down --
         a normal operator, a composition, anything the ``_known_matrix``
         chain cannot read -- that costs ``dim`` applications, and the sweep

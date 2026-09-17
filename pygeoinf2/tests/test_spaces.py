@@ -191,7 +191,7 @@ class TestReals:
 
 
 class TestDerivedOperations:
-    def test_gram_schmidt_orthonormalises(self, rng):
+    def test_gram_schmidt_orthonormalizes(self, rng):
         space = make_weighted_space()
         vectors = [space.random(rng=rng) for _ in range(3)]
         basis = space.gram_schmidt(vectors)

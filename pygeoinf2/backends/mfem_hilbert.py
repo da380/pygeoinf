@@ -3,10 +3,10 @@ MFEM as a plain Hilbert space: this library conducts, MFEM computes.
 
 :mod:`pygeoinf2.backends.mfem` presents a finite element space as a
 :class:`~pygeoinf2.algebra.spaces.CoordinateSpace`. It reads the mass matrix
-out of MFEM into SciPy, factorises it there, and hands assembled forms over as
+out of MFEM into SciPy, factorizes it there, and hands assembled forms over as
 Galerkin matrices — so once a form is assembled, this library does the linear
 algebra. That is the right arrangement for a modest serial problem, where a
-sparse factorisation of the mass matrix is cheap and a dense Gram matrix is
+sparse factorization of the mass matrix is cheap and a dense Gram matrix is
 available for checking things.
 
 This module is the other arrangement. The space is a
@@ -32,7 +32,7 @@ dot product and a global dimension — and nothing else changes. That path is
 that the design admits it, not that it has been run.
 
 What this arrangement costs is honesty about adjoints. An operator's adjoint
-on a mass-weighted space is ``M^-1 A^T M``; without a factorisation every
+on a mass-weighted space is ``M^-1 A^T M``; without a factorization every
 ``M^-1`` is an iterative solve, well conditioned and short, but a solve. The
 coordinate backend pays that once at construction; this one pays it per
 adjoint. For a PDE-constrained problem the PDE solves dominate either way.
@@ -403,7 +403,7 @@ class MfemHilbertSpace(MassWeightedSpace):
 
     What follows from having no coordinates: :meth:`LinearOperator.matrix`
     refuses, so nothing dense can be formed by accident; every solver that
-    runs here is a Krylov one; and the randomised and functional-calculus
+    runs here is a Krylov one; and the randomized and functional-calculus
     routines take their coordinate-free paths. What does not follow is any
     loss of meaning — the norm is the ``L2`` norm of the function, the
     adjoint is the adjoint, and the Bayesian machinery runs unchanged.
@@ -550,7 +550,7 @@ class MfemHilbertSpace(MassWeightedSpace):
 
         MFEM's white-noise integrator gives a load with covariance ``M``; the
         mass solve turns that into a vector with covariance ``M^-1``, which is
-        the identity in this inner product. No factorisation of ``M`` is
+        the identity in this inner product. No factorization of ``M`` is
         involved anywhere, and no matrix is formed.
         """
         return self.mass_inverse(white_noise_load(self, rng=rng))
@@ -785,9 +785,9 @@ def white_noise_load(
 ) -> Any:
     """A load vector whose covariance is the mass operator.
 
-    The finite element discretisation of white noise, ``(W, phi_i)``, whose
+    The finite element discretization of white noise, ``(W, phi_i)``, whose
     covariance is ``(phi_i, phi_j) == M``. MFEM assembles it element by
-    element; nothing is factorised. The vector vanishes on the essential
+    element; nothing is factorized. The vector vanishes on the essential
     degrees of freedom, where its covariance is the constrained mass
     operator's — the free block of ``M``.
 
@@ -857,7 +857,7 @@ def matern_measure(
     from ..probability.gaussian import GaussianMeasure
 
     dimension = space.finite_element_space.GetMesh().Dimension()
-    theta, normalisation, order = _matern_parameters(
+    theta, normalization, order = _matern_parameters(
         dimension, smoothness, correlation_length, rotation
     )
 
@@ -891,7 +891,7 @@ def matern_measure(
         space, system, make_solver=solver, rtol=rtol, max_iterations=max_iterations
     )
 
-    scale = float(amplitude) * normalisation
+    scale = float(amplitude) * normalization
     factor = solve
     powered = operator
     for _ in range(order - 1):

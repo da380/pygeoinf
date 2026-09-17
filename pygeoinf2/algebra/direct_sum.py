@@ -10,7 +10,7 @@ data)`` case, where indexing a joint vector by position is how sign errors get
 made.
 
 Block operators are **nonlinear by default**, with the linear case as a
-specialisation. That is not speculative generality: v1 already builds the joint
+specialization. That is not speculative generality: v1 already builds the joint
 law of model and data as a pushforward of a product measure through a block
 operator,
 
@@ -19,7 +19,7 @@ operator,
     joint = op @ mu                                the law of (m, A m + e)
 
 and the same shape with a nonlinear ``F`` in place of ``A`` gives the law of
-``(m, F(m) + e)`` — a samplable measure, and a linearisation
+``(m, F(m) + e)`` — a samplable measure, and a linearization
 ``[[I, 0], [F'(m), I]]`` that comes from the same object rather than from a
 separate construction.
 
@@ -109,7 +109,7 @@ class DirectSum[V](HilbertSpace[tuple]):
 
     @property
     def labels(self) -> tuple[str, ...] | None:
-        """The summand labels, or None if the sum is unlabelled."""
+        """The summand labels, or None if the sum is unlabeled."""
         return self._labels
 
     def __len__(self) -> int:
@@ -156,7 +156,7 @@ class DirectSum[V](HilbertSpace[tuple]):
             if self._labels is None:
                 raise KeyError(f"This direct sum has no labels, so no {key!r}.")
             if key not in self._labels:
-                raise KeyError(f"No summand labelled {key!r}; have {self._labels}.")
+                raise KeyError(f"No summand labeled {key!r}; have {self._labels}.")
             return self._labels.index(key)
         if not 0 <= key < len(self._spaces):
             raise IndexError(f"Index {key} out of range for {len(self._spaces)}.")
@@ -226,9 +226,9 @@ class DirectSum[V](HilbertSpace[tuple]):
     def projection(self, key: int | str) -> LinearOperator:
         """The orthogonal projection onto one summand, as an operator.
 
-        Memoised per index, for the same reason ``adjoint`` is: the palindrome
+        Memoized per index, for the same reason ``adjoint`` is: the palindrome
         rule compares factors by identity, so a rebuilt projection would make
-        ``P @ C @ P.adjoint`` unrecognisable as a congruence.
+        ``P @ C @ P.adjoint`` unrecognizable as a congruence.
         """
         i = self.index(key)
         cache = self.__dict__.setdefault("_projection_cache", {})
@@ -493,7 +493,7 @@ class BlockOperator(Operator):
     """An operator between direct sums, given as a grid of operators.
 
     Nonlinear by default. The derivative is the block operator of the blocks'
-    derivatives, which is what makes a linearised joint model fall out of the
+    derivatives, which is what makes a linearized joint model fall out of the
     joint model itself.
     """
 

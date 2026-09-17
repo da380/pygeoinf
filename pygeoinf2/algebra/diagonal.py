@@ -126,7 +126,7 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
     #                      Structure-preserving algebra                 #
     # ----------------------------------------------------------------- #
     #
-    # The specialisation protocol of DESIGN.md 5.4. Without these, the sum of
+    # The specialization protocol of DESIGN.md 5.4. Without these, the sum of
     # two diagonal operators would be a generic node and would lose both the
     # eigenvalues and the functional calculus that makes them worth storing.
 
@@ -190,7 +190,7 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
         Args:
             function: applied to the whole eigenvalue array at once, so it
-                must be vectorised and must not change the shape.
+                must be vectorized and must not change the shape.
 
         Returns:
             The diagonal operator with the transformed spectrum.

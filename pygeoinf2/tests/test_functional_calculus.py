@@ -10,8 +10,8 @@ from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.numerics.functional_calculus import (
     OperatorFunction,
     apply_operator_function,
-    iter_lanczos_tridiagonalise,
-    lanczos_tridiagonalise,
+    iter_lanczos_tridiagonalize,
+    lanczos_tridiagonalize,
     log_determinant,
     operator_exp,
     operator_function,
@@ -52,7 +52,7 @@ def problem(rng):
 class TestLanczos:
     def test_the_basis_is_orthonormal(self, problem, rng):
         X, A, _ = problem
-        basis, _ = lanczos_tridiagonalise(A, X.random(rng=rng), 8)
+        basis, _ = lanczos_tridiagonalize(A, X.random(rng=rng), 8)
         for i, u in enumerate(basis):
             for j, v in enumerate(basis):
                 assert X.inner_product(u, v) == pytest.approx(
@@ -62,32 +62,32 @@ class TestLanczos:
     def test_the_matrix_is_the_projected_operator(self, problem, rng):
         """Q* A Q == T, which is what makes the whole method work."""
         X, A, _ = problem
-        basis, matrix = lanczos_tridiagonalise(A, X.random(rng=rng), 6)
+        basis, matrix = lanczos_tridiagonalize(A, X.random(rng=rng), 6)
         projected = np.array([[X.inner_product(A(v), u) for v in basis] for u in basis])
         assert np.allclose(projected, matrix, atol=1e-9)
 
     def test_it_is_tridiagonal(self, problem, rng):
         X, A, _ = problem
-        _, matrix = lanczos_tridiagonalise(A, X.random(rng=rng), 8)
+        _, matrix = lanczos_tridiagonalize(A, X.random(rng=rng), 8)
         assert np.allclose(np.triu(matrix, 2), 0.0)
         assert np.allclose(np.tril(matrix, -2), 0.0)
         assert np.allclose(matrix, matrix.T)
 
     def test_a_full_run_recovers_the_spectrum(self, problem, rng):
         X, A, matrix = problem
-        _, tridiagonal = lanczos_tridiagonalise(A, X.random(rng=rng), N)
+        _, tridiagonal = lanczos_tridiagonalize(A, X.random(rng=rng), N)
         assert np.allclose(
             np.sort(np.linalg.eigvalsh(tridiagonal)),
             np.sort(np.linalg.eigvalsh(matrix)),
             rtol=1e-8,
         )
 
-    def test_reorthogonalisation_matters(self, problem, rng):
+    def test_reorthogonalization_matters(self, problem, rng):
         """Without it, Lanczos loses orthogonality after very few steps."""
         X, A, _ = problem
         start = X.random(rng=rng)
-        with_reorth, _ = lanczos_tridiagonalise(A, start, N, reorthogonalise=True)
-        without, _ = lanczos_tridiagonalise(A, start, N, reorthogonalise=False)
+        with_reorth, _ = lanczos_tridiagonalize(A, start, N, reorthogonalize=True)
+        without, _ = lanczos_tridiagonalize(A, start, N, reorthogonalize=False)
 
         def worst_overlap(basis):
             return max(
@@ -103,20 +103,20 @@ class TestLanczos:
         X, A, _ = problem
         sizes = [
             matrix.shape[0]
-            for _, matrix in iter_lanczos_tridiagonalise(A, X.random(rng=rng), 5)
+            for _, matrix in iter_lanczos_tridiagonalize(A, X.random(rng=rng), 5)
         ]
         assert sizes == [1, 2, 3, 4, 5]
 
     def test_a_zero_start_is_refused(self, problem):
         X, A, _ = problem
         with pytest.raises(ValueError, match="nonzero"):
-            lanczos_tridiagonalise(A, X.zero(), 3)
+            lanczos_tridiagonalize(A, X.zero(), 3)
 
     def test_an_invariant_subspace_terminates_early(self, rng):
         """Exact termination, not failure."""
         X = EuclideanSpace(4)
         A = DiagonalLinearOperator(X, np.array([2.0, 2.0, 5.0, 7.0]))
-        basis, _ = lanczos_tridiagonalise(A, X.basis_vector(0), 4)
+        basis, _ = lanczos_tridiagonalize(A, X.basis_vector(0), 4)
         assert len(basis) == 1  # e_0 is already an eigenvector
 
 
@@ -393,7 +393,7 @@ class TestDiagonalFastPath:
         assert np.allclose(root.eigenvalues, np.sqrt(values))
 
     def test_the_two_paths_agree(self, rng):
-        """The dispatch is an optimisation, not a different answer."""
+        """The dispatch is an optimization, not a different answer."""
         X = EuclideanSpace(6)
         values = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         diagonal = DiagonalLinearOperator(X, values)
@@ -430,7 +430,7 @@ class TestDiagonalOperator:
         assert not (Traits.POSITIVE_SEMIDEFINITE & indefinite.traits)
         check_traits(indefinite, rng=rng)
 
-    def test_a_projection_is_recognised(self, rng):
+    def test_a_projection_is_recognized(self, rng):
         X = EuclideanSpace(4)
         A = DiagonalLinearOperator(X, np.array([1.0, 1.0, 0.0, 0.0]))
         assert Traits.IDEMPOTENT & A.traits
@@ -541,7 +541,7 @@ class TestTheDiagonalCalculusOnANonDiagonalMetric:
             indefinite.log_determinant
 
     def test_a_diagonal_metric_is_unaffected(self, rng):
-        """The generalisation must not move the answer where the trait was
+        """The generalization must not move the answer where the trait was
         deduced: there ``d >= 0`` and ``POSITIVE_SEMIDEFINITE`` say the same
         thing."""
         space = make_weighted_space()
@@ -592,7 +592,7 @@ class TestCoordinateFreedom:
 class TestLogDeterminant:
     """``log det A == tr(log A)``, densely and by stochastic Lanczos.
 
-    The two routes share no code: one forms the matrix and factorises it, the
+    The two routes share no code: one forms the matrix and factorizes it, the
     other never forms anything and reaches the answer through a Krylov
     iteration and Hutchinson's estimator. They must agree, and on a space whose
     metric is not the identity they must agree about *which* determinant — the
@@ -715,7 +715,7 @@ class TestDiagonalLogDeterminant:
         assert estimate.standard_error == 0.0
         assert estimate.value == pytest.approx(float(np.sum(np.log(values))))
 
-    def test_an_explicit_method_is_still_honoured(self):
+    def test_an_explicit_method_is_still_honored(self):
         """The fast path is an ``auto`` decision, not an override: a caller who
         asks for the stochastic route to check it against something still gets
         it."""
@@ -801,7 +801,7 @@ class TestLanczosStopsEarly:
 class TestLanczosOnComponents:
     """On a coordinate space the Krylov basis is kept as component columns:
     one analysis and one synthesis per step, where the coordinate-free
-    iteration analysed both arguments of ``2k + 4`` inner products per step.
+    iteration analyzed both arguments of ``2k + 4`` inner products per step.
     Measured at lmax 64: 1047 analyses for 30 steps against 152."""
 
     def test_it_matches_the_coordinate_free_iteration_on_a_dense_metric(self, rng):
@@ -817,14 +817,14 @@ class TestLanczosOnComponents:
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
         )
         x = space.random(rng=rng)
-        fast_basis, fast_matrix = lanczos_tridiagonalise(operator, x, 12)
+        fast_basis, fast_matrix = lanczos_tridiagonalize(operator, x, 12)
         fast_root = apply_operator_function(operator, np.sqrt, x, max_iterations=12)
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(
             CoordinateSpace, "uses_component_fast_paths", property(lambda self: False)
         )
         try:
-            slow_basis, slow_matrix = lanczos_tridiagonalise(operator, x, 12)
+            slow_basis, slow_matrix = lanczos_tridiagonalize(operator, x, 12)
             slow_root = apply_operator_function(operator, np.sqrt, x, max_iterations=12)
         finally:
             monkeypatch.undo()
@@ -934,7 +934,7 @@ class TestTheDenseLimit:
     """``dense_limit`` was 512, which sent a 960-dimensional evidence to a
     stochastic estimate of +/-30 nats in 4.8 s where the dense route was
     exact in 2.8 s. It is now 4000, and the decision is in two parts: whether
-    the matrix can be *held and factorised* (that is what the limit means),
+    the matrix can be *held and factorized* (that is what the limit means),
     and separately whether it can be *probed* — a matrix that has to be
     probed costs ``dim`` applications, against the stochastic route's budget
     of ``samples * max_iterations``."""
@@ -977,7 +977,7 @@ class TestTheDenseLimit:
         )
 
     def test_the_metric_determinant_is_still_subtracted(self, rng):
-        """The Gram factorisation is skipped only where ``log det G == 0``.
+        """The Gram factorization is skipped only where ``log det G == 0``.
         On a dense Gram it is not, and the answer is the *component* matrix's
         determinant either way."""
         # Scaled, so that ``log det G`` is 30 log 3 rather than zero: the

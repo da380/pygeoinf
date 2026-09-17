@@ -45,7 +45,7 @@ class TestAdjoint:
         )
         check_operator(A, rng=rng)
 
-    def test_adjoint_is_memoised(self, spaces, rng):
+    def test_adjoint_is_memoized(self, spaces, rng):
         X, Y = spaces
         A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         assert A.adjoint is A.adjoint
@@ -143,7 +143,7 @@ class TestTraitPropagation:
         assert Traits.POSITIVE_SEMIDEFINITE & G.traits
         check_traits(G, rng=rng)
 
-    def test_congruence_is_recognised_after_the_fact(self, spaces, rng):
+    def test_congruence_is_recognized_after_the_fact(self, spaces, rng):
         """A @ C @ A.adjoint, built in two steps. The M1 acceptance case.
 
         This is what closures cannot do: the congruence is assembled as
@@ -377,7 +377,7 @@ class TestScipyBridge:
     def test_it_feeds_scipy_eigsh_on_a_dense_metric(self, rng):
         """The Galerkin form of a self-adjoint operator is symmetric, so
         scipy's Lanczos with the Gram matrix as the mass recovers the
-        operator's own eigenvalues -- the generalised ones of (S, G), which
+        operator's own eigenvalues -- the generalized ones of (S, G), which
         the component matrix, unsymmetric on this metric, would not give."""
         from scipy.linalg import eigh
         from scipy.sparse.linalg import eigsh
@@ -608,7 +608,7 @@ class TestMatrixRepresentations:
 class TestWithTraits:
     """Adding a claim must not cost the operator its class.
 
-    The specialisation protocol dispatches on type, so an operator that arrives
+    The specialization protocol dispatches on type, so an operator that arrives
     at a fast path as a wrapper does not take it. ``with_traits`` returned a
     wrapper, and that one fact was responsible for a diagonal covariance losing
     its exact log-determinant and a normal operator losing its factors.
@@ -647,7 +647,7 @@ class TestWithTraits:
         vector = rng.normal(size=5)
         assert claimed(vector) == pytest.approx(operator(vector))
         # SELF_ADJOINT means the adjoint is the operator itself, so the stale
-        # adjoint the original had memoised must not have been carried over.
+        # adjoint the original had memoized must not have been carried over.
         assert claimed.adjoint is claimed
 
     def test_claiming_self_adjointness_off_the_diagonal_is_refused(self):
@@ -662,7 +662,7 @@ class TestCompositionCosts:
     def test_composing_with_an_inverse_costs_no_applications(self, rng):
         """The palindrome rule compares factors by identity, and asking an
         operator for its adjoint *builds* one. For the inverse of a direct
-        solver that means extracting a second matrix and factorising it, so
+        solver that means extracting a second matrix and factorizing it, so
         testing whether a composition happened to be a palindrome cost an
         O(n^3) detour at composition time -- on an expression that might never
         be applied. Measured at dimension 60: 60 applications for
@@ -765,7 +765,7 @@ class TestMatrixLinearOperator:
     def test_the_matrix_is_read_rather_than_re_derived(self, rng):
         """It was captured in a closure, so an operator built from a matrix
         could not produce one: ``matrix()`` re-derived it by ``dim``
-        applications, and so did every direct solver before factorising."""
+        applications, and so did every direct solver before factorizing."""
         space = EuclideanSpace(40)
         matrix = rng.normal(size=(40, 40))
         applications = 0
@@ -1004,7 +1004,7 @@ class TestColumnOperator:
 
 
 class TestLinearisationIdentity:
-    """``Linearisation`` and ``QuadraticModel`` are frozen dataclasses whose
+    """``Linearization`` and ``QuadraticModel`` are frozen dataclasses whose
     fields hold *vectors*. With the default ``eq=True`` the generated ``==``
     compared them field by field, which on an array-backed space returns an
     array whose truth value is an error, and the ``__hash__`` that
@@ -1014,7 +1014,7 @@ class TestLinearisationIdentity:
 
     @staticmethod
     def model(rng):
-        from pygeoinf2.algebra.linearisation import Linearisation, QuadraticModel
+        from pygeoinf2.algebra.linearization import Linearization, QuadraticModel
 
         space = make_dense_metric_space(4)
         derivative = LinearOperator.from_matrix(
@@ -1025,7 +1025,7 @@ class TestLinearisationIdentity:
 
         functional = LinearFunctional.from_representer(space, space.random(rng=rng))
         return (
-            Linearisation(point, space.random(rng=rng), derivative),
+            Linearization(point, space.random(rng=rng), derivative),
             QuadraticModel(point, 1.0, functional),
         )
 
@@ -1078,7 +1078,7 @@ class TestAssembledStoresTheComponentsForm:
     forward application: measured at dimension 2000 over a dense Gram, 3.80 ms
     per application against 0.77 ms, and CG 624 ms against 511 ms.
 
-    The Galerkin form is still what a symmetric factorisation wants, and it
+    The Galerkin form is still what a symmetric factorization wants, and it
     still gets it — converted once, at build time, through ``_in_form``.
     """
 
@@ -1133,7 +1133,7 @@ class TestAssembledStoresTheComponentsForm:
         assert solves == 0
 
     def test_a_direct_solver_still_gets_the_symmetric_matrix(self, rng):
-        """Converted once through ``_in_form``, against the factorisation's
+        """Converted once through ``_in_form``, against the factorization's
         own cost."""
         from pygeoinf2.numerics import CholeskySolver
 

@@ -7,8 +7,8 @@ a point, a distribution gives a distribution, a constraint set gives a
 constraint set — and that rule is what says these three exist and stops a
 fourth being invented.
 
-The target is the model space, or a property space reached by an operator
-``T``. An inverse problem is an inference problem with ``T == identity``, so
+The property space is the model space, or a space reached from it by an
+operator ``T``. An inverse problem is an inference problem with ``T == identity``, so
 :meth:`Estimator.push_forward` is the whole of the difference: applying ``T``
 to a point, pushing a measure through it, taking the image of a set.
 
@@ -37,7 +37,7 @@ __all__ = [
 
 
 class Estimator(ABC):
-    """A mapping from data to an answer about the target."""
+    """A mapping from data to an answer about a property of the model."""
 
     @property
     @abstractmethod
@@ -46,7 +46,7 @@ class Estimator(ABC):
 
     @property
     @abstractmethod
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The space the answer is about — the model space, or a property space."""
 
     @abstractmethod
@@ -119,7 +119,7 @@ class LinearPointEstimator(AffineOperator):
         return self._operator.domain
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """``B``'s codomain."""
         return self._operator.codomain
 
@@ -196,37 +196,37 @@ class GaussianEstimator(MeasureEstimator):
 
     def __init__(
         self,
-        mean_map: AffineOperator,
+        expectation_operator: AffineOperator,
         covariance: LinearOperator,
         /,
         *,
-        centred_sample: Any = None,
+        centered_sample: Any = None,
     ) -> None:
         """
         Args:
-            mean_map: data to the posterior mean.
+            expectation_operator: data to the posterior expectation.
             covariance: the posterior covariance, on the target space.
-            centred_sample: a callable taking a generator and returning one
+            centered_sample: a callable taking a generator and returning one
                 draw of the *fluctuation* about the mean. Supplied when the
                 posterior can be sampled without a covariance factor — which
                 for a linear Gaussian inversion it can, by
-                randomise-then-optimise. Carried here rather than attached by a
+                randomize-then-optimize. Carried here rather than attached by a
                 subclass's ``__call__`` so that :meth:`push_forward` can map it
                 through; a sampler that only exists on the way out is a
                 sampler ``push_forward`` silently drops.
         """
-        if covariance.domain != mean_map.codomain:
+        if covariance.domain != expectation_operator.codomain:
             raise ValueError(
                 "The covariance must act on the space the mean map lands in."
             )
-        self._mean_map = mean_map
+        self._expectation_operator = expectation_operator
         self._covariance = covariance
-        self._centred_sample = centred_sample
+        self._centered_sample = centered_sample
 
     @property
-    def mean_map(self) -> AffineOperator:
-        """The affine map from data to the posterior mean."""
-        return self._mean_map
+    def expectation_operator(self) -> AffineOperator:
+        """The affine map from data to the posterior expectation."""
+        return self._expectation_operator
 
     @property
     def covariance(self) -> LinearOperator:
@@ -236,32 +236,32 @@ class GaussianEstimator(MeasureEstimator):
     @property
     def data_space(self) -> HilbertSpace:
         """The mean map's domain."""
-        return self._mean_map.domain
+        return self._expectation_operator.domain
 
     @property
-    def target_space(self) -> HilbertSpace:
+    def property_space(self) -> HilbertSpace:
         """The space the posterior lives on."""
-        return self._mean_map.codomain
+        return self._expectation_operator.codomain
 
     @property
     def can_sample(self) -> bool:
         """Whether the posteriors this produces can be drawn from."""
-        return self._centred_sample is not None
+        return self._centered_sample is not None
 
     def __call__(self, data: Any) -> GaussianMeasure:
         """The posterior measure for this data.
 
         Samplable whenever the estimator is, which for a linear Gaussian
         inversion is whenever the prior and the data errors are — the draw is
-        randomise-then-optimise and needs no factor of the posterior
+        randomize-then-optimize and needs no factor of the posterior
         covariance, which is just as well, since forming one on a model space
         is exactly what the whole arrangement avoids.
         """
         return GaussianMeasure(
-            self.target_space,
-            expectation=self._mean_map(data),
+            self.property_space,
+            expectation=self._expectation_operator(data),
             covariance=self._covariance,
-            sample=self._centred_sample,
+            sample=self._centered_sample,
         )
 
     def push_forward(self, operator: LinearOperator, /) -> "GaussianEstimator":
@@ -290,9 +290,9 @@ class GaussianEstimator(MeasureEstimator):
             The estimator of ``T m``.
         """
         pushed = None
-        if self._centred_sample is not None:
+        if self._centered_sample is not None:
 
-            def pushed(rng: Any, _sample: Any = self._centred_sample) -> Any:
+            def pushed(rng: Any, _sample: Any = self._centered_sample) -> Any:
                 return operator(_sample(rng))
 
         # A congruence preserves self-adjointness and semidefiniteness, and
@@ -304,5 +304,5 @@ class GaussianEstimator(MeasureEstimator):
             congruence_traits(self._covariance.traits, outer_invertible=False)
         )
         return GaussianEstimator(
-            operator @ self._mean_map, covariance, centred_sample=pushed
+            operator @ self._expectation_operator, covariance, centered_sample=pushed
         )

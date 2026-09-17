@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from ..symmetric_space.fourier import PeriodicBox
-from .base import colour_limits, plot, subplots
+from .base import color_limits, plot, subplots
 
 __all__: list[str] = []
 
@@ -43,12 +43,12 @@ def _(
         space: the box.
         field: a grid array of the space.
         ax: axes to draw on. A new figure is made if omitted.
-        cmap: colour map, used in two dimensions.
-        symmetric: put zero at the middle of the colour scale.
-        vmin: lower colour limit.
-        vmax: upper colour limit.
-        colorbar: attach a colourbar, in two dimensions.
-        colorbar_label: label for the colourbar.
+        cmap: color map, used in two dimensions.
+        symmetric: put zero at the middle of the color scale.
+        vmin: lower color limit.
+        vmax: upper color limit.
+        colorbar: attach a colorbar, in two dimensions.
+        colorbar_label: label for the colorbar.
         **kwargs: passed to ``plot`` or ``pcolormesh``.
 
     Returns:
@@ -74,7 +74,7 @@ def _(
         ax.set_xlim(space.grid_axes[0][0], space.grid_axes[0][-1])
         return ax, line
 
-    low, high = colour_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
+    low, high = color_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
     first, second = space.grid_axes
     mappable = ax.pcolormesh(
         second,
@@ -101,8 +101,8 @@ def plot_error_bounds(
     /,
     *,
     ax: Any = None,
-    centre: Any = None,
-    colour: str = "C0",
+    center: Any = None,
+    color: str = "C0",
     alpha: float = 0.25,
     label: str | None = None,
     **kwargs: Any,
@@ -124,16 +124,16 @@ def plot_error_bounds(
         lower: the lower bound, as a field.
         upper: the upper bound.
         ax: axes to draw on. A new figure is made if omitted.
-        centre: an optional field to draw as a line through the band, usually
+        center: an optional field to draw as a line through the band, usually
             the estimate the bounds belong to.
-        colour: for the band and the centre line.
+        color: for the band and the center line.
         alpha: the band's transparency.
         label: a legend entry for the band.
         **kwargs: passed to ``fill_between``.
 
     Returns:
-        The ``(axes, band)`` pair, with the centre line left on the axes as
-        ``.centre_line`` when one was drawn.
+        The ``(axes, band)`` pair, with the center line left on the axes as
+        ``.center_line`` when one was drawn.
 
     Raises:
         ValueError: on a box of more than one dimension, or if a field has the
@@ -159,15 +159,15 @@ def plot_error_bounds(
         fields.append(values)
 
     band = ax.fill_between(
-        axis, fields[0], fields[1], color=colour, alpha=alpha, label=label, **kwargs
+        axis, fields[0], fields[1], color=color, alpha=alpha, label=label, **kwargs
     )
-    if centre is not None:
-        middle = np.asarray(centre, dtype=float)
+    if center is not None:
+        middle = np.asarray(center, dtype=float)
         if middle.shape != space.shape:
             raise ValueError(
-                f"The centre has shape {middle.shape}, but a field on this box "
+                f"The center has shape {middle.shape}, but a field on this box "
                 f"has shape {space.shape}."
             )
-        (ax.centre_line,) = ax.plot(axis, middle, color=colour, lw=1.5)
+        (ax.center_line,) = ax.plot(axis, middle, color=color, lw=1.5)
     ax.set_xlim(axis[0], axis[-1])
     return ax, band

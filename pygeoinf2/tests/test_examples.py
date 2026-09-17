@@ -83,10 +83,10 @@ SLOW = {
 }
 
 
-def _parametrised() -> list:
+def _parametrized() -> list:
     """Every example, with the expensive ones carrying the slow marker.
 
-    Marked at parametrisation rather than skipped inside the test, so that
+    Marked at parametrization rather than skipped inside the test, so that
     ``-m slow`` selects them and ``-m ""`` runs everything — which a skip
     written against the ``-m`` string cannot do, and got backwards the first
     time: ``"not slow".endswith("slow")`` is true.
@@ -101,7 +101,7 @@ def _parametrised() -> list:
     ]
 
 
-@pytest.mark.parametrize("script", _parametrised())
+@pytest.mark.parametrize("script", _parametrized())
 def test_the_example_runs(script, capsys):
     """Run the script and require that it produces output without raising."""
     if script.stem in OPTIONAL:

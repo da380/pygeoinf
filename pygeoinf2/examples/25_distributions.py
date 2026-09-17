@@ -46,11 +46,11 @@ truth, data = problem.synthetic_model_and_data(prior, rng=rng)
 
 # Cholesky, deliberately, and this is the only place in the examples where a
 # direct solver is the right default rather than an exception. Sampling by
-# randomise-then-optimise costs *one solve per draw* — a prior sample, a noise
+# randomize-then-optimize costs *one solve per draw* — a prior sample, a noise
 # sample, and one application of the Kalman gain — so the few thousand draws
 # below are a few thousand solves. That is section 27.5's criterion, not the
 # problem's size: apply an inverse once and iterate, apply it thousands of
-# times and factorise.
+# times and factorize.
 estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
 print(f"model space {X.dim}, data space {problem.data_space.dim}")
 
@@ -68,11 +68,11 @@ cap_truth = caps.codomain.to_components(caps(truth))
 print(f"property space dimension {caps.codomain.dim}")
 print("cap averages, posterior against truth:")
 mean, covariance, _ = plotting.moments(posterior)
-for index, (value, centre) in enumerate(zip(cap_truth, mean)):
+for index, (value, center) in enumerate(zip(cap_truth, mean)):
     deviation = np.sqrt(covariance[index, index])
-    inside = abs(value - centre) < 2.0 * deviation
+    inside = abs(value - center) < 2.0 * deviation
     print(
-        f"   cap {index}: truth {value:+.5f}   posterior {centre:+.5f}"
+        f"   cap {index}: truth {value:+.5f}   posterior {center:+.5f}"
         f" +/- {deviation:.5f}   {'within 2 sd' if inside else 'OUTSIDE 2 sd'}"
     )
 print()
@@ -115,7 +115,7 @@ print("  wider of the two, and sharing one would make the posterior a spike")
 #
 # It is pushed forward from the *model* posterior rather than from the property
 # one, because that is the measure that can be sampled: the model posterior
-# carries a randomise-then-optimise sampler (DESIGN section 18.7), while the
+# carries a randomize-then-optimize sampler (DESIGN section 18.7), while the
 # property posterior is a covariance with no factor and so cannot be drawn
 # from. A push-forward can be sampled exactly when what it pushes can.
 summary = EuclideanSpace(2)
