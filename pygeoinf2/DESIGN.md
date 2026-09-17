@@ -6948,3 +6948,38 @@ bad powers and levels are refused. The sampled pointwise variance
 matches the exact invariant answer to 8 per cent on 1500 draws, its
 standard deviation squared to 15 per cent; a space without a product
 and a zero draw count are refused.
+
+## 67. The scipy bridge, both ways (2026-09-17)
+
+Item 10 of `FUNCTIONALITY_AUDIT.md` §0.2: v1's ``matrix(dense=False)``
+returned a matrix-free ``scipy.sparse.linalg.LinearOperator`` over the
+operator, and v2's `matrix` always builds the dense array. In v1 the
+bridge fed its own scipy solvers, its low-rank array path, an ``eigsh``
+and its preconditioners; v2 replaced every one of those with code
+written against the operator in the space's own metric, so nothing
+inside the library wants the bridge and the dense `matrix` is used where
+a dense matrix is meant. What the bridge is still for is the user
+handing an operator to scipy's ecosystem, ``eigsh``, ``svds``,
+``lobpcg`` or a solver of scipy's for comparison, and the place a
+hand-written adapter goes wrong is the metric: the transpose of the
+component matrix is ``G_X (A*)_c G_Y^-1``, not the adjoint's component
+matrix, and of the Galerkin matrix it is ``G_X (A*)_c``.
+
+`as_scipy(form=, n_jobs=)` returns that operator, its ``matvec`` and
+``rmatvec`` carrying the factors the form needs and its block products
+looping over columns, in parallel when asked, which David noted was the
+one thing v1's wrapper offered for free. It is not a flag on `matrix`,
+whose one meaning is a dense array. `from_scipy(domain, codomain,
+operator, form=)` is the converse, for an operator arriving from
+outside, taking ``matvec`` as the matrix in the stated form and
+``rmatvec`` as its transpose and putting the metric back to make the
+adjoint; the form must be said, since no trait implies it.
+
+**Checked.** On a dense-metric domain and a weighted codomain, in both
+forms: the bridge's ``matvec`` and ``rmatvec`` agree with the dense
+matrix and its transpose, and its block products with the matrix on a
+block; scipy's ``eigsh`` through the Galerkin bridge of a self-adjoint
+diagonal operator, with the Gram matrix as the mass, recovers its
+largest eigenvalue; the converse round-trips the operator and its
+adjoint and passes `check_operator`; a scipy-wrapped array enters as
+the component matrix; the wrong shape is refused.

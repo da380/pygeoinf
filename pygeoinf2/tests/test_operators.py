@@ -345,6 +345,86 @@ class TestSpecialisationProtocol:
         assert type(generic + a) is type(a + generic)
 
 
+class TestScipyBridge:
+    """v1's matrix-free scipy operator, as ``as_scipy`` and its converse:
+    the metric factors of each form are put in and taken out correctly on a
+    space whose Gram matrix is not diagonal."""
+
+    @pytest.fixture
+    def pieces(self, rng):
+        X = make_dense_metric_space(4)
+        Y = make_weighted_space()
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(Y.dim, X.dim)), form="components"
+        )
+        return X, Y, A
+
+    @pytest.mark.parametrize("form", ["components", "galerkin"])
+    def test_it_agrees_with_the_dense_matrix_and_its_transpose(self, pieces, form, rng):
+        X, Y, A = pieces
+        bridge = A.as_scipy(form=form)
+        dense = A.matrix(form=form)
+        assert bridge.shape == dense.shape
+        c = rng.normal(size=X.dim)
+        y = rng.normal(size=Y.dim)
+        assert np.allclose(bridge.matvec(c), dense @ c)
+        assert np.allclose(bridge.rmatvec(y), dense.T @ y)
+        block = rng.normal(size=(X.dim, 3))
+        assert np.allclose(bridge.matmat(block), dense @ block)
+        assert np.allclose(bridge.rmatmat(np.eye(Y.dim)), dense.T)
+
+    def test_it_feeds_scipy_eigsh_on_a_dense_metric(self, rng):
+        """The Galerkin form of a self-adjoint operator is symmetric, so
+        scipy's Lanczos with the Gram matrix as the mass recovers the
+        operator's own eigenvalues -- the generalised ones of (S, G), which
+        the component matrix, unsymmetric on this metric, would not give."""
+        from scipy.linalg import eigh
+        from scipy.sparse.linalg import eigsh
+
+        X = make_dense_metric_space(6)
+        raw = rng.normal(size=(6, 6))
+        symmetric = raw @ raw.T + 6.0 * np.eye(6)
+        A = LinearOperator.from_matrix(
+            X,
+            X,
+            symmetric,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        bridge = A.as_scipy()  # auto: Galerkin for a self-adjoint operator
+        largest = eigsh(
+            bridge, k=1, M=X.gram_matrix(), which="LA", return_eigenvectors=False
+        )
+        expected = eigh(symmetric, X.gram_matrix(), eigvals_only=True).max()
+        assert largest[0] == pytest.approx(expected, rel=1e-8)
+
+    @pytest.mark.parametrize("form", ["components", "galerkin"])
+    def test_the_converse_round_trips(self, pieces, form, rng):
+        X, Y, A = pieces
+        back = LinearOperator.from_scipy(X, Y, A.as_scipy(form=form), form=form)
+        x = X.random(rng=rng)
+        assert Y.norm(Y.subtract(back(x), A(x))) < 1e-10 * max(Y.norm(A(x)), 1.0)
+        y = Y.random(rng=rng)
+        assert X.norm(X.subtract(back.adjoint(y), A.adjoint(y))) < 1e-10 * max(
+            X.norm(A.adjoint(y)), 1.0
+        )
+        check_operator(back, rng=rng)
+
+    def test_a_scipy_operator_from_outside(self, rng):
+        """An array wrapped by scipy, entering as the components matrix."""
+        from scipy.sparse.linalg import aslinearoperator
+
+        X, Y = make_dense_metric_space(4), EuclideanSpace(3)
+        matrix = rng.normal(size=(3, 4))
+        A = LinearOperator.from_scipy(X, Y, aslinearoperator(matrix), form="components")
+        assert np.allclose(A.matrix(form="components"), matrix)
+        check_operator(A, rng=rng)
+        with pytest.raises(ValueError, match="shape"):
+            LinearOperator.from_scipy(
+                X, Y, aslinearoperator(matrix.T), form="components"
+            )
+
+
 class TestMatrixRepresentations:
     def test_component_matrix_round_trip(self, rng):
         X, Y = make_weighted_space(), make_dense_metric_space()

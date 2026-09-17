@@ -796,6 +796,154 @@ class LinearOperator[X, Y](Operator[X, Y]):
             matrix = self.codomain.solve_gram_to_columns(matrix)
         return matrix
 
+    def as_scipy(
+        self,
+        /,
+        *,
+        form: Literal["auto", "components", "galerkin"] = "auto",
+        n_jobs: int | None = None,
+    ) -> Any:
+        """A matrix-free ``scipy.sparse.linalg.LinearOperator`` over this one.
+
+        The bridge to scipy's ecosystem and to anything that speaks its
+        protocol -- ``eigsh``, ``svds``, ``lobpcg``, its solvers -- for a
+        routine this library does not provide. Nothing is assembled: the
+        scipy operator's ``matvec`` applies this operator on components and
+        its ``rmatvec`` applies the adjoint, each with the metric factors the
+        requested *form* needs, which is exactly the place a hand-written
+        adapter goes wrong on a weighted space. ``matmat`` and ``rmatmat``
+        loop over columns, in parallel when asked.
+
+        v1 returned this from ``matrix(dense=False)``; here ``matrix`` means
+        a dense array and this is the other thing.
+
+        Args:
+            form: which matrix the scipy operator represents: ``"components"``
+                for ``A_c``, ``"galerkin"`` for ``G_Y A_c``, which is symmetric
+                exactly when the operator is self-adjoint; ``"auto"`` chooses
+                as :meth:`matrix` does.
+            n_jobs: workers for the column loops of ``matmat`` and
+                ``rmatmat``. Serial by default; see :mod:`pygeoinf2.parallel`.
+
+        Returns:
+            A scipy linear operator of shape ``(dim(Y), dim(X))``.
+
+        Raises:
+            ValueError: for an unknown *form*.
+        """
+        from scipy.sparse.linalg import LinearOperator as ScipyOperator
+
+        from ..parallel import parallel_map
+
+        require_coordinates(self.domain, self.codomain)
+        if form == "auto":
+            form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
+        if form not in ("components", "galerkin"):
+            raise ValueError(f"Unknown matrix form {form!r}.")
+        galerkin = form == "galerkin"
+        domain, codomain = self.domain, self.codomain
+
+        def matvec(c: np.ndarray) -> np.ndarray:
+            image = codomain.to_components(
+                self(domain.from_components(np.asarray(c, dtype=float).ravel()))
+            )
+            return codomain.apply_gram(image) if galerkin else image
+
+        def rmatvec(c: np.ndarray) -> np.ndarray:
+            # The transpose of the form's matrix. With (A*)_c == G_X^-1 A_c^T
+            # G_Y, the transpose of A_c is G_X (A*)_c G_Y^-1, and of the
+            # Galerkin matrix G_Y A_c it is G_X (A*)_c.
+            y = np.asarray(c, dtype=float).ravel()
+            if not galerkin:
+                y = codomain.solve_gram(y)
+            pulled = domain.to_components(self.adjoint(codomain.from_components(y)))
+            return domain.apply_gram(pulled)
+
+        def matmat(columns: np.ndarray) -> np.ndarray:
+            block = np.asarray(columns, dtype=float)
+            images = parallel_map(matvec, list(block.T), n_jobs=n_jobs)
+            return np.column_stack(images) if images else np.zeros((codomain.dim, 0))
+
+        def rmatmat(columns: np.ndarray) -> np.ndarray:
+            block = np.asarray(columns, dtype=float)
+            images = parallel_map(rmatvec, list(block.T), n_jobs=n_jobs)
+            return np.column_stack(images) if images else np.zeros((domain.dim, 0))
+
+        return ScipyOperator(
+            shape=(codomain.dim, domain.dim),
+            matvec=matvec,
+            rmatvec=rmatvec,
+            matmat=matmat,
+            rmatmat=rmatmat,
+            dtype=float,
+        )
+
+    @classmethod
+    def from_scipy(
+        cls,
+        domain: HilbertSpace[X],
+        codomain: HilbertSpace[Y],
+        operator: Any,
+        /,
+        *,
+        form: Literal["components", "galerkin"],
+        traits: Traits = Traits.NONE,
+    ) -> LinearOperator[X, Y]:
+        """An operator from a ``scipy.sparse.linalg.LinearOperator`` on components.
+
+        The converse of :meth:`as_scipy`, for an operator arriving from
+        outside as a scipy object: its ``matvec`` is taken as the matrix in
+        the given *form* and its ``rmatvec`` as that matrix's transpose,
+        from which the adjoint follows with the metric factors put back.
+        Nothing is assembled.
+
+        Args:
+            domain: the operator's domain.
+            codomain: its codomain.
+            operator: the scipy operator, of shape ``(dim(Y), dim(X))``.
+            form: which matrix its ``matvec`` applies, ``"components"`` or
+                ``"galerkin"``; no trait implies it, so it must be said.
+            traits: claims about the operator, unverified here.
+
+        Returns:
+            The operator. Its adjoint is available if the scipy operator has
+            an ``rmatvec``, and refused otherwise.
+
+        Raises:
+            ValueError: for the wrong shape or an unknown *form*.
+        """
+        require_coordinates(domain, codomain)
+        if form not in ("components", "galerkin"):
+            raise ValueError(f"Unknown matrix form {form!r}.")
+        shape = tuple(operator.shape)
+        if shape != (codomain.dim, domain.dim):
+            raise ValueError(
+                f"The scipy operator has shape {shape}; this map needs "
+                f"({codomain.dim}, {domain.dim})."
+            )
+        galerkin = form == "galerkin"
+
+        def value(x: X) -> Y:
+            image = np.asarray(
+                operator.matvec(domain.to_components(x)), dtype=float
+            ).ravel()
+            if galerkin:
+                image = codomain.solve_gram(image)
+            return codomain.from_components(image)
+
+        def adjoint(y: Y) -> X:
+            # (A*)_c == G_X^-1 A_c^T G_Y. With M == A_c the transpose is
+            # applied to G_Y y_c; with M == G_Y A_c it is applied to y_c.
+            c = codomain.to_components(y)
+            if not galerkin:
+                c = codomain.apply_gram(c)
+            pulled = np.asarray(operator.rmatvec(c), dtype=float).ravel()
+            return domain.from_components(domain.solve_gram(pulled))
+
+        return cls.from_callables(
+            domain, codomain, value, adjoint=adjoint, traits=traits
+        )
+
     def _known_matrix(self, form: str) -> np.ndarray | None:
         """The dense matrix in *form*, if the operator can produce it without
         applying itself; ``None`` otherwise.
