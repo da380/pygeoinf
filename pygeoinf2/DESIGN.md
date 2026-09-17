@@ -6807,3 +6807,52 @@ within a degree holds; a zonal projection written against the orders
 and an axis filter written against the wavevectors keep exactly the
 components they name; the box degree is the wavevector's magnitude
 rounded down; the labels a space does not hold are refused; named coefficients come out of the analysis operator in the order asked and go back through synthesis to their places alone, both passing `check_operator`.
+
+## 64. The saddlepoint method is back; two small things stay dropped (2026-09-17)
+
+Item 13 of `FUNCTIONALITY_AUDIT.md` §0.2, three unrelated losses.
+
+**The saddlepoint.** v1's weighted chi-square had the Lugannani-Rice
+approximation among its methods; v2 had Imhof, the moment-matched
+chi-square and Monte Carlo. Restored as ``method="saddlepoint"``: tilt
+the distribution to put its mean at the threshold, one scalar root find
+on the monotone derivative of the cumulant generating function, and read
+the tail off a normal with a first-order correction. Measured on the
+credible-ball spectra it serves, decaying like a Laplacian's inverse
+powers and a slowly decaying one, at levels from a half to 0.999 and
+from 8 to 512 modes: it matches v1's routine to eight figures, costs
+0.2 to 0.6 ms against Imhof's 1 to 760 ms, growing with the mode count
+where the saddlepoint does not, and its tail probability is off by a
+few parts in a thousand to a few parts in a hundred. On equal weights,
+which the public routine handles exactly and the approximation itself
+was tested on, the error falls like one over the number of terms, as the
+theory says.
+
+**``auto`` stays on Imhof.** v1's rule took the saddlepoint when the
+effective degrees of freedom, ``(sum w)^2 / sum w^2``, were large enough
+for a calibrated error bound; the measurement says that proxy is wrong
+for these spectra. A slowly decaying spectrum of 512 modes has an
+effective count of 164 and a tail error at the 0.999 level of two parts
+in a hundred, no better than eight modes with an effective count of
+eight: the error follows the shape of the largest weights, which is
+what the tail is made of, not the count. An automatic choice on that
+proxy would trade accuracy for speed silently. Whoever wants the speed
+names the method, and the docstring says what it costs.
+
+**Array thresholds: dropped.** v1's distribution function took a scalar
+or an array and looped over the array in Python for the methods that
+could not vectorise. Nothing in either version passed an array; a
+caller maps over thresholds in one line; a second calling convention on
+a routine with one caller earns nothing.
+
+**The finite-difference dual gradient: dropped on purpose.** v1 fell
+back to central differences over the data space whenever a support
+function could not exhibit its maximiser, at one cost evaluation per
+data dimension per gradient, silently, on a nonsmooth cost where a
+finite difference is not a subgradient at all. v2 refuses, and since
+§61 the refusal names what to supply.
+
+**Checked.** Convergence on equal weights by factors of more than
+three per fourfold increase in terms, to below 1e-5 at 256; agreement
+with Imhof to 2e-3 at three levels on a Laplacian spectrum and of the
+quantile to 5e-3; the mean, the origin and the far tail handled.

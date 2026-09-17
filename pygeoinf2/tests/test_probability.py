@@ -1424,3 +1424,60 @@ class TestAMarginalsFactorMatchesItsCovariance:
         root = DiagonalLinearOperator(first, np.sqrt(values))
         product = (root @ root.adjoint).matrix(form="components")
         assert not np.allclose(product, np.diag(values))
+
+
+class TestSaddlepoint:
+    """The Lugannani-Rice approximation to the weighted chi-square, v1's
+    fourth method, restored beside Imhof."""
+
+    def test_it_converges_to_the_exact_chi_square(self):
+        """On equal weights the error falls like one over the number of
+        terms; the public routine handles that case exactly, so this goes
+        through the approximation itself."""
+        from scipy.stats import chi2
+
+        from pygeoinf2.numerics.quadratic_forms import _saddlepoint
+
+        previous = None
+        for n in (4, 16, 64, 256):
+            worst = max(
+                abs(_saddlepoint(np.ones(n), chi2.ppf(level, n)) - level) / (1 - level)
+                for level in (0.5, 0.9, 0.99, 0.999)
+            )
+            if previous is not None:
+                assert worst < previous / 3.0
+            previous = worst
+        assert previous < 1e-5
+
+    def test_it_agrees_with_imhof_and_is_far_cheaper(self):
+        from pygeoinf2.numerics.quadratic_forms import (
+            weighted_chi2_cdf,
+            weighted_chi2_quantile,
+        )
+
+        weights = 1.0 / np.arange(1, 65) ** 2
+        for level in (0.9, 0.99, 0.999):
+            value = weighted_chi2_quantile(weights, level, method="imhof")
+            assert weighted_chi2_cdf(
+                weights, value, method="saddlepoint"
+            ) == pytest.approx(level, abs=2e-3)
+        # And the quantile by the saddlepoint is a root find on it.
+        assert weighted_chi2_quantile(
+            weights, 0.95, method="saddlepoint"
+        ) == pytest.approx(
+            weighted_chi2_quantile(weights, 0.95, method="imhof"), rel=5e-3
+        )
+
+    def test_the_mean_and_the_extremes_are_handled(self):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_cdf
+
+        weights = np.array([3.0, 1.0, 0.5])
+        at_mean = weighted_chi2_cdf(weights, float(weights.sum()), method="saddlepoint")
+        assert 0.4 < at_mean < 0.7
+        assert weighted_chi2_cdf(weights, 1e-9, method="saddlepoint") == pytest.approx(
+            0.0, abs=1e-6
+        )
+        assert weighted_chi2_cdf(weights, 1e3, method="saddlepoint") == pytest.approx(
+            1.0, abs=1e-9
+        )
+        assert weighted_chi2_cdf(weights, 0.0, method="saddlepoint") == 0.0

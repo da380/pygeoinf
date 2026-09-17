@@ -141,6 +141,65 @@ def _imhof(weights: np.ndarray, value: float, /, *, tolerance: float) -> float:
     return float(np.clip(0.5 - integral / np.pi, 0.0, 1.0))
 
 
+def _cumulant(order: int, s: float, weights: np.ndarray) -> float:
+    """The cumulant generating function of the form and its derivatives.
+
+    ``K(s) == -sum log(1 - 2 s w) / 2``, defined for ``s < 1 / (2 max w)``;
+    ``K'`` is the mean of the tilted distribution and ``K''`` its variance.
+    """
+    factor = 1.0 - 2.0 * s * weights
+    if order == 0:
+        return float(-0.5 * np.sum(np.log(factor)))
+    if order == 1:
+        return float(np.sum(weights / factor))
+    return float(np.sum(2.0 * weights**2 / factor**2))
+
+
+def _saddlepoint(weights: np.ndarray, value: float) -> float:
+    """The Lugannani-Rice approximation to ``P(sum w Z^2 <= value)``.
+
+    Tilt the distribution to put its mean at the threshold -- the saddlepoint
+    ``s`` solves ``K'(s) == value``, a scalar root find on a monotone
+    function -- and read the tail off a normal with a first-order correction:
+    ``Phi(w) + phi(w) (1 / w - 1 / u)`` with ``w == sign(s) sqrt(2 (s value
+    - K(s)))`` and ``u == s sqrt(K''(s))``. A handful of sums per probe,
+    against Imhof's oscillatory integral, and its relative error *falls* in
+    the tails, where the quadrature's rises. At the mean the correction is
+    ``0 / 0``, and the moment-matched value is returned there; the
+    approximation is not exact on an ordinary chi-square either, which the
+    caller handles before reaching here.
+    """
+    mean = float(np.sum(weights))
+    if abs(value - mean) <= 1e-9 * mean:
+        return _matched(weights, value)
+    upper = 0.5 / float(np.max(weights))
+    if value < mean:
+        low, high = -1.0, -1e-12
+        while _cumulant(1, low, weights) > value:
+            low *= 10.0
+            if low < -1e30:
+                return 0.0
+    else:
+        low, high = 1e-12, upper * (1.0 - 1e-10)
+    s = float(
+        _brentq()(
+            lambda t: _cumulant(1, t, weights) - value,
+            low,
+            high,
+            xtol=1e-14,
+            rtol=1e-12,
+        )
+    )
+    inner = 2.0 * (s * value - _cumulant(0, s, weights))
+    if inner <= 0.0:
+        return _matched(weights, value)
+    w = float(np.sign(s) * np.sqrt(inner))
+    u = s * float(np.sqrt(_cumulant(2, s, weights)))
+    from scipy.stats import norm
+
+    return float(np.clip(norm.cdf(w) + norm.pdf(w) * (1.0 / w - 1.0 / u), 0.0, 1.0))
+
+
 def _matched(weights: np.ndarray, value: float) -> float:
     """A chi-square matched on its first two cumulants (Satterthwaite-Welch)."""
     first = float(np.sum(weights))
@@ -166,8 +225,12 @@ def weighted_chi2_cdf(
         weights: the coefficients, non-negative and not all zero.
         value: the threshold.
         method: ``"imhof"`` inverts the characteristic function and is exact to
-            ``tolerance``; ``"matched"`` fits a chi-square on two cumulants and
-            is fast and rough; ``"monte_carlo"`` samples. ``"auto"`` takes
+            ``tolerance``; ``"saddlepoint"`` is the Lugannani-Rice
+            approximation, a few sums and a scalar root find, whose relative
+            error falls in the tails and is around ``0.1 / nu`` in the body
+            for ``nu`` the effective degrees of freedom ``(sum w)^2 / sum
+            w^2``; ``"matched"`` fits a chi-square on two cumulants and is
+            fast and rough; ``"monte_carlo"`` samples. ``"auto"`` takes
             Imhof, falling back to the matched form if the integral misbehaves.
         tolerance: for Imhof.
         samples: for Monte Carlo.
@@ -192,6 +255,8 @@ def weighted_chi2_cdf(
         return float(_chi2().cdf(value / live[0], live.size))
     if method == "matched":
         return _matched(live, value)
+    if method == "saddlepoint":
+        return _saddlepoint(live, value)
     if method == "monte_carlo":
         generator = np.random.default_rng() if rng is None else rng
         draws = generator.standard_normal((samples, live.size))
