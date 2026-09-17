@@ -130,3 +130,135 @@ def color_limits(
         extent = max(abs(low), abs(high))
         return -extent, extent
     return low, high
+
+
+@singledispatch
+def plot_points(space: Any, points: Any, /, **kwargs: Any) -> Any:
+    """Scatter points of a space, optionally colored by a value each.
+
+    Dispatches on the space's type, as :func:`plot` does: a sphere draws on
+    a map, a box on plain axes. See the registered implementations for the
+    keywords; all take ``data=``, ``ax=``, ``marker=``, ``size=`` and
+    ``color=``.
+
+    Args:
+        space: the space the points lie in.
+        points: the points, in the space's own convention.
+        **kwargs: renderer-specific.
+
+    Returns:
+        The ``(axes, collection)`` pair.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer.
+    """
+    raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
+
+
+@singledispatch
+def plot_paths(space: Any, paths: Any, /, **kwargs: Any) -> Any:
+    """Draw geodesic paths of a space as one line collection.
+
+    Args:
+        space: the space the paths lie in.
+        paths: ``(start, end)`` pairs of points.
+        **kwargs: renderer-specific; all take ``ax=``, ``count=``,
+            ``color=``, ``linewidth=`` and ``alpha=``.
+
+    Returns:
+        The ``(axes, collection)`` pair.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer.
+    """
+    raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
+
+
+@singledispatch
+def plot_balls(space: Any, centers: Any, radius: float, /, **kwargs: Any) -> Any:
+    """Outline geodesic balls of one radius: the footprints of cap averages.
+
+    The picture that goes with
+    :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.geodesic_ball_average_operator`:
+    where each average was taken and how much it covers. Caps on a sphere,
+    discs on a box, intervals on a line.
+
+    Args:
+        space: the space.
+        centers: the ball centers, in the space's own convention.
+        radius: the *physical* radius, common to all of them.
+        **kwargs: renderer-specific; all take ``ax=``, ``count=``,
+            ``color=`` and ``linewidth=``.
+
+    Returns:
+        The ``(axes, collection)`` pair.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer.
+    """
+    raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
+
+
+def plot_network(
+    space: Any,
+    paths: Any,
+    /,
+    *,
+    ax: Any = None,
+    sources: bool = True,
+    receivers: bool = True,
+    source_kwargs: dict | None = None,
+    receiver_kwargs: dict | None = None,
+    **kwargs: Any,
+) -> tuple[Any, dict]:
+    """The paths, with the sources and receivers that define them marked.
+
+    v1's ``plot_geodesic_network``, on every geometry at once: the paths go
+    on through :func:`plot_paths`, then the distinct start points as gold
+    stars and the distinct end points as red circles through
+    :func:`plot_points`, v1's styling. One path is a network of one, so
+    there is no separate single-geodesic plotter.
+
+    Args:
+        space: the space the paths lie in.
+        paths: ``(start, end)`` pairs of points.
+        ax: axes to draw on. A new figure is made if omitted.
+        sources: mark the distinct start points.
+        receivers: mark the distinct end points.
+        source_kwargs: styling for the sources, over the defaults.
+        receiver_kwargs: styling for the receivers, over the defaults.
+        **kwargs: passed to :func:`plot_paths`.
+
+    Returns:
+        The axes, and a dict of the artists under ``"paths"``, ``"sources"``
+        and ``"receivers"``.
+    """
+    paths = list(paths)
+    ax, collection = plot_paths(space, paths, ax=ax, **kwargs)
+    artists: dict = {"paths": collection}
+    if sources:
+        style = dict(marker="*", color="gold", size=150.0, edgecolors="black", zorder=6)
+        style.update(source_kwargs or {})
+        _, artists["sources"] = plot_points(
+            space, _distinct(p[0] for p in paths), ax=ax, **style
+        )
+    if receivers:
+        style = dict(marker="o", color="red", size=50.0, edgecolors="white", zorder=6)
+        style.update(receiver_kwargs or {})
+        _, artists["receivers"] = plot_points(
+            space, _distinct(p[1] for p in paths), ax=ax, **style
+        )
+    return ax, artists
+
+
+def _distinct(points: Any) -> list[np.ndarray]:
+    """The points with exact repeats removed, first occurrences kept in order."""
+    seen: set = set()
+    kept: list[np.ndarray] = []
+    for point in points:
+        array = np.atleast_1d(np.asarray(point, dtype=float))
+        key = array.tobytes()
+        if key not in seen:
+            seen.add(key)
+            kept.append(array)
+    return kept

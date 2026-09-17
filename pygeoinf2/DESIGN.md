@@ -7621,3 +7621,57 @@ right extent; a polytope, which has no support function, asks for
 bounds and draws from its level function with them; the wrong
 dimension and an unknown route are refused. Example 23 runs headless
 and draws its three figures.
+
+## 81. Points, paths, balls and networks on every geometry (2026-09-17)
+
+v1 carried ``plot_points``, ``plot_geodesic`` and
+``plot_geodesic_network`` in each geometry module, the torus wrapping
+its geodesics round the period and the network plotter scattering the
+distinct sources as gold stars and the distinct receivers as red
+circles. v2 had points and paths on the sphere only, through cartopy,
+the paths as one line collection, and no markers anywhere, so the
+examples scattered sources and receivers by hand and a box could draw
+neither points nor paths.
+
+**Dispatch, as the fields do.** `plot_points`, `plot_paths` and the new
+`plot_balls` are ``singledispatch`` generics on the space, like `plot`
+and `subplots`. The sphere keeps its implementations. A periodic box in
+one or two dimensions has its own: points scattered where the field is
+drawn, axis 1 across and axis 0 up, reduced into the period; paths
+sampled through the box's geodesic quadrature and split where they wrap,
+as the sphere's are split at the dateline; in one dimension the points
+sit on the axis, or at their data value, which puts observations on the
+line the field is drawn on. The bounded box is a subclass and draws
+straight, without wrapping.
+
+**Balls.** David, on Mag's cap work: "It's possible I'm thinking about
+geodesic cap averages, not plotting. Either way, worth generalising."
+The averages were already general; the picture of them was not.
+`plot_balls(space, centers, radius)` outlines the geodesic balls of one
+radius, the footprints of `geodesic_ball_average_operator`: cap rims on
+the sphere from the destination formula along every bearing, discs on a
+box, spans on a line, all wrapped and split as the paths are. Example
+23 draws its four caps on the extremal model.
+
+**Networks.** `plot_network(space, paths, sources=, receivers=,
+source_kwargs=, receiver_kwargs=)` is v1's network plotter on every
+geometry at once: the paths through `plot_paths`, then the distinct
+start and end points through `plot_points` with v1's styling. One path
+is a network of one, so there is no separate single-geodesic plotter.
+Examples 21 and 23 use it.
+
+**A bug found on the way.** Example 23 built its cap centers as
+colatitudes in radians, where every method of the sphere takes
+``(latitude, longitude)`` in degrees at its boundary. The radian
+colatitudes lie within ``[-90, 90]`` read as degrees, so nothing
+refused them and the caps were simply elsewhere. The example passes
+degrees now.
+
+**Checked.** On a torus, points land where the field is drawn and are
+reduced into the period, a data value colors them, a wrapping path is
+split into two pieces and a straight one is not, a bounded box never
+wraps, a disc near the edge wraps and a one-dimensional ball near the
+end is two spans, and the network marks the distinct sources and
+receivers; on a sphere, with cartopy, the network marks one source and
+five receivers, caps go on as rims, and a cap over the dateline is
+split. Examples 21 and 23 run headless.

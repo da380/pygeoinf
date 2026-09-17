@@ -104,7 +104,7 @@ bite on a real problem; the small restorations below matter less in practice.
 ## 7. Big-ticket items needing a decision, not a session
 
 - [x] 1. `SubspaceSlicePlotter` / `plot_slice` — **ported compactly** (David: "Mag can expand it later") as `plotting.plot_set(subset, subspace=, bounds=, route=)`: one and two dimensions, matplotlib only, the route by capability (support polygon, level contour, membership raster), slices through `subspace=`, projections through `push_forward`; no 3-D, voxels or plotly. Example 23 draws its feasible set. DESIGN §80.
-- [ ] 9. point, geodesic and network plotting on boxes/tori/planes; source/receiver markers
+- [x] 9. point, geodesic and network plotting on boxes/tori/planes; source/receiver markers — **restored**: `plot_points`/`plot_paths` dispatch on the space like `plot`, with a box implementation (wrapped, split where a path wraps; the bounded box straight); `plot_network` marks distinct sources and receivers on every geometry (v1's styling); and `plot_balls` outlines geodesic balls -- cap rims on the sphere, discs on a box, spans on a line -- the footprints of the cap averages (David: worth generalising). Example 23's cap centers were radian colatitudes, now degrees. DESIGN §81.
 - [ ] 7. dataset downloaders and the cache directory
 - [ ] 11/15. `MassWeightedHilbertModule`; `MassWeightedSpace` as a `CoordinateSpace`; `EuclideanSpace.subspace_projection`
 - [ ] 8. `dynamical_system.py`

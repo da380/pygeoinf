@@ -978,3 +978,103 @@ class TestPlotSet:
         space, ball = self.ball(2)
         with pytest.raises(ValueError, match="route"):
             plotting.plot_set(ball, route="voxels")
+
+
+class TestBoxPointsPathsAndBalls:
+    """The point, path, ball and network plotters dispatch to a box too."""
+
+    @staticmethod
+    def torus():
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as BoxLebesgue
+
+        return BoxLebesgue((16, 16), lengths=(1.0, 2.0))
+
+    def test_points_land_where_the_field_is_drawn(self):
+        space = self.torus()
+        points = [np.array([0.25, 1.5]), np.array([0.75, 0.5])]
+        ax, collection = plotting.plot_points(space, points)
+        offsets = collection.get_offsets()
+        # Axis 1 across, axis 0 up, as pcolormesh draws the field.
+        assert np.allclose(offsets, [[1.5, 0.25], [0.5, 0.75]])
+        ax, colored = plotting.plot_points(
+            space, points, data=[1.0, -1.0], symmetric=True
+        )
+        assert colored.get_clim() == (-1.0, 1.0)
+        with pytest.raises(ValueError, match="values"):
+            plotting.plot_points(space, points, data=[1.0])
+
+    def test_points_are_reduced_into_the_period(self):
+        space = self.torus()
+        ax, collection = plotting.plot_points(space, [np.array([1.25, -0.5])])
+        assert np.allclose(collection.get_offsets(), [[1.5, 0.25]])
+
+    def test_a_wrapping_path_is_split(self):
+        space = self.torus()
+        straight = [(np.array([0.5, 0.2]), np.array([0.5, 0.8]))]
+        ax, collection = plotting.plot_paths(space, straight)
+        assert len(collection.get_segments()) == 1
+        # The short way from 0.1 to 0.9 along a period of one is round the
+        # back, in two pieces.
+        wrapping = [(np.array([0.1, 1.0]), np.array([0.9, 1.0]))]
+        ax, collection = plotting.plot_paths(space, wrapping)
+        assert len(collection.get_segments()) == 2
+
+    def test_a_bounded_box_never_wraps(self):
+        from pygeoinf2.symmetric_space.box import Box
+
+        space = Box((16,), bounds=((2.0, 3.0),))
+        ax, collection = plotting.plot_paths(
+            space, [(np.array([2.1]), np.array([2.9]))]
+        )
+        (segment,) = collection.get_segments()
+        assert segment[0, 0] == pytest.approx(2.1) and segment[-1, 0] == pytest.approx(
+            2.9
+        )
+        ax, collection = plotting.plot_points(space, [np.array([2.9])])
+        assert np.allclose(collection.get_offsets(), [[2.9, 0.0]])
+
+    def test_balls_are_discs_that_wrap(self):
+        space = self.torus()
+        ax, collection = plotting.plot_balls(space, [np.array([0.5, 1.0])], 0.2)
+        assert len(collection.get_segments()) == 1
+        ax, collection = plotting.plot_balls(space, [np.array([0.05, 1.0])], 0.2)
+        assert len(collection.get_segments()) >= 2
+        with pytest.raises(ValueError, match="radius"):
+            plotting.plot_balls(space, [np.array([0.5, 1.0])], 0.0)
+
+    def test_one_dimensional_balls_are_spans(self):
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as BoxLebesgue
+
+        space = BoxLebesgue((32,), lengths=(1.0,))
+        ax, spans = plotting.plot_balls(space, [np.array([0.5]), np.array([0.05])], 0.1)
+        assert len(spans) == 3
+
+    def test_the_network_marks_distinct_sources_and_receivers(self):
+        space = self.torus()
+        sources = [np.array([0.1, 0.1]), np.array([0.2, 0.2])]
+        receivers = [np.array([0.8, 1.8]), np.array([0.9, 1.9]), np.array([0.5, 1.0])]
+        paths = [(s, r) for s in sources for r in receivers]
+        ax, artists = plotting.plot_network(space, paths)
+        assert len(artists["paths"].get_segments()) >= 6
+        assert artists["sources"].get_offsets().shape[0] == 2
+        assert artists["receivers"].get_offsets().shape[0] == 3
+        ax, artists = plotting.plot_network(space, paths, sources=False)
+        assert "sources" not in artists
+
+
+class TestSphereNetworkAndCaps:
+    def test_the_network_and_the_caps_go_on_a_map(self, rng):
+        pytest.importorskip("cartopy")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        space = SphereLebesgue(8)
+        points = space.random_points(6, rng=rng)
+        paths = [(points[0], p) for p in points[1:]]
+        ax, artists = plotting.plot_network(space, paths)
+        assert artists["sources"].get_offsets().shape[0] == 1
+        assert artists["receivers"].get_offsets().shape[0] == 5
+        ax, collection = plotting.plot_balls(space, points[:2], 0.3, ax=ax)
+        assert len(collection.get_segments()) >= 2
+        # A cap over the dateline is split, as a path is.
+        ax, collection = plotting.plot_balls(space, [np.array([0.0, 179.0])], 0.3)
+        assert len(collection.get_segments()) == 2

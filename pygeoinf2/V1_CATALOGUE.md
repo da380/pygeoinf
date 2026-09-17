@@ -283,7 +283,7 @@ deliberately not started.
 | `line.Lebesgue/Sobolev` | Ported | `Interval` | |
 | `sphere.Lebesgue/Sobolev` | Ported | `Sphere` | |
 | *(3D periodic box)* | *(new)* | Free, from the N-dimensional `rfftn` construction | |
-| `plot`, `plot_error_bounds`, `plot_geodesic`, `plot_geodesic_network`, `plot_points`, `create_map_figure` | Ported | `plotting.plot` (dispatching on the space), `plot_error_bounds` on the one-dimensional box, `plot_points` and `plot_paths`, `subplots`. The sphere map regains `map_extent`, `contour`/`contour_lines`/`levels`, `gridlines_kwargs` with `lat_interval`/`lon_interval`, `colorbar_kwargs`, `borders`/`rivers` and `title` | |
+| `plot`, `plot_error_bounds`, `plot_geodesic`, `plot_geodesic_network`, `plot_points`, `create_map_figure` | Ported | `plotting.plot` (dispatching on the space), `plot_error_bounds` on the one-dimensional box, `plot_points`, `plot_paths` and `plot_balls` (all dispatching on the space, with sphere and box implementations), `plot_network` with the source and receiver markers on every geometry (DESIGN §81), `subplots`. The sphere map regains `map_extent`, `contour`/`contour_lines`/`levels`, `gridlines_kwargs` with `lat_interval`/`lon_interval`, `colorbar_kwargs`, `borders`/`rivers` and `title` | |
 
 ## `checks/` → `testing.py`
 

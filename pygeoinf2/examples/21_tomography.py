@@ -130,8 +130,8 @@ ax, _ = plotting.plot(
     coasts=True,
     colorbar_label="d ln c",
 )
-plotting.plot_paths(X, paths, ax=ax)
-ax.set_title("Truth, with the ray network")
+plotting.plot_network(X, paths, ax=ax)
+ax.set_title("Truth, with the ray network, its sources and receivers")
 
 plotting.plot(
     X,

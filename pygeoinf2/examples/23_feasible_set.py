@@ -39,8 +39,10 @@ paths = X.source_receiver_paths(
 forward = X.path_average_operator(paths, count=12, dense=True)
 print(f"{len(paths)} paths -> data space of dimension {forward.codomain.dim}")
 
+# (latitude, longitude) in degrees, which is what every method of the sphere
+# takes at its boundary.
 centers = [
-    np.array([np.radians(90.0 - lat), np.radians(lon % 360.0)])
+    np.array([lat, lon])
     for lat, lon in [(-60.0, 0.0), (5.0, 143.0), (0.0, -120.0), (46.0, 104.0)]
 ]
 target = X.geodesic_ball_average_operator(centers, 0.15, dense=True)
@@ -184,7 +186,7 @@ ax, _ = plotting.plot(
     coasts=True,
     colorbar_label="d ln c",
 )
-plotting.plot_paths(X, paths, ax=ax, alpha=0.08)
+plotting.plot_network(X, paths, ax=ax, alpha=0.08)
 ax.set_title("Truth, with the ray network")
 
 extremal = exact(data).extremal_model(P.basis_vector(0))
@@ -197,8 +199,9 @@ ax, _ = plotting.plot(
     coasts=True,
     colorbar_label="d ln c",
 )
-plotting.plot_points(X, centers, ax=ax, color="black", marker="o", size=40.0)
-ax.set_title("The model that maximizes cap 0")
+plotting.plot_balls(X, centers, 0.15, ax=ax, color="black")
+plotting.plot_points(X, centers, ax=ax, color="black", marker="o", size=20.0)
+ax.set_title("The model that maximizes cap 0, with the caps")
 
 # ---------------------------------------------------------------------------
 # The feasible set itself, projected onto two of the caps: the convex set

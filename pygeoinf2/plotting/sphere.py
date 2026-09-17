@@ -12,9 +12,9 @@ from typing import Any, Sequence
 import numpy as np
 
 from ..symmetric_space.sphere import Sphere
-from .base import color_limits, plot, subplots
+from .base import color_limits, plot, plot_balls, plot_paths, plot_points, subplots
 
-__all__ = ["plot_points", "plot_paths"]
+__all__: list[str] = []
 
 
 def _require_cartopy() -> Any:
@@ -308,7 +308,8 @@ def _gridline_options(given: dict | None, /) -> dict:
     return options
 
 
-def plot_points(
+@plot_points.register
+def _(
     space: Sphere,
     points: Any,
     /,
@@ -401,7 +402,8 @@ def plot_points(
     return ax, collection
 
 
-def plot_paths(
+@plot_paths.register
+def _(
     space: Sphere,
     paths: Any,
     /,
@@ -465,6 +467,79 @@ def plot_paths(
         colors=color,
         linewidths=linewidth,
         alpha=alpha,
+        **kwargs,
+    )
+    ax.add_collection(collection)
+    return ax, collection
+
+
+@plot_balls.register
+def _(
+    space: Sphere,
+    centers: Any,
+    radius: float,
+    /,
+    *,
+    ax: Any = None,
+    count: int = 90,
+    color: str = "black",
+    linewidth: float = 0.8,
+    **kwargs: Any,
+) -> Any:
+    """Outline spherical caps of one radius on a map.
+
+    Each cap's rim is the set of points at the angular distance
+    ``radius / R`` from its center along every bearing, and goes on as one
+    ``LineCollection`` with the paths' dateline splitting.
+
+    Args:
+        space: the sphere.
+        centers: ``(latitude, longitude)`` pairs in degrees.
+        radius: the *physical* cap radius, in the units of the sphere's.
+        ax: axes to draw on. A new map is made if omitted.
+        count: points around each rim.
+        color: line color.
+        linewidth: line width.
+        **kwargs: passed to ``LineCollection``.
+
+    Returns:
+        The ``(axes, collection)`` pair.
+
+    Raises:
+        ValueError: for a non-positive radius.
+    """
+    from matplotlib.collections import LineCollection
+
+    if radius <= 0.0:
+        raise ValueError(f"The radius must be positive, got {radius}.")
+    crs = _require_cartopy()
+    if ax is None:
+        _, ax = subplots(space)
+    angular = radius / space.radius
+    bearings = np.linspace(0.0, 2.0 * np.pi, count + 1)
+    segments = []
+    for center in centers:
+        latitude, longitude = np.radians(np.asarray(center, dtype=float)[:2])
+        rim_latitude = np.arcsin(
+            np.sin(latitude) * np.cos(angular)
+            + np.cos(latitude) * np.sin(angular) * np.cos(bearings)
+        )
+        rim_longitude = longitude + np.arctan2(
+            np.sin(bearings) * np.sin(angular) * np.cos(latitude),
+            np.cos(angular) - np.sin(latitude) * np.sin(rim_latitude),
+        )
+        latitudes = np.degrees(rim_latitude)
+        longitudes = (np.degrees(rim_longitude) + 180.0) % 360.0 - 180.0
+        breaks = np.flatnonzero(np.abs(np.diff(longitudes)) > 180.0) + 1
+        for piece in np.split(np.arange(longitudes.size), breaks):
+            if piece.size < 2:
+                continue
+            segments.append(np.column_stack([longitudes[piece], latitudes[piece]]))
+    collection = LineCollection(
+        segments,
+        transform=crs.PlateCarree(),
+        colors=color,
+        linewidths=linewidth,
         **kwargs,
     )
     ax.add_collection(collection)
