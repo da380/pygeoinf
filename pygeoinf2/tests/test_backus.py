@@ -13,6 +13,7 @@ import pytest
 
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
+from pygeoinf2.traits import Traits
 from pygeoinf2.geometry.convex import Ball, ConvexSet, HalfSpace, Polytope
 from pygeoinf2.inference import (
     BackusGilbert,
@@ -381,7 +382,17 @@ class TestOneEstimator:
             LinearOperator.identity(model) * (1.0 / 9.0),
             covariance=LinearOperator.identity(model) * 9.0,
         )
-        assert BackusGilbertParker(noisy, target, ellipsoid).route == "dual"
+        # An ellipsoid has a quadratic level function, so it takes the primal
+        # route too; only a set without one goes to the dual.
+        assert BackusGilbertParker(noisy, target, ellipsoid).route == "bisection"
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        box = Polytope(
+            model,
+            [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(2)],
+            outer=True,
+        )
+        assert BackusGilbertParker(noisy, target, box).route == "dual"
         # The closed form's answer is an ellipsoid, and says so; the others'
         # is known through its support function.
         closed = BackusGilbertParker(exact, target, ball)(data)
@@ -389,7 +400,6 @@ class TestOneEstimator:
         assert not BackusGilbertParker(noisy, target, ball)(data).has_projection
 
     def test_a_route_the_sets_do_not_allow_is_refused(self, pieces):
-        from pygeoinf2.geometry.convex import Ellipsoid
         from pygeoinf2.inference import BackusGilbertParker
 
         model, forward, target, data, exact, noisy = pieces
@@ -398,9 +408,15 @@ class TestOneEstimator:
             BackusGilbertParker(noisy, target, ball, route="closed_form")
         with pytest.raises(ValueError, match="nothing to bracket"):
             BackusGilbertParker(exact, target, ball, route="bisection")
-        ellipsoid = Ellipsoid(model, LinearOperator.identity(model))
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        box = Polytope(
+            model,
+            [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(2)],
+            outer=True,
+        )
         with pytest.raises(ValueError, match="dual route"):
-            BackusGilbertParker(noisy, target, ellipsoid, route="bisection")
+            BackusGilbertParker(noisy, target, box, route="bisection")
         with pytest.raises(ValueError, match="route must be"):
             BackusGilbertParker(noisy, target, ball, route="magic")
         # The general route is always allowed, balls included.
@@ -430,16 +446,13 @@ class TestOneEstimator:
             assert not answer.contains(beyond)
 
     def test_general_sets_know_the_answer_by_its_support_only(self, pieces):
-        from pygeoinf2.geometry.convex import Ellipsoid
+        """A Minkowski sum of balls has a support function and a maximiser
+        but no level function, so it is the dual's and has no membership."""
         from pygeoinf2.inference import BackusGilbertParker
 
         model, forward, target, data, exact, noisy = pieces
-        ellipsoid = Ellipsoid(
-            model,
-            LinearOperator.identity(model) * (1.0 / 9.0),
-            covariance=LinearOperator.identity(model) * 9.0,
-        )
-        estimator = BackusGilbertParker(noisy, target, ellipsoid)
+        fat = Ball(model, radius=2.0) + Ball(model, radius=1.0)
+        estimator = BackusGilbertParker(noisy, target, fat)
         answer = estimator(data)
         assert not answer.has_membership
         value = target.codomain.zero()
@@ -616,14 +629,21 @@ class TestLikelihoodMembership:
             with_ball = BackusGilbertParker(problem, target, prior, level=0.9)
             ellipsoid = error.credible_set(level=0.9)
             with_ellipsoid = BackusGilbertParker(
-                problem, target, prior, noise=ellipsoid
+                problem, target, prior, noise=ellipsoid, membership="likelihood"
             )
             assert with_ellipsoid.membership == "likelihood"
+            # An ellipsoid is quadratic, so the reduced engine takes it too.
+            reduced = BackusGilbertParker(problem, target, prior, noise=ellipsoid)
+            assert reduced.membership == "reduced"
             gap = 0.0
             for value in self.candidates(exact, target, truth, data, rng, count=4):
                 ball_norm = with_ball(data).inclusion_norm(value)
                 ellipsoid_norm = with_ellipsoid(data).inclusion_norm(value)
                 assert ellipsoid_norm >= ball_norm * (1.0 - 1e-8)
+                if np.isfinite(ellipsoid_norm):
+                    assert reduced(data).inclusion_norm(value) == pytest.approx(
+                        ellipsoid_norm, rel=1e-4
+                    )
                 gap = max(gap, abs(ellipsoid_norm - exact(data).inclusion_norm(value)))
             if previous is not None:
                 assert gap < previous
@@ -679,7 +699,7 @@ class TestLikelihoodMembership:
         noisy = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
         with pytest.raises(ValueError, match="exact data"):
             BackusGilbertParker(noisy, target, ball, membership="closed_form")
-        with pytest.raises(ValueError, match="positive radius"):
+        with pytest.raises(ValueError, match="positive size"):
             BackusGilbertParker(exact, target, ball, membership="reduced")
         with pytest.raises(ValueError, match="Likelihood membership"):
             BackusGilbertParker(exact, target, ball, membership="likelihood")
@@ -711,7 +731,6 @@ class TestTheResultIsWhatGetsProbed:
         return model, forward, target, truth, data, exact, noisy
 
     def test_each_route_declares_its_characterisations(self, pieces):
-        from pygeoinf2.geometry.convex import Ellipsoid
         from pygeoinf2.inference import FeasiblePropertySet
 
         model, forward, target, truth, data, exact, noisy = pieces
@@ -741,12 +760,8 @@ class TestTheResultIsWhatGetsProbed:
             dual.has_maximiser,
             dual.has_level_function,
         ) == (True, False, True, False, True)
-        ellipsoid = Ellipsoid(
-            model,
-            LinearOperator.identity(model) * (1.0 / 9.0),
-            covariance=LinearOperator.identity(model) * 9.0,
-        )
-        general = BackusGilbertParker(noisy, target, ellipsoid)(data)
+        fat = Ball(model, radius=2.0) + Ball(model, radius=1.0)
+        general = BackusGilbertParker(noisy, target, fat)(data)
         assert (general.has_membership, general.has_level_function) == (False, False)
         assert general.has_support_function and not general.has_maximiser
         for refused in (
@@ -830,6 +845,162 @@ class TestTheResultIsWhatGetsProbed:
             assert not BackusGilbertParker(problem, target, roomy, route=route)(
                 data
             ).is_empty()
+
+
+class TestQuadraticSets:
+    """The primal route on ellipsoids: written in the sets' own inner
+    products, so an ellipsoidal prior or confidence set takes the cheap
+    route, agreeing with the dual, which computes the same set another
+    way, and with the ball route where the two coincide."""
+
+    @pytest.fixture
+    def pieces(self, setting, rng):
+        from pygeoinf2 import GaussianMeasure
+
+        model, forward, target, truth, data = setting
+        error = GaussianMeasure.from_standard_deviations(
+            forward.codomain, np.linspace(0.02, 0.08, forward.codomain.dim)
+        )
+        problem = LinearForwardProblem(forward, error=error)
+        credible = error.credible_set(level=0.9)
+        return model, forward, target, truth, data, problem, credible
+
+    @staticmethod
+    def agree(first, second, directions, rel):
+        for direction in directions:
+            assert first.support(direction) == pytest.approx(
+                second.support(direction), rel=rel
+            )
+
+    def test_an_ellipsoid_written_as_a_ball_is_the_ball(self, setting, rng):
+        from pygeoinf2.geometry.convex import Ellipsoid
+
+        model, forward, target, truth, data = setting
+        data_space = forward.codomain
+        radius = 0.1
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        as_ball = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        precision = (
+            LinearOperator.identity(data_space) * (1.0 / radius**2)
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        covariance = (LinearOperator.identity(data_space) * radius**2).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+        as_ellipsoid = BackusGilbertParker(
+            problem,
+            target,
+            Ball(model, radius=3.0),
+            noise=Ellipsoid(data_space, precision, covariance=covariance),
+        )(data)
+        assert (
+            as_ellipsoid.route == "bisection" and as_ellipsoid.membership == "reduced"
+        )
+        self.agree(as_ellipsoid, as_ball, directions(target.codomain), 1e-8)
+        for _ in range(4):
+            value = target.codomain.random(rng=rng)
+            assert as_ellipsoid.inclusion_norm(value) == pytest.approx(
+                as_ball.inclusion_norm(value), rel=1e-8
+            )
+        assert as_ellipsoid.is_empty() == as_ball.is_empty()
+
+    def test_an_ellipsoidal_confidence_set_agrees_with_the_dual(self, pieces):
+        model, forward, target, truth, data, problem, credible = pieces
+        prior = Ball(model, radius=3.0)
+        primal = BackusGilbertParker(problem, target, prior, noise=credible)(data)
+        dual = BackusGilbertParker(
+            problem, target, prior, noise=credible, route="dual"
+        )(data)
+        assert primal.route == "bisection"
+        self.agree(primal, dual, directions(target.codomain), 1e-5)
+        # The extremal model attains the bound and lies in both sets.
+        q = target.codomain.basis_vector(0)
+        extremal = primal.extremal_model(q)
+        assert model.norm(extremal) <= 3.0 * (1.0 + 1e-8)
+        assert credible.contains(
+            forward.codomain.subtract(data, forward(extremal)), rtol=1e-6
+        )
+        assert target.codomain.inner_product(q, target(extremal)) == pytest.approx(
+            primal.support(q)
+        )
+        assert primal.contains(target(truth))
+        assert not primal.is_empty()
+
+    def test_an_ellipsoidal_prior_agrees_with_the_dual(self, setting):
+        from pygeoinf2.geometry.convex import Ellipsoid
+
+        model, forward, target, truth, data = setting
+        scale = np.diag(np.array([36.0, 16.0, 16.0, 9.0])[: model.dim])
+        gram = model.gram_matrix()
+        covariance = LinearOperator.from_matrix(
+            model,
+            model,
+            gram @ scale,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        precision = LinearOperator.from_matrix(
+            model,
+            model,
+            gram @ np.linalg.inv(scale),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        prior = Ellipsoid(model, precision, covariance=covariance)
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.1)
+        )
+        primal = BackusGilbertParker(problem, target, prior)(data)
+        dual = BackusGilbertParker(problem, target, prior, route="dual")(data)
+        assert primal.route == "bisection" and primal.level == 1.0
+        self.agree(primal, dual, directions(target.codomain), 1e-5)
+        assert primal.contains(target(truth))
+        q = target.codomain.basis_vector(1)
+        extremal = primal.extremal_model(q)
+        assert prior.contains(extremal, rtol=1e-6)
+        assert forward.codomain.norm(
+            forward.codomain.subtract(data, forward(extremal))
+        ) <= 0.1 * (1.0 + 1e-6)
+
+    def test_ellipsoids_on_both_sides_and_off_centre_sets(self, pieces, rng):
+        from pygeoinf2.geometry.convex import Ellipsoid
+
+        model, forward, target, truth, data, problem, credible = pieces
+        gram = model.gram_matrix()
+        scale = np.diag(np.linspace(9.0, 36.0, model.dim))
+        covariance = LinearOperator.from_matrix(
+            model,
+            model,
+            gram @ scale,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        precision = LinearOperator.from_matrix(
+            model,
+            model,
+            gram @ np.linalg.inv(scale),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
+        )
+        centre = model.scale(0.3, truth)
+        prior = Ellipsoid(model, precision, centre=centre, covariance=covariance)
+        primal = BackusGilbertParker(problem, target, prior, noise=credible)(data)
+        dual = BackusGilbertParker(
+            problem, target, prior, noise=credible, route="dual"
+        )(data)
+        self.agree(primal, dual, directions(target.codomain), 1e-5)
+        assert primal.has_membership
+        for _ in range(4):
+            value = target.codomain.random(rng=rng)
+            inside = primal.contains(value)
+            assert (
+                inside == (not primal.outside(value, directions(target.codomain)))
+                or inside is False
+            )
+        # A ball prior off the origin, against the dual.
+        shifted = Ball(model, radius=2.0, centre=centre)
+        primal = BackusGilbertParker(problem, target, shifted)(data)
+        dual = BackusGilbertParker(problem, target, shifted, route="dual")(data)
+        self.agree(primal, dual, directions(target.codomain), 1e-5)
 
 
 class TestBundleMethod:

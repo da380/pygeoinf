@@ -7032,3 +7032,67 @@ accumulation agree with the plain grid on both routes and the operator
 passes its checks; a sampled function fills the extended grid; the wrong
 shape is refused and siblings keep the flag. Random domain points land
 on the side asked for, exactly the count asked for, reproducibly.
+
+## 69. The primal route on ellipsoids, in their own inner products (2026-09-17)
+
+The last line of the lost-capabilities group: the bisection route, BGP's
+primal route and the cheap one for noisy data, took a ball prior and a
+ball confidence set and nothing else, so a Gaussian error arrived as its
+ambient ball, the looser hardening. The checklist's remark, from Mag's
+discussion with David, was that a non-identity covariance is a whitening
+of the data by its factor. The first proposal here was exactly that, a
+wrapper whitening the forward problem by a factor carried on the
+ellipsoid. David: do we need to whiten anything? Just allow more general
+sets and functionals. He was right, and the reason is what the route
+actually needs.
+
+**What the route needs.** Its structure is a Lagrangian with two
+multipliers on two level functions, each fixed by its level and each
+monotone in its own multiplier; nothing in it asks for a ball. A ball is
+the case where the level function is a squared norm and an ellipsoid the
+case where it is a quadratic form with a precision, and in both each
+probe is a linear solve. So the engine is now written in the two sets'
+inner products: the prior's covariance ``C == Q^-1`` as an operator on
+the model side, entering wherever the model norm did -- the reduction's
+Gram ``A C A*``, the kernel projector for a fixed property, ``P_Q == I
+- C T* (T C T*)^-1 T``, the pseudo-inverse and the final model -- and
+the confidence set's precision on the data side through its Cholesky
+factor on the data components, entering wherever the data norm did, so
+that ``(P r, r)`` is a Euclidean norm of factored components and the
+reduction diagonalises ``W (A C A*)_c W^T``. Both centres are shifted
+out at the start and back at the end. For balls both are scalings and
+the arithmetic is v1's. No factor is asked of an ellipsoid: its
+precision is what it has, and a missing covariance is an inverse
+through the solver.
+
+**Units.** A ball prior's inclusion norm is still the model's norm
+against the radius; an ellipsoid's is the Mahalanobis form's root
+against one, and the result's `level` says which. Feasibility for two
+balls keeps the matrix-free search of §50; with an ellipsoid on either
+side it is read off the reduction the route pays for anyway, and the
+fitting model is now returned by the engine rather than recomputed by
+the likelihood engine.
+
+**Dispatch.** Both sets quadratic, a ball or an ellipsoid each, take the
+bisection route and reduced membership; the closed form still needs a
+ball prior and exact data; a set without a quadratic level function is
+the dual's. A Gaussian's credible ellipsoid is thus a cheap choice now,
+and the hardening default stays the ambient ball as decided in §59.
+
+**Next.** The same Lagrangian on general level functions, a convex
+minimisation per probe as the likelihood engine of §59 does, is the
+following item, agreed with David: quadratic first because it keeps the
+reduction, general next.
+
+**Checked.** A ball written as an ellipsoid reproduces the ball route's
+support values, inclusion norms and emptiness to 1e-8; an ellipsoidal
+confidence set from a Gaussian with unequal standard deviations agrees
+with the dual route to 1e-5 on every direction, its extremal model lies
+in both sets and attains the bound, the truth is contained; an
+anisotropic ellipsoidal prior agrees with the dual likewise, at level
+one, with a feasible extremal model; ellipsoids on both sides with an
+off-centre prior, and a ball prior off the origin, agree with the dual;
+the reduced and likelihood engines agree on the Gaussian ellipsoid's
+inclusion norms to 1e-4; every earlier test runs, the ones that assumed
+an ellipsoid goes to the dual now using a Minkowski sum for their
+general set.

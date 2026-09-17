@@ -562,36 +562,92 @@ def _minimum_norm_fits(
     return model_space.norm(family.model_from(found.solution)) <= prior_radius
 
 
+class _Quadratic:
+    """A ball or an ellipsoid read as ``{ x : (Q (x - a), x - a) <= 1 }``.
+
+    The primal route works in the inner product a set defines, and a
+    quadratic level function defines one: ``Q`` its precision, ``C == Q^-1``
+    its covariance, ``a`` its centre. A ball of radius ``r`` has ``Q == I /
+    r^2``; its distances are reported in the space's own norm, so
+    :attr:`scale` is ``r`` there and one for an ellipsoid, whose level
+    function is already normalised. An ellipsoid built without its
+    covariance gets one through the solver, an inverse applied by conjugate
+    gradients wherever the route needs ``C``.
+    """
+
+    def __init__(self, subset: Any, solver: LinearSolver, name: str) -> None:
+        space = subset.domain
+        self.subset = subset
+        if isinstance(subset, Ball):
+            radius = float(subset.radius)
+            if radius <= 0.0:
+                raise ValueError(f"{name} needs a positive radius for this route.")
+            self.is_ball = True
+            self.scale = radius
+            self.centre = subset.centre
+            self.precision = (
+                LinearOperator.identity(space) * (1.0 / radius**2)
+            ).with_traits(Traits.POSITIVE_DEFINITE)
+            self.covariance = (LinearOperator.identity(space) * radius**2).with_traits(
+                Traits.POSITIVE_DEFINITE
+            )
+        elif isinstance(subset, Ellipsoid):
+            self.is_ball = False
+            self.scale = 1.0
+            self.centre = subset.centre
+            self.precision = subset.precision.with_traits(Traits.POSITIVE_DEFINITE)
+            covariance = subset.covariance
+            if covariance is None:
+                covariance = solver(self.precision)
+            self.covariance = covariance
+        else:
+            raise TypeError(
+                f"{name} must be a Ball or an Ellipsoid for this route; got a "
+                f"{type(subset).__name__}. A general convex set needs the dual route."
+            )
+
+
 class _BisectionRoute(SetEstimator):
     """The exact feasible property set for noisy data, by the primal route.
 
-    Route (c) of §18.3, and the one BGP recommends when both the prior and the
-    noise are norm balls. The support value in a direction is a concave
-    maximisation over the intersection of two balls, and attaching multipliers
-    to the two constraints turns its stationarity condition into
+    Route (c) of §18.3, BGP's primal route, for a prior and a confidence set
+    that are each a ball or an ellipsoid -- sets with a quadratic level
+    function. The support value in a direction is a concave maximisation
+    over the intersection of the two, and attaching multipliers to the two
+    constraints turns its stationarity condition into
 
     .. code-block:: text
 
-        (s I + t A* A) m == T* q + t A* d
+        (s Q + t A* P A) u == T* q + t A* P d'
 
-    which is a **damped least-squares solve** — the same operation as a single
-    regularised inversion, and the same primitive as §18.6. The multipliers are
-    fixed by ``||m|| == M`` and ``||d - A m|| == D``, and both residuals are
-    monotone in their own multiplier, so nested bisection converges.
+    with ``Q`` the prior's precision, ``P`` the confidence set's, ``u`` the
+    model relative to the prior's centre and ``d'`` the data relative to
+    both centres: a damped least-squares solve in the two sets' own inner
+    products, the same primitive as §18.6. The multipliers are fixed by the
+    two level functions reaching their levels, both monotone in their own
+    multiplier, so nested bisection converges. A ball is the case ``Q == I
+    / M^2``; nothing here needs it to be.
+
+    The route is written in those inner products rather than by whitening
+    the problem: the reduction to the data space diagonalises ``A C A*`` in
+    the inner product ``P`` defines, through the Cholesky factor of ``P``
+    on the data components, and the model side carries ``C == Q^-1`` as an
+    operator. For balls both are scalings and the arithmetic is v1's.
 
     Two things this has that the dual route does not: it reuses solvers that
-    already exist, and it produces the **extremal model** attaining each bound.
-    What it lacks is generality: it is norm balls or nothing.
+    already exist, and it produces the **extremal model** attaining each
+    bound. What it lacks is generality: a set without a quadratic level
+    function is the dual's.
     """
 
     def __init__(
         self,
         problem: LinearForwardProblem,
         target: LinearOperator,
-        prior: Ball,
+        prior: ConvexSet,
         /,
         *,
-        noise: Ball | None = None,
+        noise: ConvexSet | None = None,
         level: float = 0.95,
         solver: LinearSolver | None = None,
         iterations: int = 60,
@@ -600,25 +656,29 @@ class _BisectionRoute(SetEstimator):
         Args:
             problem: the forward problem.
             target: the property operator ``T``.
-            prior: a norm ball on the model space.
-            noise: a norm ball on the data space; taken from the problem if
-                omitted.
+            prior: a ball or an ellipsoid on the model space.
+            noise: a ball or an ellipsoid on the data space; taken from the
+                problem if omitted.
             level: the level at which a Gaussian error is hardened.
-            solver: how to invert the damped normal operator.
+            solver: how to invert the damped normal operator, and the prior's
+                precision when its covariance is not given.
             iterations: bisection steps, on each of the two multipliers.
         """
         if target.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
         self._problem = problem
         self._target = target
-        self._radius = _ball_radius(prior, "The prior")
-        self._noise_radius = _ball_radius(
+        self._solver = solver or CGSolver(rtol=1e-12)
+        self._prior = _Quadratic(prior, self._solver, "The prior")
+        self._noise = _Quadratic(
             harden_error(problem, level=level) if noise is None else noise,
+            self._solver,
             "The noise",
         )
-        self._solver = solver or CGSolver(rtol=1e-12)
         self._iterations = iterations
-        self._normal = problem.forward_operator.adjoint @ problem.forward_operator
+        # Reported in the prior's units: a ball's radius, an ellipsoid's one.
+        self._radius = self._prior.scale
+        self._noise_radius = self._noise.scale
 
     @property
     def data_space(self) -> HilbertSpace:
@@ -630,105 +690,162 @@ class _BisectionRoute(SetEstimator):
         """The property space."""
         return self._target.codomain
 
+    # ----------------------------------------------------------------- #
+    #                      The two inner products                       #
+    # ----------------------------------------------------------------- #
+
+    @cached_property
+    def _whitening(self) -> np.ndarray | None:
+        """``W`` with ``W^T W == P_c`` on the data components, or None for a ball.
+
+        The confidence set's inner product on components, as a triangular
+        factor: ``(P r, r) == ||W r_c||^2``. A ball's ``P`` is a scaling and
+        needs no factor.
+        """
+        if self._noise.is_ball:
+            return None
+        if not self.data_space.is_orthonormal:
+            raise NotImplementedError(
+                "The primal route reduces to the data space, which needs that "
+                "space to be orthonormal. Every forward problem here has a "
+                "Euclidean data space; if yours does not, use the dual route."
+            )
+        matrix = self._noise.precision.matrix(form="components")
+        return np.linalg.cholesky(0.5 * (matrix + matrix.T)).T
+
+    def _whiten(self, vector: Any) -> np.ndarray:
+        """A data vector's components in the confidence set's inner product."""
+        components = self.data_space.to_components(vector)
+        if self._whitening is None:
+            return components / self._noise.scale
+        return self._whitening @ components
+
+    def _unwhiten(self, components: np.ndarray) -> Any:
+        """The adjoint of :meth:`_whiten`: whitened components back to a data vector."""
+        if self._whitening is None:
+            return self.data_space.from_components(components / self._noise.scale)
+        return self.data_space.from_components(self._whitening.T @ components)
+
+    def _shifted(self, data: Any) -> Any:
+        """``d - A a - b``: the data relative to both centres."""
+        space = self.data_space
+        shifted = space.subtract(
+            data, self._problem.forward_operator(self._prior.centre)
+        )
+        return space.subtract(shifted, self._noise.centre)
+
+    def _misfit(self, residual: Any) -> float:
+        """``sqrt((P r, r))``, the confidence set's level function's root."""
+        return float(np.linalg.norm(self._whiten(residual)))
+
+    # ----------------------------------------------------------------- #
+    #                            The reduction                           #
+    # ----------------------------------------------------------------- #
+
     @cached_property
     def _data_gram(self) -> tuple[np.ndarray, np.ndarray]:
-        """The eigendecomposition of ``A A*``, formed once.
+        """The spectrum of ``A C A*`` in the confidence set's inner product.
 
         BGP §2.6's reduction, and the thing that makes the bisection
         affordable. Woodbury turns the model-space solve
 
         .. code-block:: text
 
-            (s I + t A* A)^-1 == (1/s) [ I - A* (s/t I + A A*)^-1 A ]
+            (s Q + t A* P A)^-1
 
-        so every quantity the bisection tests — the model's norm and its misfit
-        — becomes an ``O(dim(D))`` expression once ``A A*`` is diagonalised.
-        Without it each of the four thousand bisection steps per direction
-        would be a fresh Krylov solve in the model space.
+        into one on the data space, so every quantity the bisection tests --
+        the model's level function and the misfit -- becomes an ``O(dim(D))``
+        expression once ``W (A C A*)_c W^T`` is diagonalised, ``W`` the
+        factor of :attr:`_whitening`. Without it each of the four thousand
+        bisection steps per direction would be a fresh Krylov solve.
 
-        Costs ``dim(D)`` applications of the forward operator and its adjoint,
-        once per estimator.
+        Costs ``dim(D)`` applications of the forward operator, its adjoint
+        and the prior's covariance, once per estimator.
         """
         if not self.data_space.is_orthonormal:
             raise NotImplementedError(
                 "The primal route reduces to the data space, which needs that "
                 "space to be orthonormal. Every forward problem here has a "
-                "Euclidean data space; if yours does not, use route (d)."
+                "Euclidean data space; if yours does not, use the dual route."
             )
         forward = self._problem.forward_operator
-        gram = (forward @ forward.adjoint).matrix(form="components")
+        gram = (forward @ self._prior.covariance @ forward.adjoint).matrix(
+            form="components"
+        )
+        return self._reduce(gram)
+
+    def _reduce(self, gram: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Diagonalise a data-space Gram in the confidence set's inner product."""
+        gram = 0.5 * (gram + gram.T)
+        if self._whitening is None:
+            gram = gram / self._noise.scale**2
+        else:
+            gram = self._whitening @ gram @ self._whitening.T
         values, vectors = np.linalg.eigh(0.5 * (gram + gram.T))
         return np.clip(values, 0.0, None), vectors
 
-    def _kernel_part(self, vector: Any, forward: LinearOperator) -> float:
-        """``||P_ker(A) v||^2``, from the data-space spectrum.
+    @staticmethod
+    def _live(values: np.ndarray) -> np.ndarray:
+        return values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
+
+    def _kernel_part(self, dual: Any, image: np.ndarray) -> float:
+        """``(C v, v) - sum image^2 / lambda``: what of a dual vector lies off the range.
 
         Computed once per direction and at the natural scale, because the
-        alternative — subtracting the range part from the whole at each
-        bisection step — cancels: at a data weight of ``1e8`` the kernel term
-        is ``1e-16`` of two quantities of order one, and comes out as noise.
+        alternative -- subtracting the range part from the whole at each
+        bisection step -- cancels: at a data weight of ``1e8`` the kernel
+        term is ``1e-16`` of two quantities of order one, and comes out as
+        noise.
         """
-        values, vectors = self._data_gram
-        image = vectors.T @ self.data_space.to_components(forward(vector))
-        live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
-        return max(
-            self._problem.model_space.squared_norm(vector)
-            - float(np.sum(image[live] ** 2 / values[live])),
-            0.0,
+        values, _ = self._data_gram
+        live = self._live(values)
+        whole = self._problem.model_space.inner_product(
+            self._prior.covariance(dual), dual
         )
+        return max(whole - float(np.sum(image[live] ** 2 / values[live])), 0.0)
 
     def _prepare(self, direction: Any, data: Any) -> dict:
-        """Everything that does not change during the bisection."""
-        space = self._problem.model_space
         forward = self._problem.forward_operator
         pulled = self._target.adjoint(direction)
-        adjoint_data = forward.adjoint(data)
-        components = self.data_space.to_components(data)
+        shifted = self._shifted(data)
+        adjoint_data = forward.adjoint(self._noise.precision(shifted))
+        whitened = self._whiten(shifted)
         values, vectors = self._data_gram
+        forward_pulled = self._whiten(forward(self._prior.covariance(pulled)))
         return {
             "pulled": pulled,
             "adjoint_data": adjoint_data,
-            "data": components,
-            "forward_pulled": self.data_space.to_components(forward(pulled)),
-            "gram_data": vectors @ (values * (vectors.T @ components)),
-            "pulled_squared": space.squared_norm(pulled),
-            "pulled_kernel_squared": self._kernel_part(pulled, forward),
-            "cross": space.inner_product(pulled, adjoint_data),
-            "adjoint_squared": space.squared_norm(adjoint_data),
+            "data": whitened,
+            "forward_pulled": forward_pulled,
+            "gram_data": vectors @ (values * (vectors.T @ whitened)),
+            "pulled_kernel_squared": self._kernel_part(
+                pulled, vectors.T @ forward_pulled
+            ),
         }
 
     def _state(self, prepared: dict, damping: float, weight: float) -> tuple:
-        """``(||m*||, misfit)`` at a Tikhonov parameter and a data weight.
+        """The model's level function's root and the misfit at ``(gamma, t)``.
 
-        Parameterised by ``gamma == s / t`` rather than by ``s``, which is what
-        BGP §2.6 calls it and which is the only stable choice: with ``s``, the
-        norm is a ratio of two large numbers as ``t`` grows and the whole
-        expression cancels. Here
+        Parameterised by ``gamma == s / t`` rather than by ``s``, which is
+        what BGP §2.6 calls it and which is the only stable choice: with
+        ``s``, the norm is a ratio of two large numbers as ``t`` grows and
+        the whole expression cancels. Here
 
         .. code-block:: text
 
-            m* == (gamma I + A* A)^-1 ( (1/t) T* q + A* d )
+            u* == C (gamma I + A* P A C)^-1 ( (1/t) T* q + A* P d' )
 
-        stays bounded as ``t -> infinity``, tending to the damped least-squares
-        solution. Both norms expand into inner products in the data space.
+        stays bounded as ``t -> infinity``, tending to the damped
+        least-squares solution. Both quantities expand into sums over the
+        reduced spectrum.
         """
         values, vectors = self._data_gram
         inverse_weight = 1.0 / weight
         forward_w = inverse_weight * prepared["forward_pulled"] + prepared["gram_data"]
         projected = vectors.T @ forward_w
-
-        # A m* == (gamma I + A A*)^-1 A w', exactly -- the Woodbury difference
-        # cancels identically here, so the misfit is stable at every damping.
         image = vectors @ (projected / (damping + values))
-
-        # ||m*||^2 split into its kernel and range parts. Taking it from
-        # (1/gamma)(w' - A* z) instead is a difference of two nearly equal
-        # vectors divided by a small number, and at gamma of 1e-8 it returns
-        # 2.8 for a model whose norm is 0.85.
-        # A* d lies entirely in the range of A*, so the whole kernel part of
-        # w' comes from (1/t) T* q -- exactly, at its own scale.
         kernel_squared = inverse_weight**2 * prepared["pulled_kernel_squared"]
-        live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
+        live = self._live(values)
         model_squared = kernel_squared / damping**2 + float(
             np.sum(
                 projected[live] ** 2 / (values[live] * (damping + values[live]) ** 2)
@@ -738,46 +855,39 @@ class _BisectionRoute(SetEstimator):
         return np.sqrt(model_squared), float(np.linalg.norm(residual))
 
     def _model(self, prepared: dict, damping: float, weight: float) -> Any:
-        """The extremal model itself, at the cost of two adjoint applications."""
+        """The model at ``(gamma, t)``, relative to the prior's centre."""
         space = self._problem.model_space
         values, vectors = self._data_gram
         inverse_weight = 1.0 / weight
         forward_w = inverse_weight * prepared["forward_pulled"] + prepared["gram_data"]
         projected = vectors.T @ forward_w
-        # m* == (1/gamma) w'_ker  +  A* [ f / (Lambda (gamma + Lambda)) ],
-        # which is the same vector as (1/gamma)(w' - A* z) with the
-        # cancellation taken out analytically.
         adjoint = self._problem.forward_operator.adjoint
-        live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
+        live = self._live(values)
         w = space.add(
             space.scale(inverse_weight, prepared["pulled"]), prepared["adjoint_data"]
         )
         pseudo = np.zeros_like(projected)
         pseudo[live] = projected[live] / values[live]
-        kernel = space.subtract(
-            w, adjoint(self.data_space.from_components(vectors @ pseudo))
-        )
+        kernel = space.subtract(w, adjoint(self._unwhiten(vectors @ pseudo)))
         weighted = np.zeros_like(projected)
         weighted[live] = projected[live] / (values[live] * (damping + values[live]))
-        return space.add(
+        dual = space.add(
             space.scale(1.0 / damping, kernel),
-            adjoint(self.data_space.from_components(vectors @ weighted)),
+            adjoint(self._unwhiten(vectors @ weighted)),
         )
+        return self._prior.covariance(dual)
 
     def _bisect(
         self, quantity: Any, target: float, /, *, decreasing: bool = True
     ) -> float:
         """The positive multiplier at which a monotone quantity hits a target.
 
-        Delegates to :func:`~pygeoinf2.numerics.root_find.monotone_root`, which
-        is DESIGN §18.6's one kernel: the same search the discrepancy principle
-        runs, and the reason it is written once. The probes here are closed
-        form — the spectral reduction of :attr:`_data_gram` has already turned
-        each into an ``O(dim(D))`` expression — so there is no solve to warm
-        start, and the primitive reports zero inner iterations accordingly.
-
-        The tolerance is zero so that the full iteration count is always taken:
-        these searches are nested, and an inner search that stopped early would
+        Delegates to :func:`~pygeoinf2.numerics.root_find.monotone_root`,
+        DESIGN §18.6's one kernel. The probes here are closed form -- the
+        spectral reduction has already turned each into an ``O(dim(D))``
+        expression -- so there is no solve to warm start. The tolerance is
+        zero so that the full iteration count is always taken: these
+        searches are nested, and an inner search that stopped early would
         put a step in the outer one's function.
         """
         result = monotone_root(
@@ -794,29 +904,37 @@ class _BisectionRoute(SetEstimator):
         return result.argument
 
     def _fit_norm(self, prepared: dict, weight: float) -> float:
-        """The damping at which the model's norm is the prior radius."""
+        """The damping at which the model reaches the prior's level."""
         return self._bisect(
-            lambda damping: self._state(prepared, damping, weight)[0], self._radius
+            lambda damping: self._state(prepared, damping, weight)[0], 1.0
         )
+
+    # ----------------------------------------------------------------- #
+    #                          The support side                         #
+    # ----------------------------------------------------------------- #
 
     def extremal_model(self, direction: Any, data: Any, /) -> Any:
         """The model of the feasible set furthest along a direction.
 
-        What the dual route leaves implicit. Not generally unique — when the
-        prior constraint is slack the null-space components are free — but the
-        bound it attains is.
+        What the dual route leaves implicit. Not generally unique -- when the
+        prior constraint is slack the null-space components are free -- but
+        the bound it attains is.
         """
         space = self._problem.model_space
         pulled = self._target.adjoint(direction)
-        length = space.norm(pulled)
+        image = self._prior.covariance(pulled)
+        length = float(np.sqrt(max(space.inner_product(image, pulled), 0.0)))
         if length == 0.0:
-            return space.zero()
+            return space.copy(self._prior.centre)
 
         # Prior-only: if the prior's own support point already fits the data,
         # the data constraint is slack and there is nothing to solve.
-        flat = space.scale(self._radius / length, pulled)
-        residual = self.data_space.subtract(data, self._problem.forward_operator(flat))
-        if self.data_space.norm(residual) <= self._noise_radius:
+        flat = space.axpy(1.0 / length, image, space.copy(self._prior.centre))
+        residual = self.data_space.subtract(
+            self._shifted(data),
+            self._problem.forward_operator(space.subtract(flat, self._prior.centre)),
+        )
+        if self._misfit(residual) <= 1.0:
             return flat
 
         prepared = self._prepare(direction, data)
@@ -824,8 +942,9 @@ class _BisectionRoute(SetEstimator):
         def misfit(weight: float) -> float:
             return self._state(prepared, self._fit_norm(prepared, weight), weight)[1]
 
-        weight = self._bisect(misfit, self._noise_radius)
-        return self._model(prepared, self._fit_norm(prepared, weight), weight)
+        weight = self._bisect(misfit, 1.0)
+        relative = self._model(prepared, self._fit_norm(prepared, weight), weight)
+        return space.add(self._prior.centre, relative)
 
     def support(self, direction: Any, data: Any, /) -> float:
         """The support value of the feasible property set in one direction."""
@@ -834,45 +953,86 @@ class _BisectionRoute(SetEstimator):
             self._target.adjoint(direction), model
         )
 
-    def is_feasible(self, data: Any, /) -> bool:
-        """Whether any model lies in both the prior set and the noise set.
+    # ----------------------------------------------------------------- #
+    #                            Feasibility                             #
+    # ----------------------------------------------------------------- #
 
-        v1's ``test_data_compatibility``, for the bounded-noise route. The
-        question every other method here assumes has been answered: if the
-        prior ball and the data's noise ball do not intersect under ``A``,
-        there is no feasible set and a support value has nothing to be the
-        support of.
+    def fitting_model(self, data: Any, /) -> Any | None:
+        """The model nearest the prior's centre that fits the data, or None.
 
-        Answered matrix-free, by the damped minimum-norm search of
-        :func:`_minimum_norm_fits`: a few warm-started Krylov solves in the
-        data space, and nothing assembled. It used to attempt one support
-        evaluation, which went through this route's dense reduction and so
-        formed ``A A*`` -- a forward and an adjoint solve per datum -- to
-        answer a yes-or-no question that is asked *before* committing to the
-        route. The reduction is still what the support values themselves
-        cost, and the class docstring says so.
-
-        Args:
-            data: the observations.
-
-        Returns:
-            Whether the feasible set is non-empty.
+        In the prior's own inner product. For two balls this is v1's
+        ``test_data_compatibility`` computation, matrix-free: the damped
+        minimum-norm search of :func:`_minimum_norm_fits`, a few
+        warm-started Krylov solves in the data space (DESIGN §50). For an
+        ellipsoid on either side it comes from the reduction, whose cost
+        the route pays anyway for its support values: with ``xi`` the
+        shifted data in the reduced spectrum, the damped fit has misfit
+        ``gamma ||xi / (gamma + lambda)||`` and level function ``sum lambda
+        xi^2 / (gamma + lambda)^2``, monotone in ``gamma``.
         """
-        return _minimum_norm_fits(
-            self._problem,
-            data,
-            noise_radius=self._noise_radius,
-            prior_radius=self._radius,
-            solver=self._solver,
-            iterations=self._iterations,
+        space = self._problem.model_space
+        shifted = self._shifted(data)
+        if self._prior.is_ball and self._noise.is_ball:
+            from .point import misfit_search
+            from .tikhonov import TikhonovFamily
+
+            forward = self._problem.forward_operator
+            if self.data_space.norm(shifted) <= self._noise.scale:
+                return space.copy(self._prior.centre)
+            family = TikhonovFamily(
+                forward, solver=self._solver, formalism="data_space"
+            )
+            found = misfit_search(
+                family,
+                family.right_hand_side(shifted),
+                lambda model: self.data_space.norm(
+                    self.data_space.subtract(shifted, forward(model))
+                ),
+                self._noise.scale,
+                iterations=self._iterations,
+            )
+            if (
+                found.value > self._noise.scale * (1.0 + 1e-6)
+                and found.exhausted is not None
+            ):
+                return None
+            model = family.model_from(found.solution)
+            if space.norm(model) > self._prior.scale:
+                return None
+            return space.add(self._prior.centre, model)
+
+        values, vectors = self._data_gram
+        whitened = self._whiten(shifted)
+        if float(np.linalg.norm(whitened)) <= 1.0:
+            return space.copy(self._prior.centre)
+        projected = vectors.T @ whitened
+        live = self._live(values)
+        unreachable = float(np.linalg.norm(projected[~live]))
+        if unreachable > 1.0:
+            return None
+
+        def misfit(damping: float) -> float:
+            return float(damping * np.linalg.norm(projected / (damping + values)))
+
+        damping = self._bisect(misfit, 1.0, decreasing=False)
+        level = float(
+            np.sum(values[live] * projected[live] ** 2 / (damping + values[live]) ** 2)
         )
+        if level > 1.0:
+            return None
+        weighted = np.zeros_like(projected)
+        weighted[live] = projected[live] / (damping + values[live])
+        dual = self._problem.forward_operator.adjoint(
+            self._unwhiten(vectors @ weighted)
+        )
+        return space.add(self._prior.centre, self._prior.covariance(dual))
+
+    def is_feasible(self, data: Any, /) -> bool:
+        """Whether any model lies in both the prior set and the noise set."""
+        return self.fitting_model(data) is not None
 
     def __call__(self, data: Any) -> ConvexSet:
-        """The feasible property set, as a support-function oracle.
-
-        The oracle raises on data no model can match; :meth:`is_feasible`
-        tests that in advance.
-        """
+        """The feasible property set, as a support-function oracle."""
         return ConvexSet.from_support_function(
             self.target_space,
             lambda direction: self.support(direction, data),
@@ -886,85 +1046,78 @@ class _BisectionRoute(SetEstimator):
     # ----------------------------------------------------------------- #
 
     @cached_property
-    def _reduced(self) -> tuple[Any, np.ndarray, np.ndarray]:
-        """The kernel projector and the spectrum of ``A P A*``.
+    def _property_pseudo_inverse(self) -> LinearOperator:
+        """``C T* (T C T*)^-1``: the model nearest the prior's centre with a given property.
 
-        Al-Attar (2021) §3.3: fixing a property value confines the model to
-        ``m~ + ker T``, and asking whether any such model fits the data is *the
-        same problem again* in that subspace — with ``A*`` replaced by
-        ``P_ker(T) A*`` throughout, which is eq. (3.28).
-
-        Everything the reduced problem needs is the spectrum of
-        ``(A P)(A P)* == A P A*`` on the data space, formed once.
+        Factored rather than iterated. The property space is
+        finite-dimensional and small -- that is what makes it a *property*
+        space (§18.1) -- so ``T C T*`` is a handful of rows.
         """
-        kernel = OrthogonalProjector.onto_kernel(self._target, solver=self._solver)
-        forward = self._problem.forward_operator
-        reduced = forward @ kernel @ forward.adjoint
-        values, vectors = _self_adjoint_spectrum(reduced)
-        return kernel, values, vectors
+        normal = (
+            self._target @ self._prior.covariance @ self._target.adjoint
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        return self._prior.covariance @ self._target.adjoint @ CholeskySolver()(normal)
 
     @cached_property
-    def _property_pseudo_inverse(self) -> LinearOperator:
-        """``T* (T T*)^-1``: the smallest model with a given property.
+    def _reduced(self) -> tuple[np.ndarray, np.ndarray]:
+        """The spectrum of ``A P_Q C A*`` in the confidence set's inner product.
 
-        Factored rather than iterated. The property space is finite-dimensional
-        and small — that is what makes it a *property* space (§18.1) — so ``T
-        T*`` is a handful of rows, and conjugate gradients on it runs out of
-        Krylov space before it runs out of tolerance and reports the round-off
-        as a non-positive curvature direction.
+        Al-Attar (2021) §3.3: fixing a property value confines the model to
+        ``m~ + ker T``, and asking whether any such model fits the data is
+        *the same problem again* in that subspace, with the projector onto
+        the kernel taken orthogonally in the prior's inner product, ``P_Q ==
+        I - C T* (T C T*)^-1 T``, which is eq. (3.28) in that metric.
         """
-        normal = (self._target @ self._target.adjoint).with_traits(
-            Traits.POSITIVE_DEFINITE
+        space = self._problem.model_space
+        projector = (
+            LinearOperator.identity(space)
+            - self._property_pseudo_inverse @ self._target
         )
-        return self._target.adjoint @ CholeskySolver()(normal)
+        forward = self._problem.forward_operator
+        reduced = (
+            forward @ projector @ self._prior.covariance @ forward.adjoint
+        ).matrix(form="components")
+        return self._reduce(reduced)
 
     def inclusion_norm(self, value: Any, data: Any, /) -> float:
-        """``min { ||m|| : T m == value, ||d - A m|| <= D }``.
+        """The prior's level function's root of the smallest model with this value fitting the data.
 
-        The set-inclusion question reduced to a constrained optimisation, which
-        is the complement of the support-function machinery: a support function
-        bounds the feasible set from *outside*, one direction at a time, and
-        this decides membership *exactly*, one point at a time. The two together
-        are §18.4's sandwich — and only this one can produce the inner bound.
+        Reported in the prior's units: for a ball prior the model's norm,
+        compared with the radius; for an ellipsoid the Mahalanobis form's
+        root, compared with one. Infinite when no model at all can fit the
+        data with this property -- a *proof* that the value is inadmissible,
+        not a failure to find one.
 
         The reduction is Al-Attar (2021) §3.3. Writing ``m == m~ + u`` with
-        ``m~`` the minimum-norm model having the property and ``u`` in the
-        kernel of ``T``, the norms separate and what is left is a discrepancy
-        problem in the subspace. In the data space that has a closed form:
-        with ``z == (gamma + A P A*)^-1 v``, the misfit is exactly
-        ``gamma ||z||`` and the model's norm is ``(A P A* z, z)``, both
-        monotone in ``gamma`` and neither involving a cancellation.
-
-        Returns infinity when no model at all can fit the data with this
-        property — which is a *proof* that the value is inadmissible, not a
-        failure to find one, and is the constructive part of Lemma 3.1.
+        ``m~`` the model nearest the prior's centre having the property and
+        ``u`` in the kernel of ``T``, the level function separates and what
+        is left is a discrepancy problem in the subspace, closed form in the
+        reduced spectrum: the misfit is ``gamma ||z||`` and the model's level
+        function ``(A P C A* z, z)``, both monotone in ``gamma`` and neither
+        involving a cancellation.
         """
         space = self._problem.model_space
         forward = self._problem.forward_operator
-        _, values, vectors = self._reduced
-
-        anchor = self._property_pseudo_inverse(value)
-        anchor_norm = space.norm(anchor)
-        residual = self.data_space.subtract(data, forward(anchor))
-        projected = _spectral_components(self.data_space, vectors, residual)
-
-        # Already within the noise set with no help from the kernel.
-        if self.data_space.norm(residual) <= self._noise_radius:
-            return float(anchor_norm)
-
-        # The best the kernel can do: whatever of the residual lies outside the
-        # range of A P is unreachable however large the model is allowed to be.
-        live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
+        values, vectors = self._reduced
+        offset = self.target_space.subtract(value, self._target(self._prior.centre))
+        relative = self._property_pseudo_inverse(offset)
+        anchor_squared = space.inner_product(self._prior.precision(relative), relative)
+        residual = self.data_space.subtract(self._shifted(data), forward(relative))
+        whitened = self._whiten(residual)
+        if float(np.linalg.norm(whitened)) <= 1.0:
+            return self._prior.scale * float(np.sqrt(anchor_squared))
+        projected = vectors.T @ whitened
+        live = self._live(values)
         unreachable = float(np.linalg.norm(projected[~live]))
-        if unreachable > self._noise_radius:
+        if unreachable > 1.0:
             return float("inf")
 
         def misfit(damping: float) -> float:
             return float(damping * np.linalg.norm(projected / (damping + values)))
 
-        damping = self._bisect(misfit, self._noise_radius, decreasing=False)
+        damping = self._bisect(misfit, 1.0, decreasing=False)
         correction = float(np.sum(values * projected**2 / (damping + values) ** 2))
-        return float(np.sqrt(anchor_norm**2 + correction))
+        return self._prior.scale * float(np.sqrt(anchor_squared + correction))
 
     def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
         """Whether a property value is consistent with the data and the prior.
@@ -972,71 +1125,20 @@ class _BisectionRoute(SetEstimator):
         Args:
             value: the property value to test.
             data: the observations.
-            rtol: tolerance on the bound, as for
-                :meth:`_ClosedFormRoute.admits`.
+            rtol: tolerance on the bound, as for :meth:`_ClosedFormRoute.admits`.
 
         Returns:
             Whether the value is admissible.
         """
-        return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
-
-    def inner_hull(self, values: Any, data: Any, /) -> Any:
-        """The convex hull of whichever candidate values are admissible.
-
-        The *inner* bound of §18.4, and the only thing that produces one: a
-        support function can never exhibit a point of the set. Returned as an
-        inner :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be
-        mistaken for the outer one — reporting a hull of feasible samples as
-        though it were the answer is what BGP's Figure 4 is about, and it is
-        always an undercount.
-
-        Args:
-            values: candidate property values, of which the admissible ones
-                are kept.
-            data: the observations.
-
-        Returns:
-            An inner polytope containing the admissible candidates.
-
-        Raises:
-            ValueError: if fewer candidates are admissible than the property
-                space has dimensions, there being no hull to take. That is a
-                statement about the candidates, not about the feasible set.
-        """
-        from scipy.spatial import ConvexHull
-
-        from ..geometry.convex import HalfSpace, Polytope
-
-        space = self.target_space
-        inside = [
-            space.to_components(value) for value in values if self.admits(value, data)
-        ]
-        if len(inside) <= space.dim:
-            raise ValueError(
-                f"Only {len(inside)} of the candidates are admissible, which "
-                f"is not enough to bound a hull in {space.dim} dimensions. "
-                "Sample nearer the minimum-norm property."
-            )
-        hull = ConvexHull(np.stack(inside))
-        planes = []
-        for equation in hull.equations:
-            normal, offset = equation[:-1], -equation[-1]
-            planes.append(
-                HalfSpace(
-                    space,
-                    space.representer(normal),
-                    offset=float(offset),
-                )
-            )
-        return Polytope(space, planes, outer=False)
+        return self.inclusion_norm(value, data) <= self._prior.scale * (1.0 + rtol)
 
     def push_forward(self, operator: LinearOperator, /) -> "_BisectionRoute":
         """The same inference about a further property."""
         return _BisectionRoute(
             self._problem,
             operator @ self._target,
-            Ball(self._problem.model_space, radius=self._radius),
-            noise=Ball(self.data_space, radius=self._noise_radius),
+            self._prior.subset,
+            noise=self._noise.subset,
             solver=self._solver,
             iterations=self._iterations,
         )
@@ -2138,9 +2240,9 @@ class FeasiblePropertySet(ConvexSet):
 
     @property
     def level(self) -> float:
-        """The prior radius: the level the inclusion norm is bounded by."""
+        """The level the inclusion norm is bounded by: a ball prior's radius, an ellipsoid's one."""
         self._inclusion("The level")
-        return _ball_radius(self._estimator.prior, "The prior")
+        return self._estimator._prior_level
 
     def inclusion_norm(self, value: Any, /) -> float:
         """``min { ||m|| : T m == value, A m fits the data }``, the cost of a value.
@@ -2199,15 +2301,18 @@ class FeasiblePropertySet(ConvexSet):
             NotImplementedError: unless membership can be decided.
             ValueError: if no model within the prior fits the data.
         """
-        self._inclusion("The fitting model")
+        engine = self._inclusion("The fitting model")
+        if self.is_empty():
+            raise ValueError(
+                "No model within the prior fits the data; the set is empty."
+            )
         if self.membership == "closed_form":
-            model = self._estimator._inclusion.minimum_norm_model(self._data)
+            return engine.minimum_norm_model(self._data)
+        if self.membership == "reduced":
+            model = engine.fitting_model(self._data)
         else:
             model = self._estimator._likelihood_engine.fitting_model(self._data)
-        if (
-            model is None
-            or self._estimator.problem.model_space.norm(model) > self.level
-        ):
+        if model is None:
             raise ValueError(
                 "No model within the prior fits the data; the set is empty."
             )
@@ -2525,11 +2630,25 @@ class BackusGilbertParker(SetEstimator):
     def _balls(self) -> bool:
         return isinstance(self._prior, Ball) and isinstance(self._noise, Ball)
 
+    @property
+    def _quadratic(self) -> bool:
+        """Both sets have quadratic level functions: a ball or an ellipsoid each."""
+        return isinstance(self._prior, (Ball, Ellipsoid)) and isinstance(
+            self._noise, (Ball, Ellipsoid)
+        )
+
+    @property
+    def _prior_level(self) -> float:
+        """The prior's level in the units its inclusion norm is reported in."""
+        if isinstance(self._prior, Ball):
+            return float(self._prior.radius)
+        return 1.0
+
     def _choose(self, route: str) -> str:
         if route == "auto":
             if self._exact and isinstance(self._prior, Ball):
                 return "closed_form"
-            if self._balls:
+            if self._quadratic:
                 return "bisection"
             return "dual"
         if route == "closed_form" and not (
@@ -2541,9 +2660,10 @@ class BackusGilbertParker(SetEstimator):
                 f"{self._choose('auto')!r}."
             )
         if route == "bisection":
-            if not self._balls:
+            if not self._quadratic:
                 raise ValueError(
-                    "Bisection needs a ball prior and a ball confidence set; a "
+                    "Bisection needs a ball or an ellipsoid on each side, a prior "
+                    "and a confidence set with quadratic level functions; a "
                     "general convex set needs the dual route."
                 )
             if self._exact:
@@ -2589,7 +2709,7 @@ class BackusGilbertParker(SetEstimator):
         if membership == "auto":
             if self._exact and isinstance(self._prior, Ball):
                 return "closed_form"
-            if self._balls:
+            if self._quadratic:
                 return "reduced"
             if self._likelihood_applies:
                 return "likelihood"
@@ -2601,11 +2721,11 @@ class BackusGilbertParker(SetEstimator):
                 "Closed-form membership needs a ball prior and exact data; "
                 f"with these sets membership is {self._choose_membership('auto')!r}."
             )
-        if membership == "reduced" and not (self._balls and not self._exact):
+        if membership == "reduced" and not (self._quadratic and not self._exact):
             raise ValueError(
-                "Reduced membership needs a ball prior and a ball confidence "
-                "set of positive radius; with these sets membership is "
-                f"{self._choose_membership('auto')!r}."
+                "Reduced membership needs a ball or an ellipsoid on each side, "
+                "with a confidence set of positive size; with these sets "
+                f"membership is {self._choose_membership('auto')!r}."
             )
         if membership == "likelihood" and not self._likelihood_applies:
             raise ValueError(

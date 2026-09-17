@@ -1230,6 +1230,11 @@ class Ellipsoid(ConvexSet):
         )
 
     @property
+    def covariance(self) -> LinearOperator | None:
+        """The inverse of the precision, if it was given; ``None`` otherwise."""
+        return self._covariance
+
+    @property
     def precision(self) -> LinearOperator:
         """The operator defining the Mahalanobis distance."""
         return self._precision
