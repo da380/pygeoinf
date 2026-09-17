@@ -7710,3 +7710,63 @@ and written, the existing copy is kept unless forced, the USGS filters
 reach the query, a refreshed catalogue changes what the sphere returns,
 too many events names the download without fetching, and bad arguments
 and failed fetches are reported.
+
+## 83. The mass-weighted space takes what its base offers (2026-09-17)
+
+`MassWeightedSpace(base, mass)` reweights one inner product by another
+and needs no coordinates to do it, which is why the MFEM backend's
+finite element space is one over a degree-of-freedom space with no
+component map. But v1's ``MassWeightedHilbertSpace`` delegated its
+components to the base, so every coordinate-backed routine accepted it,
+and v2's did not: a direct solver, ``matrix()`` and the dense fallbacks
+refused a mass-weighted space over a perfectly good coordinate base.
+And v1's ``MassWeightedHilbertModule`` kept pointwise ``multiply`` and
+``sqrt`` over a module; v2 had no combination.
+
+**The variant is picked by the base.** The constructor stays the entry
+point and returns, over a coordinate base, a coordinate space whose
+components are the base's and whose Gram map is ``G_base M_c``, the
+base's composed with the mass operator's action on components; over a
+module, a module with the pointwise operations delegated; over both,
+both, which is v1's module. A subclass is left as written, so the MFEM
+space is untouched. The mass acts on components directly where the
+operator offers that, and through a vector round trip otherwise, which
+is what the weighted inner product costs anyway.
+
+**The lift is what this is for** (David, 2026-09-17: "It is very
+typical to derive formal or L2 adjoints and then lift these to the
+proper space, and having this step automated is key"). The lift was
+already general: one `from_formal_adjoint` over mass-weighted spaces,
+direct sums, metric ratios through the Gram actions, and Euclidean
+sides, with `lift_formal_adjoint` on the symmetric spaces a thin
+wrapper, and a component route that keeps an operator's fused actions
+so a lifted operator stays inside a product or a Krylov loop. With the
+weighted space a coordinate space, the lift takes that route over it
+too, and the mass operator in components is what the route's
+``G_U^-1 G_V`` reduces to, so nothing is assembled and nothing is
+transformed twice. The test pins both: the lifted adjoint is
+``M^-1 A^{*U} M`` to rounding, and the lifted operator exposes its
+component actions.
+
+**Coordinate selection.** `CoordinateSpace.coordinate_selection(indices)`
+is v1's ``EuclideanSpace.subspace_projection`` on any coordinate space:
+an O(k) forward map, a scatter-then-representer adjoint that carries
+the metric, and component actions exposed. `coefficient_operator` on
+the symmetric spaces remains the spectral form of the same thing.
+
+**Cameron–Martin.** §66 left the ball form of the credible set waiting
+on this line. It is constructible now, a `Ball` on
+``MassWeightedSpace(domain, precision)``, and the ellipsoid remains the
+credible set the measure hands out, the two being the same set.
+
+**Checked.** Over a dense-metric base with a dense mass operator the
+weighted space passes the space and coordinate checks, its Gram matrix
+is the base's times the mass matrix and symmetric, a Cholesky solver
+and ``matrix()`` work on an operator over it, and the lift from the
+base passes the operator check with the mass formula's adjoint and the
+component actions in place; over a periodic box with a diagonal mass
+the space is a module whose pointwise operations are the base's, with a
+diagonal metric equal to the product of the two diagonals; a subclass
+keeps its class; the selection operator passes the operator check on a
+weighted space with the metric in its adjoint and refuses repeats and
+positions outside the space.

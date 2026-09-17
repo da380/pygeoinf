@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import TYPE_CHECKING, Hashable, Sequence
+from typing import Any, TYPE_CHECKING, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator, default_rng
@@ -723,6 +723,48 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
             adjoint=lambda x: self.apply_gram(self.to_components(x)),
         )
 
+    def coordinate_selection(self, indices: Any, /) -> "LinearOperator[V, np.ndarray]":
+        """``x -> c_x[indices]``, some coordinates into a Euclidean space.
+
+        v1's ``EuclideanSpace.subspace_projection``, on any coordinate space:
+        the forward map costs the selection and nothing else, and the adjoint
+        scatters into a zero array and applies the representer, so it carries
+        the metric and is right on a weighted space. The action on components
+        is exposed, so a product through this stays fused.
+
+        Args:
+            indices: the positions to select, in the order they come out.
+
+        Returns:
+            The operator into ``EuclideanSpace(len(indices))``.
+
+        Raises:
+            ValueError: for a position outside the space, or a repeat.
+        """
+        from .operators import LinearOperator
+
+        positions = np.atleast_1d(np.asarray(indices, dtype=int)).ravel()
+        if positions.size and (positions.min() < 0 or positions.max() >= self.dim):
+            raise ValueError(f"Positions must lie in [0, {self.dim}).")
+        if np.unique(positions).size != positions.size:
+            raise ValueError("Positions must not repeat.")
+        codomain = EuclideanSpace(positions.size)
+
+        def scatter(y: np.ndarray) -> np.ndarray:
+            total = np.zeros(self.dim)
+            total[positions] = np.asarray(y, dtype=float)
+            return total
+
+        operator = LinearOperator.from_callables(
+            self,
+            codomain,
+            lambda x: self.to_components(x)[positions],
+            adjoint=lambda y: self.representer(scatter(y)),
+        )
+        operator._components_action_fn = lambda c: c[positions]
+        operator._components_adjoint_action_fn = lambda y: self.solve_gram(scatter(y))
+        return operator
+
     def representer(self, derivative_components: np.ndarray) -> V:
         """The Riesz representer of the functional with the given derivative.
 
@@ -829,6 +871,30 @@ class MassWeightedSpace[V](HilbertSpace[V]):
     usually far easier to write down an operator's adjoint with respect to the
     *base* inner product than the weighted one, and the lift is exact.
     """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "MassWeightedSpace[V]":
+        """Pick the variant the base admits: coordinates, module structure, both.
+
+        The weighting itself needs neither, and a backend with no component
+        map gets the plain class. Over a coordinate base the weighted space
+        is a coordinate space too, its Gram map the base's composed with the
+        mass operator, so every coordinate-backed routine -- direct solvers,
+        ``matrix()``, the dense fallbacks -- accepts it, as v1's did by
+        delegation. Over a module it keeps pointwise ``multiply`` and
+        ``sqrt``, v1's ``MassWeightedHilbertModule``. A subclass is left as
+        written.
+        """
+        if cls is MassWeightedSpace and args:
+            base = args[0]
+            coordinate = isinstance(base, CoordinateSpace)
+            module = isinstance(base, HilbertModule)
+            if coordinate and module:
+                cls = _CoordinateMassWeightedModule
+            elif coordinate:
+                cls = _CoordinateMassWeightedSpace
+            elif module:
+                cls = _MassWeightedModule
+        return super().__new__(cls)
 
     def __init__(
         self,
@@ -958,6 +1024,82 @@ class MassWeightedSpace[V](HilbertSpace[V]):
 
     def __repr__(self) -> str:
         return f"MassWeightedSpace({self._base!r})"
+
+
+class _CoordinateMassWeightedSpace[V](MassWeightedSpace[V], CoordinateSpace[V]):
+    """A mass-weighted space over a coordinate base: the same components, and
+    the Gram map ``G_base M_c``, with ``M_c`` the mass operator's action on
+    components.
+
+    ``(x, y)_V == (M x, y)_base == c_y . G_base M_c c_x``, so ``apply_gram``
+    is the base's after the mass and ``solve_gram`` the mass inverse after the
+    base's. The mass acts on components directly where it can, which is what
+    keeps :meth:`LinearOperator.from_formal_adjoint`'s coordinate route -- the
+    one that stays inside fused products and Krylov loops -- as cheap over
+    this space as over a diagonal-metric one.
+    """
+
+    def to_components(self, x: V) -> np.ndarray:
+        """The base's components."""
+        return self._base.to_components(x)
+
+    def from_components(self, c: np.ndarray) -> V:
+        """The base's vector."""
+        return self._base.from_components(c)
+
+    def _mass_on_components(
+        self, c: np.ndarray, operator: "LinearOperator"
+    ) -> np.ndarray:
+        """An operator on the base applied to components, directly where it can."""
+        action = operator._components_action()
+        if action is not None:
+            return action(c)
+        return self._base.to_components(operator(self._base.from_components(c)))
+
+    def apply_gram(self, c: np.ndarray) -> np.ndarray:
+        """``G_base M_c c``."""
+        return self._base.apply_gram(self._mass_on_components(c, self._mass))
+
+    def solve_gram(self, c: np.ndarray) -> np.ndarray:
+        """``M_c^-1 G_base^-1 c``."""
+        return self._mass_on_components(self._base.solve_gram(c), self.mass_inverse)
+
+    @property
+    def has_diagonal_metric(self) -> bool:
+        """Diagonal when the base's metric and the mass operator both are."""
+        from .diagonal import DiagonalLinearOperator
+
+        return self._base.has_diagonal_metric and isinstance(
+            self._mass, DiagonalLinearOperator
+        )
+
+    def gram_diagonal(self) -> np.ndarray:
+        """The base's diagonal times the mass operator's, where both are diagonal."""
+        if self.has_diagonal_metric:
+            return self._base.gram_diagonal() * self._mass.eigenvalues
+        return super().gram_diagonal()
+
+    def basis_vector(self, i: int) -> V:
+        """The base's basis vector: the same components, so the same vector."""
+        return self._base.basis_vector(i)
+
+
+class _MassWeightedModule[V](MassWeightedSpace[V], HilbertModule[V]):
+    """A mass-weighted space over a module keeps the pointwise operations."""
+
+    def multiply(self, x: V, y: V) -> V:
+        """Pointwise product, the base's."""
+        return self._base.multiply(x, y)
+
+    def sqrt(self, x: V) -> V:
+        """Pointwise square root, the base's."""
+        return self._base.sqrt(x)
+
+
+class _CoordinateMassWeightedModule[V](
+    _CoordinateMassWeightedSpace[V], _MassWeightedModule[V]
+):
+    """Both: v1's ``MassWeightedHilbertModule`` over a coordinate base."""
 
 
 class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):

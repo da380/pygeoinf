@@ -458,3 +458,132 @@ class TestOrthonormalisationOnComponents:
         before = basis[1].copy()
         space.scale_inplace(10.0, basis[0])
         assert np.array_equal(basis[1], before)
+
+
+class TestMassWeightedCoordinates:
+    """Over a coordinate base the weighted space is a coordinate space, with
+    the Gram map the base's composed with the mass operator; over a module it
+    keeps the pointwise operations. And the lift from the base stays exact
+    and stays on the component route."""
+
+    @pytest.fixture
+    def dense(self, rng):
+        from pygeoinf2.algebra.spaces import CoordinateSpace, MassWeightedSpace
+
+        base = make_dense_metric_space(4)
+        root = rng.normal(size=(4, 4)) + 3.0 * np.identity(4)
+        mass = LinearOperator.from_matrix(
+            base,
+            base,
+            root @ root.T,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        space = MassWeightedSpace(base, mass)
+        assert isinstance(space, CoordinateSpace)
+        return base, mass, space
+
+    def test_it_passes_the_coordinate_checks(self, dense, rng):
+        base, mass, space = dense
+        check_space(space, rng=rng)
+        check_coordinates(space, rng=rng)
+
+    def test_the_gram_map_is_the_base_gram_after_the_mass(self, dense):
+        base, mass, space = dense
+        expected = base.gram_matrix() @ mass.matrix(form="components")
+        assert np.allclose(space.gram_matrix(), expected)
+        assert np.allclose(expected, expected.T)
+
+    def test_a_direct_solver_and_a_matrix_work_over_it(self, dense, rng):
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        base, mass, space = dense
+        root = rng.normal(size=(4, 4)) + 4.0 * np.identity(4)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        y = space.random(rng=rng)
+        x = CholeskySolver()(operator)(y)
+        assert space.norm(space.subtract(operator(x), y)) < 1e-9 * space.norm(y)
+        assert operator.matrix(form="galerkin").shape == (4, 4)
+
+    def test_the_lift_from_the_base_is_the_mass_formula(self, dense, rng):
+        """``A^{*V} == M^-1 A^{*U} M``, and the lifted operator acts on
+        components without leaving them, which is what keeps the lift cheap
+        (David: the automated lift is key)."""
+        from pygeoinf2.testing import check_operator
+
+        base, mass, space = dense
+        on_base = LinearOperator.from_matrix(
+            base, base, rng.normal(size=(4, 4)), form="components"
+        )
+        lifted = LinearOperator.from_formal_adjoint(space, space, on_base)
+        check_operator(lifted, rng=rng)
+        y = space.random(rng=rng)
+        expected = space.mass_inverse(on_base.adjoint(mass(y)))
+        assert space.norm(space.subtract(lifted.adjoint(y), expected)) < 1e-9 * (
+            space.norm(expected) + 1.0
+        )
+        assert lifted._components_action() is not None
+        assert lifted._components_adjoint_action() is not None
+
+    def test_over_a_module_the_pointwise_operations_survive(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.spaces import HilbertModule, MassWeightedSpace
+        from pygeoinf2.symmetric_space.fourier import Lebesgue
+
+        base = Lebesgue((8,), lengths=(1.0,))
+        mass = DiagonalLinearOperator(
+            base,
+            1.0 + base.laplacian_eigenvalues,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        space = MassWeightedSpace(base, mass)
+        assert isinstance(space, HilbertModule)
+        f = base.project_function(lambda t: 1.0 + 0.5 * np.cos(2.0 * np.pi * t))
+        assert np.allclose(space.multiply(f, f), base.multiply(f, f))
+        assert np.allclose(space.sqrt(f), base.sqrt(f))
+        assert space.has_diagonal_metric
+        assert np.allclose(space.gram_diagonal(), 1.0 + base.laplacian_eigenvalues)
+        assert np.allclose(np.diag(space.gram_matrix()), space.gram_diagonal())
+
+    def test_a_subclass_is_left_as_written(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.spaces import CoordinateSpace, MassWeightedSpace
+
+        class Plain(MassWeightedSpace):
+            pass
+
+        base = EuclideanSpace(3)
+        mass = DiagonalLinearOperator(base, np.array([1.0, 2.0, 3.0]))
+        assert type(Plain(base, mass)) is Plain
+        assert not isinstance(Plain(base, mass), CoordinateSpace)
+
+
+class TestCoordinateSelection:
+    """v1's ``subspace_projection``, on any coordinate space."""
+
+    def test_it_selects_and_its_adjoint_carries_the_metric(self, rng):
+        from pygeoinf2.testing import check_operator
+
+        space = make_weighted_space()
+        selection = space.coordinate_selection([3, 1])
+        check_operator(selection, rng=rng)
+        x = space.random(rng=rng)
+        assert np.allclose(selection(x), space.to_components(x)[[3, 1]])
+        pulled = space.to_components(selection.adjoint(np.array([1.0, 0.0])))
+        expected = np.zeros(4)
+        expected[3] = 1.0 / space.metric_values[3]
+        assert np.allclose(pulled, expected)
+        assert selection._components_action() is not None
+
+    def test_bad_positions_are_refused(self):
+        space = make_weighted_space()
+        with pytest.raises(ValueError, match="repeat"):
+            space.coordinate_selection([1, 1])
+        with pytest.raises(ValueError, match="lie in"):
+            space.coordinate_selection([4])
