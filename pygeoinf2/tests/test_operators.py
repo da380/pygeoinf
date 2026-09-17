@@ -5,6 +5,7 @@ import pytest
 
 from pygeoinf2.algebra.nodes import _Composition, _Sum
 from pygeoinf2.algebra.operators import (
+    AffineOperator,
     LinearOperator,
     require_coordinates,
 )
@@ -1144,3 +1145,75 @@ class TestAssembledStoresTheComponentsForm:
         solution = CholeskySolver()(assembled)(right)
         residual = space.subtract(assembled(solution), right)
         assert space.norm(residual) < 1e-9 * space.norm(right)
+
+
+class TestChecksTakeAMeasure:
+    """v1's ``measure=`` on every check: probes drawn from a measure on the
+    space rather than as white noise, which on a function space is rough in
+    every mode and not what an operator will meet."""
+
+    @pytest.fixture
+    def field(self, rng):
+        from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
+
+        X = BoxLebesgue((16,), lengths=(1.0,))
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        return X, measure
+
+    def test_the_probes_come_from_the_measure(self, field, rng, monkeypatch):
+        from pygeoinf2.testing import check_operator, check_space
+
+        X, measure = field
+        drawn = {"n": 0}
+        real = measure.sample
+
+        def counting(*, rng=None):
+            drawn["n"] += 1
+            return real(rng=rng)
+
+        monkeypatch.setattr(measure, "sample", counting)
+        A = X.spectral_operator(1.0 / (1.0 + X.degrees.astype(float)))
+        check_operator(A, rng=rng, measure=measure)
+        assert drawn["n"] > 0
+        before = drawn["n"]
+        check_space(X, rng=rng, measure=measure)
+        assert drawn["n"] > before
+
+    def test_a_measure_on_another_space_is_refused(self, field, rng):
+        from pygeoinf2.testing import check_operator
+
+        X, measure = field
+        Y = EuclideanSpace(3)
+        B = LinearOperator.from_matrix(Y, Y, np.eye(3), form="components")
+        with pytest.raises(ValueError, match="lives on"):
+            check_operator(B, rng=rng, measure=measure)
+
+    def test_a_wrong_adjoint_still_fails_under_smooth_probes(self, field, rng):
+        from pygeoinf2.testing import check_operator
+
+        X, measure = field
+        values = 1.0 / (1.0 + X.degrees.astype(float))
+        wrong = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: X.from_components(values * X.to_components(x)),
+            adjoint=lambda y: X.from_components(2.0 * values * X.to_components(y)),
+        )
+        with pytest.raises(AssertionError, match="adjoint"):
+            check_operator(wrong, rng=rng, measure=measure)
+
+    def test_the_derivative_checks_take_it_too(self, field, rng):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.testing import check_affine, check_derivative, check_gradient
+
+        X, measure = field
+        f = Functional.from_callables(
+            X, lambda x: X.squared_norm(x), gradient=lambda x: X.scale(2.0, x)
+        )
+        point = measure.sample(rng=rng)
+        check_gradient(f, point, rng=rng, measure=measure)
+        A = X.spectral_operator(1.0 / (1.0 + X.degrees.astype(float)))
+        check_derivative(A, point, rng=rng, measure=measure)
+        check_affine(
+            AffineOperator(A, measure.sample(rng=rng)), rng=rng, measure=measure
+        )

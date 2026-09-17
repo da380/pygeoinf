@@ -63,6 +63,7 @@ bite on a real problem; the small restorations below matter less in practice.
 ## 5. Lost knobs (§0.3)
 
 - [x] adaptivity: `rtol=` through `random_diagonal`, `deflated_diagonal`, `JacobiPreconditioner`, `SpectralPreconditioner` — **restored** as keywords on the callers with the fixed defaults unchanged: `rtol=`/`max_samples=`/`block_size=` on the Jacobi preconditioner, the deflated diagonal and `pointwise_variance_at` (a tolerance alone selects the sampled route); `rank=None` with `rtol=`/`max_rank=`/`block_size=` on the spectral preconditioner. DESIGN §72.
+- [x] `measure=` on every `testing.check_*` (David, 2026-09-17: white noise is unrealistic on a function space) — **restored** as a keyword on every check but `check_measure`, through one draw helper that validates the measure's domain. DESIGN §73.
 - [ ] `random_range`: `measure=` probes and `power` default 2 → 1; `random_cholesky` Nyström; `random_trace` probe type
 - [ ] parallelism: `n_jobs=` on point/path evaluation, preconditioner probing, `as_multivariate_normal`, log-determinant, `support_values`
 - [ ] escape hatches: `lazy_quadrature`, `incomplete=True`, `inverse_sqrt_operator` route, `to_coefficient_operator` padding, degree proposal beyond the space

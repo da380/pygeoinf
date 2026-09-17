@@ -40,6 +40,30 @@ __all__ = [
 ]
 
 
+def _draw(
+    space: HilbertSpace, rng: Generator | None, measure: ProbabilityMeasure | None
+) -> object:
+    """A probe vector: white noise on the space, or a draw from *measure*.
+
+    White noise is the honest default on a space with no further structure,
+    and an unrealistic one on a function space, where it is rough in every
+    mode at once and not the kind of vector an operator will meet; a check
+    can then pass or fail for the wrong reason. Passing a measure draws the
+    probes from it instead, v1's ``measure=`` on every check.
+
+    Raises:
+        ValueError: if the measure lives on another space.
+    """
+    if measure is None:
+        return space.random(rng=rng)
+    if measure.domain != space:
+        raise ValueError(
+            f"The measure lives on {measure.domain!r}, and the probes are "
+            f"drawn on {space!r}."
+        )
+    return measure.sample(rng=rng)
+
+
 def _fail(axiom: str, detail: str) -> None:
     raise AssertionError(f"Axiom failed: {axiom}. {detail}")
 
@@ -73,6 +97,7 @@ def check_space(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     rebuild: Callable[[], HilbertSpace] | None = None,
 ) -> None:
@@ -81,6 +106,8 @@ def check_space(
     Args:
         space: the space to check.
         rng: generator used to draw test vectors.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many random triples to test.
         rebuild: optional zero-argument callable returning an independently
             constructed space that should compare equal to ``space``. Supply it
@@ -114,7 +141,11 @@ def check_space(
         return
 
     for _ in range(trials):
-        x, y, z = space.random(rng=rng), space.random(rng=rng), space.random(rng=rng)
+        x, y, z = (
+            _draw(space, rng, measure),
+            _draw(space, rng, measure),
+            _draw(space, rng, measure),
+        )
         a, b = float(rng.normal()), float(rng.normal())
 
         # --- vector space axioms -----------------------------------------
@@ -199,7 +230,7 @@ def check_space(
         _assert_close(space, x, original, "copy does not alias its source")
 
     # --- derived helpers ---------------------------------------------------
-    vectors = [space.random(rng=rng) for _ in range(min(3, space.dim))]
+    vectors = [_draw(space, rng, measure) for _ in range(min(3, space.dim))]
     orthonormal = space.gram_schmidt(vectors)
     for i, u in enumerate(orthonormal):
         for j, v in enumerate(orthonormal):
@@ -209,7 +240,7 @@ def check_space(
                 "gram_schmidt returns an orthonormal set",
             )
 
-    samples = [space.random(rng=rng) for _ in range(4)]
+    samples = [_draw(space, rng, measure) for _ in range(4)]
     total = space.zero()
     for s in samples:
         total = space.axpy(0.25, s, total)
@@ -223,6 +254,7 @@ def check_coordinates(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 5,
 ) -> None:
     """Check the coordinate map, the Gram matrix, and the pairing axiom.
@@ -230,6 +262,8 @@ def check_coordinates(
     Args:
         space: the space to check.
         rng: the generator for the probe vectors.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many random vectors to check each axiom on. More than one
             because a single draw can satisfy an identity by accident.
 
@@ -262,7 +296,7 @@ def check_coordinates(
         _fail("an orthonormal basis has an identity Gram matrix", "it does not")
 
     for _ in range(trials):
-        x, y = space.random(rng=rng), space.random(rng=rng)
+        x, y = _draw(space, rng, measure), _draw(space, rng, measure)
         cx = space.to_components(x)
         cy = space.to_components(y)
         a = float(rng.normal())
@@ -309,6 +343,7 @@ def check_representer(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 3,
 ) -> None:
     """Check the pairing axiom that separates a derivative from a gradient.
@@ -325,6 +360,8 @@ def check_representer(
     Args:
         space: the space to check.
         rng: the generator for the probe vectors.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many random functionals to check.
 
     Raises:
@@ -335,7 +372,7 @@ def check_representer(
     v = space.representer(g)
 
     for _ in range(trials):
-        x = space.random(rng=rng)
+        x = _draw(space, rng, measure)
         _assert_scalar(
             space.inner_product(v, x),
             float(g @ space.to_components(x)),
@@ -348,6 +385,7 @@ def check_white_noise(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     samples: int = 20000,
     rtol: float = 0.06,
 ) -> None:
@@ -365,6 +403,8 @@ def check_white_noise(
         space: the space to check.
         rng: the generator. Seed it: this is a statistical check and an
             unseeded failure cannot be reproduced.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         samples: how many draws to average over.
         rtol: the agreement required, which must scale like
             ``1 / sqrt(samples)`` -- tightening one without the other only
@@ -381,7 +421,7 @@ def check_white_noise(
     if isinstance(space, CoordinateSpace):
         directions = [space.basis_vector(i) for i in range(min(space.dim, 3))]
     else:
-        directions = [space.random(rng=rng) for _ in range(min(space.dim, 3))]
+        directions = [_draw(space, rng, measure) for _ in range(min(space.dim, 3))]
 
     projections = np.empty((samples, len(directions)))
     for n in range(samples):
@@ -414,6 +454,7 @@ def check_operator(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 5,
 ) -> None:
     """Check linearity and the defining property of the adjoint.
@@ -425,6 +466,8 @@ def check_operator(
     Args:
         operator: the operator to check.
         rng: the generator for the probe vectors.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many pairs to check the adjoint identity on.
 
     Raises:
@@ -434,7 +477,7 @@ def check_operator(
     domain, codomain = operator.domain, operator.codomain
 
     for _ in range(trials):
-        x, y = domain.random(rng=rng), domain.random(rng=rng)
+        x, y = _draw(domain, rng, measure), _draw(domain, rng, measure)
         a, b = float(rng.normal()), float(rng.normal())
 
         combination = domain.add(domain.scale(a, x), domain.scale(b, y))
@@ -457,7 +500,7 @@ def check_operator(
         _fail("the adjoint is an involution", "A.adjoint.adjoint is not A")
 
     for _ in range(trials):
-        x, y = domain.random(rng=rng), codomain.random(rng=rng)
+        x, y = _draw(domain, rng, measure), codomain.random(rng=rng)
         _assert_scalar(
             codomain.inner_product(operator(x), y),
             domain.inner_product(x, adjoint(y)),
@@ -471,6 +514,7 @@ def check_traits(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 5,
 ) -> None:
     """Verify every trait the operator *claims*.
@@ -482,6 +526,8 @@ def check_traits(
     Args:
         operator: the operator whose claims are to be checked.
         rng: the generator for the probe vectors.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many vectors to test each claim on.
 
     Raises:
@@ -500,7 +546,7 @@ def check_traits(
         )
 
     for _ in range(trials):
-        x, y = domain.random(rng=rng), domain.random(rng=rng)
+        x, y = _draw(domain, rng, measure), _draw(domain, rng, measure)
 
         if claims(Traits.SELF_ADJOINT):
             _assert_scalar(
@@ -569,6 +615,7 @@ def check_derivative(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     step: float = 1e-6,
     trials: int = 3,
     rtol: float = 1e-5,
@@ -579,6 +626,8 @@ def check_derivative(
         operator: the operator to check.
         point: where to check it.
         rng: the generator for the probe directions.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         step: the finite-difference step. Central differences, so the error
             is ``O(step^2)`` in truncation and ``O(1/step)`` in rounding --
             which is why the default is near the square root of machine
@@ -601,7 +650,7 @@ def check_derivative(
     derivative = linearisation.derivative
 
     for _ in range(trials):
-        direction = domain.random(rng=rng)
+        direction = _draw(domain, rng, measure)
         direction = domain.scale(1.0 / max(domain.norm(direction), 1e-30), direction)
 
         forward = operator(domain.axpy(step, direction, domain.copy(point)))
@@ -626,6 +675,7 @@ def check_gradient(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     step: float = 1e-6,
     trials: int = 3,
     rtol: float = 1e-5,
@@ -643,6 +693,8 @@ def check_gradient(
         functional: the functional to check.
         point: where to check it.
         rng: the generator for the probe directions.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         step: the finite-difference step; see :func:`check_derivative`.
         trials: how many directions to check.
         rtol: the agreement required.
@@ -655,7 +707,7 @@ def check_gradient(
     gradient = functional.at(point).gradient
 
     for _ in range(trials):
-        direction = domain.random(rng=rng)
+        direction = _draw(domain, rng, measure)
         direction = domain.scale(1.0 / max(domain.norm(direction), 1e-30), direction)
 
         forward = functional(domain.axpy(step, direction, domain.copy(point)))
@@ -679,6 +731,7 @@ def check_second_derivative(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     step: float = 1e-5,
     trials: int = 3,
     rtol: float = 1e-4,
@@ -689,6 +742,8 @@ def check_second_derivative(
         operator: the operator to check.
         point: where to check it.
         rng: the generator for the probe directions.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         step: the finite-difference step; see :func:`check_derivative`.
         trials: how many directions to check.
         rtol: the agreement required. Looser than for a first derivative, the
@@ -707,9 +762,9 @@ def check_second_derivative(
 
     domain, codomain = operator.domain, operator.codomain
     for _ in range(trials):
-        d = domain.random(rng=rng)
+        d = _draw(domain, rng, measure)
         d = domain.scale(1.0 / max(domain.norm(d), 1e-30), d)
-        e = domain.random(rng=rng)
+        e = _draw(domain, rng, measure)
         e = domain.scale(1.0 / max(domain.norm(e), 1e-30), e)
 
         forward = operator.derivative(domain.axpy(step, d, domain.copy(point)))(e)
@@ -819,6 +874,7 @@ def check_projection(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     probes: int = 30,
 ) -> None:
@@ -838,6 +894,8 @@ def check_projection(
     Args:
         subset: the convex set whose projection is to be checked.
         rng: the generator for the probe points.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many points to project.
         probes: how many further points to test the obtuse-angle condition
             against for each projection.
@@ -850,7 +908,7 @@ def check_projection(
     space = subset.domain
 
     for _ in range(trials):
-        x = space.random(rng=rng)
+        x = _draw(space, rng, measure)
         projected = subset.project(x)
 
         if not subset.contains(projected, rtol=1e-6):
@@ -868,7 +926,7 @@ def check_projection(
         for _ in range(probes):
             nearby = space.axpy(
                 0.1 * distance / max(space.norm(x), 1.0),
-                space.random(rng=rng),
+                _draw(space, rng, measure),
                 space.copy(projected),
             )
             if not subset.contains(nearby, rtol=1e-9):
@@ -885,6 +943,7 @@ def check_convexity(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 20,
     rtol: float = 1e-8,
 ) -> None:
@@ -900,6 +959,8 @@ def check_convexity(
     Args:
         functional: the functional to test.
         rng: the generator for the probe points.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many pairs to test.
         rtol: the allowance, relative to the size of the right-hand side.
 
@@ -909,7 +970,7 @@ def check_convexity(
     rng = default_rng() if rng is None else rng
     space = functional.domain
     for _ in range(trials):
-        x, y = space.random(rng=rng), space.random(rng=rng)
+        x, y = _draw(space, rng, measure), _draw(space, rng, measure)
         t = float(rng.uniform())
         between = space.axpy(1.0 - t, y, space.scale(t, x))
         fx, fy = float(functional(x)), float(functional(y))
@@ -931,6 +992,7 @@ def check_affine(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     rtol: float = 1e-8,
 ) -> None:
@@ -948,6 +1010,8 @@ def check_affine(
     Args:
         operator: an :class:`~pygeoinf2.algebra.operators.AffineOperator`.
         rng: the generator for the probe vectors.
+        measure: draw the probes from this measure on the space rather
+            than as white noise; see :func:`_draw`.
         trials: how many random points and combinations to test.
         rtol: the allowance, relative to the size of what is compared.
 
@@ -973,7 +1037,7 @@ def check_affine(
         rtol=rtol,
     )
     for _ in range(trials):
-        x, y = domain.random(rng=rng), domain.random(rng=rng)
+        x, y = _draw(domain, rng, measure), _draw(domain, rng, measure)
         a = float(rng.normal())
         combination = domain.axpy(1.0 - a, y, domain.scale(a, x))
         expected = codomain.axpy(1.0 - a, operator(y), codomain.scale(a, operator(x)))
@@ -984,7 +1048,7 @@ def check_affine(
             "the operator preserves affine combinations",
             rtol=rtol,
         )
-        direction = domain.random(rng=rng)
+        direction = _draw(domain, rng, measure)
         _assert_close(
             codomain,
             operator.derivative(x)(direction),

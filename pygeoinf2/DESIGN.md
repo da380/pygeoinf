@@ -7238,3 +7238,27 @@ metric matches the known diagonal; the adaptive spectral preconditioner
 on an operator with three dominant modes and a flat tail resolves them
 and cuts conjugate gradients' iterations; a tolerance selects the
 sampled pointwise variance, which matches the exact one.
+
+## 73. The checks draw their probes from a measure (2026-09-17)
+
+David, on the affine axiom checks of §62: "allowing such check methods to
+take in a measure is very helpful. Particularly for problems in function
+spaces where a white noise like measure isn't realistic." v1's checks
+took ``measure=``; v2's took only a generator and drew white noise on the
+space, which on a Sobolev or spherical space is rough in every mode at
+once and not the kind of vector an operator will meet, so a check could
+pass or fail for the wrong reason.
+
+Every check in `testing` but `check_measure`, whose first argument is
+the measure under test, now takes ``measure=`` and draws its probes from
+it through one helper, which validates that the measure lives on the
+space the probes are drawn on. White noise remains the default, honest
+on a space with no further structure. The adjoint identity's codomain
+probe stays white noise: the measure is on the domain, and a second one
+for the codomain would be a second keyword for a probe that is only a
+test direction.
+
+**Checked.** An invariant measure's sampler is what draws the probes, on
+the operator and the space checks; a measure on another space is
+refused; a wrong adjoint still fails under smooth probes; the
+derivative, gradient and affine checks take the measure too.
