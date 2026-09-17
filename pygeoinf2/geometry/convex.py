@@ -146,6 +146,7 @@ class ConvexSet(Subset):
         /,
         *,
         maximiser: Any = None,
+        membership: Any = None,
     ) -> "ConvexSet":
         """A convex set given only by its support function.
 
@@ -165,8 +166,14 @@ class ConvexSet(Subset):
                 point of the set attaining the supremum. Supplying it is what
                 makes an *inner* approximation available as well as an outer
                 one.
+            membership: optionally, called as ``membership(x, rtol)`` and
+                returning whether ``x`` is in the set. A support function
+                cannot decide membership (see :meth:`_OracleSet.contains`),
+                so a set that has a separate test for it -- the feasible
+                property set has one when its constraint sets are balls --
+                hands it in here, and then answers both questions.
         """
-        return _OracleSet(domain, oracle, maximiser=maximiser)
+        return _OracleSet(domain, oracle, maximiser=maximiser, membership=membership)
 
     def __add__(self, other: Any) -> Any:
         """The Minkowski sum, whose support function is the sum of theirs.
@@ -222,10 +229,24 @@ class _ShiftedSupport(SupportFunction):
 class _OracleSet(ConvexSet):
     """A convex set known only through its support function."""
 
-    def __init__(self, domain: HilbertSpace, oracle: Any, /, *, maximiser: Any) -> None:
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        oracle: Any,
+        /,
+        *,
+        maximiser: Any,
+        membership: Any = None,
+    ) -> None:
         super().__init__(domain)
         self._oracle = oracle
         self._maximiser = maximiser
+        self._membership = membership
+
+    @property
+    def has_membership(self) -> bool:
+        """Whether the set can decide membership, as well as bound itself."""
+        return self._membership is not None
 
     @property
     def has_maximiser(self) -> bool:
@@ -258,21 +279,24 @@ class _OracleSet(ConvexSet):
         return _OracleSupport(self.domain, self._oracle)
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Not decidable from a support function alone.
+        """Membership, when the set was given a test for it; otherwise refused.
 
-        ``(q, x) <= h(q)`` for *every* ``q`` is membership, and no finite
-        number of directions establishes it. What can be had is a certificate
-        of *non*-membership — see :meth:`outside`.
+        A support function alone cannot decide it: ``(q, x) <= h(q)`` for
+        *every* ``q`` is membership, and no finite number of directions
+        establishes it. What can be had from the support function is a
+        certificate of *non*-membership — see :meth:`outside`. A set built
+        with ``membership=`` answers exactly, by that test.
 
         Args:
             x: a vector of the space.
-            rtol: unused; there is no test to apply it to.
+            rtol: passed to the membership test.
 
         Raises:
-            NotImplementedError: always. Membership is not decidable from a
-                support function, and returning a guess would be worse than
-                refusing.
+            NotImplementedError: if no membership test was given. Returning
+                a guess would be worse than refusing.
         """
+        if self._membership is not None:
+            return bool(self._membership(x, rtol))
         raise NotImplementedError(
             "Membership needs every direction. Use outside() for a "
             "certificate of exclusion, or polytope() for an outer bound."

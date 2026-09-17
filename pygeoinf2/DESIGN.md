@@ -6479,3 +6479,86 @@ complement's boundaries; every thin set its own; an intersection's and
 a union's refusal. The convexity check passes a squared distance, a
 support function and an indicator, fails a concave functional, and
 runs on a dense-metric space.
+
+## 58. One estimator for the feasible property set (2026-09-17)
+
+Item 17 of the lost capabilities in `FUNCTIONALITY_AUDIT.md` §0.2 was a
+name: v2 reused `BackusInference`, v1's noisy-data method, for the
+closed-form ellipsoid of error-free data, so a v1 call got a route that
+ignores data error and no warning. Fixing the name exposed the shape of
+the module: four public classes for what BGP calls one object, three of
+them routes to the same set chosen by what the prior and noise sets
+happen to be, with the error-free case a class of its own. The user was
+picking the algorithm, and the wrong axis was public.
+
+**What goes in and what comes out.** David's statement of it: in go the
+forward problem, a convex constraint set on the model, optionally a
+convex confidence set on the data, and the property mapping; out comes
+a convex set on the property space. That is `BackusGilbertParker`, the
+one public estimator, named for what it is the core of. The confidence
+set is resolved from the problem when not given: its own set if it has
+one, the credible ball at ``level`` if its error is a measure, the
+single point ``{0}`` if it has no error. Error-free data are not a
+method, they are the confidence set shrunk to a point, and the estimator
+accounts for that itself.
+
+**The sets decide the algorithm.** A ball prior with exact data takes
+the closed form, Al-Attar (2021) eq. (2.84); two balls take BGP's primal
+route, the nested bisection; anything convex takes the dual. The choice
+is made inside, the way `resolve_solver` and the dense-or-matrix-free
+defaults are made elsewhere, and ``route=`` forces one, for testing the
+routes against each other, which the tests do, or for taking the general
+route where a cheaper one applies. A request the sets do not allow is
+refused with a message naming the route that does; in particular the
+bisection cannot take exact data, since its misfit search has nothing to
+bracket, which is the reason the closed form has to exist as a branch.
+The general route's four solvers, the bundle on the dual, the primal
+splitting, the KKT conditions and the smoothed dual, are the remaining
+values of the same keyword, so there is one vocabulary for the choice.
+
+**Two characterisations of the answer.** A closed convex set is
+determined by its support function, and every route gives that. It can
+also be characterised by membership, and that is a different
+computation, §18.5's minimum-norm test, which exists when the constraint
+and confidence sets are balls, whichever route computes the support.
+Both travel with the answer: the closed form returns an `Ellipsoid`,
+which has everything; the others return a support-function oracle set,
+which now takes an optional ``membership=`` and answers `contains` by
+it, and carries the bisection's extremal model as its maximiser. With
+general sets the set is known through its support function only, and
+`admits`, `inclusion_norm` and `inner_hull` say so rather than guess.
+The two are not required of every algorithm, which is what lets the
+dual route exist at all.
+
+**What is public.** The estimator holds what it was given, `problem`,
+`target`, `prior` and `noise`, which closes the audit's separate remark
+that the Backus classes exposed none of them; `route` says which was
+chosen; `algorithm` is the route's own object, for diagnostics that
+belong to one route and not the others, the closed form's budget and
+prior-only ellipsoid, the bisection's extremal model, the dual's
+certificate and cost. `BackusGilbert` is untouched: a point estimate
+with error bars, affine in the data, a different object under its own
+right name. `BackusInference`, `FeasibleProperty` and
+`DualFeasibleProperty` are retired as names; the classes are the private
+engines `_ClosedFormRoute`, `_BisectionRoute` and `_DualRoute`, their
+code unchanged. §18.11's ``feasible(data).is_empty()`` spelling was
+never built and `is_feasible` is what exists.
+
+**Open.** The extremal model is reached through `algorithm` and the
+example wants it; it may deserve the common surface, with the dual
+route's KKT solver able to supply one. And ``"kkt"`` is by far the
+cheapest general solver where it applies, balls and ellipsoids, so
+``auto`` could prefer it over the bundle for an ellipsoidal confidence
+set; it is left on the bundle until measured.
+
+**Checked.** The sets choose the route as stated, and the closed form's
+answer is an ellipsoid; every disallowed request is refused with the
+message that names the alternative; membership travels with the answer
+on both the bisection and the dual route when the sets are balls, agrees
+with `admits`, and excludes a value the support function excludes; with
+an ellipsoidal prior the answer has no membership and says so; the
+sweep on a cheap route is a loop and refuses the general route's
+options, and agrees with the general sweep; a Gaussian error is hardened
+to the credible ball at the level; push-forward keeps the sets and the
+request. Every previous test of the three routes runs through the one
+estimator, pinned to its route where it compares two.

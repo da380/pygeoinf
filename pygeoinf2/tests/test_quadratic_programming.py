@@ -288,7 +288,7 @@ class TestTheTwoRoutesMeet:
     @pytest.fixture
     def setting(self, rng):
         from pygeoinf2.geometry.convex import Ball
-        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.inference import BackusGilbertParker
         from pygeoinf2.inference.problem import LinearForwardProblem
 
         model = EuclideanSpace(12)
@@ -305,10 +305,11 @@ class TestTheTwoRoutesMeet:
         # Wide enough that the set is genuinely non-empty: an empty one has no
         # supremum for the two to agree on.
         prior = Ball(model, radius=2.0 * model.norm(truth))
-        estimator = DualFeasibleProperty(
+        estimator = BackusGilbertParker(
             LinearForwardProblem(forward, error=Ball(data_space, radius=0.05)),
             target,
             prior,
+            route="dual",
         )
         return estimator, target_space, data
 
@@ -334,7 +335,9 @@ class TestTheTwoRoutesMeet:
 
     def test_the_primal_route_converges(self, setting):
         estimator, space, data = setting
-        solver = estimator.primal_solver(data, tolerance=1e-9, iterations=50_000)
+        solver = estimator.algorithm.primal_solver(
+            data, tolerance=1e-9, iterations=50_000
+        )
         result = solver.solve(estimator._target.adjoint(space.basis_vector(0)))
 
         assert result.converged
@@ -346,7 +349,9 @@ class TestTheTwoRoutesMeet:
         the extrapolated point, and the method converged to something outside
         the set with a residual that would not go below 0.9."""
         estimator, space, data = setting
-        solver = estimator.primal_solver(data, tolerance=1e-9, iterations=50_000)
+        solver = estimator.algorithm.primal_solver(
+            data, tolerance=1e-9, iterations=50_000
+        )
         result = solver.solve(estimator._target.adjoint(space.basis_vector(0)))
 
         model_space = estimator._problem.model_space
@@ -515,7 +520,7 @@ class TestTheKKTRouteAgreesWhereItApplies:
     def test_all_three_routes_agree(self, rng):
         """The whole point of having three."""
         from pygeoinf2.geometry.convex import Ball
-        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.inference import BackusGilbertParker
         from pygeoinf2.inference.problem import LinearForwardProblem
 
         model = EuclideanSpace(12)
@@ -529,10 +534,11 @@ class TestTheKKTRouteAgreesWhereItApplies:
         )
         truth = model.random(rng=rng)
         data = forward(truth)
-        estimator = DualFeasibleProperty(
+        estimator = BackusGilbertParker(
             LinearForwardProblem(forward, error=Ball(data_space, radius=0.05)),
             target,
             Ball(model, radius=2.0 * model.norm(truth)),
+            route="dual",
         )
         directions = [target_space.basis_vector(0), target_space.basis_vector(1)]
 
@@ -555,7 +561,7 @@ class TestTheSmoothedRoute:
     @pytest.fixture
     def estimator(self, rng):
         from pygeoinf2.geometry.convex import Ball
-        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.inference import BackusGilbertParker
         from pygeoinf2.inference.problem import LinearForwardProblem
 
         model = EuclideanSpace(12)
@@ -569,10 +575,11 @@ class TestTheSmoothedRoute:
         )
         truth = model.random(rng=rng)
         return (
-            DualFeasibleProperty(
+            BackusGilbertParker(
                 LinearForwardProblem(forward, error=Ball(data_space, radius=0.05)),
                 target,
                 Ball(model, radius=2.0 * model.norm(truth)),
+                route="dual",
             ),
             target_space,
             forward(truth),
@@ -622,7 +629,7 @@ class TestTheSmoothedRoute:
         where the minimisation spends its time."""
         est, space, data = estimator
         direction = space.basis_vector(0)
-        cost = est.smoothed_dual_cost(direction, data, epsilon=1e-2)
+        cost = est.algorithm.smoothed_dual_cost(direction, data, epsilon=1e-2)
 
         origin = est.data_space.zero()
         gradient = cost.gradient(origin)
@@ -645,13 +652,13 @@ class TestTheSmoothedRoute:
     def test_a_nonsense_smoothing_is_refused(self, estimator):
         est, space, data = estimator
         with pytest.raises(ValueError, match="must be positive"):
-            est.smoothed_dual_cost(space.basis_vector(0), data, epsilon=0.0)
+            est.algorithm.smoothed_dual_cost(space.basis_vector(0), data, epsilon=0.0)
 
     def test_a_general_set_cannot_be_smoothed(self, rng):
         """Smoothing a support function needs its closed form, so there is no
         general case -- and the message points at the route that has one."""
         from pygeoinf2.geometry.convex import Ball, HalfSpace, Polytope
-        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.inference import BackusGilbertParker
         from pygeoinf2.inference.problem import LinearForwardProblem
 
         model = EuclideanSpace(6)
@@ -668,13 +675,16 @@ class TestTheSmoothedRoute:
             [HalfSpace(model, model.basis_vector(i), offset=1.0) for i in range(3)],
             outer=True,
         )
-        est = DualFeasibleProperty(
+        est = BackusGilbertParker(
             LinearForwardProblem(forward, error=Ball(data_space, radius=0.1)),
             target,
             box,
+            route="dual",
         )
         with pytest.raises(TypeError, match="unsmoothed dual route"):
-            est.smoothed_dual_cost(target_space.basis_vector(0), data_space.zero())
+            est.algorithm.smoothed_dual_cost(
+                target_space.basis_vector(0), data_space.zero()
+            )
 
     def test_an_unknown_route_names_all_four(self, estimator):
         est, space, data = estimator

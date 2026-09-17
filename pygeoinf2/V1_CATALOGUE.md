@@ -213,10 +213,10 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Ported | **D-13**, with `best_available_qp_solver` preferring OSQP, then Clarabel, then SciPy. All three verified to agree to 1e-6 on the same programme. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
 | `best_available_qp_solver` | Ported | **D-13**. `numerics.quadratic_programming.best_available_qp_solver`, preferring OSQP, then Clarabel, then SciPy | |
 | `PrimalKKTSolver`, `KKTResult` | Ported | **D-13**. `numerics.convex.PrimalKKTSolver`, and `route="kkt"` on `support_values`. For balls and ellipsoids the KKT conditions give the answer through a Woodbury reduction that never discretises the model space: 1358x faster than the dual route, and it agrees with the primal one to 1e-11 except where a tight noise ball saturates its second multiplier, which is v1's own limit -- same multiplier, same answer | |
-| `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Ported | **D-13**. `DualFeasibleProperty.smoothed_dual_cost` and `route="smoothed"`, over the existing `LBFGS`. Moreau-Yosida smoothing makes the dual differentiable, so a smooth method replaces the bundle one: 840x faster than the unsmoothed dual and agreeing with the primal route to 2.4e-9, which is better than the KKT route manages | |
+| `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Ported | **D-13**. `BackusGilbertParker(route="smoothed")`, `algorithm.smoothed_dual_cost`, over the existing `LBFGS`. Moreau-Yosida smoothing makes the dual differentiable, so a smooth method replaces the bundle one: 840x faster than the unsmoothed dual and agreeing with the primal route to 2.4e-9, which is better than the KKT route manages | |
 | `ChambollePockSolver`, `ChambollePockResult` | Ported | **D-13**. `numerics.convex.ChambollePockSolver` and `SaddlePointResult`. Projects onto any `ConvexSet` rather than only a ball, which v1 raised for | |
-| `solve_support_values` | Ported | **D-13**. `DualFeasibleProperty.support_values(directions, data)`, with the warm start across directions -- 1.08 to 1.23x as they get closer together, and the same answers. `n_jobs` runs them in parallel instead, which gives the warm start up | |
-| `solve_primal_feasibility` | Ported | **D-13**. `DualFeasibleProperty.support_values(..., route="primal")` over `numerics.convex.ChambollePockSolver` -- the second route rather than a second function. Measured 187x faster than the dual route on ball sets, agreeing to 1.7e-8 | |
+| `solve_support_values` | Ported | **D-13**. `BackusGilbertParker.support_values(directions, data)`, with the warm start across directions -- 1.08 to 1.23x as they get closer together, and the same answers. `n_jobs` runs them in parallel instead, which gives the warm start up | |
+| `solve_primal_feasibility` | Ported | **D-13**. `BackusGilbertParker.support_values(..., route="primal")` over `numerics.convex.ChambollePockSolver` -- the second route rather than a second function. Measured 187x faster than the dual route on ball sets, agreeing to 1.7e-8 | |
 
 ## `subsets.py` → `geometry/sets.py`, `geometry/convex.py`
 
@@ -262,7 +262,7 @@ deliberately not started.
 | `ConstrainedLinearLeastSquaresInversion` | Ported | `ConstrainedLeastSquares`, with the same entry points on the reduced problem | |
 | `LinearMinimumNormInversion` | Ported | `MinimumNorm` for a chosen damping; `DiscrepancyPrinciple` for one found from the data, as a non-linear operator with the exact Fréchet derivative *and adjoint*. §18.6's primitive is now real and warm-started (DESIGN §24.2, §24.4) | |
 | `ConstrainedLinearMinimumNormInversion` | Ported | `ConstrainedMinimumNorm`, with `constraint_value_mapping` and its derivative (DESIGN §24.5) | |
-| `BackusInference` | Ported | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
+| `BackusInference` | Ported | `BackusGilbertParker`: one estimator, the routes of §18.3 chosen from the sets inside it (DESIGN §58) | |
 | `DualMasterCostFunction` | Ported | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
 
 | `test_data_compatibility` | Ported | `is_feasible(data)` on all three noisy routes, so "is there any model at all" can be asked without waiting for an exception | |

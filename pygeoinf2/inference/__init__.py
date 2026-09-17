@@ -21,9 +21,7 @@ See DESIGN.md section 18.
 from .laplace import LaplaceResult, MaximumAPosteriori
 from .backus import (
     BackusGilbert,
-    BackusInference,
-    DualFeasibleProperty,
-    FeasibleProperty,
+    BackusGilbertParker,
 )
 from .gaussian import LinearGaussianInversion
 from .mixture import LinearGaussianMixtureInversion
@@ -57,7 +55,7 @@ __all__ = [
     "LaplaceResult",
     "MaximumAPosteriori",
     "BackusGilbert",
-    "BackusInference",
+    "BackusGilbertParker",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
     "FactoredNormalOperator",
@@ -72,8 +70,6 @@ __all__ = [
     "DiscrepancyPrinciple",
     "TikhonovFamily",
     "TikhonovNormalOperator",
-    "DualFeasibleProperty",
-    "FeasibleProperty",
     "Estimator",
     "ForwardProblem",
     "GaussianEstimator",

@@ -18,7 +18,7 @@ import numpy as np
 
 from pygeoinf2 import plotting
 from pygeoinf2.geometry.convex import Ball
-from pygeoinf2.inference import BackusGilbert, FeasibleProperty, LinearForwardProblem
+from pygeoinf2.inference import BackusGilbert, BackusGilbertParker, LinearForwardProblem
 from pygeoinf2.numerics.solvers import CholeskySolver
 from pygeoinf2.symmetric_space.sphere import Sobolev
 
@@ -76,7 +76,7 @@ prior = Ball(X, radius=PRIOR_RADIUS)
 # Route (c): the exact bounds, one constrained optimisation per direction.
 # ---------------------------------------------------------------------------
 
-exact = FeasibleProperty(problem, target, prior)
+exact = BackusGilbertParker(problem, target, prior)
 P = target.codomain
 
 print("cap averages: the exact feasible interval, against the truth")
@@ -187,7 +187,7 @@ ax, _ = plotting.plot(
 plotting.plot_paths(X, paths, ax=ax, alpha=0.08)
 ax.set_title("Truth, with the ray network")
 
-extremal = exact.extremal_model(P.basis_vector(0), data)
+extremal = exact.algorithm.extremal_model(P.basis_vector(0), data)
 ax, _ = plotting.plot(
     X,
     extremal,

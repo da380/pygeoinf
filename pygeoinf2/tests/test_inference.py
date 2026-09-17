@@ -1020,25 +1020,27 @@ class TestFeasibilityIsAskable:
 
     def test_a_tight_prior_is_infeasible_and_a_roomy_one_is_not(self, setting):
         from pygeoinf2.inference import (
-            BackusInference,
-            DualFeasibleProperty,
-            FeasibleProperty,
+            BackusGilbertParker,
         )
 
         model, forward, target, data = setting
         exact = LinearForwardProblem(forward)
         noisy = LinearForwardProblem(forward, error=Ball(forward.codomain, radius=1e-6))
 
-        assert not BackusInference(exact, target, Ball(model, radius=1e-3)).is_feasible(
-            data
-        )
-        assert BackusInference(exact, target, Ball(model, radius=100.0)).is_feasible(
-            data
-        )
+        assert not BackusGilbertParker(
+            exact, target, Ball(model, radius=1e-3)
+        ).is_feasible(data)
+        assert BackusGilbertParker(
+            exact, target, Ball(model, radius=100.0)
+        ).is_feasible(data)
 
-        for route in (FeasibleProperty, DualFeasibleProperty):
-            assert not route(noisy, target, Ball(model, radius=1e-3)).is_feasible(data)
-            assert route(noisy, target, Ball(model, radius=100.0)).is_feasible(data)
+        for route in ("bisection", "dual"):
+            assert not BackusGilbertParker(
+                noisy, target, Ball(model, radius=1e-3), route=route
+            ).is_feasible(data)
+            assert BackusGilbertParker(
+                noisy, target, Ball(model, radius=100.0), route=route
+            ).is_feasible(data)
 
     def test_feasibility_is_decided_without_forming_the_data_gram(
         self, setting, monkeypatch
@@ -1051,7 +1053,7 @@ class TestFeasibilityIsAskable:
         solver's residual, below which no fit can be certified -- the
         threshold is the norm of the exact minimum-norm model ``A^+ d``, and
         prior radii one per cent either side of it fall on opposite sides."""
-        from pygeoinf2.inference import DualFeasibleProperty, FeasibleProperty
+        from pygeoinf2.inference import BackusGilbertParker
 
         model, forward, target, data = setting
         matrix = forward.matrix(form="components")
@@ -1066,12 +1068,12 @@ class TestFeasibilityIsAskable:
             "matrix",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("A A* was formed")),
         )
-        for route in (FeasibleProperty, DualFeasibleProperty):
-            assert route(
-                noisy, target, Ball(model, radius=1.01 * threshold)
+        for route in ("bisection", "dual"):
+            assert BackusGilbertParker(
+                noisy, target, Ball(model, radius=1.01 * threshold), route=route
             ).is_feasible(data)
-            assert not route(
-                noisy, target, Ball(model, radius=0.99 * threshold)
+            assert not BackusGilbertParker(
+                noisy, target, Ball(model, radius=0.99 * threshold), route=route
             ).is_feasible(data)
             # A noise ball wide enough to hold the data is fitted by the zero
             # model, so any prior at all is feasible.
@@ -1079,13 +1081,15 @@ class TestFeasibilityIsAskable:
                 forward,
                 error=Ball(forward.codomain, radius=2.0 * float(np.linalg.norm(data))),
             )
-            assert route(roomy, target, Ball(model, radius=1e-9)).is_feasible(data)
+            assert BackusGilbertParker(
+                roomy, target, Ball(model, radius=1e-9), route=route
+            ).is_feasible(data)
 
     def test_the_predicate_agrees_with_the_exception(self, setting):
-        from pygeoinf2.inference import BackusInference
+        from pygeoinf2.inference import BackusGilbertParker
 
         model, forward, target, data = setting
-        estimator = BackusInference(
+        estimator = BackusGilbertParker(
             LinearForwardProblem(forward), target, Ball(model, radius=1e-3)
         )
         assert not estimator.is_feasible(data)

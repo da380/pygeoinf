@@ -113,7 +113,7 @@ Dense fallbacks that remain, and why:
   (`(n+1)^2` entries; 401 MB per master solve at 5000 data, measured), which
   is v1's arrangement and a limit on the data size it can take. Its
   `k`-variable dual is written out in `review/r2_numerics_recipes.md`.
-- `BackusInference` — the joint spectrum, cached per estimator.
+- `BackusGilbertParker`'s closed-form route — the joint spectrum, cached per estimator.
 - `InvariantDistancePreconditioner` and the localised preconditioners — sparse
   assembly, not dense; `BlockPreconditioner` and
   `ColumnThresholdedPreconditioner` probe columns and never form the full array.

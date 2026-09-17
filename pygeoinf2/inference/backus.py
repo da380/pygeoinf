@@ -21,9 +21,10 @@ import scipy.linalg
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
-from ..geometry.convex import Ball, ConvexSet, Ellipsoid
+from ..geometry.convex import Ball, ConvexSet, Ellipsoid, HalfSpace, Polytope
 from ..geometry.subspaces import OrthogonalProjector
 from ..numerics.root_find import Evaluation, monotone_root
+from ..probability.base import ProbabilityMeasure
 from ..numerics.solvers import CGSolver, CholeskySolver, LinearSolver
 from ..traits import Traits
 from .estimators import LinearPointEstimator, SetEstimator
@@ -72,9 +73,8 @@ def _spectral_components(
 
 __all__ = [
     "BackusGilbert",
-    "BackusInference",
-    "DualFeasibleProperty",
-    "FeasibleProperty",
+    "BackusGilbertParker",
+    "harden_error",
 ]
 
 
@@ -83,7 +83,7 @@ def _ball_radius(candidate: Any, name: str) -> float:
     if not isinstance(candidate, Ball):
         raise TypeError(
             f"{name} must be a Ball for this route; got a "
-            f"{type(candidate).__name__}. A general convex set needs route (d)."
+            f"{type(candidate).__name__}. A general convex set needs the dual route."
         )
     return float(candidate.radius)
 
@@ -263,7 +263,7 @@ class BackusGilbert(LinearPointEstimator):
         return estimate, np.array(resolution), np.array(noise)
 
 
-class BackusInference(SetEstimator):
+class _ClosedFormRoute(SetEstimator):
     """The exact feasible property set, where a closed form exists.
 
     Route (a) of §18.3: error-free data and a ball prior. Al-Attar (2021)
@@ -401,7 +401,7 @@ class BackusInference(SetEstimator):
 
         Depends only on the problem and the target, not on the data or the
         value -- so it is formed once, as
-        :attr:`FeasibleProperty._reduced` already is for the reduced problem.
+        :attr:`_BisectionRoute._reduced` already is for the reduced problem.
         Rebuilding it per call made every sweep over property values pay for a
         full eigendecomposition of a ``dim(D) + dim(P)`` operator.
         """
@@ -466,9 +466,9 @@ class BackusInference(SetEstimator):
         """
         return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
 
-    def push_forward(self, operator: LinearOperator, /) -> "BackusInference":
+    def push_forward(self, operator: LinearOperator, /) -> "_ClosedFormRoute":
         """The same inference about a further property of the model."""
-        return BackusInference(
+        return _ClosedFormRoute(
             self._problem,
             operator @ self._target,
             Ball(self._problem.model_space, radius=self._radius),
@@ -559,7 +559,7 @@ def _minimum_norm_fits(
     return model_space.norm(family.model_from(found.solution)) <= prior_radius
 
 
-class FeasibleProperty(SetEstimator):
+class _BisectionRoute(SetEstimator):
     """The exact feasible property set for noisy data, by the primal route.
 
     Route (c) of §18.3, and the one BGP recommends when both the prior and the
@@ -970,7 +970,7 @@ class FeasibleProperty(SetEstimator):
             value: the property value to test.
             data: the observations.
             rtol: tolerance on the bound, as for
-                :meth:`BackusInference.admits`.
+                :meth:`_ClosedFormRoute.admits`.
 
         Returns:
             Whether the value is admissible.
@@ -1027,9 +1027,9 @@ class FeasibleProperty(SetEstimator):
             )
         return Polytope(space, planes, outer=False)
 
-    def push_forward(self, operator: LinearOperator, /) -> "FeasibleProperty":
+    def push_forward(self, operator: LinearOperator, /) -> "_BisectionRoute":
         """The same inference about a further property."""
-        return FeasibleProperty(
+        return _BisectionRoute(
             self._problem,
             operator @ self._target,
             Ball(self._problem.model_space, radius=self._radius),
@@ -1039,7 +1039,7 @@ class FeasibleProperty(SetEstimator):
         )
 
 
-class DualFeasibleProperty(SetEstimator):
+class _DualRoute(SetEstimator):
     """The feasible property set for *any* convex prior and noise sets.
 
     Route (d) of §18.3, and the general one. Duality turns the supremum over an
@@ -1549,12 +1549,484 @@ class DualFeasibleProperty(SetEstimator):
             self.target_space, lambda direction: self.support(direction, data)
         )
 
-    def push_forward(self, operator: LinearOperator, /) -> "DualFeasibleProperty":
+    def push_forward(self, operator: LinearOperator, /) -> "_DualRoute":
         """The same inference about a further property."""
-        return DualFeasibleProperty(
+        return _DualRoute(
             self._problem,
             operator @ self._target,
             self._prior,
             noise=self._noise,
             method=self._method,
+        )
+
+
+# --------------------------------------------------------------------- #
+#                      The one estimator, routes inside                 #
+# --------------------------------------------------------------------- #
+
+
+_ROUTES = ("auto", "closed_form", "bisection", "dual", "primal", "kkt", "smoothed")
+_GENERAL = ("dual", "primal", "kkt", "smoothed")
+
+
+class BackusGilbertParker(SetEstimator):
+    """The feasible property set: what the data and a constraint let a property be.
+
+    The core of Backus-Gilbert-Parker inference. In go the forward problem, a
+    convex **constraint set** on the model, optionally a convex **confidence
+    set** on the data, and the property operator ``T``; out comes a convex set
+    on the property space, the image under ``T`` of every model that lies in
+    the constraint set and fits the data to within the confidence set (§18.3,
+    BGP eqs. 4-5). The confidence set is taken from the problem when not
+    given: its own set if it has one, the credible ball at ``level`` if its
+    error is a measure, and the single point ``{0}`` if it has no error at
+    all. Error-free data are not a separate method; they are the confidence
+    set shrunk to a point, and the estimator accounts for that itself.
+
+    **The sets decide the algorithm**, and the choice is made here rather
+    than by the caller naming a class:
+
+    * a ball prior and exact data: the **closed form**, Al-Attar (2021) eq.
+      (2.84), an ellipsoid costing ``dim(P) + 1`` minimum-norm solves;
+    * a ball prior and a ball confidence set: **bisection**, BGP's primal
+      route, a damped least-squares solve inside two nested monotone root
+      finds per direction, which also produces the extremal model;
+    * anything convex: the **dual**, BGP eq. (28), a nonsmooth minimisation
+      over the data space per direction, with the primal splitting, the KKT
+      and the smoothed solvers as alternatives where they apply.
+
+    ``route=`` names one of these to force it, for testing them against each
+    other -- they compute the same set -- or for taking the general route
+    where a cheaper one applies; the request is refused when the sets do not
+    allow it, with a message saying which route does.
+
+    **Two characterisations of the answer.** A closed convex set is
+    determined by its support function (Rockafellar 13.1), and every route
+    gives that: :meth:`support` in one direction, :meth:`support_values` in
+    many, and :meth:`__call__` returns the set as an object carrying it, an
+    :class:`~pygeoinf2.geometry.convex.Ellipsoid` from the closed form and a
+    support-function oracle otherwise. A set can also be characterised by
+    **membership**, a test saying whether a proposed value is in it, and
+    that is a different computation (§18.5): the minimum norm of a model
+    reproducing the value and fitting the data, compared with the prior
+    radius. It exists when the constraint and confidence sets are balls,
+    whichever route computes the support, and then :meth:`admits`,
+    :meth:`inclusion_norm` and :meth:`inner_hull` are available and the
+    returned set answers ``contains`` as well. With general sets the answer
+    is known through its support function only, and those methods say so.
+
+    The chosen route's own object is :attr:`algorithm`, for diagnostics that
+    belong to one route and not the others: the closed form's budget and
+    prior-only ellipsoid, the bisection's extremal model, the dual's
+    certificate and cost.
+    """
+
+    def __init__(
+        self,
+        problem: LinearForwardProblem,
+        target: LinearOperator,
+        prior: ConvexSet,
+        /,
+        *,
+        noise: ConvexSet | None = None,
+        level: float = 0.95,
+        route: str = "auto",
+        solver: LinearSolver | None = None,
+        iterations: int = 60,
+        method: Any = None,
+    ) -> None:
+        """
+        Args:
+            problem: the forward problem.
+            target: the property operator ``T``, acting on the model space.
+            prior: the constraint set on the model space. A
+                :class:`~pygeoinf2.geometry.convex.Ball` admits the cheap
+                routes; any convex set with a support function and a
+                maximiser admits the dual.
+            noise: the confidence set on the data space. Taken from the
+                problem when omitted, as described above.
+            level: the probability the confidence set carries when it is
+                hardened from a measure.
+            route: ``"auto"`` chooses by the sets. ``"closed_form"``,
+                ``"bisection"``, ``"dual"``, ``"primal"``, ``"kkt"`` and
+                ``"smoothed"`` force one; the last four are the general
+                route's solvers, see the dual sweep's own documentation.
+            solver: how the closed form and the bisection invert their
+                operators.
+            iterations: bisection steps, on each of the two multipliers.
+            method: the general route's minimiser. A proximal bundle method
+                by default.
+
+        Raises:
+            ValueError: if the route is unknown, or not available for these
+                sets; if an operator or set is on the wrong space.
+            TypeError: if the problem's error is neither a measure nor a
+                convex set.
+        """
+        if route not in _ROUTES:
+            raise ValueError(f"route must be one of {_ROUTES}, got {route!r}.")
+        if target.domain != problem.model_space:
+            raise ValueError("The property operator must act on the model space.")
+        if prior.domain != problem.model_space:
+            raise ValueError("The constraint set must lie in the model space.")
+        noise = self._resolve_noise(problem, noise, level)
+        if noise.domain != problem.data_space:
+            raise ValueError("The confidence set must lie in the data space.")
+
+        self._problem = problem
+        self._target = target
+        self._prior = prior
+        self._noise = noise
+        self._level = level
+        self._requested = route
+        self._solver = solver
+        self._iterations = iterations
+        self._method = method
+        self._route = self._choose(route)
+        self._algorithm = self._build(self._route)
+
+    # ----------------------------------------------------------------- #
+    #                              Dispatch                             #
+    # ----------------------------------------------------------------- #
+
+    @staticmethod
+    def _resolve_noise(
+        problem: LinearForwardProblem, noise: ConvexSet | None, level: float
+    ) -> ConvexSet:
+        if noise is not None:
+            if not isinstance(noise, ConvexSet):
+                raise TypeError("The confidence set must be a ConvexSet.")
+            return noise
+        if not problem.has_error:
+            return Ball(problem.data_space, radius=0.0)
+        error = problem.error
+        if isinstance(error, ConvexSet):
+            return error
+        if isinstance(error, ProbabilityMeasure):
+            return problem.error_measure.ambient_ball(level=level)
+        raise TypeError(
+            "The problem's error is neither a measure nor a convex set; pass "
+            "noise= to say what confidence set to use."
+        )
+
+    @property
+    def _exact(self) -> bool:
+        """Whether the confidence set is the single point ``{0}``."""
+        return isinstance(self._noise, Ball) and self._noise.radius == 0.0
+
+    @property
+    def _balls(self) -> bool:
+        return isinstance(self._prior, Ball) and isinstance(self._noise, Ball)
+
+    def _choose(self, route: str) -> str:
+        if route == "auto":
+            if self._exact and isinstance(self._prior, Ball):
+                return "closed_form"
+            if self._balls:
+                return "bisection"
+            return "dual"
+        if route == "closed_form" and not (
+            self._exact and isinstance(self._prior, Ball)
+        ):
+            raise ValueError(
+                "The closed form needs a ball prior and exact data (a confidence "
+                "set of radius zero); with these sets the route is "
+                f"{self._choose('auto')!r}."
+            )
+        if route == "bisection":
+            if not self._balls:
+                raise ValueError(
+                    "Bisection needs a ball prior and a ball confidence set; a "
+                    "general convex set needs the dual route."
+                )
+            if self._exact:
+                raise ValueError(
+                    "Bisection needs a confidence set of positive radius: with "
+                    "exact data its misfit search has nothing to bracket. The "
+                    "closed form is the route for exact data."
+                )
+        return route
+
+    def _build(self, route: str) -> Any:
+        if route == "closed_form":
+            return _ClosedFormRoute(
+                self._problem, self._target, self._prior, solver=self._solver
+            )
+        if route == "bisection":
+            return _BisectionRoute(
+                self._problem,
+                self._target,
+                self._prior,
+                noise=self._noise,
+                solver=self._solver,
+                iterations=self._iterations,
+            )
+        return _DualRoute(
+            self._problem,
+            self._target,
+            self._prior,
+            noise=self._noise,
+            method=self._method,
+        )
+
+    @cached_property
+    def _inclusion(self) -> Any:
+        """The engine that decides membership, or ``None`` without one.
+
+        Independent of the route computing the support: membership is the
+        minimum-norm computation of §18.5, which exists for balls.
+        """
+        if self._route in ("closed_form", "bisection"):
+            return self._algorithm
+        if self._exact and isinstance(self._prior, Ball):
+            return self._build("closed_form")
+        if self._balls:
+            return self._build("bisection")
+        return None
+
+    def _need_inclusion(self, what: str) -> Any:
+        engine = self._inclusion
+        if engine is None:
+            raise NotImplementedError(
+                f"{what} needs a ball prior and a ball (or absent) confidence "
+                "set; with general convex sets the feasible property set is "
+                "known through its support function only. Use the returned "
+                "set's outside() for a certificate of exclusion, or polytope() "
+                "for an outer bound."
+            )
+        return engine
+
+    # ----------------------------------------------------------------- #
+    #                            What it holds                          #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def problem(self) -> LinearForwardProblem:
+        """The forward problem."""
+        return self._problem
+
+    @property
+    def target(self) -> LinearOperator:
+        """The property operator ``T``."""
+        return self._target
+
+    @property
+    def prior(self) -> ConvexSet:
+        """The constraint set on the model space."""
+        return self._prior
+
+    @property
+    def noise(self) -> ConvexSet:
+        """The confidence set on the data space, as resolved."""
+        return self._noise
+
+    @property
+    def route(self) -> str:
+        """The route in use: ``"closed_form"``, ``"bisection"`` or a general one."""
+        return self._route
+
+    @property
+    def algorithm(self) -> Any:
+        """The route's own object, for diagnostics particular to it."""
+        return self._algorithm
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The problem's data space."""
+        return self._problem.data_space
+
+    @property
+    def target_space(self) -> HilbertSpace:
+        """The property space."""
+        return self._target.codomain
+
+    # ----------------------------------------------------------------- #
+    #                          The support side                         #
+    # ----------------------------------------------------------------- #
+
+    def support(self, direction: Any, data: Any, /) -> float:
+        """The support value of the feasible property set in one direction.
+
+        Raises:
+            ValueError: if the feasible set is empty. :meth:`is_feasible`
+                tests that without an exception.
+        """
+        if self._route == "closed_form":
+            return float(self._algorithm(data).support_function()(direction))
+        if self._route in ("bisection", "dual"):
+            return float(self._algorithm.support(direction, data))
+        return float(
+            self._algorithm.support_values([direction], data, route=self._route)[0]
+        )
+
+    def support_values(
+        self, directions: Sequence[Any], data: Any, /, **options: Any
+    ) -> np.ndarray:
+        """The support values in many directions.
+
+        On a general route this is the dual engine's sweep, with its warm
+        start across neighbouring directions and its ``route=``,
+        ``warm_start=`` and ``n_jobs=`` options, the route defaulting to
+        this estimator's. The closed form and the bisection have no state to
+        carry between directions and evaluate each in turn; they take no
+        options.
+
+        Args:
+            directions: the directions to evaluate.
+            data: the observations.
+            **options: the sweep's options, on a general route.
+
+        Returns:
+            One support value per direction.
+
+        Raises:
+            TypeError: if options are given on a route that has none.
+        """
+        if self._route in _GENERAL:
+            options.setdefault("route", self._route)
+            return self._algorithm.support_values(directions, data, **options)
+        if options:
+            raise TypeError(
+                f"The {self._route!r} route sweeps directions one at a time and "
+                f"takes no options; got {sorted(options)}."
+            )
+        return np.array([self.support(direction, data) for direction in directions])
+
+    def is_feasible(self, data: Any, /) -> bool:
+        """Whether any model lies in the constraint set and fits the data.
+
+        The question every other method assumes has been answered; a
+        predicate, so that a caller can ask before being told by an
+        exception.
+        """
+        return bool(self._algorithm.is_feasible(data))
+
+    def __call__(self, data: Any) -> ConvexSet:
+        """The feasible property set.
+
+        An ellipsoid from the closed form, with every closed form an
+        ellipsoid has; otherwise a set carrying its support function, the
+        bisection's extremal model as its maximiser, and the membership
+        test when the sets are balls.
+
+        Raises:
+            ValueError: if the feasible set is empty, on the closed form.
+                The other routes raise on the first support value asked
+                of the set instead; :meth:`is_feasible` tests either way.
+        """
+        if self._route == "closed_form":
+            return self._algorithm(data)
+        maximiser = None
+        if self._route == "bisection":
+            maximiser = lambda direction: self._target(  # noqa: E731
+                self._algorithm.extremal_model(direction, data)
+            )
+        membership = None
+        if self._inclusion is not None:
+            membership = lambda value, rtol: self.admits(  # noqa: E731
+                value, data, rtol=max(rtol, 1e-8)
+            )
+        return ConvexSet.from_support_function(
+            self.target_space,
+            lambda direction: self.support(direction, data),
+            maximiser=maximiser,
+            membership=membership,
+        )
+
+    # ----------------------------------------------------------------- #
+    #                        The membership side                        #
+    # ----------------------------------------------------------------- #
+
+    def inclusion_norm(self, value: Any, data: Any, /) -> float:
+        """``min { ||m|| : T m == value, A m fits the data }``, the cost of a value.
+
+        §18.5: a value is admissible exactly when this is within the prior
+        radius. Infinite when no model at all can reproduce the value and
+        fit the data, which is a proof of inadmissibility rather than a
+        failure to converge.
+
+        Raises:
+            NotImplementedError: unless the constraint and confidence sets
+                are balls.
+        """
+        return self._need_inclusion("The inclusion norm").inclusion_norm(value, data)
+
+    def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
+        """Whether a property value is consistent with the data and the prior.
+
+        The membership characterisation of the set, computed without forming
+        it; it agrees with ``self(data).contains(value)``, which calls it.
+
+        Args:
+            value: the property value to test.
+            data: the observations.
+            rtol: how far outside the bound still counts as admissible.
+
+        Raises:
+            NotImplementedError: unless the constraint and confidence sets
+                are balls.
+        """
+        return self._need_inclusion("Membership").admits(value, data, rtol=rtol)
+
+    def inner_hull(self, values: Any, data: Any, /) -> Any:
+        """The convex hull of whichever candidate values are admissible.
+
+        The *inner* bound of §18.4, and the only thing that produces one: a
+        support function can never exhibit a point of the set. Returned as an
+        inner :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be
+        mistaken for the outer one.
+
+        Args:
+            values: candidate property values, of which the admissible ones
+                are kept.
+            data: the observations.
+
+        Raises:
+            ValueError: if fewer candidates are admissible than the property
+                space has dimensions, there being no hull to take.
+            NotImplementedError: unless the constraint and confidence sets
+                are balls.
+        """
+        from scipy.spatial import ConvexHull
+
+        self._need_inclusion("An inner hull")
+        space = self.target_space
+        inside = [
+            space.to_components(value) for value in values if self.admits(value, data)
+        ]
+        if len(inside) <= space.dim:
+            raise ValueError(
+                f"Only {len(inside)} of the candidates are admissible, which "
+                f"is not enough to bound a hull in {space.dim} dimensions. "
+                "Sample nearer the minimum-norm property."
+            )
+        hull = ConvexHull(np.stack(inside))
+        planes = [
+            HalfSpace(
+                space, space.representer(equation[:-1]), offset=-float(equation[-1])
+            )
+            for equation in hull.equations
+        ]
+        return Polytope(space, planes, outer=False)
+
+    # ----------------------------------------------------------------- #
+
+    def push_forward(self, operator: LinearOperator, /) -> "BackusGilbertParker":
+        """The same inference about a further property of the model."""
+        return BackusGilbertParker(
+            self._problem,
+            operator @ self._target,
+            self._prior,
+            noise=self._noise,
+            level=self._level,
+            route=self._requested,
+            solver=self._solver,
+            iterations=self._iterations,
+            method=self._method,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"BackusGilbertParker(route={self._route!r}, prior={self._prior!r}, "
+            f"noise={self._noise!r})"
         )

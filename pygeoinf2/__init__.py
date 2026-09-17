@@ -81,11 +81,10 @@ from .traits import Traits
 from . import geometry, inference, numerics, plotting, probability, symmetric_space
 from .inference import (
     BackusGilbert,
-    BackusInference,
+    BackusGilbertParker,
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
     DiscrepancyPrinciple,
-    FeasibleProperty,
     ForwardProblem,
     LeastSquares,
     LinearForwardProblem,
@@ -134,11 +133,10 @@ __all__ = [
     "symmetric_space",
     # inference: the workflow, flat, as v1 had it
     "BackusGilbert",
-    "BackusInference",
+    "BackusGilbertParker",
     "ConstrainedLeastSquares",
     "ConstrainedMinimumNorm",
     "DiscrepancyPrinciple",
-    "FeasibleProperty",
     "ForwardProblem",
     "LeastSquares",
     "LinearForwardProblem",
