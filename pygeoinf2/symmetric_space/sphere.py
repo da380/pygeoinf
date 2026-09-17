@@ -1893,9 +1893,11 @@ class Sphere(SymmetricSpace[Any]):
         Returns:
             ``(latitude, longitude)`` points in degrees.
         """
-        table = _read_table("gsn_stations.csv")
+        from ..datasets import GSN_STATIONS, read_table
+
+        table = read_table(GSN_STATIONS)
         points = _as_points(table["Latitude"], table["Longitude"])
-        return _subsample(points, count, rng)
+        return _subsample(points, count, rng, refresh="download_gsn_stations()")
 
     def earthquakes(
         self,
@@ -1919,10 +1921,14 @@ class Sphere(SymmetricSpace[Any]):
         Returns:
             ``(latitude, longitude)`` epicenters in degrees.
         """
-        table = _read_table("usgs_event_cache.csv")
+        from ..datasets import USGS_EVENTS, read_table
+
+        table = read_table(USGS_EVENTS)
         keep = table["mag"] >= minimum_magnitude
         points = _as_points(table["latitude"][keep], table["longitude"][keep])
-        return _subsample(points, count, rng)
+        return _subsample(
+            points, count, rng, refresh="download_usgs_earthquakes(limit=...)"
+        )
 
     def domain_mask(
         self, /, *, ocean: bool = False, resolution: str = "110m"
@@ -2187,25 +2193,6 @@ class Sphere(SymmetricSpace[Any]):
         return self._rebuilt(order=order, length_scale=length_scale)
 
 
-def _read_table(name: str) -> dict[str, np.ndarray]:
-    """Read one of the shipped CSV tables into arrays, keyed by column."""
-    import csv
-    from importlib.resources import files
-
-    text = (files("pygeoinf2.data") / name).read_text(encoding="utf-8")
-    rows = list(csv.DictReader(text.splitlines()))
-    if not rows:
-        raise ValueError(f"{name} is empty.")
-    table: dict[str, np.ndarray] = {}
-    for column in rows[0]:
-        values = [row[column] for row in rows]
-        try:
-            table[column] = np.array([float(value) for value in values])
-        except ValueError:
-            table[column] = np.array(values, dtype=object)
-    return table
-
-
 def _as_points(latitudes: np.ndarray, longitudes: np.ndarray) -> list[np.ndarray]:
     """Two columns of a catalogue as points.
 
@@ -2224,13 +2211,24 @@ def _as_points(latitudes: np.ndarray, longitudes: np.ndarray) -> list[np.ndarray
 
 
 def _subsample(
-    points: list[np.ndarray], count: int | None, rng: Generator | None
+    points: list[np.ndarray],
+    count: int | None,
+    rng: Generator | None,
+    *,
+    refresh: str,
 ) -> list[np.ndarray]:
-    """Draw ``count`` points without replacement, or return all of them."""
+    """Draw ``count`` points without replacement, or return all of them.
+
+    A table too small for the request is refused, naming the download that
+    refreshes it: nothing is fetched on the caller's behalf.
+    """
     if count is None:
         return points
     if count > len(points):
-        raise ValueError(f"Asked for {count} points from a table of {len(points)}.")
+        raise ValueError(
+            f"Asked for {count} points from a table of {len(points)}; "
+            f"pygeoinf2.datasets.{refresh} writes a larger one into the cache."
+        )
     generator = np.random.default_rng() if rng is None else rng
     chosen = generator.choice(len(points), size=count, replace=False)
     return [points[index] for index in chosen]

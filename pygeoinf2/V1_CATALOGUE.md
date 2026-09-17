@@ -301,8 +301,8 @@ deliberately not started.
 |---|---|---|---|
 | `load_gsn_stations` | Ported | `Sphere.stations()`, reading the shipped table | |
 | `sample_earthquakes` | Ported | `Sphere.earthquakes()` | |
-| `download_gsn_stations` | Planned (X) | Live IRIS fetch. Kept out of the import path deliberately; should it exist at all as an explicit refresh command? | It's useful for making examples, but not core functionality. If it can be done better, then fine. |
-| `download_usgs_earthquakes` | Planned (X) | As above, for USGS | |
+| `download_gsn_stations` | Ported | `pygeoinf2.datasets.download_gsn_stations(force=)`: an explicit refresh into the user's cache directory (`PYGEOINF_CACHE_DIR`, else the platform cache), which `read_table` takes before the bundled copy; nothing fetches on a caller's behalf (DESIGN §82) | It's useful for making examples, but not core functionality |
+| `download_usgs_earthquakes` | Ported | `pygeoinf2.datasets.download_usgs_earthquakes(minimum_magnitude=, start_time=, end_time=, minimum_depth=, maximum_depth=, bounding_box=, limit=, force=, filename=)`, v1's filters; the sphere's `earthquakes(count=)` refuses a count above the table and names this rather than fetching (DESIGN §82) | |
 
 ## `quadratic_form_quantile.py`
 

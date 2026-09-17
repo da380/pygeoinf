@@ -37,9 +37,10 @@ what most of the rest follows from:
 | `numerics` | solvers, preconditioners, randomized linear algebra (`randomized.py`), functional calculus, optimization (`optimization.py`), convex methods, quadratic programming, root finding |
 | `symmetric_space` | sphere, periodic box, bounded box, circle, torus, line, plane |
 | `inference` | forward problems, Gaussian inversion, point estimators, Backus–Gilbert, the Laplace/MAP route, preconditioners |
-| `plotting` | field maps, marginals, corner plots, error bounds |
+| `plotting` | field maps, points, paths, balls and networks on every geometry, convex sets, marginals, corner plots, error bounds |
 | `backends` | MFEM, two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps it a plain `HilbertSpace` and lets MFEM do every computation (DESIGN §15.3) |
 | `testing` | `check_space`, `check_coordinates`, `check_operator`, `check_traits`, `check_white_noise` |
+| `datasets` | the shipped station and earthquake tables, the cache directory, and the explicit IRIS and USGS downloads that refresh them (DESIGN §82) |
 | `compat` | a v1 parity shim, to be deleted at the rename (DESIGN §11.3) |
 
 Ninety-eight names are re-exported at the top level; the submodules are also

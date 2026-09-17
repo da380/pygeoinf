@@ -7675,3 +7675,38 @@ end is two spans, and the network marks the distinct sources and
 receivers; on a sphere, with cartopy, the network marks one source and
 five receivers, caps go on as rims, and a cap over the dateline is
 split. Examples 21 and 23 run headless.
+
+## 82. The downloads, behind an explicit call (2026-09-17)
+
+v1's ``datasets`` fetched the Global Seismograph Network station list
+from IRIS and a filtered earthquake catalogue from the USGS into a
+per-user cache directory that ``config`` resolved at import, read the
+cached copy before the bundled one, and, in ``sample_earthquakes``,
+fetched a larger catalogue on its own when the cache held fewer events
+than were asked for. v2 shipped the two seed tables and nothing else,
+under the rule of §21.2: a live fetch belongs behind an explicit call,
+never on the path a test takes.
+
+**Restored under that rule.** `pygeoinf2.datasets` carries the two
+downloads with v1's filters and ``force=``, writing into
+`cache_directory()`, which is ``PYGEOINF_CACHE_DIR`` when set and the
+platform's user cache otherwise, resolved at each call rather than at
+import so a test can point it at a temporary directory. `read_table`
+takes the cached copy before the bundled one, and the sphere's
+`stations` and `earthquakes` read through it, so a refreshed catalogue
+takes effect with no other change. The network is touched in one
+private function, which the tests replace; no test reaches it.
+
+**No automatic fetch.** Where v1's ``sample_earthquakes`` went to the
+USGS on its own, `earthquakes(count=)` above the table's size is
+refused with the count the table holds and the download named. A fetch
+the caller did not ask for is the wrong kind of help: it needs a
+network, it takes seconds, and it changes what the next call returns.
+
+**Checked.** The variable wins over the platform default; the bundled
+table is read when the cache is empty and a cached copy takes
+precedence; a missing table names the download; the IRIS text is parsed
+and written, the existing copy is kept unless forced, the USGS filters
+reach the query, a refreshed catalogue changes what the sphere returns,
+too many events names the download without fetching, and bad arguments
+and failed fetches are reported.

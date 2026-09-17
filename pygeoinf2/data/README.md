@@ -10,4 +10,7 @@ make every problem easier than it is.
 - `usgs_event_cache.csv` — a cached USGS earthquake catalogue. The columns are
   the USGS query format; only `latitude`, `longitude` and `mag` are read.
 
-Loaded by `pygeoinf2.symmetric_space.sphere`. Nothing is fetched at runtime.
+Read through `pygeoinf2.datasets.read_table`, which takes a copy in the
+user's cache directory before the bundled one. The loaders never fetch;
+`pygeoinf2.datasets.download_gsn_stations` and `download_usgs_earthquakes`
+refresh the cache when asked.
