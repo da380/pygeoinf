@@ -7444,3 +7444,45 @@ resolved space, and an inverted band is still refused; the sphere's walk
 equals the weighted sum by hand and respects the floor and the ceiling,
 the box's enumerated shells match a box holding them eigenvalue for
 eigenvalue, and its walk goes past the space it was asked on.
+
+## 77. A derivative query is a derivative query (2026-09-17)
+
+`Operator.derivative(x)` was written as ``self.at(x).derivative``, and
+the default linearisation builds the value and the derivative together.
+So a bare derivative query on any operator built from separate value and
+derivative callables evaluated the value too, though the derivative
+callable could have been called alone; and the sum and composition
+nodes routed their own derivative through their linearisation, so on a
+composition the outer value was taken as well and on a sum every term's
+value. The audit's probe counts: one value per derivative query on a
+plain, scaled or summed operator, an extra outer value on a
+composition. For a forward operator whose value is a PDE solve that
+doubled the cost of every derivative-only query.
+
+**Now.** `derivative` calls the derivative alone. The default
+``_derivative`` falls back to the linearisation only for a class that
+overrides it, so an operator built from one ``linearise`` callable, or
+the discrepancy principle, still answers, and one with no derivative
+still refuses as before. The sum node sums the terms' derivatives. The
+composition node linearises the inner operator, since the chain rule
+needs the inner value and the inner value and derivative may share
+work, and asks the outer for its derivative alone: inner value once,
+both derivatives, no outer value, which is v1's pattern. The
+functional nodes inherit these paths.
+
+**The flexibility this keeps** (David, 2026-09-17): there are cases
+where a derivative needs a forward solve, the adjoint method, and the
+value and derivative are then wanted as a pair; and there are cases
+where they are not. `at` is the pair, `derivative` is the derivative
+alone, and an operator whose derivative needs the forward solution
+supplies a ``linearise`` callable and may cache that solution across
+the two, at a point, however it likes. The optimisers' line searches
+already take `at` and read the value and gradient from one
+linearisation, so nothing there changes.
+
+**Checked.** On spy operators counting their calls, a derivative on the
+plain, scaled, summed and negated operators takes no value; on a
+composition it takes the inner value once, the inner derivative once
+and the outer derivative once; a linearise-only operator answers a
+derivative query through one linearisation; an operator without a
+derivative, and a sum of two, still raise.

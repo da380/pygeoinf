@@ -255,8 +255,16 @@ class Operator[X, Y]:
         return self._linearise(x)
 
     def derivative(self, x: X) -> LinearOperator[X, Y]:
-        """The Fréchet derivative at ``x``."""
-        return self.at(x).derivative
+        """The Fréchet derivative at ``x``, and nothing else.
+
+        The derivative-only path: it calls the derivative alone, never the
+        value. Where the two share a backend call -- a forward solve that the
+        adjoint needs -- :meth:`at` is the one that shares it, and an operator
+        built from a single ``linearise`` callable answers this through that
+        callable, which may cache what it can. What this never does is
+        evaluate a value the caller did not ask for.
+        """
+        return self._derivative(x)
 
     def second_derivative(self, x: X, dx: X) -> LinearOperator[X, Y]:
         """``F''(x)[dx, .]``, the second derivative curried on its first slot.
@@ -293,6 +301,10 @@ class Operator[X, Y]:
         raise NotImplementedError(f"{type(self).__name__} does not implement _value.")
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
+        # A subclass that supplies its derivative only through a linearisation
+        # still answers a derivative-only query, through that.
+        if type(self)._linearise is not Operator._linearise:
+            return self._linearise(x).derivative
         raise NotImplementedError(f"{type(self).__name__} carries no derivative.")
 
     def _second_derivative(self, x: X, dx: X) -> LinearOperator[X, Y]:

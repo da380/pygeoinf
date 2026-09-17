@@ -280,6 +280,77 @@ class TestSharedWork:
         assert calls["n"] == 0
 
 
+class TestDerivativeAlone:
+    """``derivative(x)`` never evaluates a value the caller did not ask for.
+
+    The audit's cost regression: routed through ``at()``, a derivative-only
+    query on a forward operator whose value is a PDE solve paid for that
+    solve too. The counts here are v1's.
+    """
+
+    @staticmethod
+    def spy(X, Y, M, calls, name):
+        def value(x):
+            calls[name + "v"] += 1
+            return Y.from_components(M @ X.to_components(x))
+
+        def derivative(x):
+            calls[name + "d"] += 1
+            return LinearOperator.from_matrix(X, Y, M, form="components")
+
+        return Operator.from_callables(X, Y, value, derivative=derivative)
+
+    def test_plain_scaled_and_summed_take_no_value(self, rng):
+        from collections import Counter
+
+        X, Y = EuclideanSpace(3), EuclideanSpace(3)
+        calls = Counter()
+        F = self.spy(X, Y, rng.normal(size=(3, 3)), calls, "F")
+        x = X.random(rng=rng)
+        for operator in (F, 2.0 * F, F + F, -F):
+            operator.derivative(x)
+        assert calls["Fv"] == 0
+        assert calls["Fd"] == 5
+
+    def test_a_composition_takes_the_inner_value_only(self, rng):
+        from collections import Counter
+
+        X = EuclideanSpace(3)
+        calls = Counter()
+        F = self.spy(X, X, rng.normal(size=(3, 3)), calls, "F")
+        G = self.spy(X, X, rng.normal(size=(3, 3)), calls, "G")
+        (F @ G).derivative(X.random(rng=rng))
+        assert calls == {"Gv": 1, "Gd": 1, "Fd": 1}
+
+    def test_a_linearise_only_operator_still_answers(self, rng):
+        X, Y = EuclideanSpace(3), EuclideanSpace(2)
+        M = rng.normal(size=(2, 3))
+        calls = {"n": 0}
+
+        def linearise(x):
+            calls["n"] += 1
+            return Linearisation(
+                x,
+                Y.from_components(M @ X.to_components(x)),
+                LinearOperator.from_matrix(X, Y, M, form="components"),
+            )
+
+        F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
+        assert F.has_derivative
+        x = X.random(rng=rng)
+        assert np.allclose(F.derivative(x)(x), M @ X.to_components(x))
+        assert calls["n"] == 1
+
+    def test_no_derivative_still_says_so(self, rng):
+        X = EuclideanSpace(3)
+        F = Operator.from_callables(X, X, lambda x: x)
+        assert not F.has_derivative
+        with pytest.raises(NotImplementedError, match="derivative"):
+            F.derivative(X.random(rng=rng))
+        with pytest.raises(NotImplementedError, match="derivative"):
+            (F + F).derivative(X.random(rng=rng))
+
+
 class TestAffineCheck:
     """v1's affine axiom checks, as ``testing.check_affine``: the translation
     is recovered at zero, affine combinations are preserved, the derivative

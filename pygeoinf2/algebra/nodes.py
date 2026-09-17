@@ -824,7 +824,11 @@ class _OperatorSum[X, Y](Operator[X, Y]):
         return Linearisation(x, value, derivative)
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
-        return self._linearise(x).derivative
+        # Each term's derivative alone: no term's value is asked for.
+        result = self._terms[0].derivative(x)
+        for term in self._terms[1:]:
+            result = result + term.derivative(x)
+        return result
 
     def _second_derivative(self, x: X, dx: X) -> LinearOperator[X, Y]:
         result = self._terms[0].second_derivative(x, dx)
@@ -907,7 +911,11 @@ class _OperatorComposition[X, Y](Operator[X, Y]):
         return Linearisation(x, outer.value, outer.derivative @ inner.derivative)
 
     def _derivative(self, x: X) -> LinearOperator[X, Y]:
-        return self._linearise(x).derivative
+        # The chain rule needs the inner value, so the inner operator is
+        # linearised -- its value and derivative share work -- and the outer
+        # is asked for its derivative alone. The outer value is never taken.
+        inner = self._inner.at(x)
+        return self._outer.derivative(inner.value) @ inner.derivative
 
     def _second_derivative(self, x: X, dx: X) -> LinearOperator[X, Y]:
         inner = self._inner.at(x)
