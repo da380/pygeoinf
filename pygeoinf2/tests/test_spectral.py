@@ -587,3 +587,77 @@ class TestCovarianceFunction:
         assert long[0] / X.pointwise_variance(X.heat_symbol(0.14)) > short[
             0
         ] / X.pointwise_variance(X.heat_symbol(0.045))
+
+
+class TestInvariantAlgebraDrawsInOneTransform:
+    """v1's invariant measure class carried a Karhunen-Loeve sampler and lost
+    it whenever the algebra rebuilt the measure; the one-transform draw now
+    lives on any diagonal factor, so scaled, summed and marginal measures
+    all draw in one synthesis, and a sum touching a zero variance keeps its
+    factor."""
+
+    @staticmethod
+    def syntheses(space, measure, rng, draws=3):
+        """How many syntheses a draw costs, counted on the space's class."""
+        count = {"n": 0}
+        cls = type(space)
+        original = cls.from_components
+
+        def counting(self, c):
+            count["n"] += 1
+            return original(self, c)
+
+        cls.from_components = counting
+        try:
+            for _ in range(draws):
+                measure.sample(rng=rng)
+        finally:
+            cls.from_components = original
+        return count["n"] / draws
+
+    def test_the_algebra_keeps_the_one_transform_draw(self, rng):
+        X = Sobolev(8, 1.5, 0.3)
+        prior = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        noise = X.invariant_measure(np.full(X.dim, 0.01))
+        assert self.syntheses(X, prior, rng) == 1
+        assert self.syntheses(X, 3.0 * prior, rng) == 1
+        assert self.syntheses(X, prior / 2.0, rng) == 1
+        assert self.syntheses(X, prior + noise, rng) == 1
+        assert self.syntheses(X, prior - noise, rng) == 1
+        assert self.syntheses(X, prior.translate(X.random(rng=rng)), rng) == 1
+
+    def test_the_algebra_keeps_the_covariance_it_claims(self, rng):
+        from pygeoinf2.testing import check_measure
+
+        X = Sobolev(6, 1.0, 0.3)
+        prior = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        noise = X.invariant_measure(np.full(X.dim, 0.05))
+        for measure in (2.0 * prior, prior + noise, prior - noise):
+            check_measure(measure, rng=rng, samples=3000)
+
+    def test_a_sum_with_a_zero_variance_keeps_its_factor(self, rng):
+        """A band-limited prior plus anything: v2 refused both the factor
+        and the precision when any summed variance was zero, so the sum
+        could neither draw in one transform nor say it had no density. A
+        square root exists for any non-negative spectrum; only the precision
+        needs a positive one."""
+        X = Lebesgue(6)
+        band = X.invariant_measure(np.where(X.degrees <= 2, 1.0, 0.0))
+        low = X.invariant_measure(np.where(X.degrees <= 1, 0.5, 0.0))
+        total = band + low
+        assert total.covariance_factor is not None
+        assert self.syntheses(X, total, rng) == 1
+        assert total.precision is None
+        draw = total.sample(rng=rng)
+        assert np.allclose(X.to_components(draw)[X.degrees > 2], 0.0)
+
+    def test_a_marginal_keeps_factor_and_precision(self, rng):
+        X = Lebesgue(4)
+        joint = X.correlated_measure_from_correlations(
+            np.stack([1.0 / (1.0 + X.degrees), 2.0 / (1.0 + X.degrees)]),
+            np.array([[1.0, 0.3], [0.3, 1.0]]),
+        )
+        first = joint.marginal(0)
+        assert first.covariance_factor is not None and first.precision is not None
+        assert self.syntheses(X, first, rng) == 1
+        assert np.isfinite(first.log_density(X.random(rng=rng)))

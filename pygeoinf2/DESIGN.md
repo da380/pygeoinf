@@ -6856,3 +6856,46 @@ finite difference is not a subgradient at all. v2 refuses, and since
 three per fourfold increase in terms, to below 1e-5 at 256; agreement
 with Imhof to 2e-3 at three levels on a Laplacian spectrum and of the
 quantile to 5e-3; the mean, the origin and the far tail handled.
+
+## 65. The one-transform draw lives on the diagonal factor (2026-09-17)
+
+Item 18 of `FUNCTIONALITY_AUDIT.md` §0.2: v1's invariant Gaussian
+measure was a class whose algebra stayed in class and whose draws went
+through a Karhunen-Loève closure, one synthesis each; v2 builds the
+invariant measure as a plain Gaussian with a diagonal covariance and
+registered the same closure at construction, where the algebra dropped
+it. A scaled measure drew through its diagonal factor as an operator:
+white noise synthesised onto the grid, analysed, and synthesised again,
+three spectral transforms for one draw. And the helper deriving a
+factor and a precision from a diagonal covariance refused whenever any
+variance was zero, so a sum touching a band-limited measure lost both.
+
+**Where the short cut belongs.** David asked whether the class was
+being thrown away with its specialised methods. Method by method, every
+computation the class carried survives through the covariance's
+structure: a diagonal operator stays diagonal under scaling, addition
+and composition with diagonals, and a diagonal covariance yields the
+exact norms, the spectral KL route, its factor and its precision. What
+fell through was what depended on the class's identity: the sampler
+closure and the too-strict gate. So the draw now lives on the
+structure too. `GaussianMeasure.sample` recognises a diagonal factor and
+draws white-noise components scaled by its eigenvalues before one
+synthesis, which is the factor route with its redundant round trip
+removed and is valid on any metric, since white-noise components carry
+the Gram factor already. A scaled, summed, translated, marginalised or
+conditioned measure whose factor is still diagonal draws in one
+transform, and nothing is carried by anyone. The invariant measure
+registers no closure of its own any more. The gate gives a diagonal
+covariance its square root for any non-negative spectrum and its
+precision only for a positive one, and the marginal of a correlated
+measure carries its precision under the same diagonal-metric condition
+as its factor. The class stays a factory; the spectrum is read as the
+covariance's eigenvalues, which David preferred to a named accessor.
+
+**Checked.** On a Sobolev sphere, a prior and its scalings, sums,
+differences and translation each cost one synthesis per draw, counted
+on the space; their sample covariances match the declared ones; a sum
+of two band-limited measures keeps a factor, draws in one transform,
+has no precision, and its draws vanish above the band; a marginal of a
+correlated measure keeps factor and precision, draws in one transform
+and has a finite density.

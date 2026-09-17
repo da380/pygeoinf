@@ -631,8 +631,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self._sample_fn is not None:
             value = self._sample_fn(rng)
         elif self._covariance_factor is not None:
-            noise = self._covariance_factor.domain.white_noise(rng=rng)
-            value = self._covariance_factor(noise)
+            value = self._draw_through_factor(rng)
         else:
             raise NotImplementedError(
                 "This measure has a covariance but no factor, so it cannot be "
@@ -642,6 +641,29 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self._expectation is None:
             return value
         return self._domain.add(value, self._expectation)
+
+    def _draw_through_factor(self, rng: Generator | None) -> X:
+        """``L xi`` for white noise ``xi``, in one transform when ``L`` is diagonal.
+
+        A diagonal factor applies its eigenvalues to components, so ``L xi``
+        is ``from_components(lambda * xi_c)`` with ``xi_c`` white noise's
+        components, ``N(0, G^-1)``. Going through ``L`` as an operator
+        synthesises ``xi`` onto the grid only to analyse it again and
+        synthesise the result: three spectral transforms for one draw. v1
+        carried a Karhunen-Loeve closure on its invariant measure class to
+        avoid that, and lost it whenever the algebra rebuilt the measure.
+        Here the short cut lives on the structure, so a scaled, summed,
+        marginalised or conditioned measure whose factor is still diagonal
+        draws in one transform without anyone carrying anything.
+        """
+        from ..algebra.diagonal import DiagonalLinearOperator
+
+        factor = self._covariance_factor
+        if isinstance(factor, DiagonalLinearOperator):
+            space = factor.domain
+            components = space.white_noise_components(rng=rng)
+            return space.from_components(factor.eigenvalues * components)
+        return factor(factor.domain.white_noise(rng=rng))
 
     # ----------------------------------------------------------------- #
     #                             Densities                             #
@@ -1893,10 +1915,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             and block.domain.has_diagonal_metric
         ):
             factor = block.sqrt
+        # And under the same condition the precision is the reciprocal
+        # spectrum, when every variance is positive; without it the marginal
+        # of a correlated measure had no density (audit row on `marginal`).
+        precision = None
+        if factor is not None and np.all(block.eigenvalues > 0.0):
+            precision = DiagonalLinearOperator(block.domain, 1.0 / block.eigenvalues)
         return GaussianMeasure(
             block.domain,
             covariance=block,
             covariance_factor=factor,
+            precision=precision,
             expectation=expectation,
         )
 
@@ -2119,13 +2148,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if not isinstance(covariance, DiagonalLinearOperator):
             return None, None
         values = np.asarray(covariance.eigenvalues, dtype=float)
-        if np.any(values <= 0.0):
+        if np.any(values < 0.0):
             return None, None
         space = covariance.domain
-        return (
-            DiagonalLinearOperator(space, np.sqrt(values)),
-            DiagonalLinearOperator(space, 1.0 / values),
+        # A square root exists for any non-negative spectrum; a precision only
+        # for a positive one. Gating both on positivity lost the factor -- and
+        # with it sampling -- for every sum touching a band-limited measure.
+        factor = DiagonalLinearOperator(space, np.sqrt(values))
+        precision = (
+            DiagonalLinearOperator(space, 1.0 / values)
+            if np.all(values > 0.0)
+            else None
         )
+        return factor, precision
 
     def _combine_affine(
         self, operator: LinearOperator, translation: X | None

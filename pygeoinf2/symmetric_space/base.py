@@ -775,27 +775,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             else None
         )
 
-        # A draw in components: one synthesis, where the factor route costs
-        # three transforms. White noise is synthesised on the grid only for
-        # the diagonal operator to analyse it again and synthesise the result,
-        # and none of that is work -- the whole draw is
-        # `sqrt(s / g) * standard normal` in components, since white noise's
-        # components are `N(0, G^-1)` (REVIEW2 4.2.3). Centred, because
-        # GaussianMeasure.sample adds the expectation itself.
-        deviations = np.sqrt(variances / self.metric_values)
-
-        def sample(rng: Generator | None) -> V:
-            generator = np.random.default_rng() if rng is None else rng
-            return self.from_components(
-                deviations * generator.standard_normal(self.dim)
-            )
-
+        # The draw is one synthesis: `sqrt(s / g) * standard normal` in
+        # components, since white noise's components are `N(0, G^-1)`
+        # (REVIEW2 4.2.3). GaussianMeasure takes that short cut itself for any
+        # diagonal factor, so nothing is registered here -- and nothing is
+        # lost when the algebra rebuilds the measure (DESIGN §65).
         return GaussianMeasure(
             self,
             expectation=expectation,
             covariance_factor=factor,
             precision=precision,
-            sample=sample,
         )
 
     def sobolev_measure(
