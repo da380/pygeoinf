@@ -26,6 +26,7 @@ from ..geometry.sets import SublevelSet
 from ..geometry.subspaces import OrthogonalProjector
 from ..numerics.root_find import Evaluation, monotone_root
 from ..probability.base import ProbabilityMeasure
+from ..numerics.convex import SupportFunction
 from ..numerics.solvers import CGSolver, CholeskySolver, LinearSolver
 from ..traits import Traits
 from .estimators import LinearPointEstimator, SetEstimator
@@ -75,6 +76,7 @@ def _spectral_components(
 __all__ = [
     "BackusGilbert",
     "BackusGilbertParker",
+    "FeasiblePropertySet",
     "harden_error",
 ]
 
@@ -1849,6 +1851,484 @@ class _LikelihoodRoute:
 # --------------------------------------------------------------------- #
 
 
+class _FeasibleSupport(SupportFunction):
+    """The support function of a feasible property set, answered by it."""
+
+    def __init__(self, feasible: "FeasiblePropertySet", /) -> None:
+        super().__init__(feasible.domain)
+        self._set = feasible
+
+    def _value(self, y: Any) -> float:
+        return self._set.support(y)
+
+    def _maximiser(self, y: Any) -> Any:
+        return self._set.support_maximiser(y)
+
+
+class FeasiblePropertySet(ConvexSet):
+    """The set of property values consistent with the data and the prior.
+
+    What :class:`BackusGilbertParker` returns, and the object every question
+    is asked of, as a posterior measure is on the Bayesian side. It is a
+    :class:`~pygeoinf2.geometry.convex.ConvexSet` and declares what it can
+    do. It always has a **support function**, computed by the estimator's
+    route: :meth:`support` in a direction, :meth:`support_values` in many,
+    :meth:`polytope` for the outer bound they give, :meth:`outside` for a
+    certificate of exclusion. It has a **level function** when membership
+    can be decided (a ball prior; a confidence set that is a ball, an
+    ellipsoid or a sublevel set): :meth:`contains` and :meth:`admits`,
+    :meth:`inclusion_norm` and :meth:`level_function`, :meth:`extent` for
+    inner bounds along a line, :meth:`inner_hull` for an inner polytope. It
+    has a **maximiser** on the closed form and the bisection, with
+    :meth:`extremal_model` the model attaining it, and a **projection** on
+    the closed form alone, where it is an ellipsoid and :attr:`ellipsoid`
+    hands that over with everything an ellipsoid has.
+
+    Nothing is computed at construction; each answer is computed when asked
+    and the expensive ones are kept. The set may be empty, when no model
+    within the prior fits the data: :meth:`is_empty` says so, and the
+    probes that need a point of the set raise ``ValueError`` in that case.
+    """
+
+    def __init__(self, estimator: "BackusGilbertParker", data: Any, /) -> None:
+        super().__init__(estimator.target_space)
+        self._estimator = estimator
+        self._data = data
+
+    # ----------------------------------------------------------------- #
+    #                            What it holds                          #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def estimator(self) -> "BackusGilbertParker":
+        """The estimator that produced it."""
+        return self._estimator
+
+    @property
+    def data(self) -> Any:
+        """The observations it was produced from."""
+        return self._data
+
+    @property
+    def route(self) -> str:
+        """The route computing the support function."""
+        return self._estimator.route
+
+    @property
+    def membership(self) -> str | None:
+        """How membership is decided, or ``None`` when it cannot be."""
+        return self._estimator.membership
+
+    @property
+    def _algorithm(self) -> Any:
+        return self._estimator.algorithm
+
+    @cached_property
+    def ellipsoid(self) -> Ellipsoid:
+        """The set as an ellipsoid, on the closed form.
+
+        Raises:
+            NotImplementedError: on any other route, where the set is not an
+                ellipsoid.
+            ValueError: if the set is empty.
+        """
+        if self.route != "closed_form":
+            raise NotImplementedError(
+                f"On the {self.route!r} route the feasible property set is not "
+                "an ellipsoid; it is known through its support function."
+            )
+        return self._algorithm(self._data)
+
+    # ----------------------------------------------------------------- #
+    #                          What it can do                           #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def has_membership(self) -> bool:
+        """Whether :meth:`contains` decides membership."""
+        return self._estimator._inclusion is not None
+
+    @property
+    def has_projection(self) -> bool:
+        """Whether :meth:`project` is available."""
+        return self.route == "closed_form"
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return True
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return self.route in ("closed_form", "bisection")
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether a level function describes the set."""
+        return self.has_membership
+
+    @cached_property
+    def _nonempty(self) -> bool:
+        return bool(self._algorithm.is_feasible(self._data))
+
+    def is_empty(self) -> bool:
+        """Whether no model within the prior fits the data.
+
+        Decided by the route: the closed form by its budget, the bisection
+        by a matrix-free minimum-norm search, the dual by its own diagnosis
+        of an unbounded dual. Computed once and kept.
+        """
+        return not self._nonempty
+
+    # ----------------------------------------------------------------- #
+    #                          The support side                         #
+    # ----------------------------------------------------------------- #
+
+    def support(self, direction: Any, /) -> float:
+        """The support value in one direction.
+
+        Raises:
+            ValueError: if the set is empty.
+        """
+        route = self.route
+        if route == "closed_form":
+            return float(self.ellipsoid.support_function()(direction))
+        if route in ("bisection", "dual"):
+            return float(self._algorithm.support(direction, self._data))
+        return float(
+            self._algorithm.support_values([direction], self._data, route=route)[0]
+        )
+
+    def support_values(
+        self, directions: Sequence[Any], /, **options: Any
+    ) -> np.ndarray:
+        """The support values in many directions.
+
+        On a general route this is the dual engine's sweep, with its warm
+        start across neighbouring directions and its ``route=``,
+        ``warm_start=`` and ``n_jobs=`` options, the route defaulting to
+        this set's. The closed form and the bisection have no state to
+        carry between directions and evaluate each in turn; they take no
+        options.
+
+        Args:
+            directions: the directions to evaluate.
+            **options: the sweep's options, on a general route.
+
+        Returns:
+            One support value per direction.
+
+        Raises:
+            TypeError: if options are given on a route that has none.
+        """
+        if self.route in _GENERAL:
+            options.setdefault("route", self.route)
+            return self._algorithm.support_values(directions, self._data, **options)
+        if options:
+            raise TypeError(
+                f"The {self.route!r} route sweeps directions one at a time and "
+                f"takes no options; got {sorted(options)}."
+            )
+        return np.array([self.support(direction) for direction in directions])
+
+    def support_function(self) -> SupportFunction:
+        """The support function, answered by :meth:`support`."""
+        return _FeasibleSupport(self)
+
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The property value attaining the support: the extremal model's.
+
+        Raises:
+            NotImplementedError: on a general route, which finds the value
+                by duality and exhibits no point.
+        """
+        if self.route == "closed_form":
+            return self.ellipsoid.support_maximiser(direction)
+        return self._estimator.target(self.extremal_model(direction))
+
+    def extremal_model(self, direction: Any, /) -> Any:
+        """The model of the feasible set furthest along a direction.
+
+        On the closed form, the minimum-norm model plus what the prior's
+        budget allows along the kernel component of ``T* q``; on the
+        bisection, the model its two multipliers fix. Not generally unique,
+        but the bound it attains is.
+
+        Raises:
+            NotImplementedError: on a general route.
+            ValueError: if the set is empty.
+        """
+        route = self.route
+        if route == "bisection":
+            return self._algorithm.extremal_model(direction, self._data)
+        if route != "closed_form":
+            raise NotImplementedError(
+                f"The {route!r} route finds support values by duality and does "
+                "not exhibit the model attaining them; the closed form and the "
+                "bisection do."
+            )
+        space = self._estimator.problem.model_space
+        budget = self._algorithm.budget(self._data)
+        if budget < 0.0:
+            raise ValueError("The feasible set is empty; there is no extremal model.")
+        anchor = self._algorithm.minimum_norm_model(self._data)
+        pulled = self._algorithm._kernel(self._estimator.target.adjoint(direction))
+        length = space.norm(pulled)
+        if length == 0.0:
+            return anchor
+        return space.axpy(np.sqrt(budget) / length, pulled, space.copy(anchor))
+
+    def certificate(self, direction: Any, /) -> Any:
+        """The optimal dual certificate, on a general route.
+
+        Raises:
+            NotImplementedError: on the closed form and the bisection.
+        """
+        if self.route not in _GENERAL:
+            raise NotImplementedError(
+                "A certificate belongs to the dual route; the closed form and "
+                "the bisection work in the primal."
+            )
+        return self._algorithm.certificate(direction, self._data)
+
+    def polytope(self, directions: Sequence[Any], /) -> Polytope:
+        """A certified outer bound, one half-space per direction (§18.4)."""
+        directions = tuple(directions)
+        values = self.support_values(directions)
+        return Polytope(
+            self.domain,
+            [
+                HalfSpace(self.domain, direction, offset=float(value))
+                for direction, value in zip(directions, values)
+            ],
+            outer=True,
+        )
+
+    def outside(
+        self, x: Any, directions: Sequence[Any], /, *, rtol: float = 1e-9
+    ) -> bool:
+        """True when some direction proves the point is not in the set.
+
+        One-sided: a ``True`` is a proof, a ``False`` only the absence of one
+        among the directions tried. :meth:`contains` decides, when it can.
+
+        Args:
+            x: the point to test.
+            directions: the directions to try.
+            rtol: how far past a supporting hyperplane the point must lie.
+        """
+        for direction in directions:
+            pairing = self.domain.inner_product(direction, x)
+            if pairing > self.support(direction) * (1.0 + rtol) + rtol:
+                return True
+        return False
+
+    # ----------------------------------------------------------------- #
+    #                        The level-function side                    #
+    # ----------------------------------------------------------------- #
+
+    def _inclusion(self, what: str) -> Any:
+        return self._estimator._need_inclusion(what)
+
+    @property
+    def level(self) -> float:
+        """The prior radius: the level the inclusion norm is bounded by."""
+        self._inclusion("The level")
+        return _ball_radius(self._estimator.prior, "The prior")
+
+    def inclusion_norm(self, value: Any, /) -> float:
+        """``min { ||m|| : T m == value, A m fits the data }``, the cost of a value.
+
+        §18.5: a value is admissible exactly when this is within the prior
+        radius. Infinite when no model reproduces the value and fits the
+        data, which is a proof of inadmissibility rather than a failure.
+
+        Raises:
+            NotImplementedError: unless membership can be decided.
+        """
+        return self._inclusion("The inclusion norm").inclusion_norm(value, self._data)
+
+    def admits(self, value: Any, /, *, rtol: float = 1e-8) -> bool:
+        """Whether a property value is consistent with the data and the prior.
+
+        Args:
+            value: the property value to test.
+            rtol: how far outside the prior radius still counts.
+
+        Raises:
+            NotImplementedError: unless membership can be decided.
+        """
+        return self._inclusion("Membership").admits(value, self._data, rtol=rtol)
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-8) -> bool:
+        """Membership, by the inclusion norm.
+
+        Args:
+            x: a property value.
+            rtol: how far outside the prior radius still counts.
+
+        Raises:
+            NotImplementedError: unless membership can be decided; see
+                :attr:`has_membership`. :meth:`outside` gives a certificate
+                of exclusion from the support function alone.
+        """
+        return self.admits(x, rtol=rtol)
+
+    def level_function(self) -> Functional:
+        """``p -> inclusion_norm(p)``, whose sublevel set at :attr:`level` is this set.
+
+        Convex on the property space (Al-Attar 2021 §2.3): the sublevel-set
+        characterisation, as :meth:`support_function` is the other.
+        """
+        self._inclusion("The level function")
+        return Functional.from_callables(self.domain, self.inclusion_norm)
+
+    def fitting_model(self) -> Any:
+        """The smallest model fitting the data within the confidence set.
+
+        Its property is a point of this set whenever the set is non-empty,
+        and the point :meth:`extent` draws its lines through.
+
+        Raises:
+            NotImplementedError: unless membership can be decided.
+            ValueError: if no model within the prior fits the data.
+        """
+        self._inclusion("The fitting model")
+        if self.membership == "closed_form":
+            model = self._estimator._inclusion.minimum_norm_model(self._data)
+        else:
+            model = self._estimator._likelihood_engine.fitting_model(self._data)
+        if (
+            model is None
+            or self._estimator.problem.model_space.norm(model) > self.level
+        ):
+            raise ValueError(
+                "No model within the prior fits the data; the set is empty."
+            )
+        return model
+
+    def extent(self, direction: Any, /, *, iterations: int = 40) -> tuple[float, float]:
+        """How far the set reaches along a line through an interior point.
+
+        Al-Attar (2021) Fig. 8: along the line through the property of the
+        smallest fitting model in the given direction, the values are
+        admissible on an interval, since the set is convex, and its two ends
+        are found by bracketing and bisecting :meth:`admits`. Returned as the
+        pairing ``(direction, p)`` at the two ends, so that they compare
+        directly with ``-support(-direction)`` and ``support(direction)``:
+        these are **inner** bounds, points of the boundary, where the
+        support values are outer ones, and the two coincide when the
+        property space is one-dimensional. Each end costs one inclusion norm
+        per bisection step.
+
+        Args:
+            direction: the direction of the line.
+            iterations: bisection steps for each end.
+
+        Returns:
+            ``(lower, upper)``.
+
+        Raises:
+            NotImplementedError: unless membership can be decided.
+            ValueError: if the set is empty.
+        """
+        self._inclusion("An extent")
+        space = self.domain
+        base = self._estimator.target(self.fitting_model())
+        length = space.squared_norm(direction)
+        if length == 0.0:
+            value = space.inner_product(direction, base)
+            return value, value
+        if not self.admits(base):
+            raise ValueError(
+                "The interior point is not admitted; the set may be empty."
+            )
+
+        def crossing(sign: float) -> float:
+            step = max(1.0, abs(space.inner_product(direction, base))) / length
+            inside, outside = 0.0, sign * step
+            for _ in range(60):
+                if not self.admits(space.axpy(outside, direction, space.copy(base))):
+                    break
+                inside, outside = outside, 2.0 * outside
+            else:
+                raise ValueError("The set appears unbounded along this direction.")
+            for _ in range(iterations):
+                middle = 0.5 * (inside + outside)
+                if self.admits(space.axpy(middle, direction, space.copy(base))):
+                    inside = middle
+                else:
+                    outside = middle
+            return inside
+
+        centre = space.inner_product(direction, base)
+        return centre + crossing(-1.0) * length, centre + crossing(1.0) * length
+
+    def inner_hull(self, values: Any, /) -> Polytope:
+        """The convex hull of whichever candidate values are admissible.
+
+        The *inner* bound of §18.4, and the only thing that produces one: a
+        support function can never exhibit a point of the set. Returned as an
+        inner :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be
+        mistaken for the outer one.
+
+        Args:
+            values: candidate property values, of which the admissible ones
+                are kept.
+
+        Raises:
+            ValueError: if fewer candidates are admissible than the property
+                space has dimensions, there being no hull to take.
+            NotImplementedError: unless membership can be decided.
+        """
+        from scipy.spatial import ConvexHull
+
+        self._inclusion("An inner hull")
+        space = self.domain
+        inside = [space.to_components(value) for value in values if self.admits(value)]
+        if len(inside) <= space.dim:
+            raise ValueError(
+                f"Only {len(inside)} of the candidates are admissible, which "
+                f"is not enough to bound a hull in {space.dim} dimensions. "
+                "Sample nearer the minimum-norm property."
+            )
+        hull = ConvexHull(np.stack(inside))
+        planes = [
+            HalfSpace(
+                space, space.representer(equation[:-1]), offset=-float(equation[-1])
+            )
+            for equation in hull.equations
+        ]
+        return Polytope(space, planes, outer=False)
+
+    # ----------------------------------------------------------------- #
+
+    def project(self, x: Any, /) -> Any:
+        """The nearest point, on the closed form; refused elsewhere.
+
+        Raises:
+            NotImplementedError: unless the set is an ellipsoid. Bound it
+                with :meth:`polytope` and project onto that.
+        """
+        if self.route != "closed_form":
+            raise NotImplementedError(
+                "A feasible property set known through its support function "
+                "has no projection; bound it with polytope() and project onto "
+                "that."
+            )
+        return self.ellipsoid.project(x)
+
+    def push_forward(self, operator: LinearOperator, /) -> "FeasiblePropertySet":
+        """The same set for a further property of the model, ``T' == operator T``."""
+        return self._estimator.push_forward(operator)(self._data)
+
+    def __repr__(self) -> str:
+        return (
+            f"FeasiblePropertySet(route={self.route!r}, membership={self.membership!r})"
+        )
+
+
 _ROUTES = ("auto", "closed_form", "bisection", "dual", "primal", "kkt", "smoothed")
 _GENERAL = ("dual", "primal", "kkt", "smoothed")
 _MEMBERSHIPS = ("auto", "closed_form", "reduced", "likelihood")
@@ -1899,18 +2379,23 @@ class BackusGilbertParker(SetEstimator):
     data, the data-space reduction for two balls, or the likelihood route
     for a confidence set given as a sublevel set of any differentiable
     convex functional, a ball, an ellipsoid or a ``SublevelSet``. It needs a
-    ball prior. When it exists, :meth:`inclusion_norm`, :meth:`admits`,
-    :meth:`inner_hull` and :meth:`extent` are available,
-    :meth:`inclusion_functional` is the function whose sublevel set the
-    answer is, and the returned set answers ``contains`` as well. The two
-    characterisations are complementary -- the support function bounds the
-    set from outside, membership decides points and gives inner bounds --
-    and not both are required of every algorithm.
+    ball prior. Both characterisations live on the returned
+    :class:`FeasiblePropertySet`, which declares which it has: the support
+    function bounds the set from outside, the level function decides points
+    and gives inner bounds, and not both are required of every algorithm.
 
     The chosen route's own object is :attr:`algorithm`, for diagnostics that
     belong to one route and not the others: the closed form's budget and
-    prior-only ellipsoid, the bisection's extremal model, the dual's
-    certificate and cost.
+    prior-only ellipsoid, the dual's cost and solvers.
+
+    .. code-block:: python
+
+        feasible = BackusGilbertParker(problem, target, prior)(data)
+        feasible.is_empty()
+        feasible.support(direction)          # the support-function side
+        feasible.contains(value)             # the level-function side
+        feasible.extent(direction)           # inner bounds along a line
+        feasible.polytope(directions)        # an outer bound
     """
 
     def __init__(
@@ -2224,282 +2709,17 @@ class BackusGilbertParker(SetEstimator):
         return self._target.codomain
 
     # ----------------------------------------------------------------- #
-    #                          The support side                         #
-    # ----------------------------------------------------------------- #
 
-    def support(self, direction: Any, data: Any, /) -> float:
-        """The support value of the feasible property set in one direction.
+    def __call__(self, data: Any) -> "FeasiblePropertySet":
+        """The feasible property set for these data, as an object to probe.
 
-        Raises:
-            ValueError: if the feasible set is empty. :meth:`is_feasible`
-                tests that without an exception.
+        Nothing is computed here. The set holds the engines and the data,
+        and each question -- a support value, membership, the extent, the
+        inner hull, emptiness -- is answered when asked and remembered.
+        This is the shape of the Bayesian side, where the estimator returns
+        a measure and the measure is what gets probed.
         """
-        if self._route == "closed_form":
-            return float(self._algorithm(data).support_function()(direction))
-        if self._route in ("bisection", "dual"):
-            return float(self._algorithm.support(direction, data))
-        return float(
-            self._algorithm.support_values([direction], data, route=self._route)[0]
-        )
-
-    def support_values(
-        self, directions: Sequence[Any], data: Any, /, **options: Any
-    ) -> np.ndarray:
-        """The support values in many directions.
-
-        On a general route this is the dual engine's sweep, with its warm
-        start across neighbouring directions and its ``route=``,
-        ``warm_start=`` and ``n_jobs=`` options, the route defaulting to
-        this estimator's. The closed form and the bisection have no state to
-        carry between directions and evaluate each in turn; they take no
-        options.
-
-        Args:
-            directions: the directions to evaluate.
-            data: the observations.
-            **options: the sweep's options, on a general route.
-
-        Returns:
-            One support value per direction.
-
-        Raises:
-            TypeError: if options are given on a route that has none.
-        """
-        if self._route in _GENERAL:
-            options.setdefault("route", self._route)
-            return self._algorithm.support_values(directions, data, **options)
-        if options:
-            raise TypeError(
-                f"The {self._route!r} route sweeps directions one at a time and "
-                f"takes no options; got {sorted(options)}."
-            )
-        return np.array([self.support(direction, data) for direction in directions])
-
-    def is_feasible(self, data: Any, /) -> bool:
-        """Whether any model lies in the constraint set and fits the data.
-
-        The question every other method assumes has been answered; a
-        predicate, so that a caller can ask before being told by an
-        exception.
-        """
-        return bool(self._algorithm.is_feasible(data))
-
-    def __call__(self, data: Any) -> ConvexSet:
-        """The feasible property set.
-
-        An ellipsoid from the closed form, with every closed form an
-        ellipsoid has; otherwise a set carrying its support function, the
-        bisection's extremal model as its maximiser, and the membership
-        test when the sets are balls.
-
-        Raises:
-            ValueError: if the feasible set is empty, on the closed form.
-                The other routes raise on the first support value asked
-                of the set instead; :meth:`is_feasible` tests either way.
-        """
-        if self._route == "closed_form":
-            return self._algorithm(data)
-        maximiser = None
-        if self._route == "bisection":
-            maximiser = lambda direction: self._target(  # noqa: E731
-                self._algorithm.extremal_model(direction, data)
-            )
-        membership = None
-        if self._inclusion is not None:
-            membership = lambda value, rtol: self.admits(  # noqa: E731
-                value, data, rtol=max(rtol, 1e-8)
-            )
-        return ConvexSet.from_support_function(
-            self.target_space,
-            lambda direction: self.support(direction, data),
-            maximiser=maximiser,
-            membership=membership,
-        )
-
-    # ----------------------------------------------------------------- #
-    #                        The membership side                        #
-    # ----------------------------------------------------------------- #
-
-    def inclusion_norm(self, value: Any, data: Any, /) -> float:
-        """``min { ||m|| : T m == value, A m fits the data }``, the cost of a value.
-
-        §18.5: a value is admissible exactly when this is within the prior
-        radius. Infinite when no model at all can reproduce the value and
-        fit the data, which is a proof of inadmissibility rather than a
-        failure to converge.
-
-        Raises:
-            NotImplementedError: unless the constraint and confidence sets
-                are balls.
-        """
-        return self._need_inclusion("The inclusion norm").inclusion_norm(value, data)
-
-    def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
-        """Whether a property value is consistent with the data and the prior.
-
-        The membership characterisation of the set, computed without forming
-        it; it agrees with ``self(data).contains(value)``, which calls it.
-
-        Args:
-            value: the property value to test.
-            data: the observations.
-            rtol: how far outside the bound still counts as admissible.
-
-        Raises:
-            NotImplementedError: unless the constraint and confidence sets
-                are balls.
-        """
-        return self._need_inclusion("Membership").admits(value, data, rtol=rtol)
-
-    def inner_hull(self, values: Any, data: Any, /) -> Any:
-        """The convex hull of whichever candidate values are admissible.
-
-        The *inner* bound of §18.4, and the only thing that produces one: a
-        support function can never exhibit a point of the set. Returned as an
-        inner :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be
-        mistaken for the outer one.
-
-        Args:
-            values: candidate property values, of which the admissible ones
-                are kept.
-            data: the observations.
-
-        Raises:
-            ValueError: if fewer candidates are admissible than the property
-                space has dimensions, there being no hull to take.
-            NotImplementedError: unless the constraint and confidence sets
-                are balls.
-        """
-        from scipy.spatial import ConvexHull
-
-        self._need_inclusion("An inner hull")
-        space = self.target_space
-        inside = [
-            space.to_components(value) for value in values if self.admits(value, data)
-        ]
-        if len(inside) <= space.dim:
-            raise ValueError(
-                f"Only {len(inside)} of the candidates are admissible, which "
-                f"is not enough to bound a hull in {space.dim} dimensions. "
-                "Sample nearer the minimum-norm property."
-            )
-        hull = ConvexHull(np.stack(inside))
-        planes = [
-            HalfSpace(
-                space, space.representer(equation[:-1]), offset=-float(equation[-1])
-            )
-            for equation in hull.equations
-        ]
-        return Polytope(space, planes, outer=False)
-
-    def inclusion_functional(self, data: Any, /) -> Functional:
-        """The function whose sublevel set at the prior radius is the answer.
-
-        ``p -> inclusion_norm(p, data)``, convex on the property space
-        (Al-Attar 2021 §2.3), so that ``SublevelSet(f, level=radius)`` is the
-        feasible property set characterised by membership, as
-        :meth:`__call__` characterises it by its support function.
-
-        Raises:
-            NotImplementedError: unless membership can be decided.
-        """
-        self._need_inclusion("The inclusion functional")
-        return Functional.from_callables(
-            self.target_space, lambda value: self.inclusion_norm(value, data)
-        )
-
-    def sublevel_set(self, data: Any, /) -> SublevelSet:
-        """The feasible property set as a sublevel set, §3.3's characterisation."""
-        return SublevelSet(
-            self.inclusion_functional(data),
-            level=self._need_inclusion("A sublevel set")._radius,
-        )
-
-    def _interior_property(self, data: Any) -> Any:
-        """A property value inside the set: that of the smallest fitting model.
-
-        Raises:
-            ValueError: if no model within the prior fits the data.
-        """
-        if self._membership == "closed_form":
-            model = self._inclusion.minimum_norm_model(data)
-        else:
-            model = self._likelihood_engine.fitting_model(data)
-        if (
-            model is None
-            or self._problem.model_space.norm(model) > self._radius_of_prior
-        ):
-            raise ValueError(
-                "No model within the prior fits the data, so the feasible "
-                "property set is empty and has no extent."
-            )
-        return self._target(model)
-
-    @property
-    def _radius_of_prior(self) -> float:
-        return _ball_radius(self._prior, "The prior")
-
-    def extent(
-        self, direction: Any, data: Any, /, *, iterations: int = 40
-    ) -> tuple[float, float]:
-        """How far the set reaches along a line through an interior point.
-
-        Al-Attar (2021) Fig. 8: along the line through the property of the
-        smallest fitting model in the given direction, the values are
-        admissible on an interval, since the set is convex, and its two
-        ends are found by bracketing and bisecting :meth:`admits`. Returned
-        as the pairing ``(direction, p)`` at the two ends, so that they
-        compare directly with ``-support(-direction)`` and
-        ``support(direction)``: these are **inner** bounds, points of the
-        boundary, where the support values are outer ones, and the two
-        coincide when the property space is one-dimensional. Each end costs
-        one inclusion norm per bisection step.
-
-        Args:
-            direction: the direction of the line.
-            data: the observations.
-            iterations: bisection steps for each end.
-
-        Returns:
-            ``(lower, upper)``.
-
-        Raises:
-            NotImplementedError: unless membership can be decided.
-            ValueError: if the feasible set is empty.
-        """
-        self._need_inclusion("An extent")
-        space = self.target_space
-        base = self._interior_property(data)
-        length = space.squared_norm(direction)
-        if length == 0.0:
-            value = space.inner_product(direction, base)
-            return value, value
-        if not self.admits(base, data):
-            raise ValueError(
-                "The interior point is not admitted; the set may be empty."
-            )
-
-        def crossing(sign: float) -> float:
-            step = max(1.0, abs(space.inner_product(direction, base))) / length
-            inside, outside = 0.0, sign * step
-            for _ in range(60):
-                if not self.admits(
-                    space.axpy(outside, direction, space.copy(base)), data
-                ):
-                    break
-                inside, outside = outside, 2.0 * outside
-            else:
-                raise ValueError("The set appears unbounded along this direction.")
-            for _ in range(iterations):
-                middle = 0.5 * (inside + outside)
-                if self.admits(space.axpy(middle, direction, space.copy(base)), data):
-                    inside = middle
-                else:
-                    outside = middle
-            return inside
-
-        centre = space.inner_product(direction, base)
-        return centre + crossing(-1.0) * length, centre + crossing(1.0) * length
+        return FeasiblePropertySet(self, data)
 
     # ----------------------------------------------------------------- #
 

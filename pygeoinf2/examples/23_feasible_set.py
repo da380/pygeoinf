@@ -84,8 +84,8 @@ truth_values = target(truth)
 lower, upper = [], []
 for index in range(P.dim):
     direction = P.basis_vector(index)
-    high = exact.support(direction, data)
-    low = -exact.support(P.scale(-1.0, direction), data)
+    high = exact(data).support(direction)
+    low = -exact(data).support(P.scale(-1.0, direction))
     lower.append(low)
     upper.append(high)
     inside = low - 1e-9 <= truth_values[index] <= high + 1e-9
@@ -187,7 +187,7 @@ ax, _ = plotting.plot(
 plotting.plot_paths(X, paths, ax=ax, alpha=0.08)
 ax.set_title("Truth, with the ray network")
 
-extremal = exact.algorithm.extremal_model(P.basis_vector(0), data)
+extremal = exact(data).extremal_model(P.basis_vector(0))
 ax, _ = plotting.plot(
     X,
     extremal,

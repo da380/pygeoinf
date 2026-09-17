@@ -6,6 +6,7 @@ import pytest
 from pygeoinf2 import EuclideanSpace, LinearOperator, Traits
 from pygeoinf2.geometry import (
     AffineSubspace,
+    ConvexSet,
     Ball,
     BallSurface,
     Ellipsoid,
@@ -243,6 +244,133 @@ class TestConvexityCheck:
         check_convexity(
             Functional.from_callables(space, lambda x: space.norm(x) ** 3), rng=rng
         )
+
+
+class TestDeclaredCapabilities:
+    """A convex set says what it can do -- membership, projection, support
+    function, maximiser, level function -- so generic code asks rather than
+    catches. The closed forms have all of them; the combinators carry what
+    their parts allow."""
+
+    @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
+    def space(self, request):
+        return request.param()
+
+    @staticmethod
+    def flags(subset):
+        return (
+            subset.has_membership,
+            subset.has_projection,
+            subset.has_support_function,
+            subset.has_maximiser,
+            subset.has_level_function,
+        )
+
+    def test_the_closed_forms_have_everything(self, space, rng):
+        precision = LinearOperator.identity(space) * 0.25
+        for subset in (
+            Ball(space, radius=1.5, centre=space.random(rng=rng)),
+            HalfSpace(space, space.random(rng=rng), offset=0.3),
+            Ellipsoid(
+                space, precision, covariance=LinearOperator.identity(space) * 4.0
+            ),
+        ):
+            assert self.flags(subset) == (True, True, True, True, True)
+        plane = Hyperplane(space, space.random(rng=rng), offset=0.3)
+        assert self.flags(plane) == (True, True, True, True, False)
+        # An ellipsoid without its covariance has no support side.
+        assert self.flags(Ellipsoid(space, precision)) == (
+            True,
+            True,
+            False,
+            False,
+            True,
+        )
+
+    def test_the_level_function_describes_the_set(self, space, rng):
+        """``f(x) <= level`` exactly where ``contains`` says so, on the
+        boundary included."""
+        precision = LinearOperator.identity(space) * 0.25
+        for subset in (
+            Ball(space, radius=1.5, centre=space.random(rng=rng)),
+            HalfSpace(space, space.random(rng=rng), offset=0.3),
+            Ellipsoid(space, precision),
+        ):
+            f, level = subset.level_function(), subset.level
+            for _ in range(12):
+                x = space.scale(2.0, space.random(rng=rng))
+                assert (f(x) <= level * (1.0 + 1e-9) + 1e-12) == subset.contains(x)
+            outside = space.scale(5.0, space.random(rng=rng))
+            while subset.contains(outside):
+                outside = space.scale(5.0, space.random(rng=rng))
+            on = subset.project(outside)
+            assert f(on) == pytest.approx(level, abs=1e-8)
+            # And the gradient is the space's, checked against a finite step.
+            x = space.random(rng=rng)
+            step = space.random(rng=rng)
+            h = 1e-6
+            numerical = (f(space.axpy(h, step, space.copy(x))) - f(x)) / h
+            assert space.inner_product(f.gradient(x), step) == pytest.approx(
+                numerical, rel=1e-4, abs=1e-6
+            )
+
+    def test_the_combinators_carry_what_their_parts_allow(self, space, rng):
+        ball = Ball(space, radius=1.0)
+        # A half-space has no translate of its own, so this is the generic
+        # translated set carrying its base's descriptions.
+        wall = HalfSpace(space, space.random(rng=rng), offset=0.3)
+        shift = space.random(rng=rng)
+        moved = wall.translate(shift)
+        assert self.flags(moved) == (True, True, True, True, True)
+        x = space.random(rng=rng)
+        assert moved.level_function()(x) == pytest.approx(
+            wall.level_function()(space.subtract(x, shift))
+        )
+        assert moved.contains(x) == wall.contains(space.subtract(x, shift))
+        total = ball + Ball(space, radius=2.0)
+        assert self.flags(total) == (False, False, True, True, False)
+        q = space.random(rng=rng)
+        assert space.inner_product(total.support_maximiser(q), q) == pytest.approx(
+            total.support_function()(q)
+        )
+        half = HalfSpace(space, space.random(rng=rng), offset=0.3)
+        both = ball & half
+        assert self.flags(both) == (True, True, False, False, True)
+        f = both.level_function()
+        for _ in range(12):
+            y = space.scale(1.5, space.random(rng=rng))
+            assert (f(y) <= 1e-12) == both.contains(y)
+        oracle = ConvexSet.from_support_function(space, ball.support_function())
+        assert self.flags(oracle) == (False, False, True, False, False)
+        knowing = ConvexSet.from_support_function(
+            space,
+            ball.support_function(),
+            maximiser=ball.support_maximiser,
+            membership=lambda z, rtol: ball.contains(z, rtol=rtol),
+        )
+        assert self.flags(knowing) == (True, False, True, True, False)
+        assert knowing.contains(space.zero())
+
+    def test_a_polytopes_level_function_is_the_largest_excess(self, space, rng):
+        from pygeoinf2.geometry.convex import Polytope
+
+        planes = [HalfSpace(space, space.random(rng=rng), offset=0.5) for _ in range(3)]
+        box = Polytope(space, planes, outer=True)
+        assert box.has_level_function
+        f = box.level_function()
+        for _ in range(12):
+            y = space.scale(2.0, space.random(rng=rng))
+            assert (f(y) <= 1e-12) == box.contains(y)
+
+    def test_the_intersection_bound_reads_the_flags(self, space, rng):
+        """A part without a support function contributes nothing; a part
+        whose support function *fails* is no longer silently skipped."""
+        ball = Ball(space, radius=1.0)
+        precision = LinearOperator.identity(space)
+        bare = Ellipsoid(space, precision)  # no covariance: no support function
+        combined = ball & bare
+        q = space.random(rng=rng)
+        assert combined.support_bound(q) == pytest.approx(ball.support_function()(q))
 
 
 class TestConvexProjections:

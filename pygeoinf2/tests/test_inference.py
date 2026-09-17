@@ -1027,20 +1027,20 @@ class TestFeasibilityIsAskable:
         exact = LinearForwardProblem(forward)
         noisy = LinearForwardProblem(forward, error=Ball(forward.codomain, radius=1e-6))
 
-        assert not BackusGilbertParker(
-            exact, target, Ball(model, radius=1e-3)
-        ).is_feasible(data)
-        assert BackusGilbertParker(
-            exact, target, Ball(model, radius=100.0)
-        ).is_feasible(data)
+        assert BackusGilbertParker(exact, target, Ball(model, radius=1e-3))(
+            data
+        ).is_empty()
+        assert not BackusGilbertParker(exact, target, Ball(model, radius=100.0))(
+            data
+        ).is_empty()
 
         for route in ("bisection", "dual"):
-            assert not BackusGilbertParker(
-                noisy, target, Ball(model, radius=1e-3), route=route
-            ).is_feasible(data)
             assert BackusGilbertParker(
+                noisy, target, Ball(model, radius=1e-3), route=route
+            )(data).is_empty()
+            assert not BackusGilbertParker(
                 noisy, target, Ball(model, radius=100.0), route=route
-            ).is_feasible(data)
+            )(data).is_empty()
 
     def test_feasibility_is_decided_without_forming_the_data_gram(
         self, setting, monkeypatch
@@ -1069,21 +1069,21 @@ class TestFeasibilityIsAskable:
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("A A* was formed")),
         )
         for route in ("bisection", "dual"):
-            assert BackusGilbertParker(
-                noisy, target, Ball(model, radius=1.01 * threshold), route=route
-            ).is_feasible(data)
             assert not BackusGilbertParker(
+                noisy, target, Ball(model, radius=1.01 * threshold), route=route
+            )(data).is_empty()
+            assert BackusGilbertParker(
                 noisy, target, Ball(model, radius=0.99 * threshold), route=route
-            ).is_feasible(data)
+            )(data).is_empty()
             # A noise ball wide enough to hold the data is fitted by the zero
             # model, so any prior at all is feasible.
             roomy = LinearForwardProblem(
                 forward,
                 error=Ball(forward.codomain, radius=2.0 * float(np.linalg.norm(data))),
             )
-            assert BackusGilbertParker(
+            assert not BackusGilbertParker(
                 roomy, target, Ball(model, radius=1e-9), route=route
-            ).is_feasible(data)
+            )(data).is_empty()
 
     def test_the_predicate_agrees_with_the_exception(self, setting):
         from pygeoinf2.inference import BackusGilbertParker
@@ -1092,6 +1092,6 @@ class TestFeasibilityIsAskable:
         estimator = BackusGilbertParker(
             LinearForwardProblem(forward), target, Ball(model, radius=1e-3)
         )
-        assert not estimator.is_feasible(data)
+        assert estimator(data).is_empty()
         with pytest.raises(ValueError, match="No model"):
-            estimator(data)
+            estimator(data).ellipsoid

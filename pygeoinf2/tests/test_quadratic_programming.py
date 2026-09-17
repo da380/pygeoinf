@@ -327,9 +327,9 @@ class TestTheTwoRoutesMeet:
         estimator, space, data = setting
         directions = self.directions(space, 8)
 
-        dual = estimator.support_values(directions, data)
-        primal = estimator.support_values(
-            directions, data, route="primal", tolerance=1e-9, iterations=50_000
+        dual = estimator(data).support_values(directions)
+        primal = estimator(data).support_values(
+            directions, route="primal", tolerance=1e-9, iterations=50_000
         )
         assert primal == pytest.approx(dual, rel=1e-5)
 
@@ -380,7 +380,7 @@ class TestTheTwoRoutesMeet:
     def test_an_unknown_route_is_refused(self, setting):
         estimator, space, data = setting
         with pytest.raises(ValueError, match="The route is"):
-            estimator.support_values(self.directions(space, 2), data, route="sideways")
+            estimator(data).support_values(self.directions(space, 2), route="sideways")
 
     def test_the_sets_must_live_where_the_operator_does(self, rng):
         from pygeoinf2.geometry.convex import Ball
@@ -542,11 +542,11 @@ class TestTheKKTRouteAgreesWhereItApplies:
         )
         directions = [target_space.basis_vector(0), target_space.basis_vector(1)]
 
-        dual = estimator.support_values(directions, data)
-        primal = estimator.support_values(
-            directions, data, route="primal", tolerance=1e-9, iterations=50_000
+        dual = estimator(data).support_values(directions)
+        primal = estimator(data).support_values(
+            directions, route="primal", tolerance=1e-9, iterations=50_000
         )
-        exact = estimator.support_values(directions, data, route="kkt")
+        exact = estimator(data).support_values(directions, route="kkt")
 
         # The looser tolerance is the KKT route's own: where the noise ball is
         # tight its second multiplier saturates. See PrimalKKTSolver.
@@ -599,12 +599,12 @@ class TestTheSmoothedRoute:
         reaches the reference route's own accuracy."""
         est, space, data = estimator
         directions = self.directions(space, 4)
-        reference = est.support_values(
-            directions, data, route="primal", tolerance=1e-10, iterations=100_000
+        reference = est(data).support_values(
+            directions, route="primal", tolerance=1e-10, iterations=100_000
         )
 
-        coarse = est.support_values(directions, data, route="smoothed", epsilon=1e-1)
-        fine = est.support_values(directions, data, route="smoothed", epsilon=1e-4)
+        coarse = est(data).support_values(directions, route="smoothed", epsilon=1e-1)
+        fine = est(data).support_values(directions, route="smoothed", epsilon=1e-4)
 
         coarse_error = np.abs((coarse - reference) / reference).max()
         fine_error = np.abs((fine - reference) / reference).max()
@@ -618,9 +618,9 @@ class TestTheSmoothedRoute:
         est, space, data = estimator
         directions = self.directions(space, 8)
 
-        smoothed = est.support_values(directions, data, route="smoothed", epsilon=1e-4)
-        primal = est.support_values(
-            directions, data, route="primal", tolerance=1e-10, iterations=100_000
+        smoothed = est(data).support_values(directions, route="smoothed", epsilon=1e-4)
+        primal = est(data).support_values(
+            directions, route="primal", tolerance=1e-10, iterations=100_000
         )
         assert smoothed == pytest.approx(primal, rel=1e-6)
 
@@ -689,4 +689,4 @@ class TestTheSmoothedRoute:
     def test_an_unknown_route_names_all_four(self, estimator):
         est, space, data = estimator
         with pytest.raises(ValueError, match="smoothed"):
-            est.support_values(self.directions(space, 2), data, route="sideways")
+            est(data).support_values(self.directions(space, 2), route="sideways")

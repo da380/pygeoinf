@@ -68,7 +68,7 @@ class TestClosedForm:
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
         assert np.allclose(
-            inference(data).centre, target(inference.algorithm.minimum_norm_model(data))
+            inference(data).ellipsoid.centre, target(inference(data).fitting_model())
         )
 
     def test_every_feasible_model_lands_inside(self, setting, rng):
@@ -78,7 +78,7 @@ class TestClosedForm:
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
         answer = inference(data)
-        anchor = inference.algorithm.minimum_norm_model(data)
+        anchor = inference(data).fitting_model()
         budget = np.sqrt(inference.algorithm.budget(data))
         for _ in range(300):
             offset = inference.algorithm._kernel(model.random(rng=rng))
@@ -98,7 +98,7 @@ class TestClosedForm:
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
         answer, before = inference(data), inference.algorithm.prior_only()
-        assert before.contains(answer.centre)
+        assert before.contains(answer.ellipsoid.centre)
         space = inference.target_space
         for direction in directions(space):
             assert (
@@ -111,8 +111,12 @@ class TestClosedForm:
         inference = BackusGilbertParker(
             LinearForwardProblem(forward), target, Ball(model, radius=0.01)
         )
+        feasible = inference(data)
+        assert feasible.is_empty()
         with pytest.raises(ValueError, match="fits these data"):
-            inference(data)
+            feasible.ellipsoid
+        with pytest.raises(ValueError, match="fits these data"):
+            feasible.support(target.codomain.basis_vector(0))
 
     def test_the_shape_does_not_depend_on_the_data(self, setting, rng):
         """Only the centre and the size do -- the same structure as a Gaussian
@@ -137,15 +141,16 @@ class TestInclusionTest:
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
         answer = inference(data)
+        ellipsoid = answer.ellipsoid
         space = inference.target_space
         inside = 0
         for _ in range(200):
             candidate = space.from_components(
-                space.to_components(answer.centre) + rng.normal(size=space.dim) * 1.5
+                space.to_components(ellipsoid.centre) + rng.normal(size=space.dim) * 1.5
             )
-            by_set = answer.contains(candidate)
+            by_set = ellipsoid.contains(candidate)
             inside += by_set
-            assert inference.admits(candidate, data) == by_set
+            assert answer.admits(candidate) == by_set
         assert 20 < inside < 180  # the sample straddles the boundary
 
     def test_the_truth_is_admitted_at_its_own_norm(self, setting):
@@ -153,8 +158,8 @@ class TestInclusionTest:
         inference = BackusGilbertParker(
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )
-        assert inference.inclusion_norm(target(truth), data) <= model.norm(truth) + 1e-8
-        assert inference.admits(target(truth), data)
+        assert inference(data).inclusion_norm(target(truth)) <= model.norm(truth) + 1e-8
+        assert inference(data).admits(target(truth))
 
 
 class TestPrimalRoute:
@@ -180,7 +185,7 @@ class TestPrimalRoute:
             route="bisection",
         )
         for direction in directions(target.codomain):
-            assert primal.support(direction, data) == pytest.approx(
+            assert primal(data).support(direction) == pytest.approx(
                 exact(direction), rel=10.0 * noise
             )
 
@@ -198,7 +203,7 @@ class TestPrimalRoute:
             route="bisection",
         )
         for direction in directions(target.codomain):
-            extremal = primal.algorithm.extremal_model(direction, data)
+            extremal = primal(data).extremal_model(direction)
             assert model.norm(extremal) == pytest.approx(3.0, rel=1e-6)
 
     def test_the_extremal_model_is_feasible_and_attains_the_bound(self, setting, rng):
@@ -209,13 +214,13 @@ class TestPrimalRoute:
             problem, target, Ball(model, radius=3.0), route="bisection"
         )
         for direction in directions(target.codomain):
-            extremal = primal.algorithm.extremal_model(direction, data)
+            extremal = primal(data).extremal_model(direction)
             assert model.norm(extremal) <= 3.0 + 1e-6
             residual = forward.codomain.subtract(data, forward(extremal))
             assert forward.codomain.norm(residual) <= 0.2 + 1e-6
             assert target.codomain.inner_product(
                 target(extremal), direction
-            ) == pytest.approx(primal.support(direction, data))
+            ) == pytest.approx(primal(data).support(direction))
 
     def test_a_slack_data_constraint_gives_the_prior_bound(self, setting):
         """When the prior's own support point already fits, there is nothing
@@ -228,7 +233,7 @@ class TestPrimalRoute:
             problem, target, Ball(model, radius=3.0), route="bisection"
         )
         direction = target.codomain.basis_vector(0)
-        assert primal.support(direction, data) == pytest.approx(
+        assert primal(data).support(direction) == pytest.approx(
             3.0 * model.norm(target.adjoint(direction))
         )
 
@@ -377,8 +382,11 @@ class TestOneEstimator:
             covariance=LinearOperator.identity(model) * 9.0,
         )
         assert BackusGilbertParker(noisy, target, ellipsoid).route == "dual"
-        # The closed form's answer is an ellipsoid, the others' an oracle.
-        assert isinstance(BackusGilbertParker(exact, target, ball)(data), Ellipsoid)
+        # The closed form's answer is an ellipsoid, and says so; the others'
+        # is known through its support function.
+        closed = BackusGilbertParker(exact, target, ball)(data)
+        assert closed.has_projection and isinstance(closed.ellipsoid, Ellipsoid)
+        assert not BackusGilbertParker(noisy, target, ball)(data).has_projection
 
     def test_a_route_the_sets_do_not_allow_is_refused(self, pieces):
         from pygeoinf2.geometry.convex import Ellipsoid
@@ -413,11 +421,11 @@ class TestOneEstimator:
             assert answer.has_membership
             for _ in range(6):
                 value = target.codomain.random(rng=rng)
-                assert answer.contains(value) == estimator.admits(value, data)
+                assert answer.contains(value) == estimator(data).admits(value)
             # And a value the support function excludes is not admitted.
             direction = target.codomain.basis_vector(0)
             beyond = target.codomain.scale(
-                1.5 * estimator.support(direction, data) + 1.0, direction
+                1.5 * estimator(data).support(direction) + 1.0, direction
             )
             assert not answer.contains(beyond)
 
@@ -436,10 +444,10 @@ class TestOneEstimator:
         assert not answer.has_membership
         value = target.codomain.zero()
         with pytest.raises(NotImplementedError, match="support function only"):
-            estimator.admits(value, data)
-        with pytest.raises(NotImplementedError, match="Membership needs"):
+            estimator(data).admits(value)
+        with pytest.raises(NotImplementedError, match="support function only"):
             answer.contains(value)
-        assert np.isfinite(estimator.support(target.codomain.basis_vector(0), data))
+        assert np.isfinite(estimator(data).support(target.codomain.basis_vector(0)))
 
     def test_the_sweep_on_a_cheap_route_is_a_loop_with_no_options(self, pieces):
         from pygeoinf2.inference import BackusGilbertParker
@@ -449,16 +457,16 @@ class TestOneEstimator:
         directions = [
             target.codomain.basis_vector(i) for i in range(target.codomain.dim)
         ]
-        swept = estimator.support_values(directions, data)
-        assert swept == pytest.approx([estimator.support(d, data) for d in directions])
+        swept = estimator(data).support_values(directions)
+        assert swept == pytest.approx([estimator(data).support(d) for d in directions])
         with pytest.raises(TypeError, match="no options"):
-            estimator.support_values(directions, data, warm_start=False)
+            estimator(data).support_values(directions, warm_start=False)
         # On the general route the sweep is the dual engine's, options and all.
         general = BackusGilbertParker(
             noisy, target, Ball(model, radius=3.0), route="dual"
         )
-        assert general.support_values(
-            directions, data, warm_start=False
+        assert general(data).support_values(
+            directions, warm_start=False
         ) == pytest.approx(swept, rel=1e-6)
 
     def test_a_gaussian_error_is_hardened_to_the_credible_ball(self, pieces, rng):
@@ -548,15 +556,15 @@ class TestLikelihoodMembership:
         assert BackusGilbertParker(problem, target, prior).membership == "reduced"
 
         for value in self.candidates(reduced, target, truth, data, rng):
-            expected = reduced.inclusion_norm(value, data)
+            expected = reduced(data).inclusion_norm(value)
             if np.isfinite(expected):
-                assert likelihood.inclusion_norm(value, data) == pytest.approx(
+                assert likelihood(data).inclusion_norm(value) == pytest.approx(
                     expected, rel=1e-5
                 )
             else:
-                assert likelihood.inclusion_norm(value, data) == float("inf")
-        assert likelihood.is_feasible(data) == reduced.is_feasible(data) is True
-        assert likelihood.admits(target(truth), data)
+                assert likelihood(data).inclusion_norm(value) == float("inf")
+        assert not likelihood(data).is_empty() and not reduced(data).is_empty()
+        assert likelihood(data).admits(target(truth))
 
     def test_a_sublevel_set_equal_to_the_ball_gives_the_same_answer(self, pieces, rng):
         """``||v - c||^4 <= r^4`` is the ball; given with a gradient only, so
@@ -584,13 +592,13 @@ class TestLikelihoodMembership:
             membership="reduced",
         )
         for value in self.candidates(estimator, target, truth, data, rng, count=4):
-            expected = as_ball.inclusion_norm(value, data)
+            expected = as_ball(data).inclusion_norm(value)
             if np.isfinite(expected):
-                assert estimator.inclusion_norm(value, data) == pytest.approx(
+                assert estimator(data).inclusion_norm(value) == pytest.approx(
                     expected, rel=1e-4
                 )
             else:
-                assert estimator.inclusion_norm(value, data) == float("inf")
+                assert estimator(data).inclusion_norm(value) == float("inf")
 
     def test_a_gaussian_error_taken_as_its_ellipsoid(self, pieces, rng):
         """The credible ellipsoid sits inside the ambient ball, so it admits
@@ -613,10 +621,10 @@ class TestLikelihoodMembership:
             assert with_ellipsoid.membership == "likelihood"
             gap = 0.0
             for value in self.candidates(exact, target, truth, data, rng, count=4):
-                ball_norm = with_ball.inclusion_norm(value, data)
-                ellipsoid_norm = with_ellipsoid.inclusion_norm(value, data)
+                ball_norm = with_ball(data).inclusion_norm(value)
+                ellipsoid_norm = with_ellipsoid(data).inclusion_norm(value)
                 assert ellipsoid_norm >= ball_norm * (1.0 - 1e-8)
-                gap = max(gap, abs(ellipsoid_norm - exact.inclusion_norm(value, data)))
+                gap = max(gap, abs(ellipsoid_norm - exact(data).inclusion_norm(value)))
             if previous is not None:
                 assert gap < previous
             previous = gap
@@ -627,13 +635,14 @@ class TestLikelihoodMembership:
         model, data_space, forward, target, truth, data, radius = pieces
         problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
         estimator = BackusGilbertParker(problem, target, Ball(model, radius=3.0))
-        as_set = estimator.sublevel_set(data)
-        assert isinstance(as_set, SublevelSet) and as_set.level == 3.0
-        functional = estimator.inclusion_functional(data)
+        feasible = estimator(data)
+        assert feasible.has_level_function and feasible.level == 3.0
+        as_set = SublevelSet(feasible.level_function(), level=feasible.level)
+        functional = feasible.level_function()
         for value in self.candidates(estimator, target, truth, data, rng):
-            assert functional(value) == estimator.inclusion_norm(value, data)
-            assert as_set.contains(value) == estimator.admits(value, data)
-            assert estimator(data).contains(value) == estimator.admits(value, data)
+            assert functional(value) == estimator(data).inclusion_norm(value)
+            assert as_set.contains(value) == estimator(data).admits(value)
+            assert estimator(data).contains(value) == estimator(data).admits(value)
 
     def test_the_extent_is_the_support_interval_on_a_scalar_property(self, pieces, rng):
         """One-dimensional property: the two ends of the line are the two
@@ -645,10 +654,10 @@ class TestLikelihoodMembership:
         problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
         estimator = BackusGilbertParker(problem, scalar, Ball(model, radius=3.0))
         q = EuclideanSpace(1).basis_vector(0)
-        lower, upper = estimator.extent(q, data)
+        lower, upper = estimator(data).extent(q)
         assert lower < upper
-        assert upper == pytest.approx(estimator.support(q, data), rel=1e-5)
-        assert lower == pytest.approx(-estimator.support(-q, data), rel=1e-5)
+        assert upper == pytest.approx(estimator(data).support(q), rel=1e-5)
+        assert lower == pytest.approx(-estimator(data).support(-q), rel=1e-5)
 
     def test_the_extent_is_an_inner_bound_in_more_dimensions(self, pieces):
         model, data_space, forward, target, truth, data, radius = pieces
@@ -656,10 +665,10 @@ class TestLikelihoodMembership:
         estimator = BackusGilbertParker(problem, target, Ball(model, radius=3.0))
         for index in range(2):
             q = target.codomain.basis_vector(index)
-            lower, upper = estimator.extent(q, data)
+            lower, upper = estimator(data).extent(q)
             assert lower < upper
-            assert upper <= estimator.support(q, data) * (1.0 + 1e-6) + 1e-9
-            assert lower >= -estimator.support(-q, data) * (1.0 + 1e-6) - 1e-9
+            assert upper <= estimator(data).support(q) * (1.0 + 1e-6) + 1e-9
+            assert lower >= -estimator(data).support(-q) * (1.0 + 1e-6) - 1e-9
 
     def test_membership_the_sets_do_not_allow_is_refused(self, pieces):
         from pygeoinf2.geometry.convex import HalfSpace, Polytope
@@ -684,9 +693,143 @@ class TestLikelihoodMembership:
         general = BackusGilbertParker(noisy, target, box)
         assert general.membership is None
         with pytest.raises(NotImplementedError, match="support function only"):
-            general.admits(target.codomain.zero(), data)
+            general(data).admits(target.codomain.zero())
         with pytest.raises(NotImplementedError, match="support function only"):
-            general.extent(target.codomain.basis_vector(0), data)
+            general(data).extent(target.codomain.basis_vector(0))
+
+
+class TestTheResultIsWhatGetsProbed:
+    """``BackusGilbertParker(...)(data)`` is a ``FeasiblePropertySet``: a
+    convex set that declares what it can do and answers every question
+    itself, as a posterior measure does on the Bayesian side."""
+
+    @pytest.fixture
+    def pieces(self, setting):
+        model, forward, target, truth, data = setting
+        exact = LinearForwardProblem(forward)
+        noisy = LinearForwardProblem(forward, error=Ball(forward.codomain, radius=0.05))
+        return model, forward, target, truth, data, exact, noisy
+
+    def test_each_route_declares_its_characterisations(self, pieces):
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.inference import FeasiblePropertySet
+
+        model, forward, target, truth, data, exact, noisy = pieces
+        ball = Ball(model, radius=3.0)
+        closed = BackusGilbertParker(exact, target, ball)(data)
+        assert isinstance(closed, FeasiblePropertySet)
+        assert (
+            closed.has_membership,
+            closed.has_projection,
+            closed.has_support_function,
+            closed.has_maximiser,
+            closed.has_level_function,
+        ) == (True, True, True, True, True)
+        bisect = BackusGilbertParker(noisy, target, ball)(data)
+        assert (
+            bisect.has_membership,
+            bisect.has_projection,
+            bisect.has_support_function,
+            bisect.has_maximiser,
+            bisect.has_level_function,
+        ) == (True, False, True, True, True)
+        dual = BackusGilbertParker(noisy, target, ball, route="dual")(data)
+        assert (
+            dual.has_membership,
+            dual.has_projection,
+            dual.has_support_function,
+            dual.has_maximiser,
+            dual.has_level_function,
+        ) == (True, False, True, False, True)
+        ellipsoid = Ellipsoid(
+            model,
+            LinearOperator.identity(model) * (1.0 / 9.0),
+            covariance=LinearOperator.identity(model) * 9.0,
+        )
+        general = BackusGilbertParker(noisy, target, ellipsoid)(data)
+        assert (general.has_membership, general.has_level_function) == (False, False)
+        assert general.has_support_function and not general.has_maximiser
+        for refused in (
+            lambda: general.contains(target(truth)),
+            lambda: general.extent(target.codomain.basis_vector(0)),
+            lambda: general.level_function(),
+            lambda: general.extremal_model(target.codomain.basis_vector(0)),
+            lambda: bisect.project(target(truth)),
+            lambda: bisect.certificate(target.codomain.basis_vector(0)),
+        ):
+            with pytest.raises(NotImplementedError):
+                refused()
+
+    def test_the_closed_forms_extremal_model_attains_the_support(self, pieces, rng):
+        model, forward, target, truth, data, exact, noisy = pieces
+        feasible = BackusGilbertParker(exact, target, Ball(model, radius=3.0))(data)
+        for _ in range(4):
+            q = target.codomain.random(rng=rng)
+            extremal = feasible.extremal_model(q)
+            assert model.norm(extremal) <= 3.0 * (1.0 + 1e-9)
+            assert forward.codomain.norm(
+                forward.codomain.subtract(forward(extremal), data)
+            ) < 1e-8 * forward.codomain.norm(data)
+            assert target.codomain.inner_product(q, target(extremal)) == pytest.approx(
+                feasible.support(q), rel=1e-8
+            )
+            assert (
+                target.codomain.norm(
+                    target.codomain.subtract(
+                        feasible.support_maximiser(q), target(extremal)
+                    )
+                )
+                < 1e-10
+            )
+            # The support function object's subgradient is that maximiser.
+            assert (
+                target.codomain.norm(
+                    target.codomain.subtract(
+                        feasible.support_function().subgradient(q), target(extremal)
+                    )
+                )
+                < 1e-10
+            )
+
+    def test_the_result_pushes_forward(self, pieces):
+        model, forward, target, truth, data, exact, noisy = pieces
+        feasible = BackusGilbertParker(noisy, target, Ball(model, radius=3.0))(data)
+        summary = LinearOperator.from_matrix(
+            target.codomain,
+            EuclideanSpace(1),
+            np.ones((1, target.codomain.dim)),
+            form="components",
+        )
+        pushed = feasible.push_forward(summary)
+        assert pushed.domain.dim == 1
+        assert pushed.route == feasible.route
+        q = EuclideanSpace(1).basis_vector(0)
+        # h_{T S}(q) == h_S(T* q), exactly.
+        assert pushed.support(q) == pytest.approx(
+            feasible.support(summary.adjoint(q)), rel=1e-6
+        )
+
+    def test_an_exclusion_certificate_and_the_outer_polytope(self, pieces, rng):
+        model, forward, target, truth, data, exact, noisy = pieces
+        feasible = BackusGilbertParker(noisy, target, Ball(model, radius=3.0))(data)
+        space = target.codomain
+        far = space.scale(50.0, space.random(rng=rng))
+        assert feasible.outside(far, directions(space))
+        assert not feasible.outside(target(truth), directions(space))
+        outer = feasible.polytope(directions(space))
+        assert outer.is_outer and outer.contains(target(truth))
+        assert feasible.contains(target(truth))
+
+    def test_emptiness_is_answered_once_by_every_route(self, pieces):
+        model, forward, target, truth, data, exact, noisy = pieces
+        tight, roomy = Ball(model, radius=1e-3), Ball(model, radius=100.0)
+        for problem, route in ((exact, "auto"), (noisy, "bisection"), (noisy, "dual")):
+            assert BackusGilbertParker(problem, target, tight, route=route)(
+                data
+            ).is_empty()
+            assert not BackusGilbertParker(problem, target, roomy, route=route)(
+                data
+            ).is_empty()
 
 
 class TestBundleMethod:
@@ -766,8 +909,8 @@ class TestDualRoute:
             primal = BackusGilbertParker(problem, target, prior, route="bisection")
             dual = BackusGilbertParker(problem, target, prior, route="dual")
             for direction in directions(target.codomain):
-                assert dual.support(direction, data) == pytest.approx(
-                    primal.support(direction, data), rel=1e-6
+                assert dual(data).support(direction) == pytest.approx(
+                    primal(data).support(direction), rel=1e-6
                 )
 
     def test_it_accepts_a_prior_the_other_routes_cannot(self, setting, rng):
@@ -805,7 +948,7 @@ class TestDualRoute:
         )
         dual = BackusGilbertParker(problem, target, prior, route="dual")
         for direction in directions(target.codomain):
-            assert np.isfinite(dual.support(direction, data))
+            assert np.isfinite(dual(data).support(direction))
 
         with pytest.raises(TypeError, match="must be a Ball"):
             BackusGilbert(problem, target, prior)
@@ -840,8 +983,8 @@ class TestDualRoute:
             route="dual",
         )
         for direction in directions(target.codomain):
-            assert as_ellipsoid.support(direction, data) == pytest.approx(
-                as_ball.support(direction, data), rel=1e-7
+            assert as_ellipsoid(data).support(direction) == pytest.approx(
+                as_ball(data).support(direction), rel=1e-7
             )
 
     def test_an_empty_feasible_set_is_reported(self, setting):
@@ -857,7 +1000,7 @@ class TestDualRoute:
             problem, target, Ball(model, radius=0.01), route="dual"
         )
         with pytest.raises(ValueError, match="no model lies"):
-            dual.support(target.codomain.basis_vector(0), data)
+            dual(data).support(target.codomain.basis_vector(0))
 
     def test_the_certificate_is_a_weighting_of_the_data(self, setting):
         from pygeoinf2.inference import BackusGilbertParker
@@ -870,7 +1013,7 @@ class TestDualRoute:
             problem, target, Ball(model, radius=3.0), route="dual"
         )
         direction = target.codomain.basis_vector(0)
-        certificate = dual.algorithm.certificate(direction, data)
+        certificate = dual(data).certificate(direction)
         # any certificate gives a valid bound; this one is the best
         cost = dual.algorithm.dual_cost(direction, data)
         assert cost(certificate) <= cost(forward.codomain.zero()) + 1e-9
@@ -912,8 +1055,8 @@ class TestInclusionWithErrors:
 
     def test_the_truth_is_admitted(self, noisy):
         model, forward, target, truth, data, estimator = noisy
-        assert estimator.admits(target(truth), data)
-        assert estimator.inclusion_norm(target(truth), data) <= model.norm(truth) + 1e-6
+        assert estimator(data).admits(target(truth))
+        assert estimator(data).inclusion_norm(target(truth)) <= model.norm(truth) + 1e-6
 
     def test_it_reduces_to_the_error_free_test(self, noisy, rng):
         """As the noise ball shrinks, with the difference tracking its radius.
@@ -938,8 +1081,8 @@ class TestInclusionWithErrors:
                 value = space.from_components(
                     space.to_components(target(truth)) + rng.normal(size=space.dim)
                 )
-                assert noisy_estimator.inclusion_norm(value, data) == pytest.approx(
-                    exact.inclusion_norm(value, data), rel=10.0 * radius
+                assert noisy_estimator(data).inclusion_norm(value) == pytest.approx(
+                    exact(data).inclusion_norm(value), rel=10.0 * radius
                 )
 
     @pytest.mark.slow
@@ -965,12 +1108,12 @@ class TestInclusionWithErrors:
             value = space.from_components(
                 space.to_components(target(truth)) + rng.normal(size=2) * 2.0
             )
-            if estimator.admits(value, data):
+            if estimator(data).admits(value):
                 admitted += 1
                 assert outer.contains(value)
             if answer.outside(value, probes):
                 excluded += 1
-                assert not estimator.admits(value, data)
+                assert not estimator(data).admits(value)
         assert admitted > 0
         assert excluded > 0
 
@@ -983,8 +1126,8 @@ class TestInclusionWithErrors:
         far = space.from_components(
             space.to_components(target(truth)) + np.array([1e4, 0.0])
         )
-        assert estimator.inclusion_norm(far, data) == float("inf")
-        assert not estimator.admits(far, data)
+        assert estimator(data).inclusion_norm(far) == float("inf")
+        assert not estimator(data).admits(far)
 
     @pytest.mark.slow
     def test_the_inner_hull_sits_inside_the_outer_bound(self, noisy, rng):
@@ -997,7 +1140,7 @@ class TestInclusionWithErrors:
             )
             for _ in range(400)
         ]
-        hull = estimator.inner_hull(candidates, data)
+        hull = estimator(data).inner_hull(candidates)
         assert not hull.is_outer
         assert hull.contains(target(truth))
 
@@ -1017,7 +1160,7 @@ class TestInclusionWithErrors:
         space = target.codomain
         far = [space.from_components(np.array([1e4, 1e4])) for _ in range(10)]
         with pytest.raises(ValueError, match="admissible"):
-            estimator.inner_hull(far, data)
+            estimator(data).inner_hull(far)
 
 
 class TestHardeningTheError:
@@ -1105,8 +1248,8 @@ class TestSupportValuesSweep:
         estimator, space, data = dual
         directions = self.directions(space, 8)
 
-        warm = estimator.support_values(directions, data)
-        cold = estimator.support_values(directions, data, warm_start=False)
+        warm = estimator(data).support_values(directions)
+        cold = estimator(data).support_values(directions, warm_start=False)
         assert warm == pytest.approx(cold, abs=1e-5)
 
     @pytest.mark.slow
@@ -1114,15 +1257,15 @@ class TestSupportValuesSweep:
         estimator, space, data = dual
         directions = self.directions(space, 6)
 
-        swept = estimator.support_values(directions, data)
+        swept = estimator(data).support_values(directions)
         singly = np.array(
-            [estimator.support(direction, data) for direction in directions]
+            [estimator(data).support(direction) for direction in directions]
         )
         assert swept == pytest.approx(singly, abs=1e-5)
 
     def test_no_directions_is_no_values(self, dual):
         estimator, _, data = dual
-        assert estimator.support_values([], data).size == 0
+        assert estimator(data).support_values([]).size == 0
 
     def test_an_empty_feasible_set_is_still_reported(self, dual, rng):
         from pygeoinf2.inference import BackusGilbertParker
@@ -1135,7 +1278,7 @@ class TestSupportValuesSweep:
             route="dual",
         )
         with pytest.raises(ValueError, match="no model lies"):
-            tight.support_values(self.directions(space, 3), data)
+            tight(data).support_values(self.directions(space, 3))
 
 
 class TestTheDualOracleMemo:

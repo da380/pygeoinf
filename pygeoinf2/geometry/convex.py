@@ -53,7 +53,76 @@ __all__ = [
 
 
 class ConvexSet(Subset):
-    """A closed convex subset, which knows its own nearest point."""
+    """A closed convex subset, and what it can say about itself.
+
+    A convex set has up to four descriptions, and a given set has some of
+    them: **membership**, whether a point is in it; a **projection**, its
+    nearest point; a **support function**, ``sup (q, x)`` over the set, with
+    a **maximiser** attaining it; and a **level function** ``f`` with the set
+    ``{ x : f(x) <= level }``. The last two are the characterisations that
+    matter for a set known through algorithms rather than formulas -- a
+    support function bounds the set from outside one direction at a time, a
+    level function decides points and gives inner bounds -- and a set may
+    carry both, or one, or neither. Each is declared by a ``has_*`` property,
+    so that generic code asks before it calls, and refused by the method when
+    absent. The closed-form sets here have all four; the combinators carry
+    what their parts allow.
+    """
+
+    # ----------------------------------------------------------------- #
+    #                          What this set can do                     #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def has_membership(self) -> bool:
+        """Whether :meth:`contains` decides membership."""
+        return True
+
+    @property
+    def has_projection(self) -> bool:
+        """Whether :meth:`project` is available."""
+        return True
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return False
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return False
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether :meth:`level_function` and :attr:`level` describe the set."""
+        return False
+
+    def level_function(self) -> Functional:
+        """``f`` with the set ``{ x : f(x) <= level }``, convex.
+
+        The sublevel-set characterisation: a ball is the squared distance to
+        its centre, an ellipsoid its Mahalanobis form, a half-space its linear
+        form, an intersection the largest of its parts' excesses, and a
+        feasible property set the minimum norm of a model with that property.
+
+        Raises:
+            NotImplementedError: for a set without one; see
+                :attr:`has_level_function`.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no level function; it is known "
+            "through its other descriptions."
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by.
+
+        Raises:
+            NotImplementedError: for a set without a level function.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no level function.")
 
     def intersect(self, other: Subset, /) -> Subset:
         """The intersection, which stays *convex* when the other set is.
@@ -102,9 +171,10 @@ class ConvexSet(Subset):
             The support function, as a functional on the space.
 
         Raises:
-            NotImplementedError: for a set with no closed form -- an
-                intersection, or one defined only by membership. The
-                Backus-Gilbert routes compute such values by minimisation.
+            NotImplementedError: for a set without one; see
+                :attr:`has_support_function`. An intersection has none in
+                closed form, and the Backus-Gilbert-Parker estimator computes
+                the feasible property set's by minimisation.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support function."
@@ -210,6 +280,70 @@ class _Translated(ConvexSet):
         """``h_{K+v}(q) == h_K(q) + (v, q)``."""
         return _ShiftedSupport(self._base.support_function(), self._vector)
 
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The base's maximiser, moved."""
+        return self.domain.add(self._base.support_maximiser(direction), self._vector)
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Membership of the moved point in the base.
+
+        Args:
+            x: a vector of the space.
+            rtol: passed to the base's test.
+
+        Returns:
+            Whether the base contains ``x`` moved back.
+        """
+        return self._base.contains(self.domain.subtract(x, self._vector), rtol=rtol)
+
+    @property
+    def has_membership(self) -> bool:
+        """Whether :meth:`contains` decides membership."""
+        return self._base.has_membership
+
+    @property
+    def has_projection(self) -> bool:
+        """Whether :meth:`project` is available."""
+        return self._base.has_projection
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return self._base.has_support_function
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return self._base.has_maximiser
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether a level function describes the set."""
+        return self._base.has_level_function
+
+    def level_function(self) -> Functional:
+        """``x -> f(x - v)``, the base's level function moved with the set."""
+        base, vector, space = self._base.level_function(), self._vector, self.domain
+        return Functional.from_callables(
+            space,
+            lambda x: base(space.subtract(x, vector)),
+            gradient=(
+                (lambda x: base.gradient(space.subtract(x, vector)))
+                if base.has_derivative
+                else None
+            ),
+            hessian=(
+                (lambda x: base.hessian(space.subtract(x, vector)))
+                if base.has_hessian
+                else None
+            ),
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by."""
+        return self._base.level
+
     def __repr__(self) -> str:
         return f"Translated({self._base!r})"
 
@@ -249,9 +383,23 @@ class _OracleSet(ConvexSet):
         return self._membership is not None
 
     @property
+    def has_projection(self) -> bool:
+        """False: a support function does not give a projection."""
+        return False
+
+    @property
+    def has_support_function(self) -> bool:
+        """True: that is what the set was given."""
+        return True
+
+    @property
     def has_maximiser(self) -> bool:
         """Whether a point attaining the supremum can be produced."""
         return self._maximiser is not None
+
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The maximiser, under the base's name."""
+        return self.maximiser(direction)
 
     def maximiser(self, direction: Any, /) -> Any:
         """The point of the set furthest along a direction.
@@ -375,6 +523,33 @@ class _MinkowskiSum(ConvexSet):
         """``h_A + h_B``, exactly."""
         return self._first.support_function() + self._second.support_function()
 
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The sum of the parts' maximisers, which attains the sum of supports."""
+        return self.domain.add(
+            self._first.support_maximiser(direction),
+            self._second.support_maximiser(direction),
+        )
+
+    @property
+    def has_membership(self) -> bool:
+        """Whether :meth:`contains` decides membership."""
+        return False
+
+    @property
+    def has_projection(self) -> bool:
+        """Whether :meth:`project` is available."""
+        return False
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return self._first.has_support_function and self._second.has_support_function
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return self._first.has_maximiser and self._second.has_maximiser
+
     def project(self, x: Any, /) -> Any:
         """Not generally available: the sum of two projections is not one.
 
@@ -477,6 +652,33 @@ class Polytope(ConvexSet):
     def half_spaces(self) -> tuple:
         """The constraints."""
         return self._half_spaces
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether a level function describes the set."""
+        return True
+
+    def level_function(self) -> Functional:
+        """``max_i ((n_i, x) - b_i)``, at level zero; the active plane's normal is a subgradient."""
+        space, planes = self._domain, self._half_spaces
+
+        def excesses(x: Any) -> list[float]:
+            return [
+                space.inner_product(plane.normal, x) - plane.offset for plane in planes
+            ]
+
+        return Functional.from_callables(
+            space,
+            lambda x: max(excesses(x)),
+            subgradient=lambda x: space.copy(
+                planes[int(np.argmax(excesses(x)))].normal
+            ),
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by."""
+        return 0.0
 
     @property
     def is_outer(self) -> bool:
@@ -688,6 +890,38 @@ class Ball(ConvexSet):
             self._domain, radius=self._radius, centre=self._centre
         )
 
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return True
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return True
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether a level function describes the set."""
+        return True
+
+    def level_function(self) -> Functional:
+        """The squared distance to the centre, at level ``radius^2``."""
+        space, centre = self._domain, self._centre
+        return Functional.from_callables(
+            space,
+            lambda x: space.squared_norm(space.subtract(x, centre)),
+            gradient=lambda x: space.scale(2.0, space.subtract(x, centre)),
+            hessian=lambda x: (LinearOperator.identity(space) * 2.0).with_traits(
+                Traits.POSITIVE_DEFINITE
+            ),
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by."""
+        return self._radius**2
+
     def indicator(self) -> Functional:
         """The ball's indicator, with its closed-form proximal operator."""
         from ..numerics.convex import BallIndicator
@@ -772,6 +1006,16 @@ class Hyperplane(ConvexSet):
         return SupportFunction.of_hyperplane(
             self._domain, self._normal, offset=self._offset
         )
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return True
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return True
 
     def support_maximiser(self, direction: Any, /) -> Any:
         """The plane's point of least norm, ``(offset / (normal, normal)) normal``.
@@ -875,6 +1119,32 @@ class HalfSpace(ConvexSet):
         return SupportFunction.of_half_space(
             self._domain, self._normal, offset=self._offset
         )
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return True
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return True
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether a level function describes the set."""
+        return True
+
+    def level_function(self) -> Functional:
+        """The linear form ``(normal, .)``, at level ``offset``."""
+        from ..algebra.operators import LinearFunctional
+
+        return LinearFunctional.from_representer(self._domain, self._normal)
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by."""
+        return self._offset
 
     def support_maximiser(self, direction: Any, /) -> Any:
         """The boundary plane's point of least norm, ``(offset / (normal, normal)) normal``.
@@ -990,6 +1260,36 @@ class Ellipsoid(ConvexSet):
             The bounding surface.
         """
         return EllipsoidSurface(self._domain, self._precision, centre=self._centre)
+
+    @property
+    def has_support_function(self) -> bool:
+        """Only with the covariance in hand."""
+        return self._covariance is not None
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether :meth:`support_maximiser` can exhibit a point."""
+        return self._covariance is not None
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether a level function describes the set."""
+        return True
+
+    def level_function(self) -> Functional:
+        """The Mahalanobis form ``(P (x - c), x - c)``, at level one."""
+        space, precision, centre = self._domain, self._precision, self._centre
+        return Functional.from_callables(
+            space,
+            self.mahalanobis_squared,
+            gradient=lambda x: space.scale(2.0, precision(space.subtract(x, centre))),
+            hessian=lambda x: (precision * 2.0).with_traits(Traits.POSITIVE_DEFINITE),
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by."""
+        return 1.0
 
     def mahalanobis_squared(self, x: Any, /) -> float:
         """``(x - centre, P (x - centre))``."""
@@ -1416,18 +1716,57 @@ class ConvexIntersection(ConvexSet):
             NotImplementedError: if no part has a support function, in which
                 case there is no bound to give.
         """
-        bounds = []
-        for part in self._subsets:
-            try:
-                bounds.append(float(part.support_function()(direction)))
-            except NotImplementedError:
-                continue
+        bounds = [
+            float(part.support_function()(direction))
+            for part in self._subsets
+            if part.has_support_function
+        ]
         if not bounds:
             raise NotImplementedError(
                 "No part of this intersection has a support function, so "
                 "there is no upper bound to report."
             )
         return min(bounds)
+
+    @property
+    def has_level_function(self) -> bool:
+        """When every part has one: the set is where all of them are within level."""
+        return all(part.has_level_function for part in self._subsets)
+
+    def level_function(self) -> Functional:
+        """``max_i (f_i(x) - level_i)``, at level zero.
+
+        The active part's subgradient is one of the maximum's, when the
+        part's level function has one.
+
+        Raises:
+            NotImplementedError: unless every part has a level function.
+        """
+        if not self.has_level_function:
+            raise NotImplementedError(
+                "An intersection has a level function only when every part does."
+            )
+        space = self._domain
+        functionals = [part.level_function() for part in self._subsets]
+        levels = [part.level for part in self._subsets]
+
+        def excesses(x: Any) -> list[float]:
+            return [f(x) - level for f, level in zip(functionals, levels)]
+
+        subgradient = None
+        if all(f.has_subgradient for f in functionals):
+
+            def subgradient(x: Any) -> Any:
+                return functionals[int(np.argmax(excesses(x)))].subgradient(x)
+
+        return Functional.from_callables(
+            space, lambda x: max(excesses(x)), subgradient=subgradient
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by."""
+        return 0.0
 
     def support_function(self) -> SupportFunction:
         """Not available.
@@ -1436,8 +1775,8 @@ class ConvexIntersection(ConvexSet):
             NotImplementedError: always. There is no formula for the support
                 function of an intersection. :meth:`support_bound` gives the
                 upper bound ``min_i h_i``, which is what v1 returned under this
-                name, and the Backus-Gilbert routes compute the true value by
-                minimisation.
+                name, and the Backus-Gilbert-Parker estimator computes the true
+                value by minimisation.
         """
         raise NotImplementedError(
             "An intersection has no closed-form support function. Use "

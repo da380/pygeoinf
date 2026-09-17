@@ -6637,3 +6637,68 @@ admits, and so does the returned set; the extent on a scalar property
 is the support interval to 1e-5, and in two dimensions lies within it;
 every membership request the sets do not allow is refused with the
 alternative named, and a polytope prior has no membership and says so.
+
+## 60. The feasible property set is what gets probed (2026-09-17)
+
+David's aim, stated after §59: the Backus-type methods should follow one
+pattern, delivering a convex set on the property space, with the set
+carrying the means to probe it by the algorithms we have -- to match the
+Bayesian side, where the result is a measure and the measure is what is
+probed. And a convex set can carry both a support function and a
+sublevel-set function, both exposed and both useful. Measured against
+that, §58 and §59 had the type right and the shape wrong: the result was
+a `ConvexSet`, but the probes lived on the estimator with the data passed
+in again each time, and the set was a receipt.
+
+**Declared capabilities on the base.** A convex set has up to four
+descriptions: membership, a projection, a support function with a
+maximiser, and a level function ``f`` with the set ``{ f <= level }``.
+The base `Subset` promised membership and `ConvexSet` assumed closed
+forms, and a set known through algorithms broke both quietly: the oracle
+set raised on `contains` and `project`, an intersection on its support
+function, and generic code coped by catching `NotImplementedError`, which
+swallowed real failures in the intersection bound. The functional side
+solved the same problem with `has_hessian` and `has_prox`; the sets now
+do the same, `has_membership`, `has_projection`, `has_support_function`,
+`has_maximiser`, `has_level_function`, with a uniform refusal in the base
+methods. The closed forms have all five; a hyperplane has no level
+function, being an equality; an ellipsoid without its covariance has no
+support side; a translation carries its base's; a Minkowski sum has the
+support side when both parts do and nothing else; an intersection and a
+polytope have membership, projection and a level function, the largest
+of the parts' excesses at level zero, with the active part's subgradient;
+the oracle set has what it was given. The intersection bound reads the
+flags. The level function is new on the base and is §59's ``l``
+generalised: a ball's is the squared distance to its centre, an
+ellipsoid's its Mahalanobis form, a half-space's its linear form, and
+the likelihood route now reads any set that has one.
+
+**The result object.** `FeasiblePropertySet` is what the estimator
+returns, a `ConvexSet` holding the engines and the data, and every
+question is asked of it with no data argument: `support`,
+`support_values`, `support_function`, `support_maximiser`, `polytope`
+and `outside` on the support side; `contains`, `admits`,
+`inclusion_norm`, `level_function`, `level`, `extent`, `inner_hull` and
+`fitting_model` on the level-function side; `extremal_model` and
+`certificate` where a route has them; `is_empty`; `push_forward`; and
+on the closed form `ellipsoid`, the set as the ellipsoid it is, with a
+projection. It declares its capabilities by route and membership engine.
+Nothing is computed at construction, so an empty set is a set whose
+`is_empty` is true and whose point-needing probes raise, not a
+construction that fails; the answers that cost are kept on the object.
+The estimator is thin: it holds the problem, the sets and the choices,
+builds the engines, and its call is one line. `is_empty` returns as a
+computed predicate on this class, which is honest after §57 dropped v1's
+stub from the base: this is the set that can compute it.
+
+**Checked.** The five flags on every closed form, combinator and oracle,
+on a weighted and a dense-metric space; each level function agrees with
+`contains` everywhere and is at its level on a projected point, with its
+gradient checked against a finite step; the polytope's and the
+intersection's level functions; the intersection bound with a part that
+has no support side. On the result: each route's declarations, the
+closed form's extremal model feasible and attaining the support, and the
+support function object's subgradient being it; push-forward through the
+result with ``h_{TS}(q) == h_S(T* q)``; exclusion certificates and the
+outer polytope; emptiness answered by every route. Every earlier test
+runs against the result, and the example does too.
