@@ -28,7 +28,7 @@ from ..geometry.subspaces import AffineSubspace
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
 from ..numerics.root_find import Evaluation, RootResult, monotone_root
-from ..numerics.solvers import LinearSolver, resolve_solver
+from ..numerics.solvers import LinearSolver, SolveStep, resolve_solver
 from .estimators import LinearPointEstimator
 from .normal import Formalism
 from .normal import choose_formalism as _choose
@@ -325,8 +325,10 @@ class LeastSquares(LinearPointEstimator):
         if scale == 0.0:
             scale = 1.0
 
-        def callback(iteration: int, residual: float) -> None:
-            report(message.format(iteration=iteration, residual=residual / scale))
+        def callback(step: SolveStep) -> None:
+            report(
+                message.format(iteration=step.iteration, residual=step.residual / scale)
+            )
 
         return callback
 

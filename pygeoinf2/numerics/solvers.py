@@ -45,6 +45,8 @@ __all__ = [
     "resolve_solver",
     "ConvergenceError",
     "ProgressCallback",
+    "SolutionTrackingCallback",
+    "SolveStep",
     "SolveResult",
     "LinearSolver",
     "InverseOperator",
@@ -88,6 +90,42 @@ class SolveResult[X]:
             f"residual_norm={self.residual_norm:.3g}, "
             f"converged={self.converged})"
         )
+
+
+class SolveStep[X]:
+    """One step of an iterative solve, as its callback sees it.
+
+    ``iteration`` and ``residual`` are the numbers every solver has in hand
+    after a step and records in :attr:`SolveResult.history`. ``iterate`` is
+    the current approximation, and it is a *property* because not every
+    solver holds one: conjugate gradients, MINRES, BiCGSTAB and LSQR update
+    the solution every step, but GMRES assembles it only at the end of a
+    restart cycle, from the Arnoldi basis and the triangular system it has
+    built so far, at a cost of one vector operation per basis vector. Forming
+    it on demand lets a callback that only counts steps pay nothing, and one
+    that wants the path -- :class:`SolutionTrackingCallback` -- pay only for
+    what it asks. What comes back is an independent copy, yours to keep: the
+    solvers update their iterate in place, so handing out the live vector
+    would give a history in which every entry is the final answer.
+
+    Take it during the callback. The step is a view onto the solver's state
+    at that moment, and the state moves on when the callback returns.
+    """
+
+    __slots__ = ("iteration", "residual", "_form")
+
+    def __init__(self, iteration: int, residual: float, form: Callable[[], X]) -> None:
+        self.iteration = iteration
+        self.residual = residual
+        self._form = form
+
+    @property
+    def iterate(self) -> X:
+        """An independent copy of the current approximation."""
+        return self._form()
+
+    def __repr__(self) -> str:
+        return f"SolveStep(iteration={self.iteration}, residual={self.residual:.3g})"
 
 
 class LinearSolver(ABC):
@@ -368,12 +406,13 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
 class ProgressCallback:
     """A callback that records a solve's progress, and can report it.
 
-    Every iterative solver here takes ``callback=(iteration, residual)``, so
-    this is a few lines; it is supplied because the few lines were the same
-    ones every caller was writing, and because v1 had it. Pass one and keep it:
-    it is the diagnostic an inversion otherwise discards, since an estimator
-    applies its inverse operator through the algebra and the ``SolveResult``
-    never reaches the caller.
+    Every iterative solver here calls its ``callback`` with a
+    :class:`SolveStep`, so this is a few lines; it is supplied because the
+    few lines were the same ones every caller was writing, and because v1 had
+    it. Pass one and keep it: it is the diagnostic an inversion otherwise
+    discards, since an estimator applies its inverse operator through the
+    algebra and the ``SolveResult`` never reaches the caller. To keep the
+    iterates as well, see :class:`SolutionTrackingCallback`.
 
     A single instance can be reused across solves. It resets itself whenever a
     solve starts over at iteration zero, so the counts belong to the last one.
@@ -399,13 +438,13 @@ class ProgressCallback:
         self._report = report
         self.residuals: list[float] = []
 
-    def __call__(self, iteration: int, residual: float) -> None:
+    def __call__(self, step: SolveStep) -> None:
         """Record one step."""
-        if iteration == 0:
+        if step.iteration == 0:
             self.residuals = []
-        self.residuals.append(float(residual))
+        self.residuals.append(float(step.residual))
         if self._report is not None:
-            self._report(f"iteration {iteration}: residual {residual:.6g}")
+            self._report(f"iteration {step.iteration}: residual {step.residual:.6g}")
 
     @property
     def iterations(self) -> int:
@@ -420,6 +459,48 @@ class ProgressCallback:
     def __repr__(self) -> str:
         return (
             f"ProgressCallback(iterations={self.iterations}, "
+            f"residual={self.residual:.3g})"
+        )
+
+
+class SolutionTrackingCallback(ProgressCallback):
+    """A callback that keeps every iterate of a solve, as well as its residuals.
+
+    v1's class of the same name, for looking at the path a solver took: how
+    the iterates approach the answer, which components settle first, what a
+    stalled solve was doing when it stalled. Each entry of :attr:`iterates`
+    is an independent copy taken at that step, so ``iterates[0]`` is the
+    starting point and ``iterates[-1]`` the solution. Like its base it
+    resets itself whenever a solve starts over at iteration zero, so the
+    path belongs to the last solve.
+
+    The cost is one copy of the iterate per step, in memory as well as time
+    -- ``iterations`` vectors held at once -- and on GMRES the assembly of
+    each iterate from the Arnoldi basis, which the solver otherwise does once
+    per restart cycle. A callback that does not ask for the iterate pays
+    neither; see :class:`SolveStep`.
+
+    .. code-block:: python
+
+        path = SolutionTrackingCallback()
+        CGSolver(callback=path)(A).solve(b)
+        errors = [A.domain.norm(A.domain.subtract(x, exact)) for x in path.iterates]
+    """
+
+    def __init__(self, /, *, report: Callable[[str], None] | None = None) -> None:
+        super().__init__(report=report)
+        self.iterates: list[Any] = []
+
+    def __call__(self, step: SolveStep) -> None:
+        """Record one step, iterate included."""
+        super().__call__(step)
+        if step.iteration == 0:
+            self.iterates = []
+        self.iterates.append(step.iterate)
+
+    def __repr__(self) -> str:
+        return (
+            f"SolutionTrackingCallback(iterations={self.iterations}, "
             f"residual={self.residual:.3g})"
         )
 
@@ -706,7 +787,7 @@ class IterativeSolver(LinearSolver):
         maxiter: int | None = None,
         preconditioner: LinearSolver | LinearOperator | None = None,
         strict: bool = True,
-        callback: Callable[[int, float], None] | None = None,
+        callback: Callable[[SolveStep], None] | None = None,
     ) -> None:
         """
         Args:
@@ -733,11 +814,14 @@ class IterativeSolver(LinearSolver):
                 known.
             strict: raise :class:`ConvergenceError` on failure to converge
                 rather than warning.
-            callback: called with ``(iteration, residual_norm)`` after each
-                step. For watching a long solve, and for finding out *where* a
-                stalled one stalled — which the final residual alone cannot
-                say. Every iterative solver here honours it, and records the
-                same numbers in :attr:`SolveResult.history`.
+            callback: called with a :class:`SolveStep` after each step,
+                carrying the iteration count, the residual norm, and the
+                iterate on request. For watching a long solve, and for
+                finding out *where* a stalled one stalled — which the final
+                residual alone cannot say. Every iterative solver here honours
+                it, and records the same residuals in
+                :attr:`SolveResult.history`. :class:`ProgressCallback` and
+                :class:`SolutionTrackingCallback` are ready-made ones.
         """
         self._rtol = rtol
         self._atol = atol
@@ -832,8 +916,17 @@ class IterativeSolver(LinearSolver):
             return self._maxiter
         return max(2 * operator.domain.dim, 20)
 
-    def _record(self, iteration: int, residual: float, history: list) -> None:
+    def _record(
+        self,
+        iteration: int,
+        residual: float,
+        history: list,
+        form: Callable[[], Any],
+    ) -> None:
         """Note one step's residual, and tell the callback about it.
+
+        ``form`` produces an independent copy of the current iterate, and is
+        called only if the callback asks for it (see :class:`SolveStep`).
 
         A non-finite residual is a breakdown, not slow convergence: something
         returned NaN or inf, and every later step is arithmetic on it. It is
@@ -853,7 +946,7 @@ class IterativeSolver(LinearSolver):
             )
         history.append(residual)
         if self._callback is not None:
-            self._callback(iteration, residual)
+            self._callback(SolveStep(iteration, residual, form))
 
     def _finish(self, result: SolveResult) -> SolveResult:
         if not result.converged:
@@ -1025,7 +1118,7 @@ class CGSolver(IterativeSolver):
 
         history: list[float] = []
         residual = space.norm(r)
-        self._record(0, residual, history)
+        self._record(0, residual, history, lambda: space.copy(x))
         if residual <= tolerance:
             return SolveResult(x, 0, residual, True, tuple(history))
 
@@ -1051,7 +1144,7 @@ class CGSolver(IterativeSolver):
             r = space.axpy(-alpha, ap, r)
 
             residual = space.norm(r)
-            self._record(iteration, residual, history)
+            self._record(iteration, residual, history, lambda: space.copy(x))
             if residual <= tolerance:
                 return SolveResult(x, iteration, residual, True, tuple(history))
 
@@ -1099,7 +1192,7 @@ class FlexibleCGSolver(IterativeSolver):
 
         history: list[float] = []
         residual = space.norm(r)
-        self._record(0, residual, history)
+        self._record(0, residual, history, lambda: space.copy(x))
         if residual <= tolerance:
             return SolveResult(x, 0, residual, True, tuple(history))
 
@@ -1121,7 +1214,7 @@ class FlexibleCGSolver(IterativeSolver):
             r = space.axpy(-alpha, ap, r)
 
             residual = space.norm(r)
-            self._record(iteration, residual, history)
+            self._record(iteration, residual, history, lambda: space.copy(x))
             if residual <= tolerance:
                 return SolveResult(x, iteration, residual, True, tuple(history))
 
@@ -1182,7 +1275,7 @@ class GMRESSolver(IterativeSolver):
 
         history: list[float] = []
         residual = space.norm(r)
-        self._record(0, residual, history)
+        self._record(0, residual, history, lambda: space.copy(x))
         if residual <= tolerance:
             return SolveResult(x, 0, residual, True, tuple(history))
 
@@ -1236,7 +1329,18 @@ class GMRESSolver(IterativeSolver):
                 rhs[column] = cosines[column] * rhs[column]
 
                 residual = abs(rhs[column + 1])
-                self._record(total, residual, history)
+
+                def form(used: int = column + 1) -> Any:
+                    # The iterate GMRES would return if it stopped here: the
+                    # cycle's own assembly below, on the triangular system as
+                    # it stands. Later columns leave rows up to this one alone.
+                    weights = np.linalg.solve(hessenberg[:used, :used], rhs[:used])
+                    iterate = space.copy(x)
+                    for index in range(used):
+                        iterate = space.axpy(weights[index], basis[index], iterate)
+                    return iterate
+
+                self._record(total, residual, history, form)
                 if residual <= tolerance or subdiagonal == 0.0:
                     break
                 if total >= limit:
@@ -1310,7 +1414,7 @@ class MinResSolver(IterativeSolver):
         history: list[float] = []
         z = preconditioned(r)
         beta = m_norm(r, z)
-        self._record(0, beta, history)
+        self._record(0, beta, history, lambda: space.copy(x))
         if beta <= tolerance:
             return SolveResult(x, 0, beta, True, tuple(history))
 
@@ -1369,7 +1473,7 @@ class MinResSolver(IterativeSolver):
 
             # phi_bar is the residual norm, available without forming it.
             residual = abs(phi_bar)
-            self._record(iteration, residual, history)
+            self._record(iteration, residual, history, lambda: space.copy(x))
             if residual <= tolerance:
                 return SolveResult(x, iteration, residual, True, tuple(history))
             if beta_next == 0.0:
@@ -1402,7 +1506,7 @@ class BiCGStabSolver(IterativeSolver):
 
         history: list[float] = []
         residual = space.norm(r)
-        self._record(0, residual, history)
+        self._record(0, residual, history, lambda: space.copy(x))
         if residual <= tolerance:
             return SolveResult(x, 0, residual, True, tuple(history))
 
@@ -1435,7 +1539,7 @@ class BiCGStabSolver(IterativeSolver):
             s = space.axpy(-alpha, v, space.copy(r))
             if space.norm(s) <= tolerance:
                 x = space.axpy(alpha, y, x)
-                self._record(iteration, space.norm(s), history)
+                self._record(iteration, space.norm(s), history, lambda: space.copy(x))
                 return SolveResult(x, iteration, space.norm(s), True, tuple(history))
 
             z = s if preconditioner is None else preconditioner(s)
@@ -1448,7 +1552,7 @@ class BiCGStabSolver(IterativeSolver):
             r = space.axpy(-omega, t, s)
 
             residual = space.norm(r)
-            self._record(iteration, residual, history)
+            self._record(iteration, residual, history, lambda: space.copy(x))
             if residual <= tolerance:
                 return SolveResult(x, iteration, residual, True, tuple(history))
 
@@ -1498,7 +1602,7 @@ class LSQRSolver(LeastSquaresSolver):
         rtol: float = 1e-10,
         maxiter: int | None = None,
         strict: bool = True,
-        callback: Callable[[int, float], None] | None = None,
+        callback: Callable[[SolveStep], None] | None = None,
     ) -> None:
         """
         Args:
@@ -1510,9 +1614,9 @@ class LSQRSolver(LeastSquaresSolver):
             maxiter: iteration cap. Four times the domain dimension by default.
             strict: raise :class:`ConvergenceError` rather than warn when the
                 cap is reached.
-            callback: called as ``callback(iteration, normal_residual)`` each
-                step, and the same numbers are kept in
-                :attr:`SolveResult.history`.
+            callback: called with a :class:`SolveStep` each step, whose
+                residual is the *normal* residual; the same numbers are kept
+                in :attr:`SolveResult.history`.
 
         Raises:
             ValueError: if the damping is negative.
@@ -1537,11 +1641,17 @@ class LSQRSolver(LeastSquaresSolver):
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.NONE)
 
-    def _note(self, iteration: int, residual: float, history: list) -> None:
+    def _note(
+        self,
+        iteration: int,
+        residual: float,
+        history: list,
+        form: Callable[[], Any],
+    ) -> None:
         """Note one step's normal residual, and tell the callback about it."""
         history.append(float(residual))
         if self._callback is not None:
-            self._callback(iteration, float(residual))
+            self._callback(SolveStep(iteration, float(residual), form))
 
     def _solve(self, operator: LinearOperator, b: Any, x0: Any | None) -> SolveResult:
         """The bidiagonalisation, started from *x0* when one is given.
@@ -1642,7 +1752,7 @@ class LSQRSolver(LeastSquaresSolver):
             w = domain.axpy(1.0, v, w)
 
             normal_residual = abs(alpha * s * phi)
-            self._note(iteration, normal_residual, history)
+            self._note(iteration, normal_residual, history, lambda: domain.copy(x))
             if normal_residual <= normal_target or abs(phi_bar) <= residual_target:
                 return SolveResult(x, iteration, normal_residual, True, tuple(history))
             if beta == 0.0 or alpha == 0.0:

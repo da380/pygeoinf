@@ -116,7 +116,9 @@ from .numerics.solvers import (
     LUSolver,
     MinResSolver,
     ProgressCallback,
+    SolutionTrackingCallback,
     SolveResult,
+    SolveStep,
 )
 from .plotting import plot, plot_corner, plot_densities, plot_points, subplots
 
@@ -162,7 +164,9 @@ __all__ = [
     "MinResSolver",
     "NormalDiagonalPreconditioner",
     "ProgressCallback",
+    "SolutionTrackingCallback",
     "SolveResult",
+    "SolveStep",
     "SpectralPreconditioner",
     "WoodburyPreconditioner",
     # plotting

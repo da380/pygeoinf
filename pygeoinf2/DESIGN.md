@@ -6295,3 +6295,51 @@ space never builds the Gram matrix and matches `slogdet` of the
 component matrix; a diagonal mass inverts to its reciprocal spectrum
 with the CG solver's constructor patched to raise; a general mass still
 inverts through a solve.
+
+## 55. The solver callback can see the iterate (2026-09-17)
+
+First of the lost capabilities in `FUNCTIONALITY_AUDIT.md` §0.2: v1's
+`SolutionTrackingCallback` kept a copy of the solution at every step, for
+looking at the path a solve took; v2's callback protocol carried
+``(iteration, residual)`` only, so nothing built on it could reproduce
+that. A residual history is not a solution history.
+
+**The protocol.** Every iterative solver now calls its callback with a
+`SolveStep`, which carries the iteration count, the residual, and the
+iterate as a *property*. It is a property because the solvers differ in
+what they hold: conjugate gradients, flexible CG, MINRES, BiCGSTAB and
+LSQR update the solution every step, but GMRES assembles it only at the
+end of a restart cycle, from the Arnoldi basis and the triangular system
+built so far, one triangular solve and one vector operation per basis
+vector. SciPy's `gmres` faces the same choice and makes it a constructor
+flag, ``callback_type='x'`` against ``'pr_norm'``, with a warning about
+the cost. Forming the iterate on demand needs no flag: a callback that
+only counts steps pays nothing, and one that asks for the path pays only
+for what it asks. Inside a GMRES cycle the assembly uses the triangular
+system as it stands at that column, which later columns leave alone, so
+the iterate handed out mid-cycle is exactly the one GMRES would return
+if it stopped there.
+
+What comes back is an independent copy. The solvers update their
+iterate in place through `axpy`, so a history of live references would
+be a history in which every entry is the final answer, which is the
+mistake v1 guarded against with an explicit `domain.copy(xk)` in its
+callback. The copy is taken in the solver, which knows the space, rather
+than in the callback, which in v1 had to be told it.
+
+**The callbacks.** `ProgressCallback` takes the step and is otherwise as
+it was. `SolutionTrackingCallback` extends it with `iterates`, one
+independent copy per step, ``iterates[0]`` the starting point and
+``iterates[-1]`` the solution, reset whenever a solve starts over at
+iteration zero, so the path belongs to the last solve. v1's attribute
+was `history`; here `SolveResult.history` already means the residuals,
+so the iterates are called what they are. The inference layer's
+`residual_callback` reads the step's fields; nothing else consumed the
+old tuple.
+
+**Checked.** For each of the six iterative solvers, the residual of every
+iterate handed out equals the residual the step reports, on symmetric
+and unsymmetric problems and, for GMRES, across several restart cycles;
+the last iterate is the solution; the iterates are independent copies;
+GMRES with a counting callback performs one triangular solve per cycle,
+and with a tracking one exactly one more per step.

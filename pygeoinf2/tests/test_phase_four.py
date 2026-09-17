@@ -224,7 +224,7 @@ class TestSolverDiagnostics:
         operator = positive_definite(X, rng)
         seen = []
         result = CGSolver(
-            rtol=1e-12, callback=lambda step, residual: seen.append(step)
+            rtol=1e-12, callback=lambda step: seen.append(step.iteration)
         )(operator).solve(X.random(rng=rng))
         assert seen == list(range(result.iterations + 1))
 

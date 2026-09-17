@@ -11,6 +11,8 @@ from pygeoinf2.numerics import (
     CholeskySolver,
     ConvergenceError,
     EigenSolver,
+    FlexibleCGSolver,
+    GMRESSolver,
     IdentityPreconditioner,
     InverseOperator,
     JacobiPreconditioner,
@@ -178,7 +180,8 @@ class TestBreakdown:
         A, b, _ = spd_problem
         seen = []
         solver = getattr(solvers, Solver)(
-            preconditioner=self.poisoned(A.domain), callback=lambda k, r: seen.append(k)
+            preconditioner=self.poisoned(A.domain),
+            callback=lambda step: seen.append(step.iteration),
         )
         with pytest.raises(ConvergenceError, match="non-finite"):
             solver(A).solve(b)
@@ -338,9 +341,10 @@ class TestConvergenceReporting:
         history, so a non-convergence in those three left no trail."""
         A, b, _ = spd_problem
         seen = []
-        result = solver_class(rtol=1e-10, callback=lambda i, r: seen.append((i, r)))(
-            A
-        ).solve(b)
+        result = solver_class(
+            rtol=1e-10,
+            callback=lambda step: seen.append((step.iteration, step.residual)),
+        )(A).solve(b)
 
         assert result.converged
         assert len(result.history) > 1
@@ -357,9 +361,9 @@ class TestConvergenceReporting:
             form="components",
         )
         seen = []
-        result = LSQRSolver(rtol=1e-12, callback=lambda i, r: seen.append(i))(A).solve(
-            rng.normal(size=20)
-        )
+        result = LSQRSolver(
+            rtol=1e-12, callback=lambda step: seen.append(step.iteration)
+        )(A).solve(rng.normal(size=20))
         assert len(result.history) > 1
         assert len(seen) == len(result.history)
 
@@ -702,6 +706,151 @@ class TestProgressCallback:
         _, observed = problem.synthetic_model_and_data(prior, rng=rng)
         estimator(observed)
         assert progress.iterations > 0
+
+
+class TestSolutionTracking:
+    """The callback can see the iterate, so v1's ``SolutionTrackingCallback``
+    is back. The protocol used to carry ``(iteration, residual)`` only, and a
+    residual history is not a solution history."""
+
+    @pytest.fixture
+    def square_problem(self, rng):
+        """Non-symmetric, for the solvers that do not need symmetry."""
+        n = 24
+        M = rng.normal(size=(n, n))
+        M = M @ M.T + n * np.eye(n) + 0.3 * rng.normal(size=(n, n))
+        A = LinearOperator.from_matrix(
+            EuclideanSpace(n), EuclideanSpace(n), M, form="components"
+        )
+        return A, rng.normal(size=n)
+
+    @pytest.mark.parametrize("solver_class", [CGSolver, FlexibleCGSolver, MinResSolver])
+    def test_the_iterates_carry_the_residuals_they_report(
+        self, solver_class, spd_problem
+    ):
+        from pygeoinf2.numerics.solvers import SolutionTrackingCallback
+
+        A, b, _ = spd_problem
+        path = SolutionTrackingCallback()
+        result = solver_class(rtol=1e-10, callback=path)(A).solve(b)
+
+        assert len(path.iterates) == result.iterations + 1
+        space = A.domain
+        for x, residual in zip(path.iterates, path.residuals):
+            true = space.norm(space.subtract(b, A(x)))
+            assert true == pytest.approx(residual, rel=1e-6, abs=1e-12)
+        assert np.allclose(path.iterates[-1], result.solution)
+
+    @pytest.mark.parametrize("solver_class", [BiCGStabSolver, GMRESSolver])
+    def test_the_unsymmetric_solvers_do_too(self, solver_class, square_problem):
+        from pygeoinf2.numerics.solvers import SolutionTrackingCallback
+
+        A, b = square_problem
+        path = SolutionTrackingCallback()
+        result = solver_class(rtol=1e-10, callback=path)(A).solve(b)
+
+        assert result.converged
+        assert len(path.iterates) == len(path.residuals) > 2
+        space = A.domain
+        for x, residual in zip(path.iterates, path.residuals):
+            true = space.norm(space.subtract(b, A(x)))
+            assert true == pytest.approx(residual, rel=1e-6, abs=1e-10)
+        assert np.allclose(path.iterates[-1], result.solution)
+
+    def test_gmres_forms_the_iterate_inside_a_cycle(self, square_problem):
+        """GMRES only assembles its iterate at the end of a restart cycle, so
+        the one it hands out mid-cycle is built from the Arnoldi basis on
+        demand; with a short restart the path crosses several cycles."""
+        from pygeoinf2.numerics.solvers import SolutionTrackingCallback
+
+        A, b = square_problem
+        path = SolutionTrackingCallback()
+        result = GMRESSolver(rtol=1e-10, restart=5, callback=path)(A).solve(b)
+
+        assert result.converged and result.iterations > 5
+        assert len(path.iterates) == len(path.residuals)
+        space = A.domain
+        for x, residual in zip(path.iterates, path.residuals):
+            true = space.norm(space.subtract(b, A(x)))
+            assert true == pytest.approx(residual, rel=1e-6, abs=1e-10)
+
+    def test_gmres_does_not_form_the_iterate_unless_asked(
+        self, square_problem, monkeypatch
+    ):
+        """The assembly costs a triangular solve and a vector operation per
+        basis vector; a callback that only counts steps must not pay it."""
+        from pygeoinf2.numerics import solvers
+        from pygeoinf2.numerics.solvers import (
+            ProgressCallback,
+            SolutionTrackingCallback,
+        )
+
+        A, b = square_problem
+        solves = []
+        real = np.linalg.solve
+        monkeypatch.setattr(
+            solvers.np.linalg,
+            "solve",
+            lambda *a, **k: (solves.append(1), real(*a, **k))[1],
+        )
+        GMRESSolver(rtol=1e-10, restart=5, callback=ProgressCallback())(A).solve(b)
+        counting = len(solves)
+        solves.clear()
+        path = SolutionTrackingCallback()
+        GMRESSolver(rtol=1e-10, restart=5, callback=path)(A).solve(b)
+        assert len(solves) == counting + len(path.iterates) - 1
+
+    def test_lsqr_tracks_its_iterates(self, rng):
+        from pygeoinf2.numerics.solvers import SolutionTrackingCallback
+
+        A = LinearOperator.from_matrix(
+            EuclideanSpace(12),
+            EuclideanSpace(20),
+            rng.normal(size=(20, 12)),
+            form="components",
+        )
+        b = rng.normal(size=20)
+        path = SolutionTrackingCallback()
+        result = LSQRSolver(rtol=1e-12, callback=path)(A).solve(b)
+
+        assert len(path.iterates) == len(path.residuals) == result.iterations
+        domain, codomain = A.domain, A.codomain
+        for x, residual in zip(path.iterates, path.residuals):
+            normal = domain.norm(A.adjoint(codomain.subtract(b, A(x))))
+            assert normal == pytest.approx(residual, rel=1e-6, abs=1e-9)
+        assert np.allclose(path.iterates[-1], result.solution)
+
+    def test_the_iterates_are_independent_copies(self, spd_problem):
+        """The solvers update in place; a history of live references would be
+        a history in which every entry is the final answer."""
+        from pygeoinf2.numerics.solvers import SolutionTrackingCallback
+
+        A, b, _ = spd_problem
+        path = SolutionTrackingCallback()
+        CGSolver(rtol=1e-10, callback=path)(A).solve(b)
+        assert not np.allclose(path.iterates[0], path.iterates[-1])
+        first = path.iterates[1].copy()
+        path.iterates[-1][:] = 0.0
+        assert np.array_equal(path.iterates[1], first)
+
+    def test_it_resets_between_solves(self, spd_problem, rng):
+        from pygeoinf2.numerics.solvers import SolutionTrackingCallback
+
+        A, b, _ = spd_problem
+        path = SolutionTrackingCallback()
+        inverse = CGSolver(rtol=1e-10, callback=path)(A)
+        inverse.solve(b)
+        inverse.solve(A.domain.random(rng=rng))
+        assert len(path.iterates) == path.iterations + 1
+
+    def test_a_step_says_what_it_is(self, spd_problem):
+        from pygeoinf2.numerics.solvers import SolveStep
+
+        steps = []
+        A, b, _ = spd_problem
+        CGSolver(rtol=1e-10, callback=steps.append)(A).solve(b)
+        assert all(isinstance(step, SolveStep) for step in steps)
+        assert repr(steps[0]).startswith("SolveStep(iteration=0")
 
 
 class TestPreconditionedMinRes:
