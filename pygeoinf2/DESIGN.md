@@ -6343,3 +6343,71 @@ and unsymmetric problems and, for GMRES, across several restart cycles;
 the last iterate is the solution; the iterates are independent copies;
 GMRES with a counting callback performs one triangular solve per cycle,
 and with a tracking one exactly one more per step.
+
+## 56. A half-space has an extended-real support function (2026-09-17)
+
+Item 3 of the lost capabilities in `FUNCTIONALITY_AUDIT.md` §0.2: v1's
+`HalfSpaceSupportFunction` gave a half-space its support function, with
+its minimum-norm maximiser and a tolerance for deciding when a direction
+is parallel to the normal; v2's `HalfSpace` inherited the base refusal,
+"does not provide a support function". Nothing in v1 called it except
+the set's own `support_function` property, so this is the capability
+alone, not a route that depended on it.
+
+**The value.** For ``{ x : (a, x) <= b }`` the pairing ``(y, x)`` is
+bounded above on the set only when ``y == alpha a`` with ``alpha >= 0``,
+where its supremum is ``alpha b``; in every other direction, the
+direction against the normal included, the set contains a ray along
+which the pairing grows without bound and the value is ``+inf``. That
+is what a support function of an unbounded set is, and the algebra
+already carries it: a translated half-space adds ``(shift, y)`` to a
+finite value and leaves an infinite one infinite, a Minkowski sum with
+a ball is finite along the normal and infinite off it, and an
+intersection's ``min_i h_i`` is decided by its bounded parts, which is
+the contribution `ConvexIntersection.support_bound` was already
+assuming when it skipped a part with no support function. An
+intersection of half-spaces alone, which had no bound at all, now has
+one wherever a part's support is finite.
+
+**Deciding parallel.** On the residual ``y - alpha a`` with ``alpha ==
+(y, a) / (a, a)``, formed as a vector and measured in the space's norm
+against ``rtol * ||y||``, ``rtol == 1e-12``. The same quantity from
+``||y||^2 - alpha^2 ||a||^2`` cancels to noise exactly when the two are
+nearly parallel, which is the case being decided; and the test is in
+the metric, so on a dense Gram a direction with the normal's components
+is not parallel to it. v1's absolute tolerance and its slack on the
+sign of ``alpha`` are dropped: when ``y`` is parallel its norm is
+``|alpha| ||a||``, so the sign is never in doubt, and ``y == 0`` gives
+``alpha == 0`` and the value zero without a special case.
+
+**The maximiser.** Every point of the boundary plane attains a finite
+support, so the maximiser is not unique; the one returned is the
+plane's point of least norm, ``(b / (a, a)) a``, v1's choice, which is
+also what `Hyperplane.project` gives the origin. In an unbounded
+direction there is no maximiser and `support_maximiser` raises
+`ValueError` saying so, rather than v1's `NotImplementedError`, which
+this codebase reserves for "no closed form".
+
+**The hyperplane** gets the two-sided version, finite for either sign
+of ``alpha``, through the same class. v1 had no hyperplane class; here
+the pair are tested together and §16 promises them the same three
+views, so the plane is not left as the one closed-form set without a
+support function.
+
+**Downstream.** `DualFeasibleProperty` with a bare half-space as its
+prior used to refuse at once; it now runs until the bundle method asks
+for a subgradient where the dual objective is infinite, and raises the
+`ValueError` above. Both are refusals, and the new one names the cause:
+the feasible property set of an unbounded prior is unbounded except in
+the directions the data happen to pin. A half-space is used as a
+constraint inside an intersection, and an intersection still has no
+support function of its own.
+
+**Checked.** On a weighted and on a dense-metric space: the value along
+the normal and its multiples, zero at the origin, infinite off the
+normal and against it; parallelism decided in the metric with a near
+multiple accepted and a small perpendicular component refused; the
+maximiser on the boundary, attaining the value, of least norm, and the
+same through the subgradient; the refusal in an unbounded direction;
+the hyperplane both ways; translation, Minkowski sum with a ball, and
+the bound of a slab from two opposed half-spaces.

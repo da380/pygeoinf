@@ -27,7 +27,7 @@ from pygeoinf2.testing import (
     check_traits,
 )
 
-from .conftest import make_dense_metric_space
+from .conftest import make_dense_metric_space, make_weighted_space
 from .doubles import OpaqueSpace
 
 
@@ -810,6 +810,122 @@ class TestPolytopeProjection:
         )
 
 
+class TestHalfSpaceSupport:
+    """v1's ``HalfSpaceSupportFunction``: extended-real valued, finite only
+    along the outward normal, with the boundary's least-norm point as the
+    maximiser. v2's ``HalfSpace`` inherited the base refusal."""
+
+    @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
+    def space(self, request):
+        return request.param()
+
+    def test_along_the_normal_it_is_the_scaled_offset(self, space, rng):
+        normal = space.random(rng=rng)
+        half = HalfSpace(space, normal, offset=0.4)
+        h = half.support_function()
+        assert h(normal) == pytest.approx(0.4)
+        assert h(space.scale(2.5, normal)) == pytest.approx(1.0)
+        assert h(space.zero()) == 0.0
+
+    def test_elsewhere_it_is_infinite(self, space, rng):
+        """Including against the normal: the pairing grows along the ray into
+        the set, so the supremum is infinite, not ``-offset``."""
+        normal = space.random(rng=rng)
+        half = HalfSpace(space, normal, offset=0.4)
+        h = half.support_function()
+        assert h(space.random(rng=rng)) == float("inf")
+        assert h(space.scale(-1.0, normal)) == float("inf")
+
+    def test_parallel_is_decided_in_the_metric(self, rng):
+        """On a dense Gram a direction with the normal's *components* is not
+        parallel to it in the space, and one that is has different
+        components; the test is on the residual in the space's own norm."""
+        space = make_dense_metric_space()
+        normal = space.from_components(np.array([1.0, 0.0, 0.0]))
+        h = HalfSpace(space, normal, offset=1.0).support_function()
+        assert h(normal) == pytest.approx(1.0)
+        # Nearly parallel, within the tolerance: the tiny residual is scaled
+        # by the direction's norm, so a large multiple still counts.
+        nearly = space.axpy(1e-14, space.basis_vector(1), space.scale(1e6, normal))
+        assert h(nearly) == pytest.approx(1e6)
+        assert h(space.axpy(1e-6, space.basis_vector(1), space.copy(normal))) == float(
+            "inf"
+        )
+
+    def test_the_maximiser_is_the_least_norm_boundary_point(self, space, rng):
+        normal = space.random(rng=rng)
+        half = HalfSpace(space, normal, offset=0.4)
+        direction = space.scale(3.0, normal)
+        point = half.support_maximiser(direction)
+
+        assert half.boundary.contains(point)
+        assert space.inner_product(point, direction) == pytest.approx(
+            half.support_function()(direction)
+        )
+        # Least norm: the plane's nearest point to the origin.
+        assert (
+            space.norm(space.subtract(point, half.boundary.project(space.zero())))
+            < 1e-12
+        )
+        # And the subgradient route agrees, which is what a bundle method uses.
+        assert (
+            space.norm(
+                space.subtract(half.support_function().subgradient(direction), point)
+            )
+            < 1e-12
+        )
+
+    def test_an_unbounded_direction_has_no_maximiser(self, space, rng):
+        half = HalfSpace(space, space.random(rng=rng), offset=0.4)
+        with pytest.raises(ValueError, match="infinite"):
+            half.support_maximiser(space.random(rng=rng))
+
+    def test_the_hyperplane_is_finite_both_ways(self, space, rng):
+        normal = space.random(rng=rng)
+        plane = Hyperplane(space, normal, offset=0.4)
+        h = plane.support_function()
+        assert h(normal) == pytest.approx(0.4)
+        assert h(space.scale(-2.0, normal)) == pytest.approx(-0.8)
+        assert h(space.random(rng=rng)) == float("inf")
+        point = plane.support_maximiser(space.scale(-2.0, normal))
+        assert plane.contains(point)
+        assert space.inner_product(point, space.scale(-2.0, normal)) == pytest.approx(
+            -0.8
+        )
+
+    def test_it_composes_with_the_set_algebra(self, space, rng):
+        """A translated half-space shifts the finite value and leaves the
+        infinite ones infinite; a Minkowski sum with a ball is infinite off
+        the normal and the ball's support plus the offset along it."""
+        normal = space.random(rng=rng)
+        shift = space.random(rng=rng)
+        half = HalfSpace(space, normal, offset=0.4)
+        moved = half.translate(shift).support_function()
+        assert moved(normal) == pytest.approx(0.4 + space.inner_product(shift, normal))
+        assert moved(space.random(rng=rng)) == float("inf")
+
+        fat = (half + Ball(space, radius=2.0)).support_function()
+        assert fat(normal) == pytest.approx(0.4 + 2.0 * space.norm(normal))
+        assert fat(space.random(rng=rng)) == float("inf")
+
+    def test_two_half_spaces_bound_each_other_along_a_shared_normal(self, space, rng):
+        """An intersection of half-spaces alone used to have no bound at
+        all; now it has one wherever a part's support is finite."""
+        normal = space.random(rng=rng)
+        slab = HalfSpace(space, normal, offset=0.4) & HalfSpace(
+            space, space.scale(-1.0, normal), offset=0.1
+        )
+        assert slab.support_bound(normal) == pytest.approx(0.4)
+        assert slab.support_bound(space.scale(-1.0, normal)) == pytest.approx(0.1)
+        assert slab.support_bound(space.random(rng=rng)) == float("inf")
+
+    def test_a_zero_normal_is_refused_by_the_support_function_too(self, space):
+        from pygeoinf2.numerics.convex import SupportFunction
+
+        with pytest.raises(ValueError, match="nonzero"):
+            SupportFunction.of_half_space(space, space.zero())
+
+
 class TestConvexIntersection:
     """An intersection of convex sets is convex, and v2 returned a plain
     Intersection for it -- which knows only how to test membership. That loses
@@ -863,11 +979,12 @@ class TestConvexIntersection:
 
         with pytest.raises(NotImplementedError, match="support_bound"):
             combined.support_function()
-        # The half-space is unbounded and contributes nothing, which is right:
-        # its own bound is infinite. What is left is the ball's own support,
-        # which is its radius times the direction's norm -- not the radius,
-        # this space's basis not being orthonormal.
+        # The half-space is unbounded in this direction and its support is
+        # infinite, so the minimum is the ball's own support, which is its
+        # radius times the direction's norm -- not the radius, this space's
+        # basis not being orthonormal.
         direction = X.basis_vector(1)
+        assert half.support_function()(direction) == float("inf")
         assert combined.support_bound(direction) == pytest.approx(
             ball.support_function()(direction)
         )

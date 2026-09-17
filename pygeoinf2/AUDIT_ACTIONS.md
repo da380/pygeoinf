@@ -45,7 +45,7 @@ bite on a real problem; the small restorations below matter less in practice.
 ## 4. Lost capabilities with an obvious home (§0.2)
 
 - [x] 4. `SolutionTrackingCallback`: the solver callback cannot see the iterate — **restored**: every iterative solver hands its callback a `SolveStep` whose `iterate` is formed on demand (free where the solver holds it, assembled from the Arnoldi basis in GMRES only when asked) and returned as a copy; `SolutionTrackingCallback` keeps them in `iterates`. DESIGN §55.
-- [ ] 3. `HalfSpace` support function raises
+- [x] 3. `HalfSpace` support function raises — **restored**: `SupportFunction.of_half_space` is extended-real valued (`alpha * offset` along the outward normal, `+inf` elsewhere, parallelism decided on the residual in the space's norm), its maximiser the boundary's least-norm point, `ValueError` in an unbounded direction; the hyperplane gets the two-sided version. DESIGN §56.
 - [ ] 2. `SublevelSet` / `LevelSet`, `is_empty`, `is_bounded`, `closure`, `boundary`, convexity `check`
 - [ ] 17. `BackusInference` is a name reused for a different route
 - [ ] 16. `CallableSupportFunction.support_point`

@@ -734,6 +734,27 @@ class Hyperplane(ConvexSet):
             -self._residual(x) / self._squared_norm, self._normal, space.copy(x)
         )
 
+    def support_function(self) -> SupportFunction:
+        """``alpha * offset`` for a direction ``alpha * normal``, else ``+inf``.
+
+        Finite only along the normal, either way: the plane is bounded in
+        that one direction and unbounded in every other.
+        """
+        return SupportFunction.of_hyperplane(
+            self._domain, self._normal, offset=self._offset
+        )
+
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The plane's point of least norm, ``(offset / (normal, normal)) normal``.
+
+        Every point of the plane attains the support when it is finite; this
+        is the canonical one.
+
+        Raises:
+            ValueError: if the support is infinite in this direction.
+        """
+        return self.support_function().subgradient(direction)
+
     def __repr__(self) -> str:
         return f"Hyperplane(offset={self._offset})"
 
@@ -812,6 +833,30 @@ class HalfSpace(ConvexSet):
         if excess <= 0.0:
             return space.copy(x)
         return space.axpy(-excess / self._squared_norm, self._normal, space.copy(x))
+
+    def support_function(self) -> SupportFunction:
+        """``alpha * offset`` for a direction ``alpha * normal``, ``alpha >= 0``, else ``+inf``.
+
+        v1's ``HalfSpaceSupportFunction``. An unbounded set has an
+        extended-real support function, and this one is infinite in every
+        direction but the outward normal's; in an intersection that is the
+        right contribution, since ``min_i h_i`` is then decided by the
+        bounded parts.
+        """
+        return SupportFunction.of_half_space(
+            self._domain, self._normal, offset=self._offset
+        )
+
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The boundary plane's point of least norm, ``(offset / (normal, normal)) normal``.
+
+        Every point of the boundary attains the support when it is finite;
+        this is the canonical one.
+
+        Raises:
+            ValueError: if the support is infinite in this direction.
+        """
+        return self.support_function().subgradient(direction)
 
     def __repr__(self) -> str:
         return f"HalfSpace(offset={self._offset})"

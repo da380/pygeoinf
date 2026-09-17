@@ -289,6 +289,63 @@ class SupportFunction(Functional):
         """The support function of a single point: the linear functional ``(p, .)``."""
         return _PointSupport(domain, point)
 
+    @staticmethod
+    def of_half_space(
+        domain: HilbertSpace,
+        normal: Any,
+        /,
+        *,
+        offset: float = 0.0,
+        rtol: float = 1e-12,
+    ) -> SupportFunction:
+        """The support function of ``{ x : (normal, x) <= offset }``.
+
+        Extended-real valued, as a support function of an unbounded set must
+        be: ``alpha * offset`` when the direction is ``alpha * normal`` with
+        ``alpha >= 0``, and ``+inf`` in every other direction, since the set
+        then contains a ray along which the pairing grows without bound.
+
+        Args:
+            domain: the space.
+            normal: the outward normal, which must be nonzero.
+            offset: the level.
+            rtol: a direction counts as parallel to the normal when what is
+                left of it after removing its component along the normal is
+                at most ``rtol`` times its own norm.
+
+        Returns:
+            The support function.
+        """
+        return _HalfSpaceSupport(domain, normal, offset=offset, rtol=rtol)
+
+    @staticmethod
+    def of_hyperplane(
+        domain: HilbertSpace,
+        normal: Any,
+        /,
+        *,
+        offset: float = 0.0,
+        rtol: float = 1e-12,
+    ) -> SupportFunction:
+        """The support function of ``{ x : (normal, x) == offset }``.
+
+        As :meth:`of_half_space`, but finite for a direction parallel to the
+        normal of *either* sign: the plane is bounded along its normal and
+        unbounded along everything else.
+
+        Args:
+            domain: the space.
+            normal: the normal, which must be nonzero.
+            offset: the level.
+            rtol: as for :meth:`of_half_space`.
+
+        Returns:
+            The support function.
+        """
+        return _HalfSpaceSupport(
+            domain, normal, offset=offset, rtol=rtol, two_sided=True
+        )
+
     def __add__(self, other: Functional) -> Functional:
         """A sum of support functions is the support of the Minkowski sum."""
         if isinstance(other, SupportFunction) and other.domain == self.domain:
@@ -352,6 +409,73 @@ class _BallSupport(SupportFunction):
         if norm == 0.0:
             return space.copy(self._centre)
         return space.axpy(self._radius / norm, y, space.copy(self._centre))
+
+
+class _HalfSpaceSupport(SupportFunction):
+    """The support function of a half-space, or of its bounding hyperplane.
+
+    For ``{ x : (a, x) <= b }`` the pairing ``(y, x)`` is bounded above on
+    the set only when ``y == alpha a`` with ``alpha >= 0``, where its supremum
+    is ``alpha b``, attained on the whole boundary plane. For the hyperplane
+    the sign of ``alpha`` is free. Everywhere else the value is ``+inf``.
+
+    Whether a direction is parallel to the normal is decided on the residual
+    ``y - alpha a`` with ``alpha == (y, a) / (a, a)``, formed as a vector: the
+    same quantity from ``||y||^2 - alpha^2 ||a||^2`` cancels to noise exactly
+    when the two are nearly parallel, which is the case being decided.
+
+    The maximiser, when the value is finite, is not unique -- every point of
+    the boundary plane attains it. The one returned is the plane's point of
+    least norm, ``(b / (a, a)) a``, as v1 chose; any other would serve a
+    subgradient method equally, and this one is the canonical choice.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        normal: Any,
+        /,
+        *,
+        offset: float = 0.0,
+        rtol: float = 1e-12,
+        two_sided: bool = False,
+    ) -> None:
+        super().__init__(domain)
+        squared = domain.squared_norm(normal)
+        if squared == 0.0:
+            raise ValueError("The normal vector must be nonzero.")
+        if rtol < 0.0:
+            raise ValueError("rtol must not be negative.")
+        self._normal = normal
+        self._offset = float(offset)
+        self._squared_norm = squared
+        self._rtol = float(rtol)
+        self._two_sided = two_sided
+
+    def _multiple(self, y: Any) -> float | None:
+        """``alpha`` with ``y == alpha * normal``, or ``None`` if there is none."""
+        space = self.domain
+        alpha = space.inner_product(y, self._normal) / self._squared_norm
+        residual = space.axpy(-alpha, self._normal, space.copy(y))
+        if space.norm(residual) > self._rtol * space.norm(y):
+            return None
+        if alpha < 0.0 and not self._two_sided:
+            return None
+        return float(alpha)
+
+    def _value(self, y: Any) -> float:
+        alpha = self._multiple(y)
+        return float("inf") if alpha is None else alpha * self._offset
+
+    def _maximiser(self, y: Any) -> Any:
+        if self._multiple(y) is None:
+            raise ValueError(
+                "The support is infinite in this direction: the set is "
+                "unbounded along it, and no point of the set attains the "
+                "supremum. The support function is finite only for a "
+                "direction parallel to the normal."
+            )
+        return self.domain.scale(self._offset / self._squared_norm, self._normal)
 
 
 class _PointSupport(SupportFunction):
