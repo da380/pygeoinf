@@ -36,6 +36,7 @@ __all__ = [
     "check_measure",
     "check_projection",
     "check_convexity",
+    "check_affine",
 ]
 
 
@@ -923,3 +924,72 @@ def check_convexity(
                 f"f(t x + (1 - t) y) == {left:g} exceeds "
                 f"t f(x) + (1 - t) f(y) == {right:g} at t == {t:.3f}",
             )
+
+
+def check_affine(
+    operator: Operator,
+    /,
+    *,
+    rng: Generator | None = None,
+    trials: int = 5,
+    rtol: float = 1e-8,
+) -> None:
+    """Check that an affine operator is what it claims, ``x -> A x + b``.
+
+    Three identities, then the linear part's own axioms. The translation is
+    recovered by applying the operator to zero; affine combinations are
+    preserved, ``F(a x + (1 - a) y) == a F(x) + (1 - a) F(y)`` for any
+    ``a``, which is linearity with the translation cancelling; and the
+    derivative at a random point is the linear part, applied to a random
+    direction. Then :func:`check_operator` on the linear part, which is
+    where a mass matrix in the wrong place shows up as a failed adjoint
+    identity -- v1's affine checks never looked there.
+
+    Args:
+        operator: an :class:`~pygeoinf2.algebra.operators.AffineOperator`.
+        rng: the generator for the probe vectors.
+        trials: how many random points and combinations to test.
+        rtol: the allowance, relative to the size of what is compared.
+
+    Raises:
+        AssertionError: naming the identity that failed.
+        TypeError: if the operator is not affine.
+    """
+    from .algebra.operators import AffineOperator
+
+    if not isinstance(operator, AffineOperator):
+        raise TypeError(
+            f"check_affine needs an AffineOperator, got {type(operator).__name__}."
+        )
+    rng = default_rng() if rng is None else rng
+    domain, codomain = operator.domain, operator.codomain
+    linear = operator.linear_part
+
+    _assert_close(
+        codomain,
+        operator(domain.zero()),
+        operator.translation,
+        "applying the operator to zero recovers the translation",
+        rtol=rtol,
+    )
+    for _ in range(trials):
+        x, y = domain.random(rng=rng), domain.random(rng=rng)
+        a = float(rng.normal())
+        combination = domain.axpy(1.0 - a, y, domain.scale(a, x))
+        expected = codomain.axpy(1.0 - a, operator(y), codomain.scale(a, operator(x)))
+        _assert_close(
+            codomain,
+            operator(combination),
+            expected,
+            "the operator preserves affine combinations",
+            rtol=rtol,
+        )
+        direction = domain.random(rng=rng)
+        _assert_close(
+            codomain,
+            operator.derivative(x)(direction),
+            linear(direction),
+            "the derivative is the linear part",
+            rtol=rtol,
+        )
+    check_operator(linear, rng=rng, trials=trials)

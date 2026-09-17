@@ -6729,3 +6729,34 @@ subdifferentiates as the ball does; one with values only says it has no
 subgradient and refuses; a set built from an oracle with a maximiser
 returns a support function whose subgradient is that maximiser, and one
 built without says so.
+
+## 62. Affine axiom checks (2026-09-17)
+
+Item 14 of `FUNCTIONALITY_AUDIT.md` §0.2: v1's `AffineOperator` mixed in
+three sampled identities and v2's testing module had none of them,
+though every linear point estimator and the Backus-Gilbert certificate
+are affine in the data. `testing.check_affine` checks that applying the
+operator to zero recovers the translation, that affine combinations are
+preserved, that the derivative at a random point is the linear part,
+and then hands the linear part to `check_operator`, so the adjoint
+identity is checked too, which v1's version never did and which is
+where a mass matrix in the wrong place shows up. It raises
+`AssertionError` naming the identity, like the other sampled axioms,
+and prints nothing.
+
+Not done here: v1's `measure=` for drawing the probes from a chosen
+measure rather than the space's white noise, which David wants on every
+check because white noise is unrealistic on a function space; that is
+one change across the module and belongs to the knobs group. Also left:
+the audit's remark that a translation of the wrong size is accepted
+silently; the spaces have no membership test for vectors, so a guard
+would be a shape check on components and not a statement about the
+space, and the axiom check catches it where it matters.
+
+**Checked.** A correct affine operator passes on a weighted and a
+dense-metric space, with an eager and a deferred translation; a
+derivative that is not the linear part fails on that identity, lying
+through both the derivative and the linearisation, since a derivative
+query goes through the latter; a non-affine action fails; a linear
+operator is refused by type; a wrong adjoint in the linear part fails
+the adjoint identity.

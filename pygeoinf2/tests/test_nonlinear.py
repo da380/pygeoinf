@@ -18,7 +18,7 @@ from pygeoinf2.testing import (
     check_second_derivative,
 )
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
 from .doubles import OpaqueSpace
 
 
@@ -278,6 +278,78 @@ class TestSharedWork:
         for _ in range(20):
             F(X.random(rng=rng))
         assert calls["n"] == 0
+
+
+class TestAffineCheck:
+    """v1's affine axiom checks, as ``testing.check_affine``: the translation
+    is recovered at zero, affine combinations are preserved, the derivative
+    is the linear part, and the linear part passes its own checks."""
+
+    @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
+    def spaces(self, request):
+        return request.param(), EuclideanSpace(3)
+
+    def test_a_correct_affine_operator_passes(self, spaces, rng):
+        from pygeoinf2.testing import check_affine
+
+        X, Y = spaces
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="galerkin"
+        )
+        check_affine(AffineOperator(A, Y.random(rng=rng)), rng=rng)
+        # A deferred translation is computed on demand and checked the same.
+        check_affine(AffineOperator(A, lambda: Y.zero()), rng=rng)
+
+    def test_a_wrong_derivative_or_translation_fails(self, spaces, rng):
+        """Built by hand from the operator protocol, so the affine claim can
+        be made false in one place at a time."""
+        from pygeoinf2.testing import check_affine
+
+        X, Y = spaces
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="galerkin"
+        )
+        b = Y.random(rng=rng)
+
+        class WrongDerivative(AffineOperator):
+            # A derivative query goes through the linearisation, so both
+            # routes must lie for the claim to be testably false.
+            def _derivative(self, x):
+                return A * 2.0
+
+            def _linearise(self, x):
+                from pygeoinf2.algebra.operators import Linearisation
+
+                return Linearisation(x, self._value(x), A * 2.0)
+
+        with pytest.raises(AssertionError, match="derivative is the linear part"):
+            check_affine(WrongDerivative(A, b), rng=rng)
+
+        class NotAffine(AffineOperator):
+            def _value(self, x):
+                return Y.scale(X.norm(x), self.linear_part(x))
+
+        with pytest.raises(AssertionError, match="affine combinations|translation"):
+            check_affine(NotAffine(A, b), rng=rng)
+
+        with pytest.raises(TypeError, match="AffineOperator"):
+            check_affine(A, rng=rng)
+
+    def test_a_bad_adjoint_in_the_linear_part_is_caught(self, spaces, rng):
+        """The linear part is checked too, which v1 did not do; a wrong
+        adjoint on a non-orthonormal space is the classic mistake."""
+        from pygeoinf2.testing import check_affine
+
+        X, Y = spaces
+        matrix = rng.normal(size=(3, X.dim))
+        wrong = LinearOperator.from_callables(
+            X,
+            Y,
+            lambda x: Y.from_components(matrix @ X.to_components(x)),
+            adjoint=lambda y: X.from_components(matrix.T @ Y.to_components(y)),
+        )
+        with pytest.raises(AssertionError, match="adjoint"):
+            check_affine(AffineOperator(wrong, Y.random(rng=rng)), rng=rng)
 
 
 class TestAffineOperator:
