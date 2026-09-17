@@ -548,6 +548,7 @@ class AffineSubspace(ConvexSet):
         )
         return AffineOperator(self._projector, offset)
 
+    @property
     def boundary(self) -> "AffineSubspace":
         """The subspace itself: an affine subspace is its own boundary.
 

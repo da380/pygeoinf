@@ -7,6 +7,7 @@ from pygeoinf2 import EuclideanSpace, LinearOperator, Traits
 from pygeoinf2.geometry import (
     AffineSubspace,
     Ball,
+    BallSurface,
     Ellipsoid,
     EmptySet,
     HalfSpace,
@@ -97,6 +98,151 @@ class TestSetAlgebra:
         ball = Ball(space, radius=2.0)
         assert ball.contains(space.zero())
         assert isinstance(ball & UniversalSet(space), Intersection)
+
+
+class TestLevelSets:
+    """A set from a functional and a level, v1's ``SublevelSet`` and
+    ``LevelSet``, which v2 had no way to build."""
+
+    @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
+    def space(self, request):
+        return request.param()
+
+    @pytest.fixture
+    def squared_norm(self, space):
+        from pygeoinf2.algebra.operators import Functional
+
+        return Functional.from_callables(space, lambda x: space.squared_norm(x))
+
+    def test_membership_is_the_inequality_in_the_metric(self, space, squared_norm, rng):
+        """On a dense Gram the squared norm is not the squared component
+        norm, so the set is the ball in the space, not in the components."""
+        from pygeoinf2.geometry import SublevelSet
+
+        ball = SublevelSet(squared_norm, level=4.0)
+        assert ball.functional is squared_norm
+        assert ball.level == 4.0
+        for _ in range(20):
+            x = space.random(rng=rng)
+            assert ball.contains(x) == (space.norm(x) <= 2.0)
+        assert ball.contains(space.zero())
+        assert ball.contains(space.scale(2.0 / space.norm(x), x))
+
+    def test_the_tolerance_scales_with_the_level(self, space, squared_norm, rng):
+        from pygeoinf2.geometry import SublevelSet
+
+        x = space.random(rng=rng)
+        on = space.scale(2.0 / space.norm(x), x)
+        just_out = space.scale(1.0 + 1e-7, on)
+        assert not SublevelSet(squared_norm, level=4.0).contains(just_out)
+        assert SublevelSet(squared_norm, level=4.0).contains(just_out, rtol=1e-6)
+
+    def test_the_boundary_is_the_level_set(self, space, squared_norm, rng):
+        from pygeoinf2.geometry import LevelSet, SublevelSet
+
+        ball = SublevelSet(squared_norm, level=4.0)
+        sphere = ball.boundary
+        assert isinstance(sphere, LevelSet)
+        assert sphere.level == 4.0
+        x = space.random(rng=rng)
+        on = space.scale(2.0 / space.norm(x), x)
+        assert sphere.contains(on)
+        assert not sphere.contains(space.scale(0.5, on))
+        assert not sphere.contains(space.scale(1.5, on))
+        assert sphere.contains(space.scale(1.0 + 1e-10, on))
+        # And the level set has empty interior, so it is its own boundary.
+        assert sphere.boundary is sphere
+
+    def test_the_level_set_agrees_with_the_sphere(self, space, rng):
+        """The same set two ways: ``BallSurface`` and the level set of the
+        norm, which must contain the same points."""
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.geometry import LevelSet
+
+        norm = Functional.from_callables(space, lambda x: space.norm(x))
+        sphere = LevelSet(norm, level=1.5)
+        surface = BallSurface(space, radius=1.5)
+        for _ in range(10):
+            x = space.random(rng=rng)
+            for scale in (1.5 / space.norm(x), 1.0):
+                point = space.scale(scale, x)
+                assert sphere.contains(point) == surface.contains(point)
+
+    def test_it_composes_with_the_set_algebra(self, space, squared_norm, rng):
+        from pygeoinf2.geometry import SublevelSet
+
+        shell = SublevelSet(squared_norm, level=4.0) & ~SublevelSet(
+            squared_norm, level=1.0
+        )
+        x = space.random(rng=rng)
+        assert shell.contains(space.scale(1.5 / space.norm(x), x))
+        assert not shell.contains(space.scale(0.5 / space.norm(x), x))
+        assert not shell.contains(space.scale(2.5 / space.norm(x), x))
+
+
+class TestBoundaryOnTheBase:
+    """``boundary`` is on the base, so generic code can ask; a set with no
+    description of its boundary refuses rather than raising AttributeError."""
+
+    def test_the_trivial_sets(self, X):
+        assert isinstance(UniversalSet(X).boundary, EmptySet)
+        empty = EmptySet(X)
+        assert empty.boundary is empty
+
+    def test_a_set_and_its_complement_share_a_boundary(self, X, rng):
+        ball = Ball(X, radius=1.0)
+        outside = ~ball
+        assert isinstance(outside.boundary, BallSurface)
+        x = X.random(rng=rng)
+        on = X.scale(1.0 / X.norm(x), x)
+        assert outside.boundary.contains(on)
+
+    def test_a_surface_is_its_own_boundary(self, X, rng):
+        for thin in (
+            Hyperplane(X, X.random(rng=rng), offset=0.3),
+            BallSurface(X, radius=1.0),
+            Ellipsoid(X, LinearOperator.identity(X)).boundary,
+        ):
+            assert thin.boundary is thin
+
+    def test_an_intersection_refuses_rather_than_lacking_the_attribute(self, X):
+        combined = Ball(X, radius=1.0) & HalfSpace(X, X.basis_vector(0))
+        with pytest.raises(NotImplementedError, match="boundary"):
+            combined.boundary
+        with pytest.raises(NotImplementedError, match="boundary"):
+            (Ball(X, radius=1.0) | Ball(X, radius=2.0)).boundary
+
+
+class TestConvexityCheck:
+    """v1's randomised ``ConvexSubset.check``, now on the functional in
+    ``testing``, where the other sampled axioms live."""
+
+    def test_a_convex_functional_passes(self, X, rng):
+        from pygeoinf2.testing import check_convexity
+
+        check_convexity(SquaredDistance(X), rng=rng)
+        check_convexity(Ball(X, radius=1.0).support_function(), rng=rng)
+        check_convexity(Ball(X, radius=1.0).indicator(), rng=rng)
+
+    def test_a_non_convex_one_fails(self, X, rng):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.testing import check_convexity
+
+        concave = Functional.from_callables(X, lambda x: -X.squared_norm(x))
+        with pytest.raises(AssertionError, match="convex"):
+            check_convexity(concave, rng=rng)
+
+    def test_the_metric_is_the_spaces_own(self, rng):
+        """The combination is taken in the space and the values are the
+        space's own norm, on a dense Gram, where the component norm would
+        give a different functional."""
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.testing import check_convexity
+
+        space = make_dense_metric_space()
+        check_convexity(
+            Functional.from_callables(space, lambda x: space.norm(x) ** 3), rng=rng
+        )
 
 
 class TestConvexProjections:

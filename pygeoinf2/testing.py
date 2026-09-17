@@ -35,6 +35,7 @@ __all__ = [
     "check_second_derivative",
     "check_measure",
     "check_projection",
+    "check_convexity",
 ]
 
 
@@ -876,3 +877,49 @@ def check_projection(
                     "the projection is the nearest point",
                     f"found a point of the set closer than {distance:g}",
                 )
+
+
+def check_convexity(
+    functional: Functional,
+    /,
+    *,
+    rng: Generator | None = None,
+    trials: int = 20,
+    rtol: float = 1e-8,
+) -> None:
+    """Check that a functional is convex, by sampling.
+
+    The inequality ``f(t x + (1 - t) y) <= t f(x) + (1 - t) f(y)`` on random
+    pairs and random ``t``: a check, not a proof, as every sampled axiom
+    here is. Its use is on a functional about to be handed to a method that
+    assumes convexity, such as a bundle method, or made into a sublevel set
+    that is meant to be convex. A value of ``+inf`` on the right leaves
+    nothing to test and the pair is skipped.
+
+    Args:
+        functional: the functional to test.
+        rng: the generator for the probe points.
+        trials: how many pairs to test.
+        rtol: the allowance, relative to the size of the right-hand side.
+
+    Raises:
+        AssertionError: if a pair violates the inequality.
+    """
+    rng = default_rng() if rng is None else rng
+    space = functional.domain
+    for _ in range(trials):
+        x, y = space.random(rng=rng), space.random(rng=rng)
+        t = float(rng.uniform())
+        between = space.axpy(1.0 - t, y, space.scale(t, x))
+        fx, fy = float(functional(x)), float(functional(y))
+        right = t * fx + (1.0 - t) * fy
+        if not np.isfinite(right):
+            continue
+        left = float(functional(between))
+        allowance = rtol * max(abs(t * fx) + abs((1.0 - t) * fy), 1e-300)
+        if left > right + allowance:
+            _fail(
+                "the functional is convex",
+                f"f(t x + (1 - t) y) == {left:g} exceeds "
+                f"t f(x) + (1 - t) f(y) == {right:g} at t == {t:.3f}",
+            )

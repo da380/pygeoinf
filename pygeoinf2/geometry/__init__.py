@@ -11,7 +11,16 @@ from .convex import (
     HalfSpace,
     Hyperplane,
 )
-from .sets import Complement, EmptySet, Intersection, Subset, Union, UniversalSet
+from .sets import (
+    Complement,
+    EmptySet,
+    Intersection,
+    LevelSet,
+    SublevelSet,
+    Subset,
+    Union,
+    UniversalSet,
+)
 from .subspaces import AffineSubspace, LinearSubspace, OrthogonalProjector
 
 __all__ = [
@@ -27,9 +36,11 @@ __all__ = [
     "HalfSpace",
     "Hyperplane",
     "Intersection",
+    "LevelSet",
     "LinearSubspace",
     "OrthogonalProjector",
     "Polytope",
+    "SublevelSet",
     "Subset",
     "Union",
     "UniversalSet",

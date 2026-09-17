@@ -734,6 +734,11 @@ class Hyperplane(ConvexSet):
             -self._residual(x) / self._squared_norm, self._normal, space.copy(x)
         )
 
+    @property
+    def boundary(self) -> "Hyperplane":
+        """Itself: a hyperplane has empty interior, so every point is a boundary point."""
+        return self
+
     def support_function(self) -> SupportFunction:
         """``alpha * offset`` for a direction ``alpha * normal``, else ``+inf``.
 
@@ -1208,6 +1213,11 @@ class BallSurface(Subset):
             self.domain.add(self._centre, self.domain.white_noise(rng=rng))
         )
 
+    @property
+    def boundary(self) -> "BallSurface":
+        """Itself: a sphere has empty interior, so every point is a boundary point."""
+        return self
+
     def __repr__(self) -> str:
         return f"BallSurface({self.domain!r}, radius={self._radius})"
 
@@ -1265,6 +1275,11 @@ class EllipsoidSurface(Subset):
         offset = self.domain.subtract(x, self._centre)
         value = self.domain.inner_product(self._precision(offset), offset)
         return abs(value - 1.0) <= rtol
+
+    @property
+    def boundary(self) -> "EllipsoidSurface":
+        """Itself: the surface has empty interior, so every point is a boundary point."""
+        return self
 
     def __repr__(self) -> str:
         return f"EllipsoidSurface({self.domain!r})"

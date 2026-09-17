@@ -59,6 +59,8 @@ from .geometry import (
     OrthogonalProjector,
     Polytope,
     Subset,
+    SublevelSet,
+    LevelSet,
     UniversalSet,
 )
 from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
@@ -223,6 +225,8 @@ __all__ = [
     "OrthogonalProjector",
     "Polytope",
     "Subset",
+    "SublevelSet",
+    "LevelSet",
     "UniversalSet",
     # spaces
     "Box",

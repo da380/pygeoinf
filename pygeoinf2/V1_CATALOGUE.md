@@ -235,7 +235,7 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `_EllipsoidalGeometry` | Subsumed | `_EllipsoidSupport` | |
 | `Sphere` | Ported | The *surface* of a ball. Not convex, so it has no support function; used for sampling on a shell. Worth keeping? | Worth keeping with an eye to constrained optimiseation. Same for ellipsoid below.|
 | `EllipsoidSurface` | Ported | As above | |
-| `LevelSet`, `SublevelSet` | Not ported | Neither class exists in v2; §18.5's inclusion test produces exactly a sublevel set, so they are planned for M5 stage 5.8. `geometry/convex.py`'s `_SetIndicator` is the nearest thing and is not one | |
+| `LevelSet`, `SublevelSet` | Ported | `geometry.sets.SublevelSet(functional, level=)` and `LevelSet`, membership and `boundary` only (DESIGN §57); no `open_set`, `closure` or convexity `check` — the last is `testing.check_convexity` | |
 | `PolyhedralSet` | Ported | §18.12: `Polytope`, with a recorded inner/outer status so §18.4's sandwich is a type rather than a convention | |
 
 ## `subspaces.py` → `geometry/subspaces.py`

@@ -6411,3 +6411,71 @@ maximiser on the boundary, attaining the value, of least norm, and the
 same through the subgradient; the refusal in an unbounded direction;
 the hyperplane both ways; translation, Minkowski sum with a ball, and
 the bound of a slab from two opposed half-spaces.
+
+## 57. A set from a functional and a level, and a boundary on every set (2026-09-17)
+
+Item 2 of the lost capabilities in `FUNCTIONALITY_AUDIT.md` §0.2, a
+bundle: v1's `SublevelSet` and `LevelSet`, and with them the members
+that had gone from the base, `is_empty`, `is_bounded`, `closure`,
+`boundary`, and the randomised convexity `check`. None of them had a
+caller in v1 outside `subsets.py` itself, so the question for each was
+whether it is a capability worth having, not whether something depended
+on it.
+
+**Restored: the sets.** `SublevelSet(f, level=)` is ``{ x : f(x) <=
+level }`` for any `Functional`, convex or not, and `LevelSet` the
+equality. They know membership and their boundary, the sublevel set's
+being the level set, and nothing more: a projection onto a general
+sublevel set is a constrained minimisation, which is what the closed
+forms in `geometry/convex.py` have and this does not, so they are plain
+subsets, not convex ones. The tolerance is v1's, ``rtol * max(|level|,
+1)``, the floor being what a level of zero needs; the hyperplane and
+half-space keep the same floor. Both are closed. v1's ``open_set`` flag
+gave the strict inequality, and with it `closure` and a warning wherever
+an open set met an operation needing a closed one; in floating point
+the two differ by the tolerance and nothing else, and v2 has no open
+sets anywhere, so the flag, `is_open` and `closure` stay dropped.
+
+**Restored: `boundary` on the base**, as a property, since the three
+convex sets that had it made it one and `AffineSubspace` alone made it
+a method, which now changes. The default refuses with
+`NotImplementedError` naming the class, so that generic code can ask
+and find out, where before it met an attribute error on most sets. The
+empty set is its own boundary and the whole space has none; a
+complement shares its boundary with the set; and every thin set is its
+own boundary, the hyperplane, the two surfaces, the level set and the
+affine subspace, all for the one reason, that a set with empty interior
+consists of boundary points. v1's level set answered "empty" there, the
+boundary of the level set *as a manifold* rather than as a subset of
+the space, and disagreed with its own affine subspace. An intersection
+or a union still refuses: their boundaries have no description short
+of the sets themselves.
+
+**Subsumed: the convexity check.** v1's `ConvexSubset.check` sampled
+pairs and a mixing weight and tested the convexity inequality on the
+defining functional, printing a tick on success. It is a check on a
+*functional*, and the sampled axioms live in `testing`, so it is
+`testing.check_convexity(functional)`, raising `AssertionError` like
+the others, silent on success, combining points in the space's own
+algebra so that the metric is the space's, and skipping a pair whose
+right-hand side is infinite, which an indicator produces.
+
+**Dropped: `is_empty` and `is_bounded`.** v1's `is_empty` returned
+``False`` on every set but the empty one, with a docstring saying that
+``False`` did not mean non-empty, which is not a predicate; and
+`is_bounded` existed on two classes, one answering ``False`` and the
+other raising. The one real emptiness question, whether a feasible set
+is empty, is `FeasibleProperty.is_feasible` (§50). §18.11 above
+promised ``feasible(data).is_empty()`` on the set estimator; that
+spelling was never built and the promise is superseded by §50.
+
+**Checked.** On a weighted and on a dense-metric space: membership of
+a sublevel set of the squared norm is the ball in the space's norm;
+the tolerance scales with the level; the boundary is the level set,
+which is its own boundary; the level set of the norm contains exactly
+the points the sphere does; the sets compose under the algebra (a
+shell as a sublevel set and a complement). The trivial sets' and a
+complement's boundaries; every thin set its own; an intersection's and
+a union's refusal. The convexity check passes a squared distance, a
+support function and an indicator, fails a concave functional, and
+runs on a dense-metric space.

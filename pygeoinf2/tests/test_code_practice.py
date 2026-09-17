@@ -274,8 +274,6 @@ class TestTheCatalogueMatchesTheCode:
     ABSENT_FROM_V2 = (
         "deflated_pointwise_variance",
         "deflated_pointwise_std",
-        "LevelSet",
-        "SublevelSet",
         "Cut",
         "Bundle",
     )

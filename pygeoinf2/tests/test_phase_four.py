@@ -470,7 +470,7 @@ class TestSubspaceConstructions:
 
     def test_an_affine_subspace_is_its_own_boundary(self, constrained):
         _, _, _, subspace = constrained
-        assert subspace.boundary() is subspace
+        assert subspace.boundary is subspace
 
     def test_no_hyperplanes_is_refused(self):
         with pytest.raises(ValueError, match="At least one hyperplane"):

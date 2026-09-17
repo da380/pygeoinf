@@ -14,6 +14,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Iterable
 
+from ..algebra.operators import Functional
 from ..algebra.spaces import HilbertSpace
 
 __all__ = [
@@ -23,6 +24,8 @@ __all__ = [
     "Complement",
     "Intersection",
     "Union",
+    "SublevelSet",
+    "LevelSet",
 ]
 
 
@@ -55,6 +58,24 @@ class Subset(ABC):
     def __contains__(self, x: Any) -> bool:
         """``x in subset``, at the default tolerance."""
         return self.contains(x)
+
+    @property
+    def boundary(self) -> Subset:
+        """The topological boundary, as a subset of the same space.
+
+        Structure that some subsets have and others do not: a ball knows its
+        sphere and a half-space its plane, while the boundary of a general
+        intersection has no description short of the sets themselves. The
+        default refuses, so that generic code can ask and find out, rather
+        than meet an attribute error.
+
+        Raises:
+            NotImplementedError: for a subset with no description of its
+                boundary.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not describe its boundary."
+        )
 
     def complement(self) -> Subset:
         """The set of points not in this one."""
@@ -104,6 +125,11 @@ class EmptySet(Subset):
         """
         return False
 
+    @property
+    def boundary(self) -> Subset:
+        """Itself: the empty set has no boundary points."""
+        return self
+
     def complement(self) -> Subset:
         """The whole space."""
         return UniversalSet(self._domain)
@@ -124,6 +150,11 @@ class UniversalSet(Subset):
             ``True``.
         """
         return True
+
+    @property
+    def boundary(self) -> Subset:
+        """Empty: the whole space is open and closed."""
+        return EmptySet(self._domain)
 
     def complement(self) -> Subset:
         """The empty set."""
@@ -160,6 +191,11 @@ class Complement(Subset):
             Whether the complement contains it.
         """
         return not self._subset.contains(x, rtol=rtol)
+
+    @property
+    def boundary(self) -> Subset:
+        """The boundary of the original subset, which a set shares with its complement."""
+        return self._subset.boundary
 
     def complement(self) -> Subset:
         """The original subset, rather than a doubly-wrapped one."""
@@ -252,3 +288,117 @@ class Union(Subset):
 
     def __repr__(self) -> str:
         return f"Union({', '.join(repr(s) for s in self._subsets)})"
+
+
+class SublevelSet(Subset):
+    """``{ x : f(x) <= level }`` for a functional ``f``.
+
+    A set given by an inequality on any functional, convex or not: a misfit
+    below a threshold, a norm within a budget, a nonlinear constraint. It
+    knows membership and its boundary, the level set, and nothing more; a
+    projection onto it would be a constrained minimisation, which is what
+    the convex sets in :mod:`.convex` have in closed form and this does not.
+    For a convex ``f`` with a closed-form projection, use one of those.
+
+    Closed, as every set here is: v1's ``open_set`` flag gave the strict
+    inequality, and with it a closure and a warning whenever an open set met
+    an operation needing a closed one. In floating point the two differ by
+    the tolerance and nothing else.
+    """
+
+    def __init__(self, functional: Functional, /, *, level: float = 0.0) -> None:
+        """
+        Args:
+            functional: ``f``.
+            level: the bound.
+        """
+        super().__init__(functional.domain)
+        self._functional = functional
+        self._level = float(level)
+
+    @property
+    def functional(self) -> Functional:
+        """``f``."""
+        return self._functional
+
+    @property
+    def level(self) -> float:
+        """The bound."""
+        return self._level
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """True when ``f(x) <= level`` to tolerance.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far above the level still counts, relative to the
+                level's magnitude, with a floor of one for a level of zero.
+
+        Returns:
+            Whether the set contains the point.
+        """
+        return self._functional(x) <= self._level + rtol * max(abs(self._level), 1.0)
+
+    @property
+    def boundary(self) -> Subset:
+        """The level set ``{ x : f(x) == level }``."""
+        return LevelSet(self._functional, level=self._level)
+
+    def __repr__(self) -> str:
+        return f"SublevelSet({self._functional!r}, level={self._level})"
+
+
+class LevelSet(Subset):
+    """``{ x : f(x) == level }`` for a functional ``f``.
+
+    An equality is empty in floating point without a tolerance, so
+    :meth:`contains` has one, scaled by the level.
+    """
+
+    def __init__(self, functional: Functional, /, *, level: float = 0.0) -> None:
+        """
+        Args:
+            functional: ``f``.
+            level: the value.
+        """
+        super().__init__(functional.domain)
+        self._functional = functional
+        self._level = float(level)
+
+    @property
+    def functional(self) -> Functional:
+        """``f``."""
+        return self._functional
+
+    @property
+    def level(self) -> float:
+        """The value."""
+        return self._level
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """True when ``|f(x) - level|`` is within tolerance.
+
+        Args:
+            x: a vector of the space.
+            rtol: the tolerance, relative to the level's magnitude, with a
+                floor of one for a level of zero.
+
+        Returns:
+            Whether the set contains the point.
+        """
+        return abs(self._functional(x) - self._level) <= rtol * max(
+            abs(self._level), 1.0
+        )
+
+    @property
+    def boundary(self) -> Subset:
+        """Itself: a level set has empty interior, so every point is a boundary point.
+
+        The same answer as for an affine subspace, and for the same reason.
+        v1 returned the empty set, the boundary of the level set *as a
+        manifold* rather than as a subset of the space.
+        """
+        return self
+
+    def __repr__(self) -> str:
+        return f"LevelSet({self._functional!r}, level={self._level})"
