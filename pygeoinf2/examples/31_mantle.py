@@ -14,7 +14,7 @@ and a *profile* along one ray.
 Then a small inversion, chosen to show something true about the geometry:
 point values on the surface alone. Shell by shell, the error of the posterior
 mean is smallest at the surface, holds to a depth of about a correlation
-length, and has reached that of knowing nothing by the core-mantle boundary;
+length, and by the core-mantle boundary is close to that of knowing nothing;
 the section through two stations shows where the data stop and the prior
 takes over.
 
@@ -27,7 +27,7 @@ import numpy as np
 from pygeoinf2 import plotting
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 from pygeoinf2.probability.gaussian import GaussianMeasure
-from pygeoinf2.radial.ball import Sobolev
+from pygeoinf2.sem1d.ball import Sobolev
 
 rng = np.random.default_rng(5)
 
@@ -125,6 +125,7 @@ plotting.plot(
     levels=24,
     **shared,
 )
+plotting.plot_points(X, stations, ax=maps[0], size=6.0)
 plotting.plot_shell(
     X,
     truth,
@@ -162,6 +163,11 @@ plotting.plot_section(
     title="Posterior mean, same plane",
     **shared,
 )
+# The stations that lie within five degrees of that plane.
+for panel in panels[:2]:
+    plotting.plot_section_points(
+        X, stations, ax=panel, through=(first, second), size=18.0
+    )
 # One ray is one ray: it can do better or worse than its shell, and the errors
 # printed above are the fair summary.
 plotting.plot_profile(X, truth, *first, ax=panels[2], color="black", label="truth")

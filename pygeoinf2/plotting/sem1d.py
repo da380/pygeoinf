@@ -1,6 +1,6 @@
 """Fields on the spectral-element interval, ball and annulus.
 
-An interval is a line. A ball is three-dimensional and has to be cut to be
+An interval is a line, and so is a radial profile. A ball is three-dimensional and has to be cut to be
 seen, and there are three cuts: a **shell** at one radius, drawn as a map by
 the sphere's own renderer; a **section** by a plane through the centre, which
 meets the ball in a great circle and is named by that circle's pole, by two
@@ -24,11 +24,17 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..radial.ball import Ball
-from ..radial.interval import Interval
-from .base import color_limits, plot, subplots
+from ..sem1d.axis import AxisSpace
+from ..sem1d.ball import Ball
+from .base import color_limits, plot, plot_points, subplots
 
-__all__ = ["plot_profile", "plot_section", "plot_shell", "section_values"]
+__all__ = [
+    "plot_profile",
+    "plot_section",
+    "plot_section_points",
+    "plot_shell",
+    "section_values",
+]
 
 
 # --------------------------------------------------------------------- #
@@ -37,8 +43,8 @@ __all__ = ["plot_profile", "plot_section", "plot_shell", "section_values"]
 
 
 @subplots.register
-def _(space: Interval, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -> Any:
-    """Ordinary axes: an interval needs no projection."""
+def _(space: AxisSpace, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -> Any:
+    """Ordinary axes: a function of one coordinate needs no projection."""
     import matplotlib.pyplot as pyplot
 
     kwargs.setdefault("figsize", (5.0 * columns, 3.2 * rows))
@@ -48,7 +54,7 @@ def _(space: Interval, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -> 
 
 @plot.register
 def _(
-    space: Interval,
+    space: AxisSpace,
     field: np.ndarray,
     /,
     *,
@@ -56,10 +62,11 @@ def _(
     padding: bool = False,
     **kwargs: Any,
 ) -> Any:
-    """Draw a field on an interval as a line through its nodal values.
+    """Draw a field on an interval, or a radial profile, as a line through
+    its nodal values.
 
     Args:
-        space: the interval.
+        space: the interval or the space of radial profiles.
         field: a vector of the space.
         ax: axes to draw on. A new figure is made if omitted.
         padding: draw the padded mesh too, shaded, and not the domain alone:
@@ -77,7 +84,7 @@ def _(
     values = np.asarray(field, dtype=float)
     if values.shape != space.grid_shape:
         raise ValueError(
-            f"A field on this interval has shape {space.grid_shape}, got "
+            f"A field of this space has shape {space.grid_shape}, got "
             f"{values.shape}."
         )
     lower, upper = space.bounds
@@ -198,6 +205,28 @@ def _(space: Ball, field: np.ndarray, /, **kwargs: Any) -> Any:
     See :func:`plot_shell`; :func:`plot_section` and :func:`plot_profile` are
     the other two views."""
     return plot_shell(space, field, **kwargs)
+
+
+@plot_points.register
+def _(space: Ball, points: Any, /, **kwargs: Any) -> Any:
+    """Scatter points of a ball on a map, by their latitude and longitude.
+
+    The radius is set aside: a map has nowhere to put it. Stations on the
+    surface are the usual case; :func:`plot_section_points` is where a depth
+    can be seen.
+
+    Args:
+        space: the ball or annulus.
+        points: ``(radius, latitude, longitude)`` triples, the angles in
+            degrees.
+        **kwargs: those of the sphere's ``plot_points``: ``data``, ``ax``,
+            ``marker``, ``size``, ``color`` and the rest.
+
+    Returns:
+        What the sphere's ``plot_points`` returns.
+    """
+    located = np.asarray(points, dtype=float).reshape(-1, 3)
+    return plot_points(_map_space(space, space.radius), located[:, 1:], **kwargs)
 
 
 def _unit(latitude: float, longitude: float, /) -> np.ndarray:
@@ -405,6 +434,69 @@ def plot_section(
     if title is not None:
         ax.set_title(title)
     return ax, mappable
+
+
+def plot_section_points(
+    space: Ball,
+    points: Any,
+    /,
+    *,
+    ax: Any,
+    longitude: float | None = None,
+    pole: Sequence[float] | None = None,
+    through: Sequence[Sequence[float]] | None = None,
+    tolerance: float = 5.0,
+    marker: str = "^",
+    size: float = 30.0,
+    color: str = "black",
+    **kwargs: Any,
+) -> Any:
+    """Mark on a section the points that lie in its plane, or near it.
+
+    The plane is named as :func:`plot_section` names it, and must be the one
+    the axes show. A point within ``tolerance`` degrees of the plane, as seen
+    from the centre, is drawn where its foot in the plane falls, at its own
+    radius; the others are left out, being somewhere else.
+
+    Args:
+        space: the ball or annulus.
+        points: ``(radius, latitude, longitude)`` triples, the angles in
+            degrees.
+        ax: the axes of the section.
+        longitude: the plane of this meridian and its antimeridian.
+        pole: the plane's pole, ``(latitude, longitude)`` in degrees.
+        through: two points ``(latitude, longitude)`` on the great circle.
+        tolerance: how far off the plane, in degrees, a point may be.
+        marker: matplotlib marker.
+        size: marker size.
+        color: marker color.
+        **kwargs: passed to ``Axes.scatter``.
+
+    Returns:
+        The scatter, and a boolean array saying which points were drawn.
+
+    Raises:
+        ValueError: if more than one of ``longitude``, ``pole`` and
+            ``through`` is given.
+    """
+    normal, right, up = _section_frame(longitude, pole, through)
+    located = np.asarray(points, dtype=float).reshape(-1, 3)
+    directions = np.stack([_unit(lat, lon) for _, lat, lon in located])
+    off = np.degrees(np.arcsin(np.clip(np.abs(directions @ normal), 0.0, 1.0)))
+    near = off <= float(tolerance)
+    feet = directions[near] - np.outer(directions[near] @ normal, normal)
+    feet = feet / np.linalg.norm(feet, axis=1, keepdims=True)
+    radii = located[near, 0]
+    scatter = ax.scatter(
+        radii * (feet @ right),
+        radii * (feet @ up),
+        marker=marker,
+        s=size,
+        color=color,
+        zorder=3,
+        **kwargs,
+    )
+    return scatter, near
 
 
 def plot_profile(

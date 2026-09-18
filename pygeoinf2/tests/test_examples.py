@@ -41,8 +41,9 @@ OPTIONAL = {
     "23_feasible_set": "cartopy",
     "24_preconditioning": "pyshtools",
     "25_distributions": "pyshtools",
-    "30_radial_interval": "planetmodel",
-    "31_radial_ball": ("planetmodel", "pyshtools", "cartopy"),
+    "30_varying_length_scale": "planetmodel",
+    "31_mantle": ("planetmodel", "pyshtools", "cartopy"),
+    "32_density_profile": "planetmodel",
 }
 
 

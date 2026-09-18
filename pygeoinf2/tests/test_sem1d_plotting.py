@@ -19,8 +19,8 @@ if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
 pytest.importorskip("pyshtools")
 
 from pygeoinf2 import plotting  # noqa: E402
-from pygeoinf2.radial import ball as ball_module  # noqa: E402
-from pygeoinf2.radial import interval as interval_module  # noqa: E402
+from pygeoinf2.sem1d import ball as ball_module  # noqa: E402
+from pygeoinf2.sem1d import interval as interval_module  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -62,13 +62,64 @@ class TestInterval:
             plotting.plot(space, np.zeros(3))
 
 
+class TestRadialProfile:
+    def test_a_profile_is_a_line_against_radius(self, rng):
+        from pygeoinf2.sem1d import radial as radial_module
+
+        space = radial_module.Sobolev(20, 2.0, 0.2, inner_radius=0.5)
+        x = space.random(rng=rng)
+        ax, line = plotting.plot(space, x)
+        assert np.array_equal(line.get_xdata(), space.interior_nodes)
+        assert ax.get_xlim() == (0.5, 1.0)
+        _, line = plotting.plot(space, x, padding=True)
+        assert np.array_equal(line.get_xdata(), space.nodes)
+
+
+class TestStations:
+    def test_points_go_on_a_map_by_their_angles(self, ball):
+        stations = [(1.0, 10.0, 20.0), (0.8, -40.0, 100.0), (1.0, 65.0, -150.0)]
+        result = plotting.plot_points(ball, stations)
+        ax = result[0] if isinstance(result, tuple) else result
+        assert hasattr(ax, "projection")
+
+    def test_a_section_shows_the_points_in_its_plane(self, ball, rng):
+        first, second = (10.0, 20.0), (-40.0, 95.0)
+        stations = [(1.0, *first), (0.7, *second), (1.0, 80.0, -120.0)]
+        ax, _ = plotting.plot_section(
+            ball, ball.random(rng=rng), through=(first, second)
+        )
+        scatter, drawn = plotting.plot_section_points(
+            ball, stations, ax=ax, through=(first, second)
+        )
+        assert list(drawn) == [True, True, False]
+        where = np.asarray(scatter.get_offsets())
+        assert np.allclose(np.hypot(where[:, 0], where[:, 1]), [1.0, 0.7])
+        # The same places the section's own values are read at.
+        _, _, latitudes, longitudes = plotting.section_values(
+            ball, ball.random(rng=rng), through=(first, second), angles=3600
+        )
+        nearest = np.argmin(np.hypot(latitudes - first[0], longitudes - first[1]))
+        angle = 2.0 * np.pi * nearest / 3600
+        assert np.allclose(where[0], [np.cos(angle), np.sin(angle)], atol=5e-3)
+
+    def test_the_tolerance_is_an_angle_off_the_plane(self, ball):
+        _, ax = pyplot.subplots()
+        off = [(1.0, 0.0, 93.0), (1.0, 0.0, 100.0)]
+        _, drawn = plotting.plot_section_points(ball, off, ax=ax, longitude=90.0)
+        assert list(drawn) == [True, False]
+        _, drawn = plotting.plot_section_points(
+            ball, off, ax=ax, longitude=90.0, tolerance=15.0
+        )
+        assert list(drawn) == [True, True]
+
+
 class TestShell:
     @pytest.mark.parametrize("which", ["ball", "annulus"])
     def test_a_shell_at_a_node_is_the_grid_there(self, which, request, rng):
         space = request.getfixturevalue(which)
         x = space.random(rng=rng)
         node = space.interior_radii.size // 2
-        from pygeoinf2.plotting.radial import _on_a_shell
+        from pygeoinf2.plotting.sem1d import _on_a_shell
 
         shell = _on_a_shell(space, x, space.interior_radii[node])
         assert np.allclose(shell, space.interior_values(x)[node], atol=1e-11)

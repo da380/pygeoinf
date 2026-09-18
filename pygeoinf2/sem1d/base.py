@@ -33,16 +33,33 @@ from ..algebra.spaces import (
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 
-__all__ = ["LengthScale", "SpectralElementSpace"]
+__all__ = ["Boundary", "LengthScale", "SpectralElementSpace"]
 
 #: A length scale: one number, or a function of position along the mesh.
 type LengthScale = float | Callable[[np.ndarray], np.ndarray]
+
+#: The condition at the ends of the mesh: ``"robin"``, the geometries' default,
+#: for the Robin condition matched to the operator, ``None`` for the natural
+#: (Neumann) one, or the
+#: Robin coefficients themselves, one for both ends or a ``(lower, upper)``
+#: pair with ``None`` for a natural end.
+type Boundary = None | str | float | tuple[float | None, float | None]
 
 #: The default padding at each end, in units of the length scale there. The
 #: kernel of ``A^-p`` has fallen to about a tenth at ``sqrt(8 nu)`` length
 #: scales, with ``nu`` the smoothness of the draws -- 3.5 at ``nu = 3/2`` --
 #: and the boundary's mark with it.
 _PADDING_LENGTH_SCALES = 4.0
+
+#: The same under ``boundary="robin"``, which measured does at two length
+#: scales what the natural condition does at four (DECISIONS.md D-122).
+_ROBIN_PADDING_LENGTH_SCALES = 2.0
+
+#: The Robin coefficient of ``boundary="robin"``, in units of ``1 / L``. One
+#: would be the decay of the solution of ``A u = 0`` and is exact for ``A^-1``
+#: on a line; the priors in use are higher powers, for which 0.7 is the better
+#: by up to an order of magnitude and never much the worse (D-122).
+_ROBIN_COEFFICIENT = 0.7
 
 #: Mesh nodes per half wavelength of the shortest mode kept, under the default
 #: element length. The upper part of a spectral-element spectrum is the mesh's
@@ -81,19 +98,21 @@ def _clamped_length_scale(
 
 
 def _resolved_padding(
-    padding: float | tuple[float, float] | None, probe: np.ndarray, /
+    padding: float | tuple[float, float] | None,
+    probe: np.ndarray,
+    boundary: Boundary,
+    /,
 ) -> tuple[float, float]:
     """The padding below and above: as given, or four length scales, those at
-    the ends of the domain.
+    the ends of the domain -- two under ``boundary="robin"``.
 
     Raises:
         ValueError: if either is negative.
     """
     if padding is None:
-        pads = (
-            _PADDING_LENGTH_SCALES * float(probe[0]),
-            _PADDING_LENGTH_SCALES * float(probe[-1]),
-        )
+        matched = isinstance(boundary, str) and boundary == "robin"
+        scales = _ROBIN_PADDING_LENGTH_SCALES if matched else _PADDING_LENGTH_SCALES
+        pads = (scales * float(probe[0]), scales * float(probe[-1]))
     elif np.ndim(padding) == 0:
         pads = (float(padding), float(padding))
     else:
@@ -102,6 +121,86 @@ def _resolved_padding(
     if min(pads) < 0.0:
         raise ValueError("The padding must be non-negative.")
     return pads
+
+
+def _resolved_boundary(
+    boundary: Boundary,
+    probe: np.ndarray,
+    ends: tuple[float, float] | None,
+    /,
+) -> tuple[float, float]:
+    """The Robin coefficients at the two ends of the mesh.
+
+    ``"robin"`` ends the mesh as if it went on: the condition the decaying
+    solution of ``A u = 0`` satisfies there, ``u' = -+ gamma u``. On a line
+    that solution is ``exp(-+ x / L)`` and ``gamma = 1 / L``; along a radius it
+    is ``exp(-+ r / L) / r`` and ``gamma = 1 / L +- 1 / r``, the curvature
+    adding at the outer end and subtracting at the inner, where it is not
+    small. That is exact for ``A^-1``; for the higher powers priors are made
+    of, ``0.7 / L`` in place of ``1 / L`` is measurably better, and is what is
+    used (DECISIONS.md D-122).
+
+    Args:
+        boundary: the condition asked for.
+        probe: the length scale across the domain, its ends first and last.
+        ends: the radii of the two ends of the mesh, under ``r^2 dr``; the
+            curvature terms are left out if it is ``None``, as on a line. An end at the centre
+            takes no condition.
+
+    Raises:
+        ValueError: for a name that is not ``"robin"``, or a negative
+            coefficient.
+    """
+    if boundary is None:
+        return (0.0, 0.0)
+    if isinstance(boundary, str):
+        if boundary != "robin":
+            raise ValueError("boundary must be None, 'robin', a number or a pair.")
+        lower = _ROBIN_COEFFICIENT / float(probe[0])
+        upper = _ROBIN_COEFFICIENT / float(probe[-1])
+        if ends is not None:
+            lower = max(lower - 1.0 / ends[0], 0.0) if ends[0] > 0.0 else 0.0
+            upper = upper + 1.0 / ends[1]
+        return (lower, upper)
+    if np.ndim(boundary) == 0:
+        pair = (float(boundary), float(boundary))
+    else:
+        lower, upper = boundary
+        pair = (
+            0.0 if lower is None else float(lower),
+            0.0 if upper is None else float(upper),
+        )
+    if min(pair) < 0.0:
+        raise ValueError("Robin coefficients must be non-negative.")
+    return pair
+
+
+#: Singular values of a fit over the domain are kept down to this fraction of
+#: the largest. The kept modes are those of the padded mesh and are nearly
+#: dependent on the domain alone, so the fit is ill-posed by construction; this
+#: is what picks the small solution out.
+_FIT_RCOND = 1e-10
+
+#: The ways a sampled function is continued past the domain.
+_EXTENSIONS = ("odd", "constant", "fit")
+
+
+def _fitted_over_the_domain(
+    modes: np.ndarray, weights: np.ndarray, values: np.ndarray, /
+) -> np.ndarray:
+    """The coefficients of the kept modes that best give ``values`` on the
+    domain, in its own quadrature, and nothing about the padding.
+
+    ``modes`` is ``(domain nodes, kept modes)``, ``weights`` the quadrature of
+    the domain's elements, ``values`` ``(domain nodes,)`` or that by any number
+    of columns. By a truncated singular value decomposition, so the answer is
+    the smallest that fits.
+    """
+    root = np.sqrt(weights)
+    left, singular, right = np.linalg.svd(root[:, None] * modes, full_matrices=False)
+    keep = singular > _FIT_RCOND * singular[0]
+    target = (root * values.T).T
+    return right[keep].T @ ((left[:, keep].T @ target).T / singular[keep]).T
 
 
 def _sampled_with_extension(
@@ -124,8 +223,8 @@ def _sampled_with_extension(
     Raises:
         ValueError: for an extension that is neither.
     """
-    if extension not in ("odd", "constant"):
-        raise ValueError("extension must be 'odd' or 'constant'.")
+    if extension not in _EXTENSIONS:
+        raise ValueError("extension must be 'odd', 'constant' or 'fit'.")
     nodes = np.asarray(nodes, dtype=float)
     values = np.array(sample(np.clip(nodes, lower, upper)), dtype=float)
     if extension == "odd":
@@ -377,15 +476,34 @@ class SpectralElementSpace(
     #                          Point evaluation                         #
     # ----------------------------------------------------------------- #
 
-    def _require_point_evaluation(self, what: str, /, *, unsafe: bool) -> None:
-        """Refuse point evaluation at or below half the spatial dimension
+    def point_evaluation_order(
+        self, /, *, points: Sequence[Any] | None = None
+    ) -> float:
+        """The Sobolev order a space must exceed for points to have values.
+
+        Half the spatial dimension (DECISIONS.md D-11), wherever the points
+        are; a geometry in which it depends on them says so.
+
+        Args:
+            points: the points in question. Any point of the domain if
+                omitted.
+
+        Returns:
+            The order that must be exceeded.
+        """
+        return self.spatial_dimension / 2.0
+
+    def _require_point_evaluation(
+        self, what: str, points: Sequence[Any], /, *, unsafe: bool
+    ) -> None:
+        """Refuse point evaluation at or below :meth:`point_evaluation_order`
         (DECISIONS.md D-11), where it has no representer."""
-        threshold = self.spatial_dimension / 2.0
+        threshold = self.point_evaluation_order(points=points)
         if unsafe or self._order > threshold:
             return
         raise ValueError(
-            f"{what} needs a Sobolev order above {threshold:g} on a "
-            f"{self.spatial_dimension}-dimensional domain, and this space has "
+            f"{what} needs a Sobolev order above {threshold:g} at these "
+            f"points, and this space has "
             f"order {self._order:g}. Below that a point evaluation is not a "
             f"bounded functional: it has no representer, and the one this "
             f"would return is a mesh-scale artifact with no limit as the modes "
@@ -419,7 +537,7 @@ class SpectralElementSpace(
                 dimension and *unsafe* is not set, or the point lies outside
                 the domain.
         """
-        self._require_point_evaluation("A Dirac functional", unsafe=unsafe)
+        self._require_point_evaluation("A Dirac functional", [point], unsafe=unsafe)
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
     def point_evaluation_operator(
@@ -446,7 +564,9 @@ class SpectralElementSpace(
         points = list(points)
         if not points:
             raise ValueError("At least one point is needed.")
-        self._require_point_evaluation("A point evaluation operator", unsafe=unsafe)
+        self._require_point_evaluation(
+            "A point evaluation operator", points, unsafe=unsafe
+        )
         return LinearOperator.from_matrix(
             self,
             EuclideanSpace(len(points)),

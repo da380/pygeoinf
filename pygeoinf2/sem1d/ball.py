@@ -41,8 +41,10 @@ chosen accordingly. In an annulus there is no centre and nothing to it.
 
 The numerics are ``planetmodel``'s: ``RadialOperatorFamily`` under the
 ``r^2`` measure, one ``SpectralBasis`` per degree held in a
-``SphericalBasis`` (reachable as :attr:`Ball.basis`), and the grid transforms
-of ``planetmodel.harmonics``, which go through ``pyshtools``.
+``SphericalBasis`` (reachable as :attr:`Ball.basis`), and its harmonics. The
+transform between coefficients and the grid is this package's, all the radial
+shells at once, held to ``planetmodel``'s route through ``pyshtools`` to
+rounding and taken in its place up to degree 128 (DECISIONS.md D-123).
 """
 
 from __future__ import annotations
@@ -63,17 +65,28 @@ from planetmodel.randomfield import (
 from planetmodel.sampling import AngularGrid, gauss_legendre
 
 from ..algebra.operators import LinearFunctional
+from ._transform import ShellTransform
 from .base import (
     _NODES_PER_MODE,
+    Boundary,
     LengthScale,
     SpectralElementSpace,
     _clamped_length_scale,
     _length_scale_key,
+    _fitted_over_the_domain,
+    _resolved_boundary,
     _resolved_padding,
     _sampled_with_extension,
 )
 
 __all__ = ["Ball", "Lebesgue", "Sobolev"]
+
+#: The largest degree whose shells are transformed together. Measured against
+#: ``planetmodel``'s shell-by-shell route through ``pyshtools``, the batched
+#: transform is 150 times faster at degree 8, nine at 32 and 1.5 at 128, its
+#: Legendre step being dense; beyond that it has not been measured, and the
+#: other route is taken (DECISIONS.md D-123).
+_BATCHED_LMAX = 128
 
 #: Relative margin on an eigenvalue bound, so that roundoff cannot drop the
 #: mode that defines it.
@@ -95,6 +108,7 @@ class Ball(SpectralElementSpace):
         radial_modes: int | None = None,
         max_eigenvalue: float | None = None,
         padding: float | tuple[float, float] | None = None,
+        boundary: Boundary = "robin",
         ngll: int = 5,
         element_length: float | None = None,
     ) -> None:
@@ -116,10 +130,23 @@ class Ball(SpectralElementSpace):
                 where it matters, the shortest wavelength kept being the
                 angular one of degree ``lmax`` at the outer radius. The padded
                 mesh holds more such modes than the domain, by about the ratio
-                of the two volumes, and the dimension pays for it.
+                of the two volumes, and the dimension pays for it. Should the
+                mesh's own first mode of degree ``lmax`` lie above that bound,
+                as a Robin condition can make it, the bound is raised to it,
+                so that every degree keeps a mode.
             padding: how far the radial mesh extends past each end, one
                 length or an ``(inwards, outwards)`` pair; inwards it stops at
-                the centre. Four length scales by default.
+                the centre. Two length scales by default; four under the
+                natural condition.
+            boundary: the condition at the ends of the radial mesh.
+                ``"robin"``, the default, ends the mesh as if it went on,
+                ``u' = -+ (0.7 / L +- 1 / r) u``: measured, two length scales
+                of padding under it do what four do under the natural
+                condition, and in a ball the padding is most of the dimension
+                (DECISIONS.md D-122). One coefficient serves every degree.
+                ``None`` is the natural condition, and doubles the default
+                padding. A number or a pair gives the coefficients themselves;
+                none is applied at the centre.
             ngll: Gauss-Lobatto-Legendre nodes per radial element.
             element_length: the longest a radial element may be. By default
                 short enough for the shortest mode kept to be resolved, and
@@ -140,8 +167,9 @@ class Ball(SpectralElementSpace):
             raise ValueError("Give radial_modes or max_eigenvalue, not both.")
 
         clamped, probe = _clamped_length_scale(length_scale, inner, outer)
-        pads = _resolved_padding(padding, probe)
+        pads = _resolved_padding(padding, probe, boundary)
         pads = (min(pads[0], inner), pads[1])
+        robin = _resolved_boundary(boundary, probe, (inner - pads[0], outer + pads[1]))
 
         ngll = int(ngll)
         if element_length is None:
@@ -173,7 +201,7 @@ class Ball(SpectralElementSpace):
             inner, outer, pad=pads, weight="r2", ngll=ngll, drmax=element_length
         )
         family = RadialOperatorFamily(
-            mesh, kappa=lambda r: clamped(r) ** 2, weight="r2"
+            mesh, kappa=lambda r: clamped(r) ** 2, weight="r2", robin=robin
         )
         physical = restriction(mesh, inner, outer)
         if radial_modes is not None:
@@ -194,7 +222,15 @@ class Ball(SpectralElementSpace):
                     kappa=lambda r: clamped(r) ** 2,
                     weight="r2",
                 )
-                max_eigenvalue = float(bare.eigvalsh(lmax)[0]) * (1.0 + _BOUND_RTOL)
+                # And no lower than the padded mesh's own first mode of that
+                # degree, so that every degree keeps one: first eigenvalues
+                # rise with the degree. Under the natural condition the mesh's
+                # is the lower and this changes nothing; a Robin condition
+                # lifts the long modes, and on a short length scale can lift
+                # them past the domain's bound.
+                max_eigenvalue = max(
+                    float(bare.eigvalsh(lmax)[0]), float(family.eigvalsh(lmax)[0])
+                ) * (1.0 + _BOUND_RTOL)
             rule = {"theta_max": float(max_eigenvalue)}
         try:
             bases = [
@@ -208,10 +244,12 @@ class Ball(SpectralElementSpace):
             ) from error
         self._basis = SphericalBasis(bases)
         self._grid = gauss_legendre(lmax)
+        self._transform = ShellTransform(self._grid) if lmax <= _BATCHED_LMAX else None
 
         self._lmax = lmax
         self._radii = (inner, outer)
         self._padding = pads
+        self._robin = robin
         self._ngll = ngll
         self._element_length = element_length
         self._length_scale = length_scale
@@ -241,6 +279,12 @@ class Ball(SpectralElementSpace):
     def padding(self) -> tuple[float, float]:
         """The radial padding inwards and outwards."""
         return self._padding
+
+    @property
+    def robin(self) -> tuple[float, float]:
+        """The Robin coefficients at the two ends of the radial mesh, zero
+        meaning the natural condition."""
+        return self._robin
 
     @property
     def length_scale(self) -> LengthScale:
@@ -315,6 +359,7 @@ class Ball(SpectralElementSpace):
             tuple(int(n) for n in self._basis.nmodes),
             self._radii,
             self._padding,
+            self._robin,
             self._ngll,
             self._element_length,
             self._length_scale_key,
@@ -338,17 +383,20 @@ class Ball(SpectralElementSpace):
         """The coefficients of the kept eigenfunctions: a harmonic analysis of
         every radial shell, then each harmonic's radial function projected
         onto the modes of its degree, both by the grid's own quadrature."""
-        coefficients = harmonics.analyse_grid(
-            np.asarray(x, dtype=float), self._grid, lmax=self._lmax
-        )
+        values = np.asarray(x, dtype=float)
+        if self._transform is None:
+            coefficients = harmonics.analyse_grid(values, self._grid, lmax=self._lmax)
+        else:
+            coefficients = self._transform.analyse(values)
         return self._basis.analyse(coefficients)
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
         """The values on the padded grid: the radial syntheses, then a
         harmonic synthesis of every shell."""
-        return harmonics.synthesise_grid(
-            self._basis.synthesise(c, physical=False), self._grid
-        )
+        functions = self._basis.synthesise(c, physical=False)
+        if self._transform is None:
+            return harmonics.synthesise_grid(functions, self._grid)
+        return self._transform.synthesise(functions)
 
     # ----------------------------------------------------------------- #
     #                               The grid                            #
@@ -398,31 +446,40 @@ class Ball(SpectralElementSpace):
         function: Callable[[tuple[float, float, float]], float],
         /,
         *,
-        extension: str = "odd",
+        extension: str = "fit",
     ) -> np.ndarray:
-        """Sample a function on the grid, continuing it along each radius
-        across the padding.
+        """The field of this space that a function of position names.
 
         The function is never called outside the domain, where it need not be
-        defined. A padding node is given ``2 f(end) - f(mirror)`` along its
-        radius, the odd reflection through the value at the nearer end of the
-        domain, which continues the function with its radial slope; see
-        :meth:`~pygeoinf2.radial.interval.Interval.project_function` for what
-        holding it constant costs.
+        defined. ``"fit"``, the default, asks nothing of the padding: it
+        returns the field in the span of the kept modes that best matches the
+        function on the domain, harmonic by harmonic in the domain's own
+        quadrature. For a function regular at the centre it is right
+        everywhere, the centre included -- 1e-9 over the domain and 2e-6
+        within a quarter of the radius at sixteen radial modes, where the
+        continuations below give 5e-3 and 3e-2 (DECISIONS.md D-124) -- and it
+        is what a mean, a reference model or a synthetic truth wants.
+
+        ``"constant"`` and ``"odd"`` return the function's own values on the
+        domain's part of the grid and continue them along each radius across
+        the padding, by the value at the nearer end or by ``2 f(end) -
+        f(mirror)``; see
+        :meth:`~pygeoinf2.sem1d.axis.AxisSpace.project_function`. The constant
+        keeps a positive function positive on the padding, which a standard
+        deviation handed to ``pointwise_std=`` must be.
 
         Args:
             function: called with a point ``(radius, latitude, longitude)`` of
                 the domain, the angles in degrees.
-            extension: ``"odd"``, the reflection, or ``"constant"``, the value
-                at the end of the radius. The reflection of a positive
-                function need not be positive; the constant is.
+            extension: ``"fit"``, ``"odd"`` or ``"constant"``.
 
         Returns:
-            The sampled field, which :meth:`truncate` settles into the span of
-            the kept modes.
+            The field. Under ``"fit"`` it is in the span of the kept modes;
+            otherwise it holds the function's values on the domain's grid
+            points.
 
         Raises:
-            ValueError: for an extension that is neither.
+            ValueError: for an extension that is none of these.
         """
         shells: dict[float, np.ndarray] = {}
 
@@ -440,7 +497,30 @@ class Ball(SpectralElementSpace):
                     )
             return np.stack([shells[float(r)] for r in radii])
 
+        if extension == "fit":
+            return self._fitted(sample(self.interior_radii))
         return _sampled_with_extension(self.radii, *self._radii, sample, extension)
+
+    def _fitted(self, values: np.ndarray, /) -> np.ndarray:
+        """The field in the span of the kept modes that best matches values
+        given on the domain's own part of the grid."""
+        if self._transform is None:
+            functions = harmonics.analyse_grid(values, self._grid, lmax=self._lmax)
+        else:
+            functions = self._transform.analyse(values)
+        components = np.zeros(self.dim)
+        for degree, radial in enumerate(self._basis):
+            interior = radial.modes()[radial.restriction.nodes]
+            packed = np.concatenate(
+                (
+                    functions[0, degree, : degree + 1],
+                    functions[1, degree, 1 : degree + 1],
+                )
+            )  # (harmonics of the degree, domain radii)
+            fitted = _fitted_over_the_domain(interior, radial.weights(), packed.T)
+            start = self._basis.block(0, degree, 0).start
+            components[start : start + fitted.size] = fitted.T.reshape(-1)
+        return self.from_components(components)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point of the domain, drawn uniformly over its volume."""
@@ -556,6 +636,7 @@ class Lebesgue(Ball):
         radial_modes: int | None = None,
         max_eigenvalue: float | None = None,
         padding: float | tuple[float, float] | None = None,
+        boundary: Boundary = "robin",
         ngll: int = 5,
         element_length: float | None = None,
     ) -> None:
@@ -568,6 +649,8 @@ class Lebesgue(Ball):
             radial_modes, max_eigenvalue: the radial truncation at each
                 degree; isotropic when neither is given.
             padding: the radial mesh's reach past each end.
+            boundary: the condition at the ends of the radial mesh; see
+                :class:`Ball`.
             ngll: nodes per radial element.
             element_length: the longest a radial element may be.
         """
@@ -580,6 +663,7 @@ class Lebesgue(Ball):
             radial_modes=radial_modes,
             max_eigenvalue=max_eigenvalue,
             padding=padding,
+            boundary=boundary,
             ngll=ngll,
             element_length=element_length,
         )
@@ -601,6 +685,7 @@ class Sobolev(Ball):
         radial_modes: int | None = None,
         max_eigenvalue: float | None = None,
         padding: float | tuple[float, float] | None = None,
+        boundary: Boundary = "robin",
         ngll: int = 5,
         element_length: float | None = None,
     ) -> None:
@@ -614,6 +699,8 @@ class Sobolev(Ball):
             radial_modes, max_eigenvalue: the radial truncation at each
                 degree; isotropic when neither is given.
             padding: the radial mesh's reach past each end.
+            boundary: the condition at the ends of the radial mesh; see
+                :class:`Ball`.
             ngll: nodes per radial element.
             element_length: the longest a radial element may be.
         """
@@ -626,6 +713,7 @@ class Sobolev(Ball):
             radial_modes=radial_modes,
             max_eigenvalue=max_eigenvalue,
             padding=padding,
+            boundary=boundary,
             ngll=ngll,
             element_length=element_length,
         )

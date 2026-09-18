@@ -1090,8 +1090,14 @@ Mag's call), and pointing Sphinx at the new package (REVIEW2 question 11).
 
 ## 17. Spectral-element spaces
 
-**D-115. `radial` wraps `planetmodel.randomfield`; the numerics stay there**
-(2026-09-18, David). Sobolev spaces on an interval, a ball and an annulus in
+**D-115. `sem1d` wraps `planetmodel.randomfield`; the numerics stay there**
+(2026-09-18, David; renamed twice the same day. From `radial`, because a plain
+interval in a package of that name reads as a function of radius, which it is
+not: `interval` is the line under `dx`, `radial` is D-121, `ball` the ball.
+Then from `spectral_element` to `sem1d`, David's `1d_sem` with the digit moved,
+a module name being unable to start with one: shorter, and it says the
+spectral elements are along one coordinate, the ball's angles being
+harmonics, which leaves the name free for a three-dimensional mesh). Sobolev spaces on an interval, a ball and an annulus in
 the eigenbasis of `A = 1 - div(L² grad)` on a Gauss-Lobatto-Legendre mesh,
 for what the Fourier `line` cannot do: a length scale that varies, a mesh that
 is not uniform, the `r² dr` measure. The optional extra is
@@ -1148,9 +1154,11 @@ dimensions and was hidden before; a shorter padding with Robin ends is the
 way out, and is not wired through. A mesh that reaches `r = 0` is a ball's
 even under an annulus, and drops the axis node above degree zero, so one
 `radial_modes` cannot be "all of them" at every degree there. Padding defaults
-to four length scales at each end, inwards no further than the centre: a ball
-is padded outwards only. The statistical checks of the ball carry `slow`
-(D-109): a draw is one harmonic transform per radial shell.
+to two length scales at each end under the default Robin condition and four
+under the natural one (D-122), inwards no further than the centre: a ball
+is padded outwards only. The statistical checks of the ball carried `slow`
+(D-109) while a draw was one harmonic transform per radial shell; since D-123
+they take five seconds where they took 158, and run with the rest.
 
 **D-119. A sampled function is continued across the padding by odd
 reflection** (2026-09-18, David). `project_function` never calls the function
@@ -1175,7 +1183,13 @@ was the first guess and was tested; for a purely radial one the two were
 alike. The reflection stays the default: the surface is where data are, the
 norm over the domain is better, and the centre is not mended by either fill.
 What would mend it is a fit over the domain alone and not a projection over
-the padded mesh, which is not built. This touches only the sampling of a given function; priors, draws and
+the padded mesh, which is not built. **All of this was measured under the natural condition and four length
+scales of padding.** Under the Robin default (D-122) a continued function does
+not satisfy the condition at the mesh's end, the padding is half as long, and
+the two fills come out alike over the domain, the reflection still the better
+at an end by about two (appendix); what does not care is the fit of D-124,
+which is now what `project_function` does unless asked for a continuation.
+This touches only the sampling of a given function; priors, draws and
 inversions are in the span, where point evaluation is exact.
 
 **D-120. A ball is drawn by cutting it, and a section needs no rotation**
@@ -1196,6 +1210,76 @@ renderers are registered from `plotting` when `planetmodel` imports, keeping
 D-92's direction (plotting knows the geometry, not the reverse), at 77 ms on
 an `import pygeoinf2` of about 270, with neither pyshtools nor matplotlib
 loaded by it.
+
+**D-121. A function of radius is its own space, under `r² dr`** (2026-09-18,
+David). `sem1d.radial` holds profiles on `[inner_radius, radius]`:
+the part of degree zero of the ball without an angular grid, with the volume
+integral `4π ∫ u v r² dr` for its inner product, so that a profile's
+components are the ball's components of degree zero to rounding and the two
+can be copied across. It shares `axis.AxisSpace` with the interval, from which
+it differs in the measure, in stopping its padding at the centre, and in where
+a point has a value: a radius names a whole sphere, so away from the centre
+evaluation needs an order above one half, and at the centre, a point of space,
+three halves. The guard therefore takes the points (`point_evaluation_order(
+points=)`); measured, the Dirac's representer at the centre still grows with
+the modes at order 1.25 and has settled at 1.75, and at `r = 0.5` has settled
+by 0.75, in a shell or a whole ball alike.
+
+**D-122. The mesh ends with a Robin condition by default, which halves the
+padding** (2026-09-18, David: the whole point of padding is that the specific
+condition should not matter, and this is the more efficient). `boundary=` is `None` (natural), `"robin"`, or
+the coefficients. The matched condition is the one the decaying solution of
+`A u = 0` satisfies: `γ = 1/L` on a line, where it is exact for `A⁻¹` and a
+mesh that stops at the domain needs no padding at all; `1/L ± 1/r` along a
+radius, the curvature term a third of the other at a shell's inner end in the
+case measured. Priors are higher powers, and for those `0.7/L` is better than
+`1/L` by up to an order of magnitude and never much the worse, so `"robin"` is
+`0.7/L`, with the curvature under `r²` and nothing at the centre; a
+coefficient that would be negative is held at zero. With it two length scales
+of padding do what four do under the natural condition, which is the default
+padding it sets; in a ball every degree shares the one coefficient and it
+holds there too, with a quarter fewer unknowns in the case measured and a
+shorter mesh (appendix). It is the default, `boundary=None` being the natural
+condition with its four length scales; the first version had them the other
+way about. A Robin
+condition lifts the long modes, on a short length scale past the bound the
+domain sets for the default truncation (D-118), which is then raised to the
+mesh's own first eigenvalue of degree `lmax` so that every degree keeps a
+mode.
+
+**D-123. The ball transforms all its shells at once** (2026-09-18, David).
+`planetmodel.harmonics` goes to pyshtools one shell per call, and that Python
+loop was the whole cost of a draw and of a covariance application.
+`sem1d._transform.ShellTransform` contracts the degrees by one
+batched matrix product against the harmonics on the prime meridian and the
+longitudes by a second, with no loop at all; it agrees with the other route to
+rounding and is taken up to degree 128, the largest measured, beyond which the
+other is (its Legendre step is dense, ducc0's is not, and the gain falls from
+150 times at degree 8 to 1.5 at 128). Example 31 went from 10.5 s to 1.3. It
+could move to `planetmodel`'s `harmonics` as it stands, and is to, later
+(David, 2026-09-18): for the moment it stays here.
+
+**D-124. A sampled function is fitted over the domain alone, by default**
+(2026-09-18; the default David's, the same day). `project_function`, whose
+`extension` is `"fit"` unless said otherwise, asks nothing of the padding:
+it returns the field in the span of the kept modes that best matches the
+function on the domain, in the domain's quadrature, harmonic by harmonic in a
+ball. The modes are the padded mesh's and nearly dependent on the domain, so
+the fit is a truncated SVD (`rcond` 1e-10) and picks the smallest answer;
+the coefficients came out no larger than the other fills'. It converges as the
+function is smooth and not as a continuation is, by four to ten orders of
+magnitude in the cases measured, **the centre of a ball included**: what D-119
+records as the centre's trouble was the projection of a continued function
+over the whole padded ball. David chose `"odd"` when the choice lay between
+two continuations under the natural condition, and the fit once it existed
+and Robin (D-122) had taken most of the reflection's edge over the constant.
+`"odd"` and `"constant"` remain, and return the function's own nodal values:
+what a raw multiplier wants and, for `"constant"`, what keeps a positive field
+positive on the padding, as a field handed to `pointwise_std=` has to be and a
+fitted one need not be. The fit is what a mean, a reference model or a
+synthetic truth wants, and those are what the method is mostly for. D-120 gains `plot_points` for a ball, on a map by latitude and
+longitude, and `plot_section_points`, which marks the points within a
+tolerance of a section's plane at the foot of each in it.
 
 ---
 
@@ -1293,3 +1377,39 @@ laptop and should be re-measured before being quoted.
   1]`, `L` 0.2, at 8, 16, 32, 64 modes, largest leaked term 6.7e-2, 3.2e-2,
   1.7e-2, 8.5e-3 against a constant-fill error of 7.1e-2, 3.5e-2, 1.7e-2,
   8.3e-3, leaving a reflected error of 7.2e-3, 3.2e-3, 1.4e-3, 2.9e-4.
+- Robin ends (D-122), worst relative error of the prior variance on the domain
+  against a mesh padded by twelve length scales, `L` 0.1. Interval `[0, 2]`,
+  400 modes, at paddings 0, 1, 2, 4 `L`: `A⁻¹` natural 1.0, 1.6e-1, 3.0e-2,
+  1.1e-2 and `γ = 1/L` 2.3e-2, 1.9e-2, 1.2e-2, 1.0e-2, the last figures being
+  the truncation's; `A⁻²` natural 1.0, 4.1e-1, 9.2e-2, 3.0e-3 and `1/L` 5.0e-1,
+  6.8e-2, 9.1e-3, 1.6e-4. The coefficient, `γ = c/L` at padding 2 `L`: `A⁻²`,
+  c = 0.25, 0.5, 0.7, 1, 1.4, 2, 4 gives 4.9e-2, 2.2e-2, 7.3e-3, 9.1e-3, 2.4e-2,
+  3.9e-2, 6.1e-2; `A⁻³`, 8.9e-2, 3.0e-2, 2.6e-3, 3.7e-2, 6.7e-2, 9.5e-2, 1.4e-1.
+  Curvature, shell `[0.5, 1]` at 2 `L`, c = 0.7 flat against curved: `A⁻²·⁵`
+  2e-2 and 6e-3, `A⁻³` 4e-2 and 3e-3, `A⁻⁴` 8e-2 and 3e-2; in a whole ball the
+  two are alike from 2 `L`. Full ball, `lmax` 12, `L` 0.2, `A⁻³`, at 1, 2, 3,
+  4 `L`: natural 7e-1, 2e-1, 4e-2, 7e-3 and `"robin"` 3e-2, 3e-3, 2e-3, 5e-4,
+  dimension 4511, 5379, 6276, 7124; the annulus the same from 2 `L`. `A⁻¹` has
+  no pointwise variance in three dimensions and was not a test there.
+- The batched transform (D-123), against planetmodel's loop through pyshtools,
+  per transform at `lmax` and shells (4, 29), (8, 65), (16, 105), (32, 105),
+  (64, 150), (128, 100): 0.79, 2.6, 8.6, 18, 45, 60 ms against 0.01, 0.02,
+  0.11, 2.1, 17, 39 ms; agreement 5e-15 rising to 5e-11.
+- A fit over the domain (D-124), relative `L2` error on the domain. `cos` on
+  `[-1, 2]` at 32, 64, 128 modes: reflected 1.0e-3, 2.4e-4, 5.9e-5; fitted
+  9.7e-8, 7.1e-13, 1.2e-14, the smallest singular value kept 1e-4, 2.5e-9,
+  3e-16 of the largest and the largest coefficient 0.86 to 0.89 against 0.85.
+  `cos(3r)(1 + z)`, `lmax` 4, at 8, 16, 32 radial modes: unit ball, constant
+  2e-2, 5e-3, 2e-3, reflected 3e-2, 3e-3, 8e-4, fitted 4e-9, 8e-10, 8e-10, the
+  largest error within `r < 0.25` 5e-2 to 7e-3, 1e-1 to 1e-2 and 2e-6; annulus
+  fitted 6e-8, 2e-10, 1e-10.
+- The fills under the Robin default (D-119, D-122), `cos` on `[-1, 2]`, `L`
+  0.1, two length scales of padding, at 32, 64, 128 modes, relative `L2` on
+  the domain and error at `x = 2`: constant 4.1e-3, 1.2e-3, 3.2e-4 and 1.8e-2,
+  7.2e-3, 3.1e-3; reflected 4.6e-3, 1.2e-3, 3.2e-4 and 1.3e-2, 4.0e-3, 1.2e-3;
+  fitted 3.3e-5, 3.1e-8, 7.0e-14 and 3.1e-4, 4.1e-7, 2.2e-13. Under the
+  natural condition and four length scales the reflection's `L2` was 1.0e-3,
+  2.4e-4, 5.9e-5. The standard error of `check_white_noise`'s off-diagonal
+  estimate is the geometric mean of the two metric values over root `n`, which
+  a Robin condition raises: 0.048 against 0.021 at 20 000 draws on a radial
+  `H²` with `L` 0.3, against the check's fixed 0.06.

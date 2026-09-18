@@ -14,6 +14,10 @@ calibrated by a standard deviation *field*: the raw variance of ``A^-p`` is
 larger where ``L`` is smaller, and ``pointwise_std=`` flattens it -- or shapes
 it, given a field -- without touching the correlation structure.
 
+This is an interval of the *line*: the measure is ``dx``, the coordinate is a
+position and not a radius, and the mesh is padded at both ends. A function of
+radius in a planet, under ``r^2 dr``, is example 32.
+
 Needs planetmodel, which comes with the 'planetmodel' extra.
 """
 
@@ -22,7 +26,7 @@ import numpy as np
 from pygeoinf2 import plotting
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 from pygeoinf2.probability.gaussian import GaussianMeasure
-from pygeoinf2.radial.interval import Sobolev
+from pygeoinf2.sem1d.interval import Sobolev
 
 rng = np.random.default_rng(3)
 
@@ -39,8 +43,8 @@ X = Sobolev(160, 1.0, length_scale, upper=2.0)
 print(X)
 print(
     f"a mesh of {X.nodes.size} nodes on [{X.nodes[0]:.2f}, {X.nodes[-1]:.2f}]: "
-    f"padded by {X.padding[0]:.2f} below and {X.padding[1]:.2f} above, four "
-    "length scales at each end"
+    f"padded by {X.padding[0]:.2f} below and {X.padding[1]:.2f} above, two "
+    "length scales at each end, under a Robin condition"
 )
 print()
 

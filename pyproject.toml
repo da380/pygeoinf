@@ -23,10 +23,11 @@ dependencies = [
 # ducc0 is the fast transform backend; pyshtools selects it by default when it
 # is importable, so nothing in the code refers to it.
 sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0"]
-# Spaces on intervals, annuli and balls in the eigenbasis of an elliptic
-# operator on a spectral-element mesh (pygeoinf2.radial): the numerics are
-# planetmodel.randomfield's, public from 1.2. Its harmonics extra brings
-# pyshtools and ducc0 (D-114), which the ball's grid transforms go through.
+# Spaces on intervals, radial profiles, annuli and balls in the eigenbasis of
+# an elliptic operator on a spectral-element mesh (pygeoinf2.sem1d):
+# the numerics are planetmodel.randomfield's, public from 1.2. Its harmonics
+# extra brings pyshtools and ducc0 (D-114), which draw a ball's shells as maps
+# and transform it above degree 128.
 planetmodel = ["planetmodel[harmonics]>=1.2.0"]
 # Alternative QP backends for the convex-analysis solvers.
 osqp = ["osqp>=1.0.0"]

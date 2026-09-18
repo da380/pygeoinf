@@ -14,8 +14,9 @@ actually made.
 
 A ball has to be cut to be seen: ``plot_shell`` (which is what ``plot`` does
 there), ``plot_section`` by any plane through the centre, and
-``plot_profile`` along a ray, with ``section_values`` for the numbers. They
-are here when ``planetmodel`` is installed.
+``plot_profile`` along a ray, with ``section_values`` for the numbers and
+``plot_section_points`` for the stations in a section's plane. They are here
+when ``planetmodel`` is installed.
 """
 
 from .base import (
@@ -35,7 +36,13 @@ from .sets import plot_set
 from . import sphere as _sphere  # noqa: F401  (registers the sphere renderers)
 
 try:  # The spectral-element spaces need planetmodel, an optional extra.
-    from .radial import plot_profile, plot_section, plot_shell, section_values
+    from .sem1d import (
+        plot_profile,
+        plot_section,
+        plot_section_points,
+        plot_shell,
+        section_values,
+    )
 except ImportError:  # pragma: no cover
     pass
 
@@ -55,4 +62,10 @@ __all__ = [
     "moments",
 ]
 if "plot_section" in globals():
-    __all__ += ["plot_shell", "plot_section", "plot_profile", "section_values"]
+    __all__ += [
+        "plot_shell",
+        "plot_section",
+        "plot_section_points",
+        "plot_profile",
+        "section_values",
+    ]

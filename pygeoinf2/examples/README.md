@@ -43,8 +43,9 @@ failing test rather than a surprise later.
 | 27 | `mfem_inverse` | an inverse problem on a finite element space, with boundary conditions |
 | 28 | `nonlinear_map` | when the forward map is not linear: the mode, and a Gaussian on it |
 | 29 | `mfem_hilbert` | the same finite element inverse problem with no coordinates: MFEM computes, this library conducts |
-| 30 | `radial_interval` | a correlation length that varies along an interval, the padding that makes it possible, and a prior calibrated by a field |
-| 31 | `radial_ball` | a field in a mantle, cut three ways to be seen: a shell, a section by any plane, a profile; and what surface data do not reach |
+| 30 | `varying_length_scale` | a correlation length that varies along an interval of the line, the padding that makes it possible, and a prior calibrated by a field |
+| 31 | `mantle` | a field in a mantle, cut three ways to be seen: a shell, a section by any plane, a profile; and what surface data do not reach |
+| 32 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
 
 ## The ones with optional dependencies
 
@@ -56,7 +57,7 @@ enforces, so it cannot drift from what actually runs.
 | `mfem` | 16, 27, 29 |
 | `pyshtools` | 19, 24, 25 |
 | `cartopy` | 20, 21, 22, 23, 31 |
-| `planetmodel` | 30, 31 |
+| `planetmodel` | 30, 31, 32 |
 
 ```
 poetry install --extras mfem

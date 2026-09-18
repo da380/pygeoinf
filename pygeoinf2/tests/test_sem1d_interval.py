@@ -14,7 +14,7 @@ if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
     pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
 
 from pygeoinf2 import Traits  # noqa: E402
-from pygeoinf2.radial.interval import Interval, Lebesgue, Sobolev  # noqa: E402
+from pygeoinf2.sem1d.interval import Interval, Lebesgue, Sobolev  # noqa: E402
 from pygeoinf2.testing import (  # noqa: E402
     check_coordinates,
     check_measure,
@@ -31,10 +31,12 @@ def varying(x):
     return 0.2 - 0.1 * (np.asarray(x) + 1.0) / 3.0
 
 
-def build(order, /, *, modes=40, length_scale=varying):
+def build(order, /, *, modes=40, length_scale=varying, **options):
     if order == 0.0:
-        return Lebesgue(modes, lower=-1.0, upper=2.0, length_scale=length_scale)
-    return Sobolev(modes, order, length_scale, lower=-1.0, upper=2.0)
+        return Lebesgue(
+            modes, lower=-1.0, upper=2.0, length_scale=length_scale, **options
+        )
+    return Sobolev(modes, order, length_scale, lower=-1.0, upper=2.0, **options)
 
 
 def complete(order, /, *, length_scale=0.3):
@@ -66,8 +68,11 @@ class TestTheSpace:
         assert space.interior_nodes[0] == -1.0 and space.interior_nodes[-1] == 2.0
         assert np.array_equal(space.nodes[space.interior_mask], space.interior_nodes)
 
-    def test_the_default_padding_is_four_length_scales_at_each_end(self):
-        assert build(1.0).padding == pytest.approx((0.8, 0.4))
+    def test_the_default_padding_is_two_length_scales_at_each_end(self):
+        """Under the Robin condition, which is the default; four under the
+        natural one, which needs them (DECISIONS.md D-122)."""
+        assert build(1.0).padding == pytest.approx((0.4, 0.2))
+        assert build(1.0, boundary=None).padding == pytest.approx((0.8, 0.4))
 
     def test_the_metric_is_a_power_of_the_eigenvalues(self):
         space = build(2.5)
@@ -78,7 +83,12 @@ class TestTheSpace:
 
     def test_the_spectrum_without_padding_is_the_neumann_cosines(self):
         space = Lebesgue(
-            12, upper=2.0, length_scale=0.5, padding=0.0, element_length=0.05
+            12,
+            upper=2.0,
+            length_scale=0.5,
+            padding=0.0,
+            boundary=None,
+            element_length=0.05,
         )
         n = np.arange(12)
         assert np.allclose(
@@ -124,6 +134,64 @@ class TestTheSpace:
             sobolev.order_inclusion_operator(build(0.0, modes=30))
 
 
+class TestBoundary:
+    def test_robin_is_matched_to_the_length_scale_and_halves_the_padding(self):
+        space = build(0.0, length_scale=0.1, boundary=None)
+        assert space.robin == (0.0, 0.0) and space.padding == pytest.approx((0.4, 0.4))
+        matched = Lebesgue(
+            40, lower=-1.0, upper=2.0, length_scale=0.1, boundary="robin"
+        )
+        assert matched.padding == pytest.approx((0.2, 0.2))
+        assert matched.robin == pytest.approx((7.0, 7.0))
+        assert matched != space
+        varied = Lebesgue(
+            40, lower=-1.0, upper=2.0, length_scale=varying, boundary="robin"
+        )
+        assert varied.robin == pytest.approx((0.7 / 0.2, 0.7 / 0.1))
+
+    def test_coefficients_can_be_given(self):
+        assert Lebesgue(20, boundary=3.0).robin == (3.0, 3.0)
+        assert Lebesgue(20, boundary=(None, 2.0)).robin == (0.0, 2.0)
+        with pytest.raises(ValueError, match="robin"):
+            Lebesgue(20, boundary="dirichlet")
+        with pytest.raises(ValueError, match="non-negative"):
+            Lebesgue(20, boundary=-1.0)
+
+    @staticmethod
+    def _variance_error(power, padding, boundary):
+        def variance(padding, boundary):
+            space = Lebesgue(
+                400,
+                upper=2.0,
+                length_scale=0.1,
+                padding=padding,
+                boundary=boundary,
+                element_length=0.02,
+            )
+            return space.interior_values(
+                space.pointwise_variance(space.eigenvalues**-power)
+            )
+
+        return np.abs(variance(padding, boundary) / variance(1.2, None) - 1.0).max()
+
+    def test_the_exact_condition_needs_no_padding_at_all(self):
+        """``u' = -u / L`` is what the decaying solution of ``A u = 0`` does,
+        so with it a mesh that stops at the domain gives the covariance
+        ``A^-1`` of one that goes on; the natural condition doubles the
+        variance there. What is left is the truncation's."""
+        assert self._variance_error(1.0, 0.0, 1.0 / 0.1) < 5e-2
+        assert self._variance_error(1.0, 0.0, None) > 0.9
+
+    def test_two_length_scales_then_do_what_four_do_without_it(self):
+        """For the higher powers priors are made of, with the coefficient
+        ``0.7 / L`` that ``"robin"`` names."""
+        for power in (2.0, 3.0):
+            matched = self._variance_error(power, 0.2, "robin")
+            assert matched < 1e-2
+            assert self._variance_error(power, 0.2, None) > 10.0 * matched
+            assert matched < 3.0 * self._variance_error(power, 0.4, None)
+
+
 class TestPointwiseAlgebra:
     def test_a_product_is_left_on_the_nodes(self, rng):
         space = build(1.0)
@@ -167,7 +235,7 @@ class TestPointwiseAlgebra:
 class TestSamplingAFunction:
     def test_the_padding_continues_the_function_with_its_slope(self):
         space = build(0.0)
-        sampled = space.project_function(lambda x: 3.0 + 2.0 * x)
+        sampled = space.project_function(lambda x: 3.0 + 2.0 * x, extension="odd")
         assert np.allclose(sampled, 3.0 + 2.0 * space.nodes)
         held = space.project_function(lambda x: 3.0 + 2.0 * x, extension="constant")
         assert np.allclose(
@@ -178,17 +246,27 @@ class TestSamplingAFunction:
             space.interior_values(held), space.interior_values(sampled)
         )
 
-    def test_the_function_is_never_asked_about_the_padding(self):
+    @pytest.mark.parametrize("extension", ["fit", "odd", "constant"])
+    def test_the_function_is_never_asked_about_the_padding(self, extension):
         asked = []
-        build(0.0).project_function(lambda x: asked.append(x) or 0.0)
+        build(0.0).project_function(
+            lambda x: asked.append(x) or 0.0, extension=extension
+        )
         assert min(asked) >= -1.0 and max(asked) <= 2.0
 
     def test_the_reflection_mends_the_endpoints(self):
         """``cos`` on ``[-1, 2]``: held constant it has a kink at each
         endpoint, which the kept modes come to at first order; reflected, the
-        error over the domain is that of knowing ``cos`` on the padding."""
+        error over the domain is that of knowing ``cos`` on the padding. Under
+        the natural condition and its four length scales of padding, which is
+        where this was measured; the next test is the default."""
         space = Lebesgue(
-            64, lower=-1.0, upper=2.0, length_scale=0.1, element_length=0.02
+            64,
+            lower=-1.0,
+            upper=2.0,
+            length_scale=0.1,
+            boundary=None,
+            element_length=0.02,
         )
         exact = np.cos(space.interior_nodes)
         weights = space.basis.weights()
@@ -198,15 +276,54 @@ class TestSamplingAFunction:
             return np.sqrt(weights @ missed**2 / (weights @ exact**2)), abs(missed[-1])
 
         held = errors(space.project_function(np.cos, extension="constant"))
-        mirrored = errors(space.project_function(np.cos))
+        mirrored = errors(space.project_function(np.cos, extension="odd"))
         known = errors(np.cos(space.nodes))
         assert mirrored[1] < 0.2 * held[1]
         assert mirrored[0] < 0.6 * held[0]
         assert mirrored[0] == pytest.approx(known[0], rel=0.15)
 
+    def test_under_the_default_the_fills_are_alike_and_the_fit_is_not(self):
+        """Under the Robin default a continued function does not satisfy the
+        condition at the mesh's end and the padding is half as long, and the
+        two fills come out alike over the domain; the fit asks nothing of the
+        padding and is untouched."""
+        space = Lebesgue(
+            64, lower=-1.0, upper=2.0, length_scale=0.1, element_length=0.02
+        )
+        exact = np.cos(space.interior_nodes)
+        weights = space.basis.weights()
+
+        def error(extension):
+            field = space.truncate(space.project_function(np.cos, extension=extension))
+            missed = space.interior_values(field) - exact
+            return np.sqrt(weights @ missed**2 / (weights @ exact**2))
+
+        held, mirrored, fitted = error("constant"), error("odd"), error("fit")
+        assert 0.5 < mirrored / held < 2.0
+        assert fitted < 1e-4 * mirrored
+
     def test_an_extension_is_named(self):
         with pytest.raises(ValueError, match="odd"):
             build(0.0).project_function(np.cos, extension="even")
+
+    def test_a_fit_over_the_domain_converges_as_the_function_is_smooth(self):
+        """It asks nothing of the padding, so no continuation's kink, of any
+        order, is there to slow it: orders of magnitude inside the reflection
+        at the same modes, in the span of the kept modes, and with
+        coefficients no larger."""
+        space = Lebesgue(
+            64, lower=-1.0, upper=2.0, length_scale=0.1, element_length=0.02
+        )
+        exact = np.cos(space.interior_nodes)
+        fitted = space.project_function(np.cos)  # the default
+        assert np.allclose(space.interior_values(fitted), exact, atol=1e-9)
+        assert np.allclose(space.truncate(fitted), fitted, atol=1e-12)
+        mirrored = space.truncate(space.project_function(np.cos, extension="odd"))
+        assert np.abs(space.interior_values(mirrored) - exact).max() > 1e-4
+        assert (
+            np.abs(space.to_components(fitted)).max()
+            < 1.2 * np.abs(space.to_components(mirrored)).max()
+        )
 
 
 class TestPointEvaluation:
@@ -331,7 +448,12 @@ class TestMeasures:
 
         def variance(padding):
             space = Lebesgue(
-                100, upper=2.0, length_scale=0.1, padding=padding, element_length=0.05
+                100,
+                upper=2.0,
+                length_scale=0.1,
+                padding=padding,
+                boundary=None,
+                element_length=0.05,
             )
             return space.interior_values(
                 space.pointwise_variance(space.eigenvalues**-2.0)

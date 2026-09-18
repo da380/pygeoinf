@@ -6,9 +6,10 @@ grid through ``pyshtools`` and the nodal eigenfunctions, against the same field
 evaluated through scipy's harmonics and the element polynomials; and
 ``planetmodel``'s banded solve against the eigenbasis.
 
-A draw here costs a harmonic transform per radial shell, so the two statistical
-checks, which take thousands, carry ``slow`` (D-109). What they assert is held
-in the default run by exact statements about the components.
+The two statistical checks take thousands of draws. They carried ``slow`` while
+a draw cost a harmonic transform per radial shell, through ``pyshtools`` one at
+a time, and took two and a half minutes between them; with the shells
+transformed together they take five seconds and run with the rest.
 """
 
 import numpy as np
@@ -20,7 +21,7 @@ if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
 pytest.importorskip("pyshtools")
 
 from pygeoinf2 import Traits  # noqa: E402
-from pygeoinf2.radial.ball import Ball, Lebesgue, Sobolev  # noqa: E402
+from pygeoinf2.sem1d.ball import Ball, Lebesgue, Sobolev  # noqa: E402
 from pygeoinf2.testing import (  # noqa: E402
     check_coordinates,
     check_measure,
@@ -82,7 +83,8 @@ class TestTheSpace:
         assert ball(2.0) != annulus(2.0)
 
     def test_a_ball_is_padded_outwards_only_and_an_annulus_to_the_centre(self):
-        assert ball(0.0).padding == pytest.approx((0.0, 1.2))
+        assert ball(0.0).padding == pytest.approx((0.0, 0.6))
+        assert ball(0.0, boundary=None).padding == pytest.approx((0.0, 1.2))
         assert ball(0.0).radii[0] == 0.0
         shell = annulus(0.0, padding=2.0)
         assert shell.padding == pytest.approx((0.5, 2.0))
@@ -117,8 +119,11 @@ class TestTheSpace:
         the domain *without* its padding, and no other: so the shortest
         wavelength kept is the angular one at the outer radius, whatever the
         padding is."""
-        space = ball(0.0, lmax=8)
-        bound = ball(0.0, lmax=8, padding=0.0).basis.family.eigvalsh(8)[0]
+        # Under the natural condition, whose bound the rule is stated for; a
+        # Robin one can lift it, which TestBoundary covers.
+        space = ball(0.0, lmax=8, boundary=None)
+        bare = ball(0.0, lmax=8, padding=0.0, boundary=None)
+        bound = bare.basis.family.eigvalsh(8)[0]
         family = space.basis.family
         for l in range(9):
             assert space.basis.nmodes[l] == np.sum(family.eigvalsh(l) <= bound * 1.0001)
@@ -128,7 +133,7 @@ class TestTheSpace:
         assert space.basis.nmodes[8] > 1
         shortest = 2.0 * np.pi * 0.3 / np.sqrt(space.eigenvalues.max() - 1.0)
         assert shortest == pytest.approx(2.0 * np.pi / 8, rel=0.25)
-        wider = ball(0.0, lmax=8, padding=2.0)
+        wider = ball(0.0, lmax=8, padding=2.0, boundary=None)
         assert wider.eigenvalues.max() == pytest.approx(
             space.eigenvalues.max(), rel=0.05
         )
@@ -165,11 +170,116 @@ class TestTheSpace:
         draws = np.stack([space.white_noise_components(rng=rng) for _ in range(20000)])
         assert np.allclose(draws.var(axis=0) * space.metric_values, 1.0, atol=0.06)
 
-    @pytest.mark.slow
     def test_white_noise_has_identity_covariance(self, rng):
         check_white_noise(
             ball(2.0, lmax=4, element_length=0.4), rng=rng, samples=6000, rtol=0.14
         )
+
+
+class TestTransform:
+    @pytest.mark.parametrize("lmax", [0, 1, 5, 24])
+    def test_the_batched_transform_is_the_one_through_pyshtools(self, lmax, rng):
+        """Every shell at once, against ``planetmodel``'s shell by shell."""
+        from planetmodel import harmonics
+        from planetmodel.sampling import gauss_legendre
+
+        from pygeoinf2.sem1d._transform import ShellTransform
+
+        grid = gauss_legendre(lmax)
+        transform = ShellTransform(grid)
+        coefficients = rng.normal(size=(2, lmax + 1, lmax + 1, 7))
+        sine, degree, order = harmonics.packing(lmax)
+        keep = np.zeros_like(coefficients, dtype=bool)
+        keep[sine, degree, order] = True
+        coefficients = np.where(keep, coefficients, 0.0)
+        values = transform.synthesise(coefficients)
+        assert values.shape == (7, lmax + 1, 2 * lmax + 1)
+        assert np.allclose(
+            values, harmonics.synthesise_grid(coefficients, grid), atol=1e-11
+        )
+        assert np.allclose(transform.analyse(values), coefficients, atol=1e-11)
+        rough = rng.normal(size=values.shape)
+        assert np.allclose(
+            transform.analyse(rough),
+            harmonics.analyse_grid(rough, grid, lmax=lmax),
+            atol=1e-11,
+        )
+
+    def test_a_grid_that_is_not_gauss_legendre_is_refused(self):
+        from planetmodel.sampling import equiangular, gauss_legendre
+
+        from pygeoinf2.sem1d._transform import ShellTransform
+
+        with pytest.raises(ValueError, match="Gauss-Legendre"):
+            ShellTransform(equiangular(6, 11))
+        with pytest.raises(ValueError, match="longitudes"):
+            ShellTransform(gauss_legendre(5, nphi=16))
+
+    def test_beyond_the_measured_degree_the_other_route_is_taken(
+        self, monkeypatch, rng
+    ):
+        from pygeoinf2.sem1d import ball as module
+
+        monkeypatch.setattr(module, "_BATCHED_LMAX", 3)
+        slow, fast = ball(0.0, lmax=4), None
+        monkeypatch.setattr(module, "_BATCHED_LMAX", 128)
+        fast = ball(0.0, lmax=4)
+        assert slow._transform is None and fast._transform is not None
+        components = rng.normal(size=fast.dim)
+        assert np.allclose(
+            slow.from_components(components),
+            fast.from_components(components),
+            atol=1e-11,
+        )
+        field = rng.normal(size=fast.grid_shape)
+        assert np.allclose(
+            slow.to_components(field), fast.to_components(field), atol=1e-11
+        )
+
+
+class TestBoundary:
+    def test_robin_halves_the_padding_and_shrinks_the_space(self):
+        natural = ball(0.0, lmax=8, max_eigenvalue=60.0, boundary=None)
+        matched = ball(0.0, lmax=8, max_eigenvalue=60.0, boundary="robin")
+        assert matched.padding == pytest.approx((0.0, 0.6))
+        assert matched.robin == pytest.approx((0.0, 0.7 / 0.3 + 1.0 / 1.6))
+        assert matched.dim < natural.dim and matched.radii.size < natural.radii.size
+        assert matched != natural
+        # The inner end of this mesh is at r = 0.1, where the curvature term
+        # outweighs the other and the coefficient would be negative: it is
+        # held at zero, the natural condition. Further out it is not.
+        assert annulus(0.0, boundary="robin").robin[0] == 0.0
+        thin = annulus(0.0, length_scale=0.05, boundary="robin")
+        assert thin.robin[0] == pytest.approx(0.7 / 0.05 - 1.0 / 0.4)
+        # That condition lifts the long modes past the bound the domain alone
+        # would set, which is raised to keep a mode at every degree.
+        assert np.all(thin.basis.nmodes >= 1)
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_two_length_scales_then_do_what_four_do_without_it(self, build):
+        """With every degree sharing the one coefficient."""
+
+        def variance(padding, boundary):
+            space = build(
+                0.0,
+                lmax=8,
+                length_scale=0.2,
+                padding=padding,
+                boundary=boundary,
+                max_eigenvalue=160.0,
+                element_length=0.05,
+            )
+            field = space.pointwise_variance(space.eigenvalues**-3.0)
+            return space.interior_values(field)[:, 0, 0]
+
+        reference = variance(2.0, None)
+
+        def error(padding, boundary):
+            return np.abs(variance(padding, boundary) / reference - 1.0).max()
+
+        assert error(0.4, "robin") < 1e-2
+        assert error(0.4, None) > 10.0 * error(0.4, "robin")
+        assert error(0.4, "robin") < 2.0 * error(0.8, None)
 
 
 class TestPointEvaluation:
@@ -274,14 +384,18 @@ class TestPointEvaluation:
     @staticmethod
     def _truncation_error(space, function, extension):
         """Relative ``L2`` error over the domain, and the largest error by
-        radius, of a sampled function against its own truncation."""
+        radius, of a sampled function once settled into the span, against the
+        function's own values at the domain's grid points -- and not against
+        the sample, which under ``"fit"`` is in the span already."""
         sampled = space.project_function(function, extension=extension)
         grid = space.grid
         weights = (
             space.basis[0].weights()[:, None, None]
             * (grid.weights[:, None] * 2.0 * np.pi / grid.nphi)[None]
         )
-        exact = space.interior_values(sampled)
+        exact = space.interior_values(
+            space.project_function(function, extension="constant")
+        )
         missed = space.interior_values(space.truncate(sampled)) - exact
         norm = np.sqrt(np.sum(weights * missed**2) / np.sum(weights * exact**2))
         return norm, np.abs(missed).max(axis=(1, 2))
@@ -297,7 +411,13 @@ class TestPointEvaluation:
         modes kept and can pass through zero by accident."""
         errors = [
             self._truncation_error(
-                annulus(0.0, lmax=4, radial_modes=modes, element_length=0.05),
+                annulus(
+                    0.0,
+                    lmax=4,
+                    radial_modes=modes,
+                    element_length=0.05,
+                    boundary=None,
+                ),
                 self._wavy,
                 "odd",
             )[0]
@@ -308,8 +428,14 @@ class TestPointEvaluation:
 
     def test_the_reflection_mends_the_ends_of_an_annulus(self):
         """Held constant across the padding a function has a kink at each end
-        of the domain, and the error sits there; reflected, it has none."""
-        space = annulus(0.0, lmax=4, radial_modes=32, element_length=0.05)
+        of the domain, and the error sits there; reflected, it has none. A fact
+        of the natural condition and its longer padding, under which it was
+        measured, as the two tests beside it are; under the Robin default the
+        two fills come out alike, and the fit is the one that does not care
+        (DECISIONS.md D-124)."""
+        space = annulus(
+            0.0, lmax=4, radial_modes=32, element_length=0.05, boundary=None
+        )
         held, by_radius_held = self._truncation_error(space, self._wavy, "constant")
         mirrored, by_radius = self._truncation_error(space, self._wavy, "odd")
         assert mirrored < 0.7 * held
@@ -324,7 +450,7 @@ class TestPointEvaluation:
         value there grows with its index -- and what the reflection adds is
         one more error focused on it; for a purely radial function the two
         fills are alike there (DECISIONS.md D-119)."""
-        space = ball(0.0, lmax=4, radial_modes=32, element_length=0.05)
+        space = ball(0.0, lmax=4, radial_modes=32, element_length=0.05, boundary=None)
         held, by_radius_held = self._truncation_error(space, self._wavy, "constant")
         mirrored, by_radius = self._truncation_error(space, self._wavy, "odd")
         assert mirrored < held
@@ -332,12 +458,26 @@ class TestPointEvaluation:
         near_centre = space.interior_radii < 0.25
         assert by_radius[near_centre].max() > by_radius_held[near_centre].max()
 
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_a_fit_over_the_domain_is_right_everywhere(self, build):
+        """For a function regular at the centre, the centre included: what
+        looked like the centre's trouble was the projection of a continued
+        function over the whole padded ball, and a fit over the domain alone
+        has none of it (DECISIONS.md D-124)."""
+        space = build(0.0, lmax=4, radial_modes=16, element_length=0.05)
+        fitted, by_radius = self._truncation_error(space, self._wavy, "fit")
+        mirrored, _ = self._truncation_error(space, self._wavy, "odd")
+        assert fitted < 1e-7 and fitted < 1e-3 * mirrored
+        assert by_radius.max() < 1e-4
+        field = space.project_function(self._wavy, extension="fit")
+        assert np.allclose(space.truncate(field), field, atol=1e-10)
+
     def test_an_extension_is_named(self):
         space = ball(0.0, lmax=2)
         with pytest.raises(ValueError, match="odd"):
             space.project_function(lambda p: 1.0, extension="even")
         positive = lambda p: 1.0 + 5.0 * (1.0 - p[0])  # noqa: E731
-        assert np.any(space.project_function(positive) < 0.0)
+        assert np.any(space.project_function(positive, extension="odd") < 0.0)
         assert np.all(space.project_function(positive, extension="constant") > 0.0)
 
 
@@ -473,7 +613,7 @@ class TestMeasures:
         model is the thing a user has to hand."""
 
         def error(profile, modes):
-            space = ball(0.0, radial_modes=modes, element_length=0.05)
+            space = ball(0.0, radial_modes=modes, element_length=0.05, boundary=None)
             target = profile(space.radii)[:, None, None] + space.zero()
             measure = space.sobolev_measure(2.5, pointwise_std=target)
             evaluation = space.point_evaluation_operator([(0.0, 0.0, 0.0)], unsafe=True)
@@ -493,7 +633,6 @@ class TestMeasures:
         with pytest.raises(ValueError, match="positive"):
             space.sobolev_measure(1.0, pointwise_std=-1.0)
 
-    @pytest.mark.slow
     @pytest.mark.parametrize("build", GEOMETRIES)
     def test_the_moments_match_the_samples(self, build, rng):
         space = build(2.0, lmax=4, element_length=0.4)

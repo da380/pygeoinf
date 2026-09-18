@@ -15,24 +15,40 @@ extends past it by a padding, so that the boundary conditions ``A`` needs act
 at a distance and leave no mark on the fields where they matter.
 
 **One submodule per geometry**, each exporting ``Lebesgue`` and ``Sobolev``
-(DECISIONS.md D-3)::
+(DECISIONS.md D-3), and the geometries differ first in their measure:
 
-    from pygeoinf2.radial.interval import Sobolev
+``interval``
+    an interval of the *line*, under ``dx``. The coordinate is a position and
+    zero is nowhere special.
+``radial``
+    functions of *radius* alone in a ball or a shell, under ``r^2 dr``: the
+    part of degree zero of the ball, for a one-dimensional reference model.
+``ball``
+    fields of position in a ball or an annulus, under ``r^2 dr`` and the area
+    of the sphere.
 
-None of this is imported by the package itself, ``planetmodel`` being
-optional, in the way the sphere is not.
+So::
+
+    from pygeoinf2.sem1d.radial import Sobolev
+
+The mesh ends with a Robin condition matched to the operator, under which two
+length scales of padding are enough; ``boundary=None`` is the natural condition
+and wants four. A function handed in is fitted over the domain alone, which asks
+nothing of the padding; ``extension="constant"`` or ``"odd"`` continue its own
+nodal values across it, the first being what keeps a standard deviation
+positive there.
 """
 
 try:
     import planetmodel.randomfield as _randomfield
 except ImportError as error:  # pragma: no cover
     raise ImportError(
-        "pygeoinf2.radial needs planetmodel, an optional dependency: "
+        "pygeoinf2.sem1d needs planetmodel, an optional dependency: "
         "pip install pygeoinf[planetmodel]."
     ) from error
 
 if not hasattr(_randomfield, "SpectralBasis"):  # pragma: no cover
     raise ImportError(
-        "pygeoinf2.radial needs planetmodel 1.2 or later, whose randomfield "
+        "pygeoinf2.sem1d needs planetmodel 1.2 or later, whose randomfield "
         "package has the spectral bases: pip install -U planetmodel."
     )
