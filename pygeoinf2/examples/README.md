@@ -46,6 +46,7 @@ failing test rather than a surprise later.
 | 30 | `varying_length_scale` | a correlation length that varies along an interval of the line, the padding that makes it possible, and a prior calibrated by a field |
 | 31 | `mantle` | a field in a mantle, cut three ways to be seen: a shell, a section by any plane, a profile; and what surface data do not reach |
 | 32 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
+| 33 | `layered_planet` | fields that are smooth in each layer and jump between them: a direct sum of spaces that knows its layers are adjacent, data of three kinds at once, and continuity by conditioning |
 
 ## The ones with optional dependencies
 
@@ -57,7 +58,7 @@ enforces, so it cannot drift from what actually runs.
 | `mfem` | 16, 27, 29 |
 | `pyshtools` | 19, 24, 25 |
 | `cartopy` | 20, 21, 22, 23, 31 |
-| `planetmodel` | 30, 31, 32 |
+| `planetmodel` | 30, 31, 32, 33 |
 
 ```
 poetry install --extras mfem

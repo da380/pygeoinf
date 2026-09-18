@@ -1295,6 +1295,37 @@ synthetic truth wants, and those are what the method is mostly for. D-120 gains 
 longitude, and `plot_section_points`, which marks the points within a
 tolerance of a section's plane at the foot of each in it.
 
+**D-126. A piecewise-continuous field is a vector of a direct sum of layers,
+and `Layered` is that direct sum** (2026-09-18, David: the space of many
+geophysical inversions, in one dimension or in annuli). One `sem1d` space per
+layer, each on its own padded mesh with its own length scale, order and
+truncation, the paddings overlapping as fictitious things may; a vector is a
+tuple of layer fields. `sem1d.layered.Layered` subclasses the coordinate
+direct sum and **compares equal to, and hashes as, the plain `DirectSum` of
+its layers**: a block operator or a product measure builds a plain one and has
+to land here, which is the reason a direct sum's identity is its summands
+alone (D-23), carried one step further. What it adds is what a
+direct sum cannot know, that the summands are adjacent in space:
+`layer_index`, `evaluate`, `dirac` and `point_evaluation_operator` at points
+anywhere in the medium, each layer keeping its own order guard;
+`jump_operator` across an interface, at directions in balls;
+`integral_functional` over the whole; `project_function` with one function or,
+for one that jumps, a list of smooth pieces, since a single function is asked
+about an interface by both layers and cannot tell them apart; layerwise
+products; and `sobolev_measure` layer by layer, the layers **independent**,
+which is what a discontinuity means. Continuity across an interface is that
+prior conditioned on the jump vanishing (`measure.condition(jump, 0)`), exact
+to 1e-14. **A point on an interface has two values, and evaluation there is
+refused unless `side="below"` or `"above"` says which**; layers may leave a
+gap, a field in a mantle and an inner core but not the fluid between, and a
+point in a gap is in no layer. Arguments of the constructors
+(`Layered.interval`, `.radial`, `.ball`) are given once for all layers or, **as
+a list**, layer by layer, a tuple being one value (a padding pair); they build
+the named `Lebesgue` and `Sobolev` layers of D-3. `plot` draws one line a
+layer with a break at each jump; `plot_section`, `plot_profile`, `plot_shell`
+(with `side=`) and the station markers take a layered ball, every shell on one
+color scale.
+
 ---
 
 ## Appendix: measurements behind the defaults

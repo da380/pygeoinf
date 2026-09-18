@@ -27,9 +27,15 @@ at a distance and leave no mark on the fields where they matter.
     fields of position in a ball or an annulus, under ``r^2 dr`` and the area
     of the sphere.
 
+``layered``
+    piecewise-continuous fields over layers of any one of these that are
+    adjacent in space: their direct sum, with the points, jumps, integrals and
+    layer-by-layer priors a direct sum alone cannot know.
+
 So::
 
     from pygeoinf2.sem1d.radial import Sobolev
+    from pygeoinf2.sem1d.layered import Layered
 
 The mesh ends with a Robin condition matched to the operator, under which two
 length scales of padding are enough; ``boundary=None`` is the natural condition

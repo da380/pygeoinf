@@ -40,7 +40,7 @@ is what most of the rest follows from:
 | `geometry` | convex sets (balls, ellipsoids, half-spaces, polytopes, intersections, oracle sets), level and sublevel sets, affine and linear subspaces, projectors, support functions |
 | `numerics` | Krylov and direct solvers, preconditioners, randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval |
-| `sem1d` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies: `interval` on the line under `dx`, `radial` for functions of radius under `r² dr`, `ball` for a ball or annulus; Robin ends, a batched harmonic transform, a fit over the domain for sampled functions; wraps `planetmodel.randomfield`, an optional extra, and is imported explicitly (D-115 to D-124) |
+| `sem1d` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies: `interval` on the line under `dx`, `radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, `layered` for piecewise-continuous fields over adjacent layers of any one of them (their direct sum, with points, jumps, integrals and layer-by-layer priors); Robin ends, a batched harmonic transform, a fit over the domain for sampled functions; wraps `planetmodel.randomfield`, an optional extra, and is imported explicitly (D-115 to D-124, D-126) |
 | `inference` | forward problems, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, the point estimators and the Tikhonov family, `BackusGilbert` and `BackusGilbertParker`, the MAP and Laplace route, normal operators and their preconditioners |
 | `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `sem1d` ball, lines on its interval and radial profile (D-120); convex sets; marginals, corner plots and error bounds |
 | `backends` | MFEM two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps a plain `HilbertSpace` and lets MFEM do every computation (D-96) |
@@ -51,7 +51,7 @@ is what most of the rest follows from:
 
 105 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
-`compat` and `sem1d` are imported explicitly. Thirty-two examples under `examples/`
+`compat` and `sem1d` are imported explicitly. Thirty-three examples under `examples/`
 run as a slow test; their README says what each shows.
 
 ## 3. Conventions and units

@@ -44,6 +44,7 @@ OPTIONAL = {
     "30_varying_length_scale": "planetmodel",
     "31_mantle": ("planetmodel", "pyshtools", "cartopy"),
     "32_density_profile": "planetmodel",
+    "33_layered_planet": "planetmodel",
 }
 
 

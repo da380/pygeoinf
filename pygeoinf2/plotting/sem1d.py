@@ -26,6 +26,7 @@ import numpy as np
 
 from ..sem1d.axis import AxisSpace
 from ..sem1d.ball import Ball
+from ..sem1d.layered import Layered
 from .base import color_limits, plot, plot_points, subplots
 
 __all__ = [
@@ -176,7 +177,13 @@ def _(
 
 
 def plot_shell(
-    space: Ball, field: np.ndarray, /, *, radius: float | None = None, **kwargs: Any
+    space: Ball | Layered,
+    field: Any,
+    /,
+    *,
+    radius: float | None = None,
+    side: str | None = None,
+    **kwargs: Any,
 ) -> Any:
     """Draw a field of a ball on the sphere of one radius, as a map.
 
@@ -185,6 +192,8 @@ def plot_shell(
         field: a vector of the space.
         radius: the radius of the shell, within the domain. The outer radius
             if omitted.
+        side: in a layered space, which of the two fields is meant at a
+            radius that is an interface: ``"below"`` or ``"above"``.
         **kwargs: those of the sphere's ``plot``: ``ax``, ``cmap``,
             ``symmetric``, ``coasts``, ``contour``, ``colorbar_label`` and
             the rest.
@@ -195,6 +204,11 @@ def plot_shell(
     Raises:
         ValueError: if the radius lies outside the domain.
     """
+    if isinstance(space, Layered):
+        shells, fields = _shells(space, field)
+        radius = shells[-1].radius if radius is None else float(radius)
+        layer = space.layer_index((radius, 0.0, 0.0), side=side)
+        space, field = shells[layer], fields[layer]
     radius = space.radius if radius is None else float(radius)
     return plot(_map_space(space, radius), _on_a_shell(space, field, radius), **kwargs)
 
@@ -227,6 +241,67 @@ def _(space: Ball, points: Any, /, **kwargs: Any) -> Any:
     """
     located = np.asarray(points, dtype=float).reshape(-1, 3)
     return plot_points(_map_space(space, space.radius), located[:, 1:], **kwargs)
+
+
+def _shells(space: Ball | Layered, field: Any, /) -> tuple[list[Ball], list[Any]]:
+    """The balls a field lives in and its part in each: one, or a layered
+    space's layers.
+
+    Raises:
+        TypeError: for a layered space whose layers are not balls.
+    """
+    if isinstance(space, Layered):
+        if space.geometry is not Ball:
+            raise TypeError("Only layers that are balls have shells and sections.")
+        return list(space.layers), list(field)
+    return [space], [field]
+
+
+@subplots.register
+def _(space: Layered, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -> Any:
+    """The axes the layers want: a map for balls, ordinary ones otherwise."""
+    return subplots(space.layers[-1], rows=rows, columns=columns, **kwargs)
+
+
+@plot.register
+def _(space: Layered, field: Any, /, *, ax: Any = None, **kwargs: Any) -> Any:
+    """Draw a piecewise-continuous field.
+
+    Intervals and radial profiles are one line per layer in one color, which
+    leaves a break at every jump. Balls are drawn as the ball is, by the shell
+    at ``radius=``, the surface if omitted; ``plot_section`` and
+    ``plot_profile`` take a layered space too.
+
+    Args:
+        space: the layered space.
+        field: a vector of it, a tuple of layer fields.
+        ax: axes to draw on. A new figure is made if omitted.
+        **kwargs: those of the layers' own ``plot``.
+
+    Returns:
+        The ``(axes, mappable)`` pair, the mappable being the last layer's
+        line for intervals and profiles.
+    """
+    if space.geometry is Ball:
+        return plot_shell(space, field, ax=ax, **kwargs)
+    if ax is None:
+        _, ax = subplots(space)
+    line = None
+    for layer, part in zip(space.layers, field):
+        if line is not None:
+            kwargs = {**kwargs, "color": line.get_color(), "label": "_nolegend_"}
+        ax, line = plot(layer, part, ax=ax, **kwargs)
+    ends = space.layer_bounds
+    if not kwargs.get("padding", False):
+        ax.set_xlim(ends[0][0], ends[-1][1])
+    return ax, line
+
+
+@plot_points.register
+def _(space: Layered, points: Any, /, **kwargs: Any) -> Any:
+    """Scatter points of a layered ball on a map, by latitude and longitude."""
+    shells, _ = _shells(space, [None] * len(space))
+    return plot_points(shells[-1], points, **kwargs)
 
 
 def _unit(latitude: float, longitude: float, /) -> np.ndarray:
@@ -338,7 +413,7 @@ def section_values(
 
 
 def plot_section(
-    space: Ball,
+    space: Ball | Layered,
     field: np.ndarray,
     /,
     *,
@@ -396,28 +471,52 @@ def plot_section(
     """
     import matplotlib.pyplot as pyplot
 
-    values, radii, _, _ = section_values(
-        space,
-        field,
-        longitude=longitude,
-        pole=pole,
-        through=through,
-        angles=angles,
-        padding=padding,
-    )
+    shells, fields = _shells(space, field)
+    if len(shells) > 1 and padding:
+        raise ValueError(
+            "The padding of one layer lies over its neighbours, and cannot be "
+            "drawn beside them: draw that layer on its own."
+        )
+    sections = [
+        section_values(
+            shell,
+            part,
+            longitude=longitude,
+            pole=pole,
+            through=through,
+            angles=angles,
+            padding=padding,
+        )[:2]
+        for shell, part in zip(shells, fields)
+    ]
     if ax is None:
         _, ax = pyplot.subplots(figsize=(5.0, 4.4), layout="constrained")
-    count = values.shape[1]
+    count = sections[0][0].shape[1]
     psi = 2.0 * np.pi * np.arange(count + 1) / count
-    closed = np.concatenate([values, values[:, :1]], axis=1)
-    x = radii[:, None] * np.cos(psi)[None, :]
-    y = radii[:, None] * np.sin(psi)[None, :]
-    low, high = color_limits(closed, vmin=vmin, vmax=vmax, symmetric=symmetric)
-    mappable = ax.pcolormesh(
-        x, y, closed, cmap=cmap, vmin=low, vmax=high, shading="gouraud", **kwargs
+    # One color scale for every shell, or a jump would not look like one.
+    low, high = color_limits(
+        np.concatenate([values.ravel() for values, _ in sections]),
+        vmin=vmin,
+        vmax=vmax,
+        symmetric=symmetric,
     )
+    for values, radii in sections:
+        closed = np.concatenate([values, values[:, :1]], axis=1)
+        mappable = ax.pcolormesh(
+            radii[:, None] * np.cos(psi)[None, :],
+            radii[:, None] * np.sin(psi)[None, :],
+            closed,
+            cmap=cmap,
+            vmin=low,
+            vmax=high,
+            shading="gouraud",
+            **kwargs,
+        )
     if outline:
-        for radius in (space.inner_radius, space.radius):
+        edges = {shell.inner_radius for shell in shells} | {
+            shell.radius for shell in shells
+        }
+        for radius in sorted(edges):
             if radius > 0.0:
                 ax.plot(
                     radius * np.cos(psi),
@@ -437,7 +536,7 @@ def plot_section(
 
 
 def plot_section_points(
-    space: Ball,
+    space: Ball | Layered,
     points: Any,
     /,
     *,
@@ -500,7 +599,7 @@ def plot_section_points(
 
 
 def plot_profile(
-    space: Ball,
+    space: Ball | Layered,
     field: np.ndarray,
     latitude: float,
     longitude: float,
@@ -528,12 +627,23 @@ def plot_profile(
 
     if ax is None:
         _, ax = pyplot.subplots(figsize=(5.0, 3.2), layout="constrained")
-    radii = np.linspace(space.inner_radius, space.radius, int(points))
-    values = space.evaluate(
-        np.asarray(field, dtype=float),
-        [(radius, float(latitude), float(longitude)) for radius in radii],
-    )
-    (line,) = ax.plot(radii, values, **kwargs)
-    ax.set_xlim(radii[0], radii[-1])
+    shells, fields = _shells(space, field)
+    extent = shells[-1].radius - shells[0].inner_radius
+    line = None
+    for shell, part in zip(shells, fields):
+        # As many points as the shell's share of the whole, and a few at least.
+        share = (shell.radius - shell.inner_radius) / extent
+        radii = np.linspace(
+            shell.inner_radius, shell.radius, max(8, int(round(share * int(points))))
+        )
+        values = shell.evaluate(
+            np.asarray(part, dtype=float),
+            [(radius, float(latitude), float(longitude)) for radius in radii],
+        )
+        if line is not None:
+            # One field, one color, one legend entry, and a break at the jump.
+            kwargs = {**kwargs, "color": line.get_color(), "label": "_nolegend_"}
+        (line,) = ax.plot(radii, values, **kwargs)
+    ax.set_xlim(shells[0].inner_radius, shells[-1].radius)
     ax.set_xlabel("radius")
     return ax, line

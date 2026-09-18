@@ -252,3 +252,92 @@ class TestProfile:
         assert np.allclose(
             line.get_ydata(), annulus.evaluate(x, [(r, 35.0, -120.0) for r in radii])
         )
+
+
+class TestLayered:
+    @pytest.fixture
+    def profiles(self):
+        from pygeoinf2.sem1d.layered import Layered
+
+        return Layered.radial(
+            [0.0, 0.35, 0.55, 1.0],
+            [10, 8, 14],
+            order=1.0,
+            length_scale=[0.15, 0.1, 0.2],
+        )
+
+    @pytest.fixture
+    def shells(self):
+        from pygeoinf2.sem1d.layered import Layered
+
+        return Layered.ball(
+            [0.3, 0.6, 1.0],
+            4,
+            order=2.0,
+            length_scale=0.2,
+            radial_modes=5,
+            element_length=0.1,
+        )
+
+    def test_a_profile_is_one_line_a_layer_with_a_break_at_each_jump(
+        self, profiles, rng
+    ):
+        x = profiles.random(rng=rng)
+        ax, _ = plotting.plot(profiles, x, label="a field")
+        assert len(ax.lines) == 3
+        assert len({line.get_color() for line in ax.lines}) == 1
+        assert [line.get_label() for line in ax.lines].count("a field") == 1
+        for line, layer, part in zip(ax.lines, profiles.layers, x):
+            assert np.array_equal(line.get_xdata(), layer.interior_nodes)
+            assert np.array_equal(line.get_ydata(), layer.interior_values(part))
+        assert ax.get_xlim() == (0.0, 1.0)
+
+    def test_a_section_draws_every_shell_on_one_scale(self, shells, rng):
+        x = shells.random(rng=rng)
+        ax, mappable = plotting.plot_section(shells, x, longitude=20.0, symmetric=True)
+        meshes = [c for c in ax.collections if hasattr(c, "get_clim")]
+        assert len(meshes) == 2
+        assert len({mesh.get_clim() for mesh in meshes}) == 1
+        assert len(ax.lines) == 3  # the outline of every boundary, once
+        largest = max(
+            np.abs(plotting.section_values(layer, part, longitude=20.0)[0]).max()
+            for layer, part in zip(shells.layers, x)
+        )
+        assert mappable.get_clim()[1] == pytest.approx(largest)
+        with pytest.raises(ValueError, match="padding"):
+            plotting.plot_section(shells, x, padding=True)
+
+    def test_a_profile_along_a_ray_breaks_at_the_interface(self, shells, rng):
+        x = shells.random(rng=rng)
+        ax, _ = plotting.plot_profile(shells, x, 10.0, 20.0)
+        assert len(ax.lines) == 2
+        below, above = ax.lines
+        assert below.get_xdata()[-1] == pytest.approx(0.6)
+        assert above.get_xdata()[0] == pytest.approx(0.6)
+        point = [(0.6, 10.0, 20.0)]
+        assert below.get_ydata()[-1] == pytest.approx(
+            shells.evaluate(x, point, side="below")[0]
+        )
+        assert above.get_ydata()[0] == pytest.approx(
+            shells.evaluate(x, point, side="above")[0]
+        )
+
+    def test_a_shell_at_an_interface_names_its_side(self, shells, rng):
+        x = shells.random(rng=rng)
+        ax, _ = plotting.plot(shells, x)
+        assert hasattr(ax, "projection")
+        plotting.plot_shell(shells, x, radius=0.45)
+        with pytest.raises(ValueError, match="interface"):
+            plotting.plot_shell(shells, x, radius=0.6)
+        _, below = plotting.plot_shell(shells, x, radius=0.6, side="below")
+        _, above = plotting.plot_shell(shells, x, radius=0.6, side="above")
+        assert not np.allclose(below.get_array(), above.get_array())
+
+    def test_stations_and_the_wrong_geometry(self, shells, profiles, rng):
+        stations = [(1.0, 10.0, 20.0), (0.45, -40.0, 100.0)]
+        plotting.plot_points(shells, stations)
+        ax, _ = plotting.plot_section(shells, shells.random(rng=rng), longitude=20.0)
+        _, drawn = plotting.plot_section_points(shells, stations, ax=ax, longitude=20.0)
+        assert list(drawn) == [True, False]
+        with pytest.raises(TypeError, match="balls"):
+            plotting.plot_section(profiles, profiles.random(rng=rng))
