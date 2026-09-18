@@ -11,6 +11,11 @@ actually made.
     ax, im = plotting.plot(space, field, symmetric=True, coasts=True)
     ax.set_title("Flexure")
     plotting.show()
+
+A ball has to be cut to be seen: ``plot_shell`` (which is what ``plot`` does
+there), ``plot_section`` by any plane through the centre, and
+``plot_profile`` along a ray, with ``section_values`` for the numbers. They
+are here when ``planetmodel`` is installed.
 """
 
 from .base import (
@@ -29,6 +34,11 @@ from .fourier import plot_error_bounds
 from .sets import plot_set
 from . import sphere as _sphere  # noqa: F401  (registers the sphere renderers)
 
+try:  # The spectral-element spaces need planetmodel, an optional extra.
+    from .radial import plot_profile, plot_section, plot_shell, section_values
+except ImportError:  # pragma: no cover
+    pass
+
 __all__ = [
     "plot_error_bounds",
     "plot",
@@ -44,3 +54,5 @@ __all__ = [
     "plot_corner",
     "moments",
 ]
+if "plot_section" in globals():
+    __all__ += ["plot_shell", "plot_section", "plot_profile", "section_values"]

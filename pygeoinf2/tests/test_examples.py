@@ -28,7 +28,8 @@ def test_the_examples_are_discovered():
     assert len(example_scripts()) >= 27
 
 
-# Examples that need an optional dependency, and the module that provides it.
+# Examples that need an optional dependency, and the module that provides it,
+# or the modules where there are several.
 OPTIONAL = {
     "16_mfem_backend": "mfem",
     "27_mfem_inverse": "mfem",
@@ -40,6 +41,8 @@ OPTIONAL = {
     "23_feasible_set": "cartopy",
     "24_preconditioning": "pyshtools",
     "25_distributions": "pyshtools",
+    "30_radial_interval": "planetmodel",
+    "31_radial_ball": ("planetmodel", "pyshtools", "cartopy"),
 }
 
 
@@ -104,8 +107,9 @@ def _parametrized() -> list:
 @pytest.mark.parametrize("script", _parametrized())
 def test_the_example_runs(script, capsys):
     """Run the script and require that it produces output without raising."""
-    if script.stem in OPTIONAL:
-        pytest.importorskip(OPTIONAL[script.stem])
+    needed = OPTIONAL.get(script.stem, ())
+    for module in (needed,) if isinstance(needed, str) else needed:
+        pytest.importorskip(module)
     if script.stem in NEEDS_COASTLINES and not _coastlines_are_cached():
         pytest.skip("the Natural Earth coastline data is not cached locally")
     runpy.run_path(str(script), run_name="__main__")

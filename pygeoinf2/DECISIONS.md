@@ -1088,6 +1088,117 @@ Mag's call), and pointing Sphinx at the new package (REVIEW2 question 11).
 
 ---
 
+## 17. Spectral-element spaces
+
+**D-115. `radial` wraps `planetmodel.randomfield`; the numerics stay there**
+(2026-09-18, David). Sobolev spaces on an interval, a ball and an annulus in
+the eigenbasis of `A = 1 - div(L² grad)` on a Gauss-Lobatto-Legendre mesh,
+for what the Fourier `line` cannot do: a length scale that varies, a mesh that
+is not uniform, the `r² dr` measure. The optional extra is
+`planetmodel[harmonics]>=1.2`, which brings pyshtools and ducc0 for the ball
+(D-114), and the package is imported on demand, as the sphere is. One submodule per
+geometry exporting `Lebesgue` and `Sobolev` (D-3); `base.SpectralElementSpace`
+holds everything but the geometry. It is *not* a `SymmetricSpace`: nothing
+here is homogeneous, so there is no reference point, no geodesic and no single
+pointwise variance. It keeps that class's names wherever the meaning is the
+same (`with_order`, `spectral_operator`, `dirac`, `point_evaluation_operator`,
+`multiplication_operator`, `truncate`, `sobolev_measure`).
+
+**D-116. A vector is the field's values on the padded grid, not its
+coefficients** (2026-09-18). The plan going in had components as the vectors
+with an identity coordinate map; v2's convention is the other one (D-1, D-84,
+D-87) and these spaces follow it: values at the nodes of the padded mesh --
+`(radii, latitudes, longitudes)` in a ball, on the Gauss-Legendre grid of
+`lmax` -- with the eigen-coefficients as components and a product left on the
+grid. The domain is a restriction (`interior_values`, `interior_mask`);
+`project_function` holds a function constant across the padding and never
+calls it outside the domain. Multiplication is self-adjoint on `Lebesgue`
+because analysis is the transpose of synthesis under the grid's weights, none
+negative (the centre of a ball has weight zero), and is lifted on `Sobolev`.
+
+**D-117. Calibration is by a standard-deviation field** (2026-09-18).
+`sobolev_measure(order)` has covariance `A^-order` and no `scale`, the basis
+being the eigenbasis of one `A`; the draws are Matern with
+`nu = order + space.order - d/2`. `pointwise_std=` takes a number or a field
+and multiplies the diagonal measure's draws by `std / raw_std`, so the
+covariance is `S C S*` with factor `S C^1/2` and no closed-form precision.
+`pointwise_variance` returns a field. In a ball a function of `A` has a
+variance that depends on radius alone, by the addition theorem; variances that
+depend on the order square the harmonics on the grid. **A function handed to a
+ball must be regular at its centre** (David, 2026-09-18): the part of degree
+`l` of an analytic field goes like `r^l` times a series in `r²`, the modes do
+so by construction (they match `j_l(kr)` to 5e-5 at five GLL nodes and 1e-10
+at eight, near the centre and at degree 8 included), so draws are regular for
+nothing, and a profile in `r` alone, being of degree zero, must be even: one
+linear in `r` is a cone and converges at the centre at first order (appendix).
+Test targets are chosen to be regular, and the one that is not is there to
+show it.
+
+**D-118. The ball's default truncation is isotropic on the domain; the
+padding is four length scales** (2026-09-18, David). With neither
+`radial_modes` nor `max_eigenvalue`, a ball keeps at every degree the radial
+modes of the padded mesh whose eigenvalue is at most the first of degree
+`lmax` *on the domain without its padding*, found by one more banded
+eigenvalue solve. The first version took that bound from the padded mesh,
+whose first mode of degree `lmax` is longer by the ratio of the radii, so the
+radial resolution in the domain fell short of the angular by that ratio and
+the mode count ignored the padding altogether (appendix). The dimension now
+grows with the padded volume, which is the price of padding in three
+dimensions and was hidden before; a shorter padding with Robin ends is the
+way out, and is not wired through. A mesh that reaches `r = 0` is a ball's
+even under an annulus, and drops the axis node above degree zero, so one
+`radial_modes` cannot be "all of them" at every degree there. Padding defaults
+to four length scales at each end, inwards no further than the centre: a ball
+is padded outwards only. The statistical checks of the ball carry `slow`
+(D-109): a draw is one harmonic transform per radial shell.
+
+**D-119. A sampled function is continued across the padding by odd
+reflection** (2026-09-18, David). `project_function` never calls the function
+outside the domain. It gave the padding the value at the nearer end, which is
+continuous with a kink there, and the kept modes come to a kink at first
+order. It now gives `2 f(end) - f(mirror)`, which matches the slope too;
+`extension="constant"` keeps the old behaviour, and is the one that keeps a
+positive function positive. On an interval and an annulus the reflection is
+better everywhere measured, and over the domain as good as knowing the
+function on the padding. The mechanism is an identity: the two fills agree on
+the domain and truncation is linear, so the reflected error is the constant
+one plus the truncation of a field that lives on the padding alone. At a
+boundary that leaked term cancels the kink's error almost exactly (appendix),
+which is the whole improvement. **In a ball the centre is badly controlled
+under either fill**, because a unit-norm radial mode of degree zero is worth
+at the centre about 1.4 times its index and at the surface about one: any
+truncation error is focused there, erratic in sign as modes are added and
+falling only as their reciprocal. For two functions with angular dependence
+the reflection was the worse within `r < 0.25`, by up to ten times, at every
+padding tried -- so not because the mirror image runs out of domain, which
+was the first guess and was tested; for a purely radial one the two were
+alike. The reflection stays the default: the surface is where data are, the
+norm over the domain is better, and the centre is not mended by either fill.
+What would mend it is a fit over the domain alone and not a projection over
+the padded mesh, which is not built. This touches only the sampling of a given function; priors, draws and
+inversions are in the span, where point evaluation is exact.
+
+**D-120. A ball is drawn by cutting it, and a section needs no rotation**
+(2026-09-18, David). `plot` on an interval is a line, with `padding=True` to
+see the padded mesh shaded. A ball has three views: `plot_shell` at one
+radius, which is what `plot` does there and is drawn by the sphere's own
+renderer on a Gauss-Legendre sphere of the same `lmax`, so every map keyword
+comes with it; `plot_section` by any plane through the centre, named by
+`longitude=`, by `pole=` or by `through=` two points; and `plot_profile` along
+a ray, with `section_values` for the numbers. A section is the harmonics
+evaluated round the great circle times the radial coefficient functions, one
+small product for any plane, so no coefficients are rotated. The plane is seen
+from its pole with the direction nearest north up: a meridian has its own
+longitude on the right, two points are met anticlockwise in order, and the
+equator is seen from above the north pole. What is drawn in a ball is the
+field with the vector's components, since off the grid there is no other. The
+renderers are registered from `plotting` when `planetmodel` imports, keeping
+D-92's direction (plotting knows the geometry, not the reverse), at 77 ms on
+an `import pygeoinf2` of about 270, with neither pyshtools nor matplotlib
+loaded by it.
+
+---
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling
@@ -1134,3 +1245,51 @@ laptop and should be re-measured before being quoted.
   Fourier sphere NUFFT 27 ms, 100 000 points at lmax 128; on a 512² torus at
   1e5 points, the transform route against the direct sum, 2000 tomographic
   paths 1.59 s to 0.018 s through pooled nodes.
+- Spectral-element spaces (D-116 to D-118). One white-noise draw with three
+  inner products in a ball: 19.8 ms at `lmax` 8 on a `(65, 9, 17)` grid, 13.3
+  ms at `lmax` 4 on `(65, 5, 9)`, 6.4 ms on `(29, 5, 9)`; the cost is the
+  per-shell loop through pyshtools. Padding on `[0, 2]`, `L` 0.1, covariance
+  `A^-2`, 100 modes: the variance at the endpoints moves 0.3 per cent between
+  a padding of four length scales and eight, the interior 3.5e-4; with no
+  padding it is 2.001 times as large, the doubling a reflecting end gives by
+  the method of images. The interior sits within 1e-3 of the whole-line value
+  `1 / 4L`. Relative `L2` error on the unit ball of `1 + z` sampled and
+  truncated, `lmax` 4: 1.0e-2, 4.7e-3, 2.0e-3, 6.7e-4 at 4, 8, 16, 32 radial
+  modes, the error sitting at the surface where the constant extension leaves
+  a kink; at a single point it is not monotone. Standard deviation realized at
+  the centre of the unit ball, `lmax` 5, covariance `A^-2.5`, at 12, 24, 48
+  radial modes: target constant, 1e-4 throughout; `0.3 + 0.1 r`, 3.0, 1.4 and
+  0.64 per cent (2.8 and 1.2 at `lmax` 10 for 12 and 24 modes, 1.3 at `lmax`
+  16 for 24: the degree does not enter); `0.3 + 0.1 r²`, 0.32, 0.064 and 0.009
+  per cent. One length scale, 0.3, and one order throughout.
+- The ball's default truncation (D-118), unit ball, `lmax` 32: bound from the
+  padded mesh, 11 radial modes at degree zero and one at degree 32, dimension
+  3374, the same at `L` 0.3 (padded radius 2.2) and 0.1 (1.4), shortest
+  wavelength 0.395 and 0.251 against an angular 0.196 at the surface; bound
+  from the domain, 25 and 16 modes at degree zero, 11 and 3 at degree 32,
+  dimension 16 252 and 7243, shortest wavelength 0.180 in both.
+- Continuing a sampled function (D-119), error of the truncation against the
+  function. `cos` on `[-1, 2]`, `L` 0.1, at 32, 64, 128 modes, error at the
+  endpoint: constant 1.1e-2, 5.7e-3, 2.7e-3; reflected 1.6e-3, 5.4e-4, 1.3e-4;
+  `cos` known on the padding 9.1e-4, 4.0e-4, 8.7e-5, with the reflected `L2`
+  error within a few per cent of the last. `cos(3r)(1 + z)`, `lmax` 4, at 4,
+  8, 16, 32, 64 radial modes, relative `L2` over the domain: annulus `[0.5,
+  1]`, constant 9.7e-2, 1.9e-2, 7.0e-3, 2.0e-3, 7.5e-4 and reflected 6.1e-2,
+  7.1e-3, 2.5e-3, 1.0e-3, 2.6e-4, the largest error in the inner third at 64
+  modes 1.2e-2 against 6.4e-4; unit ball, padding 1.2, constant 6e-2, 2e-2,
+  5e-3, 2e-3, 5e-4 and reflected 2e-1, 3e-2, 3e-3, 8e-4, 1e-4, the largest
+  error within `r < 0.25` at 64 modes 5e-3 against 4e-3, and at padding 0.5,
+  5e-4 against 3e-2. `1 + z` in the ball at 32 modes, by radius: at the
+  surface 6.3e-3 constant against 5.8e-4 reflected, within `r < 0.25` 3.7e-3
+  against 8.3e-3, unchanged when the element length is halved.
+- The centre of a ball (D-119), `cos(3r)`, `L` 0.3, padding 1.2, at 6, 8, 12,
+  16, 20, 24, 32, 40, 48, 64 radial modes. Error at `r = 0`, constant fill:
+  +3.7e-2, -3.1e-2, -2.3e-2, -1.8e-2, -1.2e-2, -7.0e-3, +1.9e-3, +5.3e-3,
+  +2.9e-3, -3.3e-3; reflected: +5.1e-3, -1.5e-1, -3.7e-2, -3.2e-3, +8.9e-4,
+  -1.0e-3, +4.6e-3, +4.4e-3, -2.9e-3, +8.9e-5. The leaked term's norm over the
+  domain falls steadily, 4.0e-3 to 1.2e-4, while its value at the centre does
+  not. A unit-norm mode of degree zero at the centre and at the surface: mode
+  1, 2.0 and 0.87; mode 16, 22 and 0.95; mode 63, 86 and 0.40. Annulus `[0.5,
+  1]`, `L` 0.2, at 8, 16, 32, 64 modes, largest leaked term 6.7e-2, 3.2e-2,
+  1.7e-2, 8.5e-3 against a constant-fill error of 7.1e-2, 3.5e-2, 1.7e-2,
+  8.3e-3, leaving a reflected error of 7.2e-3, 3.2e-3, 1.4e-3, 2.9e-4.

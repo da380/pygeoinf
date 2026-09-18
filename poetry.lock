@@ -147,7 +147,7 @@ description = "Astronomy and astrophysics core library"
 optional = true
 python-versions = ">=3.11"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "astropy-7.2.0-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:efac04df4cc488efe630c2fff1992d6516dfb16a06e197fb68bc9e8e3b85def1"},
     {file = "astropy-7.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:52e9a7d9c86b21f1af911a2930cd0c4a275fb302d455c89e11eedaffef6f2ad0"},
@@ -186,7 +186,7 @@ description = "IERS Earth Rotation and Leap Second tables for the astropy core p
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "astropy_iers_data-0.2026.5.4.1.4.54-py3-none-any.whl", hash = "sha256:9d9014f530020fec2da8de29d5ada776b95cf3616cfac41311853f9f753d1928"},
     {file = "astropy_iers_data-0.2026.5.4.1.4.54.tar.gz", hash = "sha256:74b70c810e430c274ff9f0c91680d56f7703add8c367c842902dd53130f70832"},
@@ -235,7 +235,7 @@ files = [
     {file = "attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"},
     {file = "attrs-26.1.0.tar.gz", hash = "sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [[package]]
 name = "babel"
@@ -301,7 +301,7 @@ description = "Reference ellipsoids for geodesy and geophysics"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "boule-0.6.0-py3-none-any.whl", hash = "sha256:8b4812d088c12d64bc2ab9e7cdfa6a33d624cf7227de9d281fc4ff976dc73f39"},
     {file = "boule-0.6.0.tar.gz", hash = "sha256:ee74bec713b9694154aaffafc8ba99f448e6cd1bd59b73b9986804570c7fcad3"},
@@ -367,7 +367,7 @@ files = [
     {file = "certifi-2026.4.22-py3-none-any.whl", hash = "sha256:3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a"},
     {file = "certifi-2026.4.22.tar.gz", hash = "sha256:8d455352a37b71bf76a79caa83a3d6c25afee4a385d632127b6afb3963f1c580"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [[package]]
 name = "cffi"
@@ -617,7 +617,7 @@ files = [
     {file = "charset_normalizer-3.4.7-py3-none-any.whl", hash = "sha256:3dce51d0f5e7951f8bb4900c257dad282f49190fdbebecd4ba99bcc41fef404d"},
     {file = "charset_normalizer-3.4.7.tar.gz", hash = "sha256:ae89db9e5f98a11a4bf50407d4363e7b09b31e55bc117b4f7d80aab97ba009e5"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [[package]]
 name = "clarabel"
@@ -652,7 +652,7 @@ files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
 ]
-markers = {main = "extra == \"sphere\" and platform_system == \"Windows\"", dev = "sys_platform == \"win32\""}
+markers = {main = "(extra == \"sphere\" or extra == \"planetmodel\") and platform_system == \"Windows\"", dev = "sys_platform == \"win32\""}
 
 [[package]]
 name = "comm"
@@ -991,7 +991,7 @@ description = "Distinctly useful code collection: contains efficient algorithms 
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "ducc0-0.41.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:3f459afc64a7ee0d39634fcb5e9aeacab385a20214f64bc451e6caded44447a1"},
     {file = "ducc0-0.41.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6770425751f5521edc4f8d83ad78adaeb6860acd53a7bfc556e70ea27dc28a12"},
@@ -1283,7 +1283,7 @@ files = [
     {file = "idna-3.13-py3-none-any.whl", hash = "sha256:892ea0cde124a99ce773decba204c5552b69c3c67ffd5f232eb7696135bc8bb3"},
     {file = "idna-3.13.tar.gz", hash = "sha256:585ea8fe5d69b9181ec1afba340451fba6ba764af97026f92a91d4eef164a242"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [package.extras]
 all = ["mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2)"]
@@ -2629,7 +2629,7 @@ description = "Powerful data structures for data analysis, time series, and stat
 optional = true
 python-versions = ">=3.11"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "pandas-3.0.2-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:a727a73cbdba2f7458dc82449e2315899d5140b449015d822f515749a46cbbe0"},
     {file = "pandas-3.0.2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:dbbd4aa20ca51e63b53bbde6a0fa4254b1aaabb74d2f542df7a7959feb1d760c"},
@@ -2869,6 +2869,33 @@ tests = ["check-manifest", "coverage (>=7.4.2)", "defusedxml", "markdown2", "ole
 xmp = ["defusedxml"]
 
 [[package]]
+name = "planetmodel"
+version = "1.2.0"
+description = "Spherically layered planetary models: reference bodies, fields, mappings and meshes"
+optional = true
+python-versions = ">=3.12"
+groups = ["main"]
+markers = "extra == \"planetmodel\""
+files = [
+    {file = "planetmodel-1.2.0-py3-none-any.whl", hash = "sha256:e982845f4e1de97dc75ae488d68a0fea98c9cb17abc041ad4281bc1d9ae6b8fa"},
+    {file = "planetmodel-1.2.0.tar.gz", hash = "sha256:a711c5536ea1003567bf684466ebbc4997ef4135a0dabc85a9ede7f20fde218a"},
+]
+
+[package.dependencies]
+ducc0 = {version = ">=0.41", optional = true, markers = "extra == \"harmonics\""}
+numpy = ">=2.0,<3"
+pyshtools = {version = ">=4.14", optional = true, markers = "extra == \"harmonics\""}
+scipy = ">=1.15,<2"
+
+[package.extras]
+harmonics = ["ducc0 (>=0.41)", "pyshtools (>=4.14)"]
+meshing = ["gmsh (>=4.13)"]
+mfem = ["mfem (>=4.8)"]
+netcdf = ["netCDF4 (>=1.7)"]
+notebook = ["ipykernel (>=6.29)"]
+plot = ["matplotlib (>=3.11,<4)"]
+
+[[package]]
 name = "platformdirs"
 version = "4.9.6"
 description = "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`."
@@ -2879,7 +2906,7 @@ files = [
     {file = "platformdirs-4.9.6-py3-none-any.whl", hash = "sha256:e61adb1d5e5cb3441b4b7710bea7e4c12250ca49439228cc1021c00dcfac0917"},
     {file = "platformdirs-4.9.6.tar.gz", hash = "sha256:3bfa75b0ad0db84096ae777218481852c0ebc6c727b3168c1b9e0118e458cf0a"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [[package]]
 name = "plotly"
@@ -2929,7 +2956,7 @@ description = "A friend to fetch your data files"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "pooch-1.9.0-py3-none-any.whl", hash = "sha256:f265597baa9f760d25ceb29d0beb8186c243d6607b0f60b83ecf14078dbc703b"},
     {file = "pooch-1.9.0.tar.gz", hash = "sha256:de46729579b9857ffd3e741987a2f6d5e0e03219892c167c6578c0091fb511ed"},
@@ -3080,7 +3107,7 @@ description = "Python bindings for ERFA"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "pyerfa-2.0.1.5-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:b282d7c60c4c47cf629c484c17ac504fcb04abd7b3f4dfcf53ee042afc3a5944"},
     {file = "pyerfa-2.0.1.5-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:be1aeb70390dd03a34faf96749d5cabc58437410b4aab7213c512323932427df"},
@@ -3226,7 +3253,7 @@ description = "SHTOOLS - Spherical Harmonic Tools"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "pyshtools-4.14.1-cp310-cp310-macosx_15_0_arm64.whl", hash = "sha256:a7355b526c550095ab7c8629f61866bd844065374b2e8d26af6d90a6860480bf"},
     {file = "pyshtools-4.14.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f64bb8b602162dd9f8cb7f04a505258d6b3a939f39b291bb9196bee661a89781"},
@@ -3468,7 +3495,7 @@ files = [
     {file = "pyyaml-6.0.3-cp39-cp39-win_amd64.whl", hash = "sha256:2e71d11abed7344e42a8849600193d15b6def118602c4c176f748e4583246007"},
     {file = "pyyaml-6.0.3.tar.gz", hash = "sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [[package]]
 name = "pyzmq"
@@ -3603,7 +3630,7 @@ files = [
     {file = "requests-2.33.1-py3-none-any.whl", hash = "sha256:4e6d1ef462f3626a1f0a0a9c42dd93c63bad33f9f1c1937509b8c5c8718ab56a"},
     {file = "requests-2.33.1.tar.gz", hash = "sha256:18817f8c57c6263968bc123d237e3b8b08ac046f5456bd1e307ee8f4250d3517"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [package.dependencies]
 certifi = ">=2023.5.7"
@@ -4317,7 +4344,7 @@ description = "Fast, Extensible Progress Meter"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf"},
     {file = "tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb"},
@@ -4372,7 +4399,7 @@ files = [
     {file = "tzdata-2026.2-py2.py3-none-any.whl", hash = "sha256:bbe9af844f658da81a5f95019480da3a89415801f6cc966806612cc7169bffe7"},
     {file = "tzdata-2026.2.tar.gz", hash = "sha256:9173fde7d80d9018e02a662e168e5a2d04f87c41ea174b139fbef642eda62d10"},
 ]
-markers = {main = "(sys_platform == \"win32\" or sys_platform == \"emscripten\") and extra == \"sphere\""}
+markers = {main = "(sys_platform == \"win32\" or sys_platform == \"emscripten\") and (extra == \"sphere\" or extra == \"planetmodel\")"}
 
 [[package]]
 name = "uri-template"
@@ -4400,7 +4427,7 @@ files = [
     {file = "urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4"},
     {file = "urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed"},
 ]
-markers = {main = "extra == \"sphere\""}
+markers = {main = "extra == \"sphere\" or extra == \"planetmodel\""}
 
 [package.extras]
 brotli = ["brotli (>=1.2.0) ; platform_python_implementation == \"CPython\"", "brotlicffi (>=1.2.0.0) ; platform_python_implementation != \"CPython\""]
@@ -4498,7 +4525,7 @@ description = "N-D labeled arrays and datasets in Python"
 optional = true
 python-versions = ">=3.11"
 groups = ["main"]
-markers = "extra == \"sphere\""
+markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "xarray-2026.4.0-py3-none-any.whl", hash = "sha256:d43751d9fb4a90f9249c30431684f00c41bc874f1edccd862631a40cbc0edf08"},
     {file = "xarray-2026.4.0.tar.gz", hash = "sha256:c4ac9a01a945d90d5b1628e2af045099a9d4943536d4f2ee3ae963c3b222d15b"},
@@ -4523,9 +4550,10 @@ clarabel = ["clarabel"]
 interactive = ["plotly"]
 mfem = ["mfem"]
 osqp = ["osqp"]
+planetmodel = ["planetmodel"]
 sphere = ["Cartopy", "ducc0", "pyshtools", "shapely"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "a6d487e044c757006f57724200115a39a0d4c89ac1311b6b236ccd85a305f154"
+content-hash = "76c3ae600f4adeee76427e5e316f0f5400cfc1885772ca3112697a12c5e47e6f"
