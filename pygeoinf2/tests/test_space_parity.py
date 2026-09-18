@@ -10,8 +10,6 @@ suite of a thousand tests passed and the catalogue said "Ported".
 
 So this calls each method on each geometry, rather than asking whether the
 attribute exists: on the base class it always does.
-
-See REVIEW.md, appendix Y, Consider-30.
 """
 
 import numpy as np
@@ -139,7 +137,7 @@ class TestEveryGeometryHasTheGeometry:
 
 
 class TestChangingTheMetricKeepsTheSubclass:
-    """REVIEW2 3.7 / D-3. ``with_order`` returned the bare geometry class, so
+    """D-3. ``with_order`` returned the bare geometry class, so
     ``isinstance(X.with_order(0.0), Lebesgue)`` was false on every derived
     space -- defeating the reason D-3 gives for the subclasses existing, and
     the check pyslfp's ``sl/utils.py`` dispatches on."""
@@ -185,7 +183,7 @@ class TestChangingTheMetricKeepsTheSubclass:
 
 
 class TestAdoptingAnArray:
-    """REVIEW2, the smaller list: ``from_grid_values`` aliased the caller's
+    """``from_grid_values`` aliased the caller's
     array, so a later in-place operation rewrote it. v1's ``from_array``
     copies."""
 
@@ -214,7 +212,7 @@ class TestAdoptingAnArray:
 
 
 class TestPointsAreConvertedOnce:
-    """REVIEW2 4.2.7. The conversion from points to whatever the transform
+    """The conversion from points to whatever the transform
     consumes depends only on the points, and an observation operator is built
     once and applied thousands of times. It used to run per application: 91% of
     one on a bounded box, whose conversion is a Python loop."""
@@ -267,7 +265,7 @@ class TestPointsAreConvertedOnce:
 
 
 class TestAnInvariantDrawIsTakenInComponents:
-    """REVIEW2 4.2.3. The draw went through the covariance factor, which
+    """The draw went through the covariance factor, which
     synthesized white noise onto the grid so that a diagonal operator could
     analyze it again and synthesize the result: three transforms for numbers
     that are `sqrt(s / g) * standard normal` in components."""
@@ -309,7 +307,7 @@ class TestAnInvariantDrawIsTakenInComponents:
 
 
 class TestTwoPointQuantitiesInClosedForm:
-    """REVIEW2 4.2.4. An invariant measure's covariance is diagonal, so both
+    """An invariant measure's covariance is diagonal, so both
     two-point quantities are sums over the basis rather than applications of
     the operator to a Dirac's representer."""
 
@@ -374,7 +372,7 @@ class TestTwoPointQuantitiesInClosedForm:
         assert np.allclose(variances, by_dirac)
 
     def test_the_order_guard_is_not_weakened(self, geometry):
-        """Q4: D-11 is a guard on the space. The closed form needs no Dirac,
+        """D-11 is a guard on the space. The closed form needs no Dirac,
         so the guard is asked for explicitly rather than arriving through one.
         """
         _, space = geometry

@@ -264,7 +264,7 @@ class TestMomentsMatchSamples:
 
 
 class TestWhiteNoiseCorrection:
-    """DESIGN.md section 9, at the point where it actually bites: sampling."""
+    """DECISIONS.md D-19, at the point where it actually bites: sampling."""
 
     def test_isotropic_covariance_is_the_identity_on_the_space(self, rng):
         """v1 produces sigma^2 G here, not sigma^2 I."""

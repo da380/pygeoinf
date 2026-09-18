@@ -6,8 +6,6 @@ whose correctness cannot be read off a spectrum: with a constant rigidity every
 term that makes it interesting vanishes identically. So every test here
 compares it against something computed another way, and the ones that matter
 carry a negative control showing what a wrong answer would look like.
-
-See DESIGN.md sections 20.5 (F) and 21.
 """
 
 import numpy as np
@@ -74,7 +72,7 @@ class TestPointwiseAlgebra:
         )
 
     def test_a_product_stays_on_the_grid(self, rng):
-        """REVIEW2 Q3: the product is the product, not its projection.
+        """the product is the product, not its projection.
 
         The Driscoll-Healy grid is oversampled, so the exact product of two
         band-limited fields has no equal in the span of the basis. ``multiply``
@@ -352,7 +350,7 @@ class TestFlexureInverse:
         assert X.norm(residual) < 1e-6 * X.norm(w)
 
     def test_a_varying_rigidity_inverts_on_a_sobolev_space(self, rng):
-        """REVIEW2 3.2's failing case: on a Sobolev space the lifted operator
+        """failing case: on a Sobolev space the lifted operator
         is not self-adjoint, so CG cannot run there. The inverse is taken in
         L2 and lifted, and must neither fail nor claim a trait it lacks.
         """
@@ -434,7 +432,7 @@ def term_by_term(X, rigidity, poisson_ratio, buoyancy, w):
 
 
 class TestFusedFlexure:
-    """REVIEW2 4.2.2: the operator as one sum of grid products under each
+    """the operator as one sum of grid products under each
     Laplacian power, analyzed once each, instead of fifty transforms."""
 
     @pytest.fixture(params=["sphere", "circle"])
@@ -511,7 +509,7 @@ class TestFusedFlexure:
 
 
 class TestFlexureInverseOnASobolevSpace:
-    """REVIEW2 3.2: the inverse used to claim the *lifted* operator positive
+    """the inverse used to claim the *lifted* operator positive
     definite, which it is not in ``H^s`` -- CG raised on the sphere and
     returned a 1e-4 residual as converged on the circle. It now inverts in
     ``L2``, where the claim is true, and lifts the inverse."""

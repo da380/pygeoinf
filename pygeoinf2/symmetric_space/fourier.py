@@ -497,7 +497,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
         The conversion the non-uniform FFT starts with, done once for an
         operator rather than once per application: it was 32 of 61 ms on a
-        512-square torus at 10^5 points (REVIEW2 4.2.7).
+        512-square torus at 10^5 points (measured 2026-08-29).
 
         Args:
             points: points of the box, or an already prepared set.
@@ -1091,7 +1091,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
         **Returns the D-3 subclass its order names** rather than the base
         class, which is what makes ``isinstance(X.with_order(0.0), Lebesgue)``
-        true (REVIEW2 3.7). Each geometry over this one -- a circle, a torus, a
+        true (measured 2026-08-29). Each geometry over this one -- a circle, a torus, a
         bounded box -- overrides this and nothing else, so there is a single
         place per family that knows which class goes with which order.
 

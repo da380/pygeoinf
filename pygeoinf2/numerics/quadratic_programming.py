@@ -471,7 +471,7 @@ def best_available_qp_solver() -> QPSolver:
     optional packages the user has, and gets the best of them without asking.
 
     OSQP used to come first, for its speed and warm start. Measured on the
-    two bundle subproblems (DESIGN §44), Clarabel is faster as well as more
+    two bundle subproblems (DECISIONS.md D-56), Clarabel is faster as well as more
     accurate: on the level method's master QP, whose quadratic is singular
     in the level variable, OSQP hit its iteration cap on 40 per cent of the
     solves and the run aborted, where Clarabel solved every one; on the

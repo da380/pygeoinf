@@ -14,7 +14,7 @@ and write into :func:`cache_directory`, never into the package, which may
 sit in a read-only tree. Nothing else here touches the network, and nothing
 fetches on a caller's behalf: asking for more events than the table holds
 is refused with the download named, rather than answered with a fetch the
-caller did not ask for (DESIGN §21.2, §82). v1's ``datasets`` and
+caller did not ask for (DECISIONS.md D-103). v1's ``datasets`` and
 ``config`` modules, with the automatic fetch left out.
 
 The cache directory is ``PYGEOINF_CACHE_DIR`` when set, otherwise

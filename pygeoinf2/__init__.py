@@ -1,7 +1,8 @@
 """
 pygeoinf 2.0 — development tree.
 
-This is the shadow package described in ``DESIGN.md``. It is not shipped; the
+This is the shadow package; its design is recorded in ``DECISIONS.md``
+and ``CURRENT_STATE.md``. It is not shipped; the
 released library remains ``pygeoinf``. Imports are relative throughout so that
 the eventual promotion is a directory rename.
 
@@ -77,7 +78,7 @@ from .traits import Traits
 # The subpackages, so that ``gi.inference.X`` works. inference and plotting
 # were the two a user needs in order to *solve* anything, and the two that were
 # not reachable at all; numerics arrived only by accident, pulled in
-# transitively by symmetric_space. See DESIGN.md section 25.4.
+# transitively by symmetric_space. See DECISIONS.md D-111.
 from . import geometry, inference, numerics, plotting, probability, symmetric_space
 from .inference import (
     BackusGilbert,

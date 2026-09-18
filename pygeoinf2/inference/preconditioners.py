@@ -265,7 +265,7 @@ class LocalisedPreconditioner(LinearSolver):
 
             def restrict(vector: Any, indices: np.ndarray = indices) -> np.ndarray:
                 # Galerkin, not components: the Galerkin matrix is the one in
-                # which a self-adjoint operator is symmetric (DESIGN §5.6), and
+                # which a self-adjoint operator is symmetric (DECISIONS.md D-26), and
                 # a principal sub-block of a symmetric positive semidefinite
                 # matrix is again one, which is what Nystrom needs.
                 return data_space.apply_gram(data_space.to_components(vector))[indices]
@@ -445,7 +445,7 @@ class InvariantDistancePreconditioner(LinearSolver):
         v1's version defaulted to no taper, which is the most likely reason it
         never performed as well as hoped: without one the "preconditioner" can
         be indefinite, and an indefinite preconditioner does not slow CG down,
-        it breaks it. See DESIGN.md section 23.6.
+        it breaks it. See DECISIONS.md D-47.
 
     The caller asserts two things this class cannot check: that the forward
     operator really is evaluation at *points*, in that order, and that the

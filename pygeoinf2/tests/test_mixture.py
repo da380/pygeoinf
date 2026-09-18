@@ -11,7 +11,7 @@ The one thing that cannot be checked that way is the law of total covariance,
 which is checked against sampling instead: it is the term a single Gaussian
 does not have, and getting it wrong is how a mixture silently becomes a blur.
 
-See DESIGN.md section 31.
+See DECISIONS.md D-66.
 """
 
 import numpy as np

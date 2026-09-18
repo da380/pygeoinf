@@ -24,7 +24,7 @@ no other case it covers. Bayesian inference in general is neither.
 
 The result is a :class:`~pygeoinf2.inference.estimators.GaussianEstimator`
 rather than a measure: the covariance does not depend on the data, so the
-mapping is a pair and only the mean moves. See DESIGN.md sections 18.7 and 23.
+mapping is a pair and only the mean moves. See DECISIONS.md D-72 and D-44.
 """
 
 from __future__ import annotations

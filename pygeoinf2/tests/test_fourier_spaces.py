@@ -101,7 +101,7 @@ class TestSpaceAxioms:
 
 class TestSobolevMetric:
     def test_it_is_a_diagonal_metric_space(self):
-        """Not a mass-weighted one, which is the simplification of DESIGN.md 13.2."""
+        """Not a mass-weighted one, which is the simplification of DECISIONS.md D-85."""
         space = Sobolev((8,), 2.0, 0.3)
         assert space.has_diagonal_metric
         assert not space.is_orthonormal
@@ -233,7 +233,7 @@ class TestPointEvaluation:
         check_operator(operator, rng=rng)
 
     def test_the_adjoint_returns_dirac_representers(self, rng):
-        """The operator-level form of DESIGN.md 5.6, on a real space."""
+        """The operator-level form of DECISIONS.md D-26, on a real space."""
         space = Sobolev((32,), 2.0, 0.3)
         point = np.array([0.4])
         operator = space.point_evaluation_operator([point, np.array([2.1])])
@@ -365,7 +365,7 @@ class TestNonUniformFFT:
 
 class TestFormalAdjointLift:
     def test_the_action_is_unchanged(self, rng):
-        """Define on L2, use on the Sobolev space. DESIGN.md 3.5 and 13.2."""
+        """Define on L2, use on the Sobolev space. DECISIONS.md D-85 and 13.2."""
         lebesgue, sobolev = Lebesgue((16,)), Sobolev((16,), 2.0, 0.3)
         matrix = rng.normal(size=(16, 16))
         base = LinearOperator.from_matrix(lebesgue, lebesgue, matrix, form="components")
@@ -387,7 +387,7 @@ class TestFormalAdjointLift:
         """A formally self-adjoint operator need not stay self-adjoint.
 
         It does only if it commutes with the ratio of the two metrics, which
-        for a general operator it does not. See DESIGN.md 3.5.
+        for a general operator it does not. See DECISIONS.md D-85.
         """
         lebesgue, sobolev = Lebesgue((16,)), Sobolev((16,), 2.0, 0.3)
         matrix = rng.normal(size=(16, 16))

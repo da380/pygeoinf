@@ -1,6 +1,6 @@
 """Operators that know their own matrix, diagonals, or how to apply a block.
 
-REVIEW2 §4.4: ``(A + B).matrix()``, ``A.adjoint.matrix()``, the Jacobi diagonal
+``(A + B).matrix()``, ``A.adjoint.matrix()``, the Jacobi diagonal
 of ``M + t I`` and a direct inverse's matrix were all re-derived by ``dim``
 applications of operators that could have written the answer down. The hooks
 ``_known_matrix`` / ``_known_diagonals`` / ``apply_block`` let them. Every
@@ -168,7 +168,7 @@ class TestKnownMatrix:
 
     def test_an_lu_solver_factorizes_once(self, family, monkeypatch, rng):
         """The fix for the adjoint reuse factorized *twice*: O(n^3), doubled,
-        for a solver whose point is to do it once (REVIEW2 3.5)."""
+        for a solver whose point is to do it once (measured 2026-08-29)."""
         import pygeoinf2.numerics.solvers as solvers
 
         calls = {"n": 0}

@@ -3,7 +3,7 @@ The observation model: what the data are, and how uncertain.
 
 A ``ForwardProblem`` is the operator and the data uncertainty, and nothing
 else. The prior and the property operator belong to the *estimator*, because
-the prior is what selects the method — see DESIGN.md section 18.7. One problem
+the prior is what selects the method — see DECISIONS.md D-72. One problem
 can then be attacked several ways without being rebuilt.
 
 The data uncertainty may be a probability measure or a convex set. Those are

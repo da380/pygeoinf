@@ -1361,7 +1361,7 @@ class Ellipsoid(ConvexSet):
         usually a correction. A Cholesky factorization used to be the default,
         which extracted and factorized ``I + lambda P`` twice per step: at
         dimension 1500, 3.5 s with a matrix-backed precision and 31 s with
-        54 000 applications of one that had to be probed (DESIGN §53). It is
+        54 000 applications of one that had to be probed (DECISIONS.md D-67). It is
         still available by name for a small space.
 
         Args:

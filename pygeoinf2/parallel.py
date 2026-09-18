@@ -1,7 +1,7 @@
 """Running independent work in parallel, *around* operators.
 
-The distinction that decides where this is used, from DESIGN.md and REVIEW.md
-D-6: parallelism belongs at the embarrassingly parallel loops that surround an
+The distinction that decides where this is used, from DECISIONS.md
+D-6 and D-52: parallelism belongs at the embarrassingly parallel loops that surround an
 operator, never inside its action. Drawing a thousand samples is a thousand
 independent applications of one factor; applying that factor once is not
 something this can help with, and threading a ``parallel=`` flag down into an
@@ -23,7 +23,7 @@ genuinely independent and each expensive:
 touched.
 
 **Which regime a problem is in decides whether to ask for this at all.**
-Measured in ``review/parallel.md``:
+Measured on 2026-08-29 (the appendix of ``DECISIONS.md``):
 
 * *NumPy-bound* work -- dense matrices, Euclidean spaces, anything whose cost
   is a BLAS call -- gains nothing from processes: the serial loop with BLAS

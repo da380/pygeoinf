@@ -40,7 +40,7 @@ weighted space in the test suite.
 :meth:`~pygeoinf2.probability.gaussian.GaussianMeasure.as_multivariate_normal`
 already computes it, so this asks for that rather than doing it again.
 
-See DESIGN.md section 30.
+See DECISIONS.md D-93.
 """
 
 from __future__ import annotations

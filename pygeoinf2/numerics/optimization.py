@@ -23,7 +23,7 @@ Two further consequences of working in the space rather than in components:
 - **Quasi-Newton methods become metric-aware for free.** The L-BFGS two-loop
   recursion is built entirely from inner products, so working in the space's
   metric preconditions it by the inverse Gram matrix at no cost. The component
-  version is metric-blind, which is the conditioning half of DESIGN.md 5.6.
+  version is metric-blind, which is the conditioning half of DECISIONS.md D-26.
 """
 
 from __future__ import annotations
@@ -353,7 +353,7 @@ class SteepestDescent(_DescentMethod):
     Note this is the gradient in the *space's* metric, so the direction is
     steepest with respect to the inner product the modeler chose rather than
     with respect to an arbitrary coordinate basis. That difference is the whole
-    of DESIGN.md 5.6, and it is why this converges at a mesh-independent rate
+    of DECISIONS.md D-26, and it is why this converges at a mesh-independent rate
     where the component version does not.
     """
 
@@ -361,7 +361,7 @@ class SteepestDescent(_DescentMethod):
         return space.negative(gradient), state
 
     def _default_line_search(self) -> LineSearch:
-        """A strong Wolfe search, as DESIGN.md 11.7 says it is.
+        """A strong Wolfe search, as DECISIONS.md D-54 says it is.
 
         It inherited a backtracking one, which cannot take a *larger* step than
         it is offered -- and a steepest-descent direction carries no natural
@@ -865,7 +865,7 @@ def gauss_newton_hessian(
     For a misfit ``phi(m) == psi(F(m))`` the exact Hessian is
     ``J* H_psi J + sum_i r_i F_i''(m)``. This is the first term alone, which is
     what "Gauss-Newton" means, and it is offered under a name that says so
-    rather than as a ``hessian`` that quietly omits a term. See DESIGN.md 5.5.
+    rather than as a ``hessian`` that quietly omits a term. See DECISIONS.md D-30.
 
     It comes out positive semidefinite by the palindrome rule when the
     weighting is, with nothing claimed — so it can be handed to CG directly.

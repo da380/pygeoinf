@@ -1,7 +1,7 @@
 """
 A damped solve inside a monotone scalar root find.
 
-DESIGN.md section 18.6 names this as one numerical kernel with four users: the
+DECISIONS.md D-57 names this as one numerical kernel with four users: the
 feasible-set ellipsoid, the primal nested bisection, the set-inclusion test, and
 the discrepancy principle. Each looks for the value of a multiplier at which
 some quantity — a misfit, a norm — reaches a target, and each quantity is

@@ -3,7 +3,7 @@ Set-valued inference: a constraint set in, a constraint set out.
 
 The feasible model set is ``S_M == S_M^0 ∩ A^-1(d - S_eta)`` and the answer is
 its image ``T(S_M)``. Four routes compute that image, and they are the same set
-— which is what makes them testable against each other. See DESIGN.md §18.3.
+— which is what makes them testable against each other. See DECISIONS.md D-79.
 
 Here: route (a), the closed form for error-free data and a ball prior, and
 route (b), the linear certificate, which is where Backus-Gilbert lives. Routes
@@ -523,7 +523,7 @@ def _minimum_norm_fits(
     one warm-started Krylov solve in the data space per probe, each an
     application of ``A`` and ``A*``, and never forms ``A A*`` -- which at a
     datum per column is the one thing a data space of any size cannot
-    afford (DESIGN §50). Only the misfit differs from the discrepancy
+    afford (DECISIONS.md D-81). Only the misfit differs from the discrepancy
     principle's: the plain data norm here, the chi-squared there, which is
     the difference between a noise ball and a credible ellipsoid.
 
@@ -889,7 +889,7 @@ class _BisectionRoute(SetEstimator):
         """The positive multiplier at which a monotone quantity hits a target.
 
         Delegates to :func:`~pygeoinf2.numerics.root_find.monotone_root`,
-        DESIGN §18.6's one kernel. The probes here are closed form -- the
+        DECISIONS.md D-57's one kernel. The probes here are closed form -- the
         spectral reduction has already turned each into an ``O(dim(D))``
         expression -- so there is no solve to warm start. The tolerance is
         zero so that the full iteration count is always taken: these
@@ -969,7 +969,7 @@ class _BisectionRoute(SetEstimator):
         In the prior's own inner product. For two balls this is v1's
         ``test_data_compatibility`` computation, matrix-free: the damped
         minimum-norm search of :func:`_minimum_norm_fits`, a few
-        warm-started Krylov solves in the data space (DESIGN §50). For an
+        warm-started Krylov solves in the data space (DECISIONS.md D-81). For an
         ellipsoid on either side it comes from the reduction, whose cost
         the route pays anyway for its support values: with ``xi`` the
         shifted data in the reduced spectrum, the damped fit has misfit
@@ -1914,7 +1914,7 @@ class _LikelihoodRoute:
         # quantity froze across the closing bracket, and the search closed
         # on a false root. Cold, a quadratic objective is one exact Newton
         # step, so the saving was small; the optimizer's stopping rules on
-        # warm starts are an open point recorded in DESIGN §70.
+        # warm starts are an open point recorded in DECISIONS.md D-80.
         def probe(multiplier: float, previous: Any) -> Evaluation:
             result = self._optimizer.minimize(
                 self._objective(anchor, projector, multiplier), start

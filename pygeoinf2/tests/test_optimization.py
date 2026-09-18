@@ -230,7 +230,7 @@ class TestMetricAwareness:
     Hessian is the Gram matrix. A component-space method therefore sees a
     condition number equal to the spread of the metric values, and takes more
     iterations the worse the discretization is scaled. That is the conditioning
-    half of DESIGN.md 5.6, and it is why this is worth writing rather than
+    half of DECISIONS.md D-26, and it is why this is worth writing rather than
     wrapping.
     """
 
@@ -634,7 +634,7 @@ class TestTheLineSearchHandsBackWhatItKnows:
 
 
 class TestSteepestDescentUsesAWolfeSearch:
-    """DESIGN.md 11.7 says it does, and it inherited a backtracking one --
+    """DECISIONS.md D-54 says it does, and it inherited a backtracking one --
     which cannot take a larger step than it is offered, and a steepest-descent
     direction carries no natural scale."""
 

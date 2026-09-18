@@ -11,8 +11,6 @@ actually made.
     ax, im = plotting.plot(space, field, symmetric=True, coasts=True)
     ax.set_title("Flexure")
     plotting.show()
-
-See DESIGN.md section 20.5, O8.
 """
 
 from .base import (

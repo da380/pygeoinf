@@ -5,9 +5,9 @@ A Gaussian is determined by an expectation and a covariance, and stays Gaussian
 under an affine map. Both facts are carried structurally here: the pushforward
 covariance ``A C A*`` is recognized as positive semidefinite by the
 adjoint-palindrome rule of the algebra, with nothing asserted and no
-special-casing (DESIGN.md 4.1).
+special-casing (DECISIONS.md D-36).
 
-Sampling is where the white-noise correction of DESIGN.md section 9 earns its
+Sampling is where the white-noise correction of DECISIONS.md D-19 earns its
 keep. Given a factor ``L`` with ``C == L L*``, a sample is ``m + L xi`` where
 ``xi`` is white noise **on the factor's own domain**. When that domain is the
 space itself — the isotropic case, ``L == sigma I`` — the noise must be white
@@ -297,8 +297,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Euclidean coefficient space, making the array a statement about
         components rather than about directions. The two agree on an
         orthonormal space and differ on every other, and the operator reading
-        is the one that draws white noise correctly — the defect DESIGN.md
-        section 9 exists to record.
+        is the one that draws white noise correctly — the defect
+        DECISIONS.md D-19 exists to record.
 
         Both a factor and a precision factor are supplied, so the result can be
         sampled and has a density.
@@ -466,7 +466,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """From an explicit covariance matrix.
 
         ``form`` says which representation the array is in, because no trait
-        implies it (DESIGN.md 5.3). The Galerkin form is the natural one here:
+        implies it (DECISIONS.md D-25). The Galerkin form is the natural one here:
         a covariance is self-adjoint, so that is the representation in which it
         is symmetric.
 
@@ -739,7 +739,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         basis vector at a time: two applications per column and linear
         memory, which is v1's exact route. The dense matrix is formed only
         when asked for by name; it used to be the default, at ``N^2`` memory
-        for a number that needs ``N`` (DESIGN §48).
+        for a number that needs ``N`` (DECISIONS.md D-63).
 
         ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``. The
         estimator is a trace of ``C^2``, so its relative error is worse than a
@@ -841,7 +841,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         and otherwise sums the component diagonal from :meth:`diagonals`,
         which is free where the operator knows it and one application per
         column where it must be probed, in linear memory: v1's exact route.
-        The dense matrix is formed only when asked for by name (DESIGN §48).
+        The dense matrix is formed only when asked for by name (DECISIONS.md D-63).
 
         Args:
             method: as for :meth:`hilbert_schmidt_norm`.
@@ -1418,7 +1418,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         the covariance, with its options; see there. An operator and not a
         measure: thresholding does not keep a covariance positive definite,
         and a sparse matrix cannot be sampled from without a sparse Cholesky,
-        which SciPy does not have (DESIGN §47).
+        which SciPy does not have (DECISIONS.md D-65).
 
         Args:
             **options: ``threshold``, ``max_per_column``, ``criterion`` and
@@ -1441,7 +1441,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> "Ellipsoid":
         """The region carrying a given share of the probability, as a set.
 
-        The **hardening** of DESIGN.md section 18.1: a measure becomes a set at
+        The **hardening** of DECISIONS.md D-64: a measure becomes a set at
         a chosen chi-squared level. It is not canonical and it is not
         reversible — the ellipsoid carries no memory of the distribution it
         came from — which is why it is a named step rather than something a
@@ -1455,7 +1455,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         invert. Pass a direct solver, ``CholeskySolver()``, to factorize the
         covariance once on a space small enough to hold it; that is the dense
         route, and it is taken only by name. It used to be taken silently,
-        with an ``O(N^3)`` inverse of the Galerkin matrix (DESIGN §49).
+        with an ``O(N^3)`` inverse of the Galerkin matrix (DECISIONS.md D-64).
 
         Args:
             level: the probability the region carries, in ``(0, 1)``.
@@ -2318,7 +2318,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         No Riesz map is applied here because none is needed: the precision maps
         the space to itself, so its output is a vector. That is the whole
-        content of DESIGN.md section 5.6 in its most agreeable form.
+        content of DECISIONS.md D-26 in its most agreeable form.
 
         Args:
             x: where to evaluate it.

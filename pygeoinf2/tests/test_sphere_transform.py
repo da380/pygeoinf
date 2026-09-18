@@ -7,7 +7,7 @@ unusably slow; the second is neither. So every test here forces both and
 compares, and the ones about the delicate parts — the quadrature weights and
 the pole the grid does not sample — carry a negative control.
 
-See DESIGN.md section 21.15.
+See DECISIONS.md D-89.
 """
 
 import numpy as np
@@ -106,7 +106,7 @@ class TestQuadratureWeights:
 
 
 class TestTheLebesgueInnerProductIsTheQuadrature:
-    """REVIEW2 4.1.g. Analysis on this grid *is* the quadrature, so the L2
+    """Analysis on this grid *is* the quadrature, so the L2
     inner product of two band-limited fields is a weighted sum over the grid
     and costs no transform at all."""
 
@@ -137,7 +137,7 @@ class TestTheLebesgueInnerProductIsTheQuadrature:
         assert X.norm(x) > 0.0
 
     def test_one_raw_product_still_agrees(self, rng):
-        """The case that matters after DESIGN.md 35: a pointwise product is
+        """The case that matters after DECISIONS.md D-87: a pointwise product is
         left on the grid, and pairing one with a field of the space gives the
         same number either way -- exactly, not nearly."""
         from pygeoinf2.algebra.spaces import DiagonalMetricSpace
@@ -201,7 +201,7 @@ class TestDoubling:
     @pytest.mark.parametrize("lmax", [4, 8, 17, 32])
     @pytest.mark.parametrize("radius,sampling", [(1.0, 1), (1.7, 1), (1.0, 2)])
     def test_the_south_pole_comes_from_the_row_means(self, lmax, radius, sampling, rng):
-        """REVIEW2 4.2.8. The pole value used to cost a full analysis -- 35% of
+        """The pole value used to cost a full analysis -- 35% of
         a forward evaluation at lmax 256 -- to read one number out. Only the
         zonal harmonics are non-zero at a pole and they do not depend on
         longitude, so it is a weighting of the row means."""
@@ -293,7 +293,7 @@ class TestBothRoutesAgree:
 
 
 class TestWalkingOverThePole:
-    """REVIEW2 3.4. A walk longer than a quarter circumference used to run the
+    """A walk longer than a quarter circumference used to run the
     colatitude past ``pi`` and return a latitude below -90, which the two
     evaluation routes then read as two different points."""
 
@@ -483,7 +483,7 @@ class TestRandomDomainPoints:
 class TestGaussLegendreGrid:
     """The same space on a Gauss-Legendre grid: fewer points, exact weights,
     no pole row, and the fast point evaluation borrowed from a Driscoll-Healy
-    sibling (DESIGN §85)."""
+    sibling (DECISIONS.md D-86)."""
 
     @pytest.fixture(params=[4, 9])
     def pair(self, request):

@@ -6,7 +6,7 @@ data rather than by the caller.
 
 Each is built on :class:`~pygeoinf2.inference.tikhonov.TikhonovNormalOperator`,
 so each exposes the operator it inverts and can be preconditioned, given a
-surrogate, reduced, or swept over its damping — see DESIGN.md section 24.
+surrogate, reduced, or swept over its damping — see DECISIONS.md D-76.
 
 The distinction that runs through the module is between a damping *chosen* and
 a damping *found*. With the damping fixed, the estimate is affine in the data

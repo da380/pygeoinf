@@ -31,7 +31,7 @@ where they belong; what this side supplies is the inverse problem.
 **Nothing converts between a load vector and a function.** Each sensor is a
 linear form, so its natural output is a *derivative*; the mass solve that turns
 one into a function happens inside the operator. That is the distinction of
-DESIGN.md section 5.6, in the setting where it is easiest to get wrong.
+DECISIONS.md D-26, in the setting where it is easiest to get wrong.
 
 Needs MFEM, which comes with the 'mfem' extra.
 """

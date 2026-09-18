@@ -6,8 +6,6 @@ these tests compare against one. The measure statistics have two routes — a
 spectral one for a diagonal covariance and a dense one for anything — and the
 point of testing them is that the two agree, since only the second is obviously
 right and only the first is affordable.
-
-See DESIGN.md sections 20.5 (S) and 21.2 (P).
 """
 
 import numpy as np
@@ -813,7 +811,7 @@ class TestPriorWeightedProbes:
     """v1's ``measure=`` on the range finder: probes drawn from a prior find
     the range the prior lets the data see, which white noise finds badly.
     David remembered this working far better on function spaces; measured,
-    it does (DESIGN §74)."""
+    it does (DECISIONS.md D-53)."""
 
     def test_the_prior_weighted_range_captures_what_the_data_can_see(self, rng):
         from pygeoinf2.numerics.randomized import random_range

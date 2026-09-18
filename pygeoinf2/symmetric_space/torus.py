@@ -1,6 +1,6 @@
 """The two-dimensional torus: a doubly periodic domain.
 
-One of the geometries of DESIGN.md section 13, given its own module so that
+One of the geometries of DECISIONS.md D-83, given its own module so that
 the space a problem is posed on is named by its type. ``Torus`` is a
 :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox` of two axes.
 """
@@ -35,7 +35,7 @@ class Torus(PeriodicBox):
             lengths: the period along each axis. ``(2 pi, 2 pi)``, the unit
                 torus, if neither this nor *radii* is given. Points are
                 physical coordinates in these periods, never angles; on the
-                unit torus the two coincide (DESIGN §46).
+                unit torus the two coincide (DECISIONS.md D-84).
             radii: the radius along each axis, as an alternative to the
                 periods; ``length == 2 pi radius`` on each. v1's parameters.
             order: the Sobolev order. Zero gives the Lebesgue space.

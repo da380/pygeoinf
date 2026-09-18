@@ -10,7 +10,7 @@ charged for a Jacobian it will discard.
 Scalar-valued operators return the second-order analogue,
 :class:`QuadraticModel`, which is what a Newton or trust-region step consumes.
 
-See DESIGN.md section 5.2.
+See DECISIONS.md D-29.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class QuadraticModel[X](Linearization[X, float]):
     adjoint method produces the derivative, and recovering the gradient from it
     costs an application of the inverse metric. Storing the gradient instead
     would invite callers to supply a derivative array in its place, which is
-    the classic error described in DESIGN.md section 5.6.
+    the classic error described in DECISIONS.md D-26.
 
     The gradient is computed once, on first access, and cached.
     """

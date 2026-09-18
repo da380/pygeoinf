@@ -6,8 +6,6 @@ rendering is a separate layer that dispatches on the space's type, and nothing
 in ``symmetric_space`` imports matplotlib. That keeps the core usable from
 anything headless, and it means a new space can be plotted by registering a
 function rather than by growing a method.
-
-See DESIGN.md section 20.5, O8.
 """
 
 from __future__ import annotations

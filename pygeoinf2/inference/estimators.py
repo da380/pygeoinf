@@ -12,7 +12,7 @@ operator ``T``. An inverse problem is an inference problem with ``T == identity`
 :meth:`Estimator.push_forward` is the whole of the difference: applying ``T``
 to a point, pushing a measure through it, taking the image of a set.
 
-See DESIGN.md section 18.7.
+See DECISIONS.md D-72.
 """
 
 from __future__ import annotations

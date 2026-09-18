@@ -26,7 +26,7 @@ the periodic geometries specialize.
 The Fourier-based spaces are always available. The sphere needs ``pyshtools``,
 so its module is imported on demand rather than here.
 
-See DESIGN.md sections 13 and 19.
+See DECISIONS.md D-83 to D-91.
 """
 
 from . import box, circle, line, plane, torus

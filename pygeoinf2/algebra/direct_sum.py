@@ -23,7 +23,7 @@ and the same shape with a nonlinear ``F`` in place of ``A`` gives the law of
 ``[[I, 0], [F'(m), I]]`` that comes from the same object rather than from a
 separate construction.
 
-See DESIGN.md section 3.3.
+See DECISIONS.md D-23.
 """
 
 from __future__ import annotations

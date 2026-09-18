@@ -8,7 +8,7 @@ components, because a diagonal is a statement about a basis.
 
 v1 already had an abstract path here and it was the right idea, but it drew its
 probes from ``white_noise_measure``, whose covariance on a mass-weighted space
-is the Gram matrix rather than the identity (DESIGN.md section 9). So the
+is the Gram matrix rather than the identity (DECISIONS.md D-19). So the
 structure was coordinate-free and the *distribution* was not: the probes were
 anisotropic in the space's own geometry, exactly where ``random_range``
 documents a "geometric safety guard" for. Drawing from
@@ -85,10 +85,10 @@ def _probe_range(
     White noise by default; from *measure* when one is given, which is v1's
     ``measure=`` and finds the range of the operator composed with the
     measure's covariance factor -- on a forward operator with a prior, the
-    range the prior lets the data see, which white noise finds badly (DESIGN
-    §74). The probes are drawn in order from *rng* and applied as one block,
-    so a matrix-backed operator does one product and a parallel run gives
-    the same numbers as a serial one.
+    range the prior lets the data see, which white noise finds badly
+    (DECISIONS.md D-53). The probes are drawn in order from *rng* and applied
+    as one block, so a matrix-backed operator does one product and a parallel
+    run gives the same numbers as a serial one.
 
     Raises:
         ValueError: if the measure lives on another space.
@@ -1001,7 +1001,7 @@ def random_diagonal(
 
     Needs coordinates, because a diagonal is a statement about a basis, and
     needs to be told *which* matrix's diagonal is wanted, because no trait
-    implies it (DESIGN.md 5.3). The Galerkin form is the default: it is the
+    implies it (DECISIONS.md D-25). The Galerkin form is the default: it is the
     representation in which a self-adjoint operator is symmetric, so it is the
     diagonal a symmetric preconditioner wants.
 

@@ -1116,7 +1116,7 @@ class ProximalBundleMethod:
                 a :class:`~pygeoinf2.numerics.quadratic_programming.QPSolver`
                 is used as given. An exact backend is what v1 had through its
                 master QP and what the gap needs to be trusted to its last
-                digits: measured on a Backus dual (DESIGN §44), Clarabel is
+                digits: measured on a Backus dual (DECISIONS.md D-56), Clarabel is
                 thirty times faster than the projected gradient and a
                 thousand times closer to the primal reference. SciPy's SLSQP
                 is slower and less accurate than the projected gradient
@@ -1409,7 +1409,7 @@ def _minimize_on_simplex(
     3.5e-3 at the 99th percentile, so a single threshold either warns half the
     time or never. The accuracy answer for the hard tail is a proper QP
     backend on the ``k``-variable dual, which :class:`ProximalBundleMethod`
-    now uses by default when one is installed (DESIGN §44); this is the
+    now uses by default when one is installed (DECISIONS.md D-56); this is the
     fallback for when none is.
 
     Args:
@@ -2370,7 +2370,7 @@ class LevelKKTSolver:
 
     Each probe's minimization starts cold, from zero: warm-starting from the
     previous probe's minimizer let Newton stop one step short and froze the
-    residuals across the root find (DESIGN §70).
+    residuals across the root find (DECISIONS.md D-80).
     """
 
     def __init__(

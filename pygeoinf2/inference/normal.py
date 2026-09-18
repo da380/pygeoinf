@@ -24,7 +24,7 @@ structure-aware ones read ``forward``, ``prior_covariance`` and
 ``error_covariance`` off it. The preconditioners then stay free-standing and
 reusable rather than being bound to one inversion class, and an inversion
 exposes its normal operator instead of a growing family of preconditioner
-factories. See DESIGN.md section 23.
+factories. See DECISIONS.md D-44.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def choose_formalism(
     large; model spaces are usually larger still, so the data space is where
     the normal equations belong unless there is a reason otherwise, and the
     model-space formalism is kept for when there *is* one — an overdetermined
-    problem with a cheap precision, or a surrogate. See DESIGN.md §18.6, §27.
+    problem with a cheap precision, or a surrogate. See DECISIONS.md D-57 and D-78.
 
     Args:
         model_space: where the models live.

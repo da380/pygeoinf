@@ -1,11 +1,11 @@
-"""The escape hatches the audit found closed (FUNCTIONALITY_AUDIT.md §0.3).
+"""The escape hatches the audit found closed .
 
 Four of the five are back: the incomplete LU on the banded and block
 preconditioners, a factor route on the ellipsoid's support function, a
 coefficient operator that zero-pads past the space's own truncation, and
 a walk that proposes a truncation degree beyond the space it is asked on.
 The fifth, recomputing a path operator's quadrature on every application,
-was dropped on purpose; DESIGN §76 says why.
+was dropped on purpose; DECISIONS.md D-88 says why.
 """
 
 from __future__ import annotations

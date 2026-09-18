@@ -25,7 +25,7 @@ assembly.
 Reading ``t`` as a prior variance is also a claim about what regularization
 means, and one that a damping does not have to make.
 
-See DESIGN.md section 24.
+See DECISIONS.md D-75.
 """
 
 from __future__ import annotations

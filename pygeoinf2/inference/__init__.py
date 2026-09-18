@@ -15,7 +15,7 @@ operator is the identity, so there is one code path.
     measure = post(data)
     property_posterior = post.push_forward(T)(data)  # D -> Measure(P)
 
-See DESIGN.md section 18.
+See DECISIONS.md D-71 to D-82.
 """
 
 from .laplace import LaplaceResult, MaximumAPosteriori

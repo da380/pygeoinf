@@ -6,7 +6,7 @@ with components, basis vectors and matrices lives in ``CoordinateSpace``, which
 is an optional capability: a space backed by PETSc or MFEM implements
 ``HilbertSpace`` alone and remains usable by every coordinate-free algorithm.
 
-See DESIGN.md sections 3.1 and 3.2.
+See DECISIONS.md D-14 to D-24.
 """
 
 from __future__ import annotations
@@ -680,7 +680,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         covariance the identity *in the space's own inner product* rather than
         in the component basis. Drawing standard normal components instead
         gives covariance ``G``, which is the mistake this method exists to
-        avoid; see DESIGN.md section 9.
+        avoid; see DECISIONS.md D-19.
         """
         return self.from_components(self.white_noise_components(rng=rng))
 
@@ -711,7 +711,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
 
         ``c -> from_components(c)``. Its adjoint is ``G c_x``, the *derivative*
         components — not the components themselves, which is the distinction of
-        DESIGN.md section 5.6 in its smallest possible setting.
+        DECISIONS.md D-26 in its smallest possible setting.
         """
         from .operators import LinearOperator
 
@@ -771,7 +771,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         Given ``g`` such that the functional acts as ``x -> g . c_x`` — which is
         what a numerical adjoint method returns — this applies ``G^-1`` to give
         the vector ``v`` with ``(v, x) == g . c_x`` for all ``x``. Skipping that
-        step is the classic adjoint-method error; see DESIGN.md section 5.6.
+        step is the classic adjoint-method error; see DECISIONS.md D-26.
         """
         return self.from_components(self.solve_gram(np.asarray(derivative_components)))
 
@@ -797,7 +797,7 @@ class HilbertModule[V](HilbertSpace[V], ABC):
     what anything reading its components does implicitly. The aliasing that
     projection would introduce is inherent rather than a defect, but it means
     the truncation has to be chosen with the products in mind and not just the
-    fields. See DESIGN.md section 35.
+    fields. See DECISIONS.md D-87.
     """
 
     @abstractmethod
@@ -848,7 +848,7 @@ def require_module(*spaces: HilbertSpace) -> None:
 class MassWeightedSpace[V](HilbertSpace[V]):
     """``(x, y)_V == (M x, y)_base``, for a positive definite mass operator.
 
-    The construction DESIGN.md section 3.5 sets against the Gram matrix, and
+    The construction DECISIONS.md D-85 sets against the Gram matrix, and
     the distinction is worth restating because they are easy to confuse:
 
     =========================  =========================================

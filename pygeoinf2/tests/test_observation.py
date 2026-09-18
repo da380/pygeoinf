@@ -5,8 +5,6 @@ Everything here is a linear operator built from *derivative components*, so
 every test ends up asking the same question in a different setting — does the
 metric enter exactly once, in the adjoint? Where an operator has two routes to
 the same answer, the two are compared rather than one being trusted.
-
-See DESIGN.md sections 20.1 and 20.5.
 """
 
 import numpy as np
@@ -139,7 +137,7 @@ class TestGeodesics:
         assert distances.max() > 0.5 * radius
 
     def test_a_gauss_rule_is_computed_once(self):
-        """REVIEW2 4.2.6: `leggauss` solves an eigenproblem, and every path
+        """`leggauss` solves an eigenproblem, and every path
         asks for the same few counts -- 0.8 s for 2000 of them."""
         from pygeoinf2.symmetric_space.base import _gauss_legendre
 
@@ -171,7 +169,7 @@ class TestAverages:
         )
 
     def test_the_closed_form_agrees_with_the_rotated_indicator(self, lebesgue, rng):
-        """REVIEW2 4.2.5. The components used to come from
+        """The components used to come from
         ``SHCoeffs.from_cap``, which builds the cap at the pole and rotates it
         -- 8.5 ms a center at lmax 128, against 0.2 ms for the addition
         theorem. This is the check that they are the same components."""
@@ -616,7 +614,7 @@ class TestWeightOperator:
         assert np.allclose(W(np.array([1.0, 1.0, 1.0, 1.0])), [3.0, 7.0])
 
     def test_the_dense_route_never_densifies_the_weights(self, space, rng):
-        """REVIEW2 4.2.6. `weights.matrix()` built a (paths, nodes) array that
+        """`weights.matrix()` built a (paths, nodes) array that
         holds one entry per node: 1.59 s against 0.018 s at 2000 paths."""
         paths = list(
             zip(space.random_points(6, rng=rng), space.random_points(6, rng=rng))
@@ -632,7 +630,7 @@ class TestWeightOperator:
 
 
 class TestTheCovarianceFunctionOnASphere:
-    """REVIEW2 4.2.4. The addition theorem collapses the sum over the basis to
+    """The addition theorem collapses the sum over the basis to
     a Legendre series, when the spectrum is isotropic -- which is what a
     measure built from a symbol has and what a per-component spectrum need not.
     """

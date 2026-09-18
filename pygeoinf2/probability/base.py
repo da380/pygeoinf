@@ -13,7 +13,7 @@ gradient-based posterior exploration need. And ``push_forward`` is closed for
 the Gaussian-plus-affine case but otherwise returns something that can still be
 *sampled* — draw from the base, apply the map — even with no closed density.
 
-See DESIGN.md section 7.
+See DECISIONS.md D-59.
 """
 
 from __future__ import annotations

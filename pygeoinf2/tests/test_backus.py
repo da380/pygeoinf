@@ -1,7 +1,7 @@
 """
 Set-valued inference: the feasible property set, computed three ways.
 
-Routes (a), (b) and (c) of DESIGN.md §18.3 compute the same object, so every
+Routes (a), (b) and (c) of DECISIONS.md D-79 compute the same object, so every
 test here is a comparison rather than an assertion. The strongest are the two
 that cross a method boundary: route (c) must agree with route (a) as the noise
 vanishes, and the primal inclusion test must agree with the closed-form

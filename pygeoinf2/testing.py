@@ -112,7 +112,7 @@ def check_space(
         rebuild: optional zero-argument callable returning an independently
             constructed space that should compare equal to ``space``. Supply it
             to catch identity-based equality, which silently produces spurious
-            "domain mismatch" errors later. See DESIGN.md section 9.
+            "domain mismatch" errors later. See DECISIONS.md D-19.
     """
     rng = default_rng() if rng is None else rng
 
@@ -355,7 +355,7 @@ def check_representer(
     Handing ``g`` straight to an optimizer as if it were the gradient fails this
     identity by a factor of the Gram matrix, which is exactly the classic
     adjoint-method error. On an orthonormal basis the two coincide and there is
-    nothing to catch. See DESIGN.md section 5.6.
+    nothing to catch. See DECISIONS.md D-26.
 
     Args:
         space: the space to check.
@@ -396,8 +396,7 @@ def check_white_noise(
     that scales like ``1 / sqrt(samples)``.
 
     v1 fails this check on every mass-weighted space: drawing standard normal
-    *components* gives covariance ``G`` rather than the identity. See DESIGN.md
-    section 9.
+    *components* gives covariance ``G`` rather than the identity. See DECISIONS.md D-19.
 
     Args:
         space: the space to check.
@@ -687,7 +686,7 @@ def check_gradient(
     a gradient was wanted fails this by exactly a factor of the Gram matrix —
     which is the classic adjoint-method error. On an orthonormal space the two
     coincide and there is nothing to catch, which is why the error survives in
-    practice. See DESIGN.md section 5.6.
+    practice. See DECISIONS.md D-26.
 
     Args:
         functional: the functional to check.

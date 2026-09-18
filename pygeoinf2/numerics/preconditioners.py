@@ -512,7 +512,7 @@ def sparse_approximation(
     to sample from, so a measure built on it could not be drawn from.
 
     This is v1's ``with_sparse_approximation`` with the measure taken off
-    it (DESIGN §47). The port had replaced it with a dense assembly, a
+    it (DECISIONS.md D-65). The port had replaced it with a dense assembly, a
     global threshold and an ``O(N^3)`` definiteness check.
 
     Args:

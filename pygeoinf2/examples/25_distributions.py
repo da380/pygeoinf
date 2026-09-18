@@ -115,7 +115,7 @@ print("  wider of the two, and sharing one would make the posterior a spike")
 #
 # It is pushed forward from the *model* posterior rather than from the property
 # one, because that is the measure that can be sampled: the model posterior
-# carries a randomize-then-optimize sampler (DESIGN section 18.7), while the
+# carries a randomize-then-optimize sampler (DECISIONS.md D-73), while the
 # property posterior is a covariance with no factor and so cannot be drawn
 # from. A push-forward can be sampled exactly when what it pushes can.
 summary = EuclideanSpace(2)

@@ -28,7 +28,7 @@ space; it is already there, wearing a different name.
 
 ``white_noise`` is deliberately *not* delegated. v1 draws standard normal
 components, giving covariance ``G`` rather than the identity; the adapted
-space uses the corrected draw. See DESIGN.md section 9.
+space uses the corrected draw. See DECISIONS.md D-19.
 
 Nothing here is imported by ``pygeoinf2/__init__.py``: importing this module
 is what pulls in v1.
@@ -366,7 +366,7 @@ def adapt_form(
     A v1 form stores its action as a component array in the **derivative**
     convention — ``<f, x> == dot(components, c_x)`` — so this is exactly
     ``from_derivative_components``. The representer, which v1 obtains with
-    ``from_dual``, is then ``f.adjoint(1.0)``. See DESIGN.md section 5.6.
+    ``from_dual``, is then ``f.adjoint(1.0)``. See DECISIONS.md D-26.
 
     Args:
         form: the v1 ``LinearForm``.
@@ -383,7 +383,7 @@ def adapt_form(
 #                         v1 names for v2 classes                         #
 # ----------------------------------------------------------------------- #
 #
-# The inference-layer renames of DESIGN §79, carried here so that code
+# The inference-layer renames of DECISIONS.md D-99, carried here so that code
 # written against v1's class names imports. Only class names: a renamed
 # keyword raises TypeError at the call, which is the loud, easy failure.
 

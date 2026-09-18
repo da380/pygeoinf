@@ -7,7 +7,7 @@ inner product is not the dot product of the degree-of-freedom vector: it is
     ``(u, v) == u^T M v``
 
 with ``M`` the mass matrix. So the mass matrix *is* the Gram matrix of
-DESIGN.md 3.2, and three things that FEM practitioners write out by hand fall
+DECISIONS.md D-17, and three things that FEM practitioners write out by hand fall
 out of the general machinery instead:
 
 - **An assembled bilinear form is a Galerkin matrix.** ``a(u, v) == u^T K v``
@@ -549,7 +549,7 @@ def solver_from_bilinear_form(
     components, multiply by the mass matrix to get a **load vector**, solve,
     and read the solution's components back. The mass multiply is what turns a
     function into the right-hand side of a weak form, and omitting it is the
-    error of DESIGN.md section 5.6 in its most convincing disguise — the answer
+    error of DECISIONS.md D-26 in its most convincing disguise — the answer
     comes back smooth, plausible, and wrong by a mass matrix.
 
     Essential boundary conditions come from *space*: its free block already is
@@ -626,7 +626,7 @@ def functional_from_linear_form(space: MfemSpace, form: Any, /) -> LinearFunctio
     mass solve that recovers the function representing the functional.
 
     Handing the load vector to an optimizer as if it were a gradient is the
-    error of DESIGN.md 5.6, in the setting where it is most often made.
+    error of DECISIONS.md D-26, in the setting where it is most often made.
     """
     return LinearFunctional.from_derivative_components(
         space, space.restrict_vector(form.GetDataArray())

@@ -173,7 +173,7 @@ class Box(PeriodicBox):
         The move is a Python loop over the points, which is why doing it once
         per operator rather than once per application matters most here: it
         was 230 of 254 ms -- 91% -- of an application at 10^5 points
-        (REVIEW2 4.2.7).
+        (measured 2026-08-29).
 
         Args:
             points: points of the domain, or an already prepared set.
@@ -378,7 +378,7 @@ class Box(PeriodicBox):
         space's Lebesgue counterpart and lifted with
         :func:`~pygeoinf2.symmetric_space.base.lift_formal_adjoint`, which gives
         the right adjoint and claims nothing about symmetry -- the honest
-        outcome, and the same point as DESIGN.md 3.5. This used to raise and
+        outcome, and the same point as DECISIONS.md D-85. This used to raise and
         tell the caller to do that by hand, which is the same operator with an
         extra step.
         """

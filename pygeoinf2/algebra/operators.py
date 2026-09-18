@@ -12,7 +12,7 @@ And the algebra consults a **specialization protocol** before falling back to a
 generic expression node, so that a family closed under the algebra stays in its
 class.
 
-See DESIGN.md section 5.
+See DECISIONS.md D-25 to D-35.
 """
 
 from __future__ import annotations
@@ -735,7 +735,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         that a matrix handed to a symmetric solver is symmetric. This works for
         *extraction* only: on construction the caller must say which
         representation their array is in, since no trait implies it. See
-        DESIGN.md section 5.3.
+        DECISIONS.md D-25.
 
         ``by`` chooses which way the matrix is filled in. Columns costs
         ``dim(X)`` applications of the operator; rows costs ``dim(Y)``
@@ -794,7 +794,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         # Row i of the Galerkin matrix holds the derivative components of
         # x -> (A x, e_i)_Y == (x, A* e_i)_X, which is G_X applied to the
-        # components of the adjoint's image. See DESIGN.md section 5.6.
+        # components of the adjoint's image. See DECISIONS.md D-26.
         adjoint = self.adjoint
 
         def row(index: int) -> np.ndarray:
@@ -1424,7 +1424,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> LinearOperator[X, Y]:
         """The rank-one outer product ``x -> (v, x) u``.
 
-        Not a tensor product of *spaces* — see DESIGN.md 3.3 — but the operator
+        Not a tensor product of *spaces* — see DECISIONS.md D-23 — but the operator
         construction that shares the name, and the building block of every
         low-rank representation.
 
@@ -1688,8 +1688,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
         metric is not the identity.
 
         Passing an adjoint to :meth:`from_callables` instead means passing a
-        *gradient*-valued map, and getting that wrong is the error of DESIGN.md
-        section 5.6 in the setting where it is hardest to see. Prefer this.
+        *gradient*-valued map, and getting that wrong is the error of
+        DECISIONS.md D-26 in the setting where it is hardest to see. Prefer
+        this.
 
         Args:
             domain: the operator's domain.
@@ -1927,7 +1928,7 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
     grows as ``n^3``; here each is a read.
 
     The stored *form* is part of the object, because no trait implies it (see
-    DESIGN.md section 5.3): ``"components"`` means ``A_c`` with
+    DECISIONS.md D-25): ``"components"`` means ``A_c`` with
     ``c_{Ax} == A_c c_x``, and ``"galerkin"`` means ``G_Y A_c``, the matrix of
     the bilinear form. The two differ on any space whose basis is not
     orthonormal, and the difference is a metric factor that has to enter
@@ -2242,7 +2243,7 @@ class Functional[X](Operator[X, float]):
         ``derivative`` is the documented route, because a numerical adjoint
         method produces a derivative. ``gradient`` is accepted for callers who
         genuinely hold one, but supplying a derivative array there is the
-        classic error of DESIGN.md section 5.6; ``testing.check_gradient``
+        classic error of DECISIONS.md D-26; ``testing.check_gradient``
         catches it.
 
         Args:
@@ -2364,7 +2365,7 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
     - ``self.matrix()`` is the derivative, the row vector ``g``.
     - ``self.representer`` is the gradient, with components ``G^-1 g``.
 
-    See DESIGN.md section 5.6.
+    See DECISIONS.md D-26.
     """
 
     def __init__(  # noqa: positional - cooperative __init__, see below
@@ -2439,7 +2440,7 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
 
         Exactly one of *representer* and *derivative_components* is needed, and
         which one you have says which convention you are in. They differ by the
-        metric, and confusing them is the error of DESIGN.md section 5.6:
+        metric, and confusing them is the error of DECISIONS.md D-26:
 
         * the **representer** is the gradient, the vector ``v`` with
           ``f(x) == (v, x)``;
@@ -2590,7 +2591,7 @@ class AffineOperator[X, Y](Operator[X, Y]):
         """The translation ``b``."""
         # A translation may be given as a thunk and is then computed on the
         # first request and kept: an inversion's constant term is one solve,
-        # and building the estimator must not pay for it (DESIGN §52).
+        # and building the estimator must not pay for it (DECISIONS.md D-40).
         if callable(self._translation):
             self._translation = self._translation()
         return self._translation

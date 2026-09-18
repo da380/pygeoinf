@@ -14,8 +14,7 @@ writing, and there are three kinds here:
 Each runs on a weighted data space as well as a Euclidean one, because a
 diagonal is a statement about a basis and the Galerkin form is the one that
 makes a self-adjoint operator symmetric. That distinction is invisible when the
-metric is the identity, which is where it would otherwise hide. See DESIGN.md
-section 23.
+metric is the identity, which is where it would otherwise hide. See DECISIONS.md D-44.
 """
 
 import numpy as np

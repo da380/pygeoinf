@@ -64,7 +64,7 @@ _CHUNK_ENTRIES = 4_000_000
 # at lmax 64 and 1000 points (34 ms direct against 2.6 ms). Below dim 256 the
 # two are within a millisecond of each other either way, so the dimension
 # threshold is there to avoid paying the fixed cost for nothing.
-# See DESIGN.md 21.15.
+# See DECISIONS.md D-89.
 _TRANSFORM_MIN_POINTS = 200
 _TRANSFORM_MIN_DIM = 256
 
@@ -90,7 +90,7 @@ class _Grid:
     """The sampling grid behind a sphere: shape, angles, transforms, weights.
 
     Two kinds, and everything that depends on which one is here so that the
-    space asks rather than assumes (DESIGN §85):
+    space asks rather than assumes (DECISIONS.md D-86):
 
     * ``"DH"``, Driscoll-Healy: ``2 (lmax + 1)`` equispaced colatitude rows
       from the north pole, ``sampling`` times as many longitude columns, the
@@ -724,12 +724,12 @@ class Sphere(SymmetricSpace[Any]):
             (x, y) == (A x) . (A y) == sum_j w_j sum_i x_ji y_ji
 
         for fields in the span of the basis. Two transforms become none:
-        5.44 ms against 0.055 ms at ``lmax`` 128 (REVIEW2 4.1.g). Agrees with
+        5.44 ms against 0.055 ms at ``lmax`` 128 (measured 2026-08-29). Agrees with
         the component route to 6e-15 at every truncation, radius and sampling
         tested, and to 2e-14 when one argument is a raw pointwise product.
 
         **Where the two routes part, and why this one is right.** Since
-        DESIGN.md 35 a pointwise product is left on the grid, and a grid array
+        DECISIONS.md D-87 a pointwise product is left on the grid, and a grid array
         outside the span has a projection but no equal in the span. If *both*
         arguments are such arrays the quadrature integrates the product of what
         the grid holds, while the component route integrates the product of the
@@ -1154,7 +1154,7 @@ class Sphere(SymmetricSpace[Any]):
         The pole is not a grid row, so :meth:`_double` has to evaluate the
         field there. It did that with a full analysis, which at ``lmax`` 256
         was 19 ms of a 67 ms forward evaluation -- 35% of it, spent to read one
-        number out (REVIEW2 4.2.8).
+        number out (measured 2026-08-29).
 
         There is a closed form, and it is a row weighting. Analysis on this
         grid is a quadrature, so
@@ -1267,7 +1267,7 @@ class Sphere(SymmetricSpace[Any]):
         The conversion every route here starts with: the non-uniform FFT wants
         the two angles as contiguous arrays and :meth:`basis_matrix` wants the
         pair. Doing it per application cost 14.5 of 37 ms at 10^5 points
-        (REVIEW2 4.2.7).
+        (measured 2026-08-29).
 
         Args:
             points: ``(latitude, longitude)`` pairs in degrees, or an already
@@ -1485,7 +1485,7 @@ class Sphere(SymmetricSpace[Any]):
 
         That is one Legendre series per distance rather than one row of the
         basis: 1.2 ms against 24 ms for 50 distances at ``lmax`` 256
-        (REVIEW2 4.2.4). ``cos`` is even and periodic, so a walk past the pole
+        (measured 2026-08-29). ``cos`` is even and periodic, so a walk past the pole
         needs no special case.
 
         ``invariant_measure`` does not *require* an isotropic spectrum -- it
@@ -1672,7 +1672,7 @@ class Sphere(SymmetricSpace[Any]):
         The batched form of :meth:`_to_point`, and the reason a quadrature
         rule can be built without a Python loop over its nodes: one path of
         32 nodes made 32 of these calls, and a tomographic geometry of 2000
-        paths made 64 000 (REVIEW2 4.2.6).
+        paths made 64 000 (measured 2026-08-29).
 
         Args:
             vectors: an ``(n, 3)`` array. Need not be normalized.
@@ -1903,7 +1903,7 @@ class Sphere(SymmetricSpace[Any]):
         pole and *rotates* it to the center -- 8.5 ms a center at ``lmax`` 128
         -- and then a functional whose representer had to be synthesized for
         nobody to read. Measured at ``lmax`` 128 over 100 centers: 21 ms
-        against 1437 ms, agreeing to 1e-12 (REVIEW2 4.2.5).
+        against 1437 ms, agreeing to 1e-12 (measured 2026-08-29).
 
         Args:
             centers: the cap centers, ``(latitude, longitude)`` in degrees.
@@ -2312,8 +2312,8 @@ class Sphere(SymmetricSpace[Any]):
         The adjoint is derived rather than written down, which matters: it is
         the *other* one of the pair only when the two spaces carry the same
         metric on their shared components, and it is the ratio of the two
-        metrics otherwise. Getting that by hand is the mistake of DESIGN.md
-        section 5.6 wearing a different hat.
+        metrics otherwise. Getting that by hand is the mistake of
+        DECISIONS.md D-26 wearing a different hat.
 
         Args:
             target: the sphere to map into. It must have the same radius --

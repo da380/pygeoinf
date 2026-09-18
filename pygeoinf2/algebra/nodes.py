@@ -12,7 +12,7 @@ flattening nested sums and compositions, collapsing double adjoints, dropping
 identity factors. There is no simplification engine here, and there should not
 be one.
 
-See DESIGN.md sections 5.4 and 4.1.
+See DECISIONS.md D-31, D-32 and D-36.
 """
 
 from __future__ import annotations
@@ -716,7 +716,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # what is already stored: a rank-k factor times its adjoint on a
         # space of dimension n holds 2nk numbers, and its product n^2, which
         # at n == 3000 and k == 10 is 72 MB materialized by any caller that
-        # so much as asked whether a matrix was known (DESIGN §51). Such a
+        # so much as asked whether a matrix was known (DECISIONS.md D-33). Such a
         # product is declined, and the operator is probed like any other.
         known = self._known_factors()
         if known is None:
@@ -982,7 +982,7 @@ def linear_composition(factors: Sequence[LinearOperator]) -> LinearOperator:
 # — so every composed objective, which is to say every real one, raised
 # AttributeError.
 #
-# The Hessian rules are DESIGN.md section 5.5's, and each is available exactly
+# The Hessian rules are DECISIONS.md D-30's, and each is available exactly
 # when its ingredients are.
 
 

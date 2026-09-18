@@ -2,9 +2,7 @@
 The catalogue's remaining algebra, numerics, probability and geometry.
 
 Nothing here blocks an example, which is why it comes last; but each row was
-marked as used in practice, so each one is ported rather than dropped. See
-DESIGN.md section 21.16.
-"""
+marked as used in practice, so each one is ported rather than dropped."""
 
 import numpy as np
 import pytest
@@ -1768,7 +1766,7 @@ class TestARootFindSaysWhyItStopped:
 
 
 class TestSpectralBlockOperator:
-    """REVIEW2 4.2.9: a correlated measure's operators act on all their
+    """a correlated measure's operators act on all their
     fields at once -- one analysis and one synthesis per field -- and its
     draws are synthesized straight from white-noise components."""
 

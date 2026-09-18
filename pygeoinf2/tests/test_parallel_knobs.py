@@ -1,6 +1,6 @@
 """Every loop the audit found running serially takes ``n_jobs`` again.
 
-The audit (FUNCTIONALITY_AUDIT.md §0.3) listed the loops v1 could run on
+The audit  listed the loops v1 could run on
 several cores and v2 could not: the dense point and path operators, the
 column probes behind the sparse preconditioners, the per-block probes of
 the normal-diagonal preconditioner, the covariance assembly behind the

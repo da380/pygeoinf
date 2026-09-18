@@ -84,7 +84,7 @@ class TestAdaptedSpace:
 
 
 class TestWhiteNoiseIsFixed:
-    """The v1 defect of DESIGN.md section 9, on a real workhorse space."""
+    """The v1 defect of DECISIONS.md D-19, on a real workhorse space."""
 
     def test_adapted_white_noise_is_white(self, X, rng):
         check_white_noise(X, rng=rng, samples=30000, rtol=0.06)
@@ -105,7 +105,7 @@ class TestWhiteNoiseIsFixed:
 
 
 class TestDiracAndRepresenters:
-    """DESIGN.md 5.6, against the v1 idiom it was derived from."""
+    """DECISIONS.md D-26, against the v1 idiom it was derived from."""
 
     def test_v1_dirac_becomes_a_linear_functional(self, X, rng):
         base = X.v1_space
@@ -421,7 +421,7 @@ class TestMeasuresOnAdaptedSpaces:
         # spectrally diagonal and carries a functional calculus, so the square
         # root is one: C == L L* with L self-adjoint. The factor's domain is the
         # Sobolev space itself, so sampling draws white noise with respect to
-        # its inner product -- exactly the case DESIGN.md section 9 is about.
+        # its inner product -- exactly the case DECISIONS.md D-19 is about.
         factor = adapt_operator(v1_measure.covariance.sqrt, domain=X, codomain=X)
         return v1_measure, GaussianMeasure(X, covariance_factor=factor), covariance
 

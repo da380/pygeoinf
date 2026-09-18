@@ -1,6 +1,6 @@
 """Drawing a convex set, or a slice of one, in one or two dimensions.
 
-The compact port of v1's ``SubspaceSlicePlotter`` (DESIGN §80): one
+The compact port of v1's ``SubspaceSlicePlotter`` (DECISIONS.md D-94): one
 function, matplotlib only, one and two dimensions, and the route chosen by
 what the set can do rather than by its class. A set with a support
 function is drawn from it, as the polygon of its supporting lines; a set

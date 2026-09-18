@@ -4,7 +4,7 @@ Structural properties of linear operators, and how they survive the algebra.
 Traits record *mathematical* properties that a numerical method dispatches on.
 Representational structure (dense, sparse, diagonal, low rank) is carried by
 classes instead, because it comes with data and extra API; a trait carries no
-data. See DESIGN.md section 4.
+data. See DECISIONS.md D-36.
 
 Traits are claims made by whoever constructs an operator. They are not
 verified here. ``pygeoinf2.testing.check_traits`` verifies them numerically.

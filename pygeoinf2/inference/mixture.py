@@ -21,7 +21,7 @@ posterior can only say "here, roughly this wide"; a mixture posterior can say
 "either here or there, and the data prefer here four to one" — and the weights
 are the quantitative form of that preference.
 
-See DESIGN.md section 31.
+See DECISIONS.md D-66.
 """
 
 from __future__ import annotations

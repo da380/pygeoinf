@@ -40,7 +40,7 @@ adjoint. For a PDE-constrained problem the PDE solves dominate either way.
 The construction is the core's own :class:`MassWeightedSpace` — the vectors
 belong to :class:`MfemDofSpace`, a bare Euclidean space over true-dof vectors,
 and the finite element inner product is that space reweighted by the mass
-operator. DESIGN.md section 3.5 describes exactly this chain; a finite element
+operator. DECISIONS.md D-85 describes exactly this chain; a finite element
 space is its most natural instance.
 
 Requires PyMFEM, which is an optional dependency; install it with the ``mfem``
@@ -105,7 +105,7 @@ class MfemDofSpace(HilbertSpace):
     subspace the vectors actually range over.
 
     This space has no finite element meaning on its own: its inner product is
-    the dot product of coefficients, which is the thing DESIGN.md section 5.6
+    the dot product of coefficients, which is the thing DECISIONS.md D-26
     warns against mistaking for an inner product of functions. It exists to
     be reweighted by :class:`MfemHilbertSpace`, and to be the base from which
     :meth:`LinearOperator.from_formal_adjoint` lifts an operator whose
@@ -637,7 +637,7 @@ def solver_from_bilinear_form(
     application turns the function into a load vector, MFEM solves, and the
     solution is the answer. The mass application is the step that is easy to
     leave out — the answer then comes back smooth, plausible and wrong by a
-    mass matrix, DESIGN.md section 5.6 in its most convincing disguise.
+    mass matrix, DECISIONS.md D-26 in its most convincing disguise.
 
     Args:
         space: the finite element space, carrying any essential conditions.

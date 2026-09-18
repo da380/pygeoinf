@@ -25,7 +25,7 @@ is worth having rather than a sampling scheme.
 and ``p(d | component k)`` is the evidence of §26, which is already computed
 matrix-free.
 
-See DESIGN.md section 31.
+See DECISIONS.md D-66.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ operator stored as its eigenvalues, closed under the algebra, and carrying a
 complete functional calculus evaluated pointwise on the spectrum.
 
 It is a **class**, not a trait, because it carries data. That is the rule from
-DESIGN.md section 4: mathematical properties are traits, representations are
+DECISIONS.md D-36: mathematical properties are traits, representations are
 classes. Self-adjointness is a trait this class happens to claim; being
 diagonal is a fact about how it is stored.
 
@@ -126,7 +126,7 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
     #                      Structure-preserving algebra                 #
     # ----------------------------------------------------------------- #
     #
-    # The specialization protocol of DESIGN.md 5.4. Without these, the sum of
+    # The specialization protocol of DECISIONS.md D-32. Without these, the sum of
     # two diagonal operators would be a generic node and would lose both the
     # eigenvalues and the functional calculus that makes them worth storing.
 

@@ -1,6 +1,6 @@
 """The circle: a one-dimensional periodic domain.
 
-One of the geometries of DESIGN.md section 13, given its own module so that
+One of the geometries of DECISIONS.md D-83, given its own module so that
 the space a problem is posed on is named by its type. ``Circle`` is a
 :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox` of one axis and nothing
 else, and everything the box provides is available here unchanged.
@@ -10,7 +10,7 @@ else, and everything the box provides is available here unchanged.
 unit circle, ``L == 2 pi``, where the coordinate *is* the angle and v1's
 numbers are these; on a circle of radius ``r`` a v1 angle is ``r`` times
 too small. ``geodesic_distance`` and the argument ``project_function`` hands
-its callback are in these units (DESIGN §46).
+its callback are in these units (DECISIONS.md D-84).
 """
 
 from __future__ import annotations

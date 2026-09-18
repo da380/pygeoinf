@@ -13,7 +13,7 @@ Two paths, chosen by structure rather than by hand:
 - anything else self-adjoint goes to **Lanczos**, which approximates ``f(A) x``
   from a small Krylov space without ever forming a matrix.
 
-That split is the specialization protocol of DESIGN.md 5.4 applied to a unary
+That split is the specialization protocol of DECISIONS.md D-32 applied to a unary
 operation, and it is why "diagonal in a basis" is a class (it carries
 eigenvalues) while "self-adjoint" is a trait (it carries nothing).
 
@@ -364,7 +364,7 @@ def apply_operator_function(
     tolerance never met on any operator measured: every call spent all 50
     applications, where a well-conditioned operator needed 11, and a badly
     conditioned one stopped, silently, at a relative error between 1e-3
-    and 1e-1 (DESIGN §41). A cap the caller
+    and 1e-1 (DECISIONS.md D-49). A cap the caller
     sets still truncates without complaint: it is a quadrature degree, and
     stochastic Lanczos quadrature relies on that.
 

@@ -1,6 +1,6 @@
 """A bounded interval, embedded in a padded periodic domain.
 
-v1's ``line`` space. One of the geometries of DESIGN.md section 13, given its
+v1's ``line`` space. One of the geometries of DECISIONS.md D-83, given its
 own module so that the space a problem is posed on is named by its type.
 
 An interval is not homogeneous, so it is not a symmetric space in its own

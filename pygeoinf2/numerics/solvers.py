@@ -22,7 +22,7 @@ v1's solver API that is straightforwardly right, and kept. What changes:
 - **Non-square is a different operation.** A least-squares solver is a sibling
   of ``LinearSolver``, not a subclass whose ``__call__`` asserts squareness.
 
-See DESIGN.md section 6.
+See DECISIONS.md D-38.
 """
 
 from __future__ import annotations
@@ -548,7 +548,7 @@ class DirectSolver(LinearSolver):
         # made a surrogate of, a preconditioner that is compared but not
         # used -- costs nothing. Once done it is kept: v1 factorized inside
         # every posterior call and so paid the O(n^3) step per use, which is
-        # what this deferral must not reintroduce (DESIGN §52).
+        # what this deferral must not reintroduce (DECISIONS.md D-40).
         factors: list[_Factors] = []
 
         def factorized() -> _Factors:

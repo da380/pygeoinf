@@ -398,7 +398,7 @@ class TestProductMeasures:
 
 
 class TestJointModel:
-    """The construction the whole thing is for. See DESIGN.md 3.3."""
+    """The construction the whole thing is for. See DECISIONS.md D-23."""
 
     def test_the_linear_joint_law_matches_v1s_shape(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
