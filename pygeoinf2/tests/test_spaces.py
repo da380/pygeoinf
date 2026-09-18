@@ -163,6 +163,32 @@ class TestWhiteNoise:
                 rtol=0.05,
             )
 
+    @pytest.mark.parametrize("size", [1.0e-4, 1.0, 1.0e4])
+    def test_the_tolerance_scales_with_the_metric(self, size, rng):
+        """The sampling error of an entry is ``sqrt(2 C_ii C_jj / n)`` at
+        most, so the agreement asked for is a fraction of ``sqrt(C_ii C_jj)``
+        and one ``rtol`` serves a metric of any size. Against a fixed
+        tolerance a large metric failed by chance -- it did, on a Sobolev
+        space whose eigenvalues a Robin condition had lifted -- and a small
+        one could not fail at all."""
+        space = WeightedSpace(size * np.array([1.0, 4.0, 9.0]))
+        check_white_noise(space, rng=rng, samples=20000, rtol=0.06)
+
+    @pytest.mark.parametrize("size", [1.0e-4, 1.0e4])
+    def test_the_v1_construction_is_caught_at_any_size_of_metric(self, size, rng):
+        class V1StyleSpace(WeightedSpace):
+            def white_noise(self, *, rng=None):
+                rng = np.random.default_rng() if rng is None else rng
+                return self.from_components(rng.standard_normal(self.dim))
+
+        with pytest.raises(AssertionError, match="white noise has identity covariance"):
+            check_white_noise(
+                V1StyleSpace(size * np.array([1.0, 4.0, 9.0])),
+                rng=rng,
+                samples=20000,
+                rtol=0.06,
+            )
+
     def test_random_is_not_advertised_as_white_noise(self, rng):
         """random() draws standard normal components and makes no claim."""
         space = make_weighted_space()

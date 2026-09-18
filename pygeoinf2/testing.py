@@ -395,6 +395,17 @@ def check_white_noise(
     This is a statistical check, so it needs a seeded generator and a tolerance
     that scales like ``1 / sqrt(samples)``.
 
+    An entry is judged against ``sqrt((u, u) (v, v))``, as :func:`check_measure`
+    judges a covariance, and not against one. The products ``(x, u)`` and
+    ``(x, v)`` are jointly normal with those variances, so the sampling error
+    of their mean product is at most ``sqrt(2 (u, u) (v, v) / samples)``: it
+    grows with the metric, and a fixed tolerance was a different test on every
+    space. Where the metric is large -- a Sobolev space of some order -- a
+    correct space failed by chance, the off-diagonal entries first, being
+    expected to vanish and so compared with the tolerance bare; where it is
+    small -- a mass matrix on a fine mesh -- nothing could fail, the v1
+    construction included. One ``rtol`` now serves a metric of any size.
+
     v1 fails this check on every mass-weighted space: drawing standard normal
     *components* gives covariance ``G`` rather than the identity. See DECISIONS.md D-19.
 
@@ -405,9 +416,11 @@ def check_white_noise(
         measure: draw the probes from this measure on the space rather
             than as white noise; see :func:`_draw`.
         samples: how many draws to average over.
-        rtol: the agreement required, which must scale like
-            ``1 / sqrt(samples)`` -- tightening one without the other only
-            makes the check flaky.
+        rtol: the agreement required, as a fraction of
+            ``sqrt((u, u) (v, v))``. It must scale like ``1 / sqrt(samples)``
+            -- tightening one without the other only makes the check flaky --
+            and the default is some six standard errors at the default
+            *samples*.
 
     Raises:
         AssertionError: if the sample covariance is not the identity on the
@@ -429,17 +442,19 @@ def check_white_noise(
             projections[n, k] = space.inner_product(x, u)
 
     empirical = projections.T @ projections / samples
+    sizes = [space.inner_product(u, u) for u in directions]
     for i, u in enumerate(directions):
         for j, v in enumerate(directions):
             expected = space.inner_product(u, v)
-            scale = max(abs(expected), 1.0)
-            if abs(empirical[i, j] - expected) > rtol * scale:
+            scale = np.sqrt(max(sizes[i], 0.0) * max(sizes[j], 0.0))
+            allowance = rtol * max(scale, 1e-12)
+            if abs(empirical[i, j] - expected) > allowance:
                 _fail(
                     "white noise has identity covariance",
                     f"E[(x,u_{i})(x,u_{j})] == {empirical[i, j]:g} but "
-                    f"(u_{i}, u_{j}) == {expected:g}; a factor of the Gram "
-                    f"matrix here means components were drawn as N(0, I) "
-                    f"instead of N(0, G^-1)",
+                    f"(u_{i}, u_{j}) == {expected:g}, beyond {allowance:g}; a "
+                    f"factor of the Gram matrix here means components were "
+                    f"drawn as N(0, I) instead of N(0, G^-1)",
                 )
 
 

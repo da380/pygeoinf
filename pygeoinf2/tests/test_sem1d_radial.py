@@ -45,18 +45,7 @@ class TestTheSpace:
         space = build(order)
         check_space(space, rng=rng, rebuild=lambda: build(order))
         check_coordinates(space, rng=rng)
-        # The check compares basis directions, whose products with white noise
-        # have the metric for their variance, against a fixed tolerance; a
-        # Robin condition lifts the eigenvalues and the metric with them, so
-        # the tolerance is put at four standard errors of the noisiest pair.
-        samples = 20000
-        noisiest = float(np.max(space.metric_values[:3]))
-        check_white_noise(
-            space,
-            rng=rng,
-            samples=samples,
-            rtol=max(0.06, 4.0 * noisiest / np.sqrt(samples)),
-        )
+        check_white_noise(space, rng=rng)
 
     def test_the_subclasses_are_named(self):
         sobolev = whole(2.0)

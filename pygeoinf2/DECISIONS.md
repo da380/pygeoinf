@@ -1053,6 +1053,20 @@ point are not shrunk.
 Plotting and examples run with `MPLBACKEND=Agg`; `plotting.show()` is the
 guard.
 
+**D-125. A statistical check judges an entry against its own scale**
+(2026-09-18, David). `check_white_noise` compared `E[(x, u)(x, v)]` with
+`(u, v)` to within `rtol * max(|(u, v)|, 1)`. The sampling error of that mean
+is at most `sqrt(2 (u, u)(v, v) / n)`, which grows with the metric, so a fixed
+floor of one made it a different test on every space: on a large metric a
+correct space failed by chance, the off-diagonal entries first (it happened on
+a `sem1d` Sobolev space once a Robin condition had lifted its eigenvalues,
+1.4 standard errors against the tolerance); on a small one -- an MFEM mass
+matrix -- nothing could fail, the v1 construction of D-19 included. The entry
+is now judged against `sqrt((u, u)(v, v))`, as `check_measure` already judged
+a covariance, and one `rtol` serves a metric of any size: 0.06 at 20 000 draws
+is six standard errors on the diagonal. Every existing caller passed
+unchanged, the two on MFEM spaces for the first time as a real test.
+
 ---
 
 ## 15. Layering
@@ -1412,4 +1426,6 @@ laptop and should be re-measured before being quoted.
   2.4e-4, 5.9e-5. The standard error of `check_white_noise`'s off-diagonal
   estimate is the geometric mean of the two metric values over root `n`, which
   a Robin condition raises: 0.048 against 0.021 at 20 000 draws on a radial
-  `H²` with `L` 0.3, against the check's fixed 0.06.
+  `H²` with `L` 0.3, against the fixed 0.06 the check then had (D-125). With
+  the metric `[1, 4, 9]` scaled by 1e4 a correct space gave an off-diagonal
+  310 against that 0.06; scaled by 1e-4 the v1 construction passed it.
