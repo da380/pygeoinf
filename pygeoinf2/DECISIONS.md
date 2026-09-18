@@ -1075,6 +1075,12 @@ with no consumer gets designed twice. That session starts from: a rule
 a Kalman step is the Gaussian inversion's push-forward and conditioning
 iterated in time.
 
+**D-114. pyshtools is always paired with ducc0** (2026-09-18, David). The
+`sphere` extra lists `ducc0`, pyshtools' fast transform backend, which
+pyshtools selects by default when it is importable; nothing in the code names
+it. Measured on analysis plus synthesis of a Sobolev field: 8.5 ms to 1.3 ms
+at lmax 128, 57 ms to 6.7 ms at lmax 256, coefficients agreeing to 1e-13.
+
 **D-113. Also later:** full function-space MCMC (D-7 lays the hooks), PETSc
 (D-98), parallelism inside operator actions (D-6), the convex solvers' API
 (D-13, with Mag), `DualFeasibleProperty`'s certified gap (REVIEW2 question 2,

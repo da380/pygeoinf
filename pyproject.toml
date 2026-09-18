@@ -20,7 +20,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # Function spaces on the two-sphere: spherical harmonics plus geospatial plotting.
-sphere = ["pyshtools>=4.14.1", "Cartopy>=0.25.0", "shapely>=2.0.0"]
+# ducc0 is the fast transform backend; pyshtools selects it by default when it
+# is importable, so nothing in the code refers to it.
+sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0"]
 # Alternative QP backends for the convex-analysis solvers.
 osqp = ["osqp>=1.0.0"]
 clarabel = ["clarabel>=0.9.0"]
