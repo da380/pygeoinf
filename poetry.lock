@@ -1974,7 +1974,7 @@ description = "lightweight wrapper around basic LLVM functionality"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"mfem\""
+markers = "sys_platform == \"linux\" and extra == \"mfem\""
 files = [
     {file = "llvmlite-0.49.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:ee81e96c15a6f870918f1eb60c913551c16aa23defb4f5f1acfa660d6a0aaac2"},
     {file = "llvmlite-0.49.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:854941c2267fd4fc5b2ce02b8af8ecdffa79fb7784591d3a89370322039ea09f"},
@@ -2208,7 +2208,7 @@ description = "MFEM + PyMFEM (finite element method library)"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"mfem\""
+markers = "sys_platform == \"linux\" and extra == \"mfem\""
 files = [
     {file = "mfem-4.8.0.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:9eddd63e0224d628e6b7aeeec423b4ea4b3cd8f0af9c8a5dfec64ff0a05a578a"},
     {file = "mfem-4.8.0.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e689751c308e718151c80d7e431aed2666cc6205938ff77ded9b9eba8cd70fd1"},
@@ -2435,7 +2435,7 @@ description = "compiling Python code using LLVM"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "extra == \"mfem\""
+markers = "sys_platform == \"linux\" and extra == \"mfem\""
 files = [
     {file = "numba-0.67.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:8c0e88acd4341ddf40779db3c0228b9188aca7fcab5f5f3ce9949a1fc71e9a02"},
     {file = "numba-0.67.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d6c8e9ba3f9602471e8c6f563ffcce8db8046741f0bafb782a052e41dc6b6861"},
@@ -4556,4 +4556,4 @@ sphere = ["Cartopy", "ducc0", "pyshtools", "shapely"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "7f670b9fe947819a741295d392375f0ada65b2749b1035d2faf4115e127eb8de"
+content-hash = "8436f7dc02c4e07cfe68d2720c5b1ed3b9336f5c68437e13e08e73b0eca87424"

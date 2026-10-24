@@ -39,8 +39,10 @@ interactive = ["plotly>=5.0.0"]
 # that can be turned by hand.
 plot3d = ["plotly>=5.18,<7"]
 # Foreign vector and matrix backends, adapted in pygeoinf2.backends. Used only
-# by the examples and their tests, which skip when they are absent.
-mfem = ["mfem>=4.8.0"]
+# by the examples and their tests, which skip when they are absent. mfem ships
+# Linux-only wheels and its sdist refuses to build on Windows, so the extra is
+# marked for Linux; elsewhere `--all-extras` installs nothing and the tests skip.
+mfem = ["mfem>=4.8.0; sys_platform == 'linux'"]
 
 [tool.poetry]
 # Both packages ship for the dev period: pygeoinf2 is the 2.0 refactor and is
