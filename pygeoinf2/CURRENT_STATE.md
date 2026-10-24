@@ -222,6 +222,15 @@ Recorded rather than settled, so nobody has to rediscover them.
 - **`dense_limit` on `kl_divergence` and `ambient_ball`** keys on dimension,
   not application count (D-50). Fine until a covariance that applies a PDE
   solve meets it.
+- **A posterior on a direct sum forgets the prior's labels.** Found
+  2026-10-24 writing tutorial 10. `LinearGaussianInversion` puts the
+  posterior on the forward operator's domain, and `RowLinearOperator` (like
+  the other block constructors) builds that `DirectSum` with no labels, so
+  `posterior.marginal("bias")` raises `KeyError` although the prior was
+  built with `labels=` and compares equal to the domain. Marginals are
+  reached by position meanwhile. To look into: whether the block operators
+  should take `labels=`, or the estimator should prefer the prior's domain
+  when the two are equal.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.

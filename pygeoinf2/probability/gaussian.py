@@ -2238,7 +2238,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         left, right = domain.index(first), domain.index(second)
         if isinstance(operator, BlockLinearOperator):
             return operator.blocks[left][right]
-        return domain.projection(first) @ operator @ domain.projection(second).adjoint
+        block = domain.projection(first) @ operator @ domain.projection(second).adjoint
+        if left != right:
+            return block
+        # A diagonal block is a congruence of the operator, and inherits its
+        # traits -- stated here as push_forward states them, because the
+        # palindrome rule cannot see it: the composition flattens the
+        # operator into its own factors, and a covariance whose traits were
+        # claimed rather than derived (a posterior's) loses them on the way.
+        # Without this the marginal of a posterior on a direct sum claimed
+        # nothing and was refused.
+        return block.with_traits(
+            congruence_traits(operator.traits, outer_invertible=False)
+        )
 
     def mahalanobis_squared(self, x: X, *, unsafe: bool = False) -> float:
         """``(x - m, P (x - m))``, the squared Mahalanobis distance.

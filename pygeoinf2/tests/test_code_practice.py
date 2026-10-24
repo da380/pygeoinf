@@ -10,7 +10,8 @@ document themselves by their names and pytest fixtures take positional
 arguments by design. The examples are excluded because they are teaching
 material: annotating a three-line helper written to illustrate one idea makes
 the illustration worse, and the examples have their own test, which is that
-they run.
+they run. The tutorials are excluded for the same reason, and have the same
+test.
 """
 
 import ast
@@ -19,7 +20,7 @@ import pathlib
 import pytest
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent
-SKIP_DIRS = {"tests", "examples", "__pycache__"}
+SKIP_DIRS = {"tests", "examples", "tutorials", "__pycache__"}
 
 
 def source_files() -> list[pathlib.Path]:

@@ -18,6 +18,22 @@ four in the same style:
 An ordered course, narrative, runnable top to bottom, written against the
 v2 names from the start.
 
+> **Status, 2026-10-24: all twelve drafted, the notebooks not started.**
+> First drafts are in `pygeoinf2/tutorials/` as percent-cell scripts
+> (`# %%` / `# %% [markdown]`, so Jupyter and VS Code open them as notebooks
+> and the two kept notebooks can be converted from them), with a README and
+> `tests/test_tutorials.py`, which runs each one as `test_examples.py` runs
+> the examples; `tutorials` joins `examples` in `test_code_practice`'s
+> exemptions. Tutorials 10 (last section) and 11 need `planetmodel`, 12
+> needs MFEM. Tutorial 7 uses `BackusGilbertParker`'s automatic choice only,
+> so nothing in it depends on the `route=` spelling D-134 will change.
+> Writing them turned up one library bug, fixed with a regression test:
+> `GaussianMeasure.marginal` refused the marginal of any posterior on a
+> direct sum (`_block_of` lost the covariance's claimed traits). And one
+> wart, not fixed: a posterior on a direct sum lives on the forward
+> operator's domain, which `RowLinearOperator` builds without the prior's
+> labels, so its marginals are reached by position, not by name.
+
 1. **First inversion** — a function on a circle from point observations,
    twenty lines end to end; the taste before any theory.
 2. **Spaces** — vectors as backend objects, inner products, the Gram

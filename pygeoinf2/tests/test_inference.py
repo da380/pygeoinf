@@ -826,6 +826,59 @@ class TestJointInversionEndToEnd:
         assert np.asarray(pushed.expectation).shape == (2,)
 
 
+class TestAPosteriorOnADirectSumHasMarginals:
+    """A joint model -- a field and a nuisance parameter -- is the usual
+    reason to put a prior on a direct sum, and the marginal is the usual
+    thing asked of the posterior. It was refused: the block of a posterior
+    covariance came back claiming no traits, because the covariance's own
+    were claimed rather than derived, and the composition that sliced the
+    block flattened it and lost them."""
+
+    def test_the_marginal_is_the_push_forward_under_the_projection(self, rng):
+        from pygeoinf2.algebra.direct_sum import RowLinearOperator
+        from pygeoinf2.probability import product
+
+        field = make_dense_metric_space(6)
+        bias = EuclideanSpace(1)
+        data_space = EuclideanSpace(4)
+        forward = RowLinearOperator(
+            [
+                LinearOperator.from_matrix(
+                    field, data_space, rng.standard_normal((4, 6)), form="components"
+                ),
+                LinearOperator.from_matrix(
+                    bias, data_space, np.ones((4, 1)), form="components"
+                ),
+            ]
+        )
+        prior = product(
+            [
+                GaussianMeasure.from_standard_deviation(field, 1.0),
+                GaussianMeasure.from_standard_deviation(bias, 0.5),
+            ]
+        )
+        problem = LinearForwardProblem(
+            forward,
+            error=GaussianMeasure.from_standard_deviation(data_space, 0.1),
+        )
+        posterior = LinearGaussianInversion(problem, prior)(data_space.random(rng=rng))
+
+        for key in (0, 1):
+            marginal = posterior.marginal(key)
+            reference = posterior.push_forward(posterior.domain.projection(key))
+            assert Traits.POSITIVE_SEMIDEFINITE in marginal.covariance.traits
+            space = marginal.domain
+            np.testing.assert_allclose(
+                space.to_components(marginal.expectation),
+                space.to_components(reference.expectation),
+            )
+            np.testing.assert_allclose(
+                marginal.covariance.matrix(form="galerkin"),
+                reference.covariance.matrix(form="galerkin"),
+                atol=1e-12,
+            )
+
+
 class TestConstrainedEstimatorsCanBeReduced:
     """Both used to raise. The constraint is pulled back with the problem:
     ``B u == w`` becomes ``(B M) p == w``, which is v1's construction."""
