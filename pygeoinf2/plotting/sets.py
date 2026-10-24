@@ -1,11 +1,10 @@
-"""Drawing a convex set, or a slice of one, in one or two dimensions.
+"""Drawing a convex set, or a slice of one, in one, two or three dimensions.
 
 The compact port of v1's ``SubspaceSlicePlotter`` (DECISIONS.md D-94): one
-function, matplotlib only, one and two dimensions, and the route chosen by
-what the set can do rather than by its class. A set with a support
-function is drawn from it, as the polygon of its supporting lines; a set
-with a level function is drawn as a filled contour of it; anything else is
-rastered through membership. The exact polyhedral and quadratic paths v1
+function and the route chosen by what the set can do rather than by its
+class. A set with a support function is drawn from it; a set with a level
+function is drawn as a filled contour of it; anything else is rastered
+through membership. The exact polyhedral and quadratic paths v1
 special-cased fall out of the first two routes.
 
 A property space is where this earns its keep: the Backus–Gilbert–Parker
@@ -13,10 +12,23 @@ estimator returns a convex set there, and property spaces are one- or
 two-dimensional in nearly every use. A higher-dimensional set is drawn
 either sliced along an affine subspace, with ``subspace=``, or projected,
 by ``push_forward`` onto a coordinate pair before calling this.
+
+Three dimensions — dropped in D-94, restored for the 2.0 release — are
+drawn by the same routes, with the renderings they force. The support
+route takes the convex hull of the points *attaining* the support over a
+spread of directions, which is **inscribed** in the set; the two-
+dimensional polygon of supporting lines is circumscribed, and the
+docstrings of :func:`_support_2d` and :func:`_support_hull_3d` say which
+side each errs on. The sampled routes raster a ``resolution**3`` grid and
+draw it as voxels; that cubes the cost of an oracle call, so the default
+resolution drops and a warning names the count when it is pushed past
+what a Python oracle answers quickly. A three-dimensional picture can also
+go to plotly, with ``engine="plotly"``, to be turned by hand.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal
 
 import numpy as np
@@ -24,6 +36,7 @@ import numpy as np
 __all__ = ["plot_set"]
 
 Route = Literal["auto", "support", "level", "membership"]
+Engine = Literal["matplotlib", "plotly"]
 
 
 def plot_set(
@@ -33,49 +46,98 @@ def plot_set(
     subspace: Any = None,
     ax: Any = None,
     bounds: Any = None,
-    resolution: int = 200,
+    resolution: int | None = None,
     directions: int = 180,
     route: Route = "auto",
+    engine: Engine = "matplotlib",
     padding: float = 0.05,
     **kwargs: Any,
 ) -> tuple[Any, Any]:
-    """Draw a convex set in one or two dimensions.
+    """Draw a convex set in one, two or three dimensions.
 
     Args:
         subset: the set. Its domain must be a coordinate space of dimension
-            one or two, unless *subspace* is given.
+            one, two or three, unless *subspace* is given.
         subspace: an :class:`~pygeoinf2.geometry.subspaces.AffineSubspace`
-            of the set's domain, of dimension one or two, to slice along.
+            of the set's domain, of dimension one to three, to slice along.
             The picture is then in the subspace's own coordinates, an
             orthonormal basis of its tangent about its translation. A slice
             has no support function of its own, so the support route is
             not available for one.
-        ax: the axes to draw on. A new figure by default.
-        bounds: ``(low, high)`` in one dimension or ``((xlow, xhigh), (ylow,
-            yhigh))`` in two, for the sampled routes. Derived from the set's
+        ax: the axes to draw on. A new figure by default; in three
+            dimensions the axes must carry the ``3d`` projection, and the
+            new figure's do.
+        bounds: ``(low, high)`` in one dimension, or one pair per axis in
+            two or three, for the sampled routes. Derived from the set's
             support function when it has one, and required otherwise.
-        resolution: samples per axis on the sampled routes.
-        directions: supporting lines on the support route in two dimensions.
+        resolution: samples per axis on the sampled routes. Two hundred by
+            default, but thirty in three dimensions, where the cost is its
+            cube; pushing it past thirty there warns with the call count.
+        directions: supporting lines on the support route in two
+            dimensions, or support directions over the sphere in three.
         route: ``"support"``, ``"level"``, ``"membership"``, or ``"auto"``,
-            which takes the first of those the set offers.
+            which takes the first of those the set offers. In three
+            dimensions the support route also needs the set's
+            ``support_maximizer``, since it draws the points attaining the
+            support rather than the planes bounding it.
+        engine: ``"matplotlib"``, or ``"plotly"`` for a three-dimensional
+            picture that can be turned by hand. plotly is the ``plot3d``
+            extra, imported only when asked for.
         padding: the fraction by which derived bounds are widened.
-        **kwargs: passed to the matplotlib call that draws the set.
+        **kwargs: passed to the matplotlib or plotly call that draws the
+            set.
 
     Returns:
-        The ``(axes, artist)`` pair.
+        The ``(axes, artist)`` pair. In three dimensions the artist is a
+        ``Poly3DCollection`` on the support route and the dict that
+        ``Axes3D.voxels`` returns on the sampled ones — cell index to face
+        collection, for the filled cells with a visible face; cells buried
+        inside the set draw nothing and are absent. With ``engine="plotly"`` the pair is
+        ``(None, figure)``: no matplotlib axes exist, and the figure is a
+        ``plotly.graph_objects.Figure`` to be shown or written out.
 
     Raises:
-        ValueError: for a dimension other than one or two, a route the set
-            does not offer, or a sampled route without bounds to sample in.
+        ValueError: for a dimension other than one, two or three, a route
+            the set does not offer, a sampled route without bounds to
+            sample in, or the plotly engine outside three dimensions or
+            with an ``ax``.
         TypeError: for a domain without components.
+        ImportError: for ``engine="plotly"`` without plotly installed.
     """
-    import matplotlib.pyplot as plt
-
     picture = _Picture(subset, subspace)
     chosen = _choose(subset, picture, route)
+    if engine not in ("matplotlib", "plotly"):
+        raise ValueError(f"The engine is 'matplotlib' or 'plotly', got {engine!r}.")
+    if engine == "plotly":
+        if picture.dimension != 3:
+            raise ValueError(
+                "The plotly engine draws three-dimensional sets; matplotlib "
+                "draws one and two."
+            )
+        if ax is not None:
+            raise ValueError("The plotly engine makes its own figure; pass no ax.")
+    if resolution is None:
+        resolution = 30 if picture.dimension == 3 else 200
+    kwargs.setdefault("alpha", 0.5)
+
+    if picture.dimension == 3:
+        return _plot_3d(
+            subset,
+            picture,
+            chosen,
+            ax,
+            bounds,
+            resolution,
+            directions,
+            engine,
+            padding,
+            **kwargs,
+        )
+
+    import matplotlib.pyplot as plt
+
     if ax is None:
         _, ax = plt.subplots()
-    kwargs.setdefault("alpha", 0.5)
 
     if chosen == "support":
         artist = (
@@ -112,9 +174,10 @@ class _Picture:
             self.dimension = int(subspace.dimension())
             self.translation = subspace.translation
             self.basis = list(subspace.tangent.projector.basis())
-        if self.dimension not in (1, 2):
+        if self.dimension not in (1, 2, 3):
             raise ValueError(
-                f"A set is drawn in one or two dimensions, not {self.dimension}."
+                f"A set is drawn in one, two or three dimensions, not "
+                f"{self.dimension}."
             )
 
     def embed(self, coordinates: np.ndarray) -> Any:
@@ -150,7 +213,11 @@ class _Picture:
 def _choose(subset: Any, picture: _Picture, route: str) -> str:
     offers = {
         "support": bool(getattr(subset, "has_support_function", False))
-        and not picture.sliced,
+        and not picture.sliced
+        # In three dimensions the support route draws the points attaining
+        # the support, so it needs the maximizer; a support value alone does
+        # not determine the point.
+        and (picture.dimension < 3 or bool(getattr(subset, "has_maximizer", False))),
         "level": bool(getattr(subset, "has_level_function", False)),
         "membership": bool(getattr(subset, "has_membership", True)),
     }
@@ -164,7 +231,12 @@ def _choose(subset: Any, picture: _Picture, route: str) -> str:
             f"The route is 'support', 'level', 'membership' or 'auto', got {route!r}."
         )
     if not offers[route]:
-        why = " on a slice" if route == "support" and picture.sliced else ""
+        why = ""
+        if route == "support":
+            if picture.sliced:
+                why = " on a slice"
+            elif picture.dimension == 3:
+                why = " in three dimensions without a support maximizer"
         raise ValueError(f"The set has no {route} route{why}.")
     return route
 
@@ -179,7 +251,8 @@ def _bounds(subset: Any, picture: _Picture, given: Any, padding: float) -> np.nd
     if not getattr(subset, "has_support_function", False):
         raise ValueError(
             "Bounds are needed to sample a set without a support function: "
-            "pass bounds=(low, high) or ((xlow, xhigh), (ylow, yhigh))."
+            "pass bounds=(low, high) in one dimension, or one (low, high) "
+            "pair per axis."
         )
     box = np.empty((picture.dimension, 2))
     for axis in range(picture.dimension):
@@ -276,3 +349,199 @@ def _sampled_2d(
         floor = min(float(values.min()), level) - 1.0
         return ax.contourf(grid_x, grid_y, values, levels=[floor, level], **kwargs)
     return ax.contourf(grid_x, grid_y, values, levels=[0.5, 1.5], **kwargs)
+
+
+# --------------------------------------------------------------------------- #
+#                              Three dimensions                               #
+# --------------------------------------------------------------------------- #
+
+
+def _plot_3d(
+    subset: Any,
+    picture: _Picture,
+    route: str,
+    ax: Any,
+    bounds: Any,
+    resolution: int,
+    directions: int,
+    engine: str,
+    padding: float,
+    **kwargs: Any,
+) -> tuple[Any, Any]:
+    if route == "support":
+        points, simplices = _support_hull_3d(subset, picture, directions)
+        if engine == "plotly":
+            return None, _plotly_mesh(points, simplices, **kwargs)
+        axes = _axes_3d(ax)
+        return axes, _hull_3d(axes, points, simplices, **kwargs)
+    box = _bounds(subset, picture, bounds, padding)
+    mask = _mask_3d(subset, picture, route, box, resolution)
+    if engine == "plotly":
+        return None, _plotly_volume(box, mask, resolution, **kwargs)
+    axes = _axes_3d(ax)
+    return axes, _voxels_3d(axes, box, mask, resolution, **kwargs)
+
+
+def _axes_3d(ax: Any) -> Any:
+    import matplotlib.pyplot as plt
+
+    if ax is None:
+        _, ax = plt.subplots(subplot_kw={"projection": "3d"})
+        return ax
+    if getattr(ax, "name", None) != "3d":
+        raise ValueError(
+            "A three-dimensional set needs three-dimensional axes: make them "
+            'with subplot_kw={"projection": "3d"}, or pass none and get them.'
+        )
+    return ax
+
+
+def _fibonacci_sphere(count: int) -> np.ndarray:
+    """``count`` nearly equal-area directions: the Fibonacci lattice."""
+    indices = np.arange(count) + 0.5
+    polar = np.arccos(1.0 - 2.0 * indices / count)
+    azimuth = np.pi * (1.0 + np.sqrt(5.0)) * indices
+    return np.column_stack(
+        [
+            np.cos(azimuth) * np.sin(polar),
+            np.sin(azimuth) * np.sin(polar),
+            np.cos(polar),
+        ]
+    )
+
+
+def _support_hull_3d(
+    subset: Any, picture: _Picture, directions: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """The convex hull of the points attaining the support, as vertices and triangles.
+
+    **Inscribed**, where the two-dimensional polygon of supporting lines is
+    circumscribed: each vertex is a point *of* the set, so their hull is
+    contained in it, approaching a smooth set from inside as directions
+    grow. Exact for a polytope once every vertex's normal cone contains a
+    sampled direction. Intersecting the supporting planes instead — v1's
+    route — bounds the set from outside, but in three dimensions it needs
+    an interior point and a half-space intersection; the hull of points the
+    set exhibits is the honest cheap one.
+    """
+    from scipy.spatial import ConvexHull
+
+    if directions < 4:
+        raise ValueError(f"At least four directions are needed, got {directions}.")
+    space = picture.space
+    points = np.array(
+        [
+            space.to_components(subset.support_maximizer(picture.direction(normal)))
+            for normal in _fibonacci_sphere(directions)
+        ],
+        dtype=float,
+    )
+    try:
+        hull = ConvexHull(points)
+    except Exception as error:
+        raise ValueError(
+            "The supporting points span no volume, so there is no solid hull "
+            "to draw; slice a flat set along its own plane instead."
+        ) from error
+    return points, hull.simplices
+
+
+def _hull_3d(ax: Any, points: np.ndarray, simplices: np.ndarray, **kwargs: Any) -> Any:
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    artist = Poly3DCollection(points[simplices], **kwargs)
+    ax.add_collection3d(artist)
+    # A collection does not feed the autoscaler; open the frame by hand.
+    ax.auto_scale_xyz(points[:, 0], points[:, 1], points[:, 2])
+    return artist
+
+
+def _mask_3d(
+    subset: Any, picture: _Picture, route: str, box: np.ndarray, resolution: int
+) -> np.ndarray:
+    if resolution > 30:
+        warnings.warn(
+            f"Rastering {resolution ** 3:,} points through a Python {route} "
+            "oracle; a resolution of thirty or less keeps a three-dimensional "
+            "picture quick.",
+            stacklevel=2,
+        )
+    inside = _inside(subset, picture, route)
+    axes = [np.linspace(low, high, resolution) for low, high in box]
+    values = np.empty((resolution,) * 3)
+    for i, x in enumerate(axes[0]):
+        for j, y in enumerate(axes[1]):
+            for k, z in enumerate(axes[2]):
+                values[i, j, k] = inside(np.array([x, y, z]))
+    return values <= float(subset.level) if route == "level" else values > 0.5
+
+
+def _voxels_3d(
+    ax: Any, box: np.ndarray, mask: np.ndarray, resolution: int, **kwargs: Any
+) -> Any:
+    # Corner grids one larger than the mask put the voxels at parameter
+    # coordinates rather than index space.
+    edges = [np.linspace(low, high, resolution + 1) for low, high in box]
+    corners = np.meshgrid(*edges, indexing="ij")
+    return ax.voxels(*corners, mask, **kwargs)
+
+
+def _import_plotly() -> Any:
+    try:
+        import plotly.graph_objects as go
+    except ImportError as error:
+        raise ImportError(
+            "engine='plotly' needs plotly, which the plot3d extra installs: "
+            "pip install pygeoinf[plot3d]"
+        ) from error
+    return go
+
+
+def _plotly_mesh(points: np.ndarray, simplices: np.ndarray, **kwargs: Any) -> Any:
+    go = _import_plotly()
+    opacity = kwargs.pop("alpha", 0.5)
+    figure = go.Figure(
+        data=[
+            go.Mesh3d(
+                x=points[:, 0],
+                y=points[:, 1],
+                z=points[:, 2],
+                i=simplices[:, 0],
+                j=simplices[:, 1],
+                k=simplices[:, 2],
+                opacity=opacity,
+                **kwargs,
+            )
+        ]
+    )
+    figure.update_layout(scene={"aspectmode": "data"})
+    return figure
+
+
+def _plotly_volume(
+    box: np.ndarray, mask: np.ndarray, resolution: int, **kwargs: Any
+) -> Any:
+    go = _import_plotly()
+    opacity = kwargs.pop("alpha", 0.5)
+    axes = [np.linspace(low, high, resolution) for low, high in box]
+    grid = np.meshgrid(*axes, indexing="ij")
+    figure = go.Figure(
+        data=[
+            go.Volume(
+                x=grid[0].ravel(),
+                y=grid[1].ravel(),
+                z=grid[2].ravel(),
+                value=mask.astype(float).ravel(),
+                # The inside is one and the outside zero, so the half level
+                # is the boundary whatever the route computed.
+                isomin=0.5,
+                isomax=1.0,
+                surface_count=1,
+                opacity=opacity,
+                showscale=False,
+                **kwargs,
+            )
+        ]
+    )
+    figure.update_layout(scene={"aspectmode": "data"})
+    return figure

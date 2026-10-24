@@ -33,6 +33,29 @@ if TYPE_CHECKING:
 __all__ = ["ProbabilityMeasure", "ProductMeasure", "PushForwardMeasure", "product"]
 
 
+def _require_density(space: HilbertSpace, what: str, /, *, unsafe: bool) -> None:
+    """Refuse a density-family quantity on a function-space discretisation.
+
+    The counterpart of D-11's point-evaluation guard, for densities (D-131):
+    on a space that discretises functions, a density with respect to the
+    space's own volume measure is an artefact of the truncation -- its value
+    changes with the discretisation and vanishes in the limit. A density
+    relative to a *reference measure* is the dimension-robust object, and
+    the sampling layer is built on those. ``unsafe=True`` proceeds anyway,
+    which is worth having: seeing the number drift under refinement is the
+    quickest way to believe the refusal.
+    """
+    if unsafe or not space.is_function_space:
+        return
+    raise ValueError(
+        f"{what} is refused on {type(space).__name__}: the space discretises "
+        "a function space, so a density against its own volume measure "
+        "depends on the truncation and vanishes in the limit (D-131). Use a "
+        "density relative to a reference measure, or pass unsafe=True to see "
+        "the discretisation's own number."
+    )
+
+
 class ProbabilityMeasure[X](ABC):
     """A probability measure on a Hilbert space."""
 
@@ -207,11 +230,13 @@ class ProbabilityMeasure[X](ABC):
             )
         return self.covariance(dirac(point).representer)
 
-    def log_density(self, x: X) -> float:
+    def log_density(self, x: X, *, unsafe: bool = False) -> float:
         """The log density at ``x``, up to an additive constant.
 
         Args:
             x: where to evaluate it.
+            unsafe: proceed on a function-space discretisation, where the
+                value is an artefact of the truncation (D-131).
 
         Returns:
             The log density.
@@ -219,12 +244,14 @@ class ProbabilityMeasure[X](ABC):
         Raises:
             NotImplementedError: unless the measure provides one. Not every
                 measure has a density, and one that is only sampled has none.
+            ValueError: on a function-space discretisation without
+                ``unsafe=True`` (D-131).
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a log density."
         )
 
-    def grad_log_density(self, x: X) -> X:
+    def grad_log_density(self, x: X, *, unsafe: bool = False) -> X:
         """The gradient of the log density — a **vector** in the domain.
 
         Not a functional: under Riesz identification the representer is the
@@ -232,12 +259,15 @@ class ProbabilityMeasure[X](ABC):
 
         Args:
             x: where to evaluate it.
+            unsafe: proceed on a function-space discretisation (D-131).
 
         Returns:
             The gradient, a vector of the domain.
 
         Raises:
             NotImplementedError: unless the measure provides one.
+            ValueError: on a function-space discretisation without
+                ``unsafe=True`` (D-131).
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a log-density gradient."

@@ -386,6 +386,26 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         return False
 
     @property
+    def is_function_space(self) -> bool:
+        """True when this space discretises a space of functions (D-131).
+
+        The marker that separates a discretisation -- a symmetric space, a
+        ``sem1d`` space, a finite element space -- from a space that is
+        intrinsically finite, such as a data or property space. On a
+        discretisation, a probability density with respect to the space's own
+        volume measure is an artefact: its value depends on the truncation
+        and vanishes in the limit, so the density-family methods refuse there
+        unless told ``unsafe=True``, exactly as point evaluation refuses
+        below the Sobolev order that admits it (D-11). Densities relative to
+        a *reference measure* are the dimension-robust replacement, and they
+        are what the sampling layer is built on.
+
+        ``False`` here; a space that discretises functions overrides it, and
+        a direct sum carries it if any summand does.
+        """
+        return False
+
+    @property
     def has_diagonal_metric(self) -> bool:
         """True when the Gram matrix is diagonal in this space's basis.
 
@@ -1072,6 +1092,11 @@ class _CoordinateMassWeightedSpace[V](MassWeightedSpace[V], CoordinateSpace[V]):
         return self._base.has_diagonal_metric and isinstance(
             self._mass, DiagonalLinearOperator
         )
+
+    @property
+    def is_function_space(self) -> bool:
+        """The base's: reweighting the metric changes no vectors (D-131)."""
+        return self._base.is_function_space
 
     def gram_diagonal(self) -> np.ndarray:
         """The base's diagonal times the mass operator's, where both are diagonal."""

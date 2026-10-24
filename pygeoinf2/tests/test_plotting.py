@@ -972,12 +972,211 @@ class TestPlotSet:
         assert filled.levels[-1] == pytest.approx(square.level)
 
     def test_wrong_dimensions_and_routes_are_refused(self):
-        space, ball = self.ball(3)
-        with pytest.raises(ValueError, match="one or two"):
+        space, ball = self.ball(4)
+        with pytest.raises(ValueError, match="one, two or three"):
             plotting.plot_set(ball)
         space, ball = self.ball(2)
         with pytest.raises(ValueError, match="route"):
             plotting.plot_set(ball, route="voxels")
+
+
+class TestPlotSetThreeDimensions:
+    """The third dimension of the slice plotter, restored for 2.0.
+
+    The support route draws the hull of points *attaining* the support, so
+    the one property worth asserting is the honest one: inscribed, never
+    past the set. The sampled routes raster a cube of the parameter space
+    into voxels, and the arithmetic to check is where the filled cells sit.
+    """
+
+    ball = staticmethod(TestPlotSet.ball)
+
+    @staticmethod
+    def ellipsoid(space, rng):
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.traits import Traits
+
+        dim = space.dim
+        root = rng.normal(size=(dim, dim))
+        matrix = root @ root.T + dim * np.identity(dim)
+        precision = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        covariance = LinearOperator.from_matrix(
+            space,
+            space,
+            np.linalg.inv(precision.matrix(form="components")),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        return Ellipsoid(space, precision, covariance=covariance)
+
+    def test_the_support_hull_is_inscribed(self):
+        """Every vertex is a supporting point, so it lies *on* the ball and
+        the hull lies inside it — the opposite sense to the two-dimensional
+        polygon of supporting lines, which circumscribes."""
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+        from pygeoinf2.plotting.sets import _Picture, _support_hull_3d
+
+        space, ball = self.ball(3)
+        points, simplices = _support_hull_3d(ball, _Picture(ball, None), 128)
+        radii = np.linalg.norm(points, axis=1)
+        assert np.allclose(radii, 1.5)
+        assert simplices.shape[1] == 3
+
+        ax, artist = plotting.plot_set(ball, directions=64)
+        assert getattr(ax, "name", None) == "3d"
+        assert isinstance(artist, Poly3DCollection)
+
+    def test_the_sampled_routes_agree_on_a_ball(self):
+        """Same derived bounds, same grid, so the level and membership masks
+        must fill the same cells; the voxel dict holds the cells with a
+        visible face, which agree exactly when the masks do."""
+        space, ball = self.ball(3, radius=1.0)
+        _, filled = plotting.plot_set(ball, route="level", resolution=12)
+        _, rastered = plotting.plot_set(ball, route="membership", resolution=12)
+        assert isinstance(filled, dict) and filled
+        assert set(filled) == set(rastered)
+
+    def test_a_polytope_is_rastered_through_membership(self):
+        """A deterministic grid against a cube: six of the ten samples per
+        axis land inside, and the dict shows the 6^3 filled cells minus the
+        4^3 buried ones."""
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        space, _ = self.ball(3)
+        planes = []
+        for axis in range(3):
+            vector = space.basis_vector(axis)
+            planes.append(HalfSpace(space, vector, offset=1.0))
+            planes.append(HalfSpace(space, space.scale(-1.0, vector), offset=1.0))
+        cube = Polytope(space, planes, outer=True)
+        _, voxels = plotting.plot_set(
+            cube, route="membership", bounds=((-1.5, 1.5),) * 3, resolution=10
+        )
+        assert len(voxels) == 6**3 - 4**3
+
+    def test_a_slice_matches_the_pullback_ellipsoid(self, rng):
+        """The slice ``x = x0 + V u`` of ``(x-c, P (x-c)) <= 1`` is the
+        ellipsoid ``(u - u_c, M (u - u_c)) <= rho^2`` with ``M = V' P V``,
+        ``u_c = -M^-1 b`` and ``rho^2 = 1 - gamma + b' M^-1 b`` — v1's exact
+        quadratic path. The rastered extent along each picture axis must
+        land on that ellipsoid's, to within the cells that straddle it."""
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.geometry.subspaces import AffineSubspace
+
+        space = EuclideanSpace(4)
+        ellipsoid = self.ellipsoid(space, rng)
+        matrix = ellipsoid.precision.matrix(form="components")
+        shift = 0.1
+        plane = AffineSubspace.from_tangent_basis(
+            space,
+            [space.basis_vector(axis) for axis in range(3)],
+            translation=space.from_components(np.array([0.0, 0.0, 0.0, shift])),
+        )
+        pulled = matrix[:3, :3]
+        linear = matrix[:3, 3] * shift
+        inverse = np.linalg.inv(pulled)
+        center = -inverse @ linear
+        rho = np.sqrt(1.0 - shift**2 * matrix[3, 3] + linear @ inverse @ linear)
+        half = rho * np.sqrt(np.diag(inverse))
+
+        resolution = 24
+        bounds = tuple(
+            (center[axis] - 1.3 * half[axis], center[axis] + 1.3 * half[axis])
+            for axis in range(3)
+        )
+        _, voxels = plotting.plot_set(
+            ellipsoid,
+            subspace=plane,
+            route="level",
+            bounds=bounds,
+            resolution=resolution,
+        )
+        cells = np.array(sorted(voxels))
+        for axis in range(3):
+            edges = np.linspace(bounds[axis][0], bounds[axis][1], resolution + 1)
+            cell = edges[1] - edges[0]
+            drawn_low = edges[cells[:, axis].min()]
+            drawn_high = edges[cells[:, axis].max() + 1]
+            # The sample grid has resolution points where the edges have
+            # resolution + 1, so a drawn face can sit up to about two cells
+            # from the exact tangent plane, never more.
+            assert abs(drawn_low - (center[axis] - half[axis])) <= 2.0 * cell
+            assert abs(drawn_high - (center[axis] + half[axis])) <= 2.0 * cell
+
+    def test_a_dense_metric_hull_stays_within_the_support(self, rng):
+        """The supporting points are exact boundary points whatever the
+        metric, and how far the hull reaches along a picture axis is set by
+        the support in the direction ``G^-1 e`` — so an inscribed hull must
+        approach that reach from below, never past it."""
+        from pygeoinf2.plotting.sets import _Picture, _support_hull_3d
+
+        from .conftest import make_dense_metric_space
+
+        space = make_dense_metric_space(3)
+        ellipsoid = self.ellipsoid(space, rng)
+        picture = _Picture(ellipsoid, None)
+        points, _ = _support_hull_3d(ellipsoid, picture, 512)
+        level = ellipsoid.level_function()
+        values = [level(space.from_components(vertex)) for vertex in points]
+        assert np.allclose(values, 1.0, atol=1e-9)
+        for axis in range(3):
+            reach = picture.support_along(ellipsoid, axis, 1.0)
+            top = points[:, axis].max()
+            assert top <= reach + 1e-9
+            assert top == pytest.approx(reach, rel=5e-3)
+
+    def test_what_three_dimensions_refuse(self):
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.geometry.convex import ConvexSet
+
+        space, ball = self.ball(3)
+        _, flat = plt.subplots()
+        with pytest.raises(ValueError, match="three-dimensional axes"):
+            plotting.plot_set(ball, ax=flat)
+        with pytest.warns(UserWarning, match="29,791"):
+            plotting.plot_set(ball, route="membership", resolution=31)
+        # A support function without a maximizer can bound the set but not
+        # exhibit its points, which is what the hull is made of.
+        oracle = ConvexSet.from_support_function(
+            space, ball.support_function(), membership=lambda x, rtol: True
+        )
+        with pytest.raises(ValueError, match="maximizer"):
+            plotting.plot_set(oracle, route="support")
+
+    def test_the_plotly_engine_returns_a_bare_figure(self):
+        pytest.importorskip("plotly")
+        import plotly.graph_objects as go
+
+        space, ball = self.ball(3)
+        axes, figure = plotting.plot_set(ball, engine="plotly", directions=48)
+        assert axes is None
+        assert isinstance(figure, go.Figure)
+        assert figure.data[0].type == "mesh3d"
+        axes, volume = plotting.plot_set(
+            ball, engine="plotly", route="membership", resolution=8
+        )
+        assert axes is None
+        assert volume.data[0].type == "volume"
+
+    def test_the_plotly_engine_stays_in_three_dimensions(self):
+        space, ball = self.ball(2)
+        with pytest.raises(ValueError, match="plotly"):
+            plotting.plot_set(ball, engine="plotly")
+        space, ball = self.ball(3)
+        with pytest.raises(ValueError, match="own figure"):
+            import matplotlib.pyplot as plt
+
+            _, axis = plt.subplots()
+            plotting.plot_set(ball, engine="plotly", ax=axis)
 
 
 class TestBoxPointsPathsAndBalls:

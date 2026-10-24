@@ -220,6 +220,11 @@ class MfemSpace(CoordinateSpace):
         return self._dim
 
     @property
+    def is_function_space(self) -> bool:
+        """True: a finite element space discretises functions (D-131)."""
+        return True
+
+    @property
     def finite_element_space(self) -> Any:
         """The wrapped ``mfem.FiniteElementSpace``."""
         return self._fes

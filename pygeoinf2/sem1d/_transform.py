@@ -38,7 +38,13 @@ class ShellTransform:
             ValueError: if the grid is not a Gauss-Legendre one with its
                 weights and ``2 lmax + 1`` longitudes.
         """
-        if grid.lmax is None or grid.weights is None:
+        # The kind is asked by name: under planetmodel 1.3 every grid kind
+        # carries lmax and weights, so duck-typing them no longer selects.
+        if (
+            getattr(grid, "kind", None) != "gauss_legendre"
+            or grid.lmax is None
+            or grid.weights is None
+        ):
             raise ValueError("The grid must be a Gauss-Legendre one, with weights.")
         lmax = int(grid.lmax)
         if grid.ntheta != lmax + 1 or grid.nphi != 2 * lmax + 1:

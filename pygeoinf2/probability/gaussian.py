@@ -31,7 +31,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
     from ..numerics.randomized import Estimate
     from ..geometry.convex import Ellipsoid
-from .base import ProbabilityMeasure
+from .base import ProbabilityMeasure, _require_density
 
 __all__ = ["GaussianMeasure"]
 
@@ -1437,7 +1437,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
 
     def credible_set(
-        self, /, *, level: float = 0.95, solver: Any = None
+        self, /, *, level: float = 0.95, solver: Any = None, unsafe: bool = False
     ) -> "Ellipsoid":
         """The region carrying a given share of the probability, as a set.
 
@@ -1462,14 +1462,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             solver: how to invert the covariance when the measure has no
                 precision -- a linear solver, or a callable taking the
                 covariance and returning one. Ignored when a precision exists.
+            unsafe: proceed on a function-space discretisation (D-131).
 
         Returns:
             The credible ellipsoid.
 
         Raises:
-            ValueError: for a level outside ``(0, 1)``, or a measure with
-                neither a precision nor a covariance.
+            ValueError: for a level outside ``(0, 1)``, a measure with
+                neither a precision nor a covariance, or a function-space
+                discretisation without ``unsafe=True`` (D-131): the
+                chi-squared threshold grows with the dimension, so the set
+                is an artefact of the truncation.
         """
+        _require_density(self._domain, "A credible set", unsafe=unsafe)
         from scipy.stats import chi2
 
         from ..geometry.convex import Ellipsoid
@@ -1521,6 +1526,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         dense_limit: int = 1024,
         rng: Generator | None = None,
         n_jobs: int | None = None,
+        unsafe: bool = False,
         **calculus: Any,
     ) -> Any:
         """A credible ellipsoid shaped by a fractional power of the covariance.
@@ -1555,6 +1561,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 matrices.
             rng: the generator for the probes.
             n_jobs: workers for them.
+            unsafe: proceed on a function-space discretisation when
+                ``power == 1`` (D-131); the other powers are covariance
+                geometry and take no gate.
             **calculus: options for the Lanczos operator function on a
                 covariance that is not diagonal.
 
@@ -1574,7 +1583,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if not 0.0 < level < 1.0:
             raise ValueError(f"A credible level lies in (0, 1), got {level}.")
         if power == 1.0:
-            return self.credible_set(level=level)
+            # The one power that is the distribution's own credible set, so
+            # the one that carries D-131's gate.
+            return self.credible_set(level=level, unsafe=unsafe)
         if power == 0.0:
             return self.ambient_ball(
                 level=level,
@@ -2229,7 +2240,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return operator.blocks[left][right]
         return domain.projection(first) @ operator @ domain.projection(second).adjoint
 
-    def mahalanobis_squared(self, x: X) -> float:
+    def mahalanobis_squared(self, x: X, *, unsafe: bool = False) -> float:
         """``(x - m, P (x - m))``, the squared Mahalanobis distance.
 
         Needs a precision, and says so rather than falling back to a dense
@@ -2242,13 +2253,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             x: the vector to measure.
+            unsafe: proceed on a function-space discretisation (D-131).
 
         Returns:
             The squared distance.
 
         Raises:
-            ValueError: if the measure has no precision.
+            ValueError: if the measure has no precision, or on a
+                function-space discretisation without ``unsafe=True`` (D-131).
         """
+        _require_density(self._domain, "A Mahalanobis distance", unsafe=unsafe)
         if self._precision is None:
             raise NotImplementedError(
                 "This measure has no precision, so no Mahalanobis distance. "
@@ -2257,7 +2271,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         deviation = self._deviation(x)
         return self._domain.inner_product(self._precision(deviation), deviation)
 
-    def log_normalizing_constant(self) -> float:
+    def log_normalizing_constant(self, *, unsafe: bool = False) -> float:
         """``-(n/2) log(2 pi) - (1/2) log det C``, the constant in the density.
 
         The piece :meth:`log_density` leaves out. It depends on the covariance,
@@ -2271,13 +2285,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         is what makes the density a density with respect to the space's own
         volume measure.
 
+        Args:
+            unsafe: proceed on a function-space discretisation (D-131).
+
         Returns:
             The additive constant, in nats.
 
         Raises:
             NotImplementedError: if the measure has no covariance, so there is
                 no determinant to take.
+            ValueError: on a function-space discretisation without
+                ``unsafe=True`` (D-131) -- the constant diverges with the
+                dimension.
         """
+        _require_density(self._domain, "A normalizing constant", unsafe=unsafe)
         if self._log_normalization is None:
             self._log_normalization = self._compute_log_normalization()
         return self._log_normalization
@@ -2304,16 +2325,25 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
         return gaussian - 0.5 * log_determinant(definite).value
 
-    def log_density(self, x: X) -> float:
+    def log_density(self, x: X, *, unsafe: bool = False) -> float:
         """The log density up to an additive constant.
 
         The constant is :meth:`log_normalizing_constant`, which depends on the
         covariance. Differences of this quantity are meaningful only *within*
         one measure; comparing two measures means adding each one's constant.
-        """
-        return -0.5 * self.mahalanobis_squared(x)
 
-    def grad_log_density(self, x: X) -> X:
+        Refused on a function-space discretisation without ``unsafe=True``
+        (D-131): the value depends on the truncation. The dimension-robust
+        object is a density relative to a reference measure.
+
+        Args:
+            x: where to evaluate it.
+            unsafe: proceed on a function-space discretisation (D-131).
+        """
+        _require_density(self._domain, "A log density", unsafe=unsafe)
+        return -0.5 * self.mahalanobis_squared(x, unsafe=True)
+
+    def grad_log_density(self, x: X, *, unsafe: bool = False) -> X:
         """``-P (x - m)``, already a vector in the domain.
 
         No Riesz map is applied here because none is needed: the precision maps
@@ -2322,6 +2352,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             x: where to evaluate it.
+            unsafe: proceed on a function-space discretisation (D-131).
 
         Returns:
             The gradient, a vector of the domain.
@@ -2330,6 +2361,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             ValueError: if the measure has no precision, the gradient being
                 ``-P (x - m)``.
         """
+        _require_density(self._domain, "A log-density gradient", unsafe=unsafe)
         if self._precision is None:
             raise NotImplementedError(
                 "This measure has no precision, so no log-density gradient."

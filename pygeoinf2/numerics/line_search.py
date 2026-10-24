@@ -20,7 +20,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ..algebra.operators import Functional
+from ..algebra.operators import EvaluationError, Functional
 
 __all__ = [
     "LineSearchResult",
@@ -132,8 +132,17 @@ class ArmijoLineSearch(LineSearch):
         evaluation = 0
         for evaluation in range(1, self._max_backtracks + 1):
             trial = space.axpy(step, direction, space.copy(point))
-            trial_value = functional(trial)
-            if trial_value <= value + self._decrease * step * slope:
+            # A step into a region the functional cannot evaluate -- an
+            # EvaluationError from a forward that did not converge, or a
+            # non-finite value -- is a step that went too far, and the
+            # response is the one already in hand: backtrack (D-129).
+            try:
+                trial_value = functional(trial)
+            except EvaluationError:
+                trial_value = np.inf
+            if np.isfinite(trial_value) and (
+                trial_value <= value + self._decrease * step * slope
+            ):
                 return LineSearchResult(step, trial, trial_value, evaluation, True)
             step *= self._contraction
             if step < self._min_step:
@@ -206,7 +215,26 @@ class StrongWolfeLineSearch(LineSearch):
         step = initial_step
 
         for iteration in range(1, self._max_iterations + 1):
-            trial, trial_model, trial_value, trial_slope = evaluate(step)
+            # A trial the functional cannot evaluate, or evaluates to a
+            # non-finite value or slope, is treated as infinitely bad: the
+            # step went too far, and the bracket it closes is sectioned like
+            # any other (D-129).
+            try:
+                trial, trial_model, trial_value, trial_slope = evaluate(step)
+            except EvaluationError:
+                trial_value, trial_slope = np.inf, np.nan
+            if not (np.isfinite(trial_value) and np.isfinite(trial_slope)):
+                return self._zoom(
+                    evaluate,
+                    counter,
+                    value,
+                    slope,
+                    previous_step,
+                    previous_value,
+                    previous_slope,
+                    step,
+                    np.inf,
+                )
 
             if trial_value > value + self._decrease * step * slope or (
                 iteration > 1 and trial_value >= previous_value
@@ -248,7 +276,11 @@ class StrongWolfeLineSearch(LineSearch):
                 break
 
         trial = space.axpy(step, direction, space.copy(point))
-        return LineSearchResult(step, trial, functional(trial), counter[0], False)
+        try:
+            final_value = functional(trial)
+        except EvaluationError:
+            return LineSearchResult(0.0, point, value, counter[0], False)
+        return LineSearchResult(step, trial, final_value, counter[0], False)
 
     def _zoom(
         self,
@@ -284,7 +316,16 @@ class StrongWolfeLineSearch(LineSearch):
             step = self._section(
                 low, low_value, low_slope, high, high_value, rec_step, rec_value
             )
-            trial, model, trial_value, trial_slope = evaluate(step)
+            try:
+                trial, model, trial_value, trial_slope = evaluate(step)
+            except EvaluationError:
+                trial_value, trial_slope = np.inf, np.nan
+            if not (np.isfinite(trial_value) and np.isfinite(trial_slope)):
+                # Unevaluable inside the bracket: infinitely bad, so the
+                # bracket closes on it from the ``high`` side (D-129).
+                rec_step, rec_value = high, high_value
+                high, high_value = step, np.inf
+                continue
 
             if trial_value > value + self._decrease * step * slope or (
                 trial_value >= low_value
@@ -305,7 +346,12 @@ class StrongWolfeLineSearch(LineSearch):
             low, low_value, low_slope = step, trial_value, trial_slope
 
         step = 0.5 * (low + high)
-        trial, model, trial_value, _ = evaluate(step)
+        try:
+            trial, model, trial_value, _ = evaluate(step)
+        except EvaluationError:
+            # No point to return: a failed search's point is never consumed,
+            # the caller keeps its own.
+            return LineSearchResult(0.0, None, value, counter[0], False)
         return LineSearchResult(step, trial, trial_value, counter[0], False, model)
 
     @staticmethod

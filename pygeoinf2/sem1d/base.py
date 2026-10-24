@@ -270,6 +270,11 @@ class SpectralElementSpace(
         self._order = float(order)
         super().__init__(np.asarray(eigenvalues, dtype=float) ** self._order)
 
+    @property
+    def is_function_space(self) -> bool:
+        """True: the space discretises functions on its domain (D-131)."""
+        return True
+
     # ----------------------------------------------------------------- #
     #                         Subclass interface                        #
     # ----------------------------------------------------------------- #

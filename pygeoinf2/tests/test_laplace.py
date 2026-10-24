@@ -141,6 +141,46 @@ class TestOnANonlinearProblem:
                 space.inner_product(gradient, basis), rel=1e-4, abs=1e-6
             )
 
+    def test_the_objective_evaluates_the_forward_once_at_a_point(self, rng):
+        """``objective.at(m)`` runs the forward once, not once for the value
+        and again for the derivative. With a forward that takes minutes, the
+        double evaluation was the whole cost of a line search."""
+        model = EuclideanSpace(4)
+        data_space = EuclideanSpace(12)
+        matrix = rng.standard_normal((12, 4))
+        counts = {"value": 0}
+
+        def value(components):
+            counts["value"] += 1
+            return np.exp(matrix @ components)
+
+        def derivative(components):
+            return LinearOperator.from_matrix(
+                model,
+                data_space,
+                np.diag(np.exp(matrix @ components)) @ matrix,
+                form="components",
+            )
+
+        forward = Operator.from_callables(
+            model, data_space, value, derivative=derivative
+        )
+        prior = gi.GaussianMeasure.from_standard_deviation(model, 0.4)
+        error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.05)
+        data = data_space.random(rng=rng)
+        objective = MaximumAPosteriori(
+            ForwardProblem(forward, error=error), prior
+        ).objective(data)
+
+        point = model.random(rng=rng)
+        counts["value"] = 0
+        quadratic = objective.at(point)
+        quadratic.gradient  # noqa: B018 - force the derivative's use
+        assert counts["value"] == 1
+        counts["value"] = 0
+        objective(point)
+        assert counts["value"] == 1
+
     def test_the_gaussian_can_be_placed_anywhere(self, nonlinear_setting, rng):
         """``at`` exists for when the mode is already known -- from a previous
         run, or to see what the approximation looks like elsewhere."""

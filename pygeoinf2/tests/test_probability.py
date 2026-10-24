@@ -1481,3 +1481,80 @@ class TestSaddlepoint:
             1.0, abs=1e-9
         )
         assert weighted_chi2_cdf(weights, 0.0, method="saddlepoint") == 0.0
+
+
+class TestTheFunctionSpaceMarkerGatesDensities:
+    """D-131: on a space that discretises functions, a density against the
+    space's own volume measure is an artefact of the truncation, so the
+    density family refuses without ``unsafe=True`` -- D-11's pattern. On an
+    intrinsically finite space nothing changes."""
+
+    @staticmethod
+    def function_space():
+        from pygeoinf2.symmetric_space import Sobolev
+
+        return Sobolev((16,), 2.0, 0.3)
+
+    def test_the_marker_and_its_propagation(self):
+        from pygeoinf2.algebra.direct_sum import DirectSum
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = self.function_space()
+        finite = EuclideanSpace(3)
+        assert space.is_function_space
+        assert not finite.is_function_space
+        assert DirectSum([space, finite]).is_function_space
+        assert not DirectSum([finite, finite]).is_function_space
+        mass = DiagonalLinearOperator(finite, np.array([1.0, 2.0, 3.0]))
+        assert not MassWeightedSpace(finite, mass).is_function_space
+
+    def test_the_density_family_refuses_and_unsafe_proceeds(self, rng):
+        space = self.function_space()
+        measure = space.sobolev_measure(2.0, 0.3)
+        x = measure.sample(rng=rng)
+
+        for call in (
+            lambda **k: measure.log_density(x, **k),
+            lambda **k: measure.grad_log_density(x, **k),
+            lambda **k: measure.mahalanobis_squared(x, **k),
+            lambda **k: measure.log_normalizing_constant(**k),
+            lambda **k: measure.credible_set(level=0.9, **k),
+            lambda **k: measure.weakened_ellipsoid(level=0.9, power=1.0, **k),
+        ):
+            with pytest.raises(ValueError, match="D-131"):
+                call()
+            call(unsafe=True)
+
+    def test_a_weakened_ellipsoid_below_power_one_is_not_a_density(self, rng):
+        """``power < 1`` is covariance geometry, not the distribution's own
+        credible set, and it stays open -- the brief gates ``power == 1``."""
+        space = self.function_space()
+        measure = space.sobolev_measure(2.0, 0.3)
+        measure.weakened_ellipsoid(level=0.9, power=0.5)
+
+    def test_a_finite_space_is_untouched(self, rng):
+        space = make_dense_metric_space(4)
+        measure = GaussianMeasure.from_standard_deviation(space, 1.5)
+        x = measure.sample(rng=rng)
+        assert measure.log_density(x) == pytest.approx(
+            -0.5 * measure.mahalanobis_squared(x)
+        )
+        measure.credible_set(level=0.9)
+
+    def test_the_mixture_is_gated_too(self, rng):
+        from pygeoinf2.probability import GaussianMixture
+
+        space = self.function_space()
+        components = [
+            space.sobolev_measure(2.0, 0.3),
+            space.sobolev_measure(2.0, 0.5),
+        ]
+        mixture = GaussianMixture(components, weights=np.array([0.5, 0.5]))
+        x = mixture.sample(rng=rng)
+        with pytest.raises(ValueError, match="D-131"):
+            mixture.log_density(x)
+        with pytest.raises(ValueError, match="D-131"):
+            mixture.marginal_probabilities(x)
+        probabilities = mixture.marginal_probabilities(x, unsafe=True)
+        assert probabilities.sum() == pytest.approx(1.0)

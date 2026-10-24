@@ -1071,6 +1071,132 @@ class TestFunctionalConstructorSignature:
             Functional(space, space)
 
 
+class TestTheChecksReportWhatTheyMeasured:
+    """``check_*`` take ``rtol=`` again (v1's checks had ``check_rtol``; its
+    loss was a regression) and return a ``CheckReport``. The use is a backend
+    whose adjoint is consistent only to discretisation level: pass the
+    ``rtol`` it can meet, read the defect back, record it falling under
+    refinement (D-128)."""
+
+    @staticmethod
+    def imperfect(space, defect):
+        """A self-map whose declared adjoint is off by ``defect``, relatively,
+        on a non-diagonal metric -- the shape of a continuous adjoint."""
+        values = np.linspace(1.0, 2.0, space.dim)
+
+        def act(x):
+            return space.from_components(values * space.to_components(x))
+
+        def adjoint(y):
+            g = space.gram_matrix()
+            c = space.to_components(y)
+            exact = np.linalg.solve(g, values * (g @ c))
+            return space.from_components(exact * (1.0 + defect))
+
+        return LinearOperator.from_callables(space, space, act, adjoint=adjoint)
+
+    def test_an_exact_operator_reports_a_roundoff_defect(self, rng):
+        space = make_dense_metric_space(5)
+        A = LinearOperator.from_matrix(
+            space, space, rng.normal(size=(5, 5)), form="components"
+        )
+        report = check_operator(A, rng=rng)
+        assert report.check == "check_operator"
+        assert "the adjoint satisfies (A x, y) == (x, A* y)" in report.defects
+        assert report.worst < 1e-9
+
+    def test_a_loose_rtol_passes_and_reports_the_defect(self, rng):
+        space = make_dense_metric_space(5)
+        A = self.imperfect(space, 1e-4)
+        report = check_operator(A, rng=rng, rtol=1e-2)
+        defect = report.defects["the adjoint satisfies (A x, y) == (x, A* y)"]
+        assert 1e-6 < defect < 1e-2
+
+    def test_the_default_rtol_still_fails_it(self, rng):
+        space = make_dense_metric_space(5)
+        A = self.imperfect(space, 1e-4)
+        with pytest.raises(AssertionError, match="adjoint"):
+            check_operator(A, rng=rng)
+
+    def test_every_check_returns_a_report(self, rng):
+        from pygeoinf2.testing import CheckReport, check_coordinates, check_space
+
+        space = make_dense_metric_space(4)
+        for report in (
+            check_space(space, rng=rng),
+            check_coordinates(space, rng=rng),
+            check_traits(
+                LinearOperator.from_matrix(
+                    space, space, np.identity(4), form="components"
+                ).with_traits(Traits.SELF_ADJOINT),
+                rng=rng,
+            ),
+        ):
+            assert isinstance(report, CheckReport)
+            assert report.worst < 1e-8
+
+    def test_an_empty_report_has_a_zero_worst(self):
+        from pygeoinf2.testing import CheckReport
+
+        assert CheckReport("check_space").worst == 0.0
+
+
+class TestAFunctionalBuiltFromOneLinearization:
+    """``from_callables(linearize=)``: one call yields the value and the
+    derivative together, so ``at()`` costs one evaluation -- the arrangement
+    an objective over a PDE solve needs -- while ``value`` stays the cheap
+    route a backtracking search pays for."""
+
+    @staticmethod
+    def build(space, counts):
+        from pygeoinf2.algebra.linearization import QuadraticModel
+        from pygeoinf2.algebra.operators import Functional, LinearFunctional
+
+        def value(x):
+            counts["value"] += 1
+            return space.squared_norm(x)
+
+        def linearize(x):
+            counts["linearize"] += 1
+            return QuadraticModel(
+                x,
+                space.squared_norm(x),
+                LinearFunctional.from_representer(space, space.scale(2.0, x)),
+            )
+
+        return Functional.from_callables(space, value, linearize=linearize)
+
+    def test_at_is_the_one_call(self, rng):
+        space = EuclideanSpace(4)
+        counts = {"value": 0, "linearize": 0}
+        f = self.build(space, counts)
+        assert f.has_derivative
+        x = space.random(rng=rng)
+        model = f.at(x)
+        assert counts == {"value": 0, "linearize": 1}
+        assert model.value == pytest.approx(space.squared_norm(x))
+        assert space.to_components(model.gradient) == pytest.approx(
+            2.0 * space.to_components(x)
+        )
+
+    def test_the_value_stays_the_cheap_route(self, rng):
+        space = EuclideanSpace(4)
+        counts = {"value": 0, "linearize": 0}
+        f = self.build(space, counts)
+        f(space.random(rng=rng))
+        assert counts == {"value": 1, "linearize": 0}
+
+    def test_the_derivative_falls_back_to_it(self, rng):
+        space = EuclideanSpace(4)
+        counts = {"value": 0, "linearize": 0}
+        f = self.build(space, counts)
+        x = space.random(rng=rng)
+        df = f.derivative(x)
+        assert counts == {"value": 0, "linearize": 1}
+        probe = space.random(rng=rng)
+        assert df(probe) == pytest.approx(2.0 * space.inner_product(x, probe))
+
+
 class TestAssembledStoresTheComponentsForm:
     """``assembled()`` exists to make applications cheap, and the components
     form is the one in which an application is a bare matrix product. Storing

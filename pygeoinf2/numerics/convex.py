@@ -39,7 +39,7 @@ from numpy.random import Generator
 from ..algebra.operators import Functional, LinearFunctional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..traits import Traits
-from .optimization import OptimisationResult, Optimizer
+from .optimization import OptimizationResult, Optimizer
 
 __all__ = [
     "ChambollePockSolver",
@@ -658,7 +658,7 @@ class SubgradientDescent(Optimizer):
         self._target_value = target_value
         super().__init__(**kwargs)
 
-    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
         """Minimize, requiring only a subgradient.
 
         Args:
@@ -691,7 +691,7 @@ class SubgradientDescent(Optimizer):
             return 0.0
         return max(gap, 0.0) / subgradient_norm**2
 
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         value = functional(x)
@@ -703,7 +703,7 @@ class SubgradientDescent(Optimizer):
             subgradient = functional.subgradient(x)
             norm = space.norm(subgradient)
             if norm <= self._gtol:
-                return OptimisationResult(
+                return OptimizationResult(
                     best_point,
                     best_value,
                     norm,
@@ -726,7 +726,7 @@ class SubgradientDescent(Optimizer):
             if value < best_value:
                 best_value, best_point = value, space.copy(x)
 
-        return OptimisationResult(
+        return OptimizationResult(
             best_point,
             best_value,
             norm,
@@ -782,7 +782,7 @@ class ProximalGradient(Optimizer):
         /,
         *,
         nonsmooth: Functional | None = None,
-    ) -> OptimisationResult:
+    ) -> OptimizationResult:
         """Minimize ``smooth + nonsmooth`` from ``x0``.
 
         Args:
@@ -808,12 +808,12 @@ class ProximalGradient(Optimizer):
             )
         return self._run(smooth, nonsmooth, x0)
 
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         return self._run(functional, None, x0)
 
     def _run(
         self, smooth: Functional, nonsmooth: Functional | None, x0: Any
-    ) -> OptimisationResult:
+    ) -> OptimizationResult:
         space = smooth.domain
 
         def total(point: Any) -> float:
@@ -838,7 +838,7 @@ class ProximalGradient(Optimizer):
                 smooth, proximal, y, model.value, gradient, step
             )
             if candidate is None:
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     total(x),
                     space.norm(gradient),
@@ -865,7 +865,7 @@ class ProximalGradient(Optimizer):
 
             history.append(total(x))
             if progress <= self._gtol:
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     history[-1],
                     progress,
@@ -876,7 +876,7 @@ class ProximalGradient(Optimizer):
                     history,
                 )
 
-        return OptimisationResult(
+        return OptimizationResult(
             x,
             history[-1],
             progress,
@@ -963,7 +963,7 @@ class ProximalPoint(Optimizer):
         self._step = step
         super().__init__(**kwargs)
 
-    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
         """Minimize, requiring a proximal operator.
 
         Args:
@@ -981,7 +981,7 @@ class ProximalPoint(Optimizer):
             raise ValueError("ProximalPoint needs a functional with a prox.")
         return self._minimize(functional, x0)
 
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         history = [functional(x)]
@@ -992,7 +992,7 @@ class ProximalPoint(Optimizer):
             x = nxt
             history.append(functional(x))
             if movement <= self._gtol:
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     history[-1],
                     movement,
@@ -1003,7 +1003,7 @@ class ProximalPoint(Optimizer):
                     history,
                 )
 
-        return OptimisationResult(
+        return OptimizationResult(
             x,
             history[-1],
             movement,
@@ -1020,7 +1020,7 @@ class BundleResult:
     """The outcome of a bundle minimization.
 
     The field names are
-    :class:`~pygeoinf2.numerics.optimization.OptimisationResult`'s, so a caller
+    :class:`~pygeoinf2.numerics.optimization.OptimizationResult`'s, so a caller
     can read either without looking up which it has. ``value`` used to be
     ``minimum``, which said the same thing in a different word and made the two
     gratuitously incompatible.

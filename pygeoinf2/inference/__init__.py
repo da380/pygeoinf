@@ -24,7 +24,7 @@ from .backus import (
     BackusGilbertParker,
     FeasiblePropertySet,
 )
-from .gaussian import LinearGaussianInversion
+from .gaussian import GaussianPosterior, LinearGaussianInversion
 from .mixture import LinearGaussianMixtureInversion
 from .normal import FactoredNormalOperator, Formalism, NormalOperator
 from .preconditioners import (
@@ -58,6 +58,7 @@ __all__ = [
     "BackusGilbert",
     "BackusGilbertParker",
     "FeasiblePropertySet",
+    "GaussianPosterior",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
     "FactoredNormalOperator",

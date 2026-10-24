@@ -659,7 +659,7 @@ class TestInvariantAlgebraDrawsInOneTransform:
         first = joint.marginal(0)
         assert first.covariance_factor is not None and first.precision is not None
         assert self.syntheses(X, first, rng) == 1
-        assert np.isfinite(first.log_density(X.random(rng=rng)))
+        assert np.isfinite(first.log_density(X.random(rng=rng), unsafe=True))
 
 
 class TestWeakenedEllipsoid:
@@ -671,8 +671,8 @@ class TestWeakenedEllipsoid:
 
         X = Sobolev(6, 1.5, 0.3)
         measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
-        full = measure.weakened_ellipsoid(level=0.9, power=1.0)
-        exact = measure.credible_set(level=0.9)
+        full = measure.weakened_ellipsoid(level=0.9, power=1.0, unsafe=True)
+        exact = measure.credible_set(level=0.9, unsafe=True)
         assert isinstance(full, Ellipsoid)
         for _ in range(10):
             x = measure.sample(rng=rng)

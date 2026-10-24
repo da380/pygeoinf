@@ -565,15 +565,15 @@ class TestTheBundleSubproblem:
             _minimize_on_simplex(quadratic, linear, max_iterations=1000)
 
 
-class TestBundleResultReadsLikeAnOptimisationResult:
+class TestBundleResultReadsLikeAnOptimizationResult:
     def test_the_field_names_match(self):
         from dataclasses import fields
 
         from pygeoinf2.numerics.convex import BundleResult
-        from pygeoinf2.numerics.optimization import OptimisationResult
+        from pygeoinf2.numerics.optimization import OptimizationResult
 
         shared = {f.name for f in fields(BundleResult)} & {
-            f.name for f in fields(OptimisationResult)
+            f.name for f in fields(OptimizationResult)
         }
         assert {
             "value",

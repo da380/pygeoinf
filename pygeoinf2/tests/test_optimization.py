@@ -20,7 +20,7 @@ from pygeoinf2.numerics.optimization import (
     LBFGS,
     NewtonCG,
     NonlinearCG,
-    OptimisationResult,
+    OptimizationResult,
     SteepestDescent,
     TrustRegionNewton,
     gauss_newton_hessian,
@@ -107,7 +107,7 @@ class TestQuadratics:
     def test_the_minimum_is_found(self, method, spd_problem, rng):
         space, phi, offset = spd_problem
         result = method(max_iterations=3000).minimize(phi, space.random(rng=rng))
-        assert isinstance(result, OptimisationResult)
+        assert isinstance(result, OptimizationResult)
         assert result.converged, result.message
         assert np.allclose(result.minimizer, offset, atol=1e-6)
 
@@ -712,3 +712,121 @@ class TestArmijoReportsItsEvaluations:
         assert not result.converged
         assert result.evaluations == calls["n"] - 1  # the value= argument's call
         assert result.evaluations < 200
+
+
+class TestEvaluationFailureProtocol:
+    """``EvaluationError`` (D-129): a forward that cannot converge at a trial
+    model raises it, the line searches treat the step as one that went too
+    far, a trust region shrinks, and an optimizer that meets it with nowhere
+    to retreat returns its state instead of crashing it away."""
+
+    @staticmethod
+    def walled(space, wall=-0.5, kind="raise"):
+        """``||x||^2``, unevaluable where ``x_0 < wall``.
+
+        The minimum sits at the origin, feasible; a full first step from a
+        feasible start overshoots into the wall, so every search meets the
+        failure before it converges.
+        """
+        from pygeoinf2.algebra.operators import EvaluationError
+
+        def value(x):
+            c = space.to_components(x)
+            if c[0] < wall:
+                if kind == "raise":
+                    raise EvaluationError("the forward did not converge")
+                return float("nan")
+            return float(c @ c)
+
+        def gradient(x):
+            c = space.to_components(x)
+            if c[0] < wall and kind == "raise":
+                raise EvaluationError("the forward did not converge")
+            return space.from_components(2.0 * c)
+
+        return Functional.from_callables(space, value, gradient=gradient)
+
+    @pytest.mark.parametrize("kind", ["raise", "nan"])
+    @pytest.mark.parametrize(
+        "search", [ArmijoLineSearch(), StrongWolfeLineSearch()], ids=["armijo", "wolfe"]
+    )
+    def test_a_search_backtracks_out_of_the_bad_region(self, search, kind):
+        space = EuclideanSpace(2)
+        functional = self.walled(space, kind=kind)
+        start = space.from_components(np.array([0.9, 0.0]))
+        result = LBFGS(line_search=search, max_iterations=50).minimize(
+            functional, start
+        )
+        assert result.converged, result.message
+        assert result.failure is None
+        assert space.norm(result.minimizer) < 1e-6
+
+    def test_a_failure_with_nowhere_to_retreat_returns_the_state(self):
+        from pygeoinf2.algebra.operators import EvaluationError
+
+        space = EuclideanSpace(2)
+        start = space.from_components(np.array([0.9, 0.0]))
+
+        def value(x):
+            c = space.to_components(x)
+            return float(c @ c)
+
+        def gradient(x):
+            c = space.to_components(x)
+            if not np.allclose(c, space.to_components(start)):
+                raise EvaluationError("the derivative solve diverged")
+            return space.from_components(2.0 * c)
+
+        functional = Functional.from_callables(space, value, gradient=gradient)
+        result = LBFGS(line_search=ArmijoLineSearch(), max_iterations=50).minimize(
+            functional, start
+        )
+        assert not result.converged
+        assert result.failure == "the derivative solve diverged"
+        assert "accepted point" in result.message
+        # The last good state, not the point that failed.
+        assert np.allclose(
+            space.to_components(result.minimizer), space.to_components(start)
+        )
+
+    def test_a_trust_region_shrinks_around_the_bad_region(self):
+        from pygeoinf2.algebra.operators import EvaluationError
+
+        space = EuclideanSpace(2)
+        wall = -0.5
+
+        def value(x):
+            c = space.to_components(x)
+            if c[0] < wall:
+                raise EvaluationError("the forward did not converge")
+            return float((c @ c) ** 0.75)
+
+        def derivative(x):
+            c = space.to_components(x)
+            if c[0] < wall:
+                raise EvaluationError("the forward did not converge")
+            n2 = float(c @ c)
+            return LinearFunctional.from_derivative_components(
+                space, 1.5 * n2 ** (-0.25) * c
+            )
+
+        def hessian(x):
+            c = space.to_components(x)
+            n2 = float(c @ c)
+            return LinearOperator.self_adjoint(
+                space,
+                lambda v: space.from_components(
+                    1.5 * n2 ** (-0.25) * space.to_components(v)
+                    - 0.75 * n2 ** (-1.25) * float(c @ space.to_components(v)) * c
+                ),
+            )
+
+        functional = Functional.from_callables(
+            space, value, derivative=derivative, hessian=hessian
+        )
+        start = space.from_components(np.array([0.9, 0.0]))
+        result = TrustRegionNewton(max_iterations=100).minimize(functional, start)
+        assert isinstance(result, OptimizationResult)
+        assert result.failure is None
+        assert result.value < functional(start)
+        assert space.to_components(result.minimizer)[0] >= wall

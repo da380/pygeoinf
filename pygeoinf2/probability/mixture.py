@@ -37,7 +37,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator
 from ..traits import Traits
-from .base import ProbabilityMeasure
+from .base import ProbabilityMeasure, _require_density
 from .gaussian import GaussianMeasure
 
 __all__ = ["GaussianMixture"]
@@ -288,7 +288,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             if weight > 0.0
         )
 
-    def log_density(self, x: X) -> float:
+    def log_density(self, x: X, *, unsafe: bool = False) -> float:
         """``log sum_k w_k p_k(x)``, by log-sum-exp.
 
         Each component contributes its *fully normalized* log density. The
@@ -303,6 +303,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
 
         Args:
             x: where to evaluate it.
+            unsafe: proceed on a function-space discretisation (D-131).
 
         Returns:
             The log density, fully normalized.
@@ -311,9 +312,13 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             NotImplementedError: if any component cannot supply its own
                 normalizing constant -- which needs a log-determinant, and so
                 a covariance the component can decompose.
+            ValueError: on a function-space discretisation without
+                ``unsafe=True`` (D-131) -- doubly so here, the normalizing
+                constants being dimension-dependent too.
         """
         from scipy.special import logsumexp
 
+        _require_density(self._domain, "A mixture log density", unsafe=unsafe)
         live = self._weights > 0.0
         if not self.has_log_density:
             raise NotImplementedError(
@@ -322,7 +327,8 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             )
         densities = np.array(
             [
-                component.log_density(x) + component.log_normalizing_constant()
+                component.log_density(x, unsafe=True)
+                + component.log_normalizing_constant(unsafe=True)
                 for component, weight in zip(self._components, self._weights)
                 if weight > 0.0
             ]
@@ -355,7 +361,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             weights=self._weights,
         )
 
-    def marginal_probabilities(self, x: X, /) -> np.ndarray:
+    def marginal_probabilities(self, x: X, /, *, unsafe: bool = False) -> np.ndarray:
         """Which component ``x`` probably came from.
 
         The posterior over the component label given the vector, by Bayes.
@@ -364,6 +370,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
 
         Args:
             x: the vector to attribute.
+            unsafe: proceed on a function-space discretisation (D-131).
 
         Returns:
             One probability per component, summing to one.
@@ -371,9 +378,15 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         Raises:
             NotImplementedError: if any component cannot supply its
                 normalizing constant, as for :meth:`log_density`.
+            ValueError: on a function-space discretisation without
+                ``unsafe=True`` (D-131). The label posterior is a ratio of
+                densities, but each carries its own dimension-dependent
+                constant, so the attribution drifts with the truncation
+                wherever the components' covariances differ.
         """
         from scipy.special import softmax
 
+        _require_density(self._domain, "A component attribution", unsafe=unsafe)
         if not self.has_log_density:
             raise NotImplementedError(
                 "Component probabilities need each component's density."
@@ -387,7 +400,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
                 # cancel in the softmax the way a shared one would.
                 logs[index] = (
                     np.log(weight)
-                    + component.log_density(x)
-                    + component.log_normalizing_constant()
+                    + component.log_density(x, unsafe=True)
+                    + component.log_normalizing_constant(unsafe=True)
                 )
         return softmax(logs)

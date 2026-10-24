@@ -533,9 +533,80 @@ effective degrees of freedom would trade accuracy silently; whoever wants the
 speed names `method="saddlepoint"`. Array thresholds are not carried; a
 caller maps.
 
+**D-129. An evaluation failure is a step too far, not a crash** (2026-10-24,
+from the sl3dpp request list). `EvaluationError` in `algebra.operators` is
+the protocol for a forward that cannot converge at a trial model: raise it
+from the value or the linearization, and the point is treated as bad rather
+than the run as broken. The Armijo search treats it, and any non-finite
+value, as a failed decrease and backtracks; the strong-Wolfe search treats
+the trial as infinitely bad, closing its bracket on it from the high side,
+which the sectioning already handles (interpolation through an infinite
+value falls back to bisection); a trust region shrinks its radius, which is
+its ordinary response to a model that was wrong. The one place with nowhere
+to retreat — the derivative failing at a point the search just accepted by
+value — returns the optimizer's result with the new `failure` field carrying
+the error's message and `minimizer` still the last good point, so a run of
+hours is handed back rather than lost. A failure at the *starting* point
+propagates: there is no state worth saving and the caller must move. Only
+`EvaluationError` gets this treatment; any other exception is a bug and
+still propagates. In passing, `OptimisationResult` became
+`OptimizationResult` — the one identifier that had escaped D-100.
+
 ---
 
 ## 7. Measures and probability
+
+**D-132. An inference result carries the reference measure its density is
+defined against** (2026-10-24, David, from the sampling brief, answering
+D-73's worry). `AbsolutelyContinuousMeasure` is the dimension-robust density:
+a `reference` measure, a `relative_log_density` (a `Functional`, so it
+carries its derivative), and a lazy `log_normalizer`, under the convention
+`dmu/dnu == exp(f - c)` with `c == log int exp(f) dnu`. It is built from a
+reference and a density, never from two arbitrary measures, and
+`relative_to` is defined only through a shared reference. On its own it is a
+target and refuses to sample — drawing from a density is a sampler's job.
+`GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure)` is what a
+Bayesian update returns: `LinearGaussianInversion.__call__` hands back the
+same Gaussian as before, now carrying the prior, `-Phi`, and the evidence in
+the potential's convention, `(log|R| - log|S| - <v, S^-1 v>)/2`, lazily (two
+log-determinants, the solve shared with `mahalanobis`); it relates to
+`log_evidence` by the likelihood's constant, which the potential omits.
+`MaximumAPosteriori.at` returns one whose two readings deliberately part
+company: Gaussian moments are the approximation at the point, the relative
+density is the *exact* posterior's, computed in the data space — the pair a
+sampler starts from; its normalizer is `None` (a Laplace evidence estimate
+is a separate claim, left open). D-73 is answered rather than overridden:
+the algebra rebuilds through `GaussianMeasure._rebuild` and so degrades to a
+plain Gaussian — a density does not survive a general linear map, and a
+property-space push-forward of the *estimator* likewise returns plain
+measures. Two deliberate namings: the member is `relative_log_density`, not
+the brief's bare `log_density`, because that name already means the gated
+volume density (D-131) and the subclass holds both; and
+`ForwardProblem.potential(data, temperature=)` is the brief's likelihood
+potential `Phi = chi^2 / (2T)`, built with one forward evaluation serving
+value and derivative (D-127), the object samplers and tempering consume.
+
+**D-131. A space says whether it discretises functions, and densities refuse
+there** (2026-10-24, David, from the sampling brief). `HilbertSpace.
+is_function_space` is a boolean property, `False` at the base: `True` on
+`SymmetricSpace`, the `sem1d` spaces and both MFEM backends (`MfemDofSpace`
+stays `False` — a dof vector under the dot product is a coefficient space by
+its own admission); a `DirectSum` carries it if any summand does and
+`MassWeightedSpace` takes its base's, with `MfemHilbertSpace` overriding
+that delegation. On a marked space the density family refuses without
+`unsafe=True`, exactly D-11's pattern for point evaluation: `log_density`,
+`grad_log_density`, `mahalanobis_squared`, `log_normalizing_constant`,
+`credible_set`, `weakened_ellipsoid` at `power=1` only (below one it is
+covariance geometry, not the distribution's own set), and the mixture's
+`log_density` and `marginal_probabilities` (whose attribution drifts with
+the truncation wherever the components' covariances differ). The reason is
+the reason the sampling layer is dimension-robust: a density against a
+discretised space's own volume measure changes with the truncation and
+vanishes in the limit, while a density relative to a *reference measure*
+survives it, and `AbsolutelyContinuousMeasure` is where those will live.
+`chi_squared` passes the gate with `unsafe=True` internally: a misfit is a
+likelihood potential, defined whenever the residual lies in the error's
+Cameron-Martin space, not a density on the data space.
 
 **D-59. A measure need only be samplable; everything else is optional**
 (2026-08). `ProbabilityMeasure` has one abstract method, `sample(*, rng=)`;
@@ -800,6 +871,24 @@ bundle, left until measured. The finite-difference dual gradient is dropped:
 on a nonsmooth cost, one evaluation per data dimension, silently, it is not a
 subgradient; a maximiser is asked for by name.
 
+**D-127. The MAP objective is built from one linearization, and a functional
+can be** (2026-10-24, from the sl3dpp request list). `Functional.from_callables`
+takes `linearize=`, exactly as `Operator`'s does under D-29: one call yields
+the value and the derivative together, `at()` uses it, and `derivative()`
+falls back to it only when nothing cheaper was supplied. `value` stays
+required and cheap, because a backtracking search pays for values alone.
+`MaximumAPosteriori.objective` is the first consumer: its `linearize` runs
+`forward.at(model)` once and reads the misfit from the linearization's value
+and the gradient from its derivative, where it previously ran the forward
+once for the value and again inside the derivative — with a forward that
+takes minutes to hours, the double evaluation was the whole cost of a line
+search. The scaled and summed functional nodes already linearise through
+their bases, so `log_posterior` inherits the single evaluation. A per-point
+cache of the last linearization was asked for too and is not built: the
+Wolfe search already returns its final model to the optimizer, and a cache
+keyed on vector identity is the kind of silent state D-38 keeps out of
+solvers.
+
 ---
 
 ## 10. Symmetric spaces
@@ -893,6 +982,22 @@ resolved to that degree composed with the prolongation. `sufficient_degree`
 walks past the space over the modes a degree would have, with `with_degree`
 on the answer replacing v1's factories.
 
+**D-130. `power_measure` means the `L2` spectrum on every space**
+(2026-10-24, David, closing CURRENT_STATE §7's open question). The spectrum
+a modeller writes down is the `L2` one, so `power_measure(p)` now carries
+the gram diagonal into the eigenvalues it hands `invariant_measure`: a
+draw's expected `power_spectrum` is `p` on a space of any Sobolev order,
+where before the observed spectrum came out divided by the Sobolev symbol
+and the same call meant a different random field on each host space. The
+round trip `E[power_spectrum(sample)] == p` is now a universal identity and
+tested as one; consistency with `power_spectrum` was worth more than metric
+purity. `invariant_measure` stays the metric-native spelling for anyone who
+wants covariance-operator eigenvalues in the host's own inner product. The
+caution that replaces the old asymmetry: an `L2` spectrum is trace-class on
+`H^s` in the limit only when `p` decays faster than the Sobolev symbol —
+on a truncation everything runs, and the dimension-free reading is the
+caller's to check, as with point evaluation under D-11.
+
 ---
 
 ## 11. Plotting
@@ -916,7 +1021,26 @@ histograms with kernel density for anything with `can_sample`.
 it later). One and two dimensions, matplotlib only, the route by capability
 (support polygon, level contour, membership raster), slices through
 `subspace=`, the support asked in the domain direction `G⁻¹ n`. No 3-D,
-voxels, plotly or `Subset.plot` method.
+voxels, plotly or `Subset.plot` method. The 3-D half of the drop was
+reversed by D-133 on 2026-10-24; the rest stands.
+
+**D-133. `plot_set` draws three dimensions, and plotly is an engine, not a
+default** (2026-10-24, David, reversing half of D-94's drop for the 2.0
+release). The same one function and the same route-by-capability, extended:
+the support route samples directions on a Fibonacci sphere and draws the
+convex hull of the *attaining* points — an inscribed approximation, every
+vertex a point of the set, where the 2-D polygon of supporting lines
+circumscribes — so in 3-D it also requires a maximizer, and a
+support-function-only oracle falls through to its other routes. The level
+and membership routes raster `resolution³` cells onto `Axes3D.voxels` with
+the edges in parameter coordinates; the default resolution becomes 30 in
+three dimensions (200 stays in one and two) and more than 30 warns with the
+oracle-call count, v1's guard. Slices need nothing new — `_Picture` never
+cared about the dimension. `engine="plotly"` is the optional interactive
+route (extra `plot3d`), 3-D only, returning `(None, Figure)`; there is no
+`engine="auto"`, because a silently switching backend is not this library's
+style. Example 34 shows a sliced 4-D ellipsoid's rastered extents matching
+the exact pullback ellipsoid to three decimals.
 
 ---
 
@@ -1066,6 +1190,31 @@ is now judged against `sqrt((u, u)(v, v))`, as `check_measure` already judged
 a covariance, and one `rtol` serves a metric of any size: 0.06 at 20 000 draws
 is six standard errors on the diagonal. Every existing caller passed
 unchanged, the two on MFEM spaces for the first time as a real test.
+
+---
+
+**D-128. A check takes the tolerance it enforces and returns what it
+measured** (2026-10-24, from the sl3dpp request list). Every `check_*` takes
+`rtol=` (and `atol=` where vectors are compared), defaulting to exactly what
+it required before the parameter existed — v1's checks had `check_rtol` and
+`check_atol`, and losing them in the port was a regression, not a decision.
+Every check returns a `CheckReport`: the check's name and, per identity
+tested, the worst *relative* defect observed, the same quantity the tolerance
+bounds. A failure still raises `AssertionError` first, so a report in hand
+means the check passed. The point is the backend whose adjoint is consistent
+only to discretisation level — a continuous adjoint: checked with the `rtol`
+it can meet, its defect is read back, recorded as it falls under refinement,
+and sets the floor below which a solver tolerance asks for noise.
+`check_operator` applies one `rtol` to linearity and the adjoint alike,
+deliberately: an operator that is a solve is linear only to its inner
+tolerance, so the two degrade together (its default is now 1e-9 throughout,
+where linearity was 1e-10 — the adjoint identity was always the binding
+check). The statistical checks (`check_white_noise`, `check_measure`) keep
+their D-125 scale logic and report deviations in the units their own `rtol`
+bounds, the mean in standard errors. `check_coordinates` folds in
+`check_representer`'s defects and `check_affine` folds in `check_operator`'s
+on its linear part, so the caller of the umbrella sees everything measured
+beneath it.
 
 ---
 
@@ -1271,7 +1420,15 @@ rounding and is taken up to degree 128, the largest measured, beyond which the
 other is (its Legendre step is dense, ducc0's is not, and the gain falls from
 150 times at degree 8 to 1.5 at 128). Example 31 went from 10.5 s to 1.3. It
 could move to `planetmodel`'s `harmonics` as it stands, and is to, later
-(David, 2026-09-18): for the moment it stays here.
+(David, 2026-09-18): for the moment it stays here. The move was made on
+2026-10-24: `planetmodel.harmonics.ShellTransform` exists (uncommitted in
+that repo, agreement to 1.3e-13, same class and method names), its grid
+functions deliberately do NOT reroute through it (no caching precedent
+there, and the table is `(lmax+1)^3` numbers); once planetmodel 1.4 is
+released the pin becomes `>=1.4` and `sem1d/_transform.py` is deleted.
+Meanwhile 1.3's grids carry a `kind`, which the local copy now checks by
+name — under 1.3 every grid kind has `lmax` and weights, so duck-typing
+them stopped selecting.
 
 **D-124. A sampled function is fitted over the domain alone, by default**
 (2026-09-18; the default David's, the same day). `project_function`, whose

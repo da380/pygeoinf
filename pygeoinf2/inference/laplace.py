@@ -30,8 +30,9 @@ later means adding the sampler and nothing else.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from ..algebra.linearization import QuadraticModel
 from ..algebra.operators import Functional, LinearFunctional
 from ..algebra.spaces import HilbertSpace
 from ..numerics.optimization import LBFGS, Optimizer
@@ -39,6 +40,9 @@ from ..numerics.solvers import LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from .normal import NormalOperator
 from .problem import ForwardProblem
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .gaussian import GaussianPosterior
 
 __all__ = ["MaximumAPosteriori", "LaplaceResult"]
 
@@ -189,25 +193,33 @@ class MaximumAPosteriori:
         precision = self._prior.precision
         expectation = self._prior.expectation
 
-        def value(model: Any) -> float:
+        def prior_term(model: Any) -> tuple[Any, float]:
             offset = space.subtract(model, expectation)
-            return self._problem.chi_squared(model, data) + float(
-                space.inner_product(precision(offset), offset)
-            )
+            return offset, float(space.inner_product(precision(offset), offset))
 
-        def derivative(model: Any) -> LinearFunctional:
+        def value(model: Any) -> float:
+            return self._problem.chi_squared(model, data) + prior_term(model)[1]
+
+        def linearize(model: Any) -> QuadraticModel:
+            # One forward evaluation serves both halves: the misfit is read
+            # from the linearization's value and the derivative from its
+            # operator, so an optimizer's ``at()`` costs one solve, not two.
             linearization = forward.at(model)
             residual = data_space.subtract(data, linearization.value)
+            offset, offset_term = prior_term(model)
             weighted = error.precision(data_space.subtract(residual, error.expectation))
-            offset = space.subtract(model, expectation)
             gradient = space.axpy(
                 2.0,
                 precision(offset),
                 space.scale(-2.0, linearization.derivative.adjoint(weighted)),
             )
-            return LinearFunctional.from_representer(space, gradient)
+            return QuadraticModel(
+                model,
+                self._problem.chi_squared_from_residual(residual) + offset_term,
+                LinearFunctional.from_representer(space, gradient),
+            )
 
-        return Functional.from_callables(space, value, derivative=derivative)
+        return Functional.from_callables(space, value, linearize=linearize)
 
     def log_posterior(self, data: Any, /) -> Functional:
         """The log posterior density, up to an additive constant.
@@ -248,7 +260,7 @@ class MaximumAPosteriori:
             formalism="model_space",
         )
 
-    def at(self, model: Any, data: Any, /) -> GaussianMeasure:
+    def at(self, model: Any, data: Any, /) -> "GaussianPosterior":
         """The Laplace Gaussian about a *given* model, without searching.
 
         For when the mode is already known -- from a previous run, from a
@@ -256,13 +268,24 @@ class MaximumAPosteriori:
         looks like somewhere else. :meth:`__call__` is this composed with the
         search.
 
+        The result is a :class:`~pygeoinf2.inference.gaussian.GaussianPosterior`
+        (D-132) whose two readings part company, usefully: the Gaussian
+        moments are the *approximation* -- the curvature at this model -- while
+        ``relative_log_density`` is the **exact** posterior's ``-Phi`` against
+        the prior, computed in the data space. A sampler takes the pair whole:
+        exact target, Gaussian reference. The normalizer is ``None``; a
+        Laplace estimate of the evidence is a separate claim this does not
+        make.
+
         Args:
             model: where to center it.
             data: the observations.
 
         Returns:
-            A Gaussian with that mean and the linearized posterior covariance.
+            A Gaussian with that mean and the linearized posterior covariance,
+            carrying the exact relative density.
         """
+        from ..inference.gaussian import GaussianPosterior
         from ..numerics.solvers import resolve_solver
 
         normal = self.linearized_normal(model)
@@ -273,11 +296,13 @@ class MaximumAPosteriori:
         # sampler and a Mahalanobis distance want, and it is exact where the
         # inverse is a solve.
         inverse = resolve_solver(self._solver, normal)(normal)
-        return GaussianMeasure(
+        return GaussianPosterior(
             self.model_space,
             covariance=inverse,
             precision=normal,
             expectation=model,
+            reference=self._prior,
+            relative_log_density=-self._problem.potential(data),
         )
 
     def __call__(self, data: Any, /, *, start: Any = None) -> LaplaceResult:

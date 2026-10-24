@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     pass
 
 __all__ = [
+    "EvaluationError",
     "Operator",
     "LinearOperator",
     "Functional",
@@ -39,6 +40,20 @@ __all__ = [
 
 
 REALS = Reals()
+
+
+class EvaluationError(RuntimeError):
+    """An operator could not be evaluated at a point.
+
+    The protocol for a forward solver that fails to converge at a trial model
+    (D-129). Raise it from an operator's value or linearization and the
+    library treats the *point* as bad rather than the run as broken: a line
+    search backtracks as if the step went too far, a trust region shrinks its
+    radius, and an optimizer that meets it where it cannot retreat returns
+    its result with ``failure`` set instead of crashing away hours of state.
+    Any other exception still propagates, because a bug should not be walked
+    around by a backtracking loop.
+    """
 
 
 def _read_diagonals(
@@ -2237,6 +2252,7 @@ class Functional[X](Operator[X, float]):
         hessian: Callable[[X], LinearOperator[X, X]] | None = None,
         subgradient: Callable[[X], X] | None = None,
         prox: Callable[[X, float], X] | None = None,
+        linearize: Callable[[X], QuadraticModel[X]] | None = None,
     ) -> Functional[X]:
         """Build a functional from functions.
 
@@ -2245,6 +2261,12 @@ class Functional[X](Operator[X, float]):
         genuinely hold one, but supplying a derivative array there is the
         classic error of DECISIONS.md D-26; ``testing.check_gradient``
         catches it.
+
+        Supply ``linearize`` when a single call yields the value and the
+        derivative together -- an objective built on a PDE solve usually does
+        -- so that ``at()`` costs one evaluation rather than two. ``value``
+        is still required: a line search wants values alone and must not be
+        charged for a derivative it will discard.
 
         Args:
             domain: the functional's domain.
@@ -2256,6 +2278,9 @@ class Functional[X](Operator[X, float]):
             hessian: ``x -> LinearOperator``, self-adjoint.
             subgradient: ``x -> vector``, for a non-differentiable functional.
             prox: ``(x, step) -> vector``, for a proximal method.
+            linearize: ``x -> QuadraticModel``, when one call yields the value
+                and the derivative together. ``at()`` then uses it, and it
+                stands in for ``derivative`` when none is given.
 
         Returns:
             The functional.
@@ -2272,6 +2297,7 @@ class Functional[X](Operator[X, float]):
             gradient=gradient,
             hessian=hessian,
             subgradient=subgradient,
+            linearize=linearize,
             prox=prox,
         )
 
@@ -2288,6 +2314,7 @@ class _CallableFunctional[X](Functional[X]):
         hessian: Callable[[X], LinearOperator[X, X]] | None = None,
         subgradient: Callable[[X], X] | None = None,
         prox: Callable[[X, float], X] | None = None,
+        linearize: Callable[[X], QuadraticModel[X]] | None = None,
     ) -> None:
         super().__init__(domain)
         self._value_fn = value
@@ -2296,11 +2323,16 @@ class _CallableFunctional[X](Functional[X]):
         self._hessian_fn = hessian
         self._subgradient_fn = subgradient
         self._prox_fn = prox
+        self._linearize_fn = linearize
 
     @property
     def has_derivative(self) -> bool:
-        """True when a derivative or a gradient callable was supplied."""
-        return self._derivative_fn is not None or self._gradient_fn is not None
+        """True when a derivative, gradient or linearization was supplied."""
+        return (
+            self._derivative_fn is not None
+            or self._gradient_fn is not None
+            or self._linearize_fn is not None
+        )
 
     @property
     def has_hessian(self) -> bool:
@@ -2315,7 +2347,14 @@ class _CallableFunctional[X](Functional[X]):
             return self._derivative_fn(x)
         if self._gradient_fn is not None:
             return LinearFunctional.from_representer(self.domain, self._gradient_fn(x))
+        if self._linearize_fn is not None:
+            return self._linearize_fn(x).derivative
         raise NotImplementedError("No derivative or gradient was supplied.")
+
+    def _linearize(self, x: X) -> QuadraticModel[X]:
+        if self._linearize_fn is not None:
+            return self._linearize_fn(x)
+        return super()._linearize(x)
 
     def _hessian(self, x: X) -> LinearOperator[X, X]:
         if self._hessian_fn is None:

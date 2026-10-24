@@ -133,6 +133,11 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """
         super().__init__(metric_values)
 
+    @property
+    def is_function_space(self) -> bool:
+        """True: a symmetric space discretises a space of functions (D-131)."""
+        return True
+
     # ----------------------------------------------------------------- #
     #                         Subclass interface                        #
     # ----------------------------------------------------------------- #
@@ -551,16 +556,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         times what ``SHCoeffs.spectrum`` reports, that being the difference
         between pyshtools' scale and orthonormality in ``L2``.
 
-        It is the counterpart of :meth:`power_measure` on a Lebesgue space,
-        where a draw from ``power_measure(p)`` has expected spectrum ``p``.
-        **On a Sobolev space the two differ**, and by a known factor: the
-        eigenvalues :meth:`invariant_measure` is given are the covariance
-        *operator's*, in that space's metric, so a draw's coefficients have
-        variance ``eigenvalue / gram_diagonal`` and the spectrum comes out
-        divided by the Sobolev symbol. Whether ``power_measure`` should mean
-        the ``H^s`` spectrum it currently means, or the ``L2`` one a modeler
-        more often writes down, is a question for the API and not for this
-        method, which reports what is there.
+        It is the counterpart of :meth:`power_measure` on every space: a draw
+        from ``power_measure(p)`` has expected spectrum ``p`` whatever the
+        Sobolev order, because ``power_measure`` carries the metric so that
+        the two meet (D-130). A measure built through
+        :meth:`invariant_measure` instead speaks in the covariance
+        operator's own eigenvalues, and there a draw's coefficients have
+        variance ``eigenvalue / gram_diagonal``, so its spectrum comes out
+        divided by the Sobolev symbol -- which this method faithfully
+        reports.
         """
         components = self.to_components(x)
         degrees = self.degrees
@@ -1171,16 +1175,28 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         *,
         expectation: np.ndarray | None = None,
     ) -> GaussianMeasure:
-        """A Gaussian with a prescribed power *per degree*.
+        """A Gaussian with a prescribed ``L2`` power *per degree*.
 
         The spectrum a geophysicist actually writes down: how much variance
         each degree holds in total, rather than how much each component holds.
-        The two differ by the multiplicity, and dividing by it is the whole of
-        this method.
+        The two differ by the multiplicity, and ``power`` means the **L2
+        spectrum on every space** (D-130): a draw's expected
+        :meth:`power_spectrum` is ``power``, whatever the Sobolev order of
+        the space the measure lives on. The same ``power`` therefore means
+        the same random field wherever it is hosted; the host's metric enters
+        only through which fields the space can hold. The metric-native
+        spelling -- eigenvalues of the covariance operator in this space's
+        own inner product -- remains :meth:`invariant_measure`.
+
+        One caution comes with the convenience: an ``L2`` spectrum specifies
+        a trace-class measure on ``H^s`` in the limit only if it decays
+        faster than the Sobolev symbol. On a truncation everything runs; the
+        dimension-free interpretation is the caller's to check, as with
+        point evaluation under D-11.
 
         Args:
-            power: total variance at each degree, indexed from zero, or a
-                callable applied to the array of degrees.
+            power: total ``L2`` variance at each degree, indexed from zero,
+                or a callable applied to the array of degrees.
             expectation: the mean. Defaults to zero.
 
         Returns:
@@ -1205,7 +1221,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # rather than sweeping the whole array per component: the comprehension
         # this replaces was O(dim^2), and 6.8 s against 0.4 ms at lmax 511.
         counts = np.bincount(degrees)[degrees]
-        return self.invariant_measure(per_degree / counts, expectation=expectation)
+        # A draw's coefficient variance is eigenvalue / gram, so carrying the
+        # gram here is what makes the observed L2 spectrum the given power on
+        # a space of any order (D-130). On a Lebesgue space it is ones.
+        return self.invariant_measure(
+            per_degree / counts * self.gram_diagonal(), expectation=expectation
+        )
 
     def _spectral_variances(self, measure: GaussianMeasure, /) -> np.ndarray | None:
         """A measure's spectral variances, when its covariance is diagonal here.

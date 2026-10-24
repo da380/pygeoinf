@@ -409,6 +409,17 @@ class MfemHilbertSpace(MassWeightedSpace):
     adjoint is the adjoint, and the Bayesian machinery runs unchanged.
     """
 
+    @property
+    def is_function_space(self) -> bool:
+        """True: a finite element space discretises functions (D-131).
+
+        Overrides the :class:`MassWeightedSpace` delegation: the base
+        :class:`MfemDofSpace` is a plain coefficient space and says False,
+        but reweighted by the mass operator it is the discretisation of the
+        finite element functions themselves.
+        """
+        return True
+
     def __init__(
         self,
         finite_element_space: Any,

@@ -14,7 +14,7 @@ level, while the reverse restores detail the set never carried.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from numpy.random import Generator
 
@@ -24,6 +24,9 @@ from ..algebra.spaces import HilbertSpace
 from ..geometry.sets import Subset
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..algebra.operators import Functional
 
 __all__ = ["ForwardProblem", "LinearForwardProblem"]
 
@@ -188,8 +191,11 @@ class ForwardProblem:
                 f"one is a {type(measure).__name__}."
             )
         centered = self.data_space.subtract(residual, measure.expectation)
+        # unsafe=True past D-131's gate: a misfit is a likelihood potential,
+        # not a density on the data space, and it is well defined whenever
+        # the residual lies in the error's Cameron-Martin space.
         return measure.mahalanobis_squared(
-            self.data_space.add(centered, measure.expectation)
+            self.data_space.add(centered, measure.expectation), unsafe=True
         )
 
     def critical_chi_squared(self, /, *, level: float = 0.95) -> float:
@@ -231,6 +237,72 @@ class ForwardProblem:
             Whether the misfit falls below the critical value.
         """
         return self.chi_squared(model, data) < self.critical_chi_squared(level=level)
+
+    def potential(self, data: Any, /, *, temperature: float = 1.0) -> "Functional":
+        """The likelihood potential ``Phi(m) == chi^2(m, d) / (2 T)``.
+
+        The negative log likelihood up to its constant, which is the object a
+        function-space sampler and a tempering schedule consume (D-132): the
+        posterior's density relative to the prior is ``exp(-Phi)`` up to the
+        evidence. Built with one forward evaluation per point serving the
+        value and the derivative together, as D-127 arranges, so a sampler's
+        gradient costs one solve.
+
+        Args:
+            data: the observations.
+            temperature: divides the potential. One is the likelihood; larger
+                flattens it, which is what tempering and annealed schedules
+                sweep.
+
+        Returns:
+            The potential, a functional on the model space with a derivative
+            wherever the forward operator has one.
+
+        Raises:
+            ValueError: for a non-positive temperature, or a set-valued data
+                uncertainty, which has no likelihood.
+        """
+        from ..algebra.linearization import QuadraticModel
+        from ..algebra.operators import Functional, LinearFunctional
+
+        if temperature <= 0.0:
+            raise ValueError(f"A temperature is positive, got {temperature}.")
+        if self._error is not None and not isinstance(self._error, ProbabilityMeasure):
+            raise TypeError(
+                "A potential needs a measure-valued data uncertainty; a set "
+                "has no likelihood. Use the feasibility machinery instead."
+            )
+
+        space = self.model_space
+        data_space = self.data_space
+        forward = self._forward_operator
+        error = self.error_measure if self.has_error else None
+        scale = 1.0 / (2.0 * temperature)
+
+        def value(model: Any) -> float:
+            return scale * self.chi_squared(model, data)
+
+        def linearize(model: Any) -> QuadraticModel:
+            linearization = forward.at(model)
+            residual = data_space.subtract(data, linearization.value)
+            if error is None:
+                weighted = residual
+            else:
+                weighted = error.precision(
+                    data_space.subtract(residual, error.expectation)
+                )
+            gradient = space.scale(
+                -2.0 * scale, linearization.derivative.adjoint(weighted)
+            )
+            return QuadraticModel(
+                model,
+                scale * self.chi_squared_from_residual(residual),
+                LinearFunctional.from_representer(space, gradient),
+            )
+
+        if forward.has_derivative:
+            return Functional.from_callables(space, value, linearize=linearize)
+        return Functional.from_callables(space, value)
 
     def consistency_set(self, model: Any, /, *, level: float = 0.95) -> Subset:
         """The data compatible with a model, as an ellipsoid in the data space.

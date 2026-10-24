@@ -1,13 +1,13 @@
 """The spectral-element ball and annulus: the space, its operators, its priors.
 
-Needs ``planetmodel`` 1.2 and ``pyshtools``. The independent routes
+Needs ``planetmodel`` 1.3. The independent routes
 (DECISIONS.md D-107) are the grid against the point: values synthesized on the
-grid through ``pyshtools`` and the nodal eigenfunctions, against the same field
+grid through ``planetmodel.harmonics`` and the nodal eigenfunctions, against the same field
 evaluated through scipy's harmonics and the element polynomials; and
 ``planetmodel``'s banded solve against the eigenbasis.
 
 The two statistical checks take thousands of draws. They carried ``slow`` while
-a draw cost a harmonic transform per radial shell, through ``pyshtools`` one at
+a draw cost a harmonic transform per radial shell, one at
 a time, and took two and a half minutes between them; with the shells
 transformed together they take five seconds and run with the rest.
 """
@@ -18,7 +18,6 @@ import pytest
 randomfield = pytest.importorskip("planetmodel.randomfield")
 if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
     pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
-pytest.importorskip("pyshtools")
 
 from pygeoinf2 import Traits  # noqa: E402
 from pygeoinf2.sem1d.ball import Ball, Lebesgue, Sobolev  # noqa: E402
@@ -178,7 +177,7 @@ class TestTheSpace:
 
 class TestTransform:
     @pytest.mark.parametrize("lmax", [0, 1, 5, 24])
-    def test_the_batched_transform_is_the_one_through_pyshtools(self, lmax, rng):
+    def test_the_batched_transform_is_planetmodels(self, lmax, rng):
         """Every shell at once, against ``planetmodel``'s shell by shell."""
         from planetmodel import harmonics
         from planetmodel.sampling import gauss_legendre
@@ -287,7 +286,7 @@ class TestPointEvaluation:
     def test_every_basis_function_is_its_own_grid_values(self, build):
         """One component at a time, so that an error in the order of the
         blocks cannot hide in a sum: scipy's harmonics and the element
-        polynomials against ``pyshtools`` and the nodal values."""
+        polynomials against ``planetmodel.harmonics`` and the nodal values."""
         space = build(2.0)
         points, where = grid_points(space)
         rows = space.basis_matrix(points)

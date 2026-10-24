@@ -40,10 +40,17 @@ print()
 
 # The log density and its gradient. The gradient is a VECTOR, because the
 # precision maps the space to itself -- no Riesz map appears anywhere.
+# On a space that discretises functions the density is refused outright
+# (D-131): its value is an artefact of the truncation. unsafe=True says
+# "show me the discretisation's own number anyway".
 x = X.random(rng=rng)
-print("log density   :", round(mu.log_density(x), 4))
+try:
+    mu.log_density(x)
+except ValueError as error:
+    print("log density refused on a function space:", str(error)[:60], "...")
+print("log density   :", round(mu.log_density(x, unsafe=True), 4), " <- unsafe=True")
 print(
     "its gradient is a field, not an array of partials:",
-    type(mu.grad_log_density(x)).__name__,
-    mu.grad_log_density(x).shape,
+    type(mu.grad_log_density(x, unsafe=True)).__name__,
+    mu.grad_log_density(x, unsafe=True).shape,
 )

@@ -39,6 +39,10 @@ from ..algebra.operators import AffineOperator, LinearOperator
 from ..numerics.randomized import random_svd
 from ..geometry.sets import Subset
 from ..numerics.solvers import LinearSolver, resolve_solver
+from ..probability.absolutely_continuous import (
+    AbsolutelyContinuousMeasure,
+    _combine_log_normalizer,
+)
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
@@ -47,9 +51,58 @@ from .normal import Formalism, NormalOperator
 from .problem import LinearForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..algebra.operators import Functional
+    from ..algebra.spaces import HilbertSpace
     from ..numerics.randomized import Estimate
 
-__all__ = ["LinearGaussianInversion"]
+__all__ = ["GaussianPosterior", "LinearGaussianInversion"]
+
+
+class GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure):
+    """A Gaussian that also knows its density relative to a reference (D-132).
+
+    What a Bayesian update returns: a ``GaussianMeasure`` first — drawn from,
+    pushed forward, conditioned exactly as any other — and an
+    :class:`~pygeoinf2.probability.absolutely_continuous.AbsolutelyContinuousMeasure`
+    second, carrying the prior it came from, the log density ``-Phi`` against
+    it, and the evidence as its normalizer. For a *linear* problem the two
+    readings describe the same measure exactly; for the Laplace route the
+    Gaussian moments are the approximation at the mode while the relative
+    density is the exact posterior's, which is precisely the pair a sampler
+    wants to start from.
+
+    The algebra does not try to carry the density: a push-forward or a
+    conditioning rebuilds through ``GaussianMeasure._rebuild`` and so returns
+    a plain Gaussian, deliberately — a density does not survive a general
+    linear map, and pretending otherwise was D-73's warning.
+    """
+
+    def __init__(
+        self,
+        domain: "HilbertSpace",
+        /,
+        *,
+        reference: ProbabilityMeasure,
+        relative_log_density: "Functional",
+        log_normalizer: "Estimate | Any | None" = None,
+        **gaussian: Any,
+    ) -> None:
+        """
+        Args:
+            domain: the model space.
+            reference: the prior.
+            relative_log_density: ``-Phi``, the log density against it up to
+                the normalizer.
+            log_normalizer: the evidence in the density's convention, an
+                ``Estimate`` or a zero-argument callable computing one on
+                first use, or ``None`` when unknown.
+            **gaussian: everything ``GaussianMeasure`` takes — expectation,
+                covariance, precision, sample.
+        """
+        super().__init__(domain, **gaussian)
+        self._init_density(
+            reference, relative_log_density, log_normalizer=log_normalizer
+        )
 
 
 class LinearGaussianInversion(GaussianEstimator):
@@ -448,13 +501,18 @@ class LinearGaussianInversion(GaussianEstimator):
             self._solved_key, self._solved = key, result
         return result
 
-    def __call__(self, data: Any) -> GaussianMeasure:
+    def __call__(self, data: Any) -> GaussianPosterior:
         """The posterior measure for this data.
 
         As :meth:`~pygeoinf2.inference.estimators.GaussianEstimator.__call__`,
         but reaching the mean through :meth:`_residual_solve` so that the solve
         is shared with :meth:`mahalanobis`. :attr:`expectation_operator` still computes it
         the plain way, for a caller who wants the affine operator itself.
+
+        The result is a :class:`GaussianPosterior` (D-132): the same Gaussian
+        as always, now also carrying the prior as its reference, ``-Phi`` as
+        its density against it, and the evidence — lazily, it costs a
+        log-determinant — as its normalizer.
 
         Args:
             data: the observations.
@@ -467,12 +525,44 @@ class LinearGaussianInversion(GaussianEstimator):
         mean = self._problem.model_space.add(
             self._prior.expectation, self._normal.model_update(solved)
         )
-        return GaussianMeasure(
+        return GaussianPosterior(
             self.property_space,
             expectation=mean,
             covariance=self.covariance,
             sample=self._centered_sample,
+            reference=self._prior,
+            relative_log_density=-self._problem.potential(data),
+            log_normalizer=(
+                self._log_normalizer_for(data) if self._problem.has_error else None
+            ),
         )
+
+    def _log_normalizer_for(self, data: Any, /) -> Any:
+        """The evidence in the potential's convention, lazily.
+
+        With ``f == -chi^2/2``, the normalizer is ``log int exp(f) d prior ==
+        (log|R| - log|S| - <v, S^-1 v>) / 2`` with ``S == A Q A* + R`` the
+        data-space normal and ``v`` the shifted residual — all data-space
+        quantities, so it costs two log-determinants and shares
+        :meth:`_residual_solve`'s solve. It relates to :meth:`log_evidence`
+        by the likelihood's own constant, ``-(n log 2pi + log|R|) / 2``,
+        which the potential omits.
+        """
+
+        def compute() -> "Estimate":
+            from ..numerics.functional_calculus import log_determinant
+
+            misfit = self.mahalanobis(data)
+            volume = self.normal_log_determinant()
+            definite = self._problem.error_measure.covariance.with_traits(
+                Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            )
+            error_volume = log_determinant(definite)
+            return _combine_log_normalizer(
+                [(0.5, error_volume), (-0.5, volume), (-0.5, misfit)]
+            )
+
+        return compute
 
     def mahalanobis(self, data: Any, /) -> float:
         """``<v, N_d^-1 v>``, the misfit half of the evidence.

@@ -491,13 +491,17 @@ class TestPowerPerDegree:
     """
 
     def test_each_degree_holds_the_power_it_was_given(self, geometry):
+        """In L2 terms on any space (D-130): a draw's coefficient variance is
+        ``eigenvalue / gram``, and those, summed over a degree, are the power
+        that degree was given."""
         _, space = geometry
         degrees = space.degrees
         power = (1.0 + np.arange(degrees.max() + 1)) ** -3.0
         eigenvalues = space.power_measure(power).covariance.eigenvalues
+        variances = eigenvalues / space.gram_diagonal()
 
         for degree in np.unique(degrees):
-            held = eigenvalues[degrees == degree].sum()
+            held = variances[degrees == degree].sum()
             assert held == pytest.approx(power[degree])
 
     def test_the_multiplicities_are_the_multiplicities(self, geometry):
@@ -548,26 +552,29 @@ class TestCoefficientAccess:
         assert np.all(drawn[present] > 2.0)
         assert np.all(drawn[present] < 8.0)
 
-    def test_on_a_sobolev_space_the_metric_shows(self, geometry, rng):
-        """And it shows by a *known* factor, not an unexplained one. The
-        eigenvalues an invariant measure is given are the covariance operator's
-        in that space's metric, so a draw's coefficients carry
-        ``eigenvalue / gram``. Checked exactly rather than by sampling."""
+    def test_on_a_sobolev_space_the_round_trip_still_holds(self, geometry, rng):
+        """The point of D-130: ``power_measure(p)`` means the L2 spectrum on
+        every space, so the round trip through ``power_spectrum`` holds on a
+        Sobolev space exactly as on L2 -- where it used to come out divided
+        by the Sobolev symbol. The metric-native meaning remains reachable
+        through ``invariant_measure``, whose eigenvalues this measure's
+        covariance carries multiplied by the gram diagonal."""
         _, space = geometry
         degrees = space.degrees
         measure = space.power_measure(np.full(degrees.max() + 1, 4.0))
 
-        expected = np.bincount(
-            degrees,
-            weights=measure.covariance.eigenvalues
-            / space.apply_gram(np.ones(space.dim)),
-        )
         drawn = np.mean(
             [space.power_spectrum(measure.sample(rng=rng)) for _ in range(400)],
             axis=0,
         )
         present = np.unique(degrees)
-        assert drawn[present] == pytest.approx(expected[present], rel=0.35)
+        assert drawn[present] == pytest.approx(4.0, rel=0.35)
+
+        eigenvalues = measure.covariance.eigenvalues
+        counts = np.bincount(degrees)[degrees]
+        assert eigenvalues == pytest.approx(
+            4.0 / counts * space.gram_diagonal(), rel=1e-12
+        )
 
     def test_analysis_and_synthesis_invert_each_other(self, geometry, rng):
         """And are *not* each other's adjoint on anything but L2 -- which is

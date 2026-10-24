@@ -8,9 +8,11 @@ were reached is in git, at commit `83658d0` and before, where the design
 journal, the review rounds and the functionality audit lived until they were
 retired on 2026-09-18.
 
-Last reconciled against the code on 2026-10-24, at 3005 passing tests in the
-fast suite and 32 marked slow. The release plan in §10 was settled with David
-on that date; its API decisions get their D-numbers as each change lands.
+Last reconciled against the code on 2026-10-24, at 3053 passing tests in the
+fast suite and 32 marked slow, the 35 examples all running. The release plan
+in §10 was settled with David on that date and its first tranche landed the
+same day as D-127 to D-133; the remaining items carry their D-numbers as
+each change lands.
 
 ---
 
@@ -37,20 +39,20 @@ is what most of the rest follows from:
 |---|---|
 | `algebra` | `HilbertSpace`, `CoordinateSpace`, `HilbertModule`, `MassWeightedSpace`, `DirectSum`; `Operator`, `LinearOperator`, `Functional`, the expression nodes, `DiagonalLinearOperator`, `Linearization` |
 | `traits` | the seven trait flags and their closure and propagation rules |
-| `probability` | `ProbabilityMeasure`, `GaussianMeasure`, `GaussianMixture`, products and push-forwards, conditioning, credible sets |
+| `probability` | `ProbabilityMeasure`, `GaussianMeasure`, `GaussianMixture`, `AbsolutelyContinuousMeasure` (D-132), products and push-forwards, conditioning, credible sets |
 | `geometry` | convex sets (balls, ellipsoids, half-spaces, polytopes, intersections, oracle sets), level and sublevel sets, affine and linear subspaces, projectors, support functions |
 | `numerics` | Krylov and direct solvers, preconditioners, randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval |
 | `sem1d` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies: `interval` on the line under `dx`, `radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, `layered` for piecewise-continuous fields over adjacent layers of any one of them (their direct sum, with points, jumps, integrals and layer-by-layer priors); Robin ends, a batched harmonic transform, a fit over the domain for sampled functions; wraps `planetmodel.randomfield`, an optional extra, and is imported explicitly (D-115 to D-124, D-126) |
-| `inference` | forward problems, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, the point estimators and the Tikhonov family, `BackusGilbert` and `BackusGilbertParker`, the MAP and Laplace route, normal operators and their preconditioners |
-| `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `sem1d` ball, lines on its interval and radial profile (D-120); convex sets; marginals, corner plots and error bounds |
+| `inference` | forward problems with their likelihood `potential`, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, `GaussianPosterior` (D-132), the point estimators and the Tikhonov family, `BackusGilbert` and `BackusGilbertParker`, the MAP and Laplace route, normal operators and their preconditioners |
+| `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `sem1d` ball, lines on its interval and radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
 | `backends` | MFEM two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps a plain `HilbertSpace` and lets MFEM do every computation (D-96) |
-| `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105) |
+| `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
 | `datasets` | the shipped station and earthquake tables, the cache directory, and the explicit downloads that refresh them (D-103) |
 | `parallel` | `parallel_map` and `resolve_jobs`, the one place joblib is called (D-52) |
 | `compat` | v1 class-name aliases and the v1-space adapter; goes with v1 (D-101) |
 
-105 names are re-exported at the top level and the subpackages are importable
+108 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
 `compat` and `sem1d` are imported explicitly. Thirty-three examples under `examples/`
 run as a slow test; their README says what each shows.
@@ -85,8 +87,21 @@ These are the ones that bite.
   raises, and a non-finite residual raises whatever `strict` says (D-42).
 - **A derived adjoint is never silent** (D-34): `with_probed_adjoint()` is
   the opt-in.
-- **`power_measure` and `power_spectrum` agree on a Lebesgue space and
-  differ on a Sobolev one**, by the Sobolev symbol. Open, see §7.
+- **Densities refuse on a function-space discretisation** (D-131):
+  `is_function_space` marks the spaces, and `log_density` and its family
+  take `unsafe=True` to proceed, as point evaluation does under D-11. The
+  dimension-robust object is a density relative to a reference measure.
+- **An inference result carries its reference measure** (D-132): a Bayesian
+  update returns a `GaussianPosterior`, a Gaussian that also knows the
+  prior, `-Phi` against it, and the evidence; the algebra degrades it to a
+  plain Gaussian rather than carrying a density it cannot transform.
+- **A forward that cannot evaluate raises `EvaluationError`** (D-129): the
+  line searches back off, a trust region shrinks, and an optimizer returns
+  its last good state with `failure` set rather than crashing it away.
+- **`power_measure` and `power_spectrum` agree on every space** (D-130):
+  `power` means the `L2` spectrum whatever the host's order, and a draw's
+  expected `power_spectrum` is the `power` it was given. The metric-native
+  spelling is `invariant_measure`.
 
 ## 4. What is exact and what is estimated
 
@@ -162,6 +177,12 @@ check_operator(A, rng=rng)
 check_traits(A, rng=rng)
 ```
 
+Each takes the `rtol` it enforces and returns a `CheckReport` of the worst
+relative defect it measured (D-128). For a backend whose adjoint is
+consistent only to discretisation level — a continuous adjoint — pass the
+`rtol` it can meet and record the reported defect falling under refinement;
+it is also the floor below which a solver tolerance asks for noise.
+
 The lessons MFEM taught, which apply to any backend over foreign memory:
 
 - **Who owns the buffer.** MFEM vectors can alias memory the library will
@@ -185,12 +206,8 @@ The lessons MFEM taught, which apply to any backend over foreign memory:
 
 Recorded rather than settled, so nobody has to rediscover them.
 
-- **`power_measure` on a Sobolev space.** DECIDED 2026-10-24, not yet
-  implemented: it is to mean the `L2` spectrum on every space, so a draw's
-  expected `power_spectrum` is the given `p` universally; the trace-class
-  caveat moves to the docstring and `invariant_measure` stays the
-  metric-native spelling. Until the change lands the code still means the
-  `H^s` spectrum.
+- **`power_measure` on a Sobolev space.** Closed: D-130 made it mean the
+  `L2` spectrum on every space, 2026-10-24.
 - **The convex solvers' API.** Ported under D-13 and not redesigned; the
   numerics were restored to v1's in September. DECIDED 2026-10-24: David
   specifies the API himself, without waiting on Mag (who is starting a job
@@ -241,44 +258,50 @@ planetmodel 1.3.2.
 
 **Pre-release code, decided:**
 
-- `MaximumAPosteriori.objective` builds its functional with `linearize=` so
+- DONE (D-127). `MaximumAPosteriori.objective` builds its functional with `linearize=` so
   the value and the derivative share one `forward.at`; today each runs the
   forward, which is two solves per line-search point.
-- `EvaluationError` in `algebra`: a forward that cannot evaluate raises it,
+- DONE (D-129). `EvaluationError` in `algebra`: a forward that cannot evaluate raises it,
   both line searches treat it as a step too far, and the failure field on
   the optimization result is named now even if populated later.
-- The `check_*` functions take `rtol=`/`atol=` again (v1's checks had
+- DONE (D-128). The `check_*` functions take `rtol=`/`atol=` again (v1's checks had
   `check_rtol`/`check_atol`; losing them was a regression) and report what
   they measured: a small `CheckReport`, `check_operator`'s adjoint defect
   first. The measured defect is also how a continuous adjoint is validated
   under refinement, and what caps a solver's meaningful tolerance.
-- The function-space marker: a boolean property on `HilbertSpace`,
+- DONE (D-131, as `is_function_space`). The function-space marker: a boolean property on `HilbertSpace`,
   propagating like the traits (`DirectSum` if any summand, preserved by
   `MassWeightedSpace`); `log_density`, `mahalanobis_squared`,
   `credible_set` and their family refuse on a function-space discretisation
   without `unsafe=True`, as D-11 does for point evaluation.
-- `AbsolutelyContinuousMeasure` on `ProbabilityMeasure`: a `reference`, a
+- DONE (D-132; the density member is `relative_log_density`, `log_density` staying the gated volume one, and `ForwardProblem.potential` came with it). `AbsolutelyContinuousMeasure` on `ProbabilityMeasure`: a `reference`, a
   `log_density` (a `Functional`), a lazy `log_normalizer`, `relative_to`;
   built from a reference and a density, never from two arbitrary measures.
   The linear Gaussian posterior and `LaplaceResult.measure` return a
   subclass of it and `GaussianMeasure` (reference the prior, normalizer the
   evidence, cheap in the data-space formalism). A push-forward degrades to
   the plain Gaussian — the answer to D-73's worry, not an override of it.
-- `power_measure` means the `L2` spectrum everywhere (§7).
-- `Functional.from_callables` takes `gradient=` as an exclusive alternative
+- DONE (D-130). `power_measure` means the `L2` spectrum everywhere (§7).
+- DONE, and it turned out to predate the plan: `from_callables` already took `gradient=` with the exclusivity rule, and `Functional.gradient(x)` existed. `Functional.from_callables` takes `gradient=` as an exclusive alternative
   to `derivative=` — user code may apply the Riesz map more cheaply than
   the library can — and `gradient(x)` is the accessor. Everything
   downstream still consumes the derivative; the gradient is a doorway, not
   a second pathway.
-- 3-D slice plotting returns (the audit's drop is reversed): ported from
-  v1's `SubspaceSlicePlotter`, plotly as an optional dependency.
+- DONE (D-133). 3-D slice plotting returns (the audit's drop is
+  reversed): `plot_set` grew the third dimension in v2's own
+  route-by-capability style rather than as a port of v1's
+  `SubspaceSlicePlotter`; plotly is the optional `plot3d` extra. Example 34
+  shows it.
 - The convex solvers' API is redesigned to David's specification (§7).
-- planetmodel maintenance: `ShellTransform` moves into
-  `planetmodel.harmonics` (it is 2-30x faster than 1.3.2's shell loop and
-  agrees to 3e-14), planetmodel 1.4 is released, the pin becomes
-  `planetmodel>=1.4`, and the stale `[harmonics]` extra goes (the extra was
-  removed in planetmodel 1.3.0 when ducc0 became core; pyshtools no longer
-  arrives through it, so `test_sem1d_ball.py` must stop relying on that).
+- planetmodel maintenance, half done: the pin is `planetmodel>=1.3`, the
+  stale `[harmonics]` extra is gone, the venv and lock are on 1.3.2 (whose
+  grids carry a `kind` that the transform now checks by name), and
+  `test_sem1d_ball.py` no longer needs pyshtools. Still to do: the
+  planetmodel 1.4 release, then the pin to `>=1.4` and the deletion of
+  `sem1d/_transform.py`. The migration itself is built and tested:
+  `planetmodel.harmonics.ShellTransform` sits uncommitted in that repo (on
+  its `main`; its rules want the commit on `develop`), same names, with the
+  version bump left for the release branch as its convention requires.
 
 **Decided now, built after the release:**
 

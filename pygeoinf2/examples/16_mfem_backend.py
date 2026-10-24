@@ -83,8 +83,13 @@ stiffness.Finalize()
 A = operator_from_bilinear_form(V, stiffness, traits=Traits.POSITIVE_DEFINITE)
 print("an assembled bilinear form is the Galerkin matrix of its operator,")
 print("so the mass solve lives inside the operator rather than in your code.")
-check_operator(A, rng=rng)
+report = check_operator(A, rng=rng)
 print("  check_operator passes: the adjoint identity holds in the FE metric.")
+# A check returns what it measured (D-128). For a backend whose adjoint is
+# only consistent to discretisation level -- a continuous adjoint -- pass the
+# rtol it can meet and record this defect falling under mesh refinement; it
+# is also the floor below which a solver tolerance asks for noise.
+print(f"  its worst measured defect: {report.worst:.2e} (a {report.check} report)")
 print()
 
 # --- 3. and it all composes -----------------------------------------------

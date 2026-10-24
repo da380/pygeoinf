@@ -115,6 +115,15 @@ class DirectSum[V](HilbertSpace[tuple]):
     def __len__(self) -> int:
         return len(self._spaces)
 
+    @property
+    def is_function_space(self) -> bool:
+        """True when any summand discretises a function space (D-131).
+
+        One such summand is enough: a density on the sum factors through the
+        density on that summand, so it inherits the discretisation dependence.
+        """
+        return any(space.is_function_space for space in self._spaces)
+
     def shares_vectors_with(self, other: HilbertSpace, /) -> bool:
         """True when the summands do, one for one."""
         if self is other:

@@ -47,6 +47,8 @@ failing test rather than a surprise later.
 | 31 | `mantle` | a field in a mantle, cut three ways to be seen: a shell, a section by any plane, a profile; and what surface data do not reach |
 | 32 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
 | 33 | `layered_planet` | fields that are smooth in each layer and jump between them: a direct sum of spaces that knows its layers are adjacent, data of three kinds at once, and continuity by conditioning |
+| 34 | `sets_in_three_dimensions` | convex sets drawn solid: an inscribed hull of supporting points, voxel rasters, and a 3-D slice of a 4-D ellipsoid checked against the exact one |
+| 35 | `evaluation_failure` | a forward that cannot converge raises, a line search backs out, and an optimizer with nowhere to retreat returns its state instead of losing it |
 
 ## The ones with optional dependencies
 

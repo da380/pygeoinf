@@ -35,7 +35,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ..algebra.operators import Functional, LinearOperator, Operator
+from ..algebra.operators import EvaluationError, Functional, LinearOperator, Operator
 from ..traits import Traits
 from .line_search import (
     ArmijoLineSearch,
@@ -45,7 +45,7 @@ from .line_search import (
 
 __all__ = [
     "truncated_cg",
-    "OptimisationResult",
+    "OptimizationResult",
     "Optimizer",
     "SteepestDescent",
     "NonlinearCG",
@@ -57,7 +57,7 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class OptimisationResult:
+class OptimizationResult:
     """Where an optimizer stopped, and why."""
 
     minimizer: Any
@@ -68,10 +68,15 @@ class OptimisationResult:
     converged: bool
     message: str
     history: list[float] = field(default_factory=list)
+    failure: str | None = None
+    """What an :class:`~pygeoinf2.algebra.operators.EvaluationError` said,
+    when one ended the run (D-129). The rest of the result is still the last
+    good state -- ``minimizer`` was evaluated successfully -- so a run of
+    hours is returned, not lost. ``None`` on every other outcome."""
 
     def __repr__(self) -> str:
         return (
-            f"OptimisationResult(value={self.value:.6g}, "
+            f"OptimizationResult(value={self.value:.6g}, "
             f"|grad|={self.gradient_norm:.3g}, iterations={self.iterations}, "
             f"converged={self.converged}: {self.message})"
         )
@@ -134,7 +139,7 @@ class Optimizer(ABC):
         """The line search this method wants when none is supplied."""
         return ArmijoLineSearch()
 
-    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
         """Minimize ``functional`` starting from ``x0``.
 
         Args:
@@ -158,7 +163,7 @@ class Optimizer(ABC):
         return self._minimize(functional, x0)
 
     @abstractmethod
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         """Run the method, having passed validation."""
 
     # -- shared machinery ----------------------------------------------
@@ -190,10 +195,10 @@ class Optimizer(ABC):
         iteration: int,
         evaluations: int,
         history: list[float],
-    ) -> OptimisationResult:
+    ) -> OptimizationResult:
         """The outcome when no step improved the value."""
         limited = self._precision_limited(value, gradient_norm)
-        return OptimisationResult(
+        return OptimizationResult(
             x,
             value,
             gradient_norm,
@@ -208,6 +213,36 @@ class Optimizer(ABC):
             history,
         )
 
+    def _finish_evaluation_failure(
+        self,
+        x: Any,
+        value: float,
+        gradient_norm: float,
+        iteration: int,
+        evaluations: int,
+        history: list[float],
+        error: Exception,
+    ) -> OptimizationResult:
+        """The outcome when an accepted point could not be evaluated.
+
+        The line searches and the trust region absorb an
+        :class:`~pygeoinf2.algebra.operators.EvaluationError` at a *trial*
+        point by retreating; this is for the one place there is nowhere to
+        retreat to. The result carries the last good state, so nothing is
+        lost but the step that failed (D-129).
+        """
+        return OptimizationResult(
+            x,
+            value,
+            gradient_norm,
+            iteration,
+            evaluations,
+            False,
+            "the functional could not be evaluated at an accepted point",
+            history,
+            failure=str(error),
+        )
+
 
 class _DescentMethod(Optimizer):
     """A method that repeatedly picks a direction and searches along it.
@@ -216,7 +251,7 @@ class _DescentMethod(Optimizer):
     only the direction rule differs, so only that is left to subclasses.
     """
 
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -231,7 +266,7 @@ class _DescentMethod(Optimizer):
 
         for iteration in range(1, self._max_iterations + 1):
             if gradient_norm <= tolerance:
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     model.value,
                     gradient_norm,
@@ -270,10 +305,22 @@ class _DescentMethod(Optimizer):
             new_x = search.point
             # A Wolfe search hands back the model it already built to test the
             # curvature condition. Only a backtracking one, which never needs
-            # a gradient, leaves us to evaluate here.
+            # a gradient, leaves us to evaluate here -- where the derivative
+            # can fail at a point whose value did not.
             new_model = search.model
             if new_model is None:
-                new_model = functional.at(new_x)
+                try:
+                    new_model = functional.at(new_x)
+                except EvaluationError as error:
+                    return self._finish_evaluation_failure(
+                        x,
+                        model.value,
+                        gradient_norm,
+                        iteration,
+                        evaluations,
+                        history,
+                        error,
+                    )
                 evaluations += 1
             new_gradient = new_model.gradient
 
@@ -293,7 +340,7 @@ class _DescentMethod(Optimizer):
                 # Flat: the step was accepted but bought nothing. Continuing
                 # only spends evaluations to confirm it, which is what turned a
                 # converged steepest descent into 2000 iterations.
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     model.value,
                     gradient_norm,
@@ -304,7 +351,7 @@ class _DescentMethod(Optimizer):
                     history,
                 )
 
-        return OptimisationResult(
+        return OptimizationResult(
             x,
             model.value,
             gradient_norm,
@@ -544,7 +591,7 @@ class NewtonCG(Optimizer):
         self._max_cg_iterations = max_cg_iterations
         super().__init__(**kwargs)
 
-    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
         """Minimize, requiring a Hessian as well as a gradient.
 
         Args:
@@ -565,7 +612,7 @@ class NewtonCG(Optimizer):
             )
         return super().minimize(functional, x0)
 
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -576,7 +623,7 @@ class NewtonCG(Optimizer):
 
         for iteration in range(1, self._max_iterations + 1):
             if gradient_norm <= tolerance:
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     model.value,
                     gradient_norm,
@@ -613,15 +660,27 @@ class NewtonCG(Optimizer):
                 )
 
             previous_value = model.value
+            previous_x = x
             x = search.point
-            model = functional.at(x)
+            try:
+                model = functional.at(x)
+            except EvaluationError as error:
+                return self._finish_evaluation_failure(
+                    previous_x,
+                    previous_value,
+                    gradient_norm,
+                    iteration,
+                    evaluations,
+                    history,
+                    error,
+                )
             evaluations += 1
             gradient_norm = space.norm(model.gradient)
             history.append(model.value)
 
             decrease = previous_value - model.value
             if 0.0 <= decrease <= self._ftol * abs(model.value):
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     model.value,
                     gradient_norm,
@@ -632,7 +691,7 @@ class NewtonCG(Optimizer):
                     history,
                 )
 
-        return OptimisationResult(
+        return OptimizationResult(
             x,
             model.value,
             gradient_norm,
@@ -674,7 +733,7 @@ class TrustRegionNewton(Optimizer):
         self._acceptance = acceptance
         super().__init__(**kwargs)
 
-    def minimize(self, functional: Functional, x0: Any, /) -> OptimisationResult:
+    def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
         """Minimize, requiring a Hessian as well as a gradient.
 
         Args:
@@ -691,7 +750,7 @@ class TrustRegionNewton(Optimizer):
             raise ValueError("TrustRegionNewton needs a functional with a Hessian.")
         return super().minimize(functional, x0)
 
-    def _minimize(self, functional: Functional, x0: Any) -> OptimisationResult:
+    def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -703,7 +762,7 @@ class TrustRegionNewton(Optimizer):
 
         for iteration in range(1, self._max_iterations + 1):
             if gradient_norm <= tolerance:
-                return OptimisationResult(
+                return OptimizationResult(
                     x,
                     model.value,
                     gradient_norm,
@@ -731,8 +790,22 @@ class TrustRegionNewton(Optimizer):
                 continue
 
             trial = space.axpy(1.0, step, space.copy(x))
-            trial_value = functional(trial)
+            try:
+                trial_value = functional(trial)
+            except EvaluationError:
+                # An infeasible trial is a trust region's ordinary business:
+                # the model was wrong there, so shrink and try again (D-129).
+                evaluations += 1
+                radius *= 0.25
+                if radius < 1e-14:
+                    break
+                continue
             evaluations += 1
+            if not np.isfinite(trial_value):
+                radius *= 0.25
+                if radius < 1e-14:
+                    break
+                continue
             ratio = (model.value - trial_value) / predicted
 
             if ratio < 0.25:
@@ -741,8 +814,19 @@ class TrustRegionNewton(Optimizer):
                 radius = min(2.0 * radius, self._max_radius)
 
             if ratio > self._acceptance:
-                x = trial
-                model = functional.at(x)
+                try:
+                    accepted = functional.at(trial)
+                except EvaluationError as error:
+                    return self._finish_evaluation_failure(
+                        x,
+                        model.value,
+                        gradient_norm,
+                        iteration,
+                        evaluations,
+                        history,
+                        error,
+                    )
+                x, model = trial, accepted
                 evaluations += 1
                 gradient_norm = space.norm(model.gradient)
                 history.append(model.value)
@@ -750,7 +834,7 @@ class TrustRegionNewton(Optimizer):
             if radius < 1e-14:
                 break
 
-        return OptimisationResult(
+        return OptimizationResult(
             x,
             model.value,
             gradient_norm,

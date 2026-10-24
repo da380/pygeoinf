@@ -27,6 +27,7 @@ from .algebra.direct_sum import (
 from .algebra.linearization import Linearization, QuadraticModel
 from .algebra.operators import (
     AffineOperator,
+    EvaluationError,
     Functional,
     LinearFunctional,
     LinearOperator,
@@ -65,6 +66,7 @@ from .geometry import (
     UniversalSet,
 )
 from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
+from .probability.absolutely_continuous import AbsolutelyContinuousMeasure
 from .probability.base import (
     ProbabilityMeasure,
     ProductMeasure,
@@ -91,6 +93,7 @@ from .inference import (
     LeastSquares,
     LinearForwardProblem,
     LaplaceResult,
+    GaussianPosterior,
     LinearGaussianInversion,
     MaximumAPosteriori,
     LinearGaussianMixtureInversion,
@@ -144,6 +147,7 @@ __all__ = [
     "LeastSquares",
     "LinearForwardProblem",
     "LaplaceResult",
+    "GaussianPosterior",
     "LinearGaussianInversion",
     "MaximumAPosteriori",
     "LinearGaussianMixtureInversion",
@@ -191,6 +195,7 @@ __all__ = [
     "require_module",
     # algebra.operators
     "AffineOperator",
+    "EvaluationError",
     "Functional",
     "LinearFunctional",
     "LinearOperator",
@@ -236,6 +241,7 @@ __all__ = [
     "PeriodicBox",
     "Sobolev",
     # probability
+    "AbsolutelyContinuousMeasure",
     "GaussianMeasure",
     "GaussianMixture",
     "ProbabilityMeasure",
