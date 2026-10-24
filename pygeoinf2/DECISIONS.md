@@ -889,6 +889,54 @@ Wolfe search already returns its final model to the optimizer, and a cache
 keyed on vector identity is the kind of silent state D-38 keeps out of
 solvers.
 
+**D-134. The convex algorithms belong to the sets, and the sets dispatch by
+form** (2026-10-24, David; the redesign CURRENT_STATE §7 held open, settled
+without Mag). The inference API was already right and stays: `BackusGilbert`
+maps data and an error measure to a point of the property space;
+`BackusGilbertParker` maps data, a convex error set and a convex prior set
+to a convex subset of it. Everything else — bundle, KKT, Chambolle-Pock,
+bisection, the closed form, the dual — is computational convex geometry:
+ways of learning about a convex set that is only implicitly defined, the
+image under `T` of the prior intersected with the data's preimage. So the
+algorithms move into the sets. A probe (`support`, `contains`, `extent`,
+`project`, `is_empty`, ...) dispatches to the cheapest algorithm the set's
+*form* admits, the form being determined by the error and prior sets;
+forcing a named algorithm for a cross-check stays possible, the parity
+tests being the point of the layer. The three questions it raised were
+settled the same day, all David:
+
+(1) **Choice surfaces on the probe alone.** No construction-time algorithm
+state: `support(d)` dispatches, `via=` forces — a name for the cross-check,
+an algorithm *instance* when tuning rides along. The default is not flat
+but a **form-ranked table**: each algorithm declares the set forms it
+accepts, and the probe takes the best applicable entry for this set's
+form, "best" recorded per form from measurement rather than guessed. D-82
+stops being an API question and becomes one row of that table, settled by
+timing when the implementation lands; the dual gap certificate (REVIEW2
+Q2) is likewise a property of the dual algorithm's entry.
+
+(2) **The estimator stays, and it is no thinner than any other.** David:
+the Bayesian estimator returns a measure with all the hard work in doing
+something with it; this one returns a convex set with all the hard work in
+probing it. The answer object carries the computation in both columns of
+D-71's classification, and `problem + property_operator + prior` remains
+the one spelling learned across point, measure and set inference.
+`FeasiblePropertySet` additionally becomes constructible directly from
+sets, for callers outside the `ForwardProblem` machinery.
+
+(3) **The whole-hierarchy pattern is the architecture, built
+incrementally.** The dispatch machinery and the form declarations live in
+the geometry layer from day one — never inside `backus.py` — with
+`FeasiblePropertySet` the first composite client; intersections, images
+and preimages adopt it case by case as something wants them, each
+adoption its own entry. The full generality is correct and will probably
+be used sparingly, which is exactly why it is not built in one go.
+
+Underneath, the solver zoo unifies into the engines the probes call:
+`BundleResult`, `KKTResult` and `SaddlePointResult` fold into one result
+shape and the bundle methods join the `Optimizer` hierarchy — the detailed
+sub-decisions land with the implementation.
+
 ---
 
 ## 10. Symmetric spaces

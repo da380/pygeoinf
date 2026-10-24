@@ -208,12 +208,14 @@ Recorded rather than settled, so nobody has to rediscover them.
 
 - **`power_measure` on a Sobolev space.** Closed: D-130 made it mean the
   `L2` spectrum on every space, 2026-10-24.
-- **The convex solvers' API.** Ported under D-13 and not redesigned; the
-  numerics were restored to v1's in September. DECIDED 2026-10-24: David
-  specifies the API himself, without waiting on Mag (who is starting a job
-  and may have little time); it is the one design session left before the
-  release. The dual route's certified gap (REVIEW2's question 2, in git
-  history) is folded into that session.
+- **The convex solvers' API.** Settled as D-134, 2026-10-24, in full:
+  the estimator API stays; the algorithms move into the convex sets, whose
+  probes dispatch through a form-ranked table (`via=` forces, an instance
+  carries tuning); the dispatch machinery lives in the geometry layer with
+  `FeasiblePropertySet` its first client and the rest of the hierarchy
+  adopting incrementally; the solver zoo unifies underneath. Design fixed,
+  implementation pending; D-82 and the dual-gap certificate become
+  properties of the dispatch table's entries.
 - **`route="auto"` on quadratic sets.** The KKT solver is the cheapest general
   solver on balls and ellipsoids and `auto` could prefer it over the bundle
   where both apply; left until measured (D-82).
