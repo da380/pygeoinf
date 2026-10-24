@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Hashable
 
 import numpy as np
@@ -20,6 +21,21 @@ SEED = 20260826
 @pytest.fixture
 def rng():
     return default_rng(SEED)
+
+
+@pytest.fixture(autouse=True)
+def _close_figures():
+    """Every test ends with no open figures, so none leaks into the next.
+
+    The examples and tutorials are run whole and leave their figures open,
+    and v1's plotting draws on ``plt.gca()``: a figure left over from here
+    fails v1's tests, which run after these. pyplot is touched only if
+    something has already imported it.
+    """
+    yield
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is not None:
+        plt.close("all")
 
 
 class WeightedSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):

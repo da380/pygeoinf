@@ -1,12 +1,11 @@
-# Hooks that guard every commit and push.
+# Hooks that guard every commit.
 #
 # Install them once, after `poetry install --with dev`:
 #
-#     poetry run pre-commit install --hook-type pre-commit --hook-type pre-push
+#     poetry run pre-commit install
 #
-# Both hook types matter: the linting and notebook hooks run on `git commit`,
-# the test suite on `git push`. CI runs the same file (see ci.yml), so a clean
-# commit here is a green lint job there.
+# The test suite is not a hook: it runs in CI on every push (see ci.yml),
+# which also runs this file, so a clean commit here is a green lint job there.
 
 repos:
   # --- 1. Prevent commits to main ---
@@ -36,17 +35,3 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-
-  # --- 4. Run Pytest (Local Hook) ---
-  # On push rather than on commit. The suite takes long enough that running it
-  # per commit is what teaches people to reach for `--no-verify`; running it
-  # per push still keeps a broken tree off the remote.
-  - repo: local
-    hooks:
-      - id: pytest
-        name: pytest
-        entry: pytest
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]

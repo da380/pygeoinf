@@ -1,8 +1,9 @@
 name: CI
 
+# Every push, on any branch: the test suite is not run locally by a git hook,
+# so this is where it runs.
 on:
   push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -35,9 +36,8 @@ jobs:
     - name: Run hooks
       env:
         # `no-commit-to-branch` guards local commits; on a CI checkout of main
-        # it would fail every run. `pytest` is a pre-push hook and is covered by
-        # the test job below, across all three platforms.
-        SKIP: no-commit-to-branch,pytest
+        # it would fail every run.
+        SKIP: no-commit-to-branch
       run: pre-commit run --all-files --show-diff-on-failure --color=always
 
   build-and-test:

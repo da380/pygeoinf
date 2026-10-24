@@ -7,12 +7,15 @@ hooks:
 
 ```bash
 poetry install --with dev --all-extras
-poetry run pre-commit install --hook-type pre-commit --hook-type pre-push
+poetry run pre-commit install
 ```
 
-Both hook types are needed. On `git commit`, `pre-commit` runs Ruff (linting
-with `--fix`, then formatting) and `nbstripout`; on `git push` it runs the test
-suite. It also refuses commits made directly on `main`.
+On `git commit`, `pre-commit` runs Ruff (linting with `--fix`, then
+formatting) and `nbstripout`, and refuses commits made directly on `main`.
+
+The test suite is not a hook. CI runs it on every push, to any branch, on
+Linux, Windows and macOS; run whatever you touched locally before pushing
+(`poetry run pytest pygeoinf2`, say).
 
 The same hooks run in CI (the `Lint (pre-commit)` job reads the very same
 `.pre-commit-config.yaml`), so anything that passes locally passes there. To
