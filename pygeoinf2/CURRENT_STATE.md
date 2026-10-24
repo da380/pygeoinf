@@ -8,8 +8,9 @@ were reached is in git, at commit `83658d0` and before, where the design
 journal, the review rounds and the functionality audit lived until they were
 retired on 2026-09-18.
 
-Last reconciled against the code on 2026-09-18, at 2763 passing tests in the
-fast suite and 32 marked slow.
+Last reconciled against the code on 2026-10-24, at 3005 passing tests in the
+fast suite and 32 marked slow. The release plan in §10 was settled with David
+on that date; its API decisions get their D-numbers as each change lands.
 
 ---
 
@@ -184,15 +185,18 @@ The lessons MFEM taught, which apply to any backend over foreign memory:
 
 Recorded rather than settled, so nobody has to rediscover them.
 
-- **`power_measure` on a Sobolev space.** Its eigenvalues are the covariance
-  operator's in that space's metric, so a draw's coefficients carry
-  `eigenvalue / gram` and the spectrum comes out divided by the Sobolev
-  symbol. Whether it should mean the `H^s` spectrum it currently means, or
-  the `L2` one a modeller more often writes down, is a decision for the API.
+- **`power_measure` on a Sobolev space.** DECIDED 2026-10-24, not yet
+  implemented: it is to mean the `L2` spectrum on every space, so a draw's
+  expected `power_spectrum` is the given `p` universally; the trace-class
+  caveat moves to the docstring and `invariant_measure` stays the
+  metric-native spelling. Until the change lands the code still means the
+  `H^s` spectrum.
 - **The convex solvers' API.** Ported under D-13 and not redesigned; the
-  numerics were restored to v1's in September. Mag's view is to be sought
-  before the API changes, and the dual route's certified gap (REVIEW2's
-  question 2, in git history) is his call too.
+  numerics were restored to v1's in September. DECIDED 2026-10-24: David
+  specifies the API himself, without waiting on Mag (who is starting a job
+  and may have little time); it is the one design session left before the
+  release. The dual route's certified gap (REVIEW2's question 2, in git
+  history) is folded into that session.
 - **`route="auto"` on quadratic sets.** The KKT solver is the cheapest general
   solver on balls and ellipsoids and `auto` could prefer it over the bundle
   where both apply; left until measured (D-82).
@@ -228,6 +232,103 @@ full function-space MCMC (the hooks exist), and the v2 documentation set.
 
 ## 10. Between here and a release
 
-- Point `README.md`, `docs/` and `tutorials/` at the new package.
-- Rename `pygeoinf2/` to `pygeoinf/`, delete v1, `compat.py` and its test.
-- Confirm the MFEM extra passes in CI on every platform it installs on.
+The plan settled with David on 2026-10-24, reviewed issue by issue. Three
+inputs informed it beyond the code: the sampling brief
+(`docs/sampling_brief.pdf`, the student's proposed function-space MCMC API;
+its reasoning document `sampling.tex` is to be obtained), the sl3dpp request
+list (`~/dev/sl3dpp/docs/dev/pygeoinf-integration.md` §8), and a survey of
+planetmodel 1.3.2.
+
+**Pre-release code, decided:**
+
+- `MaximumAPosteriori.objective` builds its functional with `linearize=` so
+  the value and the derivative share one `forward.at`; today each runs the
+  forward, which is two solves per line-search point.
+- `EvaluationError` in `algebra`: a forward that cannot evaluate raises it,
+  both line searches treat it as a step too far, and the failure field on
+  the optimization result is named now even if populated later.
+- The `check_*` functions take `rtol=`/`atol=` again (v1's checks had
+  `check_rtol`/`check_atol`; losing them was a regression) and report what
+  they measured: a small `CheckReport`, `check_operator`'s adjoint defect
+  first. The measured defect is also how a continuous adjoint is validated
+  under refinement, and what caps a solver's meaningful tolerance.
+- The function-space marker: a boolean property on `HilbertSpace`,
+  propagating like the traits (`DirectSum` if any summand, preserved by
+  `MassWeightedSpace`); `log_density`, `mahalanobis_squared`,
+  `credible_set` and their family refuse on a function-space discretisation
+  without `unsafe=True`, as D-11 does for point evaluation.
+- `AbsolutelyContinuousMeasure` on `ProbabilityMeasure`: a `reference`, a
+  `log_density` (a `Functional`), a lazy `log_normalizer`, `relative_to`;
+  built from a reference and a density, never from two arbitrary measures.
+  The linear Gaussian posterior and `LaplaceResult.measure` return a
+  subclass of it and `GaussianMeasure` (reference the prior, normalizer the
+  evidence, cheap in the data-space formalism). A push-forward degrades to
+  the plain Gaussian — the answer to D-73's worry, not an override of it.
+- `power_measure` means the `L2` spectrum everywhere (§7).
+- `Functional.from_callables` takes `gradient=` as an exclusive alternative
+  to `derivative=` — user code may apply the Riesz map more cheaply than
+  the library can — and `gradient(x)` is the accessor. Everything
+  downstream still consumes the derivative; the gradient is a doorway, not
+  a second pathway.
+- 3-D slice plotting returns (the audit's drop is reversed): ported from
+  v1's `SubspaceSlicePlotter`, plotly as an optional dependency.
+- The convex solvers' API is redesigned to David's specification (§7).
+- planetmodel maintenance: `ShellTransform` moves into
+  `planetmodel.harmonics` (it is 2-30x faster than 1.3.2's shell loop and
+  agrees to 3e-14), planetmodel 1.4 is released, the pin becomes
+  `planetmodel>=1.4`, and the stale `[harmonics]` extra goes (the extra was
+  removed in planetmodel 1.3.0 when ducc0 became core; pyshtools no longer
+  arrives through it, so `test_sem1d_ball.py` must stop relying on that).
+
+**Decided now, built after the release:**
+
+- `GaussianMeasure.from_product(correlation=)`: a matrix on the latent
+  white noise, unit diagonal, `None` the independent product of today;
+  `correlated_measure` becomes a wrapper keeping its fused spectral path;
+  sem1d spaces gain correlated fields. The student builds it.
+- `formalism=` opens on the nonlinear route with `"data_space"` the default
+  (D-74's rule everywhere), and `with_probed_derivative()` mirrors D-34:
+  the derivative assembled from `dim(Y)` adjoint applications, exactly
+  adjoint to the continuous adjoint that built it. For small data, and not
+  privileged: the library offers the range of adjoint strategies — discrete
+  adjoints are the backend's business, continuous adjoints are supported
+  honestly through measured defects and solver floors, the representer
+  route exists where data are few.
+- One low-rank posterior class: a `GaussianMeasure` carrying the
+  `(C, V, D)` structure of the prior-preconditioned misfit Hessian's
+  leading eigenpairs, which is an `AbsolutelyContinuousMeasure` with an
+  r-dimensional density. Designed jointly with the student before either
+  side writes code; it serves the Laplace route, the sampling layer's
+  references, and is the designated answer to deflated pointwise variance
+  on spaces with no closed form (plain Monte Carlo until then).
+- Sampling: the presets (`PCN`, `MALA`, `HMC`, `SMC`) and the result types
+  (`SampledPosterior`, `WeightedEnsemble`) are the public contract; whether
+  they are built as kernels-and-driver or as discretised SDE dynamics is
+  the student's call, made against a working pCN benchmark. Unadjusted
+  schemes on function spaces: leaning no.
+
+**Confirmed drops** (v1 things that stay gone): derivative-free
+minimization, BiCG, and a separate deflated pointwise-variance estimator.
+
+**Docs phase:** three tiers. The reference examples here stay as they are,
+one idea each. The v1 notebooks under `tutorials/` are replaced by
+tutorial *scripts* covering the whole core, with a small number of
+notebooks kept as entry points. Mini-apps in the MFEM spirit — each a
+realistic inverse problem end to end, deeper than any one feature — are
+new. The approved list is `EXAMPLES_PLAN.md`, a working document that is
+deleted when the phase completes. `README.md` and the Sphinx tree are
+rewritten against the new name, after the rename, not before.
+
+**Release mechanics, in order:** tag `v1-final`; rename `pygeoinf2/` to
+`pygeoinf/`; delete v1, `compat.py` and its test, `work/`, and v1's root
+`tests/`; CI green on the renamed tree, including the MFEM extra on every
+platform it installs on; version 2.0.0; readthedocs flips at the tag with
+v1's docs kept under a version selector.
+
+**Post-release tracks:** the student's sampling package (the brief's order
+of work, starting with the marker-gated methods already done pre-release
+and `from_product(correlation=)`); the sl3dpp items (the data-space route
+and low-rank posterior above, then blocks with a size hint, process-safety
+declarations, the sem1d separable-basis export, optimizer checkpointing,
+resource-owning linearizations, and the Kronecker space, which sl3dpp has
+offered to supply as a backend); and whatever the convex redesign defers.
