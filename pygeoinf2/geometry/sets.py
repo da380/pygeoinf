@@ -182,10 +182,10 @@ class Complement(Subset):
 
         Args:
             x: a vector of the space.
-            rtol: passed to the underlying subset. Note the tolerance then
-                works the other way round: a point just outside the original
-                set counts as *inside* its complement only if it is outside
-                to within this.
+            rtol: passed to the underlying subset. The tolerance then works
+                the other way round: a point outside the original set by less
+                than the tolerance still counts as in it, and so not in the
+                complement.
 
         Returns:
             Whether the complement contains it.
@@ -297,13 +297,13 @@ class SublevelSet(Subset):
     below a threshold, a norm within a budget, a nonlinear constraint. It
     knows membership and its boundary, the level set, and nothing more; a
     projection onto it would be a constrained minimization, which is what
-    the convex sets in :mod:`.convex` have in closed form and this does not.
-    For a convex ``f`` with a closed-form projection, use one of those.
+    the convex sets in :mod:`pygeoinf2.geometry.convex` have in closed form
+    and this does not. For a convex ``f`` with a closed-form projection, use
+    one of those.
 
-    Closed, as every set here is: v1's ``open_set`` flag gave the strict
-    inequality, and with it a closure and a warning whenever an open set met
-    an operation needing a closed one. In floating point the two differ by
-    the tolerance and nothing else.
+    Closed, as every set here is. There is no strict-inequality variant: in
+    floating point an open and a closed sublevel set differ by the tolerance
+    and nothing else.
     """
 
     def __init__(self, functional: Functional, /, *, level: float = 0.0) -> None:
@@ -395,8 +395,8 @@ class LevelSet(Subset):
         """Itself: a level set has empty interior, so every point is a boundary point.
 
         The same answer as for an affine subspace, and for the same reason.
-        v1 returned the empty set, the boundary of the level set *as a
-        manifold* rather than as a subset of the space.
+        This is the boundary as a subset of the space, not the boundary of
+        the level set as a manifold, which is usually empty.
         """
         return self
 

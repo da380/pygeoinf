@@ -13,9 +13,10 @@ Two paths, chosen by structure rather than by hand:
 - anything else self-adjoint goes to **Lanczos**, which approximates ``f(A) x``
   from a small Krylov space without ever forming a matrix.
 
-That split is the specialization protocol of DECISIONS.md D-32 applied to a unary
-operation, and it is why "diagonal in a basis" is a class (it carries
-eigenvalues) while "self-adjoint" is a trait (it carries nothing).
+The split follows how the operator is stored: "diagonal in a basis" is a
+class, :class:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator`, because it
+carries eigenvalues, while "self-adjoint" is a trait, because it carries
+nothing.
 
 Traits gate the operations that need them: a square root requires positive
 semidefiniteness, a logarithm requires positive definiteness. Since the library
@@ -89,7 +90,8 @@ def _guard_spectrum(
     moved to its edge -- zero for a semidefinite claim, ``eps`` times the
     largest Ritz value for a definite one, which is what keeps a logarithm
     finite. A value meaningfully outside is not roundoff but a wrong claim,
-    and is refused as the dense route already refuses it. No claim, no guard.
+    and is refused, as the dense :func:`log_determinant` refuses an indefinite
+    matrix. No claim, no guard.
     """
     traits = operator.traits
     if not (Traits.POSITIVE_SEMIDEFINITE & traits):
@@ -186,15 +188,10 @@ def iter_lanczos_tridiagonalize(
         if reorthogonalize:
             # One pass, and *modified* Gram-Schmidt: each projection is taken
             # against the running w rather than the original, which is what
-            # makes a single sweep enough here.
-            #
-            # The review asked for a second ("twice is enough") pass. Measured
-            # on three cases chosen to break it -- a spectrum spanning 1e-6 to
-            # 1e6 over 200 steps, a run taken to 250 of 300 dimensions, and
-            # tenfold repeated eigenvalues -- the second pass moves
-            # ``max |Q Q^T - I|`` from 1.3e-15 to between 1.1e-15 and 1.8e-15.
-            # That is no change, and it doubles the cost of the step that
-            # dominates a Lanczos run. Not done, on the measurement.
+            # makes a single sweep enough here. A second ("twice is enough")
+            # pass leaves the basis orthogonal to the same ~1e-15 even on
+            # spectra chosen to break a single pass, and would double the
+            # cost of the step that dominates a Lanczos run.
             for q in basis:
                 w = space.axpy(-space.inner_product(w, q), q, w)
 
@@ -356,17 +353,13 @@ def apply_operator_function(
     and only one of them is cheap: recombining at every step to compare costs
     ``O(k^2)`` vector operations over the run and makes the convergence test
     more expensive than the iteration it is testing. The basis is combined
-    once, at the end. That is v1's arrangement.
+    once, at the end.
 
     **The defaults are adaptive.** The cap is the dimension of the space,
     where Lanczos terminates exactly, so by default the tolerance decides
-    when to stop and the cap never truncates. It used to be 50, which the
-    tolerance never met on any operator measured: every call spent all 50
-    applications, where a well-conditioned operator needed 11, and a badly
-    conditioned one stopped, silently, at a relative error between 1e-3
-    and 1e-1 (DECISIONS.md D-49). A cap the caller
-    sets still truncates without complaint: it is a quadrature degree, and
-    stochastic Lanczos quadrature relies on that.
+    when to stop and the cap never truncates. A cap the caller sets still
+    truncates without complaint: it is a quadrature degree, and stochastic
+    Lanczos quadrature relies on that.
 
     Args:
         operator: a self-adjoint ``A``.
@@ -376,9 +369,8 @@ def apply_operator_function(
             dimension if omitted.
         rtol: relative change in the coefficients to stop at. Tighter than
             the solvers' ``1e-8`` because the change between two Krylov
-            dimensions under-reports the distance to the answer: ``1e-8``
-            here was measured at ``1e-6`` in the result, ``1e-10`` at
-            ``1e-10``.
+            dimensions under-reports the distance to the answer, by about two
+            orders of magnitude at ``1e-8``.
         reorthogonalize: keep the Krylov basis orthogonal.
 
     Returns:
@@ -418,32 +410,17 @@ def apply_operator_function(
 
 
 # Below this order the dense symmetric solver beats the tridiagonal one, whose
-# cost at these sizes is Python argument validation rather than arithmetic.
-# Measured, microseconds per call, one BLAS thread:
+# cost at these sizes is Python argument validation rather than arithmetic; the
+# crossover is between 20 and 40 on one BLAS thread, and a Lanczos run that
+# stops on its own rarely reaches 20. The two agree to rounding, and both uses
+# here -- ``V f(L) V^T e_1`` and ``V[0]^2`` -- are invariant under the
+# eigenvector sign conventions the two drivers may differ on.
 #
-#     k             3     5    10    20    40
-#     eigh_tridiagonal   7.6   8.4  12.5  26.2  65.9
-#     np.linalg.eigh     3.5   4.5   8.6  22.7  80.4
-#
-# and a Lanczos run that stops on its own rarely reaches 20. The two agree to
-# rounding, and both uses here -- ``V f(L) V^T e_1`` and ``V[0]^2`` -- are
-# invariant under the eigenvector sign conventions the two drivers may differ
-# on.
-#
-# The alternative the review proposed -- check every k steps rather than every
-# step -- was prototyped and is a *regression*, so it is not done. Skipping a
-# check never saves an operator application: the application for a step has
-# already happened by the time the step is yielded, so a coarser check can
-# only make the iteration run further before it notices it has converged.
-# Measured over 200 probes, ``log`` at ``rtol=1e-3``, one BLAS thread:
-#
-#     check every        1        2        3
-#     dim 300      0.037 s  0.038 s  0.041 s   (1399 / 1606 / 1809 steps)
-#     dim 2000     1.06 s   1.23 s   1.37 s    (1400 / 1600 / 1800 steps)
-#
-# It loses even where the operator is cheapest, and loses badly where it is
-# dear -- which is the case stochastic Lanczos quadrature exists for. Making
-# the check cheaper is the version of the idea that works.
+# The convergence test runs every step, and should: checking only every k
+# steps never saves an operator application, since the application for a step
+# has already happened by the time the step is yielded, so a coarser check
+# only makes the iteration run further before it notices it has converged.
+# Making the check cheaper is what pays.
 _DENSE_EIGH_LIMIT = 32
 
 
@@ -451,9 +428,8 @@ def _eigh_tridiagonal(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Eigendecompose a small symmetric tridiagonal matrix.
 
     Called once per Lanczos step by the two convergence tests, so its
-    per-call overhead is the convergence check's whole cost: measured at 27 %
-    of a stochastic log-determinant on a 300-dimensional operator, where the
-    operator itself is cheap.
+    per-call overhead is the convergence check's whole cost, which matters
+    when the operator itself is cheap.
 
     Args:
         matrix: the tridiagonal matrix, dense.
@@ -488,10 +464,9 @@ def operator_quadratic_form(
     Lanczos quadrature, which is how a log-determinant gets estimated without
     a factorization.
 
-    Stops when the quadrature settles, as v1 did. It used to run every one of
-    ``max_iterations`` however early the value converged, which for the outer
-    stochastic estimator -- many probes, each its own Lanczos run -- is the
-    cost that matters.
+    Stops when the quadrature value settles, rather than running every one
+    of ``max_iterations``: for the outer stochastic estimator -- many probes,
+    each its own Lanczos run -- that is the cost that matters.
 
     Args:
         operator: a self-adjoint ``A``.
@@ -614,17 +589,13 @@ def operator_function(
     else gets a lazily-applied :class:`OperatorFunction`.
 
     **Self-adjointness is required on both routes**, so that one request gets
-    one answer: it always was on the Lanczos route, and the diagonal one used
-    to skip the check.
-
-    The requirement belongs to *this* function rather than to the calculus.
-    The Lanczos route needs it outright -- a three-term recurrence in the
-    space's own inner product computes ``f(A)`` only for self-adjoint ``A`` --
-    and the named helpers below attach traits to the result, ``operator_sqrt``
-    claiming ``POSITIVE_SEMIDEFINITE`` of what it returns, which is true only
-    of the self-adjoint case. An operator diagonal *in components* is
-    self-adjoint only where its values commute with the metric, which on a
-    non-diagonal Gram matrix they do not.
+    one answer whichever route it takes. The Lanczos route needs it outright
+    -- a three-term recurrence in the space's own inner product computes
+    ``f(A)`` only for self-adjoint ``A`` -- and the named helpers below attach
+    traits to the result, ``operator_sqrt`` claiming ``POSITIVE_SEMIDEFINITE``
+    of what it returns, which is true only of the self-adjoint case. An
+    operator diagonal *in components* is self-adjoint only where its values
+    commute with the metric, which on a non-diagonal Gram matrix they do not.
 
     Where the metric is not diagonal and the exact answer is still wanted,
     :class:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator` carries its
@@ -767,14 +738,8 @@ def log_determinant(
             factorize a ``dim x dim`` matrix. It is a **memory and
             factorization** budget, not a statement about applications:
             ``dim**2`` doubles is 128 MB at 4000 and the ``slogdet`` is
-            ``O(dim**3)``, measured at 0.8 s on one thread. The default was
-            512, which sent a 960-dimensional evidence to a stochastic
-            estimate of +/-30 nats in 4.8 s where the dense route was exact
-            in 2.8 s; measured against the stochastic route on a
-            well-conditioned operator, the dense one is 4.2x faster at 2000
-            and 3.6x at 3000, and exact at both. It is 4000 rather than 4096
-            deliberately: this BLAS is pathological at that power of two,
-            2.0 s against 0.8 s at 4000.
+            ``O(dim**3)``. Below it the dense route is exact, and on a
+            well-conditioned operator also faster than the stochastic one.
 
             Whether the *probe* is affordable is decided separately, since a
             matrix that must be probed costs ``dim`` applications: above
@@ -799,7 +764,8 @@ def log_determinant(
 
     Raises:
         ValueError: if the operator is not a positive definite endomorphism,
-            or the method is unknown. A determinant needs the first and a
+            if the method is unknown, or if the dense route finds the matrix
+            singular or indefinite. A determinant needs an endomorphism and a
             *logarithm* of one needs the definiteness.
     """
     from ..algebra.diagonal import DiagonalLinearOperator
@@ -821,8 +787,7 @@ def log_determinant(
         # on a symmetric space has a diagonal covariance — and because the
         # alternatives are both bad here: the dense route spends ``dim``
         # applications assembling a matrix that is already known, and above
-        # dense_limit the stochastic one estimates a number that can be summed
-        # (measured: 455.4 +/- 2.8 against an exact 456.7 at dimension 1000).
+        # dense_limit the stochastic one estimates a number that can be summed.
         return Estimate(operator.log_determinant, 0.0, 0)
 
     matrix: np.ndarray | None = None
@@ -853,13 +818,12 @@ def log_determinant(
                 "log determinant. It was claimed POSITIVE_DEFINITE; verify that "
                 "with testing.check_traits()."
             )
-        # ``log det I == 0``. Worth the branch: at dimension 3000 the
-        # factorization of the identity cost 0.37 s, as much as the operator's
-        # own, and doubled the memory.
+        # ``log det I == 0``: the branch saves a factorization as large as the
+        # operator's own.
         metric = 0.0
         if space.has_diagonal_metric:
-            # A diagonal metric's determinant is the product of its diagonal;
-            # the dense route took an O(dim^3) slogdet of a diagonal matrix.
+            # A diagonal metric's determinant is the product of its diagonal,
+            # with no O(dim^3) slogdet of a diagonal matrix.
             metric = float(np.sum(np.log(space.gram_diagonal())))
         elif not space.is_orthonormal:
             _, metric = np.linalg.slogdet(space.gram_matrix())

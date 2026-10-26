@@ -44,13 +44,12 @@ problem = LinearForwardProblem(forward, error=noise)
 prior = X.heat_measure(0.03, pointwise_std=0.05)
 truth, data = problem.synthetic_model_and_data(prior, rng=rng)
 
-# Cholesky, deliberately, and this is the only place in the examples where a
-# direct solver is the right default rather than an exception. Sampling by
-# randomize-then-optimize costs *one solve per draw* — a prior sample, a noise
-# sample, and one application of the Kalman gain — so the few thousand draws
-# below are a few thousand solves. That is section 27.5's criterion, not the
-# problem's size: apply an inverse once and iterate, apply it thousands of
-# times and factorize.
+# Cholesky, deliberately. Sampling by randomize-then-optimize costs *one solve
+# per draw* — a prior sample, a noise sample, and one application of the
+# Kalman gain — so the few thousand draws below are a few thousand solves.
+# The choice follows how often the inverse is applied, not the problem's
+# size: apply an inverse once and iterate, apply it thousands of times and
+# factorize.
 estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
 print(f"model space {X.dim}, data space {problem.data_space.dim}")
 
@@ -115,7 +114,7 @@ print("  wider of the two, and sharing one would make the posterior a spike")
 #
 # It is pushed forward from the *model* posterior rather than from the property
 # one, because that is the measure that can be sampled: the model posterior
-# carries a randomize-then-optimize sampler (DECISIONS.md D-73), while the
+# carries a randomize-then-optimize sampler, while the
 # property posterior is a covariance with no factor and so cannot be drawn
 # from. A push-forward can be sampled exactly when what it pushes can.
 summary = EuclideanSpace(2)

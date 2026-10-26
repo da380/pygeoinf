@@ -9,13 +9,12 @@ operator is the identity, so there is one code path.
 
     problem = LinearForwardProblem(A, error=noise)
 
-    point = MinimumNorm(problem)                    # D -> M
-    post  = LinearGaussianInversion(problem, prior)                # D -> Measure(M)
+    point = MinimumNorm(problem)                       # D -> M
+    post = LinearGaussianInversion(problem, prior)     # D -> Measure(M)
+    feasible = BackusGilbertParker(problem, T, ball)   # D -> Subset(P)
 
     measure = post(data)
-    property_posterior = post.push_forward(T)(data)  # D -> Measure(P)
-
-See DECISIONS.md D-71 to D-82.
+    property_posterior = post.push_forward(T)(data)    # D -> Measure(P)
 """
 
 from .laplace import LaplaceResult, MaximumAPosteriori

@@ -18,9 +18,9 @@ given layer by layer.
 
 **It is the direct sum, and compares equal to it.** A block operator or a
 product measure lands on a plain ``DirectSum`` of the layers, which cannot
-know what its user built; identity is the summands alone (as a direct sum's
-already is, for the same reason: DECISIONS.md D-23), so those land on this
-space (D-126).
+know what its user built. Equality and hashing depend on the summands alone,
+as they do for any direct sum, so a ``Layered`` space and the plain direct
+sum of its layers are the same space, and those results apply here.
 
 **A point on an interface belongs to two layers**, and the field has two
 values there. Evaluation at such a point is refused unless ``side="below"`` or
@@ -162,8 +162,8 @@ class Layered(_CoordinateDirectSum, HilbertModule):
             )
             for i in range(count)
         ]
-        # As the subclass its order names, Lebesgue or Sobolev (DECISIONS.md
-        # D-3), which is also what `with_order` gives: the basis is shared.
+        # As the subclass its order names, Lebesgue or Sobolev, which is what
+        # `with_order` gives; the basis is shared, not recomputed.
         return cls([layer.with_order(layer.order) for layer in layers], labels=labels)
 
     @classmethod
@@ -190,6 +190,10 @@ class Layered(_CoordinateDirectSum, HilbertModule):
 
         Returns:
             The layered space.
+
+        Raises:
+            ValueError: for fewer than two breakpoints, or a list of the wrong
+                length.
         """
         return cls._built(
             Interval, breakpoints, modes, ("lower", "upper"), labels, options
@@ -218,6 +222,10 @@ class Layered(_CoordinateDirectSum, HilbertModule):
 
         Returns:
             The layered space.
+
+        Raises:
+            ValueError: for fewer than two boundaries, or a list of the wrong
+                length.
         """
         return cls._built(
             Radial, boundaries, modes, ("inner_radius", "radius"), labels, options
@@ -246,6 +254,10 @@ class Layered(_CoordinateDirectSum, HilbertModule):
 
         Returns:
             The layered space.
+
+        Raises:
+            ValueError: for fewer than two boundaries, or a list of the wrong
+                length.
         """
         return cls._built(
             Ball, boundaries, lmax, ("inner_radius", "radius"), labels, options
@@ -318,7 +330,7 @@ class Layered(_CoordinateDirectSum, HilbertModule):
             order: one order for every layer, or a list of them.
 
         Returns:
-            The layered space of the layers ``with_order``.
+            The layered space of the layers, each with its new order.
         """
         orders = _per_layer(order, len(self), "order")
         return Layered(
@@ -362,8 +374,8 @@ class Layered(_CoordinateDirectSum, HilbertModule):
 
         Raises:
             ValueError: if the point is in no layer -- outside the medium or
-                in a gap -- or on an interface with no side named, or the
-                side is neither.
+                in a gap -- or on an interface with no side named, or *side*
+                is not ``"below"``, ``"above"`` or ``None``.
         """
         if side not in (None, "below", "above"):
             raise ValueError("side must be 'below', 'above' or None.")

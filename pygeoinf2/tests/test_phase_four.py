@@ -1029,7 +1029,7 @@ class TestQuadraticForms:
 
 
 class TestHardening:
-    """Turning a measure into a set, which is never canonical (§18.1)."""
+    """Turning a measure into a set, which is never canonical."""
 
     @pytest.fixture
     def measures(self, rng):

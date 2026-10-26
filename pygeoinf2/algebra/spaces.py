@@ -3,10 +3,10 @@ Hilbert spaces, coordinate-free at the core.
 
 The base class knows only about vectors and an inner product. Everything to do
 with components, basis vectors and matrices lives in ``CoordinateSpace``, which
-is an optional capability: a space backed by PETSc or MFEM implements
-``HilbertSpace`` alone and remains usable by every coordinate-free algorithm.
-
-See DECISIONS.md D-14 to D-24.
+is an optional capability: a space backed by a solver library such as MFEM or
+PETSc can implement ``HilbertSpace`` alone and remain usable by every
+coordinate-free algorithm. Pointwise multiplication is a second, independent
+capability, :class:`HilbertModule`.
 """
 
 from __future__ import annotations
@@ -93,15 +93,36 @@ class HilbertSpace[V](ABC):
         vector between them is a no-op rather than a round trip through
         components, which on a spectral space is two transforms.
 
-        Conservative by default: a space itself, and any space *equal* to it.
-        Equality is structural (:meth:`_key`), so an equal space holds the
-        same vectors with the same inner product; testing identity alone made
-        ``from_formal_adjoint`` refuse a good lift whenever the caller had
-        minted a second ``EuclideanSpace(n)`` -- which the library itself
-        does, in ``from_vectors`` and ``coordinate_projection``. A family that
-        knows better says so.
+        Conservative by default: true for the space itself and for any space
+        *equal* to it. Equality is structural (:meth:`_key`), so an equal
+        space holds the same vectors with the same inner product, even when
+        it is a separately constructed object. A family of spaces that knows
+        more overrides this.
         """
         return self is other or self == other
+
+    @property
+    def is_function_space(self) -> bool:
+        """True when this space discretises a space of functions.
+
+        The marker that separates a discretisation -- a symmetric space, a
+        ``sem1d`` space, a finite element space -- from a space that is
+        intrinsically finite, such as a data or property space. On a
+        discretisation, a probability density with respect to the space's own
+        volume measure is an artefact: its value depends on the truncation
+        and vanishes in the limit. The density-family methods of the measures
+        (``log_density``, ``mahalanobis_squared`` and the like) therefore
+        refuse on such a space unless passed ``unsafe=True``, as point
+        evaluation refuses below the Sobolev order that admits it. A density
+        relative to a reference measure, as held by
+        :class:`~pygeoinf2.probability.AbsolutelyContinuousMeasure`, does not
+        depend on the truncation and is the quantity to use instead.
+
+        ``False`` here; a space that discretises functions overrides it, a
+        direct sum carries it if any summand does, and a mass-weighted space
+        takes its base's.
+        """
+        return False
 
     @abstractmethod
     def zero(self) -> V:
@@ -369,8 +390,8 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         be wrong for a non-symmetric factor.
 
         The default forms the Gram matrix densely and factorizes it once,
-        caching the factor. Subclasses with a cheaper factor override this;
-        both shipped ones do.
+        caching the factor. Subclasses with a cheaper factor override this,
+        as :class:`DiagonalMetricSpace` and :class:`OrthonormalSpace` do.
         """
         xi = _resolve_rng(rng).standard_normal(self.dim)
         return solve_triangular(self._gram_cholesky.T, xi, lower=False)
@@ -383,26 +404,6 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     @property
     def is_orthonormal(self) -> bool:
         """True when the basis is orthonormal, so that ``G`` is the identity."""
-        return False
-
-    @property
-    def is_function_space(self) -> bool:
-        """True when this space discretises a space of functions (D-131).
-
-        The marker that separates a discretisation -- a symmetric space, a
-        ``sem1d`` space, a finite element space -- from a space that is
-        intrinsically finite, such as a data or property space. On a
-        discretisation, a probability density with respect to the space's own
-        volume measure is an artefact: its value depends on the truncation
-        and vanishes in the limit, so the density-family methods refuse there
-        unless told ``unsafe=True``, exactly as point evaluation refuses
-        below the Sobolev order that admits it (D-11). Densities relative to
-        a *reference measure* are the dimension-robust replacement, and they
-        are what the sampling layer is built on.
-
-        ``False`` here; a space that discretises functions overrides it, and
-        a direct sum carries it if any summand does.
-        """
         return False
 
     @property
@@ -440,9 +441,8 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     def squared_norm(self, x: V) -> float:
         """``c_x . G c_x``, converting ``x`` once rather than twice.
 
-        The base class takes ``inner_product(x, x)``, which on a spectral
-        space is two analyses of the same field; a Krylov loop takes a norm
-        every iteration.
+        ``inner_product(x, x)`` would convert the same vector twice, which on
+        a spectral space is two transforms.
         """
         if not self.uses_component_fast_paths:
             return self.inner_product(x, x)
@@ -453,18 +453,15 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     #                Arithmetic on component arrays (fast paths)         #
     # ----------------------------------------------------------------- #
     #
-    # Coordinate-free when it must be, and not otherwise. An inner product on
-    # a spectral space transforms *both* of its arguments, so any routine that
-    # takes O(k^2) inner products of k fixed vectors -- Gram-Schmidt, Lanczos
-    # reorthogonalization, a low-rank factor's adjoint -- pays O(k^2)
-    # transforms for arithmetic that needs k. Measured on a sphere at lmax 64:
-    # orthonormalizing 50 fields cost 2650 analyses and 1.9 s through
-    # ``inner_product``, and 100 transforms and 0.1 s on component arrays;
-    # a 30-step Lanczos run 1047 analyses against 152. The methods below do
-    # that arithmetic on ``(dim, k)`` arrays, converting once each way, with
-    # the metric entering only through ``apply_gram`` -- which is what keeps
-    # them right on a non-diagonal Gram matrix. The ``HilbertSpace`` versions
-    # remain the fallback for spaces with no component map.
+    # An inner product on a spectral space transforms both of its arguments,
+    # so a routine taking O(k^2) inner products of k fixed vectors --
+    # Gram-Schmidt, Lanczos reorthogonalization, a low-rank factor's adjoint
+    # -- would pay O(k^2) transforms for arithmetic that needs k. The methods
+    # below do that arithmetic on ``(dim, k)`` component arrays, converting
+    # once each way, with the metric entering only through ``apply_gram`` so
+    # that they stay correct on a non-diagonal Gram matrix. The
+    # ``HilbertSpace`` versions remain the fallback for spaces with no
+    # component map.
 
     @property
     def uses_component_fast_paths(self) -> bool:
@@ -698,9 +695,8 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
 
         The components are drawn from ``N(0, G^-1)``, which is what makes the
         covariance the identity *in the space's own inner product* rather than
-        in the component basis. Drawing standard normal components instead
-        gives covariance ``G``, which is the mistake this method exists to
-        avoid; see DECISIONS.md D-19.
+        in the component basis. Standard normal components would instead give
+        covariance ``G``; that is :meth:`random`.
         """
         return self.from_components(self.white_noise_components(rng=rng))
 
@@ -729,9 +725,9 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     def coordinate_inclusion(self) -> "LinearOperator[np.ndarray, V]":
         """The map from components into this space, as an operator.
 
-        ``c -> from_components(c)``. Its adjoint is ``G c_x``, the *derivative*
-        components — not the components themselves, which is the distinction of
-        DECISIONS.md D-26 in its smallest possible setting.
+        ``c -> from_components(c)``. Its adjoint is ``x -> G c_x``, the
+        *derivative* components of ``x`` -- not its components, which differ
+        from them by the metric.
         """
         from .operators import LinearOperator
 
@@ -746,11 +742,11 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     def coordinate_selection(self, indices: Any, /) -> "LinearOperator[V, np.ndarray]":
         """``x -> c_x[indices]``, some coordinates into a Euclidean space.
 
-        v1's ``EuclideanSpace.subspace_projection``, on any coordinate space:
-        the forward map costs the selection and nothing else, and the adjoint
+        The forward map costs the selection and nothing else. The adjoint
         scatters into a zero array and applies the representer, so it carries
-        the metric and is right on a weighted space. The action on components
-        is exposed, so a product through this stays fused.
+        the metric and is correct on a weighted space. The action on component
+        arrays is attached as well, so a composition with this operator can
+        act on components without converting through vectors.
 
         Args:
             indices: the positions to select, in the order they come out.
@@ -788,10 +784,11 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     def representer(self, derivative_components: np.ndarray) -> V:
         """The Riesz representer of the functional with the given derivative.
 
-        Given ``g`` such that the functional acts as ``x -> g . c_x`` — which is
-        what a numerical adjoint method returns — this applies ``G^-1`` to give
-        the vector ``v`` with ``(v, x) == g . c_x`` for all ``x``. Skipping that
-        step is the classic adjoint-method error; see DECISIONS.md D-26.
+        Given ``g`` such that the functional acts as ``x -> g . c_x`` -- which is
+        what a numerical adjoint method returns -- this applies ``G^-1`` to give
+        the vector ``v`` with ``(v, x) == g . c_x`` for all ``x``. Using ``g``
+        itself as the gradient, skipping that step, is the classic
+        adjoint-method error.
         """
         return self.from_components(self.solve_gram(np.asarray(derivative_components)))
 
@@ -817,7 +814,7 @@ class HilbertModule[V](HilbertSpace[V], ABC):
     what anything reading its components does implicitly. The aliasing that
     projection would introduce is inherent rather than a defect, but it means
     the truncation has to be chosen with the products in mind and not just the
-    fields. See DECISIONS.md D-87.
+    fields.
     """
 
     @abstractmethod
@@ -868,8 +865,7 @@ def require_module(*spaces: HilbertSpace) -> None:
 class MassWeightedSpace[V](HilbertSpace[V]):
     """``(x, y)_V == (M x, y)_base``, for a positive definite mass operator.
 
-    The construction DECISIONS.md D-85 sets against the Gram matrix, and
-    the distinction is worth restating because they are easy to confuse:
+    A mass operator is not a Gram matrix, and the two are easy to confuse:
 
     =========================  =========================================
     ``CoordinateSpace`` Gram   the inner product against the *components*
@@ -883,10 +879,6 @@ class MassWeightedSpace[V](HilbertSpace[V]):
     coordinates so does this, and the two compose: the Gram matrix here is the
     base's times the mass operator's.
 
-    Chaining these is how the concrete spaces are built. v1's are exactly such
-    a chain: component-Euclidean, then L2 with a diagonal Gram, then Sobolev
-    through an invariant mass operator on L2.
-
     The point of having it is :meth:`LinearOperator.from_formal_adjoint`: it is
     usually far easier to write down an operator's adjoint with respect to the
     *base* inner product than the weighted one, and the lift is exact.
@@ -899,10 +891,9 @@ class MassWeightedSpace[V](HilbertSpace[V]):
         map gets the plain class. Over a coordinate base the weighted space
         is a coordinate space too, its Gram map the base's composed with the
         mass operator, so every coordinate-backed routine -- direct solvers,
-        ``matrix()``, the dense fallbacks -- accepts it, as v1's did by
-        delegation. Over a module it keeps pointwise ``multiply`` and
-        ``sqrt``, v1's ``MassWeightedHilbertModule``. A subclass is left as
-        written.
+        ``matrix()``, the dense fallbacks -- accepts it. Over a module it keeps
+        pointwise ``multiply`` and ``sqrt``. A subclass is constructed as
+        itself, whatever its base.
         """
         if cls is MassWeightedSpace and args:
             base = args[0]
@@ -933,11 +924,8 @@ class MassWeightedSpace[V](HilbertSpace[V]):
             mass_solver: how to apply ``M^-1``, which the lifted adjoint needs.
                 A :class:`~pygeoinf2.numerics.solvers.LinearSolver`, or an
                 operator that *is* the inverse. Defaults to conjugate
-                gradients, and is free when the mass operator is diagonal.
-
-                v1 makes the caller supply ``inverse_mass_operator`` outright;
-                deriving it is one fewer thing to get wrong, and it makes the
-                construction usable when the inverse has no closed form.
+                gradients, and is exact and free when the mass operator is a
+                :class:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator`.
 
         Raises:
             ValueError: if the mass operator is not an endomorphism of *base*,
@@ -981,9 +969,8 @@ class MassWeightedSpace[V](HilbertSpace[V]):
 
         solver = self._mass_solver
         if solver is None and isinstance(self._mass, DiagonalLinearOperator):
-            # Free when the mass operator is diagonal, as promised: its
-            # inverse is the reciprocal spectrum, and a conjugate-gradient
-            # solve per application was what this used to cost instead.
+            # Free when the mass operator is diagonal: its inverse is the
+            # reciprocal spectrum, with no solve.
             return self._mass.inverse
         if solver is None:
             solver = CGSolver()
@@ -995,6 +982,11 @@ class MassWeightedSpace[V](HilbertSpace[V]):
     def dim(self) -> int:
         """The base's dimension: reweighting does not change the vectors."""
         return self._base.dim
+
+    @property
+    def is_function_space(self) -> bool:
+        """The base's: reweighting the metric changes no vectors."""
+        return self._base.is_function_space
 
     def _key(self) -> Hashable:
         # The mass operator itself, not ``id`` of it: the two give the same
@@ -1093,11 +1085,6 @@ class _CoordinateMassWeightedSpace[V](MassWeightedSpace[V], CoordinateSpace[V]):
             self._mass, DiagonalLinearOperator
         )
 
-    @property
-    def is_function_space(self) -> bool:
-        """The base's: reweighting the metric changes no vectors (D-131)."""
-        return self._base.is_function_space
-
     def gram_diagonal(self) -> np.ndarray:
         """The base's diagonal times the mass operator's, where both are diagonal."""
         if self.has_diagonal_metric:
@@ -1124,7 +1111,8 @@ class _MassWeightedModule[V](MassWeightedSpace[V], HilbertModule[V]):
 class _CoordinateMassWeightedModule[V](
     _CoordinateMassWeightedSpace[V], _MassWeightedModule[V]
 ):
-    """Both: v1's ``MassWeightedHilbertModule`` over a coordinate base."""
+    """A mass-weighted space over a base that is both a coordinate space and a
+    module, keeping both structures."""
 
 
 class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
@@ -1192,11 +1180,9 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
     def gram_matrix(self) -> np.ndarray:
         """``diag(metric_values)``, written down rather than probed.
 
-        The base class forms its Gram matrix by ``dim`` applications of
-        :meth:`apply_gram` to basis vectors, which for a diagonal metric is
-        ``dim^2`` multiplications to learn ``dim`` numbers it already holds.
-        The array returned is still dense, that being the contract, and a
-        caller that wants only the diagonal has :meth:`gram_diagonal`.
+        The array returned is dense, that being the contract of
+        :meth:`CoordinateSpace.gram_matrix`; a caller that wants only the
+        diagonal has :meth:`gram_diagonal`.
         """
         return np.diag(self._metric_values)
 
@@ -1228,9 +1214,9 @@ class ComponentView(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
 
     This is what the iterative solvers run on when the operator's space has
     coordinates: the right-hand side is converted in once, the solution out
-    once, and the Krylov loop's inner products, norms and updates -- which on
-    a sphere were seven transforms per iteration against the operator's two
-    -- are array arithmetic. See :class:`~pygeoinf2.numerics.solvers.IterativeSolver`.
+    once, and the Krylov loop's inner products, norms and updates are array
+    arithmetic rather than transforms. See
+    :class:`~pygeoinf2.numerics.solvers.IterativeSolver`.
     """
 
     def __init__(self, space: CoordinateSpace) -> None:

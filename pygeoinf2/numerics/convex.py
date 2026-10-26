@@ -15,13 +15,18 @@ discretization happened to supply.
 
 What is *not* coordinate-free is the small dense subproblem a bundle method
 solves over its cut coefficients. That lives in ``R^k`` for a handful of cuts
-and is canonically Euclidean, so a SciPy-backed quadratic program behind a
-protocol is the right shape there — coordinates are not a constraint when the
-space is genuinely finite-dimensional and has no metric of its own.
+and is canonically Euclidean, so a quadratic-programming backend behind a
+protocol (:mod:`pygeoinf2.numerics.quadratic_programming`) is the right shape
+there -- coordinates are not a constraint when the space is genuinely
+finite-dimensional and has no metric of its own.
 
-Ported from v1's ``convex_optimization`` and ``convex_analysis``, both of which
-are free of any dependence on the inversion layer. The KKT, Chambolle-Pock and
-support-value machinery is entangled with it and is deliberately left behind.
+The module holds the standard convex functionals and support functions; the
+non-smooth methods :class:`SubgradientDescent`, :class:`ProximalGradient` and
+:class:`ProximalPoint`; the two bundle methods; and three solvers for the
+maximum of a linear functional over a prior set intersected with a data
+constraint (:class:`ChambollePockSolver`, :class:`PrimalKKTSolver`,
+:class:`LevelKKTSolver`), which the Backus-Gilbert-Parker estimator in
+:mod:`pygeoinf2.inference.backus` uses.
 """
 
 from __future__ import annotations
@@ -239,10 +244,11 @@ class SupportFunction(Functional):
     and without the identification every duality argument would carry a
     transport map with it.
 
-    Only the constructions with no dependence on the inversion layer are
-    brought across: a ball, a point, a Minkowski sum, a linear image and a
-    positive scaling. The algebra is closed, which is the point of having the
-    class at all.
+    The constructions are a ball, a point, a half-space, a hyperplane and an
+    oracle; a sum of support functions is the support function of the
+    Minkowski sum, a positive multiple that of the scaled set, and
+    :meth:`compose_with` gives that of a linear image. The algebra is closed,
+    which is the point of having the class at all.
     """
 
     def __init__(self, domain: HilbertSpace, /) -> None:
@@ -301,8 +307,8 @@ class SupportFunction(Functional):
     ) -> SupportFunction:
         """A support function given by a callable, with its maximizer if known.
 
-        v1's ``CallableSupportFunction``. The value alone gives a functional
-        that can be evaluated and added and scaled like any other; the
+        The value alone gives a functional that can be evaluated and added and
+        scaled like any other; the
         maximizer, ``q -> argmax (q, x)`` over the set, is what makes it a
         *subgradient*-carrying functional, which is what a bundle method
         needs of it. Without one, :attr:`has_subgradient` is false and
@@ -488,8 +494,8 @@ class _HalfSpaceSupport(SupportFunction):
 
     The maximizer, when the value is finite, is not unique -- every point of
     the boundary plane attains it. The one returned is the plane's point of
-    least norm, ``(b / (a, a)) a``, as v1 chose; any other would serve a
-    subgradient method equally, and this one is the canonical choice.
+    least norm, ``(b / (a, a)) a``; any other would serve a subgradient
+    method equally, and this one is the canonical choice.
     """
 
     def __init__(
@@ -615,16 +621,17 @@ class _ImageSupport(SupportFunction):
 class SubgradientDescent(Optimizer):
     """Subgradient descent with a diminishing step.
 
-    v1's implementation uses a *constant* step and says in its own docstring
-    that convergence is not guaranteed — which is correct, and means it is not
-    a usable method. The step rules here are the ones that do converge:
+    The step rules:
 
-    - ``"sqrt"``: ``a / sqrt(k)``, the classical square-summable-but-not-
-      summable choice, giving ``O(1/sqrt(k))`` on a Lipschitz convex function.
-    - ``"inverse"``: ``a / k``, better when the function is strongly convex.
+    - ``"sqrt"``: ``a / sqrt(k)``, the classical choice for a Lipschitz
+      convex function, giving ``O(1/sqrt(k))`` in the best value.
+    - ``"inverse"``: ``a / k``, square-summable but not summable, and better
+      when the function is strongly convex.
     - ``"polyak"``: ``(f(x) - f*) / ||g||^2`` when a target value ``f*`` is
       known, which is much faster and is available whenever the optimum is
-      known to be zero — as it is for a feasibility problem.
+      known to be zero -- as it is for a feasibility problem.
+    - ``"constant"``: ``a`` at every step. Not convergent in general; it
+      reaches a neighborhood of the minimum whose size grows with ``a``.
 
     Subgradient methods are not descent methods: the value need not decrease.
     The best point seen is tracked and returned, which is what the theory
@@ -643,7 +650,7 @@ class SubgradientDescent(Optimizer):
         """
         Args:
             step_size: the scale ``a`` in the step rule.
-            rule: which diminishing rule to use.
+            rule: which step rule to use, as listed above.
             target_value: the known optimal value, required by ``"polyak"``.
             **kwargs: passed to :class:`~pygeoinf2.numerics.optimization.Optimizer`.
         """
@@ -714,9 +721,8 @@ class SubgradientDescent(Optimizer):
                     history,
                 )
 
-            # The value at x was evaluated at the end of the last iteration;
-            # evaluating it again here doubled the cost of every step for a
-            # number only the Polyak rule reads.
+            # The value at x was evaluated at the end of the last iteration
+            # and is reused here; only the Polyak rule reads it.
             step = self._step(iteration, value, norm)
             x = space.axpy(-step, subgradient, x)
 
@@ -1021,9 +1027,7 @@ class BundleResult:
 
     The field names are
     :class:`~pygeoinf2.numerics.optimization.OptimizationResult`'s, so a caller
-    can read either without looking up which it has. ``value`` used to be
-    ``minimum``, which said the same thing in a different word and made the two
-    gratuitously incompatible.
+    can read either without looking up which it has.
     """
 
     value: float
@@ -1052,8 +1056,8 @@ class BundleResult:
     bound ``f(center) - f*``; this one includes the proximal term, so it is
     the decrease predicted under that regularization and is generally smaller.
     It behaves like a bound and is the right thing to stop on, but it is not
-    certified. A certified global bound is what the level bundle method's LP
-    gives, and that is D-13.
+    certified. :class:`LevelBundleMethod` gives a certified bound, as
+    :attr:`lower_bound`, and its gap is ``value - lower_bound``.
     """
 
     lower_bound: float = -np.inf
@@ -1061,7 +1065,7 @@ class BundleResult:
 
     The level method's LP bound, so that ``value - lower_bound`` is its
     ``gap``; the proximal method has no certified bound and leaves this at
-    minus infinity. v1 reported it as ``f_low``.
+    minus infinity.
     """
 
     serious_steps: int = 0
@@ -1086,8 +1090,8 @@ class ProximalBundleMethod:
     That is what makes it the right method for a support function: subgradient
     descent needs a step-size schedule chosen in advance and converges at
     ``1/sqrt(k)``, while here the model's own gap gives a stopping criterion
-    that means something -- see :attr:`BundleResult.gap` for exactly how much,
-    which is less than "a genuine bound" as this used to say.
+    that means something -- see :attr:`BundleResult.gap` for exactly what it
+    does and does not bound.
     """
 
     def __init__(
@@ -1104,7 +1108,8 @@ class ProximalBundleMethod:
         """
         Args:
             weight: the proximal weight. Larger keeps steps shorter.
-            tolerance: stop when the model's gap falls below this.
+            tolerance: stop when the model's gap falls below this times
+                ``max(|f|, 1)``, with ``f`` the best value so far.
             max_iterations: the cap.
             capacity: how many cuts to keep; the oldest are dropped.
             descent: the fraction of the predicted decrease a step must
@@ -1114,13 +1119,11 @@ class ProximalBundleMethod:
                 either is installed and otherwise the accelerated projected
                 gradient built in; ``"builtin"`` asks for the latter outright;
                 a :class:`~pygeoinf2.numerics.quadratic_programming.QPSolver`
-                is used as given. An exact backend is what v1 had through its
-                master QP and what the gap needs to be trusted to its last
-                digits: measured on a Backus dual (DECISIONS.md D-56), Clarabel is
-                thirty times faster than the projected gradient and a
-                thousand times closer to the primal reference. SciPy's SLSQP
-                is slower and less accurate than the projected gradient
-                there, which is why it is not chosen by default.
+                is used as given. An exact backend is what the gap needs to be
+                trusted to its last digits, and is faster than the projected
+                gradient as well. SciPy's SLSQP is slower and less accurate
+                than the projected gradient here, which is why it is not
+                chosen by default.
         """
         if not 0.0 < descent < 1.0:
             raise ValueError(f"The descent fraction lies in (0, 1), got {descent}.")
@@ -1167,7 +1170,8 @@ class ProximalBundleMethod:
                 subgradient. Defaults to the functional's own.
 
         Returns:
-            The minimum, a minimizer, and the gap that certifies it.
+            The least value found, where it was found, and the model's gap at
+            the last step (a practical bound, not a certified one).
         """
         space = functional.domain
         slope = subgradient or functional.subgradient
@@ -1185,18 +1189,11 @@ class ProximalBundleMethod:
         gap = float("inf")
 
         # The bundle starts with the cut at the starting point; every later
-        # cut is taken at the *candidate*.
-        #
-        # This is the part that was wrong. The subgradient used to be taken at
-        # the center at the top of each iteration, and a null step leaves the
-        # center where it was -- so a null step added a cut identical to one
-        # already in the bundle and learned nothing from the trial point it had
-        # just paid to evaluate. Duplicate cuts also make the model's Gram
-        # matrix exactly singular, and it showed: across the Backus tests the
-        # median condition number was 1e67 and the worst was infinite, which is
-        # why the subproblem could not be solved to any useful tolerance.
-        # Taking the cut where the candidate is, which is what makes a null
-        # step informative, is the textbook arrangement.
+        # cut is taken at the *candidate*, the textbook arrangement. A null
+        # step leaves the center where it was, so a cut taken at the center
+        # would duplicate one already in the bundle, learn nothing from the
+        # trial point just evaluated, and make the model's Gram matrix
+        # exactly singular.
         cuts.append((space.copy(slope(center)), best, space.copy(center)))
         evaluations = 1
 
@@ -1240,8 +1237,8 @@ class ProximalBundleMethod:
 
         A bundle grows by one cut per iteration and drops the oldest when it
         is full, so all but one row and column of this matrix are the same as
-        last time. Rebuilding it cost ``k^2`` inner products per iteration and
-        ``k^3`` over a run, on a space where an inner product is the expensive
+        last time. Rebuilding it would cost ``k^2`` inner products per
+        iteration, on a space where an inner product is the expensive
         operation.
 
         Keyed on the identity of the cuts, so a dropped cut is noticed: the
@@ -1279,12 +1276,12 @@ class ProximalBundleMethod:
         """Minimize the cutting-plane model plus a proximal term.
 
         The dual of that quadratic program is a simplex-constrained least
-        squares in the *number of cuts*, which is small — so it is solved
-        there rather than in the space, whose dimension is the data's.
+        squares in the *number of cuts*, which is small -- so it is solved
+        there rather than in the space, which may be large.
 
         Returns the candidate and the predicted decrease, which is the model's
-        gap: a genuine lower bound on how much is left to gain, and the only
-        stopping criterion here that means anything.
+        gap and the stopping criterion; :attr:`BundleResult.gap` says what it
+        does and does not bound.
         """
         gram = self._gram(space, cuts)
 
@@ -1371,23 +1368,16 @@ def _minimize_on_simplex(
     """Minimize ``w' Q w / 2 - l' w`` over the unit simplex.
 
     Accelerated projected gradient -- FISTA -- with a step from the largest
-    eigenvalue. Handing this to a general nonlinear solver instead cost fifty
-    seconds per bundle minimization, almost all of it in setting up problems
+    eigenvalue. Needs nothing installed, and has no setup cost on problems
     this small.
 
-    **Accelerated, because plain projected gradient was not converging here.**
-    The cuts a bundle accumulates are near-parallel by the end -- that is what
-    it means for the method to be closing in -- so ``Q`` is a Gram matrix of
-    near-dependent vectors and badly conditioned. Measured over 30 random
-    bundles of that shape, at 400 iterations each, the accelerated method
-    leaves a smaller KKT residual on 93 per cent of them, by a median factor
-    of 3300, and by more than tenfold on 93 per cent.
-
-    It is not uniformly better -- momentum is not monotone, and on 2 of the 30
-    it still ends behind. Keeping the best iterate seen rather than the last
-    is what took the median from 557 to 3300 and the tenfold share from 87 per
-    cent to 93, and it costs nothing: the residual is already computed every
-    step for the stopping test.
+    **Accelerated, because plain projected gradient converges too slowly
+    here.** The cuts a bundle accumulates are near-parallel by the end -- that
+    is what it means for the method to be closing in -- so ``Q`` is a Gram
+    matrix of near-dependent vectors and badly conditioned. Momentum is not
+    monotone, so the best iterate seen is returned rather than the last; that
+    costs nothing, the residual being computed every step for the stopping
+    test anyway.
 
     Stopped on the KKT residual rather than on the iterate standing still. The
     two are not the same: a small step means the *method* has slowed, which is
@@ -1397,20 +1387,15 @@ def _minimize_on_simplex(
     ``max_{w_i > 0} g_i - min_i g_i`` is zero there and is the residual used.
 
     Exhausting the iterations warns -- but only when the residual left is big
-    enough to matter, which is what ``warn_above`` is for. It used to return
-    silently, and a bundle method calls this at every step, so a subproblem
-    quietly failing showed up only as an outer method that would not settle.
+    enough to matter, which is what ``warn_above`` is for. A bundle method
+    calls this at every step, so a subproblem quietly failing would show up
+    only as an outer method that would not settle.
 
-    The two thresholds are separate because the residual has a floor that no
-    iteration count removes. A converging bundle's cuts become near-parallel --
-    that is what converging means for it -- so ``Q`` is a Gram matrix of nearly
-    dependent vectors: measured across the Backus tests, the median condition
-    number is 1e23. The residual distribution there is 4.8e-7 at the median and
-    3.5e-3 at the 99th percentile, so a single threshold either warns half the
-    time or never. The accuracy answer for the hard tail is a proper QP
-    backend on the ``k``-variable dual, which :class:`ProximalBundleMethod`
-    now uses by default when one is installed (DECISIONS.md D-56); this is the
-    fallback for when none is.
+    The two thresholds are separate because, with ``Q`` as badly conditioned
+    as a converging bundle makes it, the residual has a floor that no
+    iteration count removes, and a single threshold would either warn half
+    the time or never. :class:`ProximalBundleMethod` uses a QP backend for the
+    subproblem when one is installed; this is the fallback for when none is.
 
     Args:
         quadratic: the ``Q`` above, symmetric positive semidefinite.
@@ -1432,8 +1417,7 @@ def _minimize_on_simplex(
     lookahead = weights.copy()
     momentum = 1.0
     # The best iterate seen. Acceleration is not monotone, so without this it
-    # can end worse than where it passed through -- and measured over 30
-    # random bundles it did end worse than the plain method on 2 of them.
+    # can end worse than where it passed through.
     best, residual = weights.copy(), float("inf")
 
     for _ in range(max_iterations):
@@ -1485,9 +1469,9 @@ class LevelBundleMethod:
     *under*-estimate of a convex function everywhere, so the model
     ``max_j [f_j + (g_j, x - x_j)]`` lies below ``f``, and *its* minimum lies
     below ``f*``. That minimum is a linear program -- minimize ``t`` subject
-    to every cut being at or below it -- and it is solved as one, by the
-    simplex method, which is more reliable on a nearly unbounded LP than
-    handing it to a QP solver.
+    to every cut being at or below it -- and it is solved as one, by SciPy's
+    HiGHS solver, which is more reliable on a nearly unbounded LP than handing
+    it to a QP solver.
 
     Each step then asks for a point that reaches a *level* between the bound
     and the best value, and is as close as possible to the stability center:
@@ -1509,9 +1493,8 @@ class LevelBundleMethod:
     components, so unlike the proximal method -- which works through inner
     products alone -- this one cannot run on a space without a basis. In
     practice the variable is a dual one on the data space, which has one.
-
-    A port of v1's ``LevelBundleMethod``. Its author's view on the API is to be
-    sought before it is changed beyond the port.
+    The master problem is dense in the domain's dimension plus one, which
+    limits the size of space this method suits.
     """
 
     def __init__(
@@ -1530,7 +1513,8 @@ class LevelBundleMethod:
                 is set. Towards zero aims at the bound and is aggressive;
                 towards one is cautious. In ``(0, 1)``.
             tolerance: stop when the gap falls to this fraction of the best
-                value. **Relative**, unlike a bare number would suggest.
+                value's magnitude, or of one if that is smaller.
+                **Relative**, unlike a bare number would suggest.
             max_iterations: the cap on oracle calls.
             capacity: how many cuts to keep. The oldest are dropped.
             qp_solver: the backend for the master problem. Defaults to
@@ -1580,7 +1564,7 @@ class LevelBundleMethod:
         what makes the gap a bound rather than an indication.
 
         The variable is kept inside a box ``|x_i - center_i| <= R`` with
-        ``R == 1e3 (1 + max |center|)``, as v1 did. Without it the LP is
+        ``R == 1e3 (1 + max |center|)``. Without it the LP is
         unbounded whenever the cuts do not span the space, which early on
         they never do, and the method then has no bound and no level to aim
         at and takes proximal steps instead; with it there is a finite bound
@@ -1618,8 +1602,8 @@ class LevelBundleMethod:
     ) -> np.ndarray | None:
         """The level QP, or the proximal fallback when *level* is ``None``.
 
-        Warm-started at the center with ``t == warm``, as v1 did: a feasible
-        start for the ``t`` variable is what lets an active-set or ADMM
+        Warm-started at the center with ``t == warm``: a feasible start for
+        the ``t`` variable is what lets an active-set or ADMM
         backend begin from a point that satisfies the cuts.
 
         Returns the new point's components, or ``None`` if the program was
@@ -1670,8 +1654,8 @@ class LevelBundleMethod:
                 subgradient. Defaults to the functional's own.
 
         Returns:
-            The minimum, a minimizer, and a gap that is a genuine bound on the
-            distance to the true minimum.
+            The least value found, where it was found, and a gap that is a
+            certified bound on how far that value is above the true minimum.
 
         Raises:
             TypeError: if the domain has no component map.
@@ -1716,9 +1700,9 @@ class LevelBundleMethod:
             alpha = self._alpha
             # A level too close to the bound can be unreachable. Widen towards
             # caution and retry before giving up on the level step entirely.
-            # With no bound yet the level is the best value itself, as in v1:
-            # the QP then asks for the nearest point the model puts no higher
-            # than the best seen, which is still a level step.
+            # With no bound yet the level is the best value itself: the QP
+            # then asks for the nearest point the model puts no higher than
+            # the best seen, which is still a level step.
             for _ in range(3):
                 level = (
                     alpha * lower + (1.0 - alpha) * upper
@@ -1752,16 +1736,16 @@ class LevelBundleMethod:
             if value < upper:
                 upper, best_point = value, space.copy(point)
             # A serious step moves the stability center; a null step leaves
-            # it and lets the new cut sharpen the model there. The center
-            # used to move every iteration, which turned the proximal term
-            # into a penalty on the distance from wherever the last trial
-            # landed rather than from the best point the method trusts.
+            # it and lets the new cut sharpen the model there. Moving it every
+            # iteration would make the proximal term a penalty on the distance
+            # from wherever the last trial landed rather than from the best
+            # point the method trusts.
             if value < center_value:
                 center, center_value = point, value
                 serious += 1
 
-        # ``iteration`` rather than the cap: a break on a failed master
-        # problem used to be reported as the full run.
+        # ``iteration`` rather than the cap, so that a break on a failed
+        # master problem is not reported as a full run.
         return BundleResult(
             upper,
             best_point,
@@ -1826,19 +1810,16 @@ class ChambollePockSolver:
     ``tau sigma ||K||^2 <= 1``; the step sizes are chosen to satisfy that from
     a power-iteration estimate of ``||G||`` unless given.
 
-    **It projects rather than supports.** v1's version could only handle a
-    ball, because it implemented the projection itself and raised for anything
-    else. Here every :class:`~pygeoinf2.geometry.convex.ConvexSet` knows its
-    own nearest point, so a polytope or an intersection works without a case
-    for it -- and an intersection projects by Dykstra, which is iterative, so
-    the cost per step is then no longer small. That is a real trade and worth
-    knowing about before choosing this route for such a set.
+    **It projects rather than supports.** Every
+    :class:`~pygeoinf2.geometry.convex.ConvexSet` knows its own nearest point,
+    so a polytope or an intersection works without a case for it -- but an
+    intersection projects by Dykstra, which is iterative, so the cost per step
+    is then no longer small. That is a real trade and worth knowing about
+    before choosing this route for such a set.
 
     It is at its best when the objective ``c`` changes and the feasible set
     does not: the step sizes and the operator norm are then computed once, and
     only the linear term moves.
-
-    A port of v1's ``ChambollePockSolver``.
 
     References:
         Chambolle, A. and Pock, T. (2011). A first-order primal-dual algorithm
@@ -1875,8 +1856,8 @@ class ChambollePockSolver:
             rng: for the power iteration that estimates ``||G||``.
 
         Raises:
-            ValueError: if the sets do not live in the operator's spaces, or
-                the steps are not positive.
+            ValueError: if the sets do not live in the operator's spaces, the
+                steps are not positive, or *theta* is negative.
         """
         if prior.domain != forward.domain:
             raise ValueError("The prior set must live in the model space.")
@@ -2052,11 +2033,11 @@ class PrimalKKTSolver:
     constraints give two equations in ``(lambda, mu)``, solved in log
     coordinates so both stay positive.
 
-    **The model space is never discretized.** The closed form needs
-    ``(1/mu) V^-1 + (1/lambda) G B^-1 G*``, which acts on the *data* space --
-    finite-dimensional by construction -- so the Woodbury identity moves the
-    only matrix that is formed onto the small side. That is the whole reason
-    this route exists alongside the others: on a fine model grid it is the one
+    **No matrix is formed on the model space.** The closed form needs
+    ``(1/mu) V^-1 + (1/lambda) G B^-1 G*``, which acts on the *data* space,
+    so the Woodbury identity moves the only matrix that is formed -- a dense
+    one of the data's dimension -- onto that side. That is the reason this
+    route exists alongside the others: on a fine model grid it is the one
     that does not care how fine.
 
     **Two branches.** If the prior's own support point already satisfies the
@@ -2067,15 +2048,9 @@ class PrimalKKTSolver:
     constraint is effectively an equality, the second multiplier runs away --
     it is the reciprocal of the constraint's slack -- and the root find ends
     at the clip that keeps the exponential finite. The answer is then good to
-    about ``1e-3`` rather than to machine precision. Measured against
-    :class:`ChambollePockSolver` over sixteen directions with a noise radius of
-    0.05: fourteen agree to 1e-11 and two, where ``mu`` hit the clip, to
-    2.4e-3. v1 behaves identically, down to the same multiplier, so this is
-    the method's limit rather than a defect in the port -- and the primal
-    route has no such trouble, which is the reason to keep both.
-
-    A port of v1's ``PrimalKKTSolver``, and the solver behind its
-    ``sphere_dli_example``.
+    about ``1e-3`` rather than to machine precision. This is the method's
+    limit; :class:`ChambollePockSolver` has no such trouble, which is the
+    reason to keep both.
     """
 
     def __init__(
@@ -2094,8 +2069,10 @@ class PrimalKKTSolver:
             prior: a :class:`~pygeoinf2.geometry.convex.Ball` or
                 :class:`~pygeoinf2.geometry.convex.Ellipsoid` on the model
                 space. An ellipsoid must know its covariance.
-            noise: likewise on the data space, and centered at the origin --
-                the data itself is the offset.
+            noise: likewise on the data space, as a set of data errors
+                ``d - G m``. It must be centered at the origin -- the data
+                itself is the offset. A nonzero center is not detected, and
+                is ignored.
             forward: ``G``.
             data: the observations.
             tolerance: for the root find on the multipliers.
@@ -2256,8 +2233,8 @@ class PrimalKKTSolver:
             )
             return np.array([first, second])
 
-        # A physically scaled start, as v1 has. At the solution the prior
-        # multiplier balances the objective against the constraint, so
+        # A physically scaled start. At the solution the prior multiplier
+        # balances the objective against the constraint, so
         # ``|c| / eta`` is the right order -- and starting at one instead
         # leaves fsolve searching in the wrong decade, which on these problems
         # it simply fails to leave.
@@ -2275,11 +2252,9 @@ class PrimalKKTSolver:
 
         # fsolve's own verdict is not enough: with a multiplier run off to
         # the clip the residuals stop changing, the step falls below xtol and
-        # it reports success at a point that solves nothing. Seen on a cold
-        # start where the noise multiplier went to 1e24 with the misfit
-        # equation still at -eta^2; the answer was 2 per cent low and marked
-        # converged. So a solve counts only if the equations hold, each to a
-        # tolerance in the units of its own level.
+        # it reports success at a point that solves nothing. So a solve counts
+        # only if the equations hold, each to a tolerance in the units of its
+        # own level.
         levels = np.array([self._prior_radius**2, self._noise_radius**2])
         tolerance = 1e-6 * np.maximum(levels, 1e-300)
 
@@ -2302,10 +2277,8 @@ class PrimalKKTSolver:
         if status != 1:
             # A two-variable root find on a pair of quadratics is not reliably
             # solved from one start, and a failed solve here is not a hard
-            # failure -- it is a start in the wrong decade. v1 carries a ladder
-            # of fallbacks for exactly this, and without it the method returns
-            # its own starting point and disagrees with the primal route by
-            # tens of per cent.
+            # failure -- it is a start in the wrong decade. Without a ladder of
+            # fallback starts the method can return its own starting point.
             for guess in (
                 (physical, 1e-3),
                 (physical, 1e-2),
@@ -2348,10 +2321,11 @@ class LevelKKTSolver:
 
         lambda f(m) + mu g(d - A m) - (c, m)
 
-    with ``f`` the prior's level function and ``g`` the confidence set's,
-    which is the membership engine's objective with the pairing added. Any
-    convex differentiable level functions will do: a ball, an ellipsoid, a
-    smooth sublevel set. Nothing is assembled; the operators are applied.
+    with ``f`` the prior's level function and ``g`` the confidence set's:
+    the objective of the feasible-set membership test, with the pairing
+    added. Any convex differentiable level functions will do: a ball, an
+    ellipsoid, a smooth sublevel set. Nothing is assembled; the operators are
+    applied.
 
     **Two branches**, as for the quadratic solver. If the prior's own
     support point already satisfies the data constraint, the data never bit:
@@ -2364,13 +2338,14 @@ class LevelKKTSolver:
     **Where it is weak**, as the quadratic solver is: with a confidence set
     so small that its constraint is nearly an equality the second
     multiplier runs away, and the root find ends at the clip that keeps the
-    exponential finite, good to about ``1e-3``. The bisection route has no
-    such trouble on quadratic sets and is preferred there; this solver is
-    for the sets it cannot take.
+    exponential finite, good to about ``1e-3``. The primal bisection route of
+    :class:`~pygeoinf2.inference.backus.BackusGilbertParker` has no such
+    trouble on quadratic sets and is preferred there; this solver is for the
+    sets it cannot take.
 
-    Each probe's minimization starts cold, from zero: warm-starting from the
-    previous probe's minimizer let Newton stop one step short and froze the
-    residuals across the root find (DECISIONS.md D-80).
+    Each probe's minimization starts cold, from zero: a warm start from the
+    previous probe's minimizer can let Newton stop one step short and freeze
+    the residuals across the root find.
     """
 
     def __init__(

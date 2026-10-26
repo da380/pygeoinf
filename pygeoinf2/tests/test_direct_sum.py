@@ -398,7 +398,7 @@ class TestProductMeasures:
 
 
 class TestJointModel:
-    """The construction the whole thing is for. See DECISIONS.md D-23."""
+    """The construction direct sums exist for: the joint law of model and data."""
 
     def test_the_linear_joint_law_matches_v1s_shape(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)

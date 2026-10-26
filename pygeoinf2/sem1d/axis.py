@@ -80,7 +80,8 @@ class AxisSpace(SpectralElementSpace):
             element_length: the longest an element may be.
 
         Raises:
-            ValueError: if the ends are out of order, a length scale is not
+            ValueError: if the ends are out of order, fewer than one mode is
+                asked for, a length scale or the element length is not
                 positive, or the mesh cannot hold the modes asked for.
         """
         lower, upper = float(lower), float(upper)
@@ -179,8 +180,9 @@ class AxisSpace(SpectralElementSpace):
     def _coordinate_key(self) -> Hashable:
         """The mesh, the operator and the truncation, with the metric left out.
 
-        Tagged by geometry and not by ``type(self)``, as the boxes' are:
-        ``Lebesgue`` and ``Sobolev`` are views of one set of fields.
+        Tagged by the geometry rather than by ``type(self)``, as the boxes'
+        keys are, because ``Lebesgue`` and ``Sobolev`` are views of one set of
+        fields.
         """
         return (
             self._geometry,
@@ -263,24 +265,20 @@ class AxisSpace(SpectralElementSpace):
         ``"fit"``, the default, asks nothing of it: the field *in the span of
         the kept modes* that best matches the function on the domain, in the
         domain's own quadrature. The modes are those of the padded mesh and
-        nearly dependent on the domain alone, so the fit is a truncated one
-        and picks the smallest answer. It converges as the function is smooth:
-        measured on ``cos`` over ``[-1, 2]``, 3e-5, 3e-8 and 7e-14 at 32, 64
-        and 128 modes, with coefficients no larger than the others'
-        (DECISIONS.md D-124). It is what a mean, a reference model or a
-        synthetic truth wants.
+        nearly dependent on the domain alone, so the fit is a truncated
+        singular value decomposition and picks the smallest answer. It
+        converges as fast as the function is smooth, and is what a mean, a
+        reference model or a synthetic truth wants.
 
         The other two return the function's *own values at the nodes* and
         continue them across the padding, leaving :meth:`truncate` to settle
-        the result into the span -- at 4e-3, 1e-3 and 3e-4 on the same
-        ``cos``, since a continued function is only as smooth as its
-        continuation and does not satisfy the mesh's end condition.
-        ``"constant"`` gives the padding the value at the nearer end, and
-        keeps a positive function positive there, which a standard deviation
-        handed to ``pointwise_std=`` must be. ``"odd"`` gives it ``2 f(end) -
-        f(mirror)``, which matches the slope too; under the natural condition
-        and its longer padding that is ten to twenty times the better at an
-        end, and under the default Robin one about two (D-119).
+        the result into the span. That converges more slowly, since a
+        continued function is only as smooth as its continuation and does
+        not satisfy the mesh's end condition. ``"constant"`` gives the padding
+        the value at the nearer end, and keeps a positive function positive
+        there, which a standard deviation handed to ``pointwise_std=`` must
+        be. ``"odd"`` gives it ``2 f(end) - f(mirror)``, which matches the
+        slope too and is the more accurate of the two at an end.
 
         Args:
             function: called with a position in the domain.

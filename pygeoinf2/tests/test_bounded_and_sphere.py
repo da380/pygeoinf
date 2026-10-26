@@ -285,7 +285,7 @@ class TestSphere:
         assert sines.var() == pytest.approx(1.0 / 3.0, rel=0.1)
 
     def test_points_are_latitude_and_longitude_in_degrees(self, rng):
-        """D-2. The convention every catalogue, every v1 script and pyshtools
+        """The convention every catalogue, every v1 script and pyshtools
         itself already use -- and the one whose absence would misplace a
         station rather than raise."""
         space = sphere_module.Lebesgue(8)
@@ -327,7 +327,7 @@ class TestSphere:
 
 
 class TestSphereVectorsAreGrids:
-    """D-1: a field is an ``SHGrid``, not a bare array."""
+    """A field is an ``SHGrid``, not a bare array."""
 
     def test_a_field_is_an_shgrid(self, rng):
         space = sphere_module.Lebesgue(8)
@@ -385,7 +385,7 @@ class TestSphereVectorsAreGrids:
 
 
 class TestGeometrySubmodules:
-    """D-3: one submodule per geometry, exporting classes."""
+    """One submodule per geometry, exporting classes."""
 
     def test_the_sphere_spaces_are_classes(self):
         from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev, Sphere

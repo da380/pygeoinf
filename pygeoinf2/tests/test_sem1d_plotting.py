@@ -2,7 +2,7 @@
 
 The pictures are checked through their numbers: the values handed to
 matplotlib against the space's own point evaluation, which reaches them by
-another route (DECISIONS.md D-107).
+another route.
 """
 
 import matplotlib

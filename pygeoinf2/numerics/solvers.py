@@ -1,28 +1,25 @@
 """
 Linear solvers.
 
-A solver turns an operator into its inverse, *as an operator*: the one piece of
-v1's solver API that is straightforwardly right, and kept. What changes:
+A solver turns an operator into its inverse, *as an operator*:
+``solver(A)`` is an :class:`InverseOperator`, and applying it solves a system.
 
 - **Preconditions are declared and checked.** A solver states the traits it
-  needs and whether it needs coordinates, and ``__call__`` validates before
-  doing any work. v1 writes ``assert operator.is_automorphism``, which vanishes
-  under ``python -O`` and says nothing about symmetry or definiteness.
+  needs (``requires``) and whether it needs coordinates
+  (``requires_coordinates``), and ``__call__`` validates the operator before
+  doing any work, raising with a message that names what is missing.
 
-- **The iterative solvers are coordinate-free.** CG, MINRES, BiCGStab and LSQR
-  are written against ``inner_product`` and ``axpy`` alone, so they run against
-  a space with no component map at all. Only the direct solvers set
-  ``requires_coordinates``.
+- **The iterative solvers are coordinate-free.** CG, MINRES, GMRES, BiCGStab
+  and LSQR are written against ``inner_product`` and ``axpy`` alone, so they
+  run against a space with no component map at all. Only the direct solvers
+  set ``requires_coordinates``.
 
-- **Solvers are stateless.** v1 stores the iteration count on the solver
-  object, so a solver cannot be shared and the count belongs to whichever solve
-  ran last. Here diagnostics come back from ``InverseOperator.solve``, which
-  returns a :class:`SolveResult`.
+- **Solvers are stateless.** Diagnostics are never stored on the solver; they
+  come back from :meth:`InverseOperator.solve` as a :class:`SolveResult`, so
+  one solver can be shared between any number of inversions.
 
 - **Non-square is a different operation.** A least-squares solver is a sibling
-  of ``LinearSolver``, not a subclass whose ``__call__`` asserts squareness.
-
-See DECISIONS.md D-38.
+  of ``LinearSolver``, not a subclass, and performs no squareness check.
 """
 
 from __future__ import annotations
@@ -246,8 +243,8 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
     """The inverse of an operator, produced by a solver.
 
     Applying it solves a system. ``solve`` does the same but returns the
-    diagnostics with the answer, which is where iteration counts live now that
-    solvers are stateless.
+    diagnostics with the answer; solvers are stateless, so this is the only
+    place the iteration count and residual are reported.
     """
 
     def __init__(
@@ -354,9 +351,8 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
     def adjoint_inverse(self, x: X) -> Y:
         """Apply ``(A^-1)* == (A*)^-1``.
 
-        Kept as a name; it is :attr:`adjoint` applied. It used to hold a
-        *second* cache of its own, so ``inv.adjoint(x)`` and this each built
-        their own inverse of ``A*`` and the operator ended up inverted twice.
+        A named spelling of :attr:`adjoint` applied to ``x``; the two share
+        one inverse of ``A*``.
         """
         return self.adjoint(x)
 
@@ -390,7 +386,9 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
             )
         else:
             result = self._solver(self._operator.adjoint)
-        # Close the loop, for the same reason the sum and composition nodes do.
+        # Link the pair, so that ``self.adjoint.adjoint is self``: the
+        # structural recognition in the expression nodes compares factors by
+        # identity.
         result._link_adjoint(self)
         return result
 
@@ -399,7 +397,7 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
 
 
 # --------------------------------------------------------------------- #
-#                            Direct solvers                             #
+#                              Callbacks                                #
 # --------------------------------------------------------------------- #
 
 
@@ -407,12 +405,11 @@ class ProgressCallback:
     """A callback that records a solve's progress, and can report it.
 
     Every iterative solver here calls its ``callback`` with a
-    :class:`SolveStep`, so this is a few lines; it is supplied because the
-    few lines were the same ones every caller was writing, and because v1 had
-    it. Pass one and keep it: it is the diagnostic an inversion otherwise
-    discards, since an estimator applies its inverse operator through the
-    algebra and the ``SolveResult`` never reaches the caller. To keep the
-    iterates as well, see :class:`SolutionTrackingCallback`.
+    :class:`SolveStep`; this one keeps the residuals. Pass one and keep a
+    reference to it: it is the only way to see the diagnostics of a solve
+    inside an inversion, since an estimator applies its inverse operator
+    through the algebra and the ``SolveResult`` never reaches the caller. To
+    keep the iterates as well, see :class:`SolutionTrackingCallback`.
 
     A single instance can be reused across solves. It resets itself whenever a
     solve starts over at iteration zero, so the counts belong to the last one.
@@ -466,8 +463,8 @@ class ProgressCallback:
 class SolutionTrackingCallback(ProgressCallback):
     """A callback that keeps every iterate of a solve, as well as its residuals.
 
-    v1's class of the same name, for looking at the path a solver took: how
-    the iterates approach the answer, which components settle first, what a
+    For looking at the path a solver took: how the iterates approach the
+    answer, which components settle first, what a
     stalled solve was doing when it stalled. Each entry of :attr:`iterates`
     is an independent copy taken at that step, so ``iterates[0]`` is the
     starting point and ``iterates[-1]`` the solution. Like its base it
@@ -505,6 +502,11 @@ class SolutionTrackingCallback(ProgressCallback):
         )
 
 
+# --------------------------------------------------------------------- #
+#                            Direct solvers                             #
+# --------------------------------------------------------------------- #
+
+
 _Factors = tuple[
     Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray] | None
 ]
@@ -515,11 +517,15 @@ apply_transposed)``, the second ``None`` when the factors cannot give it."""
 class DirectSolver(LinearSolver):
     """A solver that factorizes a matrix representation.
 
-    These need coordinates, and they need the *right* representation. Which one
-    is right follows from the operator's traits: self-adjointness shows up as
-    matrix symmetry only in the Galerkin form, so a symmetric factorization
-    must be handed that one. v1 threads a ``galerkin=`` flag by hand through
-    every call site instead.
+    These need coordinates, and they need the *right* representation.
+    Self-adjointness shows up as matrix symmetry only in the Galerkin form, so
+    a symmetric factorization must be handed that one. Each solver names the
+    form it factorizes in its ``form`` attribute, and the conversion between
+    forms is done here, so a caller never passes one.
+
+    The matrix is extracted and factorized on the first solve, not when the
+    solver is applied to the operator, and the factors are then kept and
+    shared by every later solve, by the adjoint and by ``matrix()``.
     """
 
     requires_coordinates: ClassVar[bool] = True
@@ -546,9 +552,8 @@ class DirectSolver(LinearSolver):
         # here. ``solver(A)`` is then free, and an inverse that is built and
         # never applied -- an inversion constructed to be reduced, swept or
         # made a surrogate of, a preconditioner that is compared but not
-        # used -- costs nothing. Once done it is kept: v1 factorized inside
-        # every posterior call and so paid the O(n^3) step per use, which is
-        # what this deferral must not reintroduce (DECISIONS.md D-40).
+        # used -- costs nothing. Once done the factors are kept, so the
+        # O(n^3) step is paid once however many solves follow.
         factors: list[_Factors] = []
 
         def factorized() -> _Factors:
@@ -632,9 +637,8 @@ class DirectSolver(LinearSolver):
         factorization needs no second: its operator is self-adjoint, so the
         inverse is too and its adjoint is itself.
 
-        One call, deliberately. The first version had a second method for the
-        transposed solve and it factorized again -- the O(n^3) step, twice,
-        for a solver whose whole point is to do it once.
+        One call returns both, so that the transposed solve shares the
+        factorization rather than repeating it.
         """
 
 
@@ -767,9 +771,10 @@ class IterativeSolver(LinearSolver):
     them the operator, the preconditioner and the vector algebra act on
     arrays through a :class:`~pygeoinf2.algebra.spaces.ComponentView`, whose
     inner product is the space's own, so the residual history is unchanged
-    to rounding. On a sphere the vector algebra alone was seven transforms
-    per iteration; an operator that can act on components then costs none,
-    and one that cannot costs what it cost before.
+    to rounding. The vector algebra then costs no transforms; an operator
+    that can act on components costs none either, and one that cannot is
+    applied to the synthesized vector and its image analyzed, which is what
+    applying it costs anyway.
     """
 
     requires_coordinates: ClassVar[bool] = False
@@ -793,18 +798,10 @@ class IterativeSolver(LinearSolver):
         Args:
             rtol: stop when the residual norm falls below ``rtol * ||b||``,
                 measured in the space's own norm and relative to ``||b||``
-                rather than to ``||b - A x0||``.
-
-                The default is ``1e-8``. On a 40 000-dimensional five-point
-                Laplacian with a 0.01 shift, conjugate gradients takes 147
-                iterations at ``1e-5`` (v1's default), 243 at ``1e-8`` and 301
-                at ``1e-10`` (v2's first choice), for relative errors in the
-                solution of 4e-5, 4e-8 and 4e-10. ``1e-10`` costs a quarter
-                more iterations than ``1e-8`` to reach an accuracy no inverse
-                problem can use, and on an ill-conditioned normal operator it
-                is often unreachable — which with ``strict=True`` turns a
-                usable answer into an exception. That combination is what broke
-                one of the examples during the port.
+                rather than to ``||b - A x0||``. A tighter tolerance costs
+                more iterations for accuracy an inverse problem rarely uses,
+                and on an ill-conditioned normal operator may be unreachable,
+                which with ``strict=True`` raises.
             atol: absolute floor on the same test.
             max_iterations: iteration cap. Defaults to ``max(2 * dim, 20)``: a Krylov
                 method terminates within ``dim`` steps in exact arithmetic, but
@@ -839,12 +836,10 @@ class IterativeSolver(LinearSolver):
         iteration cap, callbacks — and a library routine can still supply the
         preconditioner it knows how to build.
 
-        **Refuses to replace one that is already set.** It used to return the
-        solver unchanged instead, which reads as success and is not: a caller
-        writing ``solver.with_preconditioner(mine)`` on a solver that already
-        had one got their preconditioner silently discarded and no way to tell.
-        A library routine that means "supply one only if the caller did not"
-        should ask, through :attr:`preconditioner`, and say so.
+        **Refuses to replace one that is already set**, since silently keeping
+        either would discard the one the caller meant. A library routine that
+        means "supply one only if the caller did not" should check
+        :attr:`preconditioner` first.
 
         Args:
             preconditioner: the preconditioner to attach.
@@ -932,9 +927,9 @@ class IterativeSolver(LinearSolver):
         returned NaN or inf, and every later step is arithmetic on it. It is
         refused here, once for every solver, and regardless of ``strict``,
         which downgrades a solve that was *slow* and not one that was
-        poisoned. Left to the residual test -- which a NaN never passes --
-        the solve ran to its iteration cap and reported "did not converge",
-        with the cause unmentioned and the cap's worth of applications spent.
+        poisoned. Left to the residual test, which a NaN never passes, the
+        solve would run to its iteration cap and report non-convergence, with
+        the cause unmentioned and the cap's worth of applications spent.
         """
         residual = float(residual)
         if not np.isfinite(residual):
@@ -967,12 +962,11 @@ class IterativeSolver(LinearSolver):
         solve_fn = self._solve_fn(operator, preconditioner)
 
         # The adjoint system ``A* w == x`` is preconditioned by ``P*``, from
-        # the *same* resolved ``P``. Left to the generic route, the adjoint
-        # inverse was built by handing ``A*`` back to this solver, which
-        # preconditioned it with ``P`` itself -- the right answer, reached
-        # slowly (an exact ``P == A^-1`` took 13 iterations on ``A*`` instead
-        # of one) -- and, for a deferred direct preconditioner, factorized
-        # ``A*`` a second time when ``P*`` was one transposed solve away.
+        # the *same* resolved ``P``, and built only when first needed. Handing
+        # ``A*`` back to this solver instead would precondition it with ``P``
+        # itself when ``P`` is a fixed operator -- the right answer, reached
+        # slowly -- and, for a deferred direct preconditioner, factorize ``A*``
+        # a second time when ``P*`` is one transposed solve away.
         adjoint_solve_fn = None
         if preconditioner is not None:
             adjoint_solve = None
@@ -1076,9 +1070,12 @@ class CGSolver(IterativeSolver):
     """Preconditioned conjugate gradients.
 
     Requires a positive-definite operator, which by trait closure implies
-    self-adjointness. That precondition is now *checked*: the Bayesian normal
-    operator ``A Q A* + R`` carries it structurally, so CG accepts it without
-    anyone asserting anything, and rejects an operator that has not earned it.
+    self-adjointness. The requirement is checked against the operator's
+    traits: the Bayesian normal operator ``A Q A* + R`` carries them by
+    construction, so CG accepts it with nothing asserted, and an operator that
+    does not claim them is refused. A direction of non-positive curvature met
+    during the iteration raises :class:`ConvergenceError`, since it means the
+    claim was false.
     """
 
     requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
@@ -1087,9 +1084,9 @@ class CGSolver(IterativeSolver):
     def _refuse_preconditioner(value: float, iteration: int) -> None:
         """``(r, P r)`` was not positive: the preconditioner is not.
 
-        The recurrence divides by it, and its theory needs it positive; a
-        preconditioner that is not positive definite is the usual reason, and
-        the operator is not, since the curvature check guards that.
+        The recurrence divides by it, and its theory needs it positive. The
+        cause is the preconditioner, not the operator: a non-positive-definite
+        operator is caught first, by the curvature check.
         """
         if not np.isfinite(value):
             raise ConvergenceError(
@@ -1220,8 +1217,9 @@ class FlexibleCGSolver(IterativeSolver):
 
             z = r if preconditioner is None else preconditioner(r)
             # Polak-Ribiere: (r_new - r_old, z_new) rather than (r_new, z_new).
-            # The two agree when the preconditioner is fixed, because then the
-            # residuals are conjugate; they differ exactly when it is not.
+            # The two agree when the preconditioner is fixed, because then
+            # successive residuals are orthogonal in the preconditioner's inner
+            # product; they differ exactly when it is not.
             change = space.subtract(r, previous)
             rz_next = space.inner_product(r, z)
             beta = space.inner_product(change, z) / rz
@@ -1235,11 +1233,11 @@ class FlexibleCGSolver(IterativeSolver):
 class GMRESSolver(IterativeSolver):
     """Generalized minimal residual, for an operator with no symmetry at all.
 
-    The only solver here that asks nothing of its operator. Arnoldi builds an
-    orthonormal Krylov basis and the residual is minimized over it by a small
-    least-squares problem, kept triangular by Givens rotations applied as each
-    column arrives — so the residual norm is known at every step without
-    forming the iterate.
+    Like :class:`BiCGStabSolver`, it asks nothing of its operator. Arnoldi
+    builds an orthonormal Krylov basis and the residual is minimized over it
+    by a small least-squares problem, kept triangular by Givens rotations
+    applied as each column arrives -- so the residual norm is known at every
+    step without forming the iterate.
 
     Restarted, because the cost and storage of a step grow with the step
     number: ``restart`` vectors are held, then the basis is discarded and the
@@ -1567,11 +1565,9 @@ class BiCGStabSolver(IterativeSolver):
 class LeastSquaresSolver(ABC):
     """Solves a rectangular system in the least-squares sense.
 
-    A **sibling** of :class:`LinearSolver`, not a subclass. In v1 ``LSQRSolver``
-    sits under ``IterativeLinearSolver``, whose ``__call__`` asserts the
-    operator is an automorphism — so the one solver written for rectangular
-    systems inherits a squareness check. Solving ``A x == b`` and minimizing
-    ``||A x - b||`` are different operations and get different types.
+    A **sibling** of :class:`LinearSolver`, not a subclass: solving
+    ``A x == b`` and minimizing ``||A x - b||`` are different operations and
+    get different types, and a least-squares solver makes no squareness check.
     """
 
     requires_coordinates: ClassVar[bool] = False
@@ -1657,8 +1653,8 @@ class LSQRSolver(LeastSquaresSolver):
         """The bidiagonalization, started from *x0* when one is given.
 
         The warm start solves for the *correction*: the iteration runs on the
-        residual ``b - A x0`` and accumulates into a copy of ``x0``, which is
-        what v1 does. With no damping that is exactly equivalent to starting
+        residual ``b - A x0`` and accumulates into a copy of ``x0``. With no
+        damping that is exactly equivalent to starting
         from zero, so a warm start can only save iterations. With damping it is
         not: the penalty then falls on the correction rather than on the whole
         solution, which is a different minimization. Damped warm starts are

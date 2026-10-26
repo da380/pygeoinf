@@ -11,8 +11,6 @@ Simplification is limited to the obviously safe and locally decidable:
 flattening nested sums and compositions, collapsing double adjoints, dropping
 identity factors. There is no simplification engine here, and there should not
 be one.
-
-See DECISIONS.md D-31, D-32 and D-36.
 """
 
 from __future__ import annotations
@@ -129,12 +127,11 @@ class _Identity[X](LinearOperator[X, X]):
         """A multiple of the identity is a diagonal operator, and saying so
         is what lets it keep folding.
 
-        ``sigma * I`` was a scaled node, which nothing downstream recognizes,
-        so ``(sigma I) (sigma I)`` -- the covariance every
-        ``from_standard_deviation`` measure has -- stayed a composition and
-        had to be probed a column at a time to give up its own diagonal. As a
-        diagonal operator the two fold to ``sigma^2 I`` and the diagonal is
-        already there.
+        ``(sigma I) (sigma I)`` -- the covariance every
+        ``from_standard_deviation`` measure has -- then folds to
+        ``sigma^2 I`` with its diagonal known, where a generic scaled node
+        would leave a composition whose diagonal has to be probed a column at
+        a time.
 
         Only where the space has a basis to be diagonal in; elsewhere the
         scaled node is still the best available.
@@ -715,9 +712,9 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # product is "known" only when forming it creates nothing larger than
         # what is already stored: a rank-k factor times its adjoint on a
         # space of dimension n holds 2nk numbers, and its product n^2, which
-        # at n == 3000 and k == 10 is 72 MB materialized by any caller that
-        # so much as asked whether a matrix was known (DECISIONS.md D-33). Such a
-        # product is declined, and the operator is probed like any other.
+        # would be materialized by any caller that so much as asked whether a
+        # matrix was known. Such a product is declined, and the operator is
+        # probed like any other.
         known = self._known_factors()
         if known is None:
             return None
@@ -737,7 +734,8 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # The main diagonal of a product whose factors are known, without the
         # product: diag(A B) == sum_j A_ij B_ji, which for a low-rank
         # A B == U V* is O(nk) against the O(n^2 k) of probing n columns. The
-        # inner product B is formed only where it does not expand, as above.
+        # product of the inner factors, B, is formed only where it does not
+        # expand, as above.
         if offsets != (0,) or self.domain.dim != self.codomain.dim:
             return None
         if form == "galerkin" and not getattr(self.codomain, "is_orthonormal", False):
@@ -975,15 +973,14 @@ def linear_composition(factors: Sequence[LinearOperator]) -> LinearOperator:
 # *value* correctly. What they lose is its type, and with it everything a
 # functional adds: at() returns a Linearization rather than a QuadraticModel,
 # so there is no `.gradient`; there is no `.hessian`; and `isinstance(_,
-# Functional)` is False, which is what an optimizer checks.
+# Functional)` is False, which is what an optimizer checks. The nodes below
+# keep the type, so a composed objective such as a misfit plus a regularizer
+# is still a functional.
 #
-# That mattered concretely. A misfit plus a regularizer is a sum of
-# functionals, and `numerics.optimization` asks for `functional.at(x).gradient`
-# — so every composed objective, which is to say every real one, raised
-# AttributeError.
-#
-# The Hessian rules are DECISIONS.md D-30's, and each is available exactly
-# when its ingredients are.
+# Hessians propagate only where they are exact, and each is available exactly
+# when its ingredients are: a sum's is the sum of the terms', a scaling's is
+# scaled, and `phi @ F` has one when `phi` has a Hessian and `F` is linear
+# (giving `F* H F`) or carries a second derivative.
 
 
 class _FunctionalSum[X](_OperatorSum[X, float], Functional[X]):

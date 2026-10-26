@@ -17,15 +17,15 @@ not used.
 Conventions, all pinned by test rather than assumed: coefficients are
 orthonormal (``norm=4`` in pyshtools' low-level interface) with the
 Condon-Shortley phase *excluded* (pyshtools spells that ``csphase=1``), the
-grid is Driscoll-Healy with the sampling given at construction, and **a point
+grid is Driscoll-Healy by default or Gauss-Legendre on request, and **a point
 is a ``(latitude, longitude)`` pair in degrees**.
 
 That last is the convention of every station catalogue, every earthquake
-catalogue, pyshtools itself, and every script written against v1. The
-trigonometry inside is done in colatitude and radians, and each method converts
-at its own boundary; :meth:`Sphere.to_colatitude_radians` and
-:meth:`Sphere.to_latitude_degrees` are the conversion, public because anyone
-working below the boundary needs it.
+catalogue and pyshtools itself. The trigonometry inside is done in
+colatitude and radians, and each method converts at its own boundary;
+:meth:`Sphere.to_colatitude_radians` and :meth:`Sphere.to_latitude_degrees`
+are the conversion, public because anyone working below the boundary needs
+it.
 
 An *angle* on the sphere is likewise in degrees — the half-angle of a cap, for
 instance. A *distance* is in the units of :attr:`Sphere.radius`, and every
@@ -54,17 +54,10 @@ _CHUNK_ENTRIES = 4_000_000
 # When the transform route wins. Its cost is fixed in the number of points --
 # one analysis, one FFT, one NUFFT -- while the direct sum costs one basis
 # evaluation per point per component, so the crossover is a threshold on both.
-#
-# Retuned once the NUFFT stopped running on every core (see Sphere.evaluate).
-# It was 512 and 512, measured when finufft's default threading was making the
-# transform 4 to 20 times slower than it needed to be, which pushed the
-# crossover out. Measured again at lmax 4, 8, 16, 32 and 64 across six point
-# counts: the transform now wins from about 200 points once the dimension is a
-# few hundred, and the old thresholds were leaving a factor of 13 on the table
-# at lmax 64 and 1000 points (34 ms direct against 2.6 ms). Below dim 256 the
-# two are within a millisecond of each other either way, so the dimension
-# threshold is there to avoid paying the fixed cost for nothing.
-# See DECISIONS.md D-89.
+# With single-threaded NUFFTs (see Sphere.evaluate) the transform wins from
+# about 200 points once the dimension is a few hundred. Below dim 256 the two
+# are within a millisecond of each other either way, so the dimension
+# threshold avoids paying the fixed cost for nothing.
 _TRANSFORM_MIN_POINTS = 200
 _TRANSFORM_MIN_DIM = 256
 
@@ -90,7 +83,7 @@ class _Grid:
     """The sampling grid behind a sphere: shape, angles, transforms, weights.
 
     Two kinds, and everything that depends on which one is here so that the
-    space asks rather than assumes (DECISIONS.md D-86):
+    space asks rather than assumes:
 
     * ``"DH"``, Driscoll-Healy: ``2 (lmax + 1)`` equispaced colatitude rows
       from the north pole, ``sampling`` times as many longitude columns, the
@@ -248,8 +241,8 @@ def _legendre_indices_for(lmax: int) -> np.ndarray:
     """Where each component sits in pyshtools' packed Legendre array.
 
     ``PlmIndex(l, m)`` is ``l (l + 1) / 2 + m``, verified against pyshtools
-    itself. Calling it per component instead made this a Python loop of length
-    ``dim``: 212 ms at ``lmax`` 256, against 2 ms here.
+    itself, and computed here for every component at once rather than by a
+    call per component.
     """
     _, degrees, orders = _packing_for(lmax)
     indices = degrees * (degrees + 1) // 2 + orders
@@ -308,12 +301,10 @@ def _require_pyshtools() -> object:
 class Sphere(SymmetricSpace[Any]):
     """A field on a sphere, expanded in spherical harmonics.
 
-    Vectors are ``pyshtools.SHGrid`` objects on a Driscoll-Healy grid, not bare
-    arrays. That a vector may be any object at all is a point of the library,
-    and here it earns something concrete: a field arrives able to plot, rotate
-    and expand itself through the library that produced it, and it is the type
-    every caller with an existing pyshtools workflow already holds. The values
-    are reachable as ``x.data``, or through
+    Vectors are ``pyshtools.SHGrid`` objects on the space's grid, not bare
+    arrays: a field can plot, rotate and expand itself through pyshtools, and
+    it is the type a caller with an existing pyshtools workflow already holds.
+    The values are reachable as ``x.data``, or through
     :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.grid_values`.
 
     Components are the real harmonic coefficients, scaled so that the Lebesgue
@@ -477,7 +468,7 @@ class Sphere(SymmetricSpace[Any]):
 
         Non-negative for a cosine coefficient and negative for a sine one, so
         that ``(degrees[i], orders[i])`` labels component ``i`` uniquely, in
-        the convention v1 and pyshtools use. With :attr:`degrees` this is
+        the convention pyshtools uses. With :attr:`degrees` this is
         the packing made public: a symbol depending on the order is written
         against the two arrays and handed to ``spectral_operator``, and the
         label of a component is read off them. :meth:`component_of` goes
@@ -489,8 +480,8 @@ class Sphere(SymmetricSpace[Any]):
     def component_of(self, degree: Any, order: Any, /) -> Any:
         """The position of the component with a given degree and signed order.
 
-        v1's ``index_to_integer``, vectorized: scalars give an integer,
-        arrays give an array, so a whole set of labels is placed at once.
+        Vectorized: scalars give an integer, arrays give an array, so a whole
+        set of labels is placed at once.
 
         Args:
             degree: ``l``, at most ``lmax``.
@@ -593,8 +584,8 @@ class Sphere(SymmetricSpace[Any]):
         """Where each component sits in pyshtools' packed Legendre array.
 
         Depends only on ``lmax``, so it is shared between every space of that
-        truncation rather than rebuilt per instance -- ``with_order`` makes a
-        new space, and this was 212 ms of it at ``lmax`` 256, on every call.
+        truncation rather than rebuilt per instance, ``with_order`` and
+        ``with_degree`` being frequent sources of new spaces.
         """
         return _legendre_indices_for(self._lmax)
 
@@ -682,11 +673,11 @@ class Sphere(SymmetricSpace[Any]):
     def _own_grid_values(self, values: np.ndarray, /) -> Any:
         """An ``SHGrid`` over an array this space has just allocated.
 
-        ``SHGrid.from_array(..., copy=False)``, which is what
-        :meth:`from_grid_values` used to do with the *caller's* array: `axpy`
-        then wrote through the wrapper into it. Here the array is one this
-        module made and holds the only reference to, so the wrap is free and
-        safe. The copy it saves is 2 MB at ``lmax`` 256, on every synthesis.
+        Wraps with ``SHGrid.from_array(..., copy=False)``, which is safe only
+        because the array is one this module made and holds the only
+        reference to. Wrapping a caller's array this way would let ``axpy``
+        write through the field into it, which is why
+        :meth:`from_grid_values` copies first.
         """
         from pyshtools import SHGrid
 
@@ -712,9 +703,9 @@ class Sphere(SymmetricSpace[Any]):
     def inner_product(self, x: Any, y: Any) -> float:
         r"""``(x, y)``, by the grid's own quadrature on a Lebesgue space.
 
-        The ``L2`` inner product is an integral, and the Driscoll-Healy grid
-        comes with a quadrature that integrates it exactly. Analysis on this
-        grid *is* that quadrature -- coefficient ``k`` is
+        The ``L2`` inner product is an integral, and the grid comes with a
+        quadrature that integrates it exactly. Analysis on this grid *is*
+        that quadrature -- coefficient ``k`` is
         ``sum_j w_j sum_i phi_k(p_ji) v_ji`` -- so with ``S`` synthesis and
         ``W`` the cell weights, ``A == S^T W`` and ``A S == I``, whence
         ``S^T W S == I`` and
@@ -723,21 +714,17 @@ class Sphere(SymmetricSpace[Any]):
 
             (x, y) == (A x) . (A y) == sum_j w_j sum_i x_ji y_ji
 
-        for fields in the span of the basis. Two transforms become none:
-        5.44 ms against 0.055 ms at ``lmax`` 128 (measured 2026-08-29). Agrees with
-        the component route to 6e-15 at every truncation, radius and sampling
-        tested, and to 2e-14 when one argument is a raw pointwise product.
+        for fields in the span of the basis, with no transform at all.
 
-        **Where the two routes part, and why this one is right.** Since
-        DECISIONS.md D-87 a pointwise product is left on the grid, and a grid array
-        outside the span has a projection but no equal in the span. If *both*
-        arguments are such arrays the quadrature integrates the product of what
-        the grid holds, while the component route integrates the product of the
-        two projections -- 0.05% to 2% apart on the cases measured. The
-        quadrature is the more accurate of the two, and it is the same
-        decision as 35's: the grid is the representation, and what it holds is
-        not thrown away on the way past. With either argument in the span the
-        two agree exactly, which covers every inner product this package takes.
+        **Where this and the component route part.** A pointwise product is
+        left on the grid, untruncated, and a grid array outside the span has a
+        projection but no equal in the span. If *both* arguments are such
+        arrays, the quadrature integrates the product of what the grid holds,
+        while the component route integrates the product of the two
+        projections. The quadrature is the more accurate of the two: what the
+        grid holds is not discarded on the way past. With either argument in
+        the span the two agree exactly, which covers every inner product this
+        package takes.
 
         On a Sobolev space there is no such form -- the metric weights the
         modes and the grid knows nothing of that -- so the base class's
@@ -827,12 +814,12 @@ class Sphere(SymmetricSpace[Any]):
         *before* there is a space to ask -- which is the point of it being
         static: the answer is what you pass to the constructor.
 
-        The rule is v1's, so it gives v1's numbers: sum the Sobolev weights
-        mode by mode and stop when the newest term is a fraction ``rtol`` of
-        the running total.
+        The rule: sum the Sobolev weights degree by degree, one term per
+        degree, and stop when the newest term is a fraction ``rtol`` of the
+        running total.
 
-        Mode by mode, note, and not weighted by the ``2l + 1`` modes a degree
-        holds. :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.estimate_truncation_degree`
+        One term per degree, note, not weighted by the ``2l + 1`` modes a
+        degree holds. :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.estimate_truncation_degree`
         answers the weighted question, which is the one about the field's
         energy, and the two are far apart where the spectrum decays slowly: at
         order 1.5 and length scale 0.5 this returns 721 and the weighted rule
@@ -884,11 +871,11 @@ class Sphere(SymmetricSpace[Any]):
     def to_coefficients(self, x: Any, /) -> Any:
         """The field's coefficients as a pyshtools ``SHCoeffs``.
 
-        The other half of the seam that :meth:`grid_values` opens: components
+        The counterpart of :meth:`grid_values` for coefficients: components
         are this library's packed real vector, and this is the object
-        pyshtools' own plotting, rotation and spectrum routines take. Anyone
-        with an existing pyshtools workflow, or writing pyslfp-style interop,
-        wants this and not the packed vector.
+        pyshtools' own plotting, rotation and spectrum routines take, which a
+        caller with an existing pyshtools workflow wants rather than the
+        packed vector.
 
         These are pyshtools' orthonormal coefficients, with no Condon-Shortley
         phase, on their own scale. The relation to components is a single
@@ -995,12 +982,10 @@ class Sphere(SymmetricSpace[Any]):
     ) -> np.ndarray:
         """The basis evaluated at many points, as a ``(len(points), dim)`` array.
 
-        The batched form of :meth:`basis_at`, and the reason both
-        :meth:`evaluate` and :meth:`accumulate` are usable at the scale a real
-        acquisition geometry reaches. Calling ``basis_at`` in a loop spends
-        almost all of its time in per-point Python: at ``lmax == 64`` the
-        Legendre evaluation itself is 3% of it, and the other 97% is indexing
-        and trigonometry that vectorizes.
+        The batched form of :meth:`basis_at`, on which the direct routes of
+        :meth:`evaluate` and :meth:`accumulate` rest. Only the Legendre tables
+        are computed point by point; the indexing and the trigonometry, which
+        dominate a loop over ``basis_at``, are vectorized.
 
         Rows are ordered as ``points``, columns as the components.
 
@@ -1065,10 +1050,11 @@ class Sphere(SymmetricSpace[Any]):
     def _quadrature(self) -> np.ndarray:
         """The transform's own quadrature weight for each grid row.
 
-        The *shape* is Driscoll and Healy's own latitudinal weighting, which
-        is what ``SHExpandDH`` uses, so it is the transform's weighting by
-        construction rather than by coincidence. The *scale* is then fixed by
-        probing the transform on a single row, as
+        On a Gauss-Legendre grid these are the quadrature's weights in closed
+        form. On Driscoll-Healy the *shape* is Driscoll and Healy's own
+        latitudinal weighting, which is what ``SHExpandDH`` uses, so it is the
+        transform's weighting by construction rather than by coincidence. The
+        *scale* is then fixed by probing the transform on a single row, as
         :meth:`_quadrature_from_transform` does on every row.
 
         One probe rather than none, because the scale is not free: the pole
@@ -1078,12 +1064,10 @@ class Sphere(SymmetricSpace[Any]):
         normalization convention, which is exactly the kind of thing this
         class should not be asserting from memory.
 
-        One probe rather than ``rows`` of them is the whole saving: 2.9 ms
-        against 583 ms at ``lmax`` 128, and 18 ms against 8.0 s at 256.
-
-        **The pole row's weight is zero**, since the grid samples colatitude on
-        ``[0, pi)`` and the quadrature gives the pole no area. Anything sitting
-        there is invisible to the transform and has to be added back by hand.
+        **The pole row's weight is zero** on Driscoll-Healy, since the grid
+        samples colatitude on ``[0, pi)`` and the quadrature gives the pole no
+        area. Anything sitting there is invisible to the transform and has to
+        be added back by hand.
         """
         from pyshtools.utils import DHaj
 
@@ -1151,13 +1135,10 @@ class Sphere(SymmetricSpace[Any]):
     def _south_pole_kernel(self) -> np.ndarray:
         r"""Row weights taking a field's row means to its value at the south pole.
 
-        The pole is not a grid row, so :meth:`_double` has to evaluate the
-        field there. It did that with a full analysis, which at ``lmax`` 256
-        was 19 ms of a 67 ms forward evaluation -- 35% of it, spent to read one
-        number out (measured 2026-08-29).
-
-        There is a closed form, and it is a row weighting. Analysis on this
-        grid is a quadrature, so
+        The south pole is not a grid row, so :meth:`_double` has to evaluate
+        the field there, and a full analysis to read one number would be
+        wasteful. There is a closed form, and it is a row weighting. Analysis
+        on this grid is a quadrature, so
 
         .. code-block:: text
 
@@ -1178,8 +1159,6 @@ class Sphere(SymmetricSpace[Any]):
         is exactly their normalization since ``P_l(1) == 1``, times a Legendre
         Vandermonde over the grid's cosines -- so the convention is pyshtools'
         own rather than one asserted here, and no per-row transform is needed.
-        Agrees with the analysis route to 6e-14 at every truncation, radius and
-        sampling tested; 0.06 ms against 19 ms.
 
         Shared between spaces of the same grid, as the quadrature is.
         """
@@ -1266,8 +1245,8 @@ class Sphere(SymmetricSpace[Any]):
 
         The conversion every route here starts with: the non-uniform FFT wants
         the two angles as contiguous arrays and :meth:`basis_matrix` wants the
-        pair. Doing it per application cost 14.5 of 37 ms at 10^5 points
-        (measured 2026-08-29).
+        pair. Preparing a fixed set of points once saves redoing the
+        conversion on every application.
 
         Args:
             points: ``(latitude, longitude)`` pairs in degrees, or an already
@@ -1317,13 +1296,11 @@ class Sphere(SymmetricSpace[Any]):
             x: a field of this space.
             points: ``(latitude, longitude)`` pairs in degrees.
             eps: the NUFFT's requested accuracy, when it is used.
-            nthreads: threads for the NUFFT. One by default, and measured:
-                finufft's own default is every core, and on a 16-core machine
-                that is 4 to 20 times *slower* here than a single thread --
-                4.4 ms against 21 ms at ``lmax`` 128, at every point count from
-                200 to 10000. These transforms are too small to pay for the
-                threading, and a call inside a ``joblib`` loop would
-                oversubscribe on top of that. Pass zero for finufft's default.
+            nthreads: threads for the NUFFT. One by default: these transforms
+                are too small to pay for threading, finufft's own default of
+                every core being several times *slower* here, and a call
+                inside a ``joblib`` loop would oversubscribe on top of that.
+                Pass zero for finufft's default.
         """
         points = self.prepare_points(points)
         if not self._use_transform(len(points)):
@@ -1377,13 +1354,12 @@ class Sphere(SymmetricSpace[Any]):
         symmetric, so it is its own transpose — and then the transposes of the
         fold and of synthesis onto the grid.
 
-        ``eps`` and ``nthreads`` mean what they do in :meth:`evaluate`, and
         Args:
             weights: one per point.
             points: ``(latitude, longitude)`` pairs in degrees.
             eps: the NUFFT's accuracy, as in :meth:`evaluate`.
-            nthreads: threads for it, one by default and for the reason
-                measured there.
+            nthreads: threads for it, one by default for the reason given
+                there.
 
         Returns:
             The derivative components.
@@ -1484,9 +1460,8 @@ class Sphere(SymmetricSpace[Any]):
             r_l == s_l / g_l
 
         That is one Legendre series per distance rather than one row of the
-        basis: 1.2 ms against 24 ms for 50 distances at ``lmax`` 256
-        (measured 2026-08-29). ``cos`` is even and periodic, so a walk past the pole
-        needs no special case.
+        basis. ``cos`` is even and periodic, so a walk past the pole needs no
+        special case.
 
         ``invariant_measure`` does not *require* an isotropic spectrum -- it
         takes one variance per component -- and with an anisotropic one the
@@ -1531,16 +1506,12 @@ class Sphere(SymmetricSpace[Any]):
         Any direction would do, the sphere being homogeneous *and* isotropic;
         a meridian is the one that needs no tangent frame.
 
-        **The walk continues past the pole**, which is where this used to go
-        wrong: adding the angle to the colatitude and stopping there returned
-        latitudes below -90 -- a distance of ``3 pi R / 2`` from the equator
-        gave latitude -250 -- and the two evaluation routes then read that as
-        two different points. The direct sum takes the colatitude at face value
-        and lands at ``(2 pi - theta, phi)``; the non-uniform FFT sees the
-        doubled grid, on which the same colatitude is ``(2 pi - theta,
-        phi + pi)``. On a non-zonal field they disagreed by 1.02 on a field of
-        maximum 0.47. Passing the pole reflects the meridian to the far side,
-        which is what walking over a pole does, and both routes then agree.
+        **The walk continues past the pole**: the meridian is reflected to the
+        far side, the colatitude brought back into ``[0, pi]`` and the
+        longitude turned through ``pi``, which is what walking over a pole
+        does. Every returned point is therefore a genuine
+        ``(latitude, longitude)`` pair, which both evaluation routes read as
+        the same point.
 
         Args:
             point: where to start, ``(latitude, longitude)`` in degrees.
@@ -1573,10 +1544,9 @@ class Sphere(SymmetricSpace[Any]):
 
         The public form of the conversion every method here does at its
         boundary. Points are given in degrees, because that is what a catalogue
-        of stations or earthquakes holds, what pyshtools uses, and what every
-        script written against v1 passes; the trigonometry inside is done in
-        colatitude and radians, because that is what the spherical harmonics
-        are written in.
+        of stations or earthquakes holds and what pyshtools uses; the
+        trigonometry inside is done in colatitude and radians, because that is
+        what the spherical harmonics are written in.
 
         Args:
             points: one ``(latitude, longitude)`` pair or a sequence of them.
@@ -1596,10 +1566,8 @@ class Sphere(SymmetricSpace[Any]):
                 f"array of shape {np.shape(points)}."
             )
         latitudes = positions[:, 0]
-        # The check the docstring has always promised and never performed. It
-        # is what catches colatitudes passed in by mistake, and it is what
-        # would have caught walk_from returning -250 (§3.4). The tolerance is
-        # for a latitude that came back from an arcsine as 90 + 1e-14; a
+        # Catches colatitudes, or radians, passed in by mistake. The tolerance
+        # is for a latitude that came back from an arcsine as 90 + 1e-14; a
         # genuine error is degrees out, not nanodegrees.
         outside = np.abs(latitudes) > 90.0 + 1.0e-9
         if np.any(outside):
@@ -1669,10 +1637,8 @@ class Sphere(SymmetricSpace[Any]):
     def _to_points(vectors: np.ndarray, /) -> np.ndarray:
         """Many vectors as ``(latitude, longitude)`` pairs in degrees.
 
-        The batched form of :meth:`_to_point`, and the reason a quadrature
-        rule can be built without a Python loop over its nodes: one path of
-        32 nodes made 32 of these calls, and a tomographic geometry of 2000
-        paths made 64 000 (measured 2026-08-29).
+        The batched form of :meth:`_to_point`, so that a quadrature rule can
+        be built without a Python loop over its nodes.
 
         Args:
             vectors: an ``(n, 3)`` array. Need not be normalized.
@@ -1764,8 +1730,7 @@ class Sphere(SymmetricSpace[Any]):
         abscissae, weights = _gauss_legendre(count)
         parameters = 0.5 * (abscissae + 1.0)
         sine = np.sin(angle)
-        # The slerp, over every node at once. Node for node the same points as
-        # the loop it replaces, to 4e-13 degrees.
+        # The slerp, over every node at once.
         vectors = (
             np.sin((1.0 - parameters) * angle)[:, None] * first[None, :]
             + np.sin(parameters * angle)[:, None] * second[None, :]
@@ -1790,8 +1755,8 @@ class Sphere(SymmetricSpace[Any]):
             The nodes and their weights.
 
         Raises:
-            ValueError: for a non-positive radius or count, or a radius
-                larger than half the circumference.
+            ValueError: for a count below one, or a radius that is negative
+                or larger than half the circumference.
         """
         if count < 1:
             raise ValueError("A quadrature rule needs at least one node.")
@@ -1897,13 +1862,8 @@ class Sphere(SymmetricSpace[Any]):
             I_l(x) == (P_{l-1}(x) - P_{l+1}(x)) / (2l + 1)
 
         so the whole set of caps is one Legendre evaluation at a single point
-        and one :meth:`basis_matrix`.
-
-        This replaces ``SHCoeffs.from_cap``, which builds the indicator at the
-        pole and *rotates* it to the center -- 8.5 ms a center at ``lmax`` 128
-        -- and then a functional whose representer had to be synthesized for
-        nobody to read. Measured at ``lmax`` 128 over 100 centers: 21 ms
-        against 1437 ms, agreeing to 1e-12 (measured 2026-08-29).
+        and one :meth:`basis_matrix`, with no rotation of a cap built at the
+        pole.
 
         Args:
             centers: the cap centers, ``(latitude, longitude)`` in degrees.
@@ -1999,7 +1959,9 @@ class Sphere(SymmetricSpace[Any]):
             The operator.
 
         Raises:
-            ValueError: for a non-positive radius or count, or no centers.
+            ValueError: for no centers, a negative radius or one larger than
+                half the circumference, a zero radius when normalizing, or a
+                count below one.
         """
         centers = tuple(centers)
         if not centers:
@@ -2027,10 +1989,6 @@ class Sphere(SymmetricSpace[Any]):
         )
 
     # ----------------------------------------------------------------- #
-    #                          Coefficients                             #
-    # ----------------------------------------------------------------- #
-
-    # ----------------------------------------------------------------- #
     #                       Acquisition geometry                        #
     # ----------------------------------------------------------------- #
 
@@ -2051,6 +2009,11 @@ class Sphere(SymmetricSpace[Any]):
 
         Returns:
             ``(latitude, longitude)`` points in degrees.
+
+        Raises:
+            ValueError: if more are asked for than the table holds; the
+                message names the download that writes a larger one into the
+                cache. Nothing is fetched automatically.
         """
         from ..datasets import GSN_STATIONS, read_table
 
@@ -2079,6 +2042,11 @@ class Sphere(SymmetricSpace[Any]):
 
         Returns:
             ``(latitude, longitude)`` epicenters in degrees.
+
+        Raises:
+            ValueError: if more are asked for than the table holds after the
+                magnitude filter; the message names the download that writes a
+                larger one into the cache. Nothing is fetched automatically.
         """
         from ..datasets import USGS_EVENTS, read_table
 
@@ -2131,8 +2099,7 @@ class Sphere(SymmetricSpace[Any]):
         Rejection sampling against the Natural Earth coastlines, the same
         polygons :meth:`domain_mask` uses, so the two agree on which side of
         the coast a point is. Uniform in area within the chosen region. This
-        is how a synthetic ocean-only or land-only network is made; v1's
-        ``random_domain_points``.
+        is how a synthetic ocean-only or land-only network is made.
 
         Args:
             count: how many points, exactly.
@@ -2247,12 +2214,9 @@ class Sphere(SymmetricSpace[Any]):
     ) -> Sphere:
         """The same sphere with some of its parameters changed.
 
-        **Returns the D-3 subclass its order names**, not a bare
-        :class:`Sphere`. That is the whole point of D-3: ``Lebesgue`` and
-        ``Sobolev`` exist so that ``isinstance`` answers what it looks like it
-        answers, and a ``with_order``/``with_degree`` that handed back the base
-        class defeated it on every derived space -- pyslfp's ``sl/utils.py``
-        dispatches on exactly that check.
+        **Returns the subclass its order names**, :class:`Lebesgue` or
+        :class:`Sobolev`, not a bare :class:`Sphere`, so that ``isinstance``
+        answers what it looks like it answers on every derived space.
 
         The one hook the resolution methods build on, so there is one place
         that knows which class goes with which order.
@@ -2309,11 +2273,11 @@ class Sphere(SymmetricSpace[Any]):
         """Truncation to, or prolongation into, another degree.
 
         Restriction when the target is coarser, zero-padding when it is finer.
-        The adjoint is derived rather than written down, which matters: it is
-        the *other* one of the pair only when the two spaces carry the same
-        metric on their shared components, and it is the ratio of the two
-        metrics otherwise. Getting that by hand is the mistake of
-        DECISIONS.md D-26 wearing a different hat.
+        The adjoint is derived through the metrics rather than written down,
+        which matters: the adjoint of a restriction is the matching
+        zero-padding only when the two spaces carry the same metric on their
+        shared components, and carries the ratio of the two metrics
+        otherwise.
 
         Args:
             target: the sphere to map into. It must have the same radius --
@@ -2369,9 +2333,7 @@ def _as_points(latitudes: np.ndarray, longitudes: np.ndarray) -> list[np.ndarray
     """Two columns of a catalogue as points.
 
     No conversion: a catalogue holds degrees and so does a point, which is the
-    whole reason for the convention. This used to turn them into colatitude and
-    radians here, privately, so that a caller who read the same file themselves
-    got different answers from the same numbers.
+    whole reason for the convention.
     """
     return [
         np.array([float(latitude), float(longitude)])

@@ -4,7 +4,7 @@ Structural properties of linear operators, and how they survive the algebra.
 Traits record *mathematical* properties that a numerical method dispatches on.
 Representational structure (dense, sparse, diagonal, low rank) is carried by
 classes instead, because it comes with data and extra API; a trait carries no
-data. See DECISIONS.md D-36.
+data.
 
 Traits are claims made by whoever constructs an operator. They are not
 verified here. ``pygeoinf2.testing.check_traits`` verifies them numerically.
@@ -210,8 +210,9 @@ def congruence_traits(inner: Traits, *, outer_invertible: bool) -> Traits:
 def gramian_traits(*, invertible: bool) -> Traits:
     """Traits of ``L @ L.adjoint``, which is positive semidefinite always.
 
-    The palindrome rule, and the reason a covariance built as a factor times
-    its own adjoint needs no assertion from anyone.
+    The trait half of the rule for adjoint-palindromic compositions, and the
+    reason a covariance built as a factor times its own adjoint needs no
+    claim from the caller.
 
     Args:
         invertible: whether ``L`` has full rank. Positive *definiteness*

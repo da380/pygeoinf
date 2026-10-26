@@ -1,9 +1,9 @@
 """A bounded rectangle, embedded in a padded periodic domain.
 
-v1's ``plane`` space, and the two-dimensional companion to
-:mod:`~pygeoinf2.symmetric_space.line`. See that module on why a bounded domain
-is a :class:`~pygeoinf2.symmetric_space.box.Box` rather than a symmetric space
-in its own right, and on what the padding is for.
+The two-dimensional companion to :mod:`~pygeoinf2.symmetric_space.line`. See
+that module on why a bounded domain is a
+:class:`~pygeoinf2.symmetric_space.box.Box` rather than a symmetric space in
+its own right, and on what the padding is for.
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ class Plane(Box):
         """The same rectangle with some of its parameters changed.
 
         Overridden so that ``with_order`` and ``with_shape`` give back a plane
-        of the right D-3 subclass rather than a bare
-        :class:`~pygeoinf2.symmetric_space.box.Box`.
+        as the :class:`Lebesgue` or :class:`Sobolev` subclass its order names,
+        rather than a bare :class:`~pygeoinf2.symmetric_space.box.Box`.
 
         Args:
             shape: the new grid, two axes. Unchanged if omitted.

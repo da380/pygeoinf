@@ -1,19 +1,19 @@
 """Harmonic transforms of many radial shells at once.
 
 ``planetmodel.harmonics`` goes between coefficients and a Gauss-Legendre grid
-through ``pyshtools``, one shell per call, and a ball has a hundred shells: the
-loop over them, in Python, was the whole cost of a draw and of every
-application of a covariance. The transform is separable, and written so it
-handles every shell together: a table of the harmonics on the prime meridian
-contracts the degrees by one batched matrix product, and the longitudes are a
-second. Nothing loops over radii, or over anything else.
+one shell per call, and a ball has a hundred shells, so a Python loop over them
+would dominate the cost of a draw and of every application of a covariance.
+The transform is separable, and written here to handle every shell together: a
+table of the harmonics on the prime meridian contracts the degrees by one
+batched matrix product, and the longitudes are a second. Nothing loops over
+radii, or over anything else.
 
 The conventions are ``planetmodel``'s, which are ``pyshtools``' -- real
 orthonormal harmonics without the Condon-Shortley phase, coefficients laid out
 as ``(2, lmax + 1, lmax + 1, radii)`` and values as ``(radii, colatitudes,
-longitudes)`` -- and the tests hold this to that route to rounding. Exact for a
-field band-limited to the grid's degree, the grid being Gauss-Legendre with
-``2 lmax + 1`` longitudes; a projection otherwise.
+longitudes)`` -- and the result agrees with ``planetmodel.harmonics`` to
+rounding. Exact for a field band-limited to the grid's degree, the grid being
+Gauss-Legendre with ``2 lmax + 1`` longitudes; a projection otherwise.
 """
 
 from __future__ import annotations
@@ -38,8 +38,9 @@ class ShellTransform:
             ValueError: if the grid is not a Gauss-Legendre one with its
                 weights and ``2 lmax + 1`` longitudes.
         """
-        # The kind is asked by name: under planetmodel 1.3 every grid kind
-        # carries lmax and weights, so duck-typing them no longer selects.
+        # The kind is checked by name: in planetmodel 1.3 every grid kind
+        # carries lmax and weights, so their presence does not identify a
+        # Gauss-Legendre grid.
         if (
             getattr(grid, "kind", None) != "gauss_legendre"
             or grid.lmax is None

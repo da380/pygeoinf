@@ -2,9 +2,17 @@
 Preconditioners.
 
 A preconditioner is an approximate inverse, so it is a :class:`LinearSolver`
-that happens not to be exact. v1 already models it this way and it is right:
-nothing else is needed, and the iterative solvers accept either a ready-made
-operator or a solver to build one from.
+that happens not to be exact. The iterative solvers accept either a
+ready-made operator or a solver to build one from; a solver here is applied
+to the operator being inverted when the solve is set up.
+
+The generic preconditioners read entries of the operator's matrix: its
+diagonal (:class:`JacobiPreconditioner`), a band
+(:class:`BandedPreconditioner`), groups of components
+(:class:`BlockPreconditioner`) or the large entries of each column
+(:class:`ColumnThresholdedPreconditioner`). :class:`SpectralPreconditioner`
+resolves the leading eigenmodes, and :class:`WoodburyPreconditioner` inverts
+a normal operator through the other space.
 """
 
 from __future__ import annotations
@@ -57,9 +65,9 @@ class JacobiPreconditioner(LinearSolver):
     so its diagonal is the one a symmetric preconditioner wants.
 
     The diagonal is read exactly by default, and can be *estimated* from a few
-    random probes instead -- v1's behavior, and what makes this usable on a
-    large matrix-free operator, where exact costs one application per
-    component. See ``samples``.
+    random probes instead, which is what makes this usable on a large
+    matrix-free operator, where exact costs one application per component.
+    See ``samples``.
     """
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
@@ -84,10 +92,9 @@ class JacobiPreconditioner(LinearSolver):
             samples: estimate the diagonal from this many random probes
                 instead of reading it exactly. **Exact costs one operator
                 application per component** on an operator that has to be
-                probed, which for a large space is the whole reason someone
-                reached for a preconditioner; v1 estimated by default, from
-                20 probes. Exact is kept as the default here because an
-                operator that knows its own diagonal gives it up for nothing:
+                probed, which on a large space is prohibitive. Exact is the
+                default because an operator that knows its own diagonal gives
+                it up for nothing:
                 one built from a matrix, a diagonal one, a sum, scaling or
                 adjoint of those, or a block-diagonal arrangement of them --
                 ``M + t I`` is read. A *composition* is not: ``A* A`` and
@@ -95,9 +102,7 @@ class JacobiPreconditioner(LinearSolver):
                 probe, and on those this is the argument to pass.
             rtol: stop adding probes once the running estimate changes by
                 less than this, relative; ``samples`` is then the first
-                batch, ``block_size`` by default when it is not given. v1's
-                adaptive stopping, which the estimator underneath always had
-                and this did not pass on.
+                batch, ``block_size`` by default when it is not given.
             max_samples: the cap on the adaptive route.
             block_size: probes added per step on the adaptive route.
             rng: the generator for those probes.
@@ -180,8 +185,7 @@ class SpectralPreconditioner(LinearSolver):
             rank: how many eigenmodes to resolve. ``None`` resolves as many as
                 ``rtol`` demands, growing the range ``block_size`` modes at a
                 time until the residual falls below it or ``max_rank`` is
-                reached: v1's ``method="variable"``, which the range finder
-                underneath always offered and this did not pass on.
+                reached.
             damping: the scalar standing in for the tail. Defaults to the
                 smallest resolved eigenvalue.
             rtol: the adaptive route's stopping tolerance.
@@ -270,12 +274,10 @@ def _sparse_inverse_traits(operator: LinearOperator, /, *, galerkin: bool) -> Tr
     components          ``G B^-1``    ``B`` is *and* ``G`` is the identity
     ==================  ============  ======================================
 
-    So the claim is not free, and both classes used to make it unconditionally:
-    ``form="components"`` on an operator that is not self-adjoint, or on any
-    space whose metric is not the identity, gave an inverse that is not
-    self-adjoint while saying it was. ``check_traits`` caught it on a dense
-    Gram; conjugate gradients would not have, it would merely have converged
-    to something else.
+    So the claim is not free: entries taken from the components matrix give
+    a self-adjoint inverse only when the operator is self-adjoint and the
+    metric is the identity, and a false claim would not be caught by
+    conjugate gradients, which would converge to something else.
 
     Note the claim is inherited from the operator's own, as claims are here:
     it is exact for ``probe="exact"``, and for ``probe="banded"`` it holds
@@ -305,11 +307,10 @@ class BandedPreconditioner(LinearSolver):
     invert quickly.
 
     **Only worth it when the operator has that structure.** On a dense operator
-    a tridiagonal approximation is not a poor preconditioner but a harmful one:
-    measured on a random dense positive-definite operator it took conjugate
-    gradients from 125 iterations to failure. Nothing here can detect that for
-    you, which is why the bandwidth is a required argument rather than a
-    default.
+    a tridiagonal approximation is not a poor preconditioner but a harmful
+    one, and can make conjugate gradients fail where it converged without.
+    Nothing here can detect that for you, which is why the bandwidth is a
+    required argument rather than a default.
     """
 
     requires: ClassVar[Traits] = Traits.NONE
@@ -331,9 +332,11 @@ class BandedPreconditioner(LinearSolver):
         Args:
             bandwidth: sub- and super-diagonals to keep on each side. One gives
                 a tridiagonal preconditioner.
-            form: which matrix representation to band. The Galerkin form is
-                the one in which a self-adjoint operator is symmetric, so it
-                is the only one from which the resulting inverse can claim
+            form: which matrix representation to band. ``"auto"`` takes the
+                Galerkin form when the operator claims self-adjointness and
+                the components form otherwise. The Galerkin form is the one in
+                which a self-adjoint operator is symmetric, so it is the only
+                one from which the resulting inverse can claim
                 self-adjointness unless the space's metric is the identity;
                 see :func:`_sparse_inverse_traits`.
             probe: how to extract the diagonals. ``"exact"`` by default even
@@ -406,8 +409,7 @@ def _probe_columns(
     ``matrix()`` costs one application per column *and* holds the whole
     ``dim x dim`` result, which for a preconditioner that keeps a few entries
     per column is the one thing it exists to avoid: the point of a sparse
-    preconditioner is that the dense matrix does not fit. v1 probed a
-    matrix-free scipy operator column by column for exactly this reason.
+    preconditioner is that the dense matrix does not fit.
 
     The applications are the same either way; only the memory differs.
     In parallel the columns go to the workers a few per worker at a time,
@@ -511,15 +513,11 @@ def sparse_approximation(
     verify the claim if one is wanted -- and SciPy has no sparse Cholesky
     to sample from, so a measure built on it could not be drawn from.
 
-    This is v1's ``with_sparse_approximation`` with the measure taken off
-    it (DECISIONS.md D-65). The port had replaced it with a dense assembly, a
-    global threshold and an ``O(N^3)`` definiteness check.
-
     Args:
         operator: self-adjoint, on a coordinate space.
         threshold: the entries kept. Under ``"correlation"`` those with
             ``|c_ij| / sqrt(d_i d_j) >= threshold``, the natural test for a
-            covariance and v1's; under ``"column"`` those with
+            covariance; under ``"column"`` those with
             ``|c_ij| >= threshold |c_jj|``, the test the thresholded
             preconditioner uses.
         max_per_column: a hard cap on entries kept per column, the largest
@@ -619,11 +617,9 @@ class BlockPreconditioner(LinearSolver):
     real acquisition geometry gives.
 
     The matrix is built one column at a time and kept sparse, so the memory is
-    the entries retained rather than ``dim x dim``, so it grows with the
-    dimension rather than with its square: measured in blocks of 20, four times
-    the dimension costs four times the memory, where the dense matrix costs
-    sixteen. At ``dim`` 2000 that is 3.5 MB against 97 MB to form the dense
-    matrix alone. The applications are the same either way.
+    that of the entries retained rather than ``dim x dim``, and for blocks of
+    fixed size it grows with the dimension rather than with its square. The
+    applications are those of a dense assembly, one per column a block names.
 
     Blocks may overlap and need not cover everything. Both matter for a real
     clustering, where a point near two clusters belongs to both and a few
@@ -649,11 +645,12 @@ class BlockPreconditioner(LinearSolver):
             blocks: index groups. They may **overlap**, and they need not cover
                 every component: anything left out keeps its own diagonal
                 entry, so a partial grouping degrades to Jacobi there rather
-                than being refused. v2 required a partition, which rules out
-                exactly the clusterings a real geometry produces -- a station
-                near two clusters belongs to both.
-            form: which matrix representation to take entries from. As for
-                :class:`BandedPreconditioner`, only the Galerkin form lets the
+                than being refused. A partition is not required, since a real
+                clustering is rarely one: a station near two clusters belongs
+                to both.
+            form: which matrix representation to take entries from, with
+                ``"auto"`` as for :class:`BandedPreconditioner`. Only the
+                Galerkin form lets the
                 resulting inverse claim self-adjointness on a space whose
                 metric is not the identity; see :func:`_sparse_inverse_traits`.
             incomplete: factorize with an incomplete LU rather than an exact
@@ -695,11 +692,10 @@ class BlockPreconditioner(LinearSolver):
         # Overlapping blocks simply name some pairs twice, and the duplicates
         # are removed rather than added -- the entries come from the operator
         # itself, not from summed block inverses, which is what makes overlap
-        # free. That is v1's construction.
+        # free.
         #
-        # Held as arrays throughout. A dict of sets says the same thing and
-        # cost 11 MB at dim 2000 where the pattern itself is 1.6, which would
-        # have given back most of what the sparsity bought.
+        # Held as arrays throughout: a dict of sets says the same thing at
+        # several times the memory of the pattern itself.
         pattern_rows, pattern_columns = [], []
         for block in self._blocks:
             pattern_rows.append(np.tile(block, block.size))
@@ -825,8 +821,9 @@ class WoodburyPreconditioner(LinearSolver):
             prior_covariance: the prior covariance ``Q`` on the model space.
             noise_covariance: the data error covariance ``R``.
             solver: inverts the inner operator. This is the one that should be
-                cheap: it defaults to conjugate gradients at ``rtol=1e-3``
-                with ``strict=False``, which assumes the inner operator is
+                cheap: it defaults to conjugate gradients at ``rtol=1e-3``,
+                at most 200 iterations and ``strict=False``, which assumes the
+                inner operator is
                 positive definite, as both are. Loose because a preconditioner
                 is an approximation and inner precision does not show in the
                 answer; not strict because a strict inner solver raises on
@@ -924,8 +921,8 @@ class WoodburyPreconditioner(LinearSolver):
 
         Raises:
             TypeError: if the object does not expose the three factors.
-            ValueError: if they do not fit together, or the damping is
-                negative.
+            ValueError: if the problem has no error covariance, if the
+                factors do not fit together, or if the damping is negative.
         """
         for attribute in ("forward", "prior_covariance", "error_covariance"):
             if not hasattr(normal, attribute):
@@ -1070,13 +1067,10 @@ class ColumnThresholdedPreconditioner(LinearSolver):
     matter of geometry rather than of index.
 
     It costs one application per column, but never holds the whole matrix: the
-    columns are probed one at a time and only the retained entries are kept.
-    Measured at ``dim`` 2000 with a threshold of 0.1, the whole build peaks at
-    1.2 MB against 97 MB to form the dense matrix alone, and grows linearly in
-    the dimension rather than quadratically. It is for the case
-    where those applications are affordable and a dense factorization is not --
-    which is the case it was written for, and the case that forming the dense
-    matrix ruled out.
+    columns are probed one at a time and only the retained entries are kept,
+    so the memory grows with the number of entries kept rather than with the
+    square of the dimension. It is for the case where those applications are
+    affordable and a dense matrix or its factorization is not.
 
     Note:
         Thresholding column by column does not produce a symmetric matrix —
@@ -1084,10 +1078,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         own — and conjugate gradients needs a symmetric preconditioner. So the
         *pattern* is symmetrized, by keeping a position when either column
         wants it, and the values are then read off the Galerkin matrix, which
-        is symmetric to begin with. v1 did not do this. It is the same failure
-        as the untapered truncation of
-        :class:`~pygeoinf2.inference.preconditioners.InvariantDistancePreconditioner`
-        and it has the same character: cheap to prevent, silent when it happens.
+        is symmetric to begin with.
     """
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
@@ -1107,7 +1098,8 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         """
         Args:
             threshold: entries below ``threshold * |diagonal|`` of their own
-                column are dropped. Zero keeps everything.
+                column are dropped, the column's largest entry standing in for
+                a diagonal that is zero. Zero keeps everything.
             max_per_column: a hard cap on retained entries per column, keeping
                 the largest. The diagonal is always among them.
             incomplete: factorize with an incomplete LU rather than an exact

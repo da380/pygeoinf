@@ -1,6 +1,6 @@
 """Radial profiles: functions of radius under ``r^2 dr``.
 
-Needs ``planetmodel`` 1.2. The independent routes (DECISIONS.md D-107) are the
+Needs ``planetmodel`` 1.2. The independent routes are the
 ball, of which this space is the part of degree zero and with which it must
 agree component for component; ``planetmodel``'s banded solve; and the closed
 forms a constant length scale allows.

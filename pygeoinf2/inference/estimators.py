@@ -2,17 +2,14 @@
 An estimator is a mapping from data to an answer.
 
 Three kinds, distinguished only by what ``__call__`` returns: a point, a
-measure, or a set. Which kind you get is fixed by the *prior* — no prior gives
+measure, or a set. Which kind you get is fixed by the *prior*: no prior gives
 a point, a distribution gives a distribution, a constraint set gives a
-constraint set — and that rule is what says these three exist and stops a
-fourth being invented.
+constraint set.
 
 The property space is the model space, or a space reached from it by an
 operator ``T``. An inverse problem is an inference problem with ``T == identity``, so
 :meth:`Estimator.push_forward` is the whole of the difference: applying ``T``
 to a point, pushing a measure through it, taking the image of a set.
-
-See DECISIONS.md D-72.
 """
 
 from __future__ import annotations
@@ -73,13 +70,12 @@ class SetEstimator(Estimator):
 class LinearPointEstimator(AffineOperator):
     """A point estimator that is affine in the data, so also an operator.
 
-    It joins the existing algebra rather than wrapping it, and carries what the
-    method actually produces alongside the estimate itself:
+    It is an :class:`~pygeoinf2.algebra.operators.AffineOperator`, ``d -> B d +
+    t``, and carries the two halves of its error budget alongside the
+    estimate itself:
 
     ``resolution``
-        ``B A``, the averaging kernel — how the estimate sees the true model.
-        This is the *output* of a Backus-Gilbert method, not a diagnostic
-        added afterwards.
+        ``B A``, the averaging kernel -- how the estimate sees the true model.
     ``propagated_covariance``
         ``B R B*``, the data error mapped into the target space.
     """
@@ -127,9 +123,9 @@ class LinearPointEstimator(AffineOperator):
     def resolution(self) -> LinearOperator:
         """``B A``: what the estimate reports when the truth is ``m``.
 
-        The resolution operator, and the honest answer to "what am I actually
-        estimating": it is the identity only for a perfectly resolved problem,
-        and its departure from the identity is the blurring the data impose.
+        The resolution operator, which says what is actually being estimated:
+        it is the identity only for a perfectly resolved problem, and its
+        departure from the identity is the blurring the data impose.
 
         Returns:
             The operator on the target space.
@@ -176,9 +172,12 @@ class LinearPointEstimator(AffineOperator):
     def as_measure(self) -> "GaussianEstimator":
         """The measure-valued estimator this one induces.
 
-        Mean ``B d``, covariance ``B R B*``. One of the bridges of §18.7: a
-        linear point estimator, a Gaussian estimator and a set estimator are
-        three readings of the same object, not three implementations.
+        Expectation ``B d + t``, covariance ``B R B*``: the point estimate with
+        the data error propagated through it.
+
+        Raises:
+            AttributeError: if the estimator was built without a data error
+                measure.
         """
         return GaussianEstimator(self, self.propagated_covariance())
 
@@ -189,9 +188,10 @@ PointEstimator.register(LinearPointEstimator)
 class GaussianEstimator(MeasureEstimator):
     """A measure-valued estimator whose covariance does not depend on the data.
 
-    Which is the case for every linear-Gaussian method: only the mean moves,
-    and affinely. So the object is a pair, and pushing it through a property
-    operator is one line.
+    Which is the case for every linear-Gaussian method: only the expectation
+    moves, and affinely. So the object is a pair -- an affine expectation map
+    and a fixed covariance -- and pushing it through a property operator maps
+    the first and conjugates the second.
     """
 
     def __init__(
@@ -207,13 +207,15 @@ class GaussianEstimator(MeasureEstimator):
             expectation_operator: data to the posterior expectation.
             covariance: the posterior covariance, on the target space.
             centered_sample: a callable taking a generator and returning one
-                draw of the *fluctuation* about the mean. Supplied when the
-                posterior can be sampled without a covariance factor — which
-                for a linear Gaussian inversion it can, by
-                randomize-then-optimize. Carried here rather than attached by a
-                subclass's ``__call__`` so that :meth:`push_forward` can map it
-                through; a sampler that only exists on the way out is a
-                sampler ``push_forward`` silently drops.
+                draw of the *fluctuation* about the expectation. Supplied when
+                the posterior can be sampled without a covariance factor --
+                which for a linear Gaussian inversion it can, by
+                randomize-then-optimize. Carried by the estimator so that
+                :meth:`push_forward` maps it through with everything else.
+
+        Raises:
+            ValueError: if the covariance does not act on the codomain of the
+                expectation operator.
         """
         if covariance.domain != expectation_operator.codomain:
             raise ValueError(
@@ -252,10 +254,9 @@ class GaussianEstimator(MeasureEstimator):
         """The posterior measure for this data.
 
         Samplable whenever the estimator is, which for a linear Gaussian
-        inversion is whenever the prior and the data errors are — the draw is
+        inversion is whenever the prior and the data errors are: the draw is
         randomize-then-optimize and needs no factor of the posterior
-        covariance, which is just as well, since forming one on a model space
-        is exactly what the whole arrangement avoids.
+        covariance.
         """
         return GaussianMeasure(
             self.property_space,
@@ -265,11 +266,10 @@ class GaussianEstimator(MeasureEstimator):
         )
 
     def push_forward(self, operator: LinearOperator, /) -> "GaussianEstimator":
-        """The posterior for ``T m``: mean through ``T``, covariance conjugated.
+        """The posterior for ``T m``: expectation through ``T``, covariance conjugated.
 
-        Worth reaching for even when the model-space posterior is available,
-        since ``T C T*`` on a small property space is cheaper than forming
-        ``C`` on the model space at all.
+        The covariance is the operator ``T C T*``; nothing is formed on the
+        model space.
 
         **Which of the two to reach for.** This pushes the *estimator*, and is
         what to use for a property of data not yet seen -- one estimator, many
@@ -295,11 +295,12 @@ class GaussianEstimator(MeasureEstimator):
             def pushed(rng: Any, _sample: Any = self._centered_sample) -> Any:
                 return operator(_sample(rng))
 
-        # A congruence preserves self-adjointness and semidefiniteness, and
-        # that is claimed here rather than left to the composition, which sees
-        # it only when the covariance happens to be one factor: written
-        # ``(I - K A) Q`` it is two, the list flattens, and the palindrome is
-        # no longer visible in it. The rule is the same either way.
+        # A congruence T C T* preserves self-adjointness and semidefiniteness,
+        # and that is claimed here rather than left to the composition node.
+        # The node infers it only when its flattened factor list reads as a
+        # product F ... F* with the adjoints mirrored about the middle; a
+        # covariance written ``(I - K A) Q`` contributes two factors, and the
+        # mirror image is lost.
         covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
             congruence_traits(self._covariance.traits, outer_invertible=False)
         )

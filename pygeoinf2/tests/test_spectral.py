@@ -810,8 +810,7 @@ class TestAdaptiveDiagonals:
 class TestPriorWeightedProbes:
     """v1's ``measure=`` on the range finder: probes drawn from a prior find
     the range the prior lets the data see, which white noise finds badly.
-    David remembered this working far better on function spaces; measured,
-    it does (DECISIONS.md D-53)."""
+    On function spaces it does far better, as measured here."""
 
     def test_the_prior_weighted_range_captures_what_the_data_can_see(self, rng):
         from pygeoinf2.numerics.randomized import random_range

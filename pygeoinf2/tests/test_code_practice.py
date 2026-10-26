@@ -189,7 +189,7 @@ def test_space_attributes_do_not_shadow_the_vector_api(space_class):
 # Parameters whose meaning is fixed across the whole library and documented in
 # one place, so repeating them in every signature is noise rather than
 # information: `rng` is always the generator, `n_jobs` and `backend` are always
-# joblib's, and DECISIONS.md D-52 and pygeoinf2/parallel.py say so once.
+# joblib's, and pygeoinf2/parallel.py says so once.
 CONVENTIONAL = {"rng", "n_jobs", "backend"}
 
 
@@ -262,7 +262,7 @@ def documentation_gaps(path) -> list[str]:
 class TestDocstringsCarryTheContract:
     """What a function refuses, and what its options mean.
 
-    K Should-12. This was enforced for a while against a shrinking list of
+    This was enforced for a while against a shrinking list of
     files with a recorded number of gaps each, so the standard could bite
     before the backlog was cleared. The backlog is cleared -- 278 gaps across
     37 files, taken to zero -- so the list is gone and the rule is simply the
@@ -283,8 +283,8 @@ class TestTheNamespaceHasNoHoles:
     ``require_module`` reachable only as ``pygeoinf2.algebra.spaces.X``,
     ``resolve_solver`` only as ``pygeoinf2.numerics.solvers.resolve_solver``,
     and the MFEM backend's ``matern_measure`` — which one of the examples
-    imports — missing from its ``__all__``. D-5 says the top-level namespace
-    is the interface; a class documented as the reason
+    imports — missing from its ``__all__``. The top-level namespace is the
+    interface; a class documented as the reason
     ``from_formal_adjoint`` exists has to be in it.
     """
 
@@ -361,10 +361,9 @@ class TestImportCost:
 
     def test_the_quadratic_form_module_does_not_import_scipy_at_module_scope(self):
         """Loaded on its own, in a fresh interpreter: neither ``scipy.stats``
-        nor ``scipy.optimize`` may appear. It cannot be imported through the
-        package for this check, because ``pygeoinf2.inference.problem`` still
-        imports ``scipy.stats`` eagerly and would satisfy it for the wrong
-        reason."""
+        nor ``scipy.optimize`` may appear. It is loaded alone rather than
+        through the package, so that no other module's imports can satisfy
+        the check for the wrong reason."""
         import subprocess
         import sys
         import textwrap

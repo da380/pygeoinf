@@ -16,7 +16,7 @@ end of its mesh, and whichever is chosen distorts a field within about a
 correlation length of where it acts. Moving the ends away from ``[lower,
 upper]`` moves the distortion out of the domain, and the Robin condition the
 mesh ends with by default makes it smaller to begin with, so that half the
-padding the natural condition wants is enough (DECISIONS.md D-122).
+padding the natural condition wants is enough.
 
 In the eigenbasis every power of ``A`` is diagonal, so the conveniences of a
 symmetric space carry over with ``theta``, the eigenvalues of ``A``, in the
@@ -29,8 +29,8 @@ by a standard deviation *field* rather than by one number.
 **The conventions are the package's.** A vector is the array of the field's
 values at the nodes of the padded mesh, as a ``Line``'s is its values on the
 padded grid; its components are the coefficients of the kept eigenfunctions;
-a product is left on the nodes, untruncated (DECISIONS.md D-87); point
-evaluation is refused below the order that admits it (D-11).
+a product is left on the nodes, untruncated; point evaluation is refused at
+or below the order that admits it, which is one half.
 
 The numerics are ``planetmodel.randomfield``'s: ``padded_mesh``,
 ``RadialOperatorFamily`` under its plain measure, and the ``SpectralBasis`` of
@@ -84,12 +84,10 @@ class Interval(AxisSpace):
                 or a ``(below, above)`` pair. Two length scales by default,
                 those at the endpoints; four under the natural condition.
             boundary: the condition at the ends of the mesh. ``"robin"``, the
-                default, ends the mesh as if it went on, ``u' = -+ 0.7 u / L``:
-                the point of the padding is that the condition should not
-                matter, and measured, two length scales under this one do
-                what four do under the natural one (DECISIONS.md D-122).
-                ``None`` is the natural condition, and doubles the default
-                padding. A number or a pair gives the Robin coefficients
+                default, ends the mesh as if it went on, ``u' = -+ 0.7 u / L``,
+                and with it two length scales of padding do what four do under
+                the natural condition. ``None`` is the natural condition, and
+                doubles the default padding. A number or a pair gives the Robin coefficients
                 themselves.
             ngll: Gauss-Lobatto-Legendre nodes per element.
             element_length: the longest an element may be. By default short
@@ -98,8 +96,9 @@ class Interval(AxisSpace):
                 length scale.
 
         Raises:
-            ValueError: if the endpoints are out of order, a length scale is
-                not positive, or the mesh cannot hold the modes asked for.
+            ValueError: if the endpoints are out of order, fewer than one mode
+                is asked for, a length scale is not positive, or the mesh
+                cannot hold the modes asked for.
         """
         super().__init__(
             modes,

@@ -4,12 +4,12 @@ What the code does is in the code and its docstrings. This file holds the
 choices behind it that a reader cannot recover from the code alone: a
 convention chosen among alternatives, a default fixed by a measurement, a v1
 feature dropped on purpose, a rule the tests enforce. Each entry says what was
-decided, why, and what it means for a caller or contributor. Docstrings cite
-an entry as `DECISIONS.md D-nn`.
+decided, why, and what it means for a caller or contributor. The code does not
+cite these entries (D-10): its docstrings and comments are self-contained, and
+the reasoning behind them lives here.
 
 The entries are numbered in one sequence. D-1 to D-13 are the decisions of the
-August 2026 review and keep their numbers because the code cites them. The
-rest were extracted from the design journal and the functionality audit when
+August 2026 review and keep their numbers. The rest were extracted from the design journal and the functionality audit when
 those were retired on 2026-09-18; the journal's reasoning survives in git
 history, at commit `83658d0` and before, for anyone who needs the long form.
 
@@ -65,9 +65,17 @@ warning. The same rule applied to an estimate with an error bar is why
 `exp(-length_scale² λ)`, v1's meaning. The diffusion-time relation is
 documented, not encoded.
 
-**D-10. One current-state document, and docstrings cite it.** `DESIGN.md`
-was the journal; it has since been retired in favour of this file and
-`CURRENT_STATE.md`. Docstrings cite decisions here, never a journal section.
+**D-10. Two documents of record, and the code cites neither** (2026-08;
+reversed 2026-10-26, David). `DESIGN.md` was the journal; it has since been
+retired in favour of this file and `CURRENT_STATE.md`. Docstrings used to cite
+decisions here as `DECISIONS.md D-nn`; since 2026-10-26 nothing in the code
+does -- not a docstring, a comment, an error message, a test or an example.
+A docstring says what is done, what its terms mean and, where a caller needs
+it to choose well, briefly why; the longer reasoning, the alternatives and the
+measurements belong here. A docstring that needs a decision to make sense is
+incomplete, and the fix is to say the point in the docstring. The same holds
+for planning, development history and comparisons with v1, which belong in
+these documents, a migration guide or git history.
 
 **D-11. The Sobolev-order guard is a hard error with `unsafe=True` to
 override.** Point evaluation below the order that admits it is refused. The

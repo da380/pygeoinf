@@ -2,10 +2,9 @@
 24. Preconditioning a large inversion with a surrogate.
 
 Example 21 solved a tomographic inversion in one line and said nothing about
-how. That is fine while the normal equations fit in a Cholesky factorization.
-When they do not, the solve becomes iterative, and an iterative solve on an
-ill-conditioned normal operator is where a real inversion actually spends its
-time.
+how. The solve inside is conjugate gradients on the normal operator, and an
+iterative solve on an ill-conditioned normal operator is where a real
+inversion actually spends its time.
 
 The remedy is a *surrogate*: the same problem, made cheap. Here the surrogate
 lives on a sphere of a sixth the degree -- a different, much smaller model

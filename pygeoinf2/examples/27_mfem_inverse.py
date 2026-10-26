@@ -23,7 +23,7 @@ definite on this one, which ``check_traits`` verifies rather than assumes.
 
 **The PDE is solved by MFEM.** The forward operator is
 ``sensors @ pde_solve``, where the solve is MFEM's own conjugate gradients on
-MFEM's own assembled system. This library never sees a matrix: it wraps the
+MFEM's own assembled system. This library never inverts a matrix: it wraps the
 solve as an operator, composes it, and takes the adjoint. Assembly,
 preconditioning and the solve stay on MFEM's side of the boundary, which is
 where they belong; what this side supplies is the inverse problem.
@@ -31,7 +31,7 @@ where they belong; what this side supplies is the inverse problem.
 **Nothing converts between a load vector and a function.** Each sensor is a
 linear form, so its natural output is a *derivative*; the mass solve that turns
 one into a function happens inside the operator. That is the distinction of
-DECISIONS.md D-26, in the setting where it is easiest to get wrong.
+example 5, in the setting where it is easiest to get wrong.
 
 Needs MFEM, which comes with the 'mfem' extra.
 """

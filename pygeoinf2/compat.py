@@ -1,12 +1,15 @@
 """
-Presenting a v1 object to the v2 core.
+Compatibility with pygeoinf v1.
 
-The point of this module is to get the existing concrete spaces — the sphere,
-circle, torus, plane and line, roughly 9.5k lines of numerically delicate
-transform code — usable against the new core immediately, so that the core is
-exercised on real problems long before those spaces are rewritten natively.
+Two things live here. The five v1 inference class names are aliases of their
+v2 classes, so code written against those names imports; a keyword that was
+renamed is not translated, and raises ``TypeError`` at the call. And
+:func:`adapt_space`, :func:`adapt_operator` and :func:`adapt_form` present a
+v1 space, operator or form to the v2 core, for code that still holds v1
+objects.
 
-The mapping is short, because the two designs agree on more than they differ:
+The adapter's mapping is short, because the two designs agree on more than
+they differ:
 
 ===========================  ==========================================
 v1                           v2
@@ -28,10 +31,10 @@ space; it is already there, wearing a different name.
 
 ``white_noise`` is deliberately *not* delegated. v1 draws standard normal
 components, giving covariance ``G`` rather than the identity; the adapted
-space uses the corrected draw. See DECISIONS.md D-19.
+space uses the corrected draw.
 
-Nothing here is imported by ``pygeoinf2/__init__.py``: importing this module
-is what pulls in v1.
+Nothing here is imported by ``pygeoinf2/__init__.py``. The module does not
+import v1 itself: the adapters work on the v1 objects they are given.
 """
 
 from __future__ import annotations
@@ -102,8 +105,12 @@ class AdaptedSpace(CoordinateSpace):
                 ``"diagonal"`` assumes a diagonal Gram and costs one
                 application; ``"dense"`` forms and factorizes it, which is
                 ``O(dim^2)`` in memory and unusable on a large space;
-                ``"auto"`` probes for diagonality and picks. See
-                :meth:`_detect_diagonal_gram`.
+                ``"auto"`` probes for diagonality and picks, warning when it
+                has to fall back to the dense route. See
+                :meth:`_diagonal_gram`.
+
+        Raises:
+            ValueError: for an unknown *gram* strategy.
         """
         if gram not in ("auto", "diagonal", "dense"):
             raise ValueError(f"Unknown gram strategy {gram!r}.")
@@ -212,8 +219,8 @@ class AdaptedSpace(CoordinateSpace):
         """Components drawn from ``N(0, G^-1)``.
 
         Not delegated to v1, which draws ``N(0, I)`` components and so produces
-        covariance ``G`` on any space whose basis is not orthonormal — that is,
-        on every Sobolev space in the library.
+        covariance ``G`` on any space whose basis is not orthonormal -- that
+        is, on every v1 Sobolev space.
         """
         rng = _resolve_rng(rng)
         diagonal = self._diagonal_gram()
@@ -319,9 +326,10 @@ def adapt_space(space: Any, /, *, gram: str = "auto") -> CoordinateSpace:
     """Present a v1 space as a v2 ``CoordinateSpace``.
 
     Args:
-        space: the v1 space.
-        gram: how to obtain the metric. ``"auto"`` uses the space's own Gram
-            if it has one and the identity otherwise.
+        space: the v1 space. A v2 coordinate space is returned unchanged.
+        gram: how to factorize the Gram matrix for white noise:
+            ``"auto"``, ``"diagonal"`` or ``"dense"``, as for
+            :class:`AdaptedSpace`.
 
     Returns:
         A v2 space over the same vectors.
@@ -366,7 +374,7 @@ def adapt_form(
     A v1 form stores its action as a component array in the **derivative**
     convention — ``<f, x> == dot(components, c_x)`` — so this is exactly
     ``from_derivative_components``. The representer, which v1 obtains with
-    ``from_dual``, is then ``f.adjoint(1.0)``. See DECISIONS.md D-26.
+    ``from_dual``, is then ``f.adjoint(1.0)``.
 
     Args:
         form: the v1 ``LinearForm``.
@@ -383,9 +391,9 @@ def adapt_form(
 #                         v1 names for v2 classes                         #
 # ----------------------------------------------------------------------- #
 #
-# The inference-layer renames of DECISIONS.md D-99, carried here so that code
-# written against v1's class names imports. Only class names: a renamed
-# keyword raises TypeError at the call, which is the loud, easy failure.
+# v1's inference class names, carried here so that code written against them
+# imports. Only class names: a renamed keyword raises TypeError at the call,
+# which is the loud, easy failure.
 
 from .inference import (  # noqa: E402
     ConstrainedLeastSquares,

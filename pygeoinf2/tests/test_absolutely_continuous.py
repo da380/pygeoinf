@@ -1,4 +1,4 @@
-"""Measures that know their density relative to a reference (D-132)."""
+"""Measures that know their density relative to a reference."""
 
 import numpy as np
 import pytest
@@ -136,7 +136,7 @@ class TestTheLinearPosterior:
         check_gradient(posterior.relative_log_density, prior.sample(rng=rng), rng=rng)
 
     def test_the_algebra_degrades_to_a_plain_gaussian(self, euclidean_setting, rng):
-        """D-73's worry, answered: a push-forward or a translation rebuilds
+        """A push-forward or a translation of a posterior rebuilds
         through ``GaussianMeasure._rebuild``, so the density is dropped rather
         than silently wrong."""
         model, *_, prior, _, problem, data = euclidean_setting

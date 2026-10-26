@@ -2,16 +2,19 @@
 Preconditioners that need the normal operator's factors, not its assembly.
 
 The generic preconditioners in :mod:`pygeoinf2.numerics.preconditioners` take
-any operator and approximate it. These take a
-:class:`~pygeoinf2.inference.normal.NormalOperator` and exploit the fact that it
-is ``A Q A* + R``, which is why they live here: an assembled operator no longer
-knows that, and in v1 they had to be methods on the inversion class for exactly
-that reason. Here they are ordinary :class:`LinearSolver` objects and can be
-passed to any solver's ``with_preconditioner``.
+any operator and approximate it. These take a normal operator that still
+carries its factors -- a
+:class:`~pygeoinf2.inference.normal.FactoredNormalOperator`, such as an
+estimator's ``normal_operator`` or ``surrogate(...)`` -- and exploit the fact
+that it is ``A Q A* + R``, which an assembled operator no longer knows. They
+are ordinary :class:`LinearSolver` objects and can be passed to any solver's
+``with_preconditioner``.
 
-Both are for the *data-space* formalism. Neither identity has a model-space
-counterpart — ``Q^-1 + A* R^-1 A`` has no cheap diagonal, because the expensive
-part is the operator sandwiched in the middle rather than at the ends.
+All three are for the *data-space* formalism, and refuse a normal operator
+assembled in the model space. None of the identities they use has a
+model-space counterpart -- ``Q^-1 + A* R^-1 A`` has no cheap diagonal, because
+the expensive part is the operator sandwiched in the middle rather than at the
+ends.
 """
 
 from __future__ import annotations
@@ -81,9 +84,9 @@ class NormalDiagonalPreconditioner(LinearSolver):
 
     With no blocks this computes the exact Galerkin diagonal, and then agrees
     with :class:`~pygeoinf2.numerics.preconditioners.JacobiPreconditioner`
-    applied to the assembled operator. The test suite checks that it does,
-    which is what pins the metric handling: a diagonal is a statement about a
-    basis, and the Galerkin form is the one in which a self-adjoint operator is
+    applied to the assembled operator. The Galerkin diagonal is the one to
+    take on a weighted data space: a diagonal is a statement about a basis,
+    and the Galerkin form is the one in which a self-adjoint operator is
     symmetric.
     """
 
@@ -183,25 +186,24 @@ class LocalisedPreconditioner(LinearSolver):
     sensible ordering, and a preconditioner can keep the blocks and drop the
     rest.
 
-    Each block is approximated by a randomized Nystrom decomposition of
-    ``P N P*`` at the given rank rather than by the exact sub-block, so a block
-    of size 200 still costs only ``rank`` applications. The blocks are assembled
-    into a sparse matrix, the noise diagonal is added, and the result is
-    factorized once with a sparse LU.
+    Each block of ``A Q A*`` -- its Galerkin sub-block ``P (A Q A*) P*`` on
+    the block's indices -- is approximated by a randomized eigendecomposition
+    (:func:`~pygeoinf2.numerics.randomized.random_eig`) at the given rank
+    rather than formed exactly, so a block of size 200 still costs only about
+    ``rank`` applications. The blocks are assembled into a sparse matrix, the
+    noise diagonal is added, and the result is factorized once with a sparse
+    LU.
 
     Unlike :class:`NormalDiagonalPreconditioner` the blocks may **overlap** and
     need not cover every index: this is an approximation to the operator, not a
     partition of it. Where blocks overlap their estimates are **averaged**,
     which is what makes an overlapping cover behave sensibly at the seams.
-    (They used to be summed, because a COO assembly adds duplicates: an entry
-    two blocks agreed on came out twice its own value.)
 
     Note:
         Only ``A Q A*`` is treated block-wise; the error covariance contributes
         its diagonal. So a single block covering every index, at full rank,
-        reproduces ``N^-1`` exactly when ``R`` is diagonal — which is the usual
-        case, and what the test suite checks — and drops ``R``'s off-diagonal
-        otherwise. That is a real approximation and not a free one: with a
+        reproduces ``N^-1`` exactly when ``R`` is diagonal -- which is the
+        usual case -- and drops ``R``'s off-diagonal otherwise. That is a real approximation and not a free one: with a
         strongly correlated ``R`` this preconditioner is describing a different
         operator, and the iteration count will say so.
 
@@ -225,7 +227,7 @@ class LocalisedPreconditioner(LinearSolver):
         """
         Args:
             blocks: index groups that couple strongly. May overlap.
-            rank: the rank of the Nystrom approximation within each block,
+            rank: the rank of the eigendecomposition within each block,
                 capped at the block size.
             rng: the generator for the randomized range finder.
         """
@@ -265,9 +267,9 @@ class LocalisedPreconditioner(LinearSolver):
 
             def restrict(vector: Any, indices: np.ndarray = indices) -> np.ndarray:
                 # Galerkin, not components: the Galerkin matrix is the one in
-                # which a self-adjoint operator is symmetric (DECISIONS.md D-26), and
-                # a principal sub-block of a symmetric positive semidefinite
-                # matrix is again one, which is what Nystrom needs.
+                # which a self-adjoint operator is symmetric, and a principal
+                # sub-block of a symmetric positive semidefinite matrix is
+                # again one, which is what the eigendecomposition needs.
                 return data_space.apply_gram(data_space.to_components(vector))[indices]
 
             def extend(
@@ -440,17 +442,15 @@ class InvariantDistancePreconditioner(LinearSolver):
         definiteness**, and conjugate gradients needs a positive definite
         preconditioner. That is what ``taper`` is for: multiplying by a
         compactly supported positive definite function before cutting is a
-        Schur product, which does preserve it. It defaults to True here.
-
-        v1's version defaulted to no taper, which is the most likely reason it
-        never performed as well as hoped: without one the "preconditioner" can
-        be indefinite, and an indefinite preconditioner does not slow CG down,
-        it breaks it. See DECISIONS.md D-47.
+        Schur product, which does preserve it. It defaults to True. Without
+        a taper the preconditioner can be indefinite, and an indefinite
+        preconditioner does not slow conjugate gradients down, it breaks it.
 
     The caller asserts two things this class cannot check: that the forward
     operator really is evaluation at *points*, in that order, and that the
-    prior really is invariant. Both are false quietly rather than loudly, so
-    the test suite checks the assembled matrix against ``A Q A*`` directly.
+    prior really is invariant. If either is false nothing fails loudly; the
+    preconditioner is simply wrong. On a small case, compare it with the exact
+    inverse of the normal operator before relying on it.
     """
 
     requires: ClassVar[Traits] = Traits.NONE
@@ -508,8 +508,8 @@ class InvariantDistancePreconditioner(LinearSolver):
         # assembled in the Galerkin form, which is what the solve then wants
         # (``N_gal^-1 G c_y`` gives the components of ``N^-1 y``) and what the
         # noise diagonal is already in. Without the two ``G`` factors the
-        # matrix was right only on an orthonormal data space, and the Galerkin
-        # noise was being added to a non-Galerkin kernel.
+        # matrix would be right only on an orthonormal data space, and the
+        # Galerkin noise would be added to a non-Galerkin kernel.
         metric = _metric_diagonal(data_space, type(self).__name__)
 
         if self._max_distance == 0.0:

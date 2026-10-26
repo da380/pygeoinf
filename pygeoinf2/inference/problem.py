@@ -3,13 +3,13 @@ The observation model: what the data are, and how uncertain.
 
 A ``ForwardProblem`` is the operator and the data uncertainty, and nothing
 else. The prior and the property operator belong to the *estimator*, because
-the prior is what selects the method — see DECISIONS.md D-72. One problem
-can then be attacked several ways without being rebuilt.
+the prior is what selects the method. One problem can then be attacked several
+ways without being rebuilt.
 
-The data uncertainty may be a probability measure or a convex set. Those are
-the two data relations of section 18.1, and they are interconvertible but not
-canonically: a Gaussian hardens into an ellipsoid at a chosen chi-squared
-level, while the reverse restores detail the set never carried.
+The data uncertainty may be a probability measure or a convex set. The two are
+interconvertible, but not canonically: a Gaussian hardens into an ellipsoid at
+a chosen chi-squared level, while going the other way invents detail the set
+never carried.
 """
 
 from __future__ import annotations
@@ -162,8 +162,8 @@ class ForwardProblem:
     def chi_squared(self, model: Any, data: Any, /) -> float:
         """The weighted misfit of a model against data.
 
-        With a Gaussian error this is the Mahalanobis distance of the residual;
-        without an error measure it is the squared norm.
+        With a Gaussian error this is the squared Mahalanobis distance of the
+        residual; without an error measure it is the squared norm.
         """
         residual = self.data_space.subtract(data, self._forward_operator(model))
         return self.chi_squared_from_residual(residual)
@@ -175,8 +175,9 @@ class ForwardProblem:
             residual: the difference between predicted and observed data.
 
         Returns:
-            The Mahalanobis distance of the residual under the error measure,
-            or its plain squared norm when the data are taken as exact.
+            The squared Mahalanobis distance of the residual under the error
+            measure, or its plain squared norm when the data are taken as
+            exact.
 
         Raises:
             TypeError: if the uncertainty is a set rather than a Gaussian
@@ -191,9 +192,10 @@ class ForwardProblem:
                 f"one is a {type(measure).__name__}."
             )
         centered = self.data_space.subtract(residual, measure.expectation)
-        # unsafe=True past D-131's gate: a misfit is a likelihood potential,
-        # not a density on the data space, and it is well defined whenever
-        # the residual lies in the error's Cameron-Martin space.
+        # unsafe=True passes the gate that refuses densities on function
+        # spaces: a misfit is a likelihood potential, not a density on the
+        # data space, and it is well defined whenever the residual lies in
+        # the error's Cameron-Martin space.
         return measure.mahalanobis_squared(
             self.data_space.add(centered, measure.expectation), unsafe=True
         )
@@ -211,9 +213,8 @@ class ForwardProblem:
         Raises:
             ValueError: for a level outside ``(0, 1)``.
         """
-        # Imported here rather than at module scope: `scipy.stats` pulls in
-        # about three hundred modules and a quarter of a second, and this is
-        # the only thing in the file that wants it.
+        # Imported here rather than at module scope: `scipy.stats` is slow to
+        # import, and this is the only thing in the file that wants it.
         from scipy.stats import chi2
 
         if not 0.0 < level < 1.0:
@@ -226,7 +227,7 @@ class ForwardProblem:
         """Whether a model is compatible with the data at a confidence level.
 
         The boolean on top of :meth:`consistency_set`; the set is the object,
-        and this is the question people usually ask of it (§18.11).
+        and this is the question usually asked of it.
 
         Args:
             model: the model to test.
@@ -242,11 +243,12 @@ class ForwardProblem:
         """The likelihood potential ``Phi(m) == chi^2(m, d) / (2 T)``.
 
         The negative log likelihood up to its constant, which is the object a
-        function-space sampler and a tempering schedule consume (D-132): the
+        function-space sampler and a tempering schedule consume: the
         posterior's density relative to the prior is ``exp(-Phi)`` up to the
-        evidence. Built with one forward evaluation per point serving the
-        value and the derivative together, as D-127 arranges, so a sampler's
-        gradient costs one solve.
+        evidence. Where the forward operator has a derivative, the potential
+        is built from one linearization per point serving the value and the
+        derivative together, so a caller asking for both pays for one forward
+        evaluation, not two.
 
         Args:
             data: the observations.
@@ -259,8 +261,9 @@ class ForwardProblem:
             wherever the forward operator has one.
 
         Raises:
-            ValueError: for a non-positive temperature, or a set-valued data
-                uncertainty, which has no likelihood.
+            ValueError: for a non-positive temperature.
+            TypeError: for a set-valued data uncertainty, which has no
+                likelihood.
         """
         from ..algebra.linearization import QuadraticModel
         from ..algebra.operators import Functional, LinearFunctional
@@ -307,9 +310,10 @@ class ForwardProblem:
     def consistency_set(self, model: Any, /, *, level: float = 0.95) -> Subset:
         """The data compatible with a model, as an ellipsoid in the data space.
 
-        This is the hardening of §18.1: a Gaussian error measure at a chosen
-        chi-squared level. It discards information and says so by being a
-        separate, named step rather than something a constructor does quietly.
+        The error measure hardened into a set: its credible ellipsoid at
+        *level*, centered on the data the model predicts. It discards
+        information, and says so by being a separate, named step rather than
+        something a constructor does quietly.
 
         Args:
             model: the model whose predictions the set is centered on.
@@ -423,10 +427,10 @@ class LinearForwardProblem(ForwardProblem):
     def joint_measure(self, measure: ProbabilityMeasure, /) -> ProbabilityMeasure:
         """The joint distribution of model and data, on their direct sum.
 
-        Sampling this is how a consistent ``(model, data)`` pair is made: the
-        two are drawn together rather than the data being predicted from an
-        already-drawn model and given an independent error afterwards, which
-        would be the same thing only by accident.
+        The model is drawn from *measure* and the data are its prediction plus
+        an independent draw of the error, so one sample of this is a
+        consistent ``(model, data)`` pair. With an error measure, *measure*
+        and the error must both be Gaussian.
         """
         model_space, data_space = self.model_space, self.data_space
         if not self.has_error:

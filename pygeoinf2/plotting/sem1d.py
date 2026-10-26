@@ -1,7 +1,8 @@
 """Fields on the spectral-element interval, ball and annulus.
 
-An interval is a line, and so is a radial profile. A ball is three-dimensional and has to be cut to be
-seen, and there are three cuts: a **shell** at one radius, drawn as a map by
+An interval is a line, and so is a radial profile. A ball is three-dimensional
+and has to be cut to be seen, and there are three cuts: a **shell** at one
+radius, drawn as a map by
 the sphere's own renderer; a **section** by a plane through the centre, which
 meets the ball in a great circle and is named by that circle's pole, by two
 points it passes through, or -- the common case -- by a longitude; and a
@@ -14,8 +15,8 @@ small matrix product, whatever the plane.
 
 **What is drawn in a ball is the field with the vector's components**, since
 off the grid that is the only field there is: a product left on the grid
-(DECISIONS.md D-87) is drawn as its projection onto the kept modes. An
-interval draws the nodal values themselves, as a box does.
+is drawn as its projection onto the kept modes. An interval draws the nodal
+values themselves, as a box does.
 """
 
 from __future__ import annotations
@@ -188,7 +189,7 @@ def plot_shell(
     """Draw a field of a ball on the sphere of one radius, as a map.
 
     Args:
-        space: the ball or annulus.
+        space: the ball or annulus, or a layered space of them.
         field: a vector of the space.
         radius: the radius of the shell, within the domain. The outer radius
             if omitted.
@@ -202,7 +203,9 @@ def plot_shell(
         The ``(axes, mappable)`` pair.
 
     Raises:
-        ValueError: if the radius lies outside the domain.
+        ValueError: if the radius lies outside the domain, or, in a layered
+            space, in no layer or on an interface with no side named.
+        TypeError: for a layered space whose layers are not balls.
     """
     if isinstance(space, Layered):
         shells, fields = _shells(space, field)
@@ -327,8 +330,9 @@ def _section_frame(
     and ninety at the top, east running anticlockwise.
 
     Raises:
-        ValueError: unless exactly one of the three names the plane, or the
-            two points given are the same or opposite.
+        ValueError: if more than one of the three names the plane, or the two
+            points given are the same or opposite. With none, the plane is
+            the meridian of longitude zero.
     """
     given = sum(x is not None for x in (longitude, pole, through))
     if given > 1:
@@ -396,7 +400,8 @@ def section_values(
 
     Raises:
         ValueError: if more than one of ``longitude``, ``pole`` and
-            ``through`` is given, or the field has the wrong shape.
+            ``through`` is given, the two points of ``through`` coincide or
+            are opposite, or the field has the wrong shape.
     """
     from planetmodel import harmonics
 
@@ -443,7 +448,7 @@ def plot_section(
     anticlockwise from the first to the second.
 
     Args:
-        space: the ball or annulus.
+        space: the ball or annulus, or a layered space of them.
         field: a vector of the space.
         longitude: the plane of this meridian and its antimeridian, the
             meridian on the right. Zero if the plane is not named at all.
@@ -467,7 +472,10 @@ def plot_section(
 
     Raises:
         ValueError: if more than one of ``longitude``, ``pole`` and
-            ``through`` is given, or the field has the wrong shape.
+            ``through`` is given, the two points of ``through`` coincide or
+            are opposite, the field has the wrong shape, or ``padding`` is
+            asked of a layered space.
+        TypeError: for a layered space whose layers are not balls.
     """
     import matplotlib.pyplot as pyplot
 
@@ -558,7 +566,7 @@ def plot_section_points(
     radius; the others are left out, being somewhere else.
 
     Args:
-        space: the ball or annulus.
+        space: the ball or annulus, or a layered space of them.
         points: ``(radius, latitude, longitude)`` triples, the angles in
             degrees.
         ax: the axes of the section.
@@ -576,7 +584,8 @@ def plot_section_points(
 
     Raises:
         ValueError: if more than one of ``longitude``, ``pole`` and
-            ``through`` is given.
+            ``through`` is given, or the two points of ``through`` coincide
+            or are opposite.
     """
     normal, right, up = _section_frame(longitude, pole, through)
     located = np.asarray(points, dtype=float).reshape(-1, 3)
@@ -612,16 +621,21 @@ def plot_profile(
     """Draw a field of a ball along one ray, against radius.
 
     Args:
-        space: the ball or annulus.
+        space: the ball or annulus, or a layered space of them.
         field: a vector of the space.
         latitude: the ray's latitude in degrees.
         longitude: its longitude in degrees.
         ax: ordinary axes to draw on. A new figure is made if omitted.
-        points: how many radii of the domain to evaluate at.
+        points: how many radii of the domain to evaluate at, shared among
+            the layers of a layered space by their thickness, at least eight
+            each.
         **kwargs: passed to ``Axes.plot``.
 
     Returns:
         The ``(axes, line)`` pair.
+
+    Raises:
+        TypeError: for a layered space whose layers are not balls.
     """
     import matplotlib.pyplot as pyplot
 

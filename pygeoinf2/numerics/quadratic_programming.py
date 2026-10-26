@@ -6,28 +6,27 @@ tiny compared with the space the outer problem lives in, and it is solved many
 times, so what matters is that it is solved *accurately* and without setup
 overhead.
 
-``pygeoinf2.numerics.convex`` solves the simplex case by an accelerated
-projected gradient, which needs nothing installed and is enough for the
-proximal method. The level bundle method's subproblem has a general linear
-constraint and is not a simplex projection, so it wants a real QP solver --
-and the proximal method's own accuracy is limited by its projected gradient on
-the ill-conditioned Gram matrices a converging bundle produces, which is the
-other reason these are here.
+``pygeoinf2.numerics.convex`` has its own accelerated projected gradient for
+the simplex case, which needs nothing installed; the proximal bundle method
+falls back to it when no QP backend is available. The level bundle method's
+subproblem has a general linear constraint and is not a simplex projection, so
+it needs a QP solver proper. On the ill-conditioned Gram matrices a converging
+bundle produces, a QP solver is also the more accurate for the proximal
+method.
 
 Three backends, in the order :func:`best_available_qp_solver` prefers them:
 
-* **OSQP**, an ADMM splitting method. Fast on larger problems and warm-startable,
-  which matters when the same QP is re-solved with one row added.
-* **Clarabel**, an interior-point method. Slower to start and more accurate.
+* **Clarabel**, an interior-point method. Accurate, and well suited to the
+  small, badly conditioned programs a bundle method produces.
+* **OSQP**, an ADMM splitting method. Warm-startable, which matters when the
+  same QP is re-solved with one row added, but it can stop at its iteration
+  cap on a quadratic that is singular in some variable.
 * **SciPy's SLSQP**, always available, and the reason nothing here is an
   optional dependency in practice.
 
 All three take the OSQP standard form, which is the most permissive of the
 three: ``l <= A x <= u`` covers equalities (``l == u``), one-sided inequalities
 (an infinite bound) and box constraints without a separate case for each.
-
-This module is a port of v1's ``convex_optimization.py``, whose author's view
-on the API is to be sought before it is changed beyond the port.
 """
 
 from __future__ import annotations
@@ -234,7 +233,7 @@ class SciPyQPSolver:
 
 
 class OSQPQPSolver:
-    """OSQP: operator splitting, and the fastest of the three at scale.
+    """OSQP: operator splitting (ADMM), with warm starts.
 
     Takes the standard form directly, so nothing is translated. A fresh solver
     object is built per call rather than kept: OSQP's setup carries the problem
@@ -469,16 +468,10 @@ def best_available_qp_solver() -> QPSolver:
     Clarabel first, OSQP next, SciPy's SLSQP last because it is always there.
     The point of the ordering is that a caller need not know which of the
     optional packages the user has, and gets the best of them without asking.
-
-    OSQP used to come first, for its speed and warm start. Measured on the
-    two bundle subproblems (DECISIONS.md D-56), Clarabel is faster as well as more
-    accurate: on the level method's master QP, whose quadratic is singular
-    in the level variable, OSQP hit its iteration cap on 40 per cent of the
-    solves and the run aborted, where Clarabel solved every one; on the
-    proximal method's simplex QP over a Backus dual, Clarabel took 0.37 s
-    against OSQP's 0.89 s and was a thousand times closer to the primal
-    reference. An interior-point method suits these small, badly conditioned
-    programs better than ADMM does.
+    Clarabel leads because an interior-point method suits the small, badly
+    conditioned programs of the bundle methods better than ADMM does: on the
+    level method's master problem, whose quadratic is singular in the level
+    variable, OSQP can stop at its iteration cap where Clarabel solves.
 
     Returns:
         An instance of the best available backend.

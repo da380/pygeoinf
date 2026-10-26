@@ -2,14 +2,13 @@
 Line searches, coordinate-free.
 
 A line search needs two things along a direction: the value ``phi(a) ==
-f(x + a p)`` and the slope ``phi'(a) == (grad f(x + a p), p)``. Both are inner
-products in the space's own metric, so neither needs a component map — and the
-slope being metric-correct is precisely what v1's SciPy bridge has to arrange
-by hand, passing derivative components so that SciPy's Euclidean dot product
-happens to give the right number.
+f(x + a p)`` and the slope ``phi'(a) == (grad f(x + a p), p)``. The slope is
+the inner product of two vectors, the gradient and the direction, in the
+space's own metric, so it needs no component map and is correct on any space.
 
-Here the correct pairing is the only one available, because the gradient and
-the direction are both vectors and the slope is their inner product.
+An :class:`~pygeoinf2.algebra.operators.EvaluationError` raised by the
+functional at a trial point, or a non-finite value there, is treated as a step
+that went too far, never as a failure of the search.
 """
 
 from __future__ import annotations
@@ -45,9 +44,8 @@ class LineSearchResult:
     A Wolfe search evaluates the *gradient* at each trial step to test the
     curvature condition, so on success it is holding the very model the caller
     would otherwise go and recompute -- one full evaluation per outer
-    iteration, spent to learn something already known. ``None`` from a
-    backtracking search, which only ever needs values, and the caller then
-    evaluates as before.
+    iteration. ``None`` from a backtracking search, which only ever needs
+    values; the caller then evaluates the model itself.
     """
 
     def __repr__(self) -> str:
@@ -135,7 +133,7 @@ class ArmijoLineSearch(LineSearch):
             # A step into a region the functional cannot evaluate -- an
             # EvaluationError from a forward that did not converge, or a
             # non-finite value -- is a step that went too far, and the
-            # response is the one already in hand: backtrack (D-129).
+            # response is the one already in hand: backtrack.
             try:
                 trial_value = functional(trial)
             except EvaluationError:
@@ -147,8 +145,8 @@ class ArmijoLineSearch(LineSearch):
             step *= self._contraction
             if step < self._min_step:
                 break
-        # The evaluations actually spent: a stop on ``min_step`` used to be
-        # reported as the full backtrack count.
+        # The evaluations actually spent, which a stop on ``min_step`` leaves
+        # below ``max_backtracks``.
         return LineSearchResult(step, point, value, evaluation, False)
 
 
@@ -218,7 +216,7 @@ class StrongWolfeLineSearch(LineSearch):
             # A trial the functional cannot evaluate, or evaluates to a
             # non-finite value or slope, is treated as infinitely bad: the
             # step went too far, and the bracket it closes is sectioned like
-            # any other (D-129).
+            # any other.
             try:
                 trial, trial_model, trial_value, trial_slope = evaluate(step)
             except EvaluationError:
@@ -301,14 +299,15 @@ class StrongWolfeLineSearch(LineSearch):
         values at both ends and the slope at ``low`` arrive from the
         bracketing phase, so nothing is re-evaluated on entry.
 
-        The trial step is the minimizer of a cubic through the two ends and
-        the most recently discarded point, or of a quadratic through the two
-        ends when there is no third, and bisection only when the interpolant
-        puts its minimizer within a tenth of the bracket of either end, where
-        it is not to be trusted (Nocedal and Wright §3.5). It used to be
-        bisection alone, which converges linearly to a point that
-        interpolation finds in one or two steps: on a quadratic model the
-        interpolant is exact. That is what v1 had through SciPy's search.
+        The trial step is the minimizer of the cubic through the two ends and
+        the most recently discarded point, accepted when it lies at least a
+        fifth of the bracket from either end; failing that, the minimizer of
+        the quadratic through the two ends and the slope at ``low``, accepted
+        at least a tenth of the bracket from either end; failing both,
+        bisection. An interpolant's minimizer close to an end is not to be
+        trusted (Nocedal and Wright §3.5). On a quadratic model the
+        interpolant is exact, so interpolation finds in one or two steps what
+        bisection approaches only linearly.
         """
         rec_step: float | None = None
         rec_value = 0.0
@@ -322,7 +321,7 @@ class StrongWolfeLineSearch(LineSearch):
                 trial_value, trial_slope = np.inf, np.nan
             if not (np.isfinite(trial_value) and np.isfinite(trial_slope)):
                 # Unevaluable inside the bracket: infinitely bad, so the
-                # bracket closes on it from the ``high`` side (D-129).
+                # bracket closes on it from the ``high`` side.
                 rec_step, rec_value = high, high_value
                 high, high_value = step, np.inf
                 continue

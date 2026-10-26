@@ -2,18 +2,12 @@
 Unconstrained optimization, coordinate-free.
 
 Written against the space's own inner product rather than wrapped around
-SciPy. That is not purism. v1's wrapper passes SciPy the **gradient**
-components where the derivative components are wanted — verified: the ratio
-between what is passed and ``dJ/dc`` is exactly the Gram diagonal — while
-passing the Hessian correctly as the Galerkin matrix. The two are therefore in
-different conventions within a single call, so a Newton-CG step solves
-``H p = -G^-1 g`` instead of ``H p = -g``. The same file's ``line_search`` gets
-it right, with a comment explaining why; the comment protects one function and
-not its neighbor.
-
-Here the confusion is unavailable. A gradient is a vector, a direction is a
-vector, and the slope along a direction is their inner product. There is no
-array to put in the wrong convention.
+SciPy. A gradient is a vector, a direction is a vector, and the slope along a
+direction is their inner product, so there is no component array to put in
+the wrong convention. A component-space optimizer can be handed gradient
+components where it expects derivative components, beside a Hessian in
+Galerkin form; a Newton step then solves ``H p = -G^-1 g`` instead of
+``H p = -g``. Here that mistake cannot be made.
 
 Two further consequences of working in the space rather than in components:
 
@@ -22,8 +16,8 @@ Two further consequences of working in the space rather than in components:
   Euclidean norm of a component array.
 - **Quasi-Newton methods become metric-aware for free.** The L-BFGS two-loop
   recursion is built entirely from inner products, so working in the space's
-  metric preconditions it by the inverse Gram matrix at no cost. The component
-  version is metric-blind, which is the conditioning half of DECISIONS.md D-26.
+  metric preconditions it by the inverse Gram matrix at no cost. A component
+  version is blind to the metric, and conditioned accordingly.
 """
 
 from __future__ import annotations
@@ -70,7 +64,7 @@ class OptimizationResult:
     history: list[float] = field(default_factory=list)
     failure: str | None = None
     """What an :class:`~pygeoinf2.algebra.operators.EvaluationError` said,
-    when one ended the run (D-129). The rest of the result is still the last
+    when one ended the run. The rest of the result is still the last
     good state -- ``minimizer`` was evaluated successfully -- so a run of
     hours is returned, not lost. ``None`` on every other outcome."""
 
@@ -101,31 +95,24 @@ class Optimizer(ABC):
             rtol: tolerance relative to the initial gradient norm. The test is
                 ``||g|| <= max(gtol, rtol * ||g0||)``.
 
-                This stays tight, because loosening it would cost every caller
-                accuracy to fix a reporting problem. The problem was real: a
-                line-search method cannot reach ``1e-10`` in double precision
-                on an ordinary objective, and on a 60-dimensional quadratic of
-                condition number 4.9 that made L-BFGS stop at ``|g| == 1.8e-7``
-                and report *failure* after 19 iterations, nonlinear CG do the
-                same at ``1.1e-6``, and steepest descent spend 2000 iterations
-                and 5330 value evaluations arriving at the same verdict. But
-                the cure is to recognize the two ways a method legitimately
-                finishes short of the gradient tolerance — see *ftol* and the
-                precision-loss outcome — not to lower the bar. With those, the
-                same four runs converge in 16 to 25 iterations and 40 to 119
-                value evaluations.
+                The default is tighter than a line-search method can always
+                reach in double precision. Such a method then finishes in one
+                of two other ways, both reported as converged: the value
+                stops decreasing (*ftol*), or no step is found with the
+                gradient already as small as the arithmetic allows (the
+                message says "no further decrease is representable").
             ftol: stop when one iteration decreases the value by no more than
                 ``ftol * |f|``. The criterion that says "no further progress",
                 which a gradient test alone cannot: near a minimizer the
                 gradient is small everywhere the value is flat.
 
-                Relative to ``|f|`` with no absolute floor, deliberately. A
-                floor makes the test absolute wherever the minimum value is
-                near zero, and there a slow method in a narrow valley — the
-                Rosenbrock function is the standard example — takes steps
-                smaller than the floor while still far from the minimizer, so
-                the floor stops it early and calls that convergence. Set it to
-                zero to rely on the gradient test alone.
+                Relative to ``|f|`` with no absolute floor, deliberately: where
+                the minimum value is near zero a floor would make the test
+                absolute, and a slow method in a narrow valley -- the
+                Rosenbrock function is the standard example -- would be
+                stopped far from the minimizer. Set it to zero to rely on the
+                gradient test alone. The line-search methods apply it;
+                :class:`TrustRegionNewton` does not.
             max_iterations: iteration cap.
             line_search: the step rule. Each method supplies a suitable default.
         """
@@ -182,7 +169,8 @@ class Optimizer(ABC):
 
         So a failure with the gradient already at that scale is success at the
         accuracy the arithmetic allows, and saying "line search failed" instead
-        reports a wrong answer about a right one.
+        reports a wrong answer about a right one. The test is
+        ``||g|| <= sqrt(eps) (1 + |f|)``.
         """
         floor = float(np.sqrt(np.finfo(float).eps)) * (1.0 + abs(value))
         return gradient_norm <= floor
@@ -229,7 +217,7 @@ class Optimizer(ABC):
         :class:`~pygeoinf2.algebra.operators.EvaluationError` at a *trial*
         point by retreating; this is for the one place there is nowhere to
         retreat to. The result carries the last good state, so nothing is
-        lost but the step that failed (D-129).
+        lost but the step that failed.
         """
         return OptimizationResult(
             x,
@@ -338,8 +326,7 @@ class _DescentMethod(Optimizer):
             decrease = previous_value - model.value
             if 0.0 <= decrease <= self._ftol * abs(model.value):
                 # Flat: the step was accepted but bought nothing. Continuing
-                # only spends evaluations to confirm it, which is what turned a
-                # converged steepest descent into 2000 iterations.
+                # would only spend evaluations to confirm it.
                 return OptimizationResult(
                     x,
                     model.value,
@@ -399,23 +386,19 @@ class SteepestDescent(_DescentMethod):
 
     Note this is the gradient in the *space's* metric, so the direction is
     steepest with respect to the inner product the modeler chose rather than
-    with respect to an arbitrary coordinate basis. That difference is the whole
-    of DECISIONS.md D-26, and it is why this converges at a mesh-independent rate
-    where the component version does not.
+    with respect to an arbitrary coordinate basis, and it is why this converges
+    at a mesh-independent rate where a component version does not.
     """
 
     def _direction(self, space: Any, gradient: Any, state: Any) -> tuple[Any, Any]:
         return space.negative(gradient), state
 
     def _default_line_search(self) -> LineSearch:
-        """A strong Wolfe search, as DECISIONS.md D-54 says it is.
+        """A strong Wolfe search.
 
-        It inherited a backtracking one, which cannot take a *larger* step than
-        it is offered -- and a steepest-descent direction carries no natural
-        scale, so the step it is offered is a guess. Measured on a quadratic as
-        the metric spread runs over four orders of magnitude, Wolfe costs about
-        half the evaluations: 3376 against 6744 at a spread of 1e3, and 417
-        against 743 at 1e2, for the same iteration counts and the same answer.
+        A backtracking search cannot take a *larger* step than it is offered,
+        and a steepest-descent direction carries no natural scale, so the step
+        it is offered is a guess.
         """
         return StrongWolfeLineSearch()
 
@@ -582,9 +565,11 @@ class NewtonCG(Optimizer):
         """
         Args:
             forcing: the inexact-Newton forcing term. The inner solve stops
-                once the residual falls below this fraction of the gradient
-                norm, so early iterations are cheap and later ones exact.
-            max_cg_iterations: cap on the inner iteration.
+                once the residual falls below ``min(forcing, sqrt(||g||))``
+                times the gradient norm, so early iterations are cheap and
+                later ones accurate.
+            max_cg_iterations: cap on the inner iteration. ``None`` means the
+                larger of the dimension and ten.
             **kwargs: passed to :class:`Optimizer`.
         """
         self._forcing = forcing
@@ -794,7 +779,7 @@ class TrustRegionNewton(Optimizer):
                 trial_value = functional(trial)
             except EvaluationError:
                 # An infeasible trial is a trust region's ordinary business:
-                # the model was wrong there, so shrink and try again (D-129).
+                # the model was wrong there, so shrink and try again.
                 evaluations += 1
                 radius *= 0.25
                 if radius < 1e-14:
@@ -859,9 +844,11 @@ def truncated_cg(
 
     Solves ``H p == rhs`` approximately, stopping on any of three conditions:
     the residual falls below ``rtol``; a direction of negative curvature is
-    met; or the iterate reaches the trust-region boundary. The last two return
-    the point where the boundary is crossed, which is what makes the step
-    useful rather than an error.
+    met; or the iterate reaches the trust-region boundary. With a trust region,
+    the last two return the step extended to the boundary along the current
+    direction, which is what makes the step useful rather than an error.
+    Without one, negative curvature returns the step taken so far, or ``rhs``
+    itself if no step has been taken.
 
     Coordinate-free, like every other Krylov method here.
 
@@ -873,7 +860,8 @@ def truncated_cg(
         rtol: stop when the residual falls to this fraction of its initial
             norm. Loose by default: an inexact Newton step is the point, and
             solving accurately far from the optimum is wasted work.
-        max_iterations: the cap. The dimension, or ten, if omitted.
+        max_iterations: the cap. The larger of the dimension and ten, if
+            omitted.
         radius: the trust-region radius. Unbounded if omitted, which makes
             this ordinary CG with an early stop.
 
@@ -949,10 +937,11 @@ def gauss_newton_hessian(
     For a misfit ``phi(m) == psi(F(m))`` the exact Hessian is
     ``J* H_psi J + sum_i r_i F_i''(m)``. This is the first term alone, which is
     what "Gauss-Newton" means, and it is offered under a name that says so
-    rather than as a ``hessian`` that quietly omits a term. See DECISIONS.md D-30.
+    rather than as a ``hessian`` that quietly omits a term.
 
-    It comes out positive semidefinite by the palindrome rule when the
-    weighting is, with nothing claimed — so it can be handed to CG directly.
+    A composition of the form ``J* W J`` is recognised as self-adjoint by the
+    trait propagation, and as positive semidefinite when ``W`` claims to be,
+    with nothing claimed here -- so it can be handed to CG directly.
 
     Args:
         operator: the forward map ``F``.
@@ -961,11 +950,13 @@ def gauss_newton_hessian(
             identity on the codomain.
 
     Returns:
-        The operator ``J* W J``, positive semidefinite by construction.
+        The operator ``J* W J``, carrying the positive-semidefinite trait when
+        ``W`` claims it or is omitted.
 
     Raises:
-        ValueError: if the operator cannot supply a derivative at the point,
-            or the weighting does not act on its codomain.
+        ValueError: if the weighting does not act on the operator's codomain,
+            or does not claim to be self-adjoint.
+        NotImplementedError: from the operator, if it carries no derivative.
     """
     jacobian = operator.derivative(point)
     if weighting is None:

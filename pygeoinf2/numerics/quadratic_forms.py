@@ -8,8 +8,10 @@ ordinary chi-square because the weights are all one, but the plain squared norm
 of a field is not, and its weights are the covariance's eigenvalues.
 
 Imhof's method is exact to the tolerance asked for — it inverts the
-characteristic function numerically — and a moment-matched chi-square is the
-cheap approximation to fall back on.
+characteristic function numerically — and is the default. The Lugannani-Rice
+saddlepoint approximation is much faster and is available by name; a
+moment-matched chi-square is the cheap approximation to fall back on. Equal
+weights are an ordinary chi-square and are computed as one.
 """
 
 from __future__ import annotations
@@ -24,16 +26,9 @@ __all__ = ["weighted_chi2_cdf", "weighted_chi2_quantile"]
 
 # ``scipy.stats`` and ``scipy.optimize`` are imported on first use, not at
 # module scope. This module is reached by ``import pygeoinf2`` through the
-# ``numerics`` package, so every session paid for them, and measured on this
-# machine the two cost 0.26 s of a 0.48 s import -- more than half of it --
-# for functions most sessions never call. ``scipy.integrate.quad`` was
-# imported here too and never used: the Imhof integral is a vectorized
-# trapezoid rule, for the reason ``_imhof`` gives.
-#
-# One other module still imports ``scipy.stats`` eagerly --
-# ``inference/problem.py``, for a single ``chi2.ppf`` -- and until that one
-# follows, this change saves nothing at all: measured 0.48 s either way, and
-# 0.22 s once both are lazy.
+# ``numerics`` package, and the two are a large part of the package's import
+# time, for functions most sessions never call. tests/test_code_practice.py
+# checks that loading this module imports neither.
 
 
 def _chi2() -> "Any":
@@ -88,12 +83,11 @@ def _imhof_integrand(grid: np.ndarray, weights: np.ndarray, value: float) -> np.
 def _imhof(weights: np.ndarray, value: float, /, *, tolerance: float) -> float:
     """Imhof's inversion of the characteristic function.
 
-    A vectorized trapezoid rule, which is v1's, rather than adaptive
-    quadrature on a scalar integrand. The integrand oscillates with a period
-    set by *value* and decays like a power of the variable, and adaptive
-    quadrature handles neither well: it spent its subdivisions near the origin,
-    exhausted the 800 it was allowed, and warned. Measured at three weights --
-    the slowest-decaying case -- that cost 106 ms against 3.7 ms here.
+    A vectorized trapezoid rule rather than adaptive quadrature on a scalar
+    integrand. The integrand oscillates with a period set by *value* and
+    decays like a power of the variable, and adaptive quadrature handles
+    neither well: it spends its subdivisions near the origin and exhausts
+    its budget.
 
     The trapezoid works because both difficulties can be quantified rather than
     discovered. The amplitude is bounded by ``1 / (u rho(u))`` with
@@ -297,7 +291,7 @@ def weighted_chi2_quantile(
             here as an *empirical* quantile of one sample rather than a root
             find on a noisy CDF, which would not converge: brentq on a
             function that returns a different value each call has no root to
-            find. That is v1's behavior too.
+            find.
         tolerance: the accuracy asked of the CDF at each probe.
         samples: draws for ``method="monte_carlo"``.
         rng: the generator for those draws.

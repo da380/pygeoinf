@@ -11,20 +11,18 @@ A linear Gaussian problem has two normal operators, one per formalism:
 and either can be assembled and handed to a solver. But a solver is not the
 only thing that wants one. A *preconditioner* wants one too, and the useful
 preconditioners for this operator are not generic: they exploit the fact that
-it is ``A Q A* + R`` and not merely some positive definite operator. v1's
-diagonal preconditioner uses ``<v, A Q A* v> == <A* v, Q A* v>``, which needs
-``A`` and ``Q`` apart; the Woodbury one inverts through the opposite space,
-which needs all three. Assembling ``N`` into a single operator destroys exactly
-the structure they need, which is why in v1 they had to live as methods on the
-inversion class, the only place that still held the parts.
+it is ``A Q A* + R`` and not merely some positive definite operator. The
+diagonal of ``A Q A*`` comes from ``<v, A Q A* v> == <A* v, Q A* v>``, which
+needs ``A`` and ``Q`` apart; a Woodbury preconditioner inverts through the
+opposite space, which needs all three. Assembling ``N`` into a single operator
+would destroy exactly the structure they need.
 
-So the operator carries its factors. Generic preconditioners — Jacobi,
-spectral, banded — see a :class:`LinearOperator` and are unchanged; the
-structure-aware ones read ``forward``, ``prior_covariance`` and
-``error_covariance`` off it. The preconditioners then stay free-standing and
-reusable rather than being bound to one inversion class, and an inversion
-exposes its normal operator instead of a growing family of preconditioner
-factories. See DECISIONS.md D-44.
+So the operator carries its factors. Generic preconditioners -- Jacobi,
+spectral, banded -- see a :class:`LinearOperator`; the structure-aware ones
+read ``forward``, ``prior_covariance`` and ``error_covariance`` off it. The
+preconditioners stay free-standing and reusable rather than being bound to one
+inversion class, and an inversion exposes its normal operator instead of a
+family of preconditioner factories.
 """
 
 from __future__ import annotations
@@ -69,7 +67,7 @@ def choose_formalism(
     large; model spaces are usually larger still, so the data space is where
     the normal equations belong unless there is a reason otherwise, and the
     model-space formalism is kept for when there *is* one — an overdetermined
-    problem with a cheap precision, or a surrogate. See DECISIONS.md D-57 and D-78.
+    problem with a cheap precision, or a surrogate.
 
     Args:
         model_space: where the models live.
@@ -140,10 +138,10 @@ class FactoredNormalOperator(LinearOperator):
         A Tikhonov one, read with ``Q = (1/t) I``, is the first exactly, but
         its data-space form ``A A* + t R`` is ``t`` times the second. A
         preconditioner built from the factors inverts the Gaussian reading, so
-        it divides by this to invert the operator it was actually handed;
-        without that it returned ``t`` times the inverse, which a scale-blind
-        outer method such as conjugate gradients never noticed and anything
-        else did. One here, and overridden where the assembly is scaled.
+        it must divide by this to invert the operator it was actually handed;
+        otherwise it returns ``t`` times the inverse, an error conjugate
+        gradients is blind to and most other consumers are not. One here, and
+        overridden where the assembly is scaled.
         """
         return 1.0
 
@@ -163,8 +161,9 @@ class FactoredNormalOperator(LinearOperator):
         return self.error_covariance is not None
 
     # Both subclasses hold the assembled expression as ``_assembled`` and
-    # apply it; the structural hooks pass through to it, so a normal operator
-    # is read, blocked and fused exactly as the sum it stands for.
+    # apply it; the structural hooks pass through to it, so a normal operator's
+    # known matrix, diagonals, block application and component actions are
+    # those of the sum it stands for.
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         return self._assembled._known_matrix(form)
@@ -212,23 +211,6 @@ class NormalOperator(FactoredNormalOperator):
         formalism: Formalism = "data_space",
     ) -> None:
         """
-        Args:
-            forward: the forward operator ``A``.
-            prior: the prior ``Q`` on the model space. In the model-space
-                formalism its precision is needed, not merely its covariance.
-            error: the data error measure ``R``. Omitted means the data are
-                exact, which only the data-space formalism can express — see
-                below.
-            formalism: which space to assemble in. ``"auto"`` takes the
-                smaller, except that it takes the data space whenever there is
-                no error measure, because that is then the only one available.
-
-        Raises:
-            ValueError: if the prior or error lives on the wrong space; if the
-                chosen formalism needs a covariance or a precision that was not
-                supplied; or if the model-space formalism is asked for with no
-                error measure.
-
         **With no error measure there is no model-space formalism.** The two
         assemblies are
 
@@ -240,13 +222,26 @@ class NormalOperator(FactoredNormalOperator):
         and dropping the ``R`` terms gives ``A Q A*`` on one side but
         ``Q^-1 + A* A`` on the other. The second is not the noise-free problem:
         it is the problem with ``R == I``, a unit-variance error model wearing
-        the label "no error". The two posteriors genuinely differ — measured
-        mean difference 0.86 against a mean of norm 2.6 on a random 12-by-8
-        problem — so offering both would be offering two answers to one
-        question. v1 does exactly that, silently.
-
+        the label "no error", and its posterior is a different measure.
         Conditioning on exact data is a limit the model-space form cannot take,
         so it is refused rather than approximated.
+
+        Args:
+            forward: the forward operator ``A``.
+            prior: the prior ``Q`` on the model space. In the model-space
+                formalism its precision is needed, not merely its covariance.
+            error: the data error measure ``R``. Omitted means the data are
+                exact, which only the data-space formalism can express.
+            formalism: which space to assemble in, the data space by default.
+                ``"auto"`` takes the smaller, except that it takes the data
+                space whenever there is no error measure, because that is then
+                the only one available.
+
+        Raises:
+            ValueError: if the prior or error lives on the wrong space; if the
+                chosen formalism needs a covariance or a precision that was not
+                supplied; or if the model-space formalism is asked for with no
+                error measure.
         """
         if prior.domain != forward.domain:
             raise ValueError(
@@ -427,9 +422,10 @@ class NormalOperator(FactoredNormalOperator):
         preconditioner for the true operator, and correctness never depends on
         how close the surrogate is — only the iteration count does.
 
-        The surrogate may live on a **different model space**. In the tomography
-        example it is a sphere of a sixth the degree, with its own prior and its
-        own path-average operator, and only the data space is shared. That is
+        The surrogate may live on a **different model space**. In example 24
+        (preconditioning) it is a sphere of a sixth the degree, with its own
+        prior and its own path-average operator, and only the data space is
+        shared. That is
         exactly why the data-space formalism is the one that survives the
         substitution: ``A Q A* + R`` acts on the data space whatever the model
         space is.
@@ -515,11 +511,10 @@ class NormalOperator(FactoredNormalOperator):
         """``(I - K A) Q``, which in the model-space formalism is just ``N^-1``.
 
         Written with ``Q`` factored out rather than as ``Q - K A Q``, which is
-        the same operator and applies ``Q`` three times per action instead of
-        twice -- once for each term, and the gain contains a third. For a
-        diagonal prior that is invisible; for a Matern prior on a mesh or a
-        correlated field it is a third of the cost of every posterior variance,
-        every credible interval and every pushed-forward property.
+        the same operator but applies ``Q`` three times per action instead of
+        twice -- once for each term, and the gain contains a third. When ``Q``
+        is expensive, as for a Matern prior on a mesh, that saves a third of
+        the cost of every posterior covariance application.
 
         Args:
             inverse: an inverse of this operator.

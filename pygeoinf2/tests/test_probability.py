@@ -264,7 +264,8 @@ class TestMomentsMatchSamples:
 
 
 class TestWhiteNoiseCorrection:
-    """DECISIONS.md D-19, at the point where it actually bites: sampling."""
+    """White noise drawn in the space's own inner product, at the point where
+    it actually bites: sampling."""
 
     def test_isotropic_covariance_is_the_identity_on_the_space(self, rng):
         """v1 produces sigma^2 G here, not sigma^2 I."""
@@ -1180,7 +1181,7 @@ class TestConditioning:
 
 
 class TestParallelLoops:
-    """D-6: ``n_jobs`` at the loops *around* operators, never inside them."""
+    """``n_jobs`` at the loops *around* operators, never inside them."""
 
     def test_draws_do_not_depend_on_the_job_count(self, rng):
         """One stream per draw is spawned from the parent whether or not the
@@ -1484,9 +1485,10 @@ class TestSaddlepoint:
 
 
 class TestTheFunctionSpaceMarkerGatesDensities:
-    """D-131: on a space that discretises functions, a density against the
-    space's own volume measure is an artefact of the truncation, so the
-    density family refuses without ``unsafe=True`` -- D-11's pattern. On an
+    """On a space that discretises functions, a density against the space's
+    own volume measure is an artefact of the truncation, so the density
+    family refuses without ``unsafe=True``, as point evaluation refuses
+    below the order that admits it. On an
     intrinsically finite space nothing changes."""
 
     @staticmethod
@@ -1508,6 +1510,50 @@ class TestTheFunctionSpaceMarkerGatesDensities:
         assert not DirectSum([finite, finite]).is_function_space
         mass = DiagonalLinearOperator(finite, np.array([1.0, 2.0, 3.0]))
         assert not MassWeightedSpace(finite, mass).is_function_space
+
+    @staticmethod
+    def _identity_mass(space):
+        return LinearOperator.identity(space).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+
+    def test_a_space_without_coordinates_carries_the_marker(self, rng):
+        """The marker is on ``HilbertSpace`` itself. It was on
+        ``CoordinateSpace``, so every density on a backend's coordinate-free
+        space raised ``AttributeError``, and so did a direct sum or a
+        mass-weighted space built over one."""
+        from pygeoinf2.algebra.direct_sum import DirectSum
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+
+        opaque = OpaqueSpace(np.array([1.0, 2.0, 3.0]))
+        assert not opaque.is_function_space
+        assert not DirectSum([opaque, EuclideanSpace(2)]).is_function_space
+        assert DirectSum([self.function_space(), opaque]).is_function_space
+        weighted = MassWeightedSpace(opaque, self._identity_mass(opaque))
+        assert not weighted.is_function_space
+
+        identity = self._identity_mass(opaque)
+        measure = GaussianMeasure(opaque, covariance=identity, precision=identity)
+        x = opaque.random(rng=rng)
+        assert measure.log_density(x) == pytest.approx(
+            -0.5 * measure.mahalanobis_squared(x)
+        )
+
+    def test_a_mass_weighted_space_takes_its_base_marker_without_coordinates(self):
+        """The delegation is on ``MassWeightedSpace`` itself, not only on its
+        coordinate variant, so a coordinate-free base that discretises
+        functions is still one after reweighting."""
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+
+        class OpaqueFunctions(OpaqueSpace):
+            @property
+            def is_function_space(self) -> bool:
+                return True
+
+        base = OpaqueFunctions(np.array([1.0, 2.0]))
+        weighted = MassWeightedSpace(base, self._identity_mass(base))
+        assert type(weighted) is MassWeightedSpace
+        assert weighted.is_function_space
 
     def test_the_density_family_refuses_and_unsafe_proceeds(self, rng):
         space = self.function_space()

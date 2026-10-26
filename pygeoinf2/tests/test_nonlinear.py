@@ -51,7 +51,7 @@ def quadratic_on(space, matrix, rng=None):
 
 class TestFunctional:
     def test_gradient_is_the_representer_not_the_derivative(self, rng):
-        """The core of DECISIONS.md D-26, on a space where it is visible."""
+        """A derivative is not a gradient, on a space where it is visible."""
         X = make_weighted_space()
         M = rng.normal(size=(X.dim, X.dim))
         phi = quadratic_on(X, M)

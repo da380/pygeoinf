@@ -11,7 +11,8 @@ It is the part of :class:`~pygeoinf2.symmetric_space.base.SymmetricSpace`
 that does not lean on homogeneity, under the same names. What is missing is
 what does lean on it -- a reference point, geodesics, one number for the
 pointwise variance of an invariant prior -- and what takes its place is a
-variance *field*; see :meth:`SpectralElementSpace.spectral_measure`.
+variance *field*; see :meth:`SpectralElementSpace.pointwise_variance` and
+:meth:`SpectralElementSpace.spectral_measure`.
 """
 
 from __future__ import annotations
@@ -40,25 +41,24 @@ type LengthScale = float | Callable[[np.ndarray], np.ndarray]
 
 #: The condition at the ends of the mesh: ``"robin"``, the geometries' default,
 #: for the Robin condition matched to the operator, ``None`` for the natural
-#: (Neumann) one, or the
-#: Robin coefficients themselves, one for both ends or a ``(lower, upper)``
-#: pair with ``None`` for a natural end.
+#: (Neumann) one, or the Robin coefficients themselves, one for both ends or a
+#: ``(lower, upper)`` pair with ``None`` for a natural end.
 type Boundary = None | str | float | tuple[float | None, float | None]
 
-#: The default padding at each end, in units of the length scale there. The
-#: kernel of ``A^-p`` has fallen to about a tenth at ``sqrt(8 nu)`` length
-#: scales, with ``nu`` the smoothness of the draws -- 3.5 at ``nu = 3/2`` --
-#: and the boundary's mark with it.
+#: The default padding at each end under the natural condition, in units of
+#: the length scale there. The kernel of ``A^-p`` has fallen to about a tenth
+#: at ``sqrt(8 nu)`` length scales, with ``nu`` the smoothness of the draws --
+#: 3.5 at ``nu = 3/2`` -- and the boundary's mark with it.
 _PADDING_LENGTH_SCALES = 4.0
 
-#: The same under ``boundary="robin"``, which measured does at two length
-#: scales what the natural condition does at four (DECISIONS.md D-122).
+#: The same under ``boundary="robin"``, with which two length scales of
+#: padding do what four do under the natural condition.
 _ROBIN_PADDING_LENGTH_SCALES = 2.0
 
 #: The Robin coefficient of ``boundary="robin"``, in units of ``1 / L``. One
 #: would be the decay of the solution of ``A u = 0`` and is exact for ``A^-1``
-#: on a line; the priors in use are higher powers, for which 0.7 is the better
-#: by up to an order of magnitude and never much the worse (D-122).
+#: on a line; the priors in use are higher powers of ``A^-1``, for which 0.7
+#: does better.
 _ROBIN_COEFFICIENT = 0.7
 
 #: Mesh nodes per half wavelength of the shortest mode kept, under the default
@@ -103,8 +103,9 @@ def _resolved_padding(
     boundary: Boundary,
     /,
 ) -> tuple[float, float]:
-    """The padding below and above: as given, or four length scales, those at
-    the ends of the domain -- two under ``boundary="robin"``.
+    """The padding below and above: as given, or by default four length
+    scales (two under ``boundary="robin"``), taking the length scale at each
+    end of the domain.
 
     Raises:
         ValueError: if either is negative.
@@ -137,15 +138,15 @@ def _resolved_boundary(
     is ``exp(-+ r / L) / r`` and ``gamma = 1 / L +- 1 / r``, the curvature
     adding at the outer end and subtracting at the inner, where it is not
     small. That is exact for ``A^-1``; for the higher powers priors are made
-    of, ``0.7 / L`` in place of ``1 / L`` is measurably better, and is what is
-    used (DECISIONS.md D-122).
+    of, ``0.7 / L`` in place of ``1 / L`` does better, and is what is used. An
+    inner coefficient that would be negative is held at zero.
 
     Args:
         boundary: the condition asked for.
         probe: the length scale across the domain, its ends first and last.
         ends: the radii of the two ends of the mesh, under ``r^2 dr``; the
-            curvature terms are left out if it is ``None``, as on a line. An end at the centre
-            takes no condition.
+            curvature terms are left out if it is ``None``, as on a line. An
+            end at the centre takes no condition.
 
     Raises:
         ValueError: for a name that is not ``"robin"``, or a negative
@@ -221,7 +222,9 @@ def _sampled_with_extension(
     A mirror image that would fall past the far end of the domain stops at it.
 
     Raises:
-        ValueError: for an extension that is neither.
+        ValueError: for an extension other than ``"odd"``, ``"constant"`` or
+            ``"fit"``. Callers handle ``"fit"`` themselves before reaching
+            here; passed through, it gives the constant continuation.
     """
     if extension not in _EXTENSIONS:
         raise ValueError("extension must be 'odd', 'constant' or 'fit'.")
@@ -272,7 +275,7 @@ class SpectralElementSpace(
 
     @property
     def is_function_space(self) -> bool:
-        """True: the space discretises functions on its domain (D-131)."""
+        """True: the space discretises functions on its domain."""
         return True
 
     # ----------------------------------------------------------------- #
@@ -316,8 +319,8 @@ class SpectralElementSpace(
 
     @abstractmethod
     def _class_for_order(self, order: float, /) -> type:
-        """The subclass that names a space of this geometry and that order
-        (DECISIONS.md D-3)."""
+        """The subclass that names a space of this geometry and that order:
+        the geometry's ``Lebesgue`` at order zero, its ``Sobolev`` otherwise."""
 
     # ----------------------------------------------------------------- #
     #                              Identity                             #
@@ -351,8 +354,8 @@ class SpectralElementSpace(
             order: the new order.
 
         Returns:
-            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise
-            (DECISIONS.md D-3).
+            The space, as the geometry's ``Lebesgue`` at order zero and its
+            ``Sobolev`` otherwise.
         """
         order = float(order)
         new = object.__new__(self._class_for_order(order))
@@ -439,9 +442,9 @@ class SpectralElementSpace(
         return self.interior_mask
 
     def multiply(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """The pointwise product, left on the grid (DECISIONS.md D-87): the
-        exact product there, and not its projection onto the kept modes,
-        which is :meth:`truncate`'s to give."""
+        """The pointwise product, left on the grid: the exact product there,
+        and not its projection onto the kept modes, which is
+        :meth:`truncate`'s to give."""
         return np.asarray(x) * np.asarray(y)
 
     def sqrt(self, x: np.ndarray) -> np.ndarray:
@@ -486,8 +489,8 @@ class SpectralElementSpace(
     ) -> float:
         """The Sobolev order a space must exceed for points to have values.
 
-        Half the spatial dimension (DECISIONS.md D-11), wherever the points
-        are; a geometry in which it depends on them says so.
+        Half the spatial dimension, wherever the points are; a geometry in
+        which it depends on them overrides this.
 
         Args:
             points: the points in question. Any point of the domain if
@@ -501,8 +504,8 @@ class SpectralElementSpace(
     def _require_point_evaluation(
         self, what: str, points: Sequence[Any], /, *, unsafe: bool
     ) -> None:
-        """Refuse point evaluation at or below :meth:`point_evaluation_order`
-        (DECISIONS.md D-11), where it has no representer."""
+        """Refuse point evaluation at or below :meth:`point_evaluation_order`,
+        where it has no representer, unless *unsafe*."""
         threshold = self.point_evaluation_order(points=points)
         if unsafe or self._order > threshold:
             return
@@ -598,11 +601,13 @@ class SpectralElementSpace(
         """The variance of ``x(p)`` at every grid point, under a diagonal
         covariance.
 
-        ``sum_k s_k phi_k(p)^2 / g_k``, as on a symmetric space and with the
-        metric for the same reason (DECISIONS.md D-26) -- but a field and not
-        a number, since nothing here is homogeneous: the eigenfunctions of a
-        varying ``L`` are larger where it is smaller, and those of any ``L``
-        feel the ends of the mesh.
+        ``sum_k s_k phi_k(p)^2 / g_k``, as on a symmetric space: the metric
+        value ``g_k`` enters because the basis functions ``phi_k`` are
+        orthogonal in the space's inner product with squared norm ``g_k``,
+        not orthonormal. The result is a
+        field and not a number, since nothing here is homogeneous: the
+        eigenfunctions of a varying ``L`` are larger where it is smaller, and
+        those of any ``L`` feel the ends of the mesh.
 
         Args:
             spectral_variances: the covariance operator's eigenvalues, one per

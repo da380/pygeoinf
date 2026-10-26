@@ -1,16 +1,15 @@
 """
 22. Two coupled fields, seen through one shared physical chain.
 
-v1's ``work/dynamic_topography.py`` on v2: a density anomaly and a basal
-traction, both on a sphere, observed only through the geoid and the surface
-topography they jointly produce.
+A density anomaly and a basal traction, both on a sphere, observed only
+through the geoid and the surface topography they jointly produce.
 
 What makes it different from example 21 is that the unknown is a *pair*. The
 model space is a direct sum, the prior is a product measure, and the forward
 operator is a block matrix built from two degree-dependent symbols and the
 flexure operator of example 20. Nothing in the inference layer notices: a
-direct sum is a Hilbert space, so ``LinearGaussianInversion(problem, prior)`` is the same call
-it was before.
+direct sum is a Hilbert space, so ``LinearGaussianInversion(problem, prior)``
+is the same call as in example 21.
 
 The physics is a two-layer gravity calculation, kept only in enough detail to
 be a real coupled problem. The constants are not the point.
@@ -118,8 +117,8 @@ problem = LinearForwardProblem(forward, error=noise)
 
 truth, data = problem.synthetic_model_and_data(prior, rng=rng)
 density_truth, traction_truth = truth
-# Through grid_values, because a sphere's vectors are SHGrid objects (D-1)
-# rather than arrays and do not carry numpy's methods.
+# Through grid_values, because a sphere's vectors are SHGrid objects rather
+# than arrays and do not carry numpy's methods.
 print(f"density anomaly rms {X.grid_values(density_truth).std():.3f} kg/m^3")
 print(f"basal traction rms  {X.grid_values(traction_truth).std():.3e} Pa")
 print(
@@ -132,8 +131,8 @@ print()
 # One call. The direct sum is a Hilbert space, so nothing here is special.
 # ---------------------------------------------------------------------------
 
-# The solve is iterative, as it should be for a problem of this size — nothing
-# here is ever assembled. But the two fields carry wildly different units, a
+# The solve is iterative, as it should be for a problem of this size, and the
+# normal operator is never assembled. But the two fields carry wildly different units, a
 # density in kg/m^3 against a traction in Pa, so the normal operator's
 # eigenvalues span 9e12 to 7e18: badly *scaled* rather than badly conditioned.
 # Unpreconditioned conjugate gradients loses orthogonality on that and reports

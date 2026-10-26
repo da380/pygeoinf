@@ -1,17 +1,21 @@
 """
 Numerical checks on the axioms the library assumes but cannot enforce.
 
-These live here rather than in the production classes. In v1 the equivalents
-are mixins in the MRO of every space and operator
-(``class HilbertSpace(ABC, HilbertSpaceAxiomChecks)``), which puts a test suite
-inside the objects under test.
+These are free functions for test suites, kept out of the classes they check.
 
 Every check raises ``AssertionError`` with a message naming the axiom that
 failed, and on success returns a :class:`CheckReport` carrying the worst
 relative defect it measured for each identity it tested. The report is what a
 backend over an inexact adjoint wants: pass an ``rtol`` the implementation can
-meet, read the defect back, and record it falling under refinement (D-128).
-Every ``rtol`` defaults to what the check required before it was a parameter.
+meet, read the defect back, and record it falling under refinement. The
+default tolerances suit an exact implementation in double precision.
+
+Probe vectors come from the space's ``random`` method unless a ``measure=`` on
+the space is passed, in which case they are draws from it. ``random`` is the
+neutral default on a space with no further structure, and an unrealistic one
+on a function space, where it is rough in every mode at once and not the kind
+of vector an operator will meet; a check can then pass or fail for the wrong
+reason. A prior on the space is usually the better source of probes.
 """
 
 from __future__ import annotations
@@ -80,13 +84,9 @@ def _record(record: dict[str, float] | None, axiom: str, defect: float) -> None:
 def _draw(
     space: HilbertSpace, rng: Generator | None, measure: ProbabilityMeasure | None
 ) -> object:
-    """A probe vector: white noise on the space, or a draw from *measure*.
+    """A probe vector: the space's ``random`` vector, or a draw from *measure*.
 
-    White noise is the honest default on a space with no further structure,
-    and an unrealistic one on a function space, where it is rough in every
-    mode at once and not the kind of vector an operator will meet; a check
-    can then pass or fail for the wrong reason. Passing a measure draws the
-    probes from it instead, v1's ``measure=`` on every check.
+    See the module docstring for why a measure is often the better source.
 
     Raises:
         ValueError: if the measure lives on another space.
@@ -153,13 +153,13 @@ def check_space(
     Args:
         space: the space to check.
         rng: generator used to draw test vectors.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the space to draw the probe vectors from, in
+            place of the space's ``random`` method; see the module docstring.
         trials: how many random triples to test.
         rebuild: optional zero-argument callable returning an independently
             constructed space that should compare equal to ``space``. Supply it
             to catch identity-based equality, which silently produces spurious
-            "domain mismatch" errors later. See DECISIONS.md D-19.
+            "domain mismatch" errors later.
         rtol: the agreement required of each identity.
         atol: an absolute allowance on vector comparisons.
 
@@ -315,8 +315,8 @@ def check_coordinates(
     Args:
         space: the space to check.
         rng: the generator for the probe vectors.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the space to draw the probe vectors from, in
+            place of the space's ``random`` method; see the module docstring.
         trials: how many random vectors to check each axiom on. More than one
             because a single draw can satisfy an identity by accident.
         rtol: the agreement required of each identity. The ``solve_gram``
@@ -431,13 +431,13 @@ def check_representer(
     Handing ``g`` straight to an optimizer as if it were the gradient fails this
     identity by a factor of the Gram matrix, which is exactly the classic
     adjoint-method error. On an orthonormal basis the two coincide and there is
-    nothing to catch. See DECISIONS.md D-26.
+    nothing to catch.
 
     Args:
         space: the space to check.
         rng: the generator for the probe vectors.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the space to draw the probe vectors from, in
+            place of the space's ``random`` method; see the module docstring.
         trials: how many random functionals to check.
         rtol: the agreement required.
 
@@ -482,23 +482,21 @@ def check_white_noise(
     An entry is judged against ``sqrt((u, u) (v, v))``, as :func:`check_measure`
     judges a covariance, and not against one. The products ``(x, u)`` and
     ``(x, v)`` are jointly normal with those variances, so the sampling error
-    of their mean product is at most ``sqrt(2 (u, u) (v, v) / samples)``: it
-    grows with the metric, and a fixed tolerance was a different test on every
-    space. Where the metric is large -- a Sobolev space of some order -- a
-    correct space failed by chance, the off-diagonal entries first, being
-    expected to vanish and so compared with the tolerance bare; where it is
-    small -- a mass matrix on a fine mesh -- nothing could fail, the v1
-    construction included. One ``rtol`` now serves a metric of any size.
+    of their mean product is at most ``sqrt(2 (u, u) (v, v) / samples)``. It
+    grows with the metric, and judging each entry against that scale is what
+    lets one ``rtol`` serve a metric of any size.
 
-    v1 fails this check on every mass-weighted space: drawing standard normal
-    *components* gives covariance ``G`` rather than the identity. See DECISIONS.md D-19.
+    A space that draws standard normal *components* fails this check whenever
+    its basis is not orthonormal: their covariance is ``G``, not the identity.
 
     Args:
         space: the space to check.
         rng: the generator. Seed it: this is a statistical check and an
             unseeded failure cannot be reproduced.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: on a space without coordinates, draw the test directions
+            ``u`` from this measure rather than from ``space.random``. On a
+            coordinate space the directions are basis vectors and this is
+            unused. The noise itself always comes from ``white_noise``.
         samples: how many draws to average over.
         rtol: the agreement required, as a fraction of
             ``sqrt((u, u) (v, v))``. It must scale like ``1 / sqrt(samples)``
@@ -578,13 +576,13 @@ def check_operator(
     solve is linear, and adjoint, only to its inner tolerance, so the two
     defects degrade together. A discrete adjoint should pass at ``1e-9``; a
     continuous one is checked with the ``rtol`` it can meet, and the report's
-    defect is the number to watch fall under refinement (D-128).
+    defect is the number to watch fall under refinement.
 
     Args:
         operator: the operator to check.
         rng: the generator for the probe vectors.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
         trials: how many pairs to check the adjoint identity on.
         rtol: the agreement required, for linearity and the adjoint alike.
         atol: an absolute allowance on the linearity residual, for operators
@@ -659,8 +657,8 @@ def check_traits(
     Args:
         operator: the operator whose claims are to be checked.
         rng: the generator for the probe vectors.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
         trials: how many vectors to test each claim on.
         rtol: the agreement required of each claimed identity.
 
@@ -769,8 +767,8 @@ def check_derivative(
         operator: the operator to check.
         point: where to check it.
         rng: the generator for the probe directions.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
         step: the finite-difference step. Central differences, so the error
             is ``O(step^2)`` in truncation and ``O(1/step)`` in rounding --
             which is why the default is near the square root of machine
@@ -838,14 +836,14 @@ def check_gradient(
     a gradient was wanted fails this by exactly a factor of the Gram matrix —
     which is the classic adjoint-method error. On an orthonormal space the two
     coincide and there is nothing to catch, which is why the error survives in
-    practice. See DECISIONS.md D-26.
+    practice.
 
     Args:
         functional: the functional to check.
         point: where to check it.
         rng: the generator for the probe directions.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
         step: the finite-difference step; see :func:`check_derivative`.
         trials: how many directions to check.
         rtol: the agreement required.
@@ -903,8 +901,8 @@ def check_second_derivative(
         operator: the operator to check.
         point: where to check it.
         rng: the generator for the probe directions.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
         step: the finite-difference step; see :func:`check_derivative`.
         trials: how many directions to check.
         rtol: the agreement required. Looser than for a first derivative, the
@@ -1069,33 +1067,33 @@ def check_projection(
 ) -> CheckReport:
     """Check that a convex set's projection really is the metric projection.
 
-    Three properties, and the first two are what a proximal method relies on:
+    Three properties, for each of a few probe points:
 
-    - **idempotent**: projecting twice is projecting once;
-    - **the identity on the set**: a point already inside is left alone;
-    - **nearest**: no nearby point of the set is closer.
+    - **lands in the set**: the projected point is a member;
+    - **idempotent**: projecting the projected point leaves it where it is,
+      which is what a proximal method relies on;
+    - **nearest**: no nearby point of the set is closer to the probe.
 
     The third is checked by sampling rather than proved, which is the honest
-    thing for a numerical check. It is what distinguishes a projection from a
-    map onto the boundary — v1's ``HalfSpace.project`` satisfies neither of the
-    first two.
+    thing for a numerical check. It is what tells the metric projection apart
+    from other maps onto the set, such as one onto its boundary.
 
     Args:
         subset: the convex set whose projection is to be checked.
         rng: the generator for the probe points.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the space to draw the probe vectors from, in
+            place of the space's ``random`` method; see the module docstring.
         trials: how many points to project.
-        probes: how many further points to test the obtuse-angle condition
-            against for each projection.
+        probes: how many nearby points of the set to compare distances with,
+            for each projection.
         rtol: the agreement required of the idempotency identity.
 
     Returns:
         The report, carrying the worst idempotency defect.
 
     Raises:
-        AssertionError: if the projection is not idempotent, does not land in
-            the set, or fails the variational inequality.
+        AssertionError: if the projection does not land in the set, is not
+            idempotent, or a nearby point of the set is closer than it.
     """
     rng = default_rng() if rng is None else rng
     defects: dict[str, float] = {}
@@ -1155,14 +1153,14 @@ def check_convexity(
     Args:
         functional: the functional to test.
         rng: the generator for the probe points.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the space to draw the probe vectors from, in
+            place of the space's ``random`` method; see the module docstring.
         trials: how many pairs to test.
         rtol: the allowance, relative to the size of the right-hand side.
 
     Returns:
-        The report, carrying the worst convexity violation (zero for a
-        strictly convex functional on every pair tried).
+        The report, carrying the worst convexity violation, zero when no
+        pair tried violates the inequality.
 
     Raises:
         AssertionError: if a pair violates the inequality.
@@ -1209,13 +1207,13 @@ def check_affine(
     derivative at a random point is the linear part, applied to a random
     direction. Then :func:`check_operator` on the linear part, which is
     where a mass matrix in the wrong place shows up as a failed adjoint
-    identity -- v1's affine checks never looked there.
+    identity.
 
     Args:
         operator: an :class:`~pygeoinf2.algebra.operators.AffineOperator`.
         rng: the generator for the probe vectors.
-        measure: draw the probes from this measure on the space rather
-            than as white noise; see :func:`_draw`.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
         trials: how many random points and combinations to test.
         rtol: the allowance, relative to the size of what is compared.
 

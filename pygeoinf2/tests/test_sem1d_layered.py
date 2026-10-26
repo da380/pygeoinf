@@ -1,6 +1,6 @@
 """Piecewise-continuous fields: a direct sum of layers that are adjacent.
 
-Needs ``planetmodel`` 1.2. The independent routes (DECISIONS.md D-107) are the
+Needs ``planetmodel`` 1.2. The independent routes are the
 layers themselves, which a layered space must agree with piece by piece, the
 plain direct sum it claims to be, and closed forms for a layered polynomial.
 """

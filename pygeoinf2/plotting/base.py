@@ -21,11 +21,9 @@ __all__ = ["plot", "subplots", "color_limits", "show"]
 def show() -> bool:
     """Show the figures, if the backend can.
 
-    Under a non-interactive backend -- Agg, which is what the test suite runs
-    the examples under -- this is a no-op, so an example can end with it
-    unconditionally. ``pyplot.show()`` itself is not: on Agg it warns once per
-    call that the canvas is non-interactive, which is six warnings in a suite
-    run and no figures either way.
+    Under a non-interactive backend such as Agg this is a no-op, so a script
+    can end with it unconditionally and still run headless. ``pyplot.show()``
+    itself is not: on Agg it warns that the canvas is non-interactive.
 
     Returns:
         Whether the figures were shown.
@@ -211,10 +209,10 @@ def plot_network(
 ) -> tuple[Any, dict]:
     """The paths, with the sources and receivers that define them marked.
 
-    v1's ``plot_geodesic_network``, on every geometry at once: the paths go
-    on through :func:`plot_paths`, then the distinct start points as gold
-    stars and the distinct end points as red circles through
-    :func:`plot_points`, v1's styling. One path is a network of one, so
+    On every geometry that registers :func:`plot_paths` and
+    :func:`plot_points`: the paths go on through :func:`plot_paths`, then the
+    distinct start points as gold stars and the distinct end points as red
+    circles through :func:`plot_points`. One path is a network of one, so
     there is no separate single-geodesic plotter.
 
     Args:

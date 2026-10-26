@@ -48,9 +48,8 @@ print()
 
 # --- how did we do? ------------------------------------------------------
 error = X.norm(X.subtract(posterior_mean, truth)) / X.norm(truth)
-# Against the prior mean, which is what the inversion had to beat. Written as
-# the comparison rather than as the 1.0 it currently equals, so it stays
-# correct if the prior ever gets a non-zero mean.
+# Against the prior mean, which is what the inversion had to beat. The prior
+# mean is zero here, so this is 1.0.
 prior_error = X.norm(X.subtract(prior.expectation, truth)) / X.norm(truth)
 print(f"relative error of the posterior mean : {error:.3f}")
 print(f"relative error of the prior mean     : {prior_error:.3f}")

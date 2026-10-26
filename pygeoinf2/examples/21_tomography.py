@@ -1,16 +1,15 @@
 """
 21. A Bayesian inversion, end to end.
 
-v1's ``work/tomo.py`` on v2: phase-velocity tomography on a sphere, from
-travel-time anomalies along great-circle paths between real sources and
-receivers.
+Phase-velocity tomography on a sphere, from travel-time anomalies along
+great-circle paths between real sources and receivers.
 
 The point of the example is what is *not* written. There is no mass matrix, no
 Galerkin flag, and no conversion between a derivative and a gradient anywhere
 in it -- and there are two of each hiding in the arithmetic. The forward
 operator's adjoint returns a function because it was built from derivative
-components; the posterior mean comes out of a solve whose normal equations were
-assembled in whichever space is smaller, without being asked.
+components; the posterior mean comes out of a solve whose normal equations are
+formed in the data space, the default and here the smaller side.
 
 Needs pyshtools and cartopy, which come with the 'sphere' extra.
 """
@@ -64,8 +63,8 @@ print(
 print()
 
 # ---------------------------------------------------------------------------
-# The posterior. One line, and the solve inside it is iterative and
-# matrix-free: nothing here is ever assembled.
+# The posterior. One line, and the solve inside it is iterative: the normal
+# operator is applied, never assembled.
 # ---------------------------------------------------------------------------
 
 # The normal equations go in the data space by default, and here that is also

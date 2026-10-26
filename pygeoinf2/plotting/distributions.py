@@ -6,41 +6,22 @@ posterior nobody can look at; :meth:`push_forward` turns it into a measure on a
 handful of properties, and this draws *that* — which is what makes the property
 space the thing worth asking about rather than a convenience.
 
-**Renamed from v1.** The arguments were shortened when these were ported, and
-the table is here so that porting a v1 script is a lookup rather than a hunt:
+Two entry points, :func:`plot_densities` and :func:`plot_corner`, and both
+take either kind of measure:
 
-============================ =====================
-v1                           v2
-============================ =====================
-``prior_measure``            ``prior``
-``true_values``              ``truth``
-``posterior_labels``         ``labels``
-``fill_density``             ``fill``
-``num_sigmas``               ``sigmas``
-``width_scaling``            ``width``
-``contour_color``            ``color``
-``plot_1d_distributions``    :func:`plot_densities`
-``plot_corner_distributions`` :func:`plot_corner`
-============================ =====================
-
-Two entry points, and both take either kind of measure:
-
-* a :class:`~pygeoinf2.probability.gaussian.GaussianMeasure` is drawn exactly,
-  from its mean and covariance;
-* any measure that can be *sampled* is drawn from draws instead — histograms
+* a :class:`~pygeoinf2.probability.gaussian.GaussianMeasure` with a covariance
+  is drawn exactly, from its mean and covariance;
+* any measure that can be *sampled* is drawn from draws instead -- histograms
   and kernel density in place of curves and ellipses. That covers the posterior
-  of a non-linear problem, and the randomize-then-optimize sampler of §18.7,
+  of a non-linear problem, and a randomize-then-optimize posterior sampler,
   neither of which has a covariance to hand.
 
 **Components, not fields.** Everything here is about the components of a
 vector, so the covariance that matters is the covariance *of the components*,
-``G^-1 C_gal G^-1`` — not the covariance operator's component matrix, which is
-a different thing on a space whose basis is not orthonormal, by 75% on the
-weighted space in the test suite.
+``G^-1 C_gal G^-1`` -- not the covariance operator's component matrix, which is
+a different thing on a space whose basis is not orthonormal.
 :meth:`~pygeoinf2.probability.gaussian.GaussianMeasure.as_multivariate_normal`
 already computes it, so this asks for that rather than doing it again.
-
-See DECISIONS.md D-93.
 """
 
 from __future__ import annotations
@@ -74,13 +55,13 @@ def moments(
         samples: draws to take, when sampling is the route.
         rng: the generator for those draws.
 
-    Raises:
-        TypeError: for a measure that can be neither read exactly nor
-            sampled, there being nothing to plot.
-
     Returns:
         ``(mean, covariance, draws)`` in components, with ``draws`` None when
         the measure was Gaussian and nothing had to be sampled.
+
+    Raises:
+        TypeError: for a measure that can be neither read exactly nor
+            sampled, there being nothing to plot.
     """
     from ..probability.gaussian import GaussianMeasure
 
@@ -135,14 +116,16 @@ def _grid(
 
     A single grid over the union of every curve's window resolves the widest
     and aliases the rest. With a prior a thousand times wider than its
-    posterior — the case the twin axis exists for — a uniform 2000 points put
-    several posterior standard deviations between samples, so the posterior
-    peak was simply missed. Raising the count cannot fix it: the ratio, not the
+    posterior -- the case the twin axis exists for -- a uniform 2000 points
+    would put several posterior standard deviations between samples and miss
+    the posterior peak. Raising the count cannot fix it: the ratio, not the
     absolute width, is what defeats a shared grid.
 
     So each curve gets the shared span for its extent and a fine grid over its
-    own few standard deviations for its shape, which is where all of its mass
-    is. That is ~160 points per standard deviation regardless of the ratio.
+    own ``width`` standard deviations either side for its shape, which is
+    where all of its mass is. That is ``points / (2 width)`` points per
+    standard deviation regardless of the ratio, about 160 at the defaults of
+    :func:`plot_densities`.
     """
     low, high = limits
     coarse = np.linspace(low, high, points)
@@ -182,10 +165,10 @@ def _binned_density(draws: np.ndarray, values: np.ndarray, /) -> np.ndarray:
     """A kernel density estimate by histogram and convolution.
 
     ``gaussian_kde`` evaluates a kernel at every draw for every point asked
-    for: 20 000 draws over a 160 x 160 panel is 5e8 kernels and about five
-    seconds. Binning the draws onto the grid first and convolving once with
-    the same kernel gives the same estimate to within the bin width, and the
-    convolution is over the grid rather than over the draws.
+    for: 20 000 draws over a 160 x 160 panel is 5e8 kernels. Binning the
+    draws onto the grid first and convolving once with the same kernel gives
+    the same estimate to within the bin width, and the convolution is over
+    the grid rather than over the draws.
 
     Args:
         draws: the sample, one value per draw.
@@ -219,10 +202,9 @@ def _binned_density_2d(
     """The two-dimensional counterpart, on the mesh the contours use.
 
     The kernel is anisotropic -- it is the data covariance, scaled -- so this
-    convolves with that kernel rather than with an axis-aligned filter. On a
-    correlated cloud the axis-aligned version is wrong by 8% of the peak and
-    moves the contour levels by 6%; the full kernel costs the same and is
-    wrong by 1.5% and 0.7%.
+    convolves with that kernel rather than with an axis-aligned filter, which
+    would misplace the contours of a correlated cloud. The full kernel costs
+    the same.
 
     Args:
         draws: the sample, ``(n, 2)``, in ``(horizontal, vertical)`` order.
@@ -343,10 +325,10 @@ def plot_densities(
 ) -> Any:
     """One component's marginal, for one or several measures.
 
-    v1's ``plot_1d_distributions``. Priors go on a second y-axis, because a
-    prior is usually far wider than the posterior it is being compared with and
-    sharing an axis makes the posterior a spike — the comparison worth seeing
-    is of *shape and position*, not of height.
+    Priors go on a second y-axis, because a prior is usually far wider than
+    the posterior it is being compared with and sharing an axis makes the
+    posterior a spike -- the comparison worth seeing is of *shape and
+    position*, not of height.
 
     Args:
         posterior: a measure, or several.
@@ -366,17 +348,17 @@ def plot_densities(
             to within 0.1% of the peak on a marginal, and the first is some
             three orders of magnitude cheaper. See :func:`plot_corner`.
         xlabel: label for the shared x-axis.
-        title: a title for the axes. Every pyslfp call passes one, and without
-            it a caller has to reach past the return value to set it.
+        title: a title for the axes.
 
     Returns:
         The axes drawn on, or ``(posterior_axes, prior_axes)`` when priors were
         given and a second axis was made.
 
     Raises:
-        ValueError: if *index* is outside the measure's dimension, a measure
-            can be neither read nor sampled, or *density* is neither
-            ``"binned"`` nor ``"kde"``.
+        IndexError: if *index* is outside the measure's dimension.
+        TypeError: if a measure can be neither read exactly nor sampled.
+        ValueError: if *density* is neither ``"binned"`` nor ``"kde"``, or
+            every measure has zero variance in the component.
     """
     import matplotlib.pyplot as plt
 
@@ -419,12 +401,10 @@ def plot_densities(
     deviations = np.array([s for _, s in live])
     truths = None if truth is None else np.full(means.shape, float(truth))
     lower, upper = _span(means, deviations, truths, width)
-    # The grid has to resolve the *narrowest* curve, not the widest. A fixed
-    # count over the union of the windows aliases a posterior much sharper than
-    # its prior — the case the twin axis exists for: with a prior 1000x wider,
-    # 2000 points put roughly six posterior standard deviations between
-    # samples, so the posterior peak is missed altogether. v1 asks for 25
-    # points per standard deviation of the narrowest peak; so does this.
+    # One window spanning every curve and the truth. Each curve is then drawn
+    # on a grid refined over its own few standard deviations (see _grid), so a
+    # posterior much sharper than its prior -- the case the twin axis exists
+    # for -- is still resolved.
     limits = (float(lower.min()), float(upper.max()))
 
     axis = plt.gca() if ax is None else ax
@@ -542,9 +522,9 @@ def plot_corner(
 ) -> Any:
     """The joint distribution of a measure's components, panel by panel.
 
-    v1's ``plot_corner_distributions``. Marginals on the diagonal, pairwise
-    contours below it, and nothing above — which is the point of the shape: a
-    corner plot shows every pair once, and the empty half is what tells you so.
+    Marginals on the diagonal, pairwise contours below it, and nothing above
+    -- which is the point of the shape: a corner plot shows every pair once,
+    and the empty half is what tells you so.
 
     Args:
         posterior: a Gaussian measure, or any measure that can be sampled.
@@ -566,18 +546,16 @@ def plot_corner(
             the panels of a non-Gaussian corner plot are drawn from.
             ``"binned"``, the default, bins the draws onto the panel's own grid
             and convolves once with the kernel Scott's rule gives -- the same
-            kernel ``"kde"`` uses, evaluated ~2000 times faster (5.0 s to
-            2.2 ms per panel at 20 000 draws on a 160 x 160 grid; 8.9 s of
-            example 26's 12.2 s). The cost is the binning: on a strongly
-            correlated cloud the density is within 1.5% of the peak and the
-            contour levels within 0.7%. ``"kde"`` evaluates
+            kernel ``"kde"`` uses, evaluated some three orders of magnitude
+            faster. The cost is the binning: on a strongly correlated cloud
+            the density is within 1.5% of the peak and the contour levels
+            within 0.7%. ``"kde"`` evaluates
             ``scipy.stats.gaussian_kde`` at every grid point, which is exact
             and is what to use if a level matters to three digits.
-        title: a title for the figure. Every pyslfp call passes one.
+        title: a title for the figure.
         legend: draw a key in the empty upper triangle, which is otherwise
             wasted space -- and without it the dotted prior, the solid
-            posterior and the starred truth are three unlabeled marks. v1
-            had one; v2 lost it.
+            posterior and the starred truth are three unlabeled marks.
         posterior_label: what the key calls the posterior.
         prior_label: what it calls the prior.
         truth_label: what it calls the truth.
@@ -718,10 +696,9 @@ def plot_corner(
                 if fill:
                     # The fill shows *density*, in both branches. `field` is a
                     # Mahalanobis distance in the Gaussian one, which grows
-                    # away from the mean: filling it directly painted the
+                    # away from the mean: filling it directly would paint the
                     # Gaussian panels darkest where the measure is least
-                    # likely, and the sampled panels darkest where it is most,
-                    # so the same argument read opposite ways in one figure.
+                    # likely, and the sampled panels darkest where it is most.
                     if draws is None:
                         shading = np.exp(-0.5 * field**2)
                         edges = np.sort(np.exp(-0.5 * np.asarray(levels) ** 2))

@@ -1,4 +1,4 @@
-"""Nonlinear inference: the MAP model and the Gaussian about it (D-7)."""
+"""Nonlinear inference: the MAP model and the Gaussian about it."""
 
 import numpy as np
 import pytest
@@ -221,7 +221,7 @@ class TestWhatItRefuses:
 
 
 class TestTheSamplerHooksAreThere:
-    """D-7 asks for this to be built so a function-space MCMC layer plugs in.
+    """This is built so that a function-space MCMC layer can plug in.
     That needs three things and no more: prior draws, the posterior's log
     density, and the forward problem."""
 

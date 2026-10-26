@@ -1,9 +1,9 @@
 """
 A damped solve inside a monotone scalar root find.
 
-DECISIONS.md D-57 names this as one numerical kernel with four users: the
-feasible-set ellipsoid, the primal nested bisection, the set-inclusion test, and
-the discrepancy principle. Each looks for the value of a multiplier at which
+One numerical kernel serves the feasible-set ellipsoid, the primal nested
+bisection, the set-inclusion test, the KKT solvers and the discrepancy
+principle. Each looks for the value of a multiplier at which
 some quantity — a misfit, a norm — reaches a target, and each quantity is
 monotone in its multiplier, which is what makes bisection a proof rather than a
 heuristic.
@@ -21,8 +21,8 @@ structured model for data that support no structure.
 **Warm starting.** Consecutive multipliers in a bisection are close, so the
 previous solution is an excellent starting point for the next solve. This is
 the difference between a search that costs sixty full solves and one that costs
-one solve and fifty-nine corrections. The solvers have taken an ``x0`` all
-along; this is what passes it.
+one solve and fifty-nine corrections, the previous solution being passed to
+each solve as its ``x0``.
 """
 
 from __future__ import annotations
@@ -48,11 +48,12 @@ _UNSET: Any = object()
 # than encountered a bug: a damping small enough leaves the normal operator
 # numerically singular, and no solver can be asked to go further.
 #
-# ConvergenceError is *not* in here, though it used to be. It is raised both
-# by a solver that met a singular operator and by one that merely ran out of
-# iterations, and it carries nothing to tell them apart -- so treating it as
-# saturation reported "no root in this range" for a sweep that had simply set
-# maxiter too low. It is caught separately below and recorded on the result.
+# ConvergenceError is deliberately *not* in here. It is raised both by a
+# solver that met a singular operator and by one that merely ran out of
+# iterations, and it carries nothing to tell them apart, so treating it as
+# saturation would report "no root in this range" for a sweep whose
+# iteration cap was simply too low. It is caught separately below and
+# recorded on the result.
 _BREAKDOWN = (np.linalg.LinAlgError,)
 
 __all__ = [
@@ -122,7 +123,7 @@ class RootResult:
     they mean different things: the first says no root exists in the range,
     which is an answer, and the second says a probe could not be computed,
     which is not. Only a genuine singularity -- ``LinAlgError`` -- is read as
-    saturation now. A ``ConvergenceError`` from a strict solver that merely
+    saturation. A ``ConvergenceError`` from a strict solver that merely
     ran out of iterations lands here instead, so the caller can see that
     :attr:`exhausted` is standing in for a solve that did not finish rather
     than for an exhausted range."""
@@ -145,6 +146,11 @@ def monotone_root(
 ) -> RootResult:
     """Find the positive multiplier at which a monotone quantity hits *target*.
 
+    The search works in the *logarithm* of the multiplier, because a
+    multiplier of this kind ranges over orders of magnitude rather than over
+    an interval: the bracketing widens by decades, and the root is then found
+    by Brent's method in ``log t``.
+
     Args:
         evaluate: ``(multiplier, previous_solution) -> Evaluation``. The second
             argument is the solution from the last probe, or None on the first,
@@ -160,13 +166,15 @@ def monotone_root(
             ``atol + rtol * (low + high)``.
         atol: the absolute half of that criterion, which matters when the
             root sits near zero and a relative test never closes.
-        expansions: how far to widen, in factors of ten, before concluding
-            that no root exists in that direction.
+        expansions: how many times to widen an end of the bracket by a
+            factor of ten before concluding that no root exists in that
+            direction.
         minimum: a floor on the multiplier. The downward walk stops short of
             it and reports the range exhausted, rather than probing on: a
             damping far below any physical scale solves a numerically
             singular system at each probe and says nothing about the data.
-            v1's ``minimum_damping``. Zero, the default, is no floor.
+            The discrepancy searches expose it as ``minimum_damping``. Zero,
+            the default, is no floor.
         maximum: a ceiling on the multiplier, likewise for the upward walk.
         warm_start: pass each probe the previous solution.
 
@@ -178,12 +186,7 @@ def monotone_root(
 
     Raises:
         ValueError: for a non-positive ``initial``, one outside the floor and
-            ceiling, or tolerances that cannot close a bracket.
-
-    The search works in the *logarithm* of the multiplier, because a
-    multiplier of this kind ranges over orders of magnitude rather than over
-    an interval: the bracketing widens by decades, and the root is then found
-    by Brent's method in ``log t``.
+            ceiling, or a non-positive ``max_iterations``.
     """
     if initial <= 0.0:
         raise ValueError(f"The starting multiplier must be positive, got {initial}.")
@@ -301,10 +304,8 @@ def monotone_root(
 
     # Bracketed. Brent's method in log t, rather than geometric bisection:
     # the quantity is smooth in the multiplier, so interpolation converges
-    # superlinearly where bisection halves the log-bracket once per solve.
-    # Measured on a chi-squared-like quantity from three starting points:
-    # 23-28 solves per root with bisection, 10-13 with this. Each solve is a
-    # linear system, so that is the whole cost of a discrepancy sweep.
+    # superlinearly where bisection halves the log-bracket once per solve,
+    # and each probe is a linear solve.
     #
     # Probes are memoized by their log-multiplier so the two endpoints, already
     # solved by the bracketing, are not solved again, and the multiplier
@@ -393,12 +394,9 @@ class DampedSolves:
     A plain sum is an anonymous operator: it knows its value and its adjoint
     and nothing else. That is enough to solve with, but not enough to
     *precondition* with, because every structure-aware preconditioner works by
-    reading the factors ``A``, ``Q`` and ``R`` off the operator it is given.
-    Assembling the sum therefore refused those preconditioners inside every
-    discrepancy sweep, while the same solver worked on a fixed damping — so the
-    library's own claim that they apply to all the point estimators held
-    everywhere except where the sweep was the point. Pass a family's ``at`` and
-    the member arrives with its factors intact."""
+    reading the factors ``A``, ``Q`` and ``R`` off the operator it is given,
+    and a plain sum would refuse them. Pass a family's ``at`` and the member
+    arrives with its factors intact."""
 
     refresh: float = 10.0
     """Rebuild the preconditioner once the multiplier has moved by more than

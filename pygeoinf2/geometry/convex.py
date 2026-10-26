@@ -10,20 +10,17 @@ object seen from three directions, and this module makes that explicit:
 - ``set.support_function()`` — the convex-analysis view, with its own closed
   algebra.
 
-v1 keeps these in three places: the sets in ``subsets``, the support functions
-in ``convex_analysis``, and nothing that ties an indicator to a proximal
-method. Tying them together is most of the modernization.
-
 ``project`` here means the **metric projection**: the nearest point of the set,
 which leaves a point already inside where it is. That is what a proximal method
-needs. v1's ``HalfSpace.project`` instead goes to the bounding hyperplane
-whichever side the point is on, which is a different map and is not idempotent
-— using it as a projection would quietly move feasible points.
+needs. Going to the bounding hyperplane whichever side the point is on would be
+a different map, not idempotent, and would quietly move feasible points.
 
 Everything with a closed form is coordinate-free, because the closed forms are
-written with norms and inner products. Where there is no closed form — the
-projection onto a general ellipsoid, for instance — the set says so rather than
-offering an approximation under the same name.
+written with norms and inner products. Where there is no closed form, a set
+either computes the answer by a stated algorithm -- the projection onto an
+ellipsoid is Newton's method on a secular equation, onto an intersection
+Dykstra's algorithm -- or refuses, as the projection onto a Minkowski sum does,
+rather than offering an approximation under the same name.
 """
 
 from __future__ import annotations
@@ -225,9 +222,9 @@ class ConvexSet(Subset):
         loses in practice is cheapness: every question has to go through the
         oracle, and one call may be an optimization.
 
-        This is how the feasible property set of §18.3 arrives. Its support
-        function is a dual minimization and there is no other description of
-        it, so the set is the oracle.
+        The Backus-Gilbert-Parker engines use it for a feasible property set
+        whose support function is a dual minimization with no other
+        description, so that the set is the oracle.
 
         Args:
             domain: the space.
@@ -238,10 +235,8 @@ class ConvexSet(Subset):
                 one.
             membership: optionally, called as ``membership(x, rtol)`` and
                 returning whether ``x`` is in the set. A support function
-                cannot decide membership (see :meth:`_OracleSet.contains`),
-                so a set that has a separate test for it -- the feasible
-                property set has one when its constraint sets are balls --
-                hands it in here, and then answers both questions.
+                cannot decide membership, so a set that has a separate test
+                for it hands it in here, and then answers both questions.
         """
         return _OracleSet(domain, oracle, maximizer=maximizer, membership=membership)
 
@@ -249,8 +244,9 @@ class ConvexSet(Subset):
         """The Minkowski sum, whose support function is the sum of theirs.
 
         ``h_{A+B} == h_A + h_B``, exactly, which is the one operation on convex
-        sets that support functions make trivial. Route (b) of §18.3 returns a
-        sum of two ellipsoids and has no simpler description.
+        sets that support functions make trivial. The sum has a support
+        function and a maximizer when both summands do, and neither a
+        projection nor a membership test.
         """
         if not isinstance(other, ConvexSet):
             return NotImplemented
@@ -411,7 +407,7 @@ class _OracleSet(ConvexSet):
             The maximizing point.
 
         Raises:
-            NotImplementedError: unless the support function was built with a
+            AttributeError: unless the support function was built with a
                 maximizer. A support *value* does not determine the point that
                 attains it.
         """
@@ -483,7 +479,7 @@ class _OracleSet(ConvexSet):
         )
 
     def polytope(self, directions: Any, /) -> "Polytope":
-        """A certified outer bound, one half-space per direction (§18.4)."""
+        """A certified outer bound, one half-space per direction."""
         return Polytope(
             self.domain,
             [
@@ -609,11 +605,11 @@ def _dykstra(space: Any, parts: Sequence[Any], x: Any, max_iterations: int) -> A
 class Polytope(ConvexSet):
     """An intersection of half-spaces, which remembers which side it is on.
 
-    §18.4's requirement made into a type. A polytope built from support
-    function values *contains* the set it approximates; one built as the convex
-    hull of feasible points is *contained* in it. Reporting the second as
-    though it were the answer is the mistake BGP's Figure 4 is about, and the
-    two are not interchangeable — so ``outer`` is not optional.
+    A polytope built from support function values *contains* the set it
+    approximates; one built as the convex hull of feasible points is
+    *contained* in it. Reporting the second as though it were the answer
+    understates the set, and the two are not interchangeable -- so ``outer``
+    is not optional.
     """
 
     def __init__(
@@ -695,8 +691,8 @@ class Polytope(ConvexSet):
     def project(self, x: Any, /, *, max_iterations: int = 1000) -> Any:
         """The nearest point of the polytope, by Dykstra's algorithm.
 
-        Cycling the half-space projections on their own — alternating
-        projection — reaches *a* feasible point, not the nearest one. On
+        Cycling the half-space projections on their own -- alternating
+        projection -- reaches *a* feasible point, not the nearest one. On
         ``{x <= 0} and {x + y <= 0}`` from ``(1, 0.5)`` it stops at
         ``(-0.25, 0.25)`` at squared distance 1.625, where the nearest point is
         the origin at 1.25. That matters because :meth:`indicator` hands this
@@ -710,14 +706,10 @@ class Polytope(ConvexSet):
 
         Args:
             x: the point to project.
-            max_iterations: the maximum number of cycles. Each is one projection
-                per half-space. A thousand rather than the two hundred this
-                used to allow: measured on a ball cut by a half-space in a
-                sixteen-dimensional Sobolev space, two hundred cycles leave
-                the answer 3.7e-4 off the boundary and a thousand reach it
-                exactly, the cycle then stopping itself. An under-converged
-                projection is a wrong prox, which is the whole reason Dykstra
-                is here rather than alternating projection.
+            max_iterations: the maximum number of cycles, each one projection
+                per half-space. The cycle stops itself earlier once it has
+                converged. An under-converged projection is a wrong prox, so
+                the cap is generous.
 
         Returns:
             The nearest point of the polytope, to the accuracy the cycle
@@ -790,11 +782,10 @@ class Ball(ConvexSet):
         Args:
             domain: the space.
             radius: the radius, which must not be negative. Zero is allowed and
-                gives the single point at the center — the degenerate case that
-                says "exactly this", which is what error-free data are. Every
-                method below already does the right thing there: ``project``
-                and ``support_maximizer`` return the center and ``contains``
-                admits it alone.
+                gives the single point at the center -- the degenerate case that
+                says "exactly this", which is what error-free data are. There
+                ``project`` and ``support_maximizer`` return the center and
+                ``contains`` admits it alone.
             center: the center. Defaults to zero.
 
         Raises:
@@ -860,9 +851,9 @@ class Ball(ConvexSet):
     def boundary(self) -> "BallSurface":
         """The sphere bounding it, as a set in its own right.
 
-        v1 had this, and it is what an equality constraint ``||x - c|| == r``
-        is: :class:`BallSurface` projects onto it and samples uniformly over
-        it, neither of which the solid ball does.
+        This is what an equality constraint ``||x - c|| == r`` describes:
+        :class:`BallSurface` projects onto it and samples uniformly over it,
+        neither of which the solid ball does.
 
         Returns:
             The bounding surface.
@@ -1087,10 +1078,9 @@ class HalfSpace(ConvexSet):
     def project(self, x: Any, /) -> Any:
         """The metric projection, which leaves feasible points alone.
 
-        Note the ``max(0, .)``: a point already inside is returned unchanged.
-        Projecting onto the boundary regardless — which is what v1 does — is a
-        different map, is not idempotent, and would move feasible points in a
-        proximal iteration.
+        A point already inside is returned unchanged. Projecting onto the
+        boundary regardless would be a different map, not idempotent, and
+        would move feasible points in a proximal iteration.
         """
         space = self._domain
         excess = space.inner_product(self._normal, x) - self._offset
@@ -1101,11 +1091,10 @@ class HalfSpace(ConvexSet):
     def support_function(self) -> SupportFunction:
         """``alpha * offset`` for a direction ``alpha * normal``, ``alpha >= 0``, else ``+inf``.
 
-        v1's ``HalfSpaceSupportFunction``. An unbounded set has an
-        extended-real support function, and this one is infinite in every
-        direction but the outward normal's; in an intersection that is the
-        right contribution, since ``min_i h_i`` is then decided by the
-        bounded parts.
+        An unbounded set has an extended-real support function, and this one
+        is infinite in every direction but the outward normal's; in an
+        intersection that is the right contribution, since ``min_i h_i`` is
+        then decided by the bounded parts.
         """
         return SupportFunction.of_half_space(
             self._domain, self._normal, offset=self._offset
@@ -1159,10 +1148,9 @@ class Ellipsoid(ConvexSet):
     a membership test needs and what a credible region is naturally expressed
     with: the set of points whose Mahalanobis distance is at most one.
 
-    A support function is available in closed form given the covariance. A
-    *projection* is not: it requires solving a scalar secular equation with a
-    linear solve at every step, so it is not offered under the same name as the
-    closed forms elsewhere in this module.
+    A support function is available in closed form given the covariance. The
+    projection has no closed form: :meth:`project` solves a scalar secular
+    equation by Newton's method, with linear solves at every step.
     """
 
     def __init__(
@@ -1185,9 +1173,8 @@ class Ellipsoid(ConvexSet):
             factor: a factor ``L`` of the covariance, ``C == L L*``, if one
                 is known -- a Gaussian measure usually carries one. The
                 support function then costs one adjoint application of the
-                factor rather than one of the covariance, which is v1's
-                ``inverse_sqrt_operator`` route in a form any factor can
-                take. The maximizer still needs the covariance.
+                factor rather than one of the covariance. The maximizer still
+                needs the covariance.
 
         Raises:
             ValueError: if the precision does not claim to be self-adjoint
@@ -1219,9 +1206,9 @@ class Ellipsoid(ConvexSet):
             The point of the ellipsoid furthest along it.
 
         Raises:
-            ValueError: if the ellipsoid was built without its covariance.
-                The precision alone gives the constraint but not the point
-                attaining the support.
+            AttributeError: if the ellipsoid was built without its
+                covariance. The precision alone gives the constraint but not
+                the point attaining the support.
         """
         if self._covariance is None:
             raise AttributeError(
@@ -1268,9 +1255,8 @@ class Ellipsoid(ConvexSet):
     def boundary(self) -> "EllipsoidSurface":
         """The surface ``(P (x - c), x - c) == 1``, as a set in its own right.
 
-        v1 had this. The surface carries the same precision and center, so it
-        needs no covariance and exists whether or not this ellipsoid was given
-        one.
+        The surface carries the same precision and center, so it needs no
+        covariance and exists whether or not this ellipsoid was given one.
 
         Returns:
             The bounding surface.
@@ -1339,14 +1325,8 @@ class Ellipsoid(ConvexSet):
         There is no closed form. The nearest point satisfies
         ``y + lambda P y == x - c`` for a multiplier ``lambda >= 0``, so
         ``y(lambda) == (I + lambda P)^-1 (x - c)`` and the constraint becomes a
-        scalar equation ``phi(lambda) == (P y, y) - 1 == 0``. That is genuinely
-        an algorithm rather than a formula -- each evaluation costs a linear
-        solve -- which is why this used to raise.
-
-        It raises no longer, because a set that cannot project cannot be used
-        by anything that needs a proximal step: the primal-dual route, a
-        proximal method, an intersection by Dykstra. Costing a few solves is a
-        better answer than not being available.
+        scalar equation ``phi(lambda) == (P y, y) - 1 == 0``. Each evaluation
+        of ``phi`` costs a linear solve.
 
         ``phi`` is decreasing in ``lambda``, so Newton from zero converges from
         above and cannot overshoot into negative multipliers. A point already
@@ -1358,11 +1338,9 @@ class Ellipsoid(ConvexSet):
         positive definite: applications of ``P`` and nothing formed. The
         second solve starts from the first-order predictor ``y + d lambda
         y'``, which is what the derivative solve just computed, so it is
-        usually a correction. A Cholesky factorization used to be the default,
-        which extracted and factorized ``I + lambda P`` twice per step: at
-        dimension 1500, 3.5 s with a matrix-backed precision and 31 s with
-        54 000 applications of one that had to be probed (DECISIONS.md D-67). It is
-        still available by name for a small space.
+        usually a correction. On a small space a direct solver can be passed
+        instead, at the cost of assembling and factorizing ``I + lambda P``
+        twice per step.
 
         Args:
             x: the point to project.
@@ -1419,7 +1397,8 @@ class Ellipsoid(ConvexSet):
             The support function.
 
         Raises:
-            ValueError: if the ellipsoid was built without its covariance.
+            NotImplementedError: if the ellipsoid was built without its
+                covariance.
         """
         if self._covariance is None:
             raise NotImplementedError(
@@ -1515,12 +1494,6 @@ class BallSurface(Subset):
         Unlike a solid set, membership here is a measure-zero condition, so it
         is only ever meaningful up to a tolerance and the tolerance is a named
         argument rather than a hidden constant.
-
-        The keyword is ``rtol`` because that is what
-        :meth:`~pygeoinf2.geometry.sets.Subset.contains` declares, and every
-        set combinator calls it by that name: as ``tolerance`` this raised
-        ``TypeError`` inside any ``Intersection``, ``Union`` or ``Complement``
-        containing a surface.
 
         Args:
             x: the point to test.
@@ -1619,12 +1592,9 @@ class EllipsoidSurface(Subset):
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Whether a point lies on the surface, to a relative tolerance.
 
-        Named ``rtol`` to match the abstract signature, so that the set
-        combinators can call it — see :meth:`BallSurface.contains`.
-
         Args:
             x: the point to test.
-            rtol: the relative tolerance on the Mahalanobis value.
+            rtol: the tolerance on the Mahalanobis value, whose target is one.
 
         Returns:
             True when the point lies on the surface to that tolerance.
@@ -1645,21 +1615,21 @@ class EllipsoidSurface(Subset):
 class ConvexIntersection(ConvexSet):
     """The points in every one of several *convex* sets.
 
-    An intersection of convex sets is convex, and v2 was returning a plain
-    :class:`~pygeoinf2.geometry.sets.Intersection` for it -- which knows only
-    how to test membership. That loses everything downstream: no projection, so
-    no proximal step, no Dykstra, no primal-dual route, and no use as a prior
-    in anything that needs one.
+    An intersection of convex sets is convex, and keeping it a
+    :class:`ConvexSet` -- rather than the general
+    :class:`~pygeoinf2.geometry.sets.Intersection`, which only tests
+    membership -- keeps the projection, and with it proximal steps and use as
+    a prior.
 
-    The projection is Dykstra's algorithm over the parts, which is the same
-    machinery :class:`Polytope` already uses over its half-spaces -- a polytope
-    being the special case where every part is a half-space.
+    The projection is Dykstra's algorithm over the parts, the same machinery
+    :class:`Polytope` uses over its half-spaces -- a polytope being the special
+    case where every part is a half-space.
 
-    **The support function is only an upper bound.** ``min_i h_i`` bounds the
-    intersection's support from above and is not equal to it: the minimizing
-    point of one set need not lie in the others. v1 offered that as the support
-    function; here it is :meth:`support_bound`, under a name that says what it
-    is, and :meth:`support_function` raises rather than return it as the truth.
+    **There is no support function, only an upper bound.** ``min_i h_i`` bounds
+    the intersection's support from above and is not equal to it: the
+    maximizing point of one set need not lie in the others. It is available
+    as :meth:`support_bound`, and :meth:`support_function` raises rather than
+    return it as the truth.
     """
 
     def __init__(self, subsets: Sequence[ConvexSet], /) -> None:
@@ -1717,8 +1687,8 @@ class ConvexIntersection(ConvexSet):
             x: the point to project.
             max_iterations: the maximum number of cycles, each one projection per
                 part. A part that projects iteratively -- an ellipsoid, say --
-                makes each of those a small solve of its own. The default is
-                a thousand for the reason given in :meth:`Polytope.project`.
+                makes each of those a small solve of its own. The cycle stops
+                itself earlier once it has converged.
 
         Returns:
             The nearest point, to the accuracy the cycle reached.
@@ -1733,11 +1703,12 @@ class ConvexIntersection(ConvexSet):
         is not the support function: the point of one set attaining its own
         support need not lie in the others, and then the bound is strict.
 
-        A part with no support function -- a half-space, which is unbounded --
-        simply contributes nothing. Its bound is infinite, so leaving it out
-        loses nothing, and requiring every part to be bounded would make this
-        unavailable on exactly the intersections that need it: a bounded set
-        cut by unbounded ones.
+        A part with no support function -- an ellipsoid given without its
+        covariance, say -- is left out. The intersection lies inside every
+        remaining part, so the least of their values is still an upper bound,
+        if a looser one. An unbounded part such as a half-space contributes
+        ``+inf`` in most directions, which leaves the minimum to the bounded
+        parts.
 
         Args:
             direction: the direction to bound in.
@@ -1807,9 +1778,8 @@ class ConvexIntersection(ConvexSet):
         Raises:
             NotImplementedError: always. There is no formula for the support
                 function of an intersection. :meth:`support_bound` gives the
-                upper bound ``min_i h_i``, which is what v1 returned under this
-                name, and the Backus-Gilbert-Parker estimator computes the true
-                value by minimization.
+                upper bound ``min_i h_i``, and the Backus-Gilbert-Parker
+                estimator computes the true value by minimization.
         """
         raise NotImplementedError(
             "An intersection has no closed-form support function. Use "

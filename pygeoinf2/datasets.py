@@ -14,8 +14,7 @@ and write into :func:`cache_directory`, never into the package, which may
 sit in a read-only tree. Nothing else here touches the network, and nothing
 fetches on a caller's behalf: asking for more events than the table holds
 is refused with the download named, rather than answered with a fetch the
-caller did not ask for (DECISIONS.md D-103). v1's ``datasets`` and
-``config`` modules, with the automatic fetch left out.
+caller did not ask for.
 
 The cache directory is ``PYGEOINF_CACHE_DIR`` when set, otherwise
 ``$XDG_CACHE_HOME/pygeoinf`` or ``~/.cache/pygeoinf`` on Unix and
@@ -198,7 +197,8 @@ def download_usgs_earthquakes(
 
     Written in the service's own CSV format. Under the default *filename* it
     is what :meth:`~pygeoinf2.symmetric_space.sphere.Sphere.earthquakes`
-    reads from then on; another name keeps the seed table in use.
+    reads from then on; under another name, ``earthquakes`` keeps reading the
+    table it read before.
 
     Args:
         minimum_magnitude: the smallest magnitude to include.

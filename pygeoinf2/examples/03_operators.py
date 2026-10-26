@@ -1,7 +1,7 @@
 """
 3. Operators carry their adjoint, and the adjoint carries the metric.
 
-There are no dual spaces in pygeoinf 2. An operator has an adjoint, defined by
+There are no dual spaces here. An operator has an adjoint, defined by
 ``(A x, y)_Y == (x, A* y)_X``, and that identity is where the metric of both
 spaces enters. Get the adjoint wrong and everything downstream is wrong, which
 is why there is a check for it.

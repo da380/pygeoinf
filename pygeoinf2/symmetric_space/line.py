@@ -1,7 +1,7 @@
 """A bounded interval, embedded in a padded periodic domain.
 
-v1's ``line`` space. One of the geometries of DECISIONS.md D-83, given its
-own module so that the space a problem is posed on is named by its type.
+Each geometry has its own module, so that the space a problem is posed on is
+named by its type.
 
 An interval is not homogeneous, so it is not a symmetric space in its own
 right; it is a :class:`~pygeoinf2.symmetric_space.box.Box` of one axis, which
@@ -63,8 +63,8 @@ class Line(Box):
         """The same interval with some of its parameters changed.
 
         Overridden so that ``with_order`` and ``with_shape`` give back a line
-        of the right D-3 subclass rather than a bare
-        :class:`~pygeoinf2.symmetric_space.box.Box`.
+        as the :class:`Lebesgue` or :class:`Sobolev` subclass its order names,
+        rather than a bare :class:`~pygeoinf2.symmetric_space.box.Box`.
 
         Args:
             shape: the new grid, one axis. Unchanged if omitted.
@@ -100,7 +100,8 @@ class Lebesgue(Line):
         """
         Args:
             points: grid points spanning the padded interval.
-            lower, upper: the endpoints.
+            lower: the left endpoint.
+            upper: the right endpoint.
             padding: periodic padding at each end.
         """
         super().__init__(points, lower=lower, upper=upper, padding=padding, order=0.0)
@@ -125,7 +126,8 @@ class Sobolev(Line):
             points: grid points spanning the padded interval.
             order: the Sobolev order.
             length_scale: the length at which the Sobolev weight turns over.
-            lower, upper: the endpoints.
+            lower: the left endpoint.
+            upper: the right endpoint.
             padding: periodic padding at each end.
         """
         super().__init__(

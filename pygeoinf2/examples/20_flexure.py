@@ -1,16 +1,15 @@
 """
 20. A spatially varying coefficient, and what it takes to have one.
 
-v1's ``work/flexure.py`` on v2: a floating elastic plate on a sphere, stiffened
-where there are continents, loaded at random, and solved for its deflection.
+A floating elastic plate on a sphere, stiffened where there are continents,
+loaded at random, and solved for its deflection.
 
 This is the first example where the operator is not invariant. The rigidity
 varies in space, so the operator is no longer diagonal in the harmonic basis
 and no closed-form inverse exists -- but the constant-rigidity inverse is still
 an excellent preconditioner, and that is what makes the solve cheap.
 
-Three things had to exist for it to be written at all: pointwise multiplication
-of fields, which is a *capability* a space declares rather than something the
+It rests on three things: pointwise multiplication of fields, which is a *capability* a space declares rather than something the
 core assumes; the covariant flexure operator, built from a Bochner identity so
 that no Hessian or tangent frame is ever formed; and a plotting layer that
 dispatches on the space's type.

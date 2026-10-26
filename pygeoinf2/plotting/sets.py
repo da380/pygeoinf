@@ -1,11 +1,11 @@
 """Drawing a convex set, or a slice of one, in one, two or three dimensions.
 
-The compact port of v1's ``SubspaceSlicePlotter`` (DECISIONS.md D-94): one
-function and the route chosen by what the set can do rather than by its
-class. A set with a support function is drawn from it; a set with a level
-function is drawn as a filled contour of it; anything else is rastered
-through membership. The exact polyhedral and quadratic paths v1
-special-cased fall out of the first two routes.
+One function, :func:`plot_set`, with the route chosen by what the set can do
+rather than by its class. A set with a support function is drawn from it; a
+set with a level function is drawn as a filled contour of it; anything else
+is rastered through membership. Polytopes and ellipsoids need no special
+case: each offers a support function or a level function, and is drawn
+through it.
 
 A property space is where this earns its keep: the Backus–Gilbert–Parker
 estimator returns a convex set there, and property spaces are one- or
@@ -13,17 +13,16 @@ two-dimensional in nearly every use. A higher-dimensional set is drawn
 either sliced along an affine subspace, with ``subspace=``, or projected,
 by ``push_forward`` onto a coordinate pair before calling this.
 
-Three dimensions — dropped in D-94, restored for the 2.0 release — are
-drawn by the same routes, with the renderings they force. The support
-route takes the convex hull of the points *attaining* the support over a
-spread of directions, which is **inscribed** in the set; the two-
-dimensional polygon of supporting lines is circumscribed, and the
-docstrings of :func:`_support_2d` and :func:`_support_hull_3d` say which
-side each errs on. The sampled routes raster a ``resolution**3`` grid and
-draw it as voxels; that cubes the cost of an oracle call, so the default
-resolution drops and a warning names the count when it is pushed past
-what a Python oracle answers quickly. A three-dimensional picture can also
-go to plotly, with ``engine="plotly"``, to be turned by hand.
+Three dimensions are drawn by the same routes, with the renderings they
+force. The support route takes the convex hull of the points *attaining* the
+support over a spread of directions, which is **inscribed** in the set,
+where the two-dimensional polygon of supporting lines is circumscribed: a
+three-dimensional support picture errs inside the set and a two-dimensional
+one outside it. The sampled routes raster a ``resolution**3`` grid and draw
+it as voxels; that cubes the cost of an oracle call, so the default
+resolution drops and a warning names the count when it is pushed past what a
+Python oracle answers quickly. A three-dimensional picture can also go to
+plotly, with ``engine="plotly"``, to be turned by hand.
 """
 
 from __future__ import annotations
@@ -419,9 +418,9 @@ def _support_hull_3d(
     circumscribed: each vertex is a point *of* the set, so their hull is
     contained in it, approaching a smooth set from inside as directions
     grow. Exact for a polytope once every vertex's normal cone contains a
-    sampled direction. Intersecting the supporting planes instead — v1's
-    route — bounds the set from outside, but in three dimensions it needs
-    an interior point and a half-space intersection; the hull of points the
+    sampled direction. Intersecting the supporting planes instead would
+    bound the set from outside, but in three dimensions it needs an
+    interior point and a half-space intersection; the hull of points the
     set exhibits is the honest cheap one.
     """
     from scipy.spatial import ConvexHull

@@ -1,14 +1,27 @@
 """
 Set-valued inference: a constraint set in, a constraint set out.
 
-The feasible model set is ``S_M == S_M^0 ∩ A^-1(d - S_eta)`` and the answer is
-its image ``T(S_M)``. Four routes compute that image, and they are the same set
-— which is what makes them testable against each other. See DECISIONS.md D-79.
+Given a convex constraint set ``S_M^0`` on the model space and a convex
+confidence set ``S_eta`` on the data space, the feasible model set is
+``S_M == S_M^0 ∩ A^-1(d - S_eta)`` -- the models the constraint allows that fit
+the data to within the confidence set -- and the answer is its image
+``T(S_M)`` under the property operator ``T``, a convex subset of the property
+space. :class:`BackusGilbertParker` returns it as a
+:class:`FeasiblePropertySet`, choosing from the two sets how to compute it:
 
-Here: route (a), the closed form for error-free data and a ball prior, and
-route (b), the linear certificate, which is where Backus-Gilbert lives. Routes
-(c) and (d) — the primal bisection and the dual with bundle methods — are
-§18.3's expensive general cases.
+* the **closed form**, for exact data and a ball constraint;
+* **bisection**, the primal route, for a ball or an ellipsoid on each side;
+* the **KKT** route, for sets with differentiable level functions;
+* the **dual**, for any convex sets with support functions.
+
+Where two of these apply they compute the same set, which is what makes them
+testable against each other. :class:`BackusGilbert` is the related point
+estimate: a fixed linear combination of the data, with an error bound in two
+parts, one for what the data cannot resolve and one for the noise.
+
+Equation, section and figure numbers cite Al-Attar (2021) and "BGP", the
+paper on Backus-Gilbert-Parker inference whose formulation this module
+follows.
 """
 
 from __future__ import annotations
@@ -44,12 +57,12 @@ _UNBOUNDED = 1.0e6
 def _self_adjoint_spectrum(operator: LinearOperator) -> tuple[np.ndarray, np.ndarray]:
     """Eigenvalues, and eigenvectors orthonormal in the space's own metric.
 
-    The *Galerkin* matrix ``G N_c`` is the symmetric one (§5.6), not the
-    component matrix, so the eigenproblem is the generalized ``M v == lambda G
-    v``. Its vectors satisfy ``v_j^T G v_k == delta_jk`` — orthonormal in the
-    inner product of the space rather than in whichever coordinates happen to
-    be in use. On a Euclidean space this is the ordinary symmetric
-    eigenproblem, which is why the distinction stays invisible until it isn't.
+    For a self-adjoint operator ``N`` it is the *Galerkin* matrix ``G N_c``
+    that is symmetric, not the component matrix ``N_c``, so the eigenproblem
+    is the generalized ``(G N_c) v == lambda G v``. Its vectors satisfy
+    ``v_j^T G v_k == delta_jk`` -- orthonormal in the inner product of the
+    space rather than in its coordinates. On a Euclidean space this is the
+    ordinary symmetric eigenproblem.
 
     Used where a self-adjoint operator is *singular* and a solver cannot be:
     with the spectrum in hand, the range and the kernel can be told apart, so
@@ -98,13 +111,8 @@ def harden_error(problem: LinearForwardProblem, /, *, level: float) -> Ball:
     routes need: the smallest ball about the mean carrying probability *level*,
     which is :meth:`~pygeoinf2.probability.GaussianMeasure.ambient_ball`.
 
-    The radius is a quantile of ``sum_i lambda_i Z_i^2`` in the *space's* norm.
-    The rule this replaces was ``sqrt(chi2_crit * mean diagonal of the
-    component matrix)``, which is not the radius of any credible ball and is
-    not even a variance on a weighted data space — the covariance of the
-    components is ``C_c G^-1``, so the component matrix's diagonal is the
-    variance only when the basis is orthonormal. It also formed a dense matrix
-    to read one scalar off it.
+    The radius is a quantile of ``sum_i lambda_i Z_i^2``, with ``lambda_i``
+    the covariance's eigenvalues, in the *space's* norm.
 
     Args:
         problem: the forward problem, whose error may be a measure or a set.
@@ -132,22 +140,24 @@ def harden_error(problem: LinearForwardProblem, /, *, level: float) -> Ball:
 class BackusGilbert(LinearPointEstimator):
     """The optimally-averaged estimate of a property, with its error set.
 
-    A *linear certificate*, in the sense of §18.3(b): the estimator is a fixed
-    operator ``X`` applied to the data, chosen by minimizing a quadratic
-    surrogate for the width of the resulting bound,
+    A *linear certificate*: the estimator is a fixed operator ``X`` applied to
+    the data, chosen by minimizing a quadratic surrogate for the width of the
+    resulting bound,
 
     .. code-block:: text
 
         M^2 ||T - X A||_HS^2  +  D^2 ||X||_HS^2      ->      X = T A* (A A* + alpha)^-1
 
-    with ``alpha == D^2 / M^2``. **Any** ``X`` gives a *valid* bound — that is
-    weak duality, and it is why this route can never be wrong, only loose. This
-    particular one is the least loose in an average sense.
+    with ``M`` the prior ball's radius, ``D`` the noise ball's and ``alpha ==
+    D^2 / M^2``. **Any** ``X`` gives a *valid* bound -- that is weak duality,
+    and it is why this route can never be wrong, only loose. This particular
+    one is the least loose in an average sense.
 
-    What comes out is not a number but a set. The estimate is ``X d``; the
-    uncertainty is a Minkowski sum of two ellipsoids, one for what the data
-    cannot resolve and one for the noise, and the two are reported separately
-    because they respond to different remedies.
+    The estimate is ``X d``, and :meth:`uncertainty` gives the set of
+    property values it is consistent with: a Minkowski sum of two
+    ellipsoids, one for what the data cannot resolve and one for the noise.
+    :meth:`error_bars` reports the two separately, because they respond to
+    different remedies. Both balls are taken as centered at the origin.
     """
 
     def __init__(
@@ -169,7 +179,14 @@ class BackusGilbert(LinearPointEstimator):
             noise: a norm ball on the data space. Taken from the problem's
                 error if omitted, hardening a Gaussian one at ``level``.
             level: the confidence level used if a Gaussian error is hardened.
-            solver: how to invert the data-space normal operator.
+            solver: how to invert the data-space normal operator ``A A* +
+                alpha I``. Conjugate gradients at ``rtol=1e-12`` by default.
+
+        Raises:
+            ValueError: if the property operator does not act on the model
+                space, or the prior ball's radius is not positive.
+            TypeError: if the prior or the noise is not a ball, or the
+                problem's error is a convex set other than a ball.
         """
         if property_operator.domain != problem.model_space:
             raise ValueError("The property operator must act on the model space.")
@@ -269,18 +286,15 @@ class BackusGilbert(LinearPointEstimator):
 class _ClosedFormRoute(SetEstimator):
     """The exact feasible property set, where a closed form exists.
 
-    Route (a) of §18.3: error-free data and a ball prior. Al-Attar (2021)
-    eq. (2.84) gives the answer as an *ellipsoid*,
+    Error-free data and a ball prior. Al-Attar (2021) eq. (2.84) gives the
+    answer as an *ellipsoid*,
 
     .. code-block:: text
 
         { p : ((T P T*)^-1 (p - p~), p - p~) <= r^2 - ||m~||^2 }
 
     with ``m~`` the minimum-norm model fitting the data, ``p~ == T m~``, and
-    ``P`` the projection onto the kernel of the forward operator. Every piece
-    of that is already here: ``A A*`` is positive semidefinite by the
-    palindrome rule, ``onto_kernel`` is example 18's subject, and ``Ellipsoid``
-    carries the support function the bound's directional form needs.
+    ``P`` the orthogonal projection onto the kernel of the forward operator.
 
     Costs ``dim(P) + 1`` minimum-norm solves, and nothing else.
     """
@@ -355,17 +369,14 @@ class _ClosedFormRoute(SetEstimator):
     def is_feasible(self, data: Any, /) -> bool:
         """Whether any model within the prior bound fits these data at all.
 
-        v1's ``test_data_compatibility``, and the question every other method
-        here assumes has been answered: the smallest model reproducing the data
-        exactly is ``A* (A A*)^-1 d``, and if even that lies outside the prior
-        ball then no model does and the feasible set is empty. That is a
-        statement about the data and the prior together -- usually that the
-        prior bound is too tight, or the data too noisy to be fitted exactly.
+        The smallest model reproducing the data exactly is ``A* (A A*)^-1 d``,
+        and if even that lies outside the prior ball then no model does and the
+        feasible set is empty. That is a statement about the data and the prior
+        together -- usually that the prior bound is too tight, or the data too
+        noisy to be fitted exactly.
 
-        A predicate, so a caller can ask *before* being told by an exception.
-        :meth:`__call__` raises on the same condition, which is right when a
-        set was asked for and unhelpful when the question was whether one
-        exists.
+        :meth:`__call__` raises on the same condition; this asks the question
+        without the exception.
 
         Args:
             data: the observations.
@@ -402,11 +413,11 @@ class _ClosedFormRoute(SetEstimator):
     def _joint_spectrum(self) -> tuple[Any, np.ndarray, np.ndarray]:
         """The spectrum of ``C C*`` for Parker's joint map ``C == (A, T)``.
 
-        Depends only on the problem and the property operator, not on the data or the
-        value -- so it is formed once, as
-        :attr:`_BisectionRoute._reduced` already is for the reduced problem.
-        Rebuilding it per call made every sweep over property values pay for a
-        full eigendecomposition of a ``dim(D) + dim(P)`` operator.
+        Depends only on the problem and the property operator, not on the data
+        or the value, so it is formed once, as :attr:`_BisectionRoute._reduced`
+        is for the reduced problem: an eigendecomposition of a ``dim(D) +
+        dim(P)`` operator per call would dominate a sweep over property
+        values.
         """
         from ..algebra.direct_sum import ColumnLinearOperator
 
@@ -425,10 +436,10 @@ class _ClosedFormRoute(SetEstimator):
         Al-Attar (2021) eq. (2.46).
 
         ``C C*`` acts on ``D (+) P``, so the solve is Parker's square system of
-        size ``dim(D) + dim(P)``. It is positive *semi*definite — the palindrome
-        rule gives no more than that, and once ``dim(D) + dim(P)`` exceeds
-        ``dim(M)`` it is genuinely singular, because a model cannot generically
-        match more numbers than it has. So this goes through the spectrum
+        size ``dim(D) + dim(P)``. It is positive *semi*definite, and once
+        ``dim(D) + dim(P)`` exceeds ``dim(M)`` it is singular, because a model
+        cannot generically match more numbers than it has. So this goes
+        through the spectrum
         rather than a solver: the unreachable part of the joint target is the
         part in the kernel, and if it is non-zero the answer is ``inf``, which
         is a statement about the value and not a failure to converge.
@@ -514,18 +525,17 @@ def _minimum_norm_fits(
 ) -> bool:
     """Whether a model within the prior ball fits the data within the noise ball.
 
-    v1's ``test_data_compatibility``, matrix-free, and the same search as
-    the discrepancy principle's: the smallest model whose misfit
-    ``||d - A m||`` is within the noise radius is the damped minimum-norm
-    model at the damping where the misfit reaches it, because the misfit
-    rises with the damping while the model's norm falls.
-    :func:`~pygeoinf2.inference.point.misfit_search` finds that damping,
-    one warm-started Krylov solve in the data space per probe, each an
-    application of ``A`` and ``A*``, and never forms ``A A*`` -- which at a
-    datum per column is the one thing a data space of any size cannot
-    afford (DECISIONS.md D-81). Only the misfit differs from the discrepancy
-    principle's: the plain data norm here, the chi-squared there, which is
-    the difference between a noise ball and a credible ellipsoid.
+    Matrix-free, and the same search as the discrepancy principle's: the
+    smallest model whose misfit ``||d - A m||`` is within the noise radius is
+    the damped minimum-norm model at the damping where the misfit reaches it,
+    because the misfit rises with the damping while the model's norm falls.
+    :func:`~pygeoinf2.inference.point.misfit_search` finds that damping with
+    one warm-started Krylov solve in the data space per probe, each step an
+    application of ``A`` and ``A*``. ``A A*`` is never formed, which would
+    cost one application per datum. Only the misfit differs from the
+    discrepancy principle's: the plain data norm here, the chi-squared there,
+    which is the difference between a noise ball and a credible ellipsoid.
+    Both balls are taken as centered at the origin.
 
     The misfit is measured on the model the solve gives, so it carries the
     solve's residual: a noise radius below the solver's tolerance is one no
@@ -577,8 +587,8 @@ class _Quadratic:
     r^2``; its distances are reported in the space's own norm, so
     :attr:`scale` is ``r`` there and one for an ellipsoid, whose level
     function is already normalized. An ellipsoid built without its
-    covariance gets one through the solver, an inverse applied by conjugate
-    gradients wherever the route needs ``C``.
+    covariance gets one as the solver's inverse of its precision, applied by
+    an iterative solve wherever the route needs ``C``.
     """
 
     def __init__(self, subset: Any, solver: LinearSolver, name: str) -> None:
@@ -616,9 +626,8 @@ class _Quadratic:
 class _BisectionRoute(SetEstimator):
     """The exact feasible property set for noisy data, by the primal route.
 
-    Route (c) of §18.3, BGP's primal route, for a prior and a confidence set
-    that are each a ball or an ellipsoid -- sets with a quadratic level
-    function. The support value in a direction is a concave maximization
+    BGP's primal route, for a prior and a confidence set that are each a ball
+    or an ellipsoid -- sets with a quadratic level function. The support value in a direction is a concave maximization
     over the intersection of the two, and attaching multipliers to the two
     constraints turns its stationarity condition into
 
@@ -629,16 +638,17 @@ class _BisectionRoute(SetEstimator):
     with ``Q`` the prior's precision, ``P`` the confidence set's, ``u`` the
     model relative to the prior's center and ``d'`` the data relative to
     both centers: a damped least-squares solve in the two sets' own inner
-    products, the same primitive as §18.6. The multipliers are fixed by the
-    two level functions reaching their levels, both monotone in their own
-    multiplier, so nested bisection converges. A ball is the case ``Q == I
-    / M^2``; nothing here needs it to be.
+    products, the same primitive as the discrepancy principle's. The
+    multipliers are fixed by the two level functions reaching their levels,
+    both monotone in their own multiplier, so nested bisection converges. A
+    ball of radius ``M`` is the case ``Q == I / M^2``; nothing here needs it
+    to be.
 
     The route is written in those inner products rather than by whitening
     the problem: the reduction to the data space diagonalizes ``A C A*`` in
     the inner product ``P`` defines, through the Cholesky factor of ``P``
     on the data components, and the model side carries ``C == Q^-1`` as an
-    operator. For balls both are scalings and the arithmetic is v1's.
+    operator. For balls both are scalings.
 
     Two things this has that the dual route does not: it reuses solvers that
     already exist, and it produces the **extremal model** attaining each
@@ -762,8 +772,9 @@ class _BisectionRoute(SetEstimator):
         into one on the data space, so every quantity the bisection tests --
         the model's level function and the misfit -- becomes an ``O(dim(D))``
         expression once ``W (A C A*)_c W^T`` is diagonalized, ``W`` the
-        factor of :attr:`_whitening`. Without it each of the four thousand
-        bisection steps per direction would be a fresh Krylov solve.
+        factor of :attr:`_whitening`. Without it each step of the nested
+        bisections, up to ``max_iterations`` squared per direction, would be
+        a fresh Krylov solve.
 
         Costs ``dim(D)`` applications of the forward operator, its adjoint
         and the prior's covariance, once per estimator.
@@ -888,8 +899,8 @@ class _BisectionRoute(SetEstimator):
     ) -> float:
         """The positive multiplier at which a monotone quantity hits a target.
 
-        Delegates to :func:`~pygeoinf2.numerics.root_find.monotone_root`,
-        DECISIONS.md D-57's one kernel. The probes here are closed form -- the
+        Delegates to :func:`~pygeoinf2.numerics.root_find.monotone_root`, the
+        library's one monotone root finder. The probes here are closed form -- the
         spectral reduction has already turned each into an ``O(dim(D))``
         expression -- so there is no solve to warm start. The tolerance is
         zero so that the full iteration count is always taken: these
@@ -966,10 +977,9 @@ class _BisectionRoute(SetEstimator):
     def fitting_model(self, data: Any, /) -> Any | None:
         """The model nearest the prior's center that fits the data, or None.
 
-        In the prior's own inner product. For two balls this is v1's
-        ``test_data_compatibility`` computation, matrix-free: the damped
-        minimum-norm search of :func:`_minimum_norm_fits`, a few
-        warm-started Krylov solves in the data space (DECISIONS.md D-81). For an
+        In the prior's own inner product. For two balls this is the damped
+        minimum-norm search of :func:`_minimum_norm_fits`, matrix-free, a few
+        warm-started Krylov solves in the data space. For an
         ellipsoid on either side it comes from the reduction, whose cost
         the route pays anyway for its support values: with ``xi`` the
         shifted data in the reduced spectrum, the damped fit has misfit
@@ -1057,7 +1067,7 @@ class _BisectionRoute(SetEstimator):
 
         Factored rather than iterated. The property space is
         finite-dimensional and small -- that is what makes it a *property*
-        space (§18.1) -- so ``T C T*`` is a handful of rows.
+        space -- so ``T C T*`` is a handful of rows.
         """
         normal = (
             self._property_operator
@@ -1171,7 +1181,7 @@ class _BisectionRoute(SetEstimator):
 class _DualRoute(SetEstimator):
     """The feasible property set for *any* convex prior and noise sets.
 
-    Route (d) of §18.3, and the general one. Duality turns the supremum over an
+    The general route. Duality turns the supremum over an
     infinite-dimensional model set into an infimum over the finite-dimensional
     data space,
 
@@ -1180,14 +1190,18 @@ class _DualRoute(SetEstimator):
         h(q) == inf over lambda of
                 (lambda, d) + h_prior(T* q - A* lambda) + h_noise(-lambda)
 
-    which is BGP eq. (28), and which is exactly what v1's
-    ``DualMasterCostFunction`` docstring writes down without naming it as a
-    support function of an image.
+    which is BGP eq. (28), the support function of an image computed by
+    duality.
 
     It uses only the two sets' *support functions*, so it accepts anything
-    convex — an ellipsoid, a box, an intersection — where routes (a) and (c)
-    accept norm balls. What it costs is a nonsmooth convex minimization per
-    direction, which is why the cheaper routes exist at all.
+    convex -- an ellipsoid, a box, an intersection -- where the closed form
+    and the bisection need balls or ellipsoids. What it costs is a nonsmooth
+    convex minimization per direction, which is why the cheaper routes exist
+    at all.
+
+    The same object also answers by the alternatives of
+    :meth:`support_values`: the primal splitting, the KKT conditions and a
+    smoothed dual.
     """
 
     def __init__(
@@ -1208,7 +1222,14 @@ class _DualRoute(SetEstimator):
                 and a support maximizer.
             noise: likewise on the data space; taken from the problem if
                 omitted.
-            method: the minimizer. A proximal bundle method by default.
+            method: the minimizer of the dual cost. A
+                :class:`~pygeoinf2.numerics.convex.ProximalBundleMethod` with
+                tolerance ``1e-10`` and 300 iterations by default.
+
+        Raises:
+            ValueError: if the property operator does not act on the model
+                space, or no noise set is given and the problem's error is
+                not a convex set.
         """
         from ..numerics.convex import ProximalBundleMethod
 
@@ -1259,10 +1280,10 @@ class _DualRoute(SetEstimator):
 
         # A bundle method asks for the value and the subgradient at the *same*
         # point, one after the other, and both need the same two quantities:
-        # the residual ``T* q - A* lambda`` and the negated certificate. v1
-        # fused them into one oracle for exactly this reason; here a one-entry
-        # memo does it without changing the Functional protocol, and the
-        # saving is one adjoint application and one negation per oracle call.
+        # the residual ``T* q - A* lambda`` and the negated certificate. A
+        # one-entry memo shares them without changing the Functional
+        # protocol, saving one adjoint application and one negation per
+        # oracle call.
         cache: dict[str, Any] = {}
 
         def prepare(certificate: Any) -> tuple[Any, Any]:
@@ -1319,6 +1340,7 @@ class _DualRoute(SetEstimator):
         Raises:
             TypeError: for any other set. There is no general formula --
                 smoothing a support function needs to know its shape.
+            ValueError: for an ellipsoid built without its covariance.
         """
         from ..geometry.convex import Ball, Ellipsoid
 
@@ -1424,12 +1446,11 @@ class _DualRoute(SetEstimator):
         """The same problem set up for the *primal* route.
 
         :class:`~pygeoinf2.numerics.convex.ChambollePockSolver` maximizes
-        ``(c, m)`` over the feasible set directly, where everything else here
-        minimizes the dual. The two answer the same question and meet at the
-        same number -- measured, they agree to 1e-10, which is strong duality
-        checked rather than assumed -- but they cost differently: the dual
-        route takes few expensive bundle iterations, the primal many cheap
-        splitting steps, one application of ``A`` and one projection each.
+        ``(c, m)`` over the feasible set directly, where the dual route
+        minimizes the dual cost. By strong duality the two meet at the same
+        number, but they cost differently: the dual route takes few expensive
+        bundle iterations, the primal many cheap splitting steps, one
+        application of ``A`` and one projection each.
 
         Which is better depends on the sets. A ball projects in closed form
         and the primal route is then very cheap per step; an intersection
@@ -1466,12 +1487,10 @@ class _DualRoute(SetEstimator):
     ) -> np.ndarray:
         """The support values in many directions, sweeping with a warm start.
 
-        Restores v1's ``solve_support_values``. Neighbouring directions have
-        neighboring certificates, so each minimization started from the last
-        one's answer is a correction rather than a fresh problem -- which is
-        the whole reason to sweep rather than to call :meth:`support` in a
-        loop, and the part :class:`ProximalBundleMethod` does not supply on
-        its own.
+        Neighboring directions have neighboring certificates, so each
+        minimization started from the last one's answer is a correction
+        rather than a fresh problem -- which is the reason to sweep rather
+        than to call :meth:`support` in a loop.
 
         Warm starting is inherently *sequential*: each direction needs the one
         before it. Passing ``n_jobs`` runs the directions in parallel instead,
@@ -1482,37 +1501,43 @@ class _DualRoute(SetEstimator):
         Args:
             directions: the directions to evaluate.
             data: the observations.
-            route: which solver answers the question. All three agree, and
-                differ only in cost:
+            route: which solver answers the question. They agree to their
+                tolerances, and differ in cost and in what they accept:
 
-                * ``"dual"`` minimizes the dual cost with a bundle method.
-                  Works for any convex sets, and is the most expensive.
+                * ``"dual"`` minimizes the dual cost with the bundle method
+                  given at construction. Works for any convex sets, and is
+                  the most expensive.
                 * ``"primal"`` maximizes over the feasible set directly with
                   :class:`~pygeoinf2.numerics.convex.ChambollePockSolver`.
                   Also works for any convex sets, and is cheap per step when
-                  they project cheaply. This is v1's
-                  ``solve_primal_feasibility``.
-                * ``"kkt"`` writes the answer down from the KKT conditions
-                  with :class:`~pygeoinf2.numerics.convex.PrimalKKTSolver`.
-                  Needs both sets to be balls or ellipsoids, and is by far the
+                  they project cheaply.
+                * ``"kkt"`` solves the KKT conditions: in closed form with
+                  :class:`~pygeoinf2.numerics.convex.PrimalKKTSolver` when
+                  both sets are balls or ellipsoids, which is by far the
                   cheapest where it applies -- tens of function evaluations
                   against hundreds of splitting steps or a bundle
-                  minimization. It also never discretizes the model space.
-
-                Measured agreement between the three: 1.7e-8 relative between
-                dual and primal, and 2.7e-11 between primal and KKT.
-            warm_start: carry each answer into the next. Ignored when running
-                in parallel, where there is no previous answer to carry.
+                  minimization -- and with
+                  :class:`~pygeoinf2.numerics.convex.LevelKKTSolver`, a
+                  convex minimization per probe, for other sets with
+                  differentiable level functions.
+                * ``"smoothed"`` minimizes the Moreau-Yosida smoothed dual of
+                  :meth:`smoothed_dual_cost` with L-BFGS. Needs both sets to
+                  be balls or ellipsoids, and is accurate to ``O(epsilon)``.
+            warm_start: carry each answer into the next. Ignored on the KKT
+                route, and when running in parallel, where there is no
+                previous answer to carry.
             n_jobs: workers, on any route. ``None`` or one keeps the sweep
                 sequential.
-            **kwargs: passed to the primal solver, and ignored on the dual
-                route, which is configured through ``method=`` at construction.
+            **kwargs: passed to the primal or KKT solver; on the smoothed
+                route, ``optimizer=`` and the keywords of
+                :meth:`smoothed_dual_cost`. Ignored on the dual route, which
+                is configured through ``method=`` at construction.
 
         Returns:
             One support value per direction.
 
         Raises:
-            ValueError: if the route is not one of the two, or -- on the dual
+            ValueError: if the route is not one of the four, or -- on the dual
                 route -- if the feasible set is empty, as :meth:`support` does.
         """
         if route not in ("dual", "primal", "kkt", "smoothed"):
@@ -1652,9 +1677,9 @@ class _DualRoute(SetEstimator):
     def certificate(self, direction: Any, data: Any, /) -> Any:
         """The optimal ``lambda``: the linear combination of data that bounds.
 
-        Interpretable in its own right — it is the weighting of the
+        Interpretable in its own right: it is the weighting of the
         observations that certifies the bound, and any ``lambda`` at all gives
-        a valid one (§18.3(b)). This is the best of them.
+        a valid one, by weak duality. This is the best of them.
         """
         cost = self.dual_cost(direction, data)
         return self._method.minimize(cost, self.data_space.zero()).minimizer
@@ -1662,9 +1687,9 @@ class _DualRoute(SetEstimator):
     def is_feasible(self, data: Any, /) -> bool:
         """Whether any model lies in both the prior set and the noise set.
 
-        When both sets are norm balls this is v1's test, matrix-free: the
-        damped minimum-norm search of :func:`_minimum_norm_fits`, a few
-        warm-started Krylov solves in the data space. For general convex
+        When both sets are norm balls this is the damped minimum-norm search
+        of :func:`_minimum_norm_fits`, matrix-free, a few warm-started Krylov
+        solves in the data space. For general convex
         sets it is the dual's own diagnosis: an unbounded dual *is* an empty
         primal, which is why :meth:`support` refuses rather than returning
         the large negative number the minimization was heading towards, and
@@ -1713,7 +1738,7 @@ class _DualRoute(SetEstimator):
 
 
 # --------------------------------------------------------------------- #
-#                 Membership by the likelihood, §3.3                    #
+#          Membership by the likelihood, Al-Attar (2021) §3.3           #
 # --------------------------------------------------------------------- #
 
 
@@ -1789,10 +1814,10 @@ class _LikelihoodRoute:
         self._quadratic_prior = isinstance(prior, (Ball, Ellipsoid))
         if optimizer is None:
             # The forcing term is tight because for quadratic level functions
-            # one *exact* Newton step is the minimizer: with the inexact
-            # default of 1e-3 the step carried a relative error of a
-            # thousandth into the model, and the value-decrease test then
-            # stopped the iteration there, warm start after warm start.
+            # one *exact* Newton step is the minimizer. An inexact step, at
+            # the default forcing of 1e-3, leaves a relative error of that
+            # size in the model, and the value-decrease test then stops the
+            # iteration there.
             optimizer = (
                 NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
                 if self._likelihood.has_hessian and self._prior.has_hessian
@@ -1845,9 +1870,9 @@ class _LikelihoodRoute:
         # The two have the same minimizer, but at a large multiplier the
         # unscaled objective is dominated by the misfit term and the
         # optimizer's value-decrease test fires while the prior term is
-        # still moving, which left the fitted misfit 0.8 per cent above the
-        # level on one seed in twenty-five. Scaled, the misfit is order one
-        # throughout and the prior term is what the last decreases are.
+        # still moving, leaving the fitted misfit visibly above the level.
+        # Scaled, the misfit is order one throughout and the prior term is
+        # what the last decreases are.
         weight = 1.0 if multiplier is None else 1.0 / multiplier
 
         def value(v: Any) -> float:
@@ -1906,15 +1931,12 @@ class _LikelihoodRoute:
         if floor >= level * (1.0 - self._rtol):
             return space.add(anchor, projector(limit.minimizer))
 
-        # Every probe starts from zero. Warm-starting each from the last
-        # probe's minimizer -- the obvious saving, and what the first version
-        # did -- returned a misfit 0.7 per cent above the level on one seed
-        # in twenty-five while reporting convergence: Newton-CG from a
-        # nearby point stopped after one step short of the minimizer, the
-        # quantity froze across the closing bracket, and the search closed
-        # on a false root. Cold, a quadratic objective is one exact Newton
-        # step, so the saving was small; the optimizer's stopping rules on
-        # warm starts are an open point recorded in DECISIONS.md D-80.
+        # Every probe starts from zero, deliberately. Warm-starting each from
+        # the last probe's minimizer can return a misfit above the level
+        # while reporting convergence: Newton-CG from a nearby point stops
+        # one step short of the minimizer, the quantity freezes across the
+        # closing bracket, and the search closes on a false root. Cold, a
+        # quadratic objective is one exact Newton step, so little is lost.
         def probe(multiplier: float, previous: Any) -> Evaluation:
             result = self._optimizer.minimize(
                 self._objective(anchor, projector, multiplier), start
@@ -1957,9 +1979,9 @@ class _LikelihoodRoute:
         """
         space = self._problem.model_space
         if self._likelihood(data) <= self._level:
-            # The zero correction fits; the model nearest the prior's own
-            # minimum among those fitting is found by the search anyway, so
-            # start it: a level exactly met is the search's boundary case.
+            # Even when the data fit as they stand, the search below still
+            # runs: it finds the fitting model smallest in the prior's sense,
+            # and a level met exactly is its boundary case.
             pass
         return self._fit(data, space.zero(), LinearOperator.identity(space))
 
@@ -2039,17 +2061,19 @@ class FeasiblePropertySet(ConvexSet):
     What :class:`BackusGilbertParker` returns, and the object every question
     is asked of, as a posterior measure is on the Bayesian side. It is a
     :class:`~pygeoinf2.geometry.convex.ConvexSet` and declares what it can
-    do. It always has a **support function**, computed by the estimator's
-    route: :meth:`support` in a direction, :meth:`support_values` in many,
+    do. It has a **support function** whenever a route computes one, which
+    is unless the prior or the confidence set is known by a level function
+    alone: :meth:`support` in a direction, :meth:`support_values` in many,
     :meth:`polytope` for the outer bound they give, :meth:`outside` for a
     certificate of exclusion. It has a **level function** when membership
-    can be decided (a ball prior; a confidence set that is a ball, an
-    ellipsoid or a sublevel set): :meth:`contains` and :meth:`admits`,
+    can be decided -- exact data with a ball prior, a ball or an ellipsoid
+    on each side, or differentiable level functions on both:
+    :meth:`contains` and :meth:`admits`, :meth:`inclusion_level`,
     :meth:`inclusion_norm` and :meth:`level_function`, :meth:`extent` for
     inner bounds along a line, :meth:`inner_hull` for an inner polytope. It
-    has a **maximizer** on the closed form and the bisection, with
-    :meth:`extremal_model` the model attaining it, and a **projection** on
-    the closed form alone, where it is an ellipsoid and :attr:`ellipsoid`
+    has a **maximizer** on the closed form, the bisection and the KKT route,
+    with :meth:`extremal_model` the model attaining it, and a **projection**
+    on the closed form alone, where it is an ellipsoid and :attr:`ellipsoid`
     hands that over with everything an ellipsoid has.
 
     Nothing is computed at construction; each answer is computed when asked
@@ -2148,9 +2172,12 @@ class FeasiblePropertySet(ConvexSet):
     def is_empty(self) -> bool:
         """Whether no model within the prior fits the data.
 
-        Decided by the route: the closed form by its budget, the bisection
-        by a matrix-free minimum-norm search, the dual by its own diagnosis
-        of an unbounded dual. Computed once and kept.
+        Decided by the membership engine where there is one -- the closed
+        form by its budget, the reduction by a matrix-free minimum-norm
+        search for two balls and by its spectrum otherwise, the likelihood
+        route by its multiplier search -- and otherwise by the support
+        route, the dual diagnosing an unbounded dual. Computed once and
+        kept.
         """
         return not self._nonempty
 
@@ -2230,8 +2257,9 @@ class FeasiblePropertySet(ConvexSet):
         """The property value attaining the support: the extremal model's.
 
         Raises:
-            NotImplementedError: on a general route, which finds the value
-                by duality and exhibits no point.
+            NotImplementedError: on the dual, primal and smoothed routes,
+                which exhibit no point, or when no route computes the
+                support.
         """
         if self.route == "closed_form":
             return self.ellipsoid.support_maximizer(direction)
@@ -2242,11 +2270,13 @@ class FeasiblePropertySet(ConvexSet):
 
         On the closed form, the minimum-norm model plus what the prior's
         budget allows along the kernel component of ``T* q``; on the
-        bisection, the model its two multipliers fix. Not generally unique,
-        but the bound it attains is.
+        bisection, the model its two multipliers fix; on the KKT route, the
+        KKT solver's maximizer. Not generally unique, but the bound it
+        attains is.
 
         Raises:
-            NotImplementedError: on a general route.
+            NotImplementedError: on the dual, primal and smoothed routes, or
+                when no route computes the support.
             ValueError: if the set is empty.
         """
         route = self.route
@@ -2275,7 +2305,8 @@ class FeasiblePropertySet(ConvexSet):
         """The optimal dual certificate, on a general route.
 
         Raises:
-            NotImplementedError: on the closed form and the bisection.
+            NotImplementedError: on the closed form and the bisection, or
+                when no route computes the support.
         """
         if self.route not in _GENERAL:
             raise NotImplementedError(
@@ -2285,7 +2316,13 @@ class FeasiblePropertySet(ConvexSet):
         return self._algorithm.certificate(direction, self._data)
 
     def polytope(self, directions: Sequence[Any], /) -> Polytope:
-        """A certified outer bound, one half-space per direction (§18.4)."""
+        """A certified outer bound, one half-space per direction.
+
+        Each half-space is ``{ p : (q, p) <= h(q) }`` with ``h`` the support
+        function, so the polytope contains the set however few directions
+        are given. Report it beside an inner bound -- :meth:`extent` or
+        :meth:`inner_hull` -- since either alone misstates the set.
+        """
         directions = tuple(directions)
         values = self.support_values(directions)
         return Polytope(
@@ -2338,10 +2375,10 @@ class FeasiblePropertySet(ConvexSet):
     def inclusion_norm(self, value: Any, /) -> float:
         """``min { ||m|| : T m == value, A m fits the data }``, in the prior's norm.
 
-        The quadratic case's convenience, §18.5: the root of the prior's
-        level function at the fitting model, so for a ball prior the model's
-        norm against the radius and for an ellipsoid the Mahalanobis root
-        against one. Infinite when no model reproduces the value and fits
+        The quadratic case's convenience: the root of the prior's level
+        function at the fitting model, so for a ball prior the model's norm
+        against the radius and for an ellipsoid the Mahalanobis root against
+        one. Infinite when no model reproduces the value and fits
         the data. :meth:`inclusion_level` is the general form.
 
         Raises:
@@ -2495,10 +2532,10 @@ class FeasiblePropertySet(ConvexSet):
     def inner_hull(self, values: Any, /) -> Polytope:
         """The convex hull of whichever candidate values are admissible.
 
-        The *inner* bound of §18.4, and the only thing that produces one: a
-        support function can never exhibit a point of the set. Returned as an
-        inner :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be
-        mistaken for the outer one.
+        An *inner* bound: every vertex is an admissible value, which a
+        support function can never exhibit. Returned as an inner
+        :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be mistaken
+        for the outer one of :meth:`polytope`.
 
         Args:
             values: candidate property values, of which the admissible ones
@@ -2588,8 +2625,8 @@ class BackusGilbertParker(SetEstimator):
     convex **constraint set** on the model, optionally a convex **confidence
     set** on the data, and the property operator ``T``; out comes a convex set
     on the property space, the image under ``T`` of every model that lies in
-    the constraint set and fits the data to within the confidence set (§18.3,
-    BGP eqs. 4-5). The confidence set is taken from the problem when not
+    the constraint set and fits the data to within the confidence set (BGP
+    eqs. 4-5). The confidence set is taken from the problem when not
     given: its own set if it has one, the credible ball at ``level`` if its
     error is a measure, and the single point ``{0}`` if it has no error at
     all. Error-free data are not a separate method; they are the confidence
@@ -2600,12 +2637,16 @@ class BackusGilbertParker(SetEstimator):
 
     * a ball prior and exact data: the **closed form**, Al-Attar (2021) eq.
       (2.84), an ellipsoid costing ``dim(P) + 1`` minimum-norm solves;
-    * a ball prior and a ball confidence set: **bisection**, BGP's primal
+    * a ball or an ellipsoid on each side: **bisection**, BGP's primal
       route, a damped least-squares solve inside two nested monotone root
       finds per direction, which also produces the extremal model;
-    * anything convex: the **dual**, BGP eq. (28), a nonsmooth minimization
-      over the data space per direction, with the primal splitting, the KKT
-      and the smoothed solvers as alternatives where they apply.
+    * otherwise, differentiable level functions on both sides: the **KKT**
+      route, a convex minimization per direction, which also produces the
+      extremal model;
+    * anything convex with support functions: the **dual**, BGP eq. (28), a
+      nonsmooth minimization over the data space per direction, with the
+      primal splitting and the smoothed dual as alternatives where they
+      apply.
 
     ``route=`` names one of these to force it, for testing them against each
     other -- they compute the same set -- or for taking the general route
@@ -2619,14 +2660,15 @@ class BackusGilbertParker(SetEstimator):
     :class:`~pygeoinf2.geometry.convex.Ellipsoid` from the closed form and a
     support-function oracle otherwise. A set can also be characterized as
     a **sublevel set**, by a function saying how far a proposed value is
-    from acceptable: the minimum norm of a model reproducing the value and
-    fitting the data, which is acceptable when within the prior radius
-    (§18.5, Al-Attar 2021 §2.3 and §3.3). That is a different computation,
+    from acceptable: the prior's level function at the smallest model
+    reproducing the value and fitting the data, acceptable when at most the
+    prior's level -- for a ball prior, the norm of that model against the
+    radius (Al-Attar 2021 §2.3 and §3.3). That is a different computation,
     and ``membership=`` chooses it: the closed form's joint map for exact
-    data, the data-space reduction for two balls, or the likelihood route
-    for a confidence set given as a sublevel set of any differentiable
-    convex functional, a ball, an ellipsoid or a ``SublevelSet``. It needs a
-    ball prior. Both characterizations live on the returned
+    data with a ball prior, the data-space reduction for a ball or an
+    ellipsoid on each side, or the likelihood route for sets given as
+    sublevel sets of differentiable convex functionals -- a ball, an
+    ellipsoid or a ``SublevelSet``. Both characterizations live on the returned
     :class:`FeasiblePropertySet`, which declares which it has: the support
     function bounds the set from outside, the level function decides points
     and gives inner bounds, and not both are required of every algorithm.
@@ -2666,9 +2708,11 @@ class BackusGilbertParker(SetEstimator):
             problem: the forward problem.
             property_operator: ``T``, the property operator, acting on the model space.
             prior: the constraint set on the model space. A
-                :class:`~pygeoinf2.geometry.convex.Ball` admits the cheap
-                routes; any convex set with a support function and a
-                maximizer admits the dual.
+                :class:`~pygeoinf2.geometry.convex.Ball` admits every route;
+                an :class:`~pygeoinf2.geometry.convex.Ellipsoid` all but the
+                closed form; a set with a differentiable level function the
+                KKT route; any convex set with a support function and a
+                maximizer the dual.
             noise: the confidence set on the data space: a convex set, or a
                 ``SublevelSet`` of a convex functional, which is taken as
                 convex on the caller's word since a sublevel set does not
@@ -2676,15 +2720,20 @@ class BackusGilbertParker(SetEstimator):
                 above.
             level: the probability the confidence set carries when it is
                 hardened from a measure.
-            route: ``"auto"`` chooses by the sets. ``"closed_form"``,
-                ``"bisection"``, ``"dual"``, ``"primal"``, ``"kkt"`` and
-                ``"smoothed"`` force one; the last four are the general
-                route's solvers, see the dual sweep's own documentation.
+            route: ``"auto"`` chooses by the sets, as listed above.
+                ``"closed_form"``, ``"bisection"``, ``"dual"``, ``"primal"``,
+                ``"kkt"`` and ``"smoothed"`` force one. The last four are the
+                general route's solvers: a bundle method on the dual cost,
+                Chambolle-Pock splitting in the primal, the KKT conditions,
+                and L-BFGS on a Moreau-Yosida smoothed dual (balls and
+                ellipsoids only).
             membership: how membership is decided. ``"auto"`` chooses by
-                the sets: ``"closed_form"`` for exact data, ``"reduced"``
-                for two balls, ``"likelihood"`` for an ellipsoid or a
-                sublevel set; each can be forced where the sets allow it,
-                and the likelihood route applies to a ball as well.
+                the sets: ``"closed_form"`` for exact data with a ball
+                prior, ``"reduced"`` for a ball or an ellipsoid on each
+                side, ``"likelihood"`` for other sets with differentiable
+                level functions; each can be forced where the sets allow it,
+                and the likelihood route applies to balls and ellipsoids as
+                well.
             solver: how the closed form, the bisection and the likelihood
                 route invert their operators.
             max_iterations: bisection steps, on each of the two multipliers,
@@ -2692,15 +2741,16 @@ class BackusGilbertParker(SetEstimator):
             method: the general route's minimizer. A proximal bundle method
                 by default.
             optimizer: the likelihood route's minimizer for each probe.
-                Newton-CG when the confidence set's functional has a
-                Hessian, L-BFGS otherwise.
+                Newton-CG when both sets' level functions have a Hessian,
+                L-BFGS otherwise.
 
         Raises:
             ValueError: if the route or membership is unknown, or not
                 available for these sets; if an operator or set is on the
                 wrong space.
-            TypeError: if the problem's error is neither a measure nor a
-                convex set.
+            TypeError: if the prior or the confidence set is neither a
+                ``ConvexSet`` nor a ``SublevelSet``, or the problem's error
+                is neither a measure nor a convex set.
         """
         if route not in _ROUTES:
             raise ValueError(f"route must be one of {_ROUTES}, got {route!r}.")
@@ -2901,8 +2951,9 @@ class BackusGilbertParker(SetEstimator):
         """The engine that decides membership, or ``None`` without one.
 
         Independent of the route computing the support: membership is the
-        minimum-norm computation of §18.5, and the support route's own
-        object is reused when it happens to be the same engine.
+        smallest-fitting-model computation of :meth:`FeasiblePropertySet.inclusion_level`,
+        and the support route's own object is reused when it happens to be
+        the same engine.
         """
         if self._membership is None:
             return None

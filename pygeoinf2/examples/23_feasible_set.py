@@ -1,15 +1,15 @@
 """
 23. What the data cannot rule out.
 
-v1's ``work/sphere_dli_example.py`` on v2, and the third kind of answer: a
-*set*. No probability anywhere -- the prior is a norm bound, the noise is a
+The third kind of answer: a *set*. No probability anywhere -- the prior is a norm bound, the noise is a
 norm bound, and what comes back is the collection of property values that no
 model consistent with both can be shown to exclude.
 
 The estimate is not a number with an error bar bolted on. It is a convex set,
 and the honest way to report it is by its extent in chosen directions, which is
-what a support function is. Three routes compute it, and the example runs two
-of them so they can be compared.
+what a support function is. The example computes it exactly, one constrained
+optimization per direction, and compares the result with a linear
+certificate, which bounds it from outside.
 
 Needs pyshtools and cartopy, which come with the 'sphere' extra.
 """
@@ -75,7 +75,7 @@ problem = LinearForwardProblem(forward, error=Ball(data_space, radius=NOISE_RADI
 prior = Ball(X, radius=PRIOR_RADIUS)
 
 # ---------------------------------------------------------------------------
-# Route (c): the exact bounds, one constrained optimization per direction.
+# The exact bounds, one constrained optimization per direction.
 # ---------------------------------------------------------------------------
 
 exact = BackusGilbertParker(problem, target, prior)
@@ -99,13 +99,12 @@ lower, upper = np.array(lower), np.array(upper)
 print()
 
 # ---------------------------------------------------------------------------
-# Route (b): the linear certificate, which bounds route (c) for free.
+# A linear certificate, which bounds the exact interval from outside.
 # ---------------------------------------------------------------------------
 
 # A direct solve, not CG: with a noise ball this tight the damping is
 # 4e-5 and the data-space normal operator is nearly singular. The data
-# space is small, so it can simply be factored -- which is what BGP
-# recommends anyway.
+# space is small, so it can simply be factored.
 certificate = BackusGilbert(problem, target, prior, solver=CholeskySolver())
 estimate, resolution, noise = certificate.error_bars(data)
 print("the same, from a linear certificate -- valid always, sharp never:")

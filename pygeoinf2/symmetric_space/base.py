@@ -13,15 +13,13 @@ of it is already general machinery elsewhere in the package:
   under the algebra and carries an exact functional calculus;
 - a Gaussian measure whose covariance is such an operator has an exact square
   root, so it can be sampled directly;
-- the correction v1 writes by hand as ``sqrt(spectral_variances /
-  metric_values)`` is simply ``white_noise`` on a space with a diagonal metric,
-  and needs no code here at all.
+- the factor ``1/sqrt(metric_values)`` that a draw needs on a weighted space
+  is supplied by ``white_noise``, whose components are ``N(0, G^-1)``, so no
+  code here writes it out.
 
 What each concrete space must supply is small: the map between fields and
 spectral components, the Laplacian eigenvalue attached to each component, and
 the value of each basis function at a point.
-
-See DECISIONS.md D-83.
 """
 
 from __future__ import annotations
@@ -57,10 +55,8 @@ class PreparedPoints:
     An observation operator is built once and applied many times, and the
     conversion from points to whatever the transform consumes -- colatitudes in
     radians, angles on a periodic axis, coordinates moved into an enclosing box
-    -- depends only on the points. Doing it inside the application was 14.5 of
-    37 ms on a sphere at 10^5 points, 32 of 61 ms on a torus and 230 of 254 ms
-    -- 91% -- on a bounded box, whose conversion is a Python loop over the
-    points (measured 2026-08-29).
+    -- depends only on the points. Doing it once, here, keeps it out of every
+    application, where it can otherwise be a large part of the cost.
 
     Build one with :meth:`SymmetricSpace.prepare_points` and pass it wherever a
     sequence of points is taken; it behaves as that sequence, so anything that
@@ -135,7 +131,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     @property
     def is_function_space(self) -> bool:
-        """True: a symmetric space discretises a space of functions (D-131)."""
+        """True: a symmetric space discretises a space of functions."""
         return True
 
     # ----------------------------------------------------------------- #
@@ -190,9 +186,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """The value of each basis function at a point.
 
         These are the derivative components of the evaluation functional, and
-        so exactly what :meth:`dirac` needs. Returning them rather than a
-        representer is deliberate: it is what an evaluation actually produces,
-        and the metric is applied once, in the adjoint. See DECISIONS.md D-26.
+        so exactly what :meth:`dirac` needs. They are not a representer: the
+        metric is applied once, in the adjoint, when a representer is asked
+        for.
         """
 
     # ----------------------------------------------------------------- #
@@ -241,9 +237,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         invariant — a band-limiting projection is the obvious case — so nothing
         is claimed about it beyond what the values themselves imply.
 
-        v1 spells this ``InvariantLinearAutomorphism.from_index_function``.
-        Taking an array rather than a callable on indices is what lets the
-        caller write ``space.spectral_operator(f(space.degrees))``.
+        It takes an array rather than a callable on indices, so a symbol
+        indexed by degree is written ``space.spectral_operator(f(space.degrees))``.
 
         Args:
             values: one per component.
@@ -324,10 +319,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         whose components already *are* those coefficients this is a selection,
         so it is matrix-free and costs nothing.
 
-        On the base rather than on the sphere, because a band of degrees means
-        the same thing on every geometry here -- on a box the degree of a
-        component is ``floor(|k|)``, so the band is an annulus in wavenumber
-        rather than a range of harmonic degrees, but it is still a band.
+        A band of degrees means the same thing on every geometry: on a box the
+        degree of a component is ``floor(|k|)``, so the band is an annulus in
+        wavenumber rather than a range of harmonic degrees.
 
         Args:
             lmax: the highest degree to report. The largest present if
@@ -335,8 +329,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 missing degrees are reported as zero: the operator is the
                 one on a space resolved to that degree, composed with the
                 prolongation into it, so two spaces of different resolution
-                can report into one coefficient space. That is v1's
-                zero-padding, with the adjoint derived rather than written.
+                can report into one coefficient space.
             lmin: the lowest.
             components: instead of a band, the positions of the components
                 to report, in the order they are to come out -- typically
@@ -386,11 +379,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         The companion of :meth:`coefficient_operator`, and *not* its adjoint.
         The adjoint of analysis carries this space's metric, so on anything but
-        ``L2`` it is not synthesis at all -- v1 papered over the difference by
-        writing ``* radius**2`` into the adjoint by hand, which is right for
-        Lebesgue and wrong for every Sobolev order. Here each is built from its
-        own value map and its own derivative, and the metric looks after
-        itself.
+        ``L2`` it is not synthesis at all. Each of the two is built from its
+        own value map and its own derivative, and the metric enters only
+        through their adjoints.
 
         Args:
             lmax: the highest degree accepted. The largest present if omitted.
@@ -475,12 +466,11 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Walks the degrees upward, summing the symbol over every mode of each
         -- the modes the degree *would* have, not the ones this space holds
         -- and stops when the newest degree adds less than ``rtol`` of the
-        running total. v1's ``estimate_truncation_degree``, which is what
-        chooses a truncation from a prior before there is a space at that
-        truncation: build one with ``with_degree`` on the answer.
-        :meth:`estimate_truncation_degree` is the other question, how much
-        of the power *this* space holds lies below a degree, and cannot
-        answer past its own truncation.
+        running total. This is how to choose a truncation from a prior before
+        there is a space at that truncation: build one with ``with_degree`` on
+        the answer. :meth:`estimate_truncation_degree` answers a different
+        question, how much of the power *this* space holds lies below a
+        degree, and cannot answer past its own truncation.
 
         Args:
             symbol: the spectral variances, as a callable on an array of
@@ -544,22 +534,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def power_spectrum(self, x: Any, /) -> np.ndarray:
         """Total power at each degree, indexed from zero.
 
-        The sum of the squared components over each degree -- what v1 got at,
-        on the sphere only, by drawing samples and calling
-        ``SHCoeffs.spectrum``. It is a property of the field, so it needs no
-        samples; run it over a measure's ``samples`` to recover v1's
-        ``sample_power_measure``.
+        The sum of the squared components over each degree. It is a property
+        of the field, so it needs no samples; applied to a measure's draws it
+        gives their sample power spectra.
 
         A property of the *field*, not of the metric it is being read in:
         components are the same coefficients whatever the Sobolev order, so
-        this is the ``L2`` spectrum either way. On the sphere it is ``4 pi``
-        times what ``SHCoeffs.spectrum`` reports, that being the difference
-        between pyshtools' scale and orthonormality in ``L2``.
+        this is the ``L2`` spectrum either way. On a sphere of radius ``r`` it
+        is ``4 pi r^2`` times what ``SHCoeffs.spectrum`` reports for the
+        ``4pi``-normalized expansion, that being the difference between
+        pyshtools' normalization and orthonormality in ``L2`` on that sphere.
 
         It is the counterpart of :meth:`power_measure` on every space: a draw
         from ``power_measure(p)`` has expected spectrum ``p`` whatever the
         Sobolev order, because ``power_measure`` carries the metric so that
-        the two meet (D-130). A measure built through
+        the two meet. A measure built through
         :meth:`invariant_measure` instead speaks in the covariance
         operator's own eigenvalues, and there a draw's coefficients have
         variance ``eigenvalue / gram_diagonal``, so its spectrum comes out
@@ -691,11 +680,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         by a square — ``time == length_scale^2`` — and the length is the one a
         modeler has an opinion about: it is the distance over which the field
         decorrelates, in the units of the domain, and it sits beside
-        :meth:`sobolev_symbol`'s length scale meaning the same thing.
-
-        v1 spells this ``heat_kernel(scale)`` with the same convention. v2
-        briefly took the time instead, silently, which turns a correlation
-        length of 0.1 into one of about 0.32.
+        :meth:`sobolev_symbol`'s length scale meaning the same thing. Passing
+        a diffusion time where the length is expected silently changes the
+        correlation length: a time of 0.1 is a length of about 0.32.
 
         Args:
             length_scale: the correlation length, non-negative.
@@ -749,8 +736,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``p``, which comes out as ``sum_k s_k phi_k(p)^2 / g_k``. The metric
         appears because the spectral variances are the covariance *operator's*
         eigenvalues, while a sample's components carry the ``1/sqrt(g)`` of
-        white noise. Dropping it is the error of DECISIONS.md D-26 once
-        more, and it is invisible on a Lebesgue space where ``g == 1``.
+        white noise. Dropping it gives the wrong variance on every Sobolev
+        space, and the error is invisible on a Lebesgue space, where
+        ``g == 1``.
 
         **Which ``p``, and how far the homogeneity reaches.** It is evaluated
         at :attr:`reference_point`, and the sum above is the same at *every
@@ -820,12 +808,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """A Gaussian whose covariance is diagonal in the spectral basis.
 
         The factor is the exact square root of the covariance, and the draw is
-        taken in components: ``sqrt(s / g)`` times a standard normal, which is
-        one synthesis. Going through the factor synthesizes white noise onto
-        the grid only for a diagonal operator to analyze it again, at three
-        transforms for the same numbers. The ``1/sqrt(g)`` is the metric's,
-        and it is white noise's rather than this method's invention: white
-        noise has components ``N(0, G^-1)``.
+        taken in components: ``sqrt(s / g)`` times a standard normal, followed
+        by one synthesis. The ``1/sqrt(g)`` is the metric's, coming from white
+        noise, whose components are ``N(0, G^-1)``.
 
         ``pointwise_std`` rescales the whole spectrum so that
         :meth:`pointwise_variance` comes out as its square, leaving the shape
@@ -888,10 +873,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         )
 
         # The draw is one synthesis: `sqrt(s / g) * standard normal` in
-        # components, since white noise's components are `N(0, G^-1)`
-        # (measured 2026-08-29). GaussianMeasure takes that short cut itself for any
-        # diagonal factor, so nothing is registered here -- and nothing is
-        # lost when the algebra rebuilds the measure (DECISIONS.md D-61).
+        # components, since white noise's components are `N(0, G^-1)`.
+        # GaussianMeasure takes that short cut itself for any diagonal factor,
+        # so no sampler is registered here, and the short cut survives when
+        # the algebra rebuilds the measure (scaled, summed, conditioned).
         return GaussianMeasure(
             self,
             expectation=expectation,
@@ -918,9 +903,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         supported on functions of that smoothness.
 
         Args:
-            order: the Sobolev order of the *measure*, which must exceed half
-                the spatial dimension for the draws to be functions.
-            length_scale: the correlation length.
+            order: the Sobolev order of the *measure*: the covariance is
+                ``(1 + scale^2 lambda)^-order`` in this space's metric. On a
+                Lebesgue space the draws are continuous functions when it
+                exceeds half the spatial dimension; on a Sobolev space the
+                space's own order adds to it, since a draw's coefficients are
+                further divided by the metric.
+            scale: the correlation length.
             amplitude: an overall scale on the spectrum.
             expectation: the mean. Zero if omitted.
             pointwise_std: calibrate by the pointwise standard deviation.
@@ -948,8 +937,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> GaussianMeasure:
         r"""A Gaussian prior with a heat-kernel covariance.
 
-        The covariance is ``amplitude^2 exp(-length_scale^2 Delta)``, which is
-        v1's ``heat_kernel_gaussian_measure(scale)`` unchanged. See
+        The covariance is ``amplitude^2 exp(-length_scale^2 Delta)``. See
         :meth:`heat_symbol` on why the parameter is a length and not a time.
 
         Args:
@@ -972,10 +960,6 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             pointwise_std=pointwise_std,
             norm_std=norm_std,
         )
-
-    # ----------------------------------------------------------------- #
-    #                        Point evaluation                           #
-    # ----------------------------------------------------------------- #
 
     def correlated_measure(
         self,
@@ -1003,7 +987,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         the symmetric square roots ``L(k)``, so one draw of white noise on the
         direct sum, correlated mode by mode, is a sample. The ``1/sqrt(g)`` a
         non-trivial metric demands is carried by the white noise rather than
-        written out here — which is the same argument as §13.1, one field wider.
+        written out here, as for :meth:`invariant_measure`.
 
         Args:
             spectral_cross_covariances: shape ``(dim, n, n)``; slice ``k`` is
@@ -1068,9 +1052,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         # A draw is the factor on white noise. Drawn in components it is the
         # slice product on the white-noise components and one synthesis per
-        # field; through the factor as an operator it was one synthesis for
-        # the noise, an analysis to get back to components, and the
-        # synthesis -- three transforms per field where one is the floor.
+        # field; applying the factor as an operator would take three
+        # transforms per field (synthesize the noise, analyze it, synthesize
+        # the result) where one suffices.
         action = factor._components_action()
 
         def sample(rng: Generator | None) -> tuple:
@@ -1144,8 +1128,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         marginals cannot say that two fields agree at long wavelengths and not
         at short ones.
 
-        Zero wherever either marginal has no variance at that mode, following
-        v1: there is no correlation to report there, and the ratio is 0/0.
+        Zero wherever either marginal has no variance at that mode: there is
+        no correlation to report there, and the ratio is 0/0.
 
         Args:
             measure: a measure from :meth:`correlated_measure` or its
@@ -1180,7 +1164,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         The spectrum a geophysicist actually writes down: how much variance
         each degree holds in total, rather than how much each component holds.
         The two differ by the multiplicity, and ``power`` means the **L2
-        spectrum on every space** (D-130): a draw's expected
+        spectrum on every space**: a draw's expected
         :meth:`power_spectrum` is ``power``, whatever the Sobolev order of
         the space the measure lives on. The same ``power`` therefore means
         the same random field wherever it is hosted; the host's metric enters
@@ -1191,8 +1175,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         One caution comes with the convenience: an ``L2`` spectrum specifies
         a trace-class measure on ``H^s`` in the limit only if it decays
         faster than the Sobolev symbol. On a truncation everything runs; the
-        dimension-free interpretation is the caller's to check, as with
-        point evaluation under D-11.
+        dimension-free interpretation is the caller's to check.
 
         Args:
             power: total ``L2`` variance at each degree, indexed from zero,
@@ -1217,13 +1200,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                     f"{values.size} values."
                 )
             per_degree = values[degrees]
-        # The multiplicity of each component's degree. By tabulating once
-        # rather than sweeping the whole array per component: the comprehension
-        # this replaces was O(dim^2), and 6.8 s against 0.4 ms at lmax 511.
+        # The multiplicity of each component's degree, tabulated once rather
+        # than counted per component, which would be O(dim^2).
         counts = np.bincount(degrees)[degrees]
         # A draw's coefficient variance is eigenvalue / gram, so carrying the
         # gram here is what makes the observed L2 spectrum the given power on
-        # a space of any order (D-130). On a Lebesgue space it is ones.
+        # a space of any order. On a Lebesgue space it is ones.
         return self.invariant_measure(
             per_degree / counts * self.gram_diagonal(), expectation=expectation
         )
@@ -1262,15 +1244,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         so this is one row of :meth:`basis_matrix` per distance against a fixed
         weight vector. The general route, which builds the Dirac's representer,
-        applies the covariance to it and evaluates the result, stays for a
-        measure that is not invariant (measured 2026-08-29).
+        applies the covariance to it and evaluates the result, is taken for a
+        measure that is not invariant.
 
-        **The order guard is not weakened by the closed form.** A covariance
-        function is a statement about point values, and D-11's position -- the
-        user's, answering Q4 -- is that a space too rough for point evaluation
-        should not be asked for them, whatever the measure's spectrum would
-        allow. So the guard is asked for explicitly here rather than arriving
-        by way of the Dirac the closed form does not need.
+        **The order guard applies to the closed form too.** A covariance
+        function is a statement about point values, so it is refused on a
+        space too rough for point evaluation, whatever the measure's spectrum
+        would allow.
 
         Args:
             measure: the measure. Invariant, for the answer to depend on the
@@ -1316,17 +1296,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         It is the diagonal of ``E C E*`` with ``E`` evaluation at the points,
         since ``(C u_i, u_i)`` is the variance at the ``i``-th. Exact by
-        default, at one application of the covariance per point. Pass
-        ``samples`` to estimate it instead, and ``rank`` to deflate first —
-        which for a covariance with a decaying spectrum is the difference
-        between a useful estimate and a useless one.
+        default, at one application of the covariance per point, or in closed
+        form for an invariant measure. Pass ``samples`` or ``rtol`` to
+        estimate it instead, and ``rank`` to deflate first.
 
         Args:
             measure: the measure whose variance is wanted.
             points: where to evaluate it.
-            rank: how many leading eigenpairs to deflate before estimating.
-                For a covariance with a decaying spectrum this is the
-                difference between a useful estimate and a useless one.
+            rank: on the sampled route, how many leading eigenpairs to
+                deflate before estimating. For a covariance with a decaying
+                spectrum this is the difference between a useful estimate and
+                a useless one.
             rtol: on the sampled route, stop adding probes once the estimate
                 settles to this relative change; ``samples`` is then the first
                 batch, twenty if not given.
@@ -1351,10 +1331,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             if variances is not None:
                 # An invariant measure has a closed form, `sum_k s_k
                 # phi_k(p)^2 / g_k`, so the whole set of points is one basis
-                # matrix against a fixed weight vector rather than five
-                # transforms per point (measured 2026-08-29). The order guard is
-                # asked for explicitly, since the Dirac that used to raise it
-                # is not built here; see covariance_function on why it stays.
+                # matrix against a fixed weight vector rather than several
+                # transforms per point. The order guard is asked for
+                # explicitly, since no Dirac is built on this route; see
+                # covariance_function on why it applies.
                 self._require_point_evaluation("A pointwise variance", unsafe=False)
                 weights = variances / self.metric_values
                 points = tuple(points)
@@ -1373,8 +1353,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 )
             # One covariance application per point, and the points are
             # independent: the loop parallelizes even though nothing inside it
-            # does. The operator below is not built on this path -- it was,
-            # and was dead work.
+            # does. The evaluation operator below is not needed on this path.
             from ..parallel import parallel_map
 
             return np.array(
@@ -1444,13 +1423,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Both orderings of a pair are returned, and so is every diagonal entry:
         the result is the pattern of a symmetric matrix, not of a triangle.
 
-        A KD-tree over the embedding, as v1 does on the sphere. v2 formed the
-        full ``(n, n, d)`` array of differences instead: 576 MB and 0.21 s at
-        n = 3000 against 7 MB and 0.08 s, and 2.4 GB at n = 10^4.
-
-        On the base rather than on the sphere, because it needs only the
-        embedding -- so a box gets it too, with the tree wrapping periodically
-        where the domain does.
+        The search is a KD-tree over the geometry's embedding, so memory grows
+        with the number of pairs found rather than the square of the number of
+        points. On a periodic domain the tree wraps.
 
         Args:
             points: the points.
@@ -1521,17 +1496,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Two ways to say how many, and exactly one is required. ``radius`` caps
         how wide a cluster may be; ``count`` fixes how many there are, which is
-        the mode that sizes preconditioner blocks to a budget and the one v2
-        dropped -- it offered a greedy radius rule seeded by the lowest
-        remaining index, which is neither of v1's and is not stable under
-        reordering the points.
+        the mode that sizes preconditioner blocks to a budget. Either way the
+        result does not depend on the order in which the points are given.
 
         Args:
             points: the points.
             radius: the widest a cluster may be, in geodesic distance.
             count: how many clusters to form.
-            method: the linkage rule. ``"complete"`` by default, as in v1,
-                because it is the one that keeps clusters compact.
+            method: the linkage rule, as for
+                :func:`scipy.cluster.hierarchy.linkage`. ``"complete"`` by
+                default, because it is the one that keeps clusters compact.
 
         Returns:
             One list of indices per cluster.
@@ -1573,9 +1547,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> list[Any]:
         """Several points drawn uniformly over the domain.
 
-        On the base because it is a loop over :meth:`random_point` and nothing
-        else. It lived on the sphere, so every other geometry lacked it for no
-        reason anyone had decided.
+        A loop over :meth:`random_point`.
 
         Args:
             count: how many points.
@@ -1627,6 +1599,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             f"{type(self).__name__} does not report a spatial dimension."
         )
 
+    # ----------------------------------------------------------------- #
+    #                        Point evaluation                           #
+    # ----------------------------------------------------------------- #
+
     def _require_point_evaluation(self, what: str, /, *, unsafe: bool) -> None:
         r"""Refuse point evaluation on a space too rough to admit it.
 
@@ -1638,8 +1614,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Nothing downstream can detect this. The adjoint of an observation
         operator built here returns noise, an inversion built on that adjoint
-        returns noise, and every number involved is finite. v1 refuses, v2
-        stopped refusing, and this puts it back.
+        returns noise, and every number involved is finite.
 
         ``unsafe=True`` proceeds anyway, which is worth having: seeing the
         representer fail to converge as ``lmax`` grows is the clearest
@@ -1674,13 +1649,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         surface, a unit weaker than point evaluation's threshold, nothing at
         all in one dimension, where every ``L2`` function integrates over an
         interval. Below it the functional has no representer and the
-        quadrature returns a number with no limit as the truncation rises --
-        measured on a sphere, the representer norm at order zero doubles
-        with every two doublings of ``lmax`` (DECISIONS.md D-83).
-
-        v1 guarded this with the point threshold, safe and too strict by
-        half a unit; v2 bypassed the guard with a comment naming the right
-        condition. This is that condition.
+        quadrature returns a number with no limit as the truncation rises.
 
         Args:
             what: the operation, named for the message.
@@ -1710,11 +1679,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Built from derivative components, so ``dirac(p).representer`` is the
         Riesz representer and the metric is applied exactly once, inside the
-        adjoint. On a Lebesgue space the Dirac is not bounded and the
-        representer is meaningless; on a Sobolev space of high enough order it
-        is a perfectly good function, and the difference is visible in the
-        metric rather than hidden in the code, and in a refusal: see
-        :meth:`_require_point_evaluation`.
+        adjoint. On a Sobolev space of order above half the spatial dimension
+        the representer is a function in the space. At or below that order,
+        a Lebesgue space included, the Dirac is not bounded and is refused;
+        see :meth:`_require_point_evaluation`.
 
         Args:
             point: where to evaluate.
@@ -1830,9 +1798,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             eps: accuracy for the non-uniform FFT, where one is used. Defaults
                 to the geometry's own, which is not the same on all of them.
             nthreads: threads for that transform. Defaults to the geometry's
-                own, which is one: finufft's default of every core is slower
-                here at every size measured, and would oversubscribe inside an
-                outer parallel loop. Both are ignored on the direct route.
+                own, which is one: finufft's default of every core would
+                oversubscribe inside an outer parallel loop. Both are ignored
+                on the direct route.
             n_jobs: workers for the dense assembly, which is one basis
                 evaluation per point. Ignored on the matrix-free route, whose
                 application is one transform. Serial by default.
@@ -1850,7 +1818,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             raise ValueError("At least one point is needed.")
         # Converted once here rather than once per application: the conversion
         # depends only on the points, and an observation operator is built once
-        # and applied thousands of times (measured 2026-08-29).
+        # and applied many times.
         points = self.prepare_points(points)
         self._require_point_evaluation("A point evaluation operator", unsafe=unsafe)
         codomain = EuclideanSpace(len(points))
@@ -1914,10 +1882,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         the values are taken as they are, and it is :meth:`truncate` that
         settles them into the span of the basis.
 
-        **The array is copied**, as v1's ``from_array`` copies. This is the
-        boundary at which an array from somewhere else becomes a vector of this
-        space, and the caller goes on holding their array: aliasing it meant a
-        later ``axpy`` -- which is in-place by contract -- silently rewrote it.
+        **The array is copied.** This is the boundary at which an array from
+        somewhere else becomes a vector of this space, and the caller goes on
+        holding their array: aliasing it would let a later ``axpy`` -- which
+        is in-place by contract -- silently rewrite it.
 
         Args:
             values: an array of shape :attr:`grid_shape`.
@@ -1933,8 +1901,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         :meth:`from_grid_values` without the copy, for the many places that
         build the array themselves and hand over the only reference to it --
         a product, a synthesis, a sampled function. Copying those would be
-        pure cost: 2 MB per call at ``lmax`` 256, on paths that run once per
-        transform.
+        pure cost, on paths that run once per transform.
         """
         return values
 
@@ -1950,8 +1917,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Kept, and public, because a caller who wants the band-limited
         representative of a product — to plot it, to hand it to something that
         assumes the span of the basis, or to compare two grids entry by entry —
-        has to be able to ask for it. :meth:`multiply` no longer applies it for
-        them; see there for why.
+        has to be able to ask for it. :meth:`multiply` does not apply it; see
+        there for why.
 
         Args:
             x: a vector, or any grid array of this space's shape.
@@ -1964,7 +1931,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def multiply(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """The pointwise product, left on the grid.
 
-        **Not truncated back into the space** (DECISIONS.md D-87). The product of
+        **Not truncated back into the space.** The product of
         two band-limited functions is not band-limited, so on an oversampled
         grid the product has no representative in the span of the basis that is
         equal to it; truncating picks one, at the cost of an analysis and a
@@ -2010,17 +1977,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         :func:`lift_formal_adjoint`. The lifted operator is **not** claimed
         self-adjoint, because a formally self-adjoint operator is self-adjoint
         under the new metric only if it commutes with the ratio of the two, and
-        multiplication by a varying field does not (§3.5).
+        multiplication by a varying field does not.
 
-        **The claim survives :meth:`multiply` leaving the grid**, and it is
-        worth saying why rather than leaving it to a test. An analysis on this
-        grid *is* a quadrature — coefficient ``k`` is ``sum_j w_j phi_k(p_j)
-        v_j`` with the grid's own positive weights — so it is the transpose of
-        synthesis with respect to those weights. The form is therefore
+        **Self-adjointness on ``L2`` holds although :meth:`multiply` leaves
+        the product on the grid.** An analysis on this grid *is* a quadrature
+        — coefficient ``k`` is ``sum_j w_j phi_k(p_j) v_j`` with the grid's
+        own positive weights — so it is the transpose of synthesis with
+        respect to those weights. The form is therefore
         ``sum_j w_j f_j (S u)_j (S v)_j``, which is symmetric in ``u`` and
-        ``v`` for *any* grid array ``f``, band-limited or not. Truncating the
-        product changed neither side of the identity; it only cost two
-        transforms per application.
+        ``v`` for *any* grid array ``f``, band-limited or not.
 
         Args:
             f: the field to multiply by.
@@ -2069,19 +2034,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         without a tangent frame.
 
         The result is left on the grid, as the products it is built from are.
-        Its *components* are the same either way: projection is linear, so
-        projecting each term and adding is projecting the sum, and the one term
-        that is already band-limited — ``L(f g)`` — is unchanged by it. So this
-        returns a strictly better grid representative for the same cost, and
-        for two fewer transforms per product.
+        Its *components* are the same as if every product were truncated:
+        projection is linear, so projecting each term and adding is projecting
+        the sum, and the one term that is already band-limited — ``L(f g)`` —
+        is unchanged by it. Leaving it on the grid keeps the part of the
+        result the grid can carry and saves two transforms per product.
 
-        **The sign is the whole content of this method.** v1 has it the other
-        way round, which is verifiable against ``grad sin . grad cos`` on a
-        circle: its answer is exactly ``-1`` times the analytic one. It went
-        unnoticed because every use is inside a variable-coefficient term, and
-        those vanish identically when the coefficient is constant — so the
-        constant-coefficient case, which is the one with a closed form to check
-        against, cannot see it.
+        **Mind the sign.** With the negative Laplacian the formula gives
+        exactly ``-1`` times the right answer, which ``grad sin . grad cos`` on
+        a circle shows. A constant-coefficient test cannot catch the error:
+        every use of this method is inside a variable-coefficient term, and
+        those vanish identically when the coefficient is constant.
         """
         laplacian = self.laplacian
         result = self.multiply(f, laplacian(g))
@@ -2186,7 +2149,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             baseline_rigidity: the constant rigidity used for the
                 preconditioner. Defaults to the spatial average.
             baseline_buoyancy: likewise for the restoring coefficient.
-            solver: the iterative solver. Defaults to ``CGSolver()``.
+            solver: the iterative solver. Defaults to ``CGSolver()``. The
+                constant-coefficient preconditioner is attached only if the
+                solver has none of its own.
 
         Returns:
             The inverse operator.
@@ -2203,11 +2168,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             # The operator is self-adjoint and positive definite in L2, and
             # that is where CG must run: lifted to a Sobolev space it keeps
             # its action but is no longer its own adjoint, so the claim CG
-            # needs would be false there -- it raised on the sphere and
-            # returned a 1e-4 residual as converged on the circle. Inverting
-            # in L2 and lifting the inverse gives the inverse of the lifted
-            # operator, since the lift preserves actions and commutes with
-            # inversion.
+            # needs would be false there. Inverting in L2 and lifting the
+            # inverse gives the inverse of the lifted operator, since the lift
+            # preserves actions and commutes with inversion.
             base = self.with_order(0.0)
             return lift_formal_adjoint(
                 base.inverse_flexural_operator(
@@ -2268,9 +2231,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             rigidity, poisson_ratio, buoyancy
         ).with_traits(Traits.POSITIVE_DEFINITE)
         # Only if the caller did not bring their own -- they know something
-        # this routine does not. Asked explicitly, because
-        # with_preconditioner now refuses to replace one rather than
-        # discarding it quietly.
+        # this routine does not. Checked explicitly, because
+        # with_preconditioner refuses to replace an existing one.
         if preconditioner is not None and solver.preconditioner is None:
             solver = solver.with_preconditioner(preconditioner)
         return solver(operator)
@@ -2354,11 +2316,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """Quadrature nodes and weights along one geodesic.
 
         With ``count`` unset the node count comes from the arc length and the
-        space's own length scale: two nodes per length scale, which is v1's
-        heuristic and the only one available without asking the caller what the
-        field looks like. A fixed count is under-resolved for a long path on a
-        short-scale space and wasteful for the reverse, and the field's length
-        scale is exactly the thing that settles it.
+        space's own length scale: two nodes per length scale, and at least
+        two. A fixed count is under-resolved for a long path on a short-scale
+        space and wasteful for the reverse, and the field's length scale is
+        exactly the thing that settles it.
         """
         if count is None:
             arc = self.geodesic_distance(start, end)
@@ -2381,11 +2342,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """Line integrals along a set of geodesic paths.
 
         The tomographic forward map: a travel time is an integral along a ray,
-        not an average over one. v1 computes exactly this and calls it
-        ``path_average_operator``, saying in its own docstring that the name is
-        wrong; :meth:`path_average_operator` here is the normalized variant,
-        and the two now differ by what they are called rather than by which
-        version you are using.
+        not an average over one. :meth:`path_average_operator` is the
+        normalized variant.
 
         Built as ``W E``: point evaluation at the pooled quadrature nodes, then
         a sparse matrix of weights. Writing it that way means the adjoint is
@@ -2534,9 +2492,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         if dense:
             from ..algebra.spaces import EuclideanSpace
 
-            # The weights stay sparse. Asking the operator for its matrix
-            # densified a (paths, nodes) array that is one entry per node --
-            # 1.59 s against 0.018 s for 2000 paths (measured 2026-08-29).
+            # The weights stay sparse: the matrix is the sparse weights times
+            # the basis at the pooled nodes, and the (paths, nodes) weight
+            # array, one entry per node, is never densified.
             matrix = sparse @ self.basis_matrix(nodes, n_jobs=n_jobs)
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(paths)), matrix, form="galerkin"
@@ -2614,8 +2572,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             )
         # unsafe: the *quadrature* samples points, but the functional it
         # computes is an average over a set of positive measure, which is
-        # bounded on L2 and has a perfectly good representer there. The
-        # closed-form route below takes no point values at all.
+        # bounded on L2 and has a perfectly good representer there.
         return _weight_operator(sparse) @ self.point_evaluation_operator(
             nodes, unsafe=True
         )
@@ -2670,10 +2627,11 @@ class SpectralBlockLinearOperator(BlockLinearOperator):
     :class:`~pygeoinf2.algebra.direct_sum.BlockLinearOperator`, so a
     marginal or a cross-covariance is still read off a block; but it is
     applied as a whole: every field is analyzed once, the slices act on the
-    ``(dim, n)`` array of components, and every field is synthesized once.
-    As a grid of blocks it cost ``n^2`` analyses and ``n^2 + n`` syntheses
-    per application. It acts on components directly, so it fuses into
-    products and Krylov loops like a diagonal operator does.
+    ``(dim, n)`` array of components, and every field is synthesized once,
+    where a grid of blocks would cost ``n^2`` analyses and ``n^2 + n``
+    syntheses per application. It also exposes its action on component
+    arrays, so compositions and Krylov loops can apply it without converting
+    through fields, as with a diagonal operator.
 
     The adjoint is the transposed slices, which is right because every copy
     carries the same diagonal metric.
@@ -2794,18 +2752,16 @@ class SpectralBlockLinearOperator(BlockLinearOperator):
 
 
 class _FlexureOperator(LinearOperator):
-    """The variable-coefficient flexure operator on an ``L2`` space, fused.
+    """The variable-coefficient flexure operator on an ``L2`` space.
 
     The expression in :meth:`SymmetricSpace.flexural_operator` is a sum of
     pointwise products of the field with the coefficient fields, some of
-    them under one Laplacian and one under two. Applied term by term it
-    cost fifty transforms per application: every ``multiply`` truncated
-    back into the space (an analysis and a synthesis), and every Laplacian
-    re-analyses what was just synthesized. Analysis is linear, so the
-    products under a common multiplier can be summed on the grid and
-    analyzed once. Written out, with ``L`` the positive Laplacian, ``K`` the
-    curvature, ``D`` the rigidity, ``E == D (1 - nu)``, ``rho`` the buoyancy
-    and ``w`` the field:
+    them under one Laplacian and one under two. Applied term by term, every
+    Laplacian would re-analyze what was just synthesized. Analysis is
+    linear, so the products under a common multiplier can be summed on the
+    grid and analyzed once. Written out, with ``L`` the positive Laplacian,
+    ``K`` the curvature, ``D`` the rigidity, ``E == D (1 - nu)``, ``rho`` the
+    buoyancy and ``w`` the field:
 
     .. code-block:: text
 
@@ -2822,9 +2778,7 @@ class _FlexureOperator(LinearOperator):
     for the ``G``s, one synthesis for the result -- and six from
     components, which is what a Krylov loop asks for. The components agree
     with the term-by-term form to rounding: the products are the same grid
-    arrays and analysis is linear. That held while ``multiply`` truncated --
-    the truncation it applied was exactly the analysis -- and it holds now
-    that it does not (DECISIONS.md D-87).
+    arrays and analysis is linear.
 
     Self-adjoint in ``L2``; the Sobolev version is this operator lifted.
     """
@@ -2932,8 +2886,7 @@ def _gauss_legendre(count: int) -> tuple[np.ndarray, np.ndarray]:
     """Gauss-Legendre abscissae and weights, computed once per count.
 
     Every path and every ball asks for the same few counts, and
-    ``np.polynomial.legendre.leggauss`` solves an eigenproblem each time:
-    0.8 s for the 2000 calls one tomographic geometry makes (measured 2026-08-29).
+    ``np.polynomial.legendre.leggauss`` solves an eigenproblem each time.
     Returned read-only, since the arrays are shared.
     """
     abscissae, weights = np.polynomial.legendre.leggauss(count)

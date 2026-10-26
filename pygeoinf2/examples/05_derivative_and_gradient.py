@@ -6,8 +6,9 @@ basis you chose. Step along that and you are not going downhill in the metric
 you chose -- you are going downhill in an artifact of the discretization, and
 the direction changes when the mesh does.
 
-The gradient is the derivative with the inverse metric applied. In pygeoinf 2
-the adjoint is where that happens, and it is the only place it happens.
+The gradient is the derivative with the inverse metric applied. In this
+library the adjoint is where that happens, and it is the only place it
+happens.
 """
 
 import numpy as np

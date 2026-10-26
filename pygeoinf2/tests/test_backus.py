@@ -1,10 +1,10 @@
 """
 Set-valued inference: the feasible property set, computed three ways.
 
-Routes (a), (b) and (c) of DECISIONS.md D-79 compute the same object, so every
-test here is a comparison rather than an assertion. The strongest are the two
-that cross a method boundary: route (c) must agree with route (a) as the noise
-vanishes, and the primal inclusion test must agree with the closed-form
+The closed form, the linear certificate and the primal bisection compute or
+bound the same object, so every test here is a comparison rather than an
+assertion. The strongest are the two that cross a method boundary: the
+primal bisection must agree with the closed form as the noise vanishes, and the primal inclusion test must agree with the closed-form
 ellipsoid on every candidate value.
 """
 
@@ -166,7 +166,7 @@ class TestInclusionTest:
 class TestPrimalRoute:
     @pytest.mark.parametrize("noise", [1e-3, 1e-6])
     def test_it_agrees_with_the_closed_form_as_the_noise_vanishes(self, setting, noise):
-        """The parity test between route (c) and route (a).
+        """The parity test between the primal bisection and the closed form.
 
         Two methods with nothing in common — a bisection over two multipliers
         against a projection and an eigen-shape — converging on the same
@@ -242,7 +242,7 @@ class TestPrimalRoute:
 class TestLinearCertificate:
     def test_it_bounds_the_exact_set(self, setting):
         """Validity is free; only sharpness is lost. That is weak duality, and
-        it is the property that makes route (b) safe to use."""
+        it is the property that makes the linear certificate safe to use."""
         model, forward, target, truth, data = setting
         noise = Ball(forward.codomain, radius=0.2)
         problem = LinearForwardProblem(forward, error=noise)
@@ -1586,7 +1586,8 @@ class TestInclusionWithErrors:
 
     @pytest.mark.slow
     def test_the_inner_hull_sits_inside_the_outer_bound(self, noisy, rng):
-        """§18.4's sandwich, with both sides real for the first time."""
+        """The inner hull inside, the certified outer polytope outside: the set
+        sandwiched between the two."""
         model, forward, target, truth, data, estimator = noisy
         space = target.codomain
         candidates = [

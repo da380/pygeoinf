@@ -19,9 +19,9 @@ far as the centre and no further: the centre is a regular point of the
 operator, needing neither padding nor a condition, so a profile in a whole
 ball is padded on the outside only. The eigenfunctions are even in ``r``
 there -- for constant ``L`` they are ``sin(k r) / r`` -- which is what a field
-regular at the centre has to be at degree zero (DECISIONS.md D-117), so every
-draw of a prior is regular for nothing; a profile *handed in* should be even
-in ``r`` too, and one linear in ``r`` is a cone.
+regular at the centre has to be at degree zero, so every draw of a prior is
+regular there automatically; a profile *handed in* should be even in ``r``
+too, and one linear in ``r`` is a cone.
 
 **A point is a radius.** Its value is the field's on the whole sphere of that
 radius, so away from the centre evaluation needs an order above one half, as
@@ -80,12 +80,12 @@ class Radial(AxisSpace):
                 Two length scales by default; four under the natural condition.
             boundary: the condition at the ends of the mesh. ``"robin"``, the
                 default, ends the mesh as if it went on, ``u' = -+ (0.7 / L +-
-                1 / r) u`` with the curvature of the sphere at each end:
-                measured, two length scales of padding under it do what four
-                do under the natural condition (DECISIONS.md D-122). ``None``
-                is the natural condition, and doubles the default padding. A
-                number or a pair gives the Robin coefficients themselves. None
-                is applied at the centre.
+                1 / r) u`` with the curvature of the sphere at each end, and
+                with it two length scales of padding do what four do under
+                the natural condition. ``None`` is the natural condition, and
+                doubles the default padding. A number or a pair gives the
+                Robin coefficients themselves. No condition is applied at the
+                centre.
             ngll: Gauss-Lobatto-Legendre nodes per element.
             element_length: the longest an element may be. By default short
                 enough that the mesh has two and a half nodes for every mode
@@ -93,8 +93,9 @@ class Radial(AxisSpace):
                 length scale.
 
         Raises:
-            ValueError: if the radii are out of order, a length scale is not
-                positive, or the mesh cannot hold the modes asked for.
+            ValueError: unless ``0 <= inner_radius < radius``, or if fewer
+                than one mode is asked for, a length scale is not positive,
+                or the mesh cannot hold the modes asked for.
         """
         inner, outer = float(inner_radius), float(radius)
         if not 0.0 <= inner < outer:
@@ -134,9 +135,7 @@ class Radial(AxisSpace):
         A radius names a whole sphere, and the field along it is a function of
         one variable, so away from the centre a point has a value above order
         one half, as on a line. The centre is a point of space, and needs
-        three halves. Measured: the norm of the Dirac's representer at the
-        centre still grows with the modes at order 1.25 and has settled at
-        1.75, and at ``r = 0.5`` has settled by 0.75 (DECISIONS.md D-121).
+        three halves.
 
         Args:
             points: the radii in question. Any radius of the domain, the

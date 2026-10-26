@@ -1,8 +1,8 @@
 """
 The posterior of a linear problem with a Gaussian prior.
 
-The Kalman update, assembled in whichever space is smaller. With prior
-covariance ``Q`` and data covariance ``R``:
+The Kalman update, assembled in the data space by default or in the model
+space on request. With prior covariance ``Q`` and data covariance ``R``:
 
 .. code-block:: text
 
@@ -22,9 +22,9 @@ it is *Gaussian* — the prior is a
 measure, because the update below is the closed-form conjugate one and there is
 no other case it covers. Bayesian inference in general is neither.
 
-The result is a :class:`~pygeoinf2.inference.estimators.GaussianEstimator`
-rather than a measure: the covariance does not depend on the data, so the
-mapping is a pair and only the mean moves. See DECISIONS.md D-72 and D-44.
+The estimator is a :class:`~pygeoinf2.inference.estimators.GaussianEstimator`,
+a mapping from data to posterior measures: the covariance does not depend on
+the data, so the mapping is a pair and only the mean moves.
 """
 
 from __future__ import annotations
@@ -59,22 +59,22 @@ __all__ = ["GaussianPosterior", "LinearGaussianInversion"]
 
 
 class GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure):
-    """A Gaussian that also knows its density relative to a reference (D-132).
+    """A Gaussian that also knows its density relative to a reference.
 
-    What a Bayesian update returns: a ``GaussianMeasure`` first — drawn from,
-    pushed forward, conditioned exactly as any other — and an
+    What a Bayesian update returns: a ``GaussianMeasure`` first -- drawn from,
+    pushed forward, conditioned exactly as any other -- and an
     :class:`~pygeoinf2.probability.absolutely_continuous.AbsolutelyContinuousMeasure`
     second, carrying the prior it came from, the log density ``-Phi`` against
-    it, and the evidence as its normalizer. For a *linear* problem the two
-    readings describe the same measure exactly; for the Laplace route the
-    Gaussian moments are the approximation at the mode while the relative
-    density is the exact posterior's, which is precisely the pair a sampler
-    wants to start from.
+    it (``Phi`` being the likelihood potential, half the chi-squared misfit),
+    and the evidence as its normalizer. For a *linear* problem the two
+    readings describe the same measure exactly. For a Laplace approximation
+    (:meth:`~pygeoinf2.inference.laplace.MaximumAPosteriori.at`) the Gaussian
+    moments are the approximation at the mode while the relative density is
+    the exact posterior's, which is the pair a sampler wants to start from.
 
-    The algebra does not try to carry the density: a push-forward or a
-    conditioning rebuilds through ``GaussianMeasure._rebuild`` and so returns
-    a plain Gaussian, deliberately — a density does not survive a general
-    linear map, and pretending otherwise was D-73's warning.
+    The algebra does not carry the density: a push-forward or a conditioning
+    returns a plain ``GaussianMeasure``, because a density does not survive a
+    general linear map.
     """
 
     def __init__(
@@ -134,9 +134,11 @@ class LinearGaussianInversion(GaussianEstimator):
                 preconditioner can be built from the very thing it will
                 precondition. See
                 :func:`~pygeoinf2.numerics.solvers.resolve_solver`.
-            formalism: which space to assemble in; ``"auto"`` takes the
+            formalism: which space to assemble in: ``"data_space"`` (the
+                default), ``"model_space"``, or ``"auto"`` to take the
                 smaller, which for an underdetermined problem is the data
-                space and for an overdetermined one the model space.
+                space and for an overdetermined one the model space; see
+                :func:`~pygeoinf2.inference.normal.choose_formalism`.
         """
         if not isinstance(prior, GaussianMeasure):
             raise TypeError(
@@ -202,8 +204,8 @@ class LinearGaussianInversion(GaussianEstimator):
         self._log_determinants: dict[tuple, Any] = {}
         self._solver = solver
         # The one-entry memo of _residual_solve. Keyed on the *contents* of the
-        # data vector: an id() key is a bug waiting for a freed array's address
-        # to be reused, which is exactly what went wrong in backus.py.
+        # data vector: an id() key would return a stale answer once a freed
+        # array's address is reused.
         self._solved_key: bytes | None = None
         self._solved: tuple[Any, Any, Any] | None = None
 
@@ -219,11 +221,10 @@ class LinearGaussianInversion(GaussianEstimator):
     def kalman_operator(self) -> LinearOperator:
         """The Kalman operator: data residuals to model updates.
 
-        v1's name; a property rather than a method because
-        the solver it needs was given at construction. ``Q A* N^-1`` in the
-        data-space formalism and ``N^-1 A* R^-1`` in the model-space one, which
-        are the same operator written two ways; the test suite checks it
-        against both formulae.
+        A property rather than a method, because the solver it needs was given
+        at construction. ``Q A* N^-1`` in the data-space formalism and
+        ``N^-1 A* R^-1`` in the model-space one, which are the same operator
+        written two ways.
         """
         return self._gain
 
@@ -231,8 +232,8 @@ class LinearGaussianInversion(GaussianEstimator):
     def data_prior(self) -> GaussianMeasure:
         """The prior predictive ``A Q A* + R``: the data before observing them.
 
-        v1's ``data_prior_measure``. What the evidence is a density under, and
-        what a synthetic dataset is drawn from.
+        What the evidence is a density under, and what a synthetic dataset is
+        drawn from.
         """
         return self._problem.data_measure_from_model_measure(self._prior)
 
@@ -240,8 +241,7 @@ class LinearGaussianInversion(GaussianEstimator):
     def joint_prior(self) -> Any:
         """The joint law of model and data before observing anything.
 
-        v1's ``joint_prior_measure``. Sampling it gives a consistent
-        ``(model, data)`` pair, which is how a synthetic test is set up
+        Sampling it gives a consistent ``(model, data)`` pair, which is how a synthetic test is set up
         without smuggling in knowledge of the answer.
         """
         return self._problem.joint_measure(self._prior)
@@ -297,8 +297,7 @@ class LinearGaussianInversion(GaussianEstimator):
     def with_formalism(self, formalism: Formalism, /) -> "LinearGaussianInversion":
         """The same inversion, assembled in the other space.
 
-        The two give the same answer, so this is a computational choice; the
-        test suite checks the agreement.
+        The two give the same answer, so this is a computational choice.
         """
         return LinearGaussianInversion(
             self._problem, self._prior, solver=self._solver, formalism=formalism
@@ -449,10 +448,9 @@ class LinearGaussianInversion(GaussianEstimator):
         The memo below must be keyed on what the vector *is*, not on where it
         happens to live: keying on ``id()`` returns the previous caller's
         answer as soon as an array is freed and its address reused. The price
-        is one ``to_components`` and one buffer copy per call, which on the
-        Euclidean data space this is nearly always used with is a few
-        microseconds against a solve of tens of milliseconds. A space with no
-        coordinate map cannot be summarized, and there the memo is simply off.
+        is one ``to_components`` and one buffer copy per call, small beside a
+        solve. A space with no coordinate map cannot be summarized, and there
+        the memo is simply off.
 
         Args:
             data: the data vector.
@@ -473,11 +471,9 @@ class LinearGaussianInversion(GaussianEstimator):
 
         The posterior mean is ``mu + K v`` and the data misfit is a pairing
         against ``N^-1`` of the same ``v``, so the two differ only in what they
-        do *after* the solve. v1 computed the mean as ``m0 + K(d - shift)`` and
-        shared it; v2 had the mean inside an affine operator and the misfit in
-        its own method, so ``est(data)`` followed by ``log_evidence(data)``
-        cost two solves and a mixture inversion cost ``2K`` where ``K`` would
-        do.
+        do *after* the solve. Memoizing it lets ``est(data)`` followed by
+        ``log_evidence(data)`` cost one solve rather than two, and a mixture
+        inversion over ``K`` components ``K`` solves rather than ``2K``.
 
         One entry is enough because the two calls that matter are adjacent.
         Nothing here is mutated in place, but the tuple is shared, so callers
@@ -506,13 +502,14 @@ class LinearGaussianInversion(GaussianEstimator):
 
         As :meth:`~pygeoinf2.inference.estimators.GaussianEstimator.__call__`,
         but reaching the mean through :meth:`_residual_solve` so that the solve
-        is shared with :meth:`mahalanobis`. :attr:`expectation_operator` still computes it
-        the plain way, for a caller who wants the affine operator itself.
+        is shared with :meth:`mahalanobis`. :attr:`expectation_operator`
+        computes the same mean without the shared solve, for a caller who
+        wants the affine operator itself.
 
-        The result is a :class:`GaussianPosterior` (D-132): the same Gaussian
-        as always, now also carrying the prior as its reference, ``-Phi`` as
-        its density against it, and the evidence — lazily, it costs a
-        log-determinant — as its normalizer.
+        The result is a :class:`GaussianPosterior`: the posterior Gaussian,
+        also carrying the prior as its reference, ``-Phi`` as its density
+        against it, and, when the problem has an error measure, the evidence
+        as its normalizer -- computed lazily, since it costs log-determinants.
 
         Args:
             data: the observations.
@@ -567,8 +564,9 @@ class LinearGaussianInversion(GaussianEstimator):
     def mahalanobis(self, data: Any, /) -> float:
         """``<v, N_d^-1 v>``, the misfit half of the evidence.
 
-        The optimal, penalty-balanced data misfit: the unnormalized log
-        posterior at the posterior mean. Computed **matrix-free**, through the
+        The optimal penalized misfit: the minimum over models of the data
+        misfit plus the prior penalty, which is minus twice the unnormalized
+        log posterior at the posterior mean. Computed **matrix-free**, through the
         solver and preconditioner this estimator was given, so it costs one
         solve of the normal equations and never assembles anything.
 
@@ -626,12 +624,10 @@ class LinearGaussianInversion(GaussianEstimator):
         """``log |A Q A* + R|``, the volume half of the evidence.
 
         Densely when the space is small enough to afford it, and by stochastic
-        Lanczos quadrature otherwise — see
-        :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`. A
-        log-determinant is the one part of an evidence calculation that looks
-        like it needs the matrix, and it does not; without this the whole
-        calculation is confined to problems small enough to assemble, which is
-        not where model comparison is interesting.
+        Lanczos quadrature otherwise -- see
+        :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`. The
+        stochastic route needs only applications of the operator, so the
+        evidence is available on problems too large to assemble.
 
         In the model-space formalism it is reached by Sylvester's identity,
 

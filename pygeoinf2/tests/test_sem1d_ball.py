@@ -1,7 +1,7 @@
 """The spectral-element ball and annulus: the space, its operators, its priors.
 
 Needs ``planetmodel`` 1.3. The independent routes
-(DECISIONS.md D-107) are the grid against the point: values synthesized on the
+are the grid against the point: values synthesized on the
 grid through ``planetmodel.harmonics`` and the nodal eigenfunctions, against the same field
 evaluated through scipy's harmonics and the element polynomials; and
 ``planetmodel``'s banded solve against the eigenbasis.
@@ -430,8 +430,7 @@ class TestPointEvaluation:
         of the domain, and the error sits there; reflected, it has none. A fact
         of the natural condition and its longer padding, under which it was
         measured, as the two tests beside it are; under the Robin default the
-        two fills come out alike, and the fit is the one that does not care
-        (DECISIONS.md D-124)."""
+        two fills come out alike, and the fit is the one that does not care."""
         space = annulus(
             0.0, lmax=4, radial_modes=32, element_length=0.05, boundary=None
         )
@@ -448,7 +447,7 @@ class TestPointEvaluation:
         The centre is badly controlled under either fill -- a radial mode's
         value there grows with its index -- and what the reflection adds is
         one more error focused on it; for a purely radial function the two
-        fills are alike there (DECISIONS.md D-119)."""
+        fills are alike there."""
         space = ball(0.0, lmax=4, radial_modes=32, element_length=0.05, boundary=None)
         held, by_radius_held = self._truncation_error(space, self._wavy, "constant")
         mirrored, by_radius = self._truncation_error(space, self._wavy, "odd")
@@ -462,7 +461,7 @@ class TestPointEvaluation:
         """For a function regular at the centre, the centre included: what
         looked like the centre's trouble was the projection of a continued
         function over the whole padded ball, and a fit over the domain alone
-        has none of it (DECISIONS.md D-124)."""
+        has none of it."""
         space = build(0.0, lmax=4, radial_modes=16, element_length=0.05)
         fitted, by_radius = self._truncation_error(space, self._wavy, "fit")
         mirrored, _ = self._truncation_error(space, self._wavy, "odd")

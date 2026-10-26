@@ -1,16 +1,16 @@
 """The circle: a one-dimensional periodic domain.
 
-One of the geometries of DECISIONS.md D-83, given its own module so that
-the space a problem is posed on is named by its type. ``Circle`` is a
+Each geometry has its own module, so that the space a problem is posed on is
+named by its type. ``Circle`` is a
 :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox` of one axis and nothing
 else, and everything the box provides is available here unchanged.
 
 **Points are arc lengths, not angles.** A point is a physical coordinate in
 ``[0, L)`` with ``L`` the circumference, as on every box. The default is the
-unit circle, ``L == 2 pi``, where the coordinate *is* the angle and v1's
-numbers are these; on a circle of radius ``r`` a v1 angle is ``r`` times
-too small. ``geodesic_distance`` and the argument ``project_function`` hands
-its callback are in these units (DECISIONS.md D-84).
+unit circle, ``L == 2 pi``, where the coordinate *is* the angle; on a circle
+of radius ``r`` the angle is the coordinate divided by ``r``.
+``geodesic_distance`` and the argument ``project_function`` hands its
+callback are in these units.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class Circle(PeriodicBox):
             length: the circumference. ``2 pi``, the unit circle, if neither
                 this nor *radius* is given.
             radius: the radius, as an alternative to the circumference;
-                ``length == 2 pi radius``. v1's parameter.
+                ``length == 2 pi radius``.
             order: the Sobolev order. Zero gives the Lebesgue space.
             length_scale: the length at which the Sobolev weight turns over.
 
@@ -74,7 +74,8 @@ class Circle(PeriodicBox):
         """The same circle with some of its parameters changed.
 
         Overridden so that ``with_order`` and ``with_shape`` give back a circle
-        of the right D-3 subclass rather than a bare
+        as the :class:`Lebesgue` or :class:`Sobolev` subclass its order names,
+        rather than a bare
         :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox`.
 
         Args:
@@ -155,7 +156,7 @@ def _period(length: float | None, radius: float | None, /) -> float:
 
     Points on the circle are physical arc-length coordinates in ``[0, L)``,
     never angles; on the unit circle, the default, the two coincide, and on
-    any other radius a v1 angle is this coordinate divided by the radius.
+    any other radius the angle is this coordinate divided by the radius.
     """
     if length is not None and radius is not None:
         raise ValueError("Give the circumference or the radius, not both.")

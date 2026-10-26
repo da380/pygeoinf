@@ -20,31 +20,29 @@ neither padding nor a condition, so a ball is padded on the outside only.
 **The conventions are the package's.** A vector is the array of the field's
 values on the padded grid, shape ``(radii, latitudes, longitudes)``, the
 angular grid being the Gauss-Legendre one of the truncation degree; a product
-is left on the grid, untruncated (DECISIONS.md D-87); a point is ``(radius,
-latitude, longitude)`` with the angles in degrees (D-2); the harmonics are
-orthonormal on the unit sphere without the Condon-Shortley phase (D-86); and
-point evaluation is refused at or below order three halves (D-11).
+is left on the grid, untruncated; a point is ``(radius, latitude, longitude)``
+with the angles in degrees; the harmonics are orthonormal on the unit sphere
+without the Condon-Shortley phase; and point evaluation is refused at or below
+order three halves.
 
 **A field regular at the centre grows there in a way its degree fixes.** The
 part of degree ``l`` of a field analytic at the centre of a ball goes like
 ``r^l`` times a series in ``r^2``: ``u ~ r^l Y_lm``. The radial modes here do
 so by construction -- for a constant ``L`` they are the spherical Bessel
 functions ``j_l(k r)``, to the accuracy of the mesh -- so every draw of a
-prior is regular for nothing. A function *handed in* has to be regular
-itself, or the expansion converges slowly at the centre: a standard
+prior is regular there automatically. A function *handed in* has to be
+regular itself, or the expansion converges slowly at the centre: a standard
 deviation, a multiplier or a mean given as a profile in ``r`` is of degree
-zero and must be even in ``r``, and one linear in ``r`` is a cone. Measured,
-the standard deviation a prior realizes at the centre under such a profile is
-three per cent out at twelve radial modes and still 0.6 at forty-eight,
-against a hundredth of that for a profile in ``r^2``. Targets in tests are
-chosen accordingly. In an annulus there is no centre and nothing to it.
+zero and must be even in ``r``. One linear in ``r`` is a cone, and converges
+at the centre only at first order, where a profile in ``r^2`` converges
+quickly. In an annulus there is no centre and nothing to it.
 
 The numerics are ``planetmodel``'s: ``RadialOperatorFamily`` under the
 ``r^2`` measure, one ``SpectralBasis`` per degree held in a
 ``SphericalBasis`` (reachable as :attr:`Ball.basis`), and its harmonics. The
 transform between coefficients and the grid is this package's, all the radial
-shells at once, held to ``planetmodel``'s route through ``pyshtools`` to
-rounding and taken in its place up to degree 128 (DECISIONS.md D-123).
+shells at once; it agrees with ``planetmodel``'s shell-by-shell route to
+rounding and is used in its place up to degree 128.
 """
 
 from __future__ import annotations
@@ -81,11 +79,10 @@ from .base import (
 
 __all__ = ["Ball", "Lebesgue", "Sobolev"]
 
-#: The largest degree whose shells are transformed together. Measured against
-#: ``planetmodel``'s shell-by-shell route through ``pyshtools``, the batched
-#: transform is 150 times faster at degree 8, nine at 32 and 1.5 at 128, its
-#: Legendre step being dense; beyond that it has not been measured, and the
-#: other route is taken (DECISIONS.md D-123).
+#: The largest degree whose shells are transformed together; above it,
+#: ``planetmodel``'s shell-by-shell route is taken. The batched transform's
+#: Legendre step is dense, so its advantage shrinks as the degree grows, to
+#: about a factor of 1.5 at 128, the largest degree measured.
 _BATCHED_LMAX = 128
 
 #: Relative margin on an eigenvalue bound, so that roundoff cannot drop the
@@ -140,10 +137,10 @@ class Ball(SpectralElementSpace):
                 natural condition.
             boundary: the condition at the ends of the radial mesh.
                 ``"robin"``, the default, ends the mesh as if it went on,
-                ``u' = -+ (0.7 / L +- 1 / r) u``: measured, two length scales
-                of padding under it do what four do under the natural
-                condition, and in a ball the padding is most of the dimension
-                (DECISIONS.md D-122). One coefficient serves every degree.
+                ``u' = -+ (0.7 / L +- 1 / r) u``, and with it two length
+                scales of padding do what four do under the natural
+                condition, which matters in a ball, where the padding can be
+                most of the dimension. One coefficient serves every degree.
                 ``None`` is the natural condition, and doubles the default
                 padding. A number or a pair gives the coefficients themselves;
                 none is applied at the centre.
@@ -153,9 +150,10 @@ class Ball(SpectralElementSpace):
                 no longer than half the smallest length scale.
 
         Raises:
-            ValueError: if the radii are out of order, a length scale is not
-                positive, both truncations are given, or some degree has no
-                mode within the truncation.
+            ValueError: if ``lmax`` is negative, the radii do not satisfy
+                ``0 <= inner_radius < radius``, a length scale or the element
+                length is not positive, both truncations are given, or some
+                degree has no mode within the truncation.
         """
         lmax = int(lmax)
         if lmax < 0:
@@ -454,11 +452,10 @@ class Ball(SpectralElementSpace):
         defined. ``"fit"``, the default, asks nothing of the padding: it
         returns the field in the span of the kept modes that best matches the
         function on the domain, harmonic by harmonic in the domain's own
-        quadrature. For a function regular at the centre it is right
-        everywhere, the centre included -- 1e-9 over the domain and 2e-6
-        within a quarter of the radius at sixteen radial modes, where the
-        continuations below give 5e-3 and 3e-2 (DECISIONS.md D-124) -- and it
-        is what a mean, a reference model or a synthetic truth wants.
+        quadrature. For a function regular at the centre it is accurate
+        everywhere, the centre included, where the continuations below
+        converge slowly; it is what a mean, a reference model or a synthetic
+        truth wants.
 
         ``"constant"`` and ``"odd"`` return the function's own values on the
         domain's part of the grid and continue them along each radius across

@@ -40,8 +40,8 @@ print()
 
 # The log density and its gradient. The gradient is a VECTOR, because the
 # precision maps the space to itself -- no Riesz map appears anywhere.
-# On a space that discretises functions the density is refused outright
-# (D-131): its value is an artefact of the truncation. unsafe=True says
+# On a space that discretises functions the density is refused outright:
+# its value is an artefact of the truncation. unsafe=True says
 # "show me the discretisation's own number anyway".
 x = X.random(rng=rng)
 try:

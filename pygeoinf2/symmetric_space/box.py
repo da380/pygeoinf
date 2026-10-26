@@ -1,10 +1,9 @@
 """
 Bounded domains, by embedding in a padded periodic box.
 
-v1 builds the line from the circle and the plane from the torus in exactly this
-way, and for the same reason: a Fourier basis is periodic, so representing a
-function on a bounded domain means putting it inside a larger periodic one with
-enough padding that the wrap-around never reaches it.
+A Fourier basis is periodic, so representing a function on a bounded domain
+means putting it inside a larger periodic one, with enough padding that the
+wrap-around never reaches it.
 
 The space is therefore the *same* space as its enclosing box — same components,
 same metric, same operators — differing only in geometry: which physical point
@@ -13,10 +12,12 @@ the grid is the domain proper rather than padding. Making it a subclass rather
 than a wrapper says that plainly, and means every invariant operator and
 measure carries over untouched.
 
-The support assumption is real and worth stating: a field is taken to vanish
-outside the domain. Padding is what keeps that assumption from being violated
-by periodic wrap-around, and too little of it is the usual cause of a spurious
-correlation between the two ends of an interval.
+The padding is worth sizing with care. A field lives on the whole periodic
+box, so the two ends of the domain meet across the padding: a prior correlates
+them unless the padding is wide compared with its correlation length, and too
+little padding is the usual cause of a spurious correlation between the two
+ends of an interval. :meth:`Box.project_function` rolls a sampled function off
+to zero across the padding, and :meth:`Box.support_projection` zeroes it.
 """
 
 from __future__ import annotations
@@ -165,15 +166,12 @@ class Box(PeriodicBox):
 
         The enclosing box's grid does not start where the domain does -- the
         padding sits in between -- so a point has to be moved into the
-        enclosing coordinates before it becomes an angle. :meth:`basis_at`
-        already did this and the angle conversion did not, which meant the
-        non-uniform FFT route evaluated the field displaced by exactly the
-        padding while the direct route got it right. Both are the same map.
+        enclosing coordinates before it becomes an angle. This is the map
+        :meth:`basis_at` applies, so the non-uniform FFT route and the direct
+        route evaluate at the same place.
 
         The move is a Python loop over the points, which is why doing it once
-        per operator rather than once per application matters most here: it
-        was 230 of 254 ms -- 91% -- of an application at 10^5 points
-        (measured 2026-08-29).
+        per operator rather than once per application matters most here.
 
         Args:
             points: points of the domain, or an already prepared set.
@@ -220,9 +218,9 @@ class Box(PeriodicBox):
     ) -> "Box":
         """The same box, viewed with a different Sobolev order.
 
-        Overridden so the result is still a ``Box``: the base class would give
-        back the enclosing periodic domain, which has the same components but
-        not the same idea of where the boundary is.
+        The result is still a ``Box``, with this box's bounds and padding, not
+        the enclosing periodic domain, which has the same components but not
+        the same idea of where the boundary is.
 
         Args:
             order: the new Sobolev order.
@@ -250,7 +248,8 @@ class Box(PeriodicBox):
         the result is a ``Box`` and keeps this box's bounds and padding -- the
         base class's version would hand back the enclosing periodic domain,
         which has the same components but not the same idea of where the
-        boundary is -- and so that it is the D-3 subclass its order names.
+        boundary is -- and so that it is the :class:`Lebesgue` or
+        :class:`Sobolev` subclass its order names.
 
         Args:
             shape: the new grid. Unchanged if omitted.
@@ -326,12 +325,9 @@ class Box(PeriodicBox):
 
         **Why not simply zero.** A hard cutoff puts a step into a field the
         space then represents by a truncated Fourier series, and a step rings.
-        Measured on the constant one over ``[0, 1]`` with the default padding:
-        integrating along a path from 0.05 to 0.95 gives 0.851 against an exact
-        0.9, an error of 5%, which falls to 7e-6 for a path from 0.4 to 0.6
-        where the ringing has died away. v1 tapers for exactly this reason; v2
-        stopped, and its module docstring presented the step as a "support
-        assumption".
+        Near the boundary the error is then of order several per cent, even
+        for a constant function, and it dies away only well inside the
+        domain.
 
         Args:
             function: called with a point of the domain.
@@ -377,10 +373,8 @@ class Box(PeriodicBox):
         mask does not commute with the metric. There it is built on this
         space's Lebesgue counterpart and lifted with
         :func:`~pygeoinf2.symmetric_space.base.lift_formal_adjoint`, which gives
-        the right adjoint and claims nothing about symmetry -- the honest
-        outcome, and the same point as DECISIONS.md D-85. This used to raise and
-        tell the caller to do that by hand, which is the same operator with an
-        extra step.
+        the right adjoint and claims nothing about symmetry, since the lifted
+        operator is not self-adjoint in the Sobolev metric.
         """
         mask = self.interior_mask.astype(float)
         if self._order != 0.0:
@@ -405,7 +399,11 @@ def Interval(
     order: float = 0.0,
     length_scale: float = 1.0,
 ) -> Box:
-    """A one-dimensional bounded domain: v1's ``line`` space.
+    """A one-dimensional bounded domain, embedded in a padded circle.
+
+    A plain :class:`Box` of one axis. :class:`~pygeoinf2.symmetric_space.line.Line`
+    builds the same geometry as a class of its own, with ``Lebesgue`` and
+    ``Sobolev`` subclasses.
 
     Args:
         points: grid points spanning the padded interval.

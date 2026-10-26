@@ -4,15 +4,13 @@ Direct sums of Hilbert spaces, and block operators between them.
 A vector in a direct sum is a **tuple** of component vectors. The container is
 fixed-length and should never be restructured, and a tuple says so; the
 components themselves stay mutable, so ``axpy`` still updates in place. The
-space may carry labels, which gives named access without the vector wrapper
-that was rejected everywhere else — worth having chiefly for the ``(model,
-data)`` case, where indexing a joint vector by position is how sign errors get
-made.
+space may carry labels, which give named access without wrapping the vectors
+-- worth having chiefly for the ``(model, data)`` case, where indexing a joint
+vector by position is how sign errors get made.
 
 Block operators are **nonlinear by default**, with the linear case as a
-specialization. That is not speculative generality: v1 already builds the joint
-law of model and data as a pushforward of a product measure through a block
-operator,
+specialization. The joint law of model and data is the pushforward of a
+product measure through a block operator,
 
     mu    = model_measure (x) noise_measure        on X (+) Y
     op    = [[I, 0], [A, I]]
@@ -22,8 +20,6 @@ and the same shape with a nonlinear ``F`` in place of ``A`` gives the law of
 ``(m, F(m) + e)`` — a samplable measure, and a linearization
 ``[[I, 0], [F'(m), I]]`` that comes from the same object rather than from a
 separate construction.
-
-See DECISIONS.md D-23.
 """
 
 from __future__ import annotations
@@ -117,7 +113,7 @@ class DirectSum[V](HilbertSpace[tuple]):
 
     @property
     def is_function_space(self) -> bool:
-        """True when any summand discretises a function space (D-131).
+        """True when any summand discretises a function space.
 
         One such summand is enough: a density on the sum factors through the
         density on that summand, so it inherits the discretisation dependence.
@@ -235,9 +231,10 @@ class DirectSum[V](HilbertSpace[tuple]):
     def projection(self, key: int | str) -> LinearOperator:
         """The orthogonal projection onto one summand, as an operator.
 
-        Memoized per index, for the same reason ``adjoint`` is: the palindrome
-        rule compares factors by identity, so a rebuilt projection would make
-        ``P @ C @ P.adjoint`` unrecognizable as a congruence.
+        Memoized per index, for the same reason ``adjoint`` is: a composition
+        is recognized as adjoint-palindromic by comparing its factors by
+        identity, so a rebuilt projection would make ``P @ C @ P.adjoint``
+        unrecognizable as a congruence, and so not as positive semidefinite.
         """
         i = self.index(key)
         cache = self.__dict__.setdefault("_projection_cache", {})
@@ -460,19 +457,14 @@ def _known_block_diagonals(
 def _accumulate(space: HilbertSpace, images: "Iterable[Any]") -> Any:
     """Sum a row of block images in *space*, allocating as little as possible.
 
-    Two allocations that a block operator used to make for nothing. The sum
-    used to start from ``space.zero()``, which on a spectral space is a
-    synthesis of an array of zeros; it now starts from a *copy* of the first
-    image, which is a grid copy. The copy is not optional: a block may return
-    its argument unchanged -- ``_Identity`` does -- and ``axpy`` writes into
-    its target.
+    The sum starts from a *copy* of the first image rather than from
+    ``space.zero()``, which on a spectral space is a synthesis of an array of
+    zeros. The copy is not optional: a block may return its argument
+    unchanged -- ``_Identity`` does -- and ``axpy`` writes into its target.
 
-    And *images* is consumed lazily, so a caller that filters out its
+    *images* is consumed lazily, so a caller that filters out its
     structurally zero blocks never applies them: ``_Zero``'s value is a fresh
     zero vector, one more synthesis, added to no effect.
-
-    Measured on ``[[I, 0], [I, I]]`` over two spheres: three syntheses per
-    application before, none after.
 
     Args:
         space: the codomain the images live in.

@@ -1,14 +1,14 @@
 """
 MFEM finite element spaces.
 
-This is the case the whole design was built for. In a finite element space the
-inner product is not the dot product of the degree-of-freedom vector: it is
+In a finite element space the inner product is not the dot product of the
+degree-of-freedom vector: it is
 
     ``(u, v) == u^T M v``
 
-with ``M`` the mass matrix. So the mass matrix *is* the Gram matrix of
-DECISIONS.md D-17, and three things that FEM practitioners write out by hand fall
-out of the general machinery instead:
+with ``M`` the mass matrix. So the mass matrix *is* the space's Gram matrix,
+and three things that FEM practitioners write out by hand fall out of the
+general machinery instead:
 
 - **An assembled bilinear form is a Galerkin matrix.** ``a(u, v) == u^T K v``
   means ``K == M A_c``, which is precisely what
@@ -21,9 +21,9 @@ out of the general machinery instead:
 - **A mass solve is a metric solve.** ``solve_gram`` is that solve, and it is
   the only place the inverse metric appears.
 
-Vectors are ``mfem.Vector`` objects, not NumPy arrays. That is deliberate: it
-exercises the claim that a vector can be any backend object, since arithmetic
-goes through the space rather than through the vector.
+Vectors are ``mfem.Vector`` objects, not NumPy arrays: arithmetic goes through
+the space rather than through the vector, so the vectors are MFEM's own and can
+be handed to MFEM directly.
 
 Requires PyMFEM, which is an optional dependency; install it with the ``mfem``
 extra.
@@ -221,7 +221,7 @@ class MfemSpace(CoordinateSpace):
 
     @property
     def is_function_space(self) -> bool:
-        """True: a finite element space discretises functions (D-131)."""
+        """True: a finite element space discretises functions."""
         return True
 
     @property
@@ -265,10 +265,7 @@ class MfemSpace(CoordinateSpace):
         **Sparsity survives.** A finite element matrix is sparse because the
         basis functions have local support, and that is the only reason a large
         problem fits in memory at all: at 1e5 degrees of freedom a dense block
-        is 80 GB. This used to call ``.toarray()`` unconditionally, so
-        :func:`operator_from_bilinear_form` handed a dense array to
-        ``from_matrix`` and :func:`solver_from_bilinear_form`
-        densified it only to re-sparsify it immediately.
+        is 80 GB.
 
         Args:
             matrix: an ``mfem.SparseMatrix`` or a NumPy array over all dofs.
@@ -294,9 +291,8 @@ class MfemSpace(CoordinateSpace):
 
         A copy, for the reason :meth:`to_components` gives at length: an array
         handed over by MFEM is a view into memory MFEM owns and does not keep
-        its owner alive. Fancy indexing copies anyway, so only the
-        unconstrained path needed saying — which is exactly the path where the
-        bug is invisible until the owning form goes out of scope.
+        its owner alive, so without a copy the values go bad, silently, once
+        the owning form is collected.
         """
         array = np.array(values, dtype=float, copy=True)
         return array if not self.is_constrained else array[self._free]
@@ -471,29 +467,24 @@ def operator_from_bilinear_form(
 def _to_mfem(matrix: Any) -> Any:
     """A SciPy sparse matrix as an ``mfem.SparseMatrix``.
 
-    Built entry by entry, which is not elegant and is not the bottleneck: it
-    happens once per operator, against a solve that happens many times, and it
-    is linear in the number of *stored* entries — 16 ms for 33k of them. What
-    did matter was the dense intermediate this used to be handed; see
-    :meth:`MfemSpace.restrict`.
+    Built entry by entry, which is not the bottleneck: it happens once per
+    operator, against a solve that happens many times, and it is linear in the
+    number of *stored* entries.
 
     **The CSR constructor is bound, and must not be used here.**
     ``mfem.SparseMatrix([indptr, indices, data, rows, columns])`` exists in
-    this binding and builds a matrix whose ``Mult`` is correct — the earlier
-    claim that it "has nowhere to bind" was simply wrong, and would invite
-    someone to swap it in. The reason it is unusable is that MFEM then *owns*
-    the three NumPy buffers it was handed and frees them in its destructor,
-    while NumPy still owns them too: the process ends in ``double free or
-    corruption``, reproducibly, whether or not the Python arrays are still
-    alive. Anyone tempted by the faster constructor is being offered a
-    segfault, not a speed-up.
+    this binding and builds a matrix whose ``Mult`` is correct, but MFEM then
+    *owns* the three NumPy buffers it was handed and frees them in its
+    destructor, while NumPy still owns them too: the process ends in ``double
+    free or corruption``, reproducibly, whether or not the Python arrays are
+    still alive.
 
-    The alternative was ``BilinearForm.FormSystemMatrix``, MFEM's own way of
-    imposing essential conditions. It is not used here because it **takes
-    ownership of the form's matrix**: after calling it, reading ``SpMat()``
-    from the same form is a use-after-free, which does not raise — it
-    segfaults, and did. Building the constrained operator from the free block
-    instead leaves every MFEM object the caller passed in exactly as it was.
+    ``BilinearForm.FormSystemMatrix``, MFEM's own way of imposing essential
+    conditions, is not used either, because it **takes ownership of the form's
+    matrix**: after calling it, reading ``SpMat()`` from the same form is a
+    use-after-free, which does not raise but segfaults. Building the
+    constrained operator from the free block instead leaves every MFEM object
+    the caller passed in exactly as it was.
     """
     mfem = _require_mfem()
     coordinates = matrix.tocoo()
@@ -553,9 +544,9 @@ def solver_from_bilinear_form(
     inverse's is ``K^-1 M``. Applying it therefore means: take the function's
     components, multiply by the mass matrix to get a **load vector**, solve,
     and read the solution's components back. The mass multiply is what turns a
-    function into the right-hand side of a weak form, and omitting it is the
-    error of DECISIONS.md D-26 in its most convincing disguise — the answer
-    comes back smooth, plausible, and wrong by a mass matrix.
+    function into the right-hand side of a weak form; omitting it, so that
+    components are treated as a load vector, gives an answer that is smooth,
+    plausible, and wrong by a mass matrix.
 
     Essential boundary conditions come from *space*: its free block already is
     the constrained system, so nothing is eliminated and no object the caller
@@ -586,6 +577,8 @@ def solver_from_bilinear_form(
 
     Raises:
         ImportError: without MFEM installed.
+        RuntimeError: from an application of the returned operator, when
+            *strict* and MFEM's solver reports that it did not converge.
     """
     mfem = _require_mfem()
     system = _to_mfem(sp.csr_matrix(space.restrict(form.SpMat())))
@@ -630,8 +623,8 @@ def functional_from_linear_form(space: MfemSpace, form: Any, /) -> LinearFunctio
     ``from_derivative_components``, and ``.representer`` is ``M^-1 b`` — the
     mass solve that recovers the function representing the functional.
 
-    Handing the load vector to an optimizer as if it were a gradient is the
-    error of DECISIONS.md D-26, in the setting where it is most often made.
+    The load vector is not a gradient: handing it to an optimizer as one is
+    wrong by a mass matrix. The gradient is the representer.
     """
     return LinearFunctional.from_derivative_components(
         space, space.restrict_vector(form.GetDataArray())
@@ -802,7 +795,9 @@ def matern_measure(
             deviation is 1.0 away from the boundary.
         solver: a ``matrix -> solver`` factory, passed to
             :func:`solver_from_bilinear_form` as ``make_solver``.
-        rtol, max_iterations: for the default solver.
+        rtol: the relative residual for each of the solves that build the
+            covariance factor, when the default solver is used.
+        max_iterations: the cap on each of those solves, likewise.
 
     Note:
         **The field is not stationary near the boundary.** The SPDE is posed on
@@ -815,18 +810,17 @@ def matern_measure(
         MFEM handles a fractional exponent with an AAA rational approximation,
         which its Python bindings do not expose
         (``ComputePartialFractionApproximation`` is absent). Rather than
-        reimplement it here — badly, and duplicating what MFEM already
-        does well — this refuses a non-integer exponent and says so.
-        rtol: the relative residual for each of the solves that build the
-            covariance factor.
+        reimplement it, this refuses a non-integer exponent and says so.
 
     Returns:
         The measure, with a covariance factor built from the solves.
 
     Raises:
         ImportError: without MFEM installed.
-        ValueError: for a non-integer or non-positive exponent, or a
-            non-positive correlation length.
+        ValueError: for a non-integer or non-positive exponent, a
+            non-positive smoothness or correlation length, the wrong number
+            of correlation lengths, or a rotation on a mesh that is not
+            two-dimensional.
     """
     mfem = _require_mfem()
     from ..probability.gaussian import GaussianMeasure
@@ -912,8 +906,9 @@ def _anisotropy(
     """``R^T diag(l^2) R / (2 nu)``, MFEM's Theta.
 
     The correlation lengths enter squared and divided by twice the smoothness,
-    which is what makes ``correlation_length`` the distance at which the
-    correlation has fallen to about 0.14 rather than an arbitrary scale.
+    which makes the correlation fall to about 0.14 at twice
+    ``correlation_length``, whatever the smoothness; at ``correlation_length``
+    itself it is about 0.37, rising towards 0.61 as the smoothness grows.
     """
     scaled = lengths**2 / (2.0 * smoothness)
     if dimension == 2 and rotation != 0.0:

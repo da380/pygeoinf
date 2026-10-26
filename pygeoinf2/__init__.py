@@ -1,15 +1,22 @@
 """
-pygeoinf 2.0 — development tree.
+pygeoinf 2.0: inference on Hilbert spaces.
 
-This is the shadow package; its design is recorded in ``DECISIONS.md``
-and ``CURRENT_STATE.md``. It is not shipped; the
-released library remains ``pygeoinf``. Imports are relative throughout so that
-the eventual promotion is a directory rename.
+Vectors are whatever objects a backend provides, and every algorithm works
+through the space's inner product, so the same estimator runs on a Euclidean
+space, a spherical-harmonic field or a finite element space. The subpackages:
 
-Both may be imported side by side for comparison testing:
+* ``algebra`` -- Hilbert spaces, direct sums, linear and nonlinear operators;
+* ``numerics`` -- linear solvers, preconditioners, randomized methods, the
+  operator calculus, optimization and convex solvers;
+* ``geometry`` -- convex sets, subsets and subspaces;
+* ``probability`` -- measures, Gaussian and otherwise;
+* ``inference`` -- forward problems and the estimators built on them;
+* ``symmetric_space`` and ``sem1d`` -- concrete function spaces;
+* ``plotting`` -- figures for fields, measures and sets.
 
-    import pygeoinf as gi
-    import pygeoinf2 as gi2
+The names a typical workflow needs are also exported here, flat.
+``compat``, ``backends``, ``datasets`` and ``testing`` are imported
+separately.
 """
 
 from .algebra.diagonal import DiagonalLinearOperator
@@ -77,10 +84,8 @@ from .probability.gaussian import GaussianMeasure
 from .probability.mixture import GaussianMixture
 from .traits import Traits
 
-# The subpackages, so that ``gi.inference.X`` works. inference and plotting
-# were the two a user needs in order to *solve* anything, and the two that were
-# not reachable at all; numerics arrived only by accident, pulled in
-# transitively by symmetric_space. See DECISIONS.md D-111.
+# The subpackages, so that ``gi.inference.X`` works without a separate import.
+# compat, backends, datasets and testing are deliberately not pulled in.
 from . import geometry, inference, numerics, plotting, probability, symmetric_space
 from .inference import (
     BackusGilbert,
@@ -136,7 +141,7 @@ __all__ = [
     "plotting",
     "probability",
     "symmetric_space",
-    # inference: the workflow, flat, as v1 had it
+    # inference: the workflow, flat
     "BackusGilbert",
     "BackusGilbertParker",
     "FeasiblePropertySet",

@@ -1076,7 +1076,7 @@ class TestTheChecksReportWhatTheyMeasured:
     loss was a regression) and return a ``CheckReport``. The use is a backend
     whose adjoint is consistent only to discretisation level: pass the
     ``rtol`` it can meet, read the defect back, record it falling under
-    refinement (D-128)."""
+    refinement."""
 
     @staticmethod
     def imperfect(space, defect):

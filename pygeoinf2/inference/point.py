@@ -1,12 +1,17 @@
 """
 Point estimators: a data vector in, one model out.
 
-Three methods, and a fourth that is one of them with its damping chosen by the
-data rather than by the caller.
+Least squares and minimum norm at a damping chosen by the caller
+(:class:`LeastSquares`, :class:`MinimumNorm`); the discrepancy principle, which
+is minimum norm with its damping found from the data
+(:class:`DiscrepancyPrinciple`); and their counterparts confined to an
+affine subspace, :class:`ConstrainedLeastSquares` for least squares and
+:class:`ConstrainedMinimumNorm` for the discrepancy principle.
 
-Each is built on :class:`~pygeoinf2.inference.tikhonov.TikhonovNormalOperator`,
-so each exposes the operator it inverts and can be preconditioned, given a
-surrogate, reduced, or swept over its damping — see DECISIONS.md D-76.
+The fixed-damping estimators are built on
+:class:`~pygeoinf2.inference.tikhonov.TikhonovNormalOperator`, so they expose
+the operator they invert, and :class:`LeastSquares` can be preconditioned,
+given a surrogate, parameterized, data-reduced, or swept over its damping.
 
 The distinction that runs through the module is between a damping *chosen* and
 a damping *found*. With the damping fixed, the estimate is affine in the data
@@ -99,9 +104,9 @@ class LeastSquares(LinearPointEstimator):
                 :func:`~pygeoinf2.numerics.solvers.resolve_solver`.
             formalism: which space to solve in; see :func:`choose_formalism`.
         """
-        # Built before the solver, because it never needed one: a solver only
-        # inverts it. So a caller may pass a factory and precondition with
-        # something derived from the operator about to be inverted.
+        # The normal operator is built before the solver, which only inverts
+        # it, so a caller may pass a factory that builds a preconditioner from
+        # the operator about to be inverted.
         normal = TikhonovNormalOperator(
             problem.forward_operator,
             damping,
@@ -194,7 +199,7 @@ class LeastSquares(LinearPointEstimator):
     def with_formalism(self, formalism: Formalism, /) -> "LeastSquares":
         """The same estimator, assembled in the other space.
 
-        The two give the same answer; the test suite checks that they do.
+        The two formalisms give the same answer, to the solver's tolerance.
         """
         return type(self)(
             self._problem,
@@ -303,8 +308,7 @@ class LeastSquares(LinearPointEstimator):
     ) -> Any:
         """A solver callback that reports the normal-equation residual.
 
-        v1's ``normal_residual_callback``. Wired to *these* normal equations
-        and *this* right-hand side, so the number printed is the one the solve
+        Wired to *these* normal equations and *this* right-hand side, so the number printed is the one the solve
         is actually driving down rather than whatever the solver happens to
         track internally.
 
@@ -358,24 +362,19 @@ class MinimumNorm(LeastSquares):
 
         Damps as hard as the data allow: the largest damping whose misfit still
         reaches the chi-squared threshold at *level*. The misfit increases with
-        the damping, which is what makes the bisection a proof.
+        the damping, which is what makes the bisection reliable.
 
-        Two saturated cases matter, and getting either wrong is worse than
-        failing:
+        Two saturated cases are handled explicitly, both read off
+        :func:`~pygeoinf2.numerics.root_find.monotone_root` reporting which
+        end of the range it ran out at:
 
-        * the misfit never reaches the threshold, so every damping fits and the
-          answer is the **largest** — the data support no structure and the
-          model should say so;
-        * the misfit already exceeds it at any damping, so nothing fits and the
-          answer is the **smallest**.
-
-        Both fall out of :func:`~pygeoinf2.numerics.root_find.monotone_root`
-        reporting which end it ran out at.
-
-        The third case is not saturation but failure: if the misfit never
-        reaches the threshold *from below*, no model fits and there is no
-        answer to give. That is refused rather than answered, on the same terms
-        as :class:`DiscrepancyPrinciple` — the two share one search.
+        * the misfit stays below the threshold however large the damping, so
+          every damping fits and the answer is the **largest** reached -- the
+          data support no structure and the model should say so;
+        * the misfit stays above the threshold however small the damping, so
+          no model fits and there is no answer to give. That is refused, on
+          the same terms as :class:`DiscrepancyPrinciple`, the two sharing one
+          search.
 
         Args:
             data: the data vector.
@@ -465,9 +464,8 @@ def misfit_search(
 
     The one search under the discrepancy principle and the feasibility tests
     of the Backus-Gilbert routes: each probe solves ``N(t) w == v`` in the
-    family, warm-started from the previous probe's ``w`` -- which is what
-    makes a sixty-step search cost roughly one solve rather than sixty --
-    and measures the misfit of the model that ``w`` gives. Any misfit that
+    family, warm-started from the previous probe's ``w`` to save inner
+    iterations, and measures the misfit of the model that ``w`` gives. Any misfit that
     rises with the damping will do: the chi-squared against its critical
     value, or the plain data-norm misfit against a noise radius.
 
@@ -546,10 +544,7 @@ def _searched_damping(
     """The discrepancy search, refusing data that no model fits.
 
     Shared by :class:`DiscrepancyPrinciple` and :meth:`MinimumNorm.for_data`
-    so the two cannot disagree about the saturated cases. They did: where the
-    principle raised, ``for_data`` returned a damping of 1e-200 whose model had
-    a chi-squared of 5e7 against a target of 9.5 — the solution of a
-    numerically singular system, reported as an answer.
+    so the two cannot disagree about the saturated cases.
 
     Raises:
         ValueError: when the misfit does not reach its target at any damping.
@@ -567,9 +562,9 @@ def _searched_damping(
     if found.exhausted == "low":
         # No damping small enough brings the misfit to its target, so the
         # principle has no solution: these data cannot be fitted to this level
-        # by any model this problem admits. v1 raises here too. The least-damped
-        # model is *not* a fallback — it solves a numerically singular system,
-        # and its size says nothing about the data.
+        # by any model this problem admits. The least-damped model is *not* a
+        # fallback -- it solves a numerically singular system, and its size
+        # says nothing about the data.
         target = problem.critical_chi_squared(level=level)
         raise ValueError(
             f"The data cannot be fitted to the chi-squared threshold at "
@@ -632,8 +627,8 @@ class DiscrepancyPrinciple(Operator):
             atol: the absolute half of that tolerance, for a damping near
                 zero, where a relative test never closes.
             minimum_damping: a floor on the damping. Data that no model fits
-                are refused after the search reaches it, rather than after
-                two hundred decades of probes on a numerically singular
+                are refused once the search reaches it, rather than after
+                probing ever smaller dampings on a numerically singular
                 system. Zero is no floor.
         """
         if not problem.has_error:
@@ -716,10 +711,10 @@ class DiscrepancyPrinciple(Operator):
     def _linearize(self, data: Any) -> Any:
         """The model and its derivative from a *single* damping search.
 
-        ``at(data)`` otherwise called :meth:`_value` and :meth:`_derivative`
-        in turn, and each of those runs :meth:`_resolve` -- so the root find
-        over the damping, which is the whole cost of this operator, ran twice
-        for one linearization. Nothing else about the two paths differs.
+        Without this, ``at(data)`` would call :meth:`_value` and
+        :meth:`_derivative` in turn, each running :meth:`_resolve`, so the
+        root find over the damping -- the whole cost of this operator -- would
+        run twice for one linearization.
         """
         from ..algebra.operators import Linearization
 
@@ -911,15 +906,12 @@ class ConstrainedLeastSquares(LinearPointEstimator):
 
         The constraint is pulled back with the problem: ``B u == w`` in the
         model space becomes ``(B M) p == w`` in the parameter space, where
-        ``M`` is the parameterization. That is v1's construction, and it works
-        because a constraint written as an equation says what it means about
-        any model, including one built from parameters.
-
-        This used to refuse outright, on the grounds that the parameterization
-        alone does not determine the constraint. It does when the subspace
-        remembers the equation it was built from -- which is what
+        ``M`` is the parameterization. This works because a constraint written
+        as an equation says what it means about any model, including one built
+        from parameters. It therefore needs the subspace to remember the
+        equation it was built from, which
         :attr:`~pygeoinf2.geometry.subspaces.AffineSubspace.has_explicit_equation`
-        reports -- and only then, which is what the refusal below is for.
+        reports.
 
         Args:
             parameterization: ``M``, from the parameter space into the model
@@ -973,9 +965,8 @@ def _parameterized_subspace(
     """A constraint pulled back through a parameterization.
 
     ``B u == w`` in the model space becomes ``(B M) p == w`` in the parameter
-    space. That is v1's construction, and it works because a constraint written
-    as an equation says what it means about any model, including one assembled
-    from parameters.
+    space. This works because a constraint written as an equation says what it
+    means about any model, including one assembled from parameters.
 
     Args:
         subspace: the constraint, which must remember its equation.
@@ -1155,9 +1146,6 @@ class ConstrainedMinimumNorm(Operator):
         Raises:
             ValueError: if the subspace carries no explicit equation. One
                 defined geometrically has no ``w`` to vary.
-
-        Needs the subspace to carry an explicit equation; one defined
-        geometrically has no ``w`` to vary.
         """
         subspace = self._subspace
         if not subspace.has_explicit_equation:

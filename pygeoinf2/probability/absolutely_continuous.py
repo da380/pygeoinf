@@ -1,10 +1,11 @@
 """
 Measures that know their density relative to a reference measure.
 
-The dimension-robust notion of a density (D-132). A density with respect to a
+The dimension-robust notion of a density. A density with respect to a
 discretised space's own volume measure is an artefact of the truncation,
-which is why D-131 gates it; a density with respect to a *reference measure*
--- a prior, most of all -- survives refinement, and it is the object every
+which is why ``log_density`` and its relatives refuse on a space that
+discretises functions; a density with respect to a *reference measure* -- a
+prior, most of all -- survives refinement, and it is the object every
 function-space sampler is built on. An inference result that carries its
 reference is one a sampler can take whole: the measure to draw from, and the
 log density that weights the draws, arrive together and cannot be mispaired.
@@ -39,13 +40,14 @@ __all__ = ["AbsolutelyContinuousMeasure"]
 
 
 class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
-    """A measure carrying its log density relative to a reference (D-132).
+    """A measure carrying its log density relative to a reference.
 
     On its own it is a *target*: it states where its probability sits
     relative to the reference, and that is what an MCMC kernel or an
     importance weight consumes, but it cannot be sampled -- sampling it is
     the sampler's job. Subclasses that can also be sampled say so by being
-    something else as well: the linear-Gaussian posterior is a
+    something else as well: the linear-Gaussian posterior,
+    :class:`~pygeoinf2.inference.gaussian.GaussianPosterior`, is a
     ``GaussianMeasure`` first and one of these second, so it draws exactly
     *and* states its density against the prior.
 
@@ -76,9 +78,9 @@ class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
         if isinstance(reference, HilbertSpace):
             # Mid-MRO: a sibling's ``super().__init__(domain)`` landing here
             # on its way to ProbabilityMeasure, as GaussianMeasure's does in
-            # the posterior diamond. Pass the domain along; the subclass sets
-            # the density triple afterwards through ``_init_density``. The
-            # same accommodation Functional's positional codomain makes.
+            # GaussianPosterior, which inherits from both. Pass the domain
+            # along; the subclass sets the density triple afterwards through
+            # ``_init_density``.
             if relative_log_density is not None:
                 raise TypeError("A domain takes no density; pass a reference.")
             super().__init__(reference)
@@ -104,8 +106,8 @@ class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
 
         A subclass whose primary ``__init__`` is another class's -- the
         linear-Gaussian posterior's is ``GaussianMeasure``'s -- calls this
-        afterwards rather than fighting a cooperative ``super()`` chain
-        through the diamond.
+        afterwards rather than threading the density through a cooperative
+        ``super()`` chain.
         """
         if relative_log_density.domain != reference.domain:
             raise ValueError(
@@ -126,11 +128,10 @@ class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
     def relative_log_density(self) -> Functional[X]:
         """``f`` with ``d mu / d nu == exp(f - log_normalizer)``.
 
-        The name is not the brief's bare ``log_density``, deliberately:
-        ``log_density(x)`` on a measure already means the density against the
-        space's own volume (D-131 gates it), and one name for the two would
-        make the subclass that has both ambiguous. ``relative_`` says which
-        one this is.
+        Not to be confused with :meth:`log_density`, which on a measure means
+        the density against the space's own volume measure and is refused on
+        a function-space discretisation. A subclass may have both, and
+        ``relative_`` says which one this is.
         """
         return self._relative_log_density
 

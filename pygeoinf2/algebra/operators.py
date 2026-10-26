@@ -4,15 +4,13 @@ Operators between Hilbert spaces.
 ``Operator`` is the general, possibly nonlinear mapping; ``LinearOperator``
 specializes it and gains an adjoint, structural traits and matrix
 representations. Scalar-valued operators are ``Functional`` and
-``LinearFunctional``, which subsume what v1 calls forms.
+``LinearFunctional``, which are operators into :class:`Reals` and inherit the
+whole of the operator algebra.
 
-Two things are deliberate here. Operators are defined by **subclassing**, with
-``from_callables`` for the quick path, rather than only by injecting callables.
-And the algebra consults a **specialization protocol** before falling back to a
-generic expression node, so that a family closed under the algebra stays in its
-class.
-
-See DECISIONS.md D-25 to D-35.
+Operators are defined by **subclassing**, with ``from_callables`` for the
+quick path. The algebra consults a **specialization protocol** before falling
+back to a generic expression node, so that a family closed under the algebra
+-- diagonal operators, affine maps -- stays in its class.
 """
 
 from __future__ import annotations
@@ -45,14 +43,15 @@ REALS = Reals()
 class EvaluationError(RuntimeError):
     """An operator could not be evaluated at a point.
 
-    The protocol for a forward solver that fails to converge at a trial model
-    (D-129). Raise it from an operator's value or linearization and the
+    The protocol for a forward solver that fails to converge at a trial
+    model. Raise it from an operator's value or linearization and the
     library treats the *point* as bad rather than the run as broken: a line
     search backtracks as if the step went too far, a trust region shrinks its
     radius, and an optimizer that meets it where it cannot retreat returns
-    its result with ``failure`` set instead of crashing away hours of state.
-    Any other exception still propagates, because a bug should not be walked
-    around by a backtracking loop.
+    its result with ``failure`` set, and the last good point as its
+    minimizer, instead of raising. A failure at the starting point
+    propagates. Any other exception also propagates, because a bug should
+    not be walked around by a backtracking loop.
     """
 
 
@@ -563,14 +562,10 @@ class LinearOperator[X, Y](Operator[X, Y]):
     def with_traits(self, traits: Traits) -> Self:
         """The same operator, carrying additional claimed traits.
 
-        A shallow copy of *this class*, not a wrapper. That matters more than
-        it looks: the specialization protocol of the algebra dispatches on
-        type, so an operator that forgets what it is on the way through
-        ``with_traits`` loses every fast path it had. A wrapper cost a
-        ``DiagonalLinearOperator`` its exact log-determinant — sending a
-        diagonal covariance through a hundred Hutchinson probes to estimate a
-        number it could have summed — and cost a ``NormalOperator`` its
-        factors, so that every structure-aware preconditioner refused it.
+        A shallow copy of *this class*, not a wrapper. The specialization
+        protocol of the algebra dispatches on type, so a wrapper would lose
+        every fast path of a structured operator -- a diagonal operator's
+        exact log-determinant, a normal operator's factors.
 
         The copy shares the original's data, which is safe because operators
         are immutable, but drops the memoized adjoint: the original may have
@@ -632,9 +627,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """Record that *other* is this operator's adjoint, without building it.
 
         The memo is what makes the structural recognition in ``nodes.py`` work
-        — it compares factors by identity — so an operator that can produce its
-        adjoint cheaply says so here rather than writing into ``__dict__`` by
-        name, which seven call sites in three modules were doing.
+        -- it compares factors by identity -- so an operator that can produce
+        its adjoint cheaply records it here.
         """
         self.__dict__["_adjoint_cache"] = other
 
@@ -642,14 +636,11 @@ class LinearOperator[X, Y](Operator[X, Y]):
     def adjoints_are_linked(first: LinearOperator, second: LinearOperator, /) -> bool:
         """Whether two operators are *already known* to be adjoint to each other.
 
-        Reads the memo; never fills it. That distinction is the whole point.
-        Asking ``first.adjoint is second`` *constructs* the adjoint when it has
-        not been built, and for the inverse of a direct solver that means
-        extracting a second matrix and factorizing it — so testing whether a
-        composition happened to be a palindrome cost an ``O(n^3)`` detour, at
-        composition time, on an expression that may never be applied. Measured:
-        ``solver(A) @ B`` cost 60 applications of ``A`` at dimension 60, while
-        ``B @ solver(A)`` cost none.
+        Reads the memo; never fills it. Asking ``first.adjoint is second``
+        *constructs* the adjoint when it has not been built, and for the
+        inverse of a direct solver that means extracting a second matrix and
+        factorizing it -- an ``O(n^3)`` cost paid at composition time, on an
+        expression that may never be applied.
 
         Nothing is lost by reading only. Two operators that are adjoint but
         unlinked would fail the identity test anyway; the links that matter are
@@ -680,9 +671,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
     def with_probed_adjoint(self) -> LinearOperator[X, Y]:
         """The same operator, its adjoint derived from its assembled matrix.
 
-        For an operator whose action is known and whose adjoint is not. v1
-        derived one silently, by probing every basis vector of the domain on
-        *every* adjoint application; v2 refuses, and this is the opt-in. The
+        For an operator whose action is known and whose adjoint is not. Such
+        an operator refuses an adjoint, and this is the opt-in. The
         first adjoint application assembles the component matrix, which
         costs ``dim(domain)`` applications of the operator; each later one is
         a matrix-vector product, and the matrix is handed to :meth:`matrix`
@@ -749,8 +739,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         ``"auto"`` picks the Galerkin form when self-adjointness is claimed, so
         that a matrix handed to a symmetric solver is symmetric. This works for
         *extraction* only: on construction the caller must say which
-        representation their array is in, since no trait implies it. See
-        DECISIONS.md D-25.
+        representation their array is in, since no trait implies it.
 
         ``by`` chooses which way the matrix is filled in. Columns costs
         ``dim(X)`` applications of the operator; rows costs ``dim(Y)``
@@ -809,7 +798,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         # Row i of the Galerkin matrix holds the derivative components of
         # x -> (A x, e_i)_Y == (x, A* e_i)_X, which is G_X applied to the
-        # components of the adjoint's image. See DECISIONS.md D-26.
+        # components of the adjoint's image, not those components themselves.
         adjoint = self.adjoint
 
         def row(index: int) -> np.ndarray:
@@ -839,10 +828,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
         its ``rmatvec`` applies the adjoint, each with the metric factors the
         requested *form* needs, which is exactly the place a hand-written
         adapter goes wrong on a weighted space. ``matmat`` and ``rmatmat``
-        loop over columns, in parallel when asked.
-
-        v1 returned this from ``matrix(dense=False)``; here ``matrix`` means
-        a dense array and this is the other thing.
+        loop over columns, in parallel when asked. :meth:`matrix`, by
+        contrast, always returns a dense array.
 
         Args:
             form: which matrix the scipy operator represents: ``"components"``
@@ -1162,26 +1149,23 @@ class LinearOperator[X, Y](Operator[X, Y]):
         the one in which a forward application is a bare matrix product:
         ``c_{Ax} == A_c c_x``. The Galerkin form is ``G_Y A_c``, so applying it
         forwards means undoing the metric again, one ``solve_gram`` per
-        application — free on an orthonormal metric, a broadcast on a diagonal
-        one, and a triangular solve on any other. Measured, conjugate
-        gradients on a 2000-dimensional operator over a dense Gram matrix:
-        320 ms stored as Galerkin against 95 ms stored as components.
+        application -- free on an orthonormal metric, a broadcast on a diagonal
+        one, and a triangular solve on any other.
 
         Extraction is cheaper this way too. Probing a matrix by columns
-        *gives* the components form — each column is ``to_components(A e_j)``
-        — and the Galerkin form was then a further metric application down
+        *gives* the components form -- each column is ``to_components(A e_j)``
+        -- and the Galerkin form would need a further metric application down
         every column.
 
         What the Galerkin form is good for is a symmetric factorization, since
         that is the representation in which a self-adjoint operator is
         symmetric. Nothing is lost there: a direct solver asks for the form it
         wants through :meth:`_known_matrix`, and the stored matrix is
-        converted once, at factorization time, against the ``dim``
-        factorization itself.
+        converted once, at factorization time, for less than the
+        factorization itself costs.
 
-        This is why no observation operator needs a ``matrix_free`` flag. Build
-        it matrix-free, and assemble it here if it is small enough to be worth
-        assembling.
+        So an operator is built matrix-free, and assembled here when it is
+        small enough to be worth assembling.
 
         Args:
             n_jobs: workers for the extraction, one column per worker. Serial
@@ -1439,19 +1423,20 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> LinearOperator[X, Y]:
         """The rank-one outer product ``x -> (v, x) u``.
 
-        Not a tensor product of *spaces* — see DECISIONS.md D-23 — but the operator
-        construction that shares the name, and the building block of every
-        low-rank representation.
+        Not a tensor product of *spaces*, which the library does not provide,
+        but the operator construction that shares the name, and the building
+        block of every low-rank representation. When ``u`` and ``v`` are the
+        same vector on the same space, the result claims positive
+        semidefiniteness.
 
         Args:
-            left: the vector on the left of the product.
-            right: the vector on the right.
-            domain: the space *right* belongs to. Taken from the vectors when
-                they carry one.
-            codomain: the space *left* belongs to.
+            u: the vector on the left of the product, in *codomain*.
+            v: the vector on the right, in *domain*.
+            domain: the space *v* belongs to.
+            codomain: the space *u* belongs to.
 
         Returns:
-            The rank-one operator ``x -> (right, x) left``.
+            The rank-one operator ``x -> (v, x) u``.
         """
 
         def value(x: X) -> Y:
@@ -1687,7 +1672,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """Matrix-free, from the action and the *derivative* of its pullback.
 
         The counterpart of :meth:`from_matrix` in Galerkin form, for an operator
-        large to assemble. ``derivative_components(y)`` returns
+        too large to assemble. ``derivative_components(y)`` returns
 
         .. code-block:: text
 
@@ -1703,9 +1688,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
         metric is not the identity.
 
         Passing an adjoint to :meth:`from_callables` instead means passing a
-        *gradient*-valued map, and getting that wrong is the error of
-        DECISIONS.md D-26 in the setting where it is hardest to see. Prefer
-        this.
+        *gradient*-valued map, and handing it derivative components there is
+        an error by a factor of the metric that is easy to make and hard to
+        see. Prefer this.
 
         Args:
             domain: the operator's domain.
@@ -1719,9 +1704,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
             The operator, with an adjoint derived from the components.
 
         Raises:
-            TypeError: if the domain provides no component map. Only the
-                domain needs one -- which is the right way round, the model
-                space being the one worth keeping matrix-free.
+            TypeError: if the domain provides no component map.
         """
         require_coordinates(domain)
 
@@ -1934,16 +1917,12 @@ class _ProbedAdjointOperator[X, Y](LinearOperator[X, Y]):
 class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
     """A linear operator that remembers the matrix it was built from.
 
-    The matrix constructors used to hand back a closure with the array captured
-    inside it, so an operator built *from* a matrix could not produce one:
-    :meth:`matrix` re-derived it by ``dim`` applications, :meth:`diagonals`
-    likewise, :meth:`assembled` extracted an already-assembled operator, and
-    every direct solver paid a full extraction before factorizing something it
-    had been given outright. At dimension 1200 that is 50-70 ms per call and
-    grows as ``n^3``; here each is a read.
+    Because the array is kept, :meth:`matrix`, :meth:`diagonals` and
+    :meth:`assembled` are reads rather than ``dim`` applications, and a
+    direct solver factorizes the array it was given.
 
-    The stored *form* is part of the object, because no trait implies it (see
-    DECISIONS.md D-25): ``"components"`` means ``A_c`` with
+    The stored *form* is part of the object, because no trait implies it:
+    ``"components"`` means ``A_c`` with
     ``c_{Ax} == A_c c_x``, and ``"galerkin"`` means ``G_Y A_c``, the matrix of
     the bilinear form. The two differ on any space whose basis is not
     orthonormal, and the difference is a metric factor that has to enter
@@ -2107,10 +2086,11 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
 
 
 class Functional[X](Operator[X, float]):
-    """A scalar-valued operator: what v1 calls a non-linear form.
+    """A scalar-valued operator, possibly nonlinear.
 
-    Subsumed rather than removed — a functional is an operator into
-    :class:`Reals`, so it inherits the whole algebra instead of duplicating it.
+    A functional is an operator into :class:`Reals`, so it inherits the whole
+    operator algebra. It adds the gradient and Hessian, and the convex
+    interface: subgradient, proximal operator and conjugate.
     """
 
     def __init__(  # noqa: positional - cooperative __init__, see below
@@ -2258,9 +2238,9 @@ class Functional[X](Operator[X, float]):
 
         ``derivative`` is the documented route, because a numerical adjoint
         method produces a derivative. ``gradient`` is accepted for callers who
-        genuinely hold one, but supplying a derivative array there is the
-        classic error of DECISIONS.md D-26; ``testing.check_gradient``
-        catches it.
+        genuinely hold one, but supplying derivative components there, as if
+        they were the gradient, is the classic adjoint-method error, wrong by
+        a factor of the metric; ``testing.check_gradient`` catches it.
 
         Supply ``linearize`` when a single call yields the value and the
         derivative together -- an objective built on a PDE solve usually does
@@ -2396,15 +2376,17 @@ class _CallableFunctional[X](Functional[X]):
 
 
 class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
-    """A continuous linear functional: what v1 calls a ``LinearForm``.
+    """A continuous linear functional.
 
     The two ways of reading it are the derivative and the gradient, and the
     adjoint is what separates them:
 
-    - ``self.matrix()`` is the derivative, the row vector ``g``.
-    - ``self.representer`` is the gradient, with components ``G^-1 g``.
+    - ``self.matrix()`` is the derivative, the row vector ``g`` with
+      ``f(x) == g . c_x``.
+    - ``self.representer`` is the gradient, ``self.adjoint(1.0)``, with
+      components ``G^-1 g``.
 
-    See DECISIONS.md D-26.
+    The metric enters at the adjoint and nowhere else.
     """
 
     def __init__(  # noqa: positional - cooperative __init__, see below
@@ -2453,8 +2435,8 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
 
         The other half of :meth:`from_derivative_components`, and the form a
         functional has to be in before it can become a row of a Galerkin
-        matrix. ``G c_representer``, so the metric is applied here and not
-        anywhere the caller has to remember.
+        matrix. Computed as ``G c_v`` from the representer ``v``, so the
+        metric is applied here and not anywhere the caller has to remember.
         """
         require_coordinates(self.domain)
         return self.domain.apply_gram(self.domain.to_components(self.representer))
@@ -2472,14 +2454,9 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
     ) -> LinearFunctional[X]:
         """A linear functional from its action, and one of its two readings.
 
-        There was no way to build one of these from a mapping at all: this name
-        resolved by MRO to :meth:`LinearOperator.from_callables`, which wants a
-        codomain and an adjoint and hands back a plain operator — so v1's
-        ``LinearForm(domain, mapping=...)`` had no counterpart.
-
         Exactly one of *representer* and *derivative_components* is needed, and
         which one you have says which convention you are in. They differ by the
-        metric, and confusing them is the error of DECISIONS.md D-26:
+        metric, and confusing them is an error by a factor of it:
 
         * the **representer** is the gradient, the vector ``v`` with
           ``f(x) == (v, x)``;
@@ -2529,13 +2506,13 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
     ) -> LinearFunctional[X]:
         """The functional ``x -> g . c_x``, from what an adjoint solve returns.
 
-        This is the derivative convention. The representer is obtained by
-        applying the inverse metric, which happens inside ``adjoint`` — so the
-        correction is structural rather than something a caller must remember.
+        This is the derivative convention. The representer is obtained here
+        by applying the inverse metric once, so the correction is structural
+        rather than something a caller must remember.
 
         Args:
             domain: the functional's domain.
-            components: the derivative's components, *not* the gradient's.
+            g: the derivative's components, *not* the gradient's.
 
         Returns:
             The linear functional.
@@ -2607,8 +2584,10 @@ class AffineOperator[X, Y](Operator[X, Y]):
 
     Its derivative is constant, which is the whole of its structure. The
     specialization protocol keeps sums and compositions with linear operators
-    inside this class, so affineness survives the algebra without the
-    string-based type check v1 uses in ``LinearOperator.__add__``.
+    inside this class, so affineness survives the algebra.
+
+    The translation may be given as a zero-argument callable, which is then
+    evaluated on the first request for it and kept.
     """
 
     def __init__(
@@ -2630,7 +2609,7 @@ class AffineOperator[X, Y](Operator[X, Y]):
         """The translation ``b``."""
         # A translation may be given as a thunk and is then computed on the
         # first request and kept: an inversion's constant term is one solve,
-        # and building the estimator must not pay for it (DECISIONS.md D-40).
+        # and building the estimator should not pay for it.
         if callable(self._translation):
             self._translation = self._translation()
         return self._translation

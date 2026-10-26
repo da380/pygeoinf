@@ -6,8 +6,6 @@ and in the data space, so the first thing each test does is check that the two
 agree. Where a dense reference is available it is used, and the reference
 carries the ``G^-1`` that turns a transpose into an adjoint — getting that
 wrong is the one way to write a plausible reference that disagrees.
-
-See DECISIONS.md D-71 to D-82.
 """
 
 import numpy as np

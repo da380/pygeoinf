@@ -54,7 +54,7 @@ class TestSquaredDistance:
         )
 
     def test_its_hessian_is_the_identity(self, rng):
-        """Whatever the metric, which is the whole point of DECISIONS.md D-26."""
+        """Whatever the metric: the Hessian is taken in the space's inner product."""
         space = make_weighted_space()
         f = SquaredDistance(space, center=space.random(rng=rng))
         x, v = space.random(rng=rng), space.random(rng=rng)

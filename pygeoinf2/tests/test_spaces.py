@@ -107,7 +107,7 @@ class TestMetric:
 
 
 class TestRepresenter:
-    """The distinction between a derivative and a gradient. See DECISIONS.md D-26."""
+    """The distinction between a derivative and a gradient."""
 
     def test_representer_pairs_as_the_derivative_does(self, rng):
         for build in (
@@ -141,7 +141,8 @@ class TestRepresenter:
 
 
 class TestWhiteNoise:
-    """v1 gets this wrong on every mass-weighted space. See DECISIONS.md D-19."""
+    """White noise in the space's own inner product, which standard normal
+    components are not on any weighted space."""
 
     @pytest.mark.parametrize("name", ["euclidean", "weighted", "dense_metric"])
     def test_white_noise_has_identity_covariance(self, name, rng):

@@ -22,10 +22,10 @@ is worth having rather than a sampling scheme.
     posterior  sum_k w'_k N(m_k^post, C_k^post)
     w'_k       proportional to  w_k p(d | component k)
 
-and ``p(d | component k)`` is the evidence of §26, which is already computed
-matrix-free.
-
-See DECISIONS.md D-66.
+and ``p(d | component k)`` is the evidence of component ``k``'s own linear
+Gaussian inversion
+(:meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.log_evidence`),
+which is computed matrix-free.
 """
 
 from __future__ import annotations
@@ -194,8 +194,8 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
     def with_weights(self, weights: Any, /) -> "GaussianMixture[X]":
         """The same components, weighted differently.
 
-        What a data update produces: the components move, but a reweighting
-        alone is the whole of what a *model comparison* does to a mixture.
+        A data update moves the components and reweights them; a reweighting
+        alone is what a *model comparison* does to a mixture.
         """
         return GaussianMixture(self._components, weights=weights)
 
@@ -303,18 +303,21 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
 
         Args:
             x: where to evaluate it.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function space
+                (``domain.is_function_space``), where the value is an artefact
+                of the truncation.
 
         Returns:
             The log density, fully normalized.
 
         Raises:
-            NotImplementedError: if any component cannot supply its own
-                normalizing constant -- which needs a log-determinant, and so
-                a covariance the component can decompose.
-            ValueError: on a function-space discretisation without
-                ``unsafe=True`` (D-131) -- doubly so here, the normalizing
-                constants being dimension-dependent too.
+            NotImplementedError: if any component has no log density, or
+                cannot supply its own normalizing constant -- which needs a
+                log-determinant, and so a covariance the component can
+                decompose.
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True`` -- doubly so here, the normalizing constants
+                being dimension-dependent too.
         """
         from scipy.special import logsumexp
 
@@ -370,19 +373,20 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
 
         Args:
             x: the vector to attribute.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function space
+                (``domain.is_function_space``).
 
         Returns:
             One probability per component, summing to one.
 
         Raises:
-            NotImplementedError: if any component cannot supply its
-                normalizing constant, as for :meth:`log_density`.
-            ValueError: on a function-space discretisation without
-                ``unsafe=True`` (D-131). The label posterior is a ratio of
-                densities, but each carries its own dimension-dependent
-                constant, so the attribution drifts with the truncation
-                wherever the components' covariances differ.
+            NotImplementedError: if any component cannot supply its density
+                or its normalizing constant, as for :meth:`log_density`.
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``. The label posterior is a ratio of densities,
+                but each carries its own dimension-dependent constant, so the
+                attribution drifts with the truncation wherever the
+                components' covariances differ.
         """
         from scipy.special import softmax
 

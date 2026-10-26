@@ -229,9 +229,8 @@ class TestMetricAwareness:
     In components the same function is ``0.5 (c - a)^T G (c - a)``, whose
     Hessian is the Gram matrix. A component-space method therefore sees a
     condition number equal to the spread of the metric values, and takes more
-    iterations the worse the discretization is scaled. That is the conditioning
-    half of DECISIONS.md D-26, and it is why this is worth writing rather than
-    wrapping.
+    iterations the worse the discretization is scaled. That is why the
+    optimizers are written in the space rather than wrapped around SciPy.
     """
 
     @staticmethod
@@ -634,7 +633,7 @@ class TestTheLineSearchHandsBackWhatItKnows:
 
 
 class TestSteepestDescentUsesAWolfeSearch:
-    """DECISIONS.md D-54 says it does, and it inherited a backtracking one --
+    """It defaults to a strong Wolfe search; it inherited a backtracking one --
     which cannot take a larger step than it is offered, and a steepest-descent
     direction carries no natural scale."""
 
@@ -715,7 +714,7 @@ class TestArmijoReportsItsEvaluations:
 
 
 class TestEvaluationFailureProtocol:
-    """``EvaluationError`` (D-129): a forward that cannot converge at a trial
+    """``EvaluationError``: a forward that cannot converge at a trial
     model raises it, the line searches treat the step as one that went too
     far, a trust region shrinks, and an optimizer that meets it with nowhere
     to retreat returns its state instead of crashing it away."""

@@ -1,7 +1,7 @@
 """The spectral-element interval: the space, its operators and its priors.
 
 Needs ``planetmodel`` 1.2, whose ``randomfield`` surface does the numerics.
-The independent routes (DECISIONS.md D-107) are that library's *direct*
+The independent routes are that library's *direct*
 methods -- the banded bilinear form and the banded Cholesky solve -- against
 the eigenbasis this space works in, and closed forms where there is one.
 """
@@ -70,7 +70,7 @@ class TestTheSpace:
 
     def test_the_default_padding_is_two_length_scales_at_each_end(self):
         """Under the Robin condition, which is the default; four under the
-        natural one, which needs them (DECISIONS.md D-122)."""
+        natural one, which needs them."""
         assert build(1.0).padding == pytest.approx((0.4, 0.2))
         assert build(1.0, boundary=None).padding == pytest.approx((0.8, 0.4))
 

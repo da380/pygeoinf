@@ -11,14 +11,15 @@ The projector is the object that does the work, and it carries its structure:
 complement is another projector rather than a generic difference, which matters
 because a generic difference would have forgotten that it is idempotent.
 
-Three constructions, in increasing order of what they need:
+Two constructions, both coordinate-free:
 
-- **from a basis** — Gram-Schmidt and a sum of outer products. Coordinate-free.
-- **from the kernel of an operator** — project off the range of its adjoint,
-  which needs a solve in the *codomain*. Coordinate-free, since the operator
-  involved is ``A A*`` and so positive semidefinite.
-- **from an explicit matrix** — only where coordinates exist, and only worth it
-  when the dimension is small.
+- **from a basis** -- Gram-Schmidt and a sum of outer products, which need only
+  the inner product;
+- **from an equation** ``A x == b``, or the kernel of ``A`` -- project off the
+  range of the adjoint, which needs a solve with ``A A*`` in the *codomain*,
+  by conjugate gradients unless another solver is given.
+
+A set of hyperplanes is an equation with one row per plane.
 """
 
 from __future__ import annotations
@@ -42,11 +43,9 @@ def _normal_inverse(
     """``(A A*)^-1``, the one solve every construction here needs.
 
     The kernel projector, the minimum-norm solution of ``A x == b`` and the
-    pseudo-inverse are three uses of the same operator, and each used to build
-    its own. With an iterative solver that is only a wasted object; with a
-    direct one it is the matrix of ``A A*`` extracted and factorized again,
-    three times over, and for a subspace built from an equation two of those
-    happen in the one constructor call.
+    pseudo-inverse are three uses of the same operator. Building it once and
+    sharing it means a direct solver assembles and factorizes ``A A*`` once
+    rather than once per use.
 
     Args:
         operator: the ``A``. Must have full row rank; see
@@ -181,9 +180,9 @@ class OrthogonalProjector(LinearOperator):
         and the only solve is in the codomain, on ``A A*``. Coordinate-free
         throughout.
 
-        **``A`` must have full row rank.** The palindrome rule gets ``A A*`` as
-        far as positive *semi*definite, which is all that is true in general:
-        ``A A*`` is definite exactly when ``A`` is surjective. This asserts
+        **``A`` must have full row rank.** The composition ``A A*`` earns only
+        the trait positive *semi*definite, which is all that is true in
+        general: ``A A*`` is definite exactly when ``A`` is surjective. This asserts
         definiteness because the formula needs the inverse to exist, so the
         assertion is a precondition on the caller rather than a deduction. Give
         it an ``A`` with a nontrivial cokernel and the claim is false, the
@@ -486,8 +485,8 @@ class AffineSubspace(ConvexSet):
 
         The equation moves with it: if the tangent space is ``{A x == 0}``
         then the translated affine space is ``{A x == A t}``, so the equation
-        is kept with its value updated rather than dropped. v1 does the same,
-        and without it a translated kernel forgets what defined it.
+        is kept with its value updated rather than dropped, and a translated
+        kernel still knows the equation that defines it.
         """
         moved = AffineSubspace(self._projector, translation=translation)
         if self._equation is not None:
@@ -539,7 +538,8 @@ class AffineSubspace(ConvexSet):
 
         ``x -> P x + (I - P) t``. Distinct from :attr:`projector`, which is the
         *linear* projection onto the tangent space: this one lands on the
-        subspace itself, and is affine exactly when the translation is nonzero.
+        subspace itself, and has a nonzero offset exactly when the subspace
+        does not pass through the origin.
         """
         from ..algebra.operators import AffineOperator
 
@@ -620,8 +620,7 @@ class LinearSubspace(AffineSubspace):
         The equation is recorded: a kernel *is* ``A x == 0``, so the subspace
         knows which equation defines it and everything that needs one --
         :meth:`with_constraint_value`, and the constraint pull-back a
-        parameterized inversion does -- works on it. It did not before, and a
-        kernel is the commonest way such a subspace gets built.
+        parameterized inversion does -- works on it.
 
         Args:
             operator: the ``A`` whose kernel this is.

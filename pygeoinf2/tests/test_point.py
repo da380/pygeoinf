@@ -1,8 +1,8 @@
 """
 The point estimators, the damped family, and the root find underneath them.
 
-DECISIONS.md D-57 named one numerical kernel with four users — a damped solve
-inside a monotone scalar root find — and the three things worth testing about
+One numerical kernel has four users — a damped solve inside a monotone
+scalar root find — and the three things worth testing about
 it are the three that are exact rather than matters of degree:
 
 * the saturated cases, where no root exists and the *endpoint* is the answer.
@@ -12,8 +12,6 @@ it are the three that are exact rather than matters of degree:
   isotropic prior, which is exact and so must hold to machine precision;
 * the derivative of the discrepancy solution, against central differences and
   against its own adjoint.
-
-See DECISIONS.md D-76.
 """
 
 import numpy as np
@@ -643,7 +641,7 @@ class TestDiscrepancyPrinciple:
         assert principle.search(observed).converged
 
     def test_a_structure_aware_preconditioner_works_inside_the_sweep(self, setup, rng):
-        """The claim (DECISIONS.md D-44) that every structure-aware
+        """The claim that every structure-aware
         preconditioner applies to the point estimators held everywhere except
         where the sweep was the point.
 

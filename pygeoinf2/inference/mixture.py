@@ -9,10 +9,10 @@ prior ``sum_k w_k N(m_k, C_k)`` and data ``d = A m + e``:
     posterior  sum_k w'_k N(m_k^post, C_k^post)
     w'_k       proportional to  w_k p(d | k)
 
-Each component is updated by the usual Kalman formulas — one
+Each component is updated by the usual Kalman formulas -- one
 :class:`~pygeoinf2.inference.gaussian.LinearGaussianInversion` per component,
-with everything §23 through §28 gives them — and the weights are reweighted by
-each component's *evidence*, which is exactly what
+with its solver, formalism and preconditioning -- and the weights are reweighted
+by each component's *evidence*, which is exactly what
 :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.log_evidence`
 computes. Nothing new is needed for the hard part.
 
@@ -20,8 +20,6 @@ The result is a **multimodal** posterior in closed form. A single Gaussian
 posterior can only say "here, roughly this wide"; a mixture posterior can say
 "either here or there, and the data prefer here four to one" — and the weights
 are the quantitative form of that preference.
-
-See DECISIONS.md D-66.
 """
 
 from __future__ import annotations
@@ -68,9 +66,14 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
                 through unchanged, so a factory taking the normal operator
                 works here too and is applied per component.
             formalism: which space to assemble each component in.
-            evidence: keyword arguments for the evidence calculation, as a
-                dict — ``{"method": "stochastic", "samples": 200}`` to keep the
-                weight update matrix-free on a large data space.
+            evidence: keyword arguments for each component's
+                :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.log_evidence`,
+                as a dict -- ``{"method": "stochastic", "samples": 200}`` to
+                keep the weight update matrix-free on a large data space.
+
+        Raises:
+            TypeError: if the prior is not a ``GaussianMixture``.
+            ValueError: if the prior is not defined on the model space.
         """
         if not isinstance(prior, GaussianMixture):
             raise TypeError(
@@ -108,9 +111,9 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
     def inversions(self) -> list[LinearGaussianInversion]:
         """One inversion per component, each a full estimator in its own right.
 
-        Exposed because a component *is* an ordinary linear Gaussian inversion:
-        its normal operator, its gain, its evidence and its preconditioning are
-        all reachable, and there is no reason to hide them behind the mixture.
+        Each component is an ordinary linear Gaussian inversion: its normal
+        operator, its Kalman operator, its evidence and its preconditioning
+        are all reachable through it.
         """
         return list(self._inversions)
 
@@ -212,11 +215,10 @@ class _PushedMixture(MeasureEstimator):
         """The posterior mixture on the property space.
 
         Each component's *measure* is pushed forward, not its estimator.
-        The two give the identical measure -- same mean, same covariance
-        ``T C T*``, same sampler -- but a pushed estimator re-solves the normal
-        equations, while the measure is already the answer. With the weights
-        needing the same solve again, that was ``2K`` solves for ``K``
-        components where ``K`` will do.
+        The two give the identical measure -- same expectation, same
+        covariance ``T C T*``, same sampler -- but a pushed estimator would
+        solve the normal equations again for data each component has already
+        inverted.
         """
         return GaussianMixture(
             [

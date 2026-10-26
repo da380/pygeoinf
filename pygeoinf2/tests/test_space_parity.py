@@ -137,10 +137,10 @@ class TestEveryGeometryHasTheGeometry:
 
 
 class TestChangingTheMetricKeepsTheSubclass:
-    """D-3. ``with_order`` returned the bare geometry class, so
+    """``with_order`` returned the bare geometry class, so
     ``isinstance(X.with_order(0.0), Lebesgue)`` was false on every derived
-    space -- defeating the reason D-3 gives for the subclasses existing, and
-    the check pyslfp's ``sl/utils.py`` dispatches on."""
+    space -- defeating the reason the ``Lebesgue`` and ``Sobolev`` subclasses
+    exist, and the check pyslfp's ``sl/utils.py`` dispatches on."""
 
     @staticmethod
     def _module(space):
@@ -372,7 +372,7 @@ class TestTwoPointQuantitiesInClosedForm:
         assert np.allclose(variances, by_dirac)
 
     def test_the_order_guard_is_not_weakened(self, geometry):
-        """D-11 is a guard on the space. The closed form needs no Dirac,
+        """The order guard is on the space. The closed form needs no Dirac,
         so the guard is asked for explicitly rather than arriving through one.
         """
         _, space = geometry
@@ -491,7 +491,7 @@ class TestPowerPerDegree:
     """
 
     def test_each_degree_holds_the_power_it_was_given(self, geometry):
-        """In L2 terms on any space (D-130): a draw's coefficient variance is
+        """In L2 terms on any space: a draw's coefficient variance is
         ``eigenvalue / gram``, and those, summed over a degree, are the power
         that degree was given."""
         _, space = geometry
@@ -553,7 +553,7 @@ class TestCoefficientAccess:
         assert np.all(drawn[present] < 8.0)
 
     def test_on_a_sobolev_space_the_round_trip_still_holds(self, geometry, rng):
-        """The point of D-130: ``power_measure(p)`` means the L2 spectrum on
+        """``power_measure(p)`` means the L2 spectrum on
         every space, so the round trip through ``power_spectrum`` holds on a
         Sobolev space exactly as on L2 -- where it used to come out divided
         by the Sobolev symbol. The metric-native meaning remains reachable

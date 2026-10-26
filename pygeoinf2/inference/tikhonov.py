@@ -24,8 +24,6 @@ assembly.
 
 Reading ``t`` as a prior variance is also a claim about what regularization
 means, and one that a damping does not have to make.
-
-See DECISIONS.md D-75.
 """
 
 from __future__ import annotations
@@ -66,7 +64,8 @@ class TikhonovNormalOperator(FactoredNormalOperator):
             damping: the Tikhonov parameter ``t``, non-negative.
             error: the data error measure ``R``. Omitted means unweighted
                 least squares.
-            formalism: which space to assemble in; ``"auto"`` takes the smaller.
+            formalism: which space to assemble in, the data space by default;
+                ``"auto"`` takes the smaller.
         """
         if damping < 0.0:
             raise ValueError(f"The damping must be non-negative, got {damping}.")
@@ -189,9 +188,9 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         """``(1 / t) I``: the prior this damping is, read as one.
 
         Supplied so that the preconditioners written for a Gaussian normal
-        operator apply here unchanged — the identity of the module docstring,
-        used rather than argued about. Undefined at zero damping, which is the
-        unregularized case and has no prior reading.
+        operator apply here unchanged, through the identity in the module
+        docstring. Undefined at zero damping, which is the unregularized case
+        and has no prior reading.
 
         Returns:
             The covariance operator.
@@ -351,11 +350,13 @@ class TikhonovFamily:
         Args:
             forward: the forward operator ``A``.
             error: the data error measure ``R``.
-            solver: how to invert ``N(t)``. Cholesky by default. An *iterative*
-                solver is what makes warm starting mean anything; a direct one
-                refactorizes at every damping and reports zero iterations,
-                which is the honest signal that it is doing so.
-            formalism: which space to assemble in.
+            solver: how to invert ``N(t)``. Conjugate gradients by default,
+                or a callable receiving a representative member and returning
+                the solver. An *iterative* solver is what makes warm starting
+                mean anything; a direct one refactorizes at every damping and
+                reports zero iterations, which is the honest signal that it is
+                doing so.
+            formalism: which space to assemble in, the data space by default.
         """
         self._forward = forward
         self._error = error

@@ -6,14 +6,12 @@ everything else as optional: an expectation, a covariance, a log density, its
 gradient. A measure that can only be sampled is still a measure, and that is
 the case nonlinear inference actually presents.
 
-Two things are groundwork for the nonlinear side rather than for the linear
-one. ``grad_log_density`` returns a **vector**, not a functional, which is a
-direct dividend of Riesz-identifying the spaces and is what MALA, HMC and any
-gradient-based posterior exploration need. And ``push_forward`` is closed for
-the Gaussian-plus-affine case but otherwise returns something that can still be
-*sampled* — draw from the base, apply the map — even with no closed density.
-
-See DECISIONS.md D-59.
+Two things serve nonlinear inference in particular. ``grad_log_density``
+returns a **vector**, the Riesz representer of the derivative rather than a
+functional, which is what MALA, HMC and any gradient-based posterior
+exploration step along. And ``push_forward`` is closed for the
+Gaussian-plus-affine case but otherwise returns something that can still be
+*sampled* -- draw from the base, apply the map -- even with no closed density.
 """
 
 from __future__ import annotations
@@ -36,14 +34,15 @@ __all__ = ["ProbabilityMeasure", "ProductMeasure", "PushForwardMeasure", "produc
 def _require_density(space: HilbertSpace, what: str, /, *, unsafe: bool) -> None:
     """Refuse a density-family quantity on a function-space discretisation.
 
-    The counterpart of D-11's point-evaluation guard, for densities (D-131):
-    on a space that discretises functions, a density with respect to the
-    space's own volume measure is an artefact of the truncation -- its value
-    changes with the discretisation and vanishes in the limit. A density
-    relative to a *reference measure* is the dimension-robust object, and
-    the sampling layer is built on those. ``unsafe=True`` proceeds anyway,
-    which is worth having: seeing the number drift under refinement is the
-    quickest way to believe the refusal.
+    The counterpart, for densities, of the guard that refuses point
+    evaluation below the Sobolev order that admits it. On a space that
+    discretises functions (``space.is_function_space``), a density with
+    respect to the space's own volume measure is an artefact of the
+    truncation: its value changes with the discretisation and vanishes in the
+    limit. A density relative to a *reference measure*
+    (:class:`~pygeoinf2.probability.AbsolutelyContinuousMeasure`) does not.
+    ``unsafe=True`` proceeds anyway, which is worth having: seeing the number
+    drift under refinement is the quickest way to believe the refusal.
     """
     if unsafe or not space.is_function_space:
         return
@@ -92,8 +91,10 @@ class ProbabilityMeasure[X](ABC):
     def sample(self, *, rng: Generator | None = None) -> X:
         """Draw one sample.
 
-        The generator is always explicit. v1 draws from NumPy's legacy global
-        state, so no result involving sampling is reproducible.
+        Args:
+            rng: the ``numpy.random.Generator`` to draw with. Pass one for
+                reproducible draws; when omitted, a default generator is
+                used.
         """
 
     def samples(
@@ -217,9 +218,15 @@ class ProbabilityMeasure[X](ABC):
         Needs a domain whose points can be evaluated at, so it is defined for a
         space of functions and not for a space of coefficients.
 
+        Args:
+            point: the anchor point, in the domain's own point convention.
+
+        Returns:
+            The field ``y -> Cov(x(point), x(y))``, a vector of the domain.
+
         Raises:
-            NotImplementedError: on a domain with no point evaluation, there
-                being no "two points" to take the covariance between.
+            TypeError: on a domain with no point evaluation (no ``dirac``),
+                there being no "two points" to take the covariance between.
         """
         space = self.domain
         dirac = getattr(space, "dirac", None)
@@ -235,8 +242,9 @@ class ProbabilityMeasure[X](ABC):
 
         Args:
             x: where to evaluate it.
-            unsafe: proceed on a function-space discretisation, where the
-                value is an artefact of the truncation (D-131).
+            unsafe: proceed even when the domain discretises a function space
+                (``domain.is_function_space``), where the value is an artefact
+                of the truncation.
 
         Returns:
             The log density.
@@ -244,8 +252,8 @@ class ProbabilityMeasure[X](ABC):
         Raises:
             NotImplementedError: unless the measure provides one. Not every
                 measure has a density, and one that is only sampled has none.
-            ValueError: on a function-space discretisation without
-                ``unsafe=True`` (D-131).
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a log density."
@@ -259,15 +267,16 @@ class ProbabilityMeasure[X](ABC):
 
         Args:
             x: where to evaluate it.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function space
+                (``domain.is_function_space``).
 
         Returns:
             The gradient, a vector of the domain.
 
         Raises:
             NotImplementedError: unless the measure provides one.
-            ValueError: on a function-space discretisation without
-                ``unsafe=True`` (D-131).
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a log-density gradient."
@@ -501,10 +510,10 @@ class _IndependentSum[X](ProbabilityMeasure[X]):
 class ProductMeasure[X](ProbabilityMeasure[tuple]):
     """Independent factors on a direct sum.
 
-    v1 has this only for Gaussians (``GaussianMeasure.from_direct_sum``), but
-    the independent product of *any* samplable measures is samplable — which is
-    what the joint model needs when the prior is not Gaussian, and so is
-    exactly the case the nonlinear work runs into.
+    The independent product of *any* samplable measures is samplable, which is
+    what a joint model needs when the prior is not Gaussian. For Gaussian
+    factors :func:`product` returns a
+    :class:`~pygeoinf2.probability.gaussian.GaussianMeasure` instead.
     """
 
     def __init__(

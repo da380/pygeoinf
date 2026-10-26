@@ -2,18 +2,17 @@
 Gaussian measures on Hilbert spaces.
 
 A Gaussian is determined by an expectation and a covariance, and stays Gaussian
-under an affine map. Both facts are carried structurally here: the pushforward
-covariance ``A C A*`` is recognized as positive semidefinite by the
-adjoint-palindrome rule of the algebra, with nothing asserted and no
-special-casing (DECISIONS.md D-36).
+under an affine map. Both facts are carried structurally here: the operator
+algebra recognises a product of the form ``A C A*`` with ``C`` positive
+semidefinite as self-adjoint and positive semidefinite, so the pushforward
+covariance carries those traits with nothing asserted.
 
-Sampling is where the white-noise correction of DECISIONS.md D-19 earns its
-keep. Given a factor ``L`` with ``C == L L*``, a sample is ``m + L xi`` where
-``xi`` is white noise **on the factor's own domain**. When that domain is the
-space itself — the isotropic case, ``L == sigma I`` — the noise must be white
-with respect to the space's inner product, not with respect to its components.
-v1 draws standard normal components there and so produces covariance
-``sigma^2 G`` rather than ``sigma^2 I`` on any mass-weighted space.
+Given a factor ``L`` with ``C == L L*``, a sample is ``m + L xi`` where ``xi``
+is white noise **on the factor's own domain**. When that domain is the space
+itself -- the isotropic case, ``L == sigma I`` -- the noise must be white with
+respect to the space's inner product, not with respect to its components:
+standard normal components would give covariance ``sigma^2 G`` rather than
+``sigma^2 I`` on any space whose Gram matrix ``G`` is not the identity.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ def _semidefinite_factors(
     symmetric eigendecomposition decides which: eigenvalues below
     ``-rtol * max|lambda|`` mean the caller's matrix is not a covariance, and
     smaller negative ones are floating-point noise and are clipped, with a
-    warning, exactly as v1 did.
+    warning.
 
     Args:
         symmetric: the matrix, already symmetrized.
@@ -131,10 +130,8 @@ def _check_round_trip(
     """Refuse a solver that does not actually invert the operator.
 
     A Krylov solver stops on the *residual*, and on an ill-conditioned
-    covariance the residual says almost nothing about the error: conjugate
-    gradients at ``rtol=1e-8`` on a covariance of condition 4e10 returned a
-    trace of 217 where the truth was 289, without complaint. Two applications
-    and one solve buy an honest refusal instead.
+    covariance a small residual can hide a large error. Two applications and
+    one solve on a white-noise probe detect that, and refuse.
 
     Args:
         operator: the operator being inverted.
@@ -248,8 +245,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """An isotropic measure with covariance ``sigma^2 I`` **on the space**.
 
         The factor's domain is the space itself, so the sample draws white
-        noise with respect to the space's inner product. This is the
-        construction v1 gets wrong on a mass-weighted space.
+        noise with respect to the space's inner product, and the covariance
+        is ``sigma^2`` times the identity on the space whatever its metric.
 
         Args:
             domain: the space.
@@ -289,16 +286,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *,
         expectation: X | None = None,
     ) -> GaussianMeasure[X]:
-        """A measure with a different standard deviation in each direction.
+        """A measure with a different standard deviation along each basis vector.
 
-        The covariance is ``diag(sigma^2)`` **as an operator on the space**,
-        which is the generalization of :meth:`from_standard_deviation` and not
-        of v1's method of this name: v1 built its factor as a map from a
-        Euclidean coefficient space, making the array a statement about
-        components rather than about directions. The two agree on an
-        orthonormal space and differ on every other, and the operator reading
-        is the one that draws white noise correctly — the defect
-        DECISIONS.md D-19 exists to record.
+        The covariance factor is the diagonal operator ``diag(sigma)`` **on the
+        space**, its factor domain the space itself, which generalizes
+        :meth:`from_standard_deviation`; the precision factor is
+        ``diag(1/sigma)``. On a space whose metric is diagonal -- every
+        symmetric space, every orthonormal one -- the covariance is then
+        ``diag(sigma^2)``. On a space with a non-diagonal metric
+        ``diag(sigma)`` is not self-adjoint, and the covariance is
+        ``L L*`` with ``L == diag(sigma)``, which is not diagonal in the
+        components.
 
         Both a factor and a precision factor are supplied, so the result can be
         sampled and has a density.
@@ -391,12 +389,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         definite exactly when every factor is. The precision is block diagonal
         for the same reason, and is built whenever every factor has one.
 
-        That matters beyond the density. The surrogate prior a Woodbury data
-        form is built from is a product of invariant measures, each with a
-        diagonal precision; without a precision on the product the
-        preconditioner falls back to inverting ``Q`` by conjugate gradients on
-        every application, which is a solve nested inside a preconditioner
-        inside a solve.
+        The precision matters beyond the density: a Woodbury preconditioner
+        built from a product prior inverts it through the precision when
+        there is one, and by conjugate gradients at every application when
+        there is not.
 
         Args:
             measures: the independent factors.
@@ -465,32 +461,30 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> GaussianMeasure[X]:
         """From an explicit covariance matrix.
 
-        ``form`` says which representation the array is in, because no trait
-        implies it (DECISIONS.md D-25). The Galerkin form is the natural one here:
-        a covariance is self-adjoint, so that is the representation in which it
-        is symmetric.
+        ``form`` says which representation the array is in: ``"galerkin"``
+        (``G C_c``) or ``"components"`` (``C_c``, with ``c_{Cx} == C_c c_x``).
+        The Galerkin form is the natural one for a covariance: it is
+        self-adjoint, so that is the representation in which it is symmetric.
 
         A covariance is required to be positive *semi*definite, so a Cholesky
         factorization alone is not enough: it refuses every singular
-        covariance — a measure supported on a subspace, an empirical
+        covariance -- a measure supported on a subspace, an empirical
         covariance from fewer samples than dimensions, a pushforward through a
-        rank-deficient map — and it refuses a matrix that is semidefinite in
+        rank-deficient map -- and it refuses a matrix that is semidefinite in
         exact arithmetic but has eigenvalues of size ``-1e-17`` after being
-        assembled in floating point. v1 took a symmetric eigendecomposition,
-        clipped small negative eigenvalues to zero with a warning, and built
-        both factors from it; this does the same. A strictly definite matrix
-        still takes the Cholesky route, which is the cheaper one and which
-        proves definiteness by succeeding.
+        assembled in floating point. When Cholesky fails, a symmetric
+        eigendecomposition is taken instead, small negative eigenvalues are
+        clipped to zero with a warning, and both factors are built from it. A
+        strictly definite matrix takes the Cholesky route, which is the cheaper
+        one and which proves definiteness by succeeding.
 
-        The measure carries a precision factor whenever the covariance is
-        nonsingular, so that it has a density — v1 attached one and v2 had
-        stopped doing so, leaving :meth:`mahalanobis_squared`,
-        :meth:`log_density` and :meth:`grad_log_density` refusing on every
-        measure built this way. A *singular* covariance gets none: the measure
-        is degenerate, its density with respect to the space's own volume
-        measure does not exist, and a pseudo-inverse in the precision slot
-        would answer those three methods with a finite number that is not the
-        thing they name.
+        The measure carries a precision and a precision factor whenever the
+        covariance is nonsingular, so that :meth:`mahalanobis_squared`,
+        :meth:`log_density` and :meth:`grad_log_density` work. A *singular*
+        covariance gets neither: the measure is degenerate, its density with
+        respect to the space's own volume measure does not exist, and a
+        pseudo-inverse in the precision slot would answer those three methods
+        with a finite number that is not the thing they name.
 
         Cost is cubic in ``domain.dim`` and the result holds two dense
         matrices (three when a precision is attached, the Gram matrix being
@@ -499,8 +493,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Args:
             domain: the space.
             matrix: the covariance, as an array.
-            form: which representation *matrix* is in. No default: guessing
-                wrong is a silent error of one factor of the Gram matrix.
+            form: which representation *matrix* is in, ``"galerkin"`` by
+                default. Getting it wrong is a silent error of one factor of
+                the Gram matrix, so it is worth passing explicitly.
             expectation: the mean. Zero if omitted.
             rtol: how negative an eigenvalue may be, relative to the largest in
                 magnitude, before the matrix is refused rather than clipped.
@@ -543,7 +538,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # M^T M must be G C_gal^-1 G, which M == R^-1 G delivers. The Gram
             # matrix appears twice because the precision is a form on the
             # space, not on its components; dropping it is right only for an
-            # orthonormal basis, which is v1's version of this line.
+            # orthonormal basis.
             precision_factor = LinearOperator.from_matrix(
                 domain,
                 coefficients,
@@ -649,12 +644,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         is ``from_components(lambda * xi_c)`` with ``xi_c`` white noise's
         components, ``N(0, G^-1)``. Going through ``L`` as an operator
         synthesizes ``xi`` onto the grid only to analyze it again and
-        synthesize the result: three spectral transforms for one draw. v1
-        carried a Karhunen-Loeve closure on its invariant measure class to
-        avoid that, and lost it whenever the algebra rebuilt the measure.
-        Here the short cut lives on the structure, so a scaled, summed,
-        marginalized or conditioned measure whose factor is still diagonal
-        draws in one transform without anyone carrying anything.
+        synthesize the result: three spectral transforms for one draw.
+        Because the short cut is keyed on the factor and not on a measure
+        class, a scaled, summed, marginalized or conditioned measure whose
+        factor is still diagonal draws in one transform too.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
 
@@ -737,9 +730,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         takes ``sum(M * M.T)`` on a covariance that already holds its
         component matrix, and otherwise probes the diagonal of ``C C`` one
         basis vector at a time: two applications per column and linear
-        memory, which is v1's exact route. The dense matrix is formed only
-        when asked for by name; it used to be the default, at ``N^2`` memory
-        for a number that needs ``N`` (DECISIONS.md D-63).
+        memory. The dense matrix, ``N^2`` memory for a number that needs
+        ``N``, is formed only when asked for by name.
 
         ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``. The
         estimator is a trace of ``C^2``, so its relative error is worse than a
@@ -811,9 +803,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         A correlated measure on several fields has one small matrix per mode
         (:class:`~pygeoinf2.symmetric_space.base.SpectralBlockLinearOperator`),
-        from which both norms follow in ``O(dim n^2)``; v1 had these formulas
-        on its correlated measure. Recognized by shape rather than by type, so
-        that this module does not import the symmetric spaces.
+        from which both norms follow in ``O(dim n^2)``. Recognized by shape
+        rather than by type, so that this module does not import the
+        symmetric spaces.
         """
         slices = getattr(self._covariance, "slices", None)
         if slices is None:
@@ -840,8 +832,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         diagonal covariance or the slices of a spectrally block-diagonal one,
         and otherwise sums the component diagonal from :meth:`diagonals`,
         which is free where the operator knows it and one application per
-        column where it must be probed, in linear memory: v1's exact route.
-        The dense matrix is formed only when asked for by name (DECISIONS.md D-63).
+        column where it must be probed, in linear memory. The dense matrix is
+        formed only when asked for by name.
 
         Args:
             method: as for :meth:`hilbert_schmidt_norm`.
@@ -953,15 +945,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             max_samples: a ceiling on the probes it may draw.
             n_jobs: workers for the probes.
             rng: the generator for the probes.
-            dense_limit: the dimension below which the dense route is taken.
-                Four thousand, matching
-                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`:
-                measured at dimension 4000, the dense divergence is exact in
-                4.4 s where a hundred probes take 37 s to reach +/- 1.5.
+            dense_limit: the largest dimension at which ``"auto"`` takes the
+                dense route. Four thousand, as for
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`;
+                up to that size the dense route is both exact and faster than
+                the stochastic one.
             kwargs: passed to the Lanczos functional calculus.
 
         Returns:
             The divergence.
+
+        Raises:
+            ValueError: as for :meth:`kl_divergence_estimate`.
         """
         return self.kl_divergence_estimate(
             other,
@@ -1015,14 +1010,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             formed. The route for a space too large to assemble, at the cost
             of an answer with an error bar. ``g`` is non-negative, so the
             estimate is too, and it vanishes probe by probe when the two
-            measures agree; see :meth:`_kl_similarity` for why that matters
-            and for what this replaced.
+            measures agree.
 
-            **It still has to be asked for by name.** Not because it is
-            unreliable — on a dense reference of dimension 400 and condition
-            1e6 it gives 15.14 +/- 0.30 against an exact 15.67, where the old
-            route gave -7.0 +/- 22.8 — but because a divergence reported as a
-            bare number, with the error bar dropped, is the one way this
+            **It has to be asked for by name**, because a divergence reported
+            as a bare number, with the error bar dropped, is the one way this
             quantity misleads. ``"auto"`` raises and says so.
 
         Args:
@@ -1043,12 +1034,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             n_jobs: workers for the probes.
             rng: the generator for those probes.
             dense_limit: the dimension above which ``"auto"`` stops forming
-                matrices. Four thousand, matching
-                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`:
-                the dense route stays both exact and *faster* well past the
-                512 this used to be, measured at 0.09 / 0.63 / 4.4 s against a
-                hundred probes' 1.4 / 9.3 / 37 s at dimensions 960 / 2000 /
-                4000.
+                matrices. Four thousand, as for
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`;
+                up to that size the dense route is both exact and faster than
+                a hundred probes.
             kwargs: passed to
                 :func:`~pygeoinf2.numerics.functional_calculus.operator_function`,
                 which is where *max_iterations* and the Lanczos *rtol* live.
@@ -1155,8 +1144,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         quadratic = self._domain.inner_product(inverse(shift), shift)
         value = 0.5 * (estimate.value + quadratic)
         error = 0.5 * estimate.standard_error
-        # An estimate whose error bar exceeds it says nothing, and the old
-        # route returned such numbers routinely. This one cannot: every probe
+        # An estimate whose error bar exceeds it says nothing. This route
+        # cannot produce one: every probe
         # returns ``(x, g(M) x) >= 0`` because ``g >= 0``, and for a
         # non-negative sample ``sum x_i^2 <= (sum x_i)^2``, which is exactly
         # the statement that the standard error is at most the mean. The check
@@ -1175,17 +1164,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> tuple[LinearOperator, LinearOperator]:
         r"""An operator with the spectrum of ``C_o^-1 C_s``, and ``C_o^-1``.
 
-        The stochastic divergence used to estimate three things separately —
-        ``tr(C_o^-1 C_s)`` by Hutchinson and each log-determinant by its own
-        stochastic Lanczos run — and then combine them. Two of those estimates
-        are large and nearly equal whenever the measures are close, so the
-        answer was a small difference of large noisy numbers: ``KL(mu || mu)``
-        at dimension 289 came out as ``369 +/- 35``, and the same calculation
-        with the reference's precision to hand as ``-351 +/- 33``. A divergence
-        cannot be negative, and this one could not even get the sign right.
-
-        The cure is to fold the whole thing into one trace. With
-        ``M == C_o^-1 C_s``,
+        The stochastic divergence is one trace, not three. Estimating
+        ``tr(C_o^-1 C_s)`` and the two log-determinants separately and then
+        combining them would subtract large, nearly equal, noisy numbers
+        whenever the measures are close. With ``M == C_o^-1 C_s``,
 
         .. code-block:: text
 
@@ -1201,17 +1183,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         ``M`` itself is not self-adjoint, but it is similar to something that
         is, and a trace only sees the spectrum. Two such:
         ``L_s* C_o^-1 L_s`` from this measure's covariance factor, and
-        ``Li_o C_s Li_o*`` from the reference's precision factor. Both are
-        palindromes, so they *earn* self-adjointness from the algebra rather
-        than claiming it — which is what the old route did to the two
-        covariances, on operators that had not been checked.
+        ``Li_o C_s Li_o*`` from the reference's precision factor. Both have
+        the form ``B* A B`` with ``A`` self-adjoint, so the operator algebra
+        derives their self-adjointness rather than having it claimed.
 
         A solve is needed only when the reference has neither a precision nor
         a precision factor. Then the accuracy of the answer is the accuracy of
-        that solve, which on an ill-conditioned covariance is much worse than
-        its residual suggests: conjugate gradients at ``rtol=1e-8`` on a
-        covariance of condition 4e10 returned a trace of 217 where the truth
-        was 289. So the solver is tested on a round trip before it is trusted.
+        that solve, which on an ill-conditioned covariance can be much worse
+        than its residual suggests, so the solver is tested on a round trip
+        before it is trusted.
 
         Args:
             other: the reference measure.
@@ -1267,18 +1247,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> "GaussianMeasure[X]":
         """The same measure with ``Var((x, direction))`` set to a given value.
 
-        A whole-measure rescaling, as v1 does it, not a rank-one update: the
-        covariance is multiplied by a scalar chosen so that one direction comes
-        out right. Every other variance moves by the same factor, which is what
-        makes it a recalibration rather than a change of shape.
+        A whole-measure rescaling, not a rank-one update: the covariance is
+        multiplied by a scalar chosen so that one direction comes out right.
+        Every other variance moves by the same factor, which is what makes it
+        a recalibration rather than a change of shape.
 
         Returns:
             The rescaled measure, of the same class.
 
         Raises:
-            ValueError: for a non-positive target variance, or a direction in
-                which this measure has none -- there being no factor that
-                would give it one.
+            ValueError: for a direction in which this measure has no variance,
+                there being no factor that would give it one.
         """
         current = self.directional_variance(direction)
         if current <= 0.0:
@@ -1353,9 +1332,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         posterior, a sum -- is a graph of operators, and applying it costs
         whatever that graph costs. Once it is going to be applied many times,
         or once something wants to look at it, assembling it once is cheaper:
-        this is what a plotting script does before drawing a variance field,
-        and it is v1's ``with_dense_covariance(parallel=, n_jobs=)``, which had
-        no successor here.
+        this is what a plotting script does before drawing a variance field.
 
         The assembly is ``dim`` applications of the covariance, run in
         parallel when *n_jobs* asks. The result carries a matrix-backed
@@ -1364,8 +1341,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         density even when this one could do neither.
 
         The dense measure is kept, so a second call is free and a later
-        *n_jobs* is ignored. That is the point: the assembly is the expensive
-        thing and nobody wants it twice.
+        *n_jobs* is ignored.
 
         Args:
             n_jobs: workers for the ``dim`` applications.
@@ -1374,8 +1350,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             A measure with the same law and a matrix-backed covariance.
 
         Raises:
-            ValueError: if this measure has no covariance operator, or the
-                space has no coordinates to assemble one in.
+            TypeError: if the space has no coordinates to assemble one in.
+            ValueError: if this measure has no covariance operator.
         """
         if self._dense is not None:
             return self._dense
@@ -1390,7 +1366,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # attaches a precision when there is one to attach. The covariance
         # itself is then replaced by the matrix rather than left as ``L L*``:
         # one product instead of two, and a matrix the operator algebra can
-        # read straight off. That is v1's move here too.
+        # read straight off.
         factored = GaussianMeasure.from_covariance_matrix(
             self._domain, symmetric, expectation=self._expectation
         )
@@ -1418,7 +1394,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         the covariance, with its options; see there. An operator and not a
         measure: thresholding does not keep a covariance positive definite,
         and a sparse matrix cannot be sampled from without a sparse Cholesky,
-        which SciPy does not have (DECISIONS.md D-65).
+        which SciPy does not have.
 
         Args:
             **options: ``threshold``, ``max_per_column``, ``criterion`` and
@@ -1441,11 +1417,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> "Ellipsoid":
         """The region carrying a given share of the probability, as a set.
 
-        The **hardening** of DECISIONS.md D-64: a measure becomes a set at
-        a chosen chi-squared level. It is not canonical and it is not
-        reversible — the ellipsoid carries no memory of the distribution it
-        came from — which is why it is a named step rather than something a
-        constructor does quietly.
+        One **hardening** of the measure: a set chosen to carry a given
+        probability, here the Mahalanobis ellipsoid at the chi-squared
+        quantile of *level*. A hardening is not canonical and it is not
+        reversible -- the ellipsoid carries no memory of the distribution it
+        came from -- which is why it is a named step rather than something a
+        constructor does quietly. :meth:`ambient_ball` and
+        :meth:`weakened_ellipsoid` are the others.
 
         An ellipsoid is defined by a precision. A measure that has one uses
         it. A measure with only a covariance gets one as the covariance's
@@ -1454,23 +1432,24 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         solve, which is what the question costs on a space too large to
         invert. Pass a direct solver, ``CholeskySolver()``, to factorize the
         covariance once on a space small enough to hold it; that is the dense
-        route, and it is taken only by name. It used to be taken silently,
-        with an ``O(N^3)`` inverse of the Galerkin matrix (DECISIONS.md D-64).
+        route, and it is taken only by name.
 
         Args:
             level: the probability the region carries, in ``(0, 1)``.
             solver: how to invert the covariance when the measure has no
                 precision -- a linear solver, or a callable taking the
                 covariance and returning one. Ignored when a precision exists.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function
+                space (``domain.is_function_space``), where the set is an
+                artefact of the truncation.
 
         Returns:
             The credible ellipsoid.
 
         Raises:
             ValueError: for a level outside ``(0, 1)``, a measure with
-                neither a precision nor a covariance, or a function-space
-                discretisation without ``unsafe=True`` (D-131): the
+                neither a precision nor a covariance, or a domain that
+                discretises a function space unless ``unsafe=True``: the
                 chi-squared threshold grows with the dimension, so the set
                 is an artefact of the truncation.
         """
@@ -1484,7 +1463,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         threshold = float(chi2.ppf(level, self.domain.dim))
         # The ellipsoid is defined by its precision; the covariance only rides
         # along for whoever wants it. So a measure described by a precision
-        # alone has a perfectly good credible set, and used to raise.
+        # alone has a perfectly good credible set.
         covariance = None if self._covariance is None else self._covariance * threshold
         factor = (
             None
@@ -1496,10 +1475,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         else:
             # A measure built from a covariance alone has no precision, and an
             # ellipsoid is defined by one: the covariance's inverse, through
-            # a solver, is an operator in the space's own metric -- which is
-            # what a dense inverse of the Galerkin matrix was not, until it
-            # was corrected by two factors of G, and what a solver gets right
-            # by construction.
+            # a solver, is an operator in the space's own metric by
+            # construction. A dense inverse of the Galerkin matrix would not
+            # be without two corrections by G.
             from ..numerics.solvers import resolve_solver
 
             definite = self._require_covariance("A credible set").with_traits(
@@ -1532,14 +1510,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """A credible ellipsoid shaped by a fractional power of the covariance.
 
         Between the two hardenings :meth:`credible_set` and
-        :meth:`ambient_ball` give: the set ``{ x : (C^-p (x - m), x - m) <=
+        :meth:`ambient_ball`: the set ``{ x : (C^-p (x - m), x - m) <=
         r^2 }`` carrying the given probability, so that ``p == 1`` is the
         credible ellipsoid, the distribution's own shape, and ``p == 0`` is
         the ball in the space's norm. In between the ellipsoid is *weakened*,
         its axes being ``lambda^(p/2)`` rather than ``lambda^(1/2)``, which
         is what one wants of a prior that should not commit to the
-        covariance's fine structure at the level of a Mahalanobis form. v1's
-        ``weakened_ellipsoid``; its ``theta`` is ``power`` here.
+        covariance's fine structure at the level of a Mahalanobis form.
 
         The radius is a quantile of ``sum_i lambda_i^(1 - p) Z_i^2``, the
         covariance's eigenvalues to the complementary power, and the
@@ -1561,9 +1538,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 matrices.
             rng: the generator for the probes.
             n_jobs: workers for them.
-            unsafe: proceed on a function-space discretisation when
-                ``power == 1`` (D-131); the other powers are covariance
-                geometry and take no gate.
+            unsafe: at ``power == 1``, the credible set, proceed even when
+                the domain discretises a function space, as for
+                :meth:`credible_set`. The other powers are covariance
+                geometry rather than a statement about the density, and are
+                not refused there.
             **calculus: options for the Lanczos operator function on a
                 covariance that is not diagonal.
 
@@ -1574,7 +1553,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Raises:
             ValueError: for a power outside ``[0, 1]``, a level outside
-                ``(0, 1)``, or a spectrum this measure cannot supply.
+                ``(0, 1)``, or a spectrum this measure cannot supply; and at
+                ``power == 1`` as :meth:`credible_set` does.
         """
         from ..geometry.convex import Ellipsoid
 
@@ -1583,8 +1563,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if not 0.0 < level < 1.0:
             raise ValueError(f"A credible level lies in (0, 1), got {level}.")
         if power == 1.0:
-            # The one power that is the distribution's own credible set, so
-            # the one that carries D-131's gate.
+            # The one power that is the distribution's own credible set, and
+            # so the one refused on a function-space discretisation.
             return self.credible_set(level=level, unsafe=unsafe)
         if power == 0.0:
             return self.ambient_ball(
@@ -1783,37 +1763,35 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         the ball is always the larger.
 
         It is worth having because a norm bound is what a set-theoretic prior
-        is, so this is the bridge from a Gaussian belief to one — §18.1's
-        conversion, done in the geometry the constraint will be used in. It is
-        also what :func:`~pygeoinf2.inference.backus.harden_error` calls on
-        every Backus route whose error is a Gaussian, which is why the route
-        taken here matters.
+        is, so this is the bridge from a Gaussian belief to one, done in the
+        geometry the constraint will be used in. It is also what
+        :func:`~pygeoinf2.inference.backus.harden_error` calls on every Backus
+        route whose error is a Gaussian, which is why the route taken here
+        matters.
 
         The radius is a quantile of ``sum_i lambda_i Z_i^2`` with the
         covariance's eigenvalues as weights, which is not a chi-square unless
-        the measure is isotropic. Four ways to reach it, three of them from
-        v1:
+        the measure is isotropic. Four ways to reach it:
 
         ``"diagonal"``
             The spectrum is already the covariance's eigenvalues. Exact,
-            ``O(dim)``, no applications at all. This is the common case — an
+            ``O(dim)``, no applications at all. This is the common case -- an
             isotropic error, a measure from :meth:`from_standard_deviations`,
-            any invariant measure on a symmetric space — and it used to go the
-            long way round like everything else.
+            any invariant measure on a symmetric space.
         ``"dense"``
             The generalized symmetric eigenproblem ``C_gal v == lambda G v``,
             whose eigenvalues are the operator's. Exact, ``O(dim^3)``, and it
             holds two dense matrices.
         ``"spectral"``
-            A randomized eigendecomposition truncated to *rank*, as v1's
-            ``LowRankEig`` route. The dropped tail is positive, so the radius
+            A randomized eigendecomposition truncated to *rank*. The dropped
+            tail is positive, so the radius
             comes out **too small**: this is a lower bound on the true one, and
             a rank has to be large enough that what it leaves out is
             negligible.
         ``"sampling"``
-            The empirical quantile of ``||x - m||^2`` over draws, which is v1's
-            ``radius_method="sampling"``. No spectrum at all, and the accuracy
-            is that of an order statistic on *samples* draws.
+            The empirical quantile of ``||x - m||^2`` over draws. No spectrum
+            at all, and the accuracy is that of an order statistic on
+            *samples* draws.
 
         Args:
             level: the probability the ball carries, in ``(0, 1)``.
@@ -1833,7 +1811,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             n_jobs: workers for them.
 
         Returns:
-            A ball containing the credible region.
+            The ball about the expectation carrying probability *level*.
 
         Raises:
             ValueError: for an unknown method, a method whose ingredients this
@@ -1909,8 +1887,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # which is not symmetric on a space whose basis is not orthonormal.
         # They are the generalized eigenvalues of the symmetric pair
         # (C_gal, G), which is both cheaper and better conditioned than a
-        # non-symmetric decomposition of C_c: 0.05 s against 0.26 s at
-        # dimension 1000, 4.0 s against 15.2 s at 4000.
+        # non-symmetric decomposition of C_c.
         galerkin = covariance.matrix(form="galerkin")
         spectrum = eigh(
             0.5 * (galerkin + galerkin.T),
@@ -1950,17 +1927,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Imhof's integrand sums over every weight at every quadrature point, so
         inverting it costs time linear in the length of the spectrum *and* in
-        the root find: 0.8 s at 500 weights, 10.4 s at 2000, and hopeless at
-        the 10^5 a global inverse problem produces. That is what made an
-        ambient ball unaffordable at scale once the spectrum itself was cheap.
+        the root find, which is unaffordable for the spectra of size ``10^5``
+        a large inverse problem produces.
 
         A sum of many comparable weighted chi-squares is close to its
         moment-matched chi-square, by the same argument that makes it close to
-        a normal, and the agreement improves as the sum lengthens: measured at
-        9e-5 relative on 500 weights and 3e-5 on 2000, in 0.001 s. A spectrum
+        a normal, and the agreement improves as the sum lengthens. A spectrum
         dominated by a few modes is a different object -- one chi-square with
         one degree of freedom is not well matched by its own moments -- so the
-        effective rank decides, not the length alone.
+        effective rank decides, not the length alone: ``"matched"`` above a
+        thousand positive weights with effective rank
+        ``(sum w)^2 / sum w^2`` above a hundred, ``"imhof"`` otherwise.
 
         Args:
             weights: the non-negative spectrum.
@@ -1998,7 +1975,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # vector; handing it a matrix and relying on broadcasting gives
         # `M / g` row-wise on a space with a diagonal metric and a genuine
         # `G^-1 M` on one without, so an expression built that way can be
-        # right on the first and wrong on the second — which is what this was.
+        # right on the first and wrong on the second.
         def divide(matrix: np.ndarray) -> np.ndarray:
             return np.column_stack(
                 [self._domain.solve_gram(column) for column in matrix.T]
@@ -2048,8 +2025,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 exact.
             solver: how to invert ``A C A* + R`` on the constraint codomain.
                 Conjugate gradients by default; a factory taking the operator
-                is also accepted. This used to be a dense ``np.linalg.inv``
-                with no way to change it.
+                is also accepted.
 
         Returns:
             The conditioned measure.
@@ -2168,10 +2144,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # ``diag(r) G^-1 diag(r) G``, which is ``diag(r^2)`` exactly when the
         # two commute -- that is, when ``G`` is itself diagonal. Without this
         # test the marginal comes back with a factor that does not match its
-        # covariance, and it is the *sampler* that is wrong, silently. The
-        # trait deduction used to refuse the square root here for its own
-        # reasons; it no longer does, so the condition is stated where it
-        # belongs.
+        # covariance, and it is the *sampler* that is wrong, silently.
         factor = None
         if (
             isinstance(block, DiagonalLinearOperator)
@@ -2179,8 +2152,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         ):
             factor = block.sqrt
         # And under the same condition the precision is the reciprocal
-        # spectrum, when every variance is positive; without it the marginal
-        # of a correlated measure had no density (audit row on `marginal`).
+        # spectrum, when every variance is positive, so the marginal has a
+        # density.
         precision = None
         if factor is not None and np.all(block.eigenvalues > 0.0):
             precision = DiagonalLinearOperator(block.domain, 1.0 / block.eigenvalues)
@@ -2246,8 +2219,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # palindrome rule cannot see it: the composition flattens the
         # operator into its own factors, and a covariance whose traits were
         # claimed rather than derived (a posterior's) loses them on the way.
-        # Without this the marginal of a posterior on a direct sum claimed
-        # nothing and was refused.
+        # Without this the marginal of a posterior on a direct sum would claim
+        # nothing, and the measure constructor would refuse it.
         return block.with_traits(
             congruence_traits(operator.traits, outer_invertible=False)
         )
@@ -2265,14 +2238,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             x: the vector to measure.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function
+                space (``domain.is_function_space``), where the value is an
+                artefact of the truncation.
 
         Returns:
             The squared distance.
 
         Raises:
-            ValueError: if the measure has no precision, or on a
-                function-space discretisation without ``unsafe=True`` (D-131).
+            NotImplementedError: if the measure has no precision.
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``.
         """
         _require_density(self._domain, "A Mahalanobis distance", unsafe=unsafe)
         if self._precision is None:
@@ -2298,7 +2274,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         volume measure.
 
         Args:
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function
+                space (``domain.is_function_space``), where the constant
+                diverges with the dimension.
 
         Returns:
             The additive constant, in nats.
@@ -2306,9 +2284,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Raises:
             NotImplementedError: if the measure has no covariance, so there is
                 no determinant to take.
-            ValueError: on a function-space discretisation without
-                ``unsafe=True`` (D-131) -- the constant diverges with the
-                dimension.
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``.
         """
         _require_density(self._domain, "A normalizing constant", unsafe=unsafe)
         if self._log_normalization is None:
@@ -2323,8 +2300,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None:
-            # Exact, and cheap. Taken before any retraiting, so it survives
-            # whatever the general route would have done with the claim.
+            # Exact and cheap, and needs no positive-definiteness claim,
+            # unlike the general route below.
             return gaussian - 0.5 * float(np.sum(np.log(eigenvalues)))
 
         if self._covariance is None:
@@ -2344,13 +2321,23 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         covariance. Differences of this quantity are meaningful only *within*
         one measure; comparing two measures means adding each one's constant.
 
-        Refused on a function-space discretisation without ``unsafe=True``
-        (D-131): the value depends on the truncation. The dimension-robust
-        object is a density relative to a reference measure.
+        Refused on a domain that discretises a function space unless
+        ``unsafe=True``: the value depends on the truncation. The quantity
+        that does not is a density relative to a reference measure,
+        :class:`~pygeoinf2.probability.AbsolutelyContinuousMeasure`.
 
         Args:
             x: where to evaluate it.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function
+                space (``domain.is_function_space``).
+
+        Returns:
+            ``-(x - m, P (x - m)) / 2``.
+
+        Raises:
+            NotImplementedError: if the measure has no precision.
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``.
         """
         _require_density(self._domain, "A log density", unsafe=unsafe)
         return -0.5 * self.mahalanobis_squared(x, unsafe=True)
@@ -2359,19 +2346,22 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """``-P (x - m)``, already a vector in the domain.
 
         No Riesz map is applied here because none is needed: the precision maps
-        the space to itself, so its output is a vector. That is the whole
-        content of DECISIONS.md D-26 in its most agreeable form.
+        the space to itself, so its output is already the gradient, not a
+        derivative.
 
         Args:
             x: where to evaluate it.
-            unsafe: proceed on a function-space discretisation (D-131).
+            unsafe: proceed even when the domain discretises a function
+                space (``domain.is_function_space``).
 
         Returns:
             The gradient, a vector of the domain.
 
         Raises:
-            ValueError: if the measure has no precision, the gradient being
-                ``-P (x - m)``.
+            NotImplementedError: if the measure has no precision, the
+                gradient being ``-P (x - m)``.
+            ValueError: on a domain that discretises a function space, unless
+                ``unsafe=True``.
         """
         _require_density(self._domain, "A log-density gradient", unsafe=unsafe)
         if self._precision is None:
@@ -2408,13 +2398,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     ) -> GaussianMeasure:
         """Build a measure of this class. Subclasses override to stay in theirs.
 
-        The precision is carried because otherwise nothing can carry it: every
-        algebraic operation goes through here, so a signature without it means
-        no operation whatever can keep a precision, and none did — not even
-        translation, which does not change the covariance at all. The cost was
-        not only the density (``mu.translate(v).log_density`` raised where
-        ``mu.log_density`` worked) but the spectral KL route, which falls back
-        to a dense solve when the reference measure has no precision.
+        Every algebraic operation goes through here, so the precision and its
+        factor are passed through: an operation that preserves them (a
+        translation, an invertible diagonal map, a scaling) keeps the density
+        and everything built on the precision.
         """
         return GaussianMeasure(
             domain,
@@ -2448,8 +2435,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return None, None
         space = covariance.domain
         # A square root exists for any non-negative spectrum; a precision only
-        # for a positive one. Gating both on positivity lost the factor -- and
-        # with it sampling -- for every sum touching a band-limited measure.
+        # for a positive one. Gating both on positivity would lose the factor,
+        # and with it sampling, for every sum involving a band-limited measure,
+        # whose spectrum has zeros.
         factor = DiagonalLinearOperator(space, np.sqrt(values))
         precision = (
             DiagonalLinearOperator(space, 1.0 / values)
@@ -2523,8 +2511,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         survives exactly when ``A`` does. Two cases are worth taking:
 
         * the identity, which is what a *translation* is built from. A shift
-          does not touch the covariance, so dropping the precision there was
-          pure loss — and it is the commonest operation of the three.
+          does not touch the covariance, and it is the commonest of these
+          operations.
         * an invertible diagonal operator, which is what masking or rescaling a
           field by a spectral multiplier looks like.
 
@@ -2585,10 +2573,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """``alpha X``: the factor scales by ``alpha`` and the covariance by
         ``alpha^2``.
 
-        Works from whichever of the two the measure has. Requiring a factor
-        turned a measure described by a covariance and a precision — which is
-        every conditioned or explicitly-built one — into an unspecialized
-        pushforward under a scalar multiple.
+        Works from whichever of the two the measure has, so a measure
+        described by a covariance and a precision -- every conditioned or
+        explicitly built one -- stays a Gaussian under a scalar multiple.
         """
         if (
             self._covariance_factor is None

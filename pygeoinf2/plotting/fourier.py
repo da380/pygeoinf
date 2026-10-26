@@ -54,6 +54,10 @@ def _(
     Returns:
         The ``(axes, mappable)`` pair. In one dimension the mappable is the
         line.
+
+    Raises:
+        ValueError: if the field is not shaped as the box's grid.
+        NotImplementedError: on a box of more than two dimensions.
     """
     if space.spatial_dimension > 2:
         raise NotImplementedError(
@@ -109,10 +113,10 @@ def plot_error_bounds(
 ) -> Any:
     """Shade the band between two fields on a one-dimensional box.
 
-    v1's ``plot_error_bounds``, and the natural way to draw what an inference
-    actually produces: a bound above and below, not a single curve. A pair of
-    lines says the same thing and reads as two estimates rather than as one
-    with an uncertainty, which is the wrong impression to leave.
+    The natural way to draw what an inference actually produces: a bound
+    above and below, not a single curve. A pair of lines says the same thing
+    and reads as two estimates rather than as one with an uncertainty, which
+    is the wrong impression to leave.
 
     The two bounds are *not* checked against each other. A band that crosses
     over is a real thing to want to see -- it is what an inconsistent bound

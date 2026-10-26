@@ -9,8 +9,6 @@ charged for a Jacobian it will discard.
 
 Scalar-valued operators return the second-order analogue,
 :class:`QuadraticModel`, which is what a Newton or trust-region step consumes.
-
-See DECISIONS.md D-29.
 """
 
 from __future__ import annotations
@@ -26,9 +24,9 @@ __all__ = ["Linearization", "QuadraticModel"]
 
 # ``eq=False``, so both of these keep object identity for ``==`` and ``hash``.
 # The generated field-wise versions cannot work here: the fields hold vectors,
-# which on every array-backed space are NumPy arrays, so ``==`` returned an
-# array and ``bool()`` of it raised, and the ``__hash__`` that ``frozen=True``
-# generates alongside ``eq=True`` raised ``TypeError: unhashable type:
+# which on every array-backed space are NumPy arrays, so ``==`` would return an
+# array whose ``bool()`` raises, and the ``__hash__`` that ``frozen=True``
+# generates alongside ``eq=True`` would raise ``TypeError: unhashable type:
 # 'numpy.ndarray'``. A linearization is a record of one evaluation at one
 # point; identity is the only equality it can honestly offer.
 @dataclass(frozen=True, eq=False)
@@ -59,8 +57,8 @@ class QuadraticModel[X](Linearization[X, float]):
     because that is the direction the information actually flows: a numerical
     adjoint method produces the derivative, and recovering the gradient from it
     costs an application of the inverse metric. Storing the gradient instead
-    would invite callers to supply a derivative array in its place, which is
-    the classic error described in DECISIONS.md D-26.
+    would invite callers to supply a derivative array in its place, the
+    classic adjoint-method error, wrong by a factor of the metric.
 
     The gradient is computed once, on first access, and cached.
     """

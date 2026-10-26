@@ -673,7 +673,7 @@ class TestTheCovarianceFunctionOnASphere:
 
 
 class TestPointConvention:
-    """D-2: points are ``(latitude, longitude)`` in degrees, everywhere."""
+    """Points are ``(latitude, longitude)`` in degrees, everywhere."""
 
     def test_the_converters_invert_each_other(self, space, rng):
         points = np.array(space.random_points(50, rng=rng))

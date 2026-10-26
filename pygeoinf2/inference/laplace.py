@@ -1,10 +1,9 @@
 """Nonlinear inference: the MAP model, and the Gaussian that sits on it.
 
-The one substantive capability absent from both versions (**D-7**). Everything
-else here assumes the forward operator is linear, which makes the posterior
-Gaussian and its mean a linear function of the data. When it is not, neither
-holds -- and the standard first thing to do is the two-step this module
-implements:
+The rest of :mod:`pygeoinf2.inference` assumes the forward operator is linear,
+which makes the posterior Gaussian and its expectation an affine function of
+the data. When the operator is nonlinear, neither holds, and the standard
+first thing to do is the two-step this module implements:
 
 1. **Find the mode.** Minimize ``chi^2(m, d) + (m - m0, P (m - m0))``, which is
    twice the negative log posterior. That is an ordinary optimization, and the
@@ -20,12 +19,13 @@ linear, good when the posterior is unimodal and nearly quadratic near its peak,
 and silently wrong when it is neither. :meth:`MaximumAPosteriori.at` hands back
 the machinery a sampler would need to check -- see below.
 
-**Built so a sampler can replace step 2.** A function-space MCMC method --
-preconditioned Crank-Nicolson, and the Stuart-school samplers generally -- needs
-three things: draws from the prior, the log density of the posterior up to a
-constant, and the forward problem. All three are here, and
-:meth:`MaximumAPosteriori.log_posterior` is the second, so adding such a sampler
-later means adding the sampler and nothing else.
+**What a sampler needs.** A function-space MCMC method -- preconditioned
+Crank-Nicolson, and the Stuart-school samplers generally -- needs three
+things: draws from the prior, the log density of the posterior up to a
+constant, and the forward problem. The prior supplies the first,
+:meth:`MaximumAPosteriori.log_posterior` is the second, and the result of
+:meth:`MaximumAPosteriori.at` carries the posterior's exact density relative
+to the prior beside its Gaussian approximation.
 """
 
 from __future__ import annotations
@@ -112,19 +112,23 @@ class MaximumAPosteriori:
             to supply a derivative, which :meth:`~pygeoinf2.algebra.operators.Operator.at`
             provides.
         prior: a Gaussian prior on the model space.
-        optimizer: how to find the mode. L-BFGS by default, which needs only
-            gradients -- the exact Hessian of a nonlinear misfit carries a
-            second-derivative term that a forward operator is rarely asked to
-            supply. Pass a Newton method if it can.
+        optimizer: how to find the mode. L-BFGS with 500 iterations by
+            default, which needs only gradients -- the exact Hessian of a
+            nonlinear misfit carries a second-derivative term that a forward
+            operator is rarely asked to supply. Pass a Newton-type optimizer
+            if it can.
         solver: how to invert the linearized normal operator for the
-            covariance. Left to :class:`~pygeoinf2.inference.gaussian.LinearGaussianInversion`'s
-            own default if omitted.
+            covariance: a :class:`~pygeoinf2.numerics.solvers.LinearSolver`,
+            or a callable receiving the normal operator and returning one.
+            Conjugate gradients if omitted.
 
     Raises:
         ValueError: if the prior does not live on the model space, if the
             problem has no error measure, or if the prior has no precision --
             the objective is built from ``P``, and a prior that cannot supply
             one cannot state its own contribution to it.
+        TypeError: if the problem's data uncertainty is a set rather than a
+            measure.
     """
 
     def __init__(
@@ -174,11 +178,12 @@ class MaximumAPosteriori:
     def objective(self, data: Any, /) -> Functional:
         """``chi^2(m, d) + (m - m0, P (m - m0))``: twice the negative log posterior.
 
-        Both halves are already available -- the first from the problem, the
-        second from the prior -- so this assembles rather than derives. Its
-        gradient is ``-2 J* R^-1 r + 2 P (m - m0)`` with ``J`` the derivative
-        at the point, which is where the nonlinearity enters and the only
-        place it does.
+        The misfit comes from the problem and the prior term from the prior.
+        The gradient is ``-2 J* R^-1 r + 2 P (m - m0)``, with ``J`` the
+        derivative of the forward operator at the point and ``r`` the residual
+        less the error's expectation; ``J`` is where the nonlinearity enters,
+        and the only place it does. Each linearization costs one forward
+        evaluation, serving the value and the gradient together.
 
         Args:
             data: the observations.
@@ -203,7 +208,8 @@ class MaximumAPosteriori:
         def linearize(model: Any) -> QuadraticModel:
             # One forward evaluation serves both halves: the misfit is read
             # from the linearization's value and the derivative from its
-            # operator, so an optimizer's ``at()`` costs one solve, not two.
+            # operator, so an optimizer's ``at()`` evaluates the forward
+            # operator once, not twice.
             linearization = forward.at(model)
             residual = data_space.subtract(data, linearization.value)
             offset, offset_term = prior_term(model)
@@ -224,10 +230,8 @@ class MaximumAPosteriori:
     def log_posterior(self, data: Any, /) -> Functional:
         """The log posterior density, up to an additive constant.
 
-        Minus half :meth:`objective`. Offered separately because it is what a
-        sampler wants and the optimizer wants the other sign -- and because
-        writing ``-0.5 *`` at the call site is exactly the kind of factor that
-        goes missing.
+        Minus half :meth:`objective`: the sign and scale a sampler wants,
+        where an optimizer wants the objective itself.
 
         Args:
             data: the observations.
@@ -241,11 +245,10 @@ class MaximumAPosteriori:
         """The normal operator of the problem linearized at a model.
 
         ``P + J* R^-1 J`` in the model-space formalism, with ``J`` the
-        derivative there. This is the curvature of :meth:`objective` up to a
-        factor of two -- up to the Gauss-Newton approximation, which drops the
-        term in the operator's *second* derivative. That term vanishes at a
-        perfect fit and is small near a good one, and a forward operator is
-        rarely asked to supply it.
+        derivative there. This is half the Gauss-Newton approximation to the
+        Hessian of :meth:`objective`, which drops the term in the operator's
+        *second* derivative. That term vanishes at a perfect fit and is small
+        near a good one, and a forward operator is rarely asked to supply it.
 
         Args:
             model: where to linearize.
@@ -269,13 +272,14 @@ class MaximumAPosteriori:
         search.
 
         The result is a :class:`~pygeoinf2.inference.gaussian.GaussianPosterior`
-        (D-132) whose two readings part company, usefully: the Gaussian
-        moments are the *approximation* -- the curvature at this model -- while
-        ``relative_log_density`` is the **exact** posterior's ``-Phi`` against
-        the prior, computed in the data space. A sampler takes the pair whole:
-        exact target, Gaussian reference. The normalizer is ``None``; a
-        Laplace estimate of the evidence is a separate claim this does not
-        make.
+        whose two readings deliberately differ: the Gaussian moments are the
+        *approximation* -- the curvature at this model -- while
+        ``relative_log_density`` is the **exact** posterior's log density
+        relative to the prior, ``-Phi`` with ``Phi`` the likelihood potential
+        of :meth:`~pygeoinf2.inference.problem.ForwardProblem.potential`,
+        computed in the data space. A sampler takes the pair whole: exact
+        target, Gaussian approximation. The normalizer is ``None``; a Laplace
+        estimate of the evidence is a separate claim this does not make.
 
         Args:
             model: where to center it.
@@ -289,12 +293,11 @@ class MaximumAPosteriori:
         from ..numerics.solvers import resolve_solver
 
         normal = self.linearized_normal(model)
-        # In the model-space formalism the posterior covariance *is* N^-1, so
-        # this is the same construction LinearGaussianInversion makes -- and
-        # the same one, evaluated at the mode rather than assumed everywhere.
-        # The precision is N itself, which is worth keeping: it is what a
-        # sampler and a Mahalanobis distance want, and it is exact where the
-        # inverse is a solve.
+        # In the model-space formalism the posterior covariance *is* N^-1, the
+        # construction LinearGaussianInversion makes, here evaluated at this
+        # model. The precision is N itself, which is worth keeping: it is
+        # what a sampler and a Mahalanobis distance want, and it is exact
+        # where the inverse is a solve.
         inverse = resolve_solver(self._solver, normal)(normal)
         return GaussianPosterior(
             self.model_space,

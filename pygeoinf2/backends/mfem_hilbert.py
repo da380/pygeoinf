@@ -28,8 +28,7 @@ it forms a matrix. That is the point: the same code over a
 with this library orchestrating solves it never sees. The two things a
 parallel space must supply are named in :class:`MfemDofSpace` — a reduced
 dot product and a global dimension — and nothing else changes. That path is
-*not exercised here*: the test environment has no ``mpi4py``, so the claim is
-that the design admits it, not that it has been run.
+*untested*: the design admits it, but it has not been run.
 
 What this arrangement costs is honesty about adjoints. An operator's adjoint
 on a mass-weighted space is ``M^-1 A^T M``; without a factorization every
@@ -40,8 +39,7 @@ adjoint. For a PDE-constrained problem the PDE solves dominate either way.
 The construction is the core's own :class:`MassWeightedSpace` — the vectors
 belong to :class:`MfemDofSpace`, a bare Euclidean space over true-dof vectors,
 and the finite element inner product is that space reweighted by the mass
-operator. DECISIONS.md D-85 describes exactly this chain; a finite element
-space is its most natural instance.
+operator.
 
 Requires PyMFEM, which is an optional dependency; install it with the ``mfem``
 extra.
@@ -105,9 +103,9 @@ class MfemDofSpace(HilbertSpace):
     subspace the vectors actually range over.
 
     This space has no finite element meaning on its own: its inner product is
-    the dot product of coefficients, which is the thing DECISIONS.md D-26
-    warns against mistaking for an inner product of functions. It exists to
-    be reweighted by :class:`MfemHilbertSpace`, and to be the base from which
+    the dot product of coefficients, not an inner product of functions. It
+    exists to be reweighted by :class:`MfemHilbertSpace`, and to be the base
+    from which
     :meth:`LinearOperator.from_formal_adjoint` lifts an operator whose
     transpose is known.
 
@@ -411,7 +409,7 @@ class MfemHilbertSpace(MassWeightedSpace):
 
     @property
     def is_function_space(self) -> bool:
-        """True: a finite element space discretises functions (D-131).
+        """True: a finite element space discretises functions.
 
         Overrides the :class:`MassWeightedSpace` delegation: the base
         :class:`MfemDofSpace` is a plain coefficient space and says False,
@@ -648,7 +646,7 @@ def solver_from_bilinear_form(
     application turns the function into a load vector, MFEM solves, and the
     solution is the answer. The mass application is the step that is easy to
     leave out — the answer then comes back smooth, plausible and wrong by a
-    mass matrix, DECISIONS.md D-26 in its most convincing disguise.
+    mass matrix.
 
     Args:
         space: the finite element space, carrying any essential conditions.
@@ -670,6 +668,10 @@ def solver_from_bilinear_form(
 
     Returns:
         The inverse, as a ``LinearOperator`` on *space*.
+
+    Raises:
+        RuntimeError: from an application of the returned operator, when
+            *strict* and MFEM's solver reports that it did not converge.
     """
     system = _as_system(space, form)
     solver = _mfem_solver(
@@ -812,7 +814,9 @@ def white_noise_load(
     """
     mfem = _require_mfem()
     seed = int(_resolve_rng(rng).integers(1, 2**31 - 1))
-    # Bound to a name, not passed inline; see the coordinate backend for why.
+    # Bound to a name, not passed inline: AddDomainIntegrator does not take
+    # ownership of an integrator built this way, so a temporary would be
+    # collected before Assemble runs and the form would integrate freed memory.
     integrator = _white_noise_integrator(seed)
     form = mfem.LinearForm(space.finite_element_space)
     form.AddDomainIntegrator(integrator)
@@ -861,8 +865,10 @@ def matern_measure(
 
     Raises:
         ValueError: for a non-integer or non-positive exponent, a
-            non-positive correlation length, or an anisotropic field on a
-            partially assembled space (see the note in the source).
+            non-positive smoothness or correlation length, the wrong number
+            of correlation lengths, a rotation on a mesh that is not
+            two-dimensional, or an anisotropic field on a partially assembled
+            space, which PyMFEM 4.8 computes wrongly.
     """
     mfem = _require_mfem()
     from ..probability.gaussian import GaussianMeasure
@@ -875,8 +881,8 @@ def matern_measure(
     # An isotropic field has Theta == c I, and a scalar coefficient is both
     # cheaper and the only kind partial assembly handles: in PyMFEM 4.8 a
     # partially assembled DiffusionIntegrator with a MatrixConstantCoefficient
-    # returns values of order 1e290, whatever keeps the coefficient alive
-    # (measured; scalar coefficients agree with full assembly to 1e-16).
+    # returns values of order 1e290, whatever keeps the coefficient alive,
+    # while a scalar coefficient agrees with full assembly to rounding.
     isotropic = np.allclose(theta, theta[0, 0] * np.identity(dimension))
     if isotropic:
         coefficient = mfem.ConstantCoefficient(float(theta[0, 0]))

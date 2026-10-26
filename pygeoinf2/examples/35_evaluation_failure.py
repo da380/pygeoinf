@@ -3,7 +3,7 @@
 
 A real forward solver has models it cannot evaluate: the time step blows up,
 the nonlinear solve diverges, the trial model is unphysical. ``EvaluationError``
-is the protocol for saying so (D-129). Raised from the forward's value or
+is the protocol for saying so. Raised from the forward's value or
 linearization, the *point* is treated as bad rather than the run as broken: a
 line search backtracks as if the step went too far, and an optimizer that
 meets a failure where it cannot retreat returns its last good state with

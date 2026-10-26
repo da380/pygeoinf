@@ -6,18 +6,17 @@ factorizations and trace estimation need only the operator's action, its
 adjoint, an inner product and ``axpy``. Only the diagonal estimator needs
 components, because a diagonal is a statement about a basis.
 
-v1 already had an abstract path here and it was the right idea, but it drew its
-probes from ``white_noise_measure``, whose covariance on a mass-weighted space
-is the Gram matrix rather than the identity (DECISIONS.md D-19). So the
-structure was coordinate-free and the *distribution* was not: the probes were
-anisotropic in the space's own geometry, exactly where ``random_range``
-documents a "geometric safety guard" for. Drawing from
-``HilbertSpace.white_noise`` fixes it at the source.
+Probes are drawn from :meth:`~pygeoinf2.algebra.spaces.HilbertSpace.white_noise`,
+whose covariance is the identity in the space's own inner product, so they
+are isotropic in the space's geometry; standard normal components would have
+covariance ``G`` and be anisotropic on any weighted space. The range finder
+and the factorizations built on it can draw their probes from any measure on
+the domain instead, through ``measure=``.
 
-The other change is orthogonalization. A single Gram-Schmidt pass loses
-orthogonality precisely when the new vector nearly lies in the span, which is
-the regime a rank-revealing method spends its time in; the basis routines here
-use the reorthogonalizing ``orthonormal_basis``.
+A single Gram-Schmidt pass loses orthogonality precisely when the new vector
+nearly lies in the span, which is the regime a rank-revealing method spends
+its time in, so the basis routines here use the reorthogonalizing
+``orthonormal_basis``.
 """
 
 from __future__ import annotations
@@ -82,11 +81,11 @@ def _probe_range(
 ) -> list[Any]:
     """Apply the operator to probes drawn on its domain.
 
-    White noise by default; from *measure* when one is given, which is v1's
-    ``measure=`` and finds the range of the operator composed with the
-    measure's covariance factor -- on a forward operator with a prior, the
-    range the prior lets the data see, which white noise finds badly
-    (DECISIONS.md D-53). The probes are drawn in order from *rng* and applied
+    White noise by default; from *measure* when one is given, which finds the
+    range of the operator composed with the measure's covariance factor -- on
+    a forward operator with a prior, the range the prior lets the data see,
+    which white noise finds badly. The probes are drawn in order from *rng*
+    and applied
     as one block, so a matrix-backed operator does one product and a parallel
     run gives the same numbers as a serial one.
 
@@ -313,7 +312,7 @@ def random_range(
     # the vectors to extend by. Rebuilding the whole basis each round instead
     # -- orthonormal_basis(basis + block) -- redoes every earlier vector's work
     # and throws the residuals away, which turns a linear cost into a cubic
-    # one. That is v1's arrangement.
+    # one.
     if _fast(codomain):
         columns = _adaptive_range_on_components(
             operator,
@@ -434,9 +433,8 @@ def _adaptive_range_on_components(
 class LowRankEig(LinearOperator):
     """``A ~ U D U*`` for a self-adjoint operator, with ``U`` an isometry.
 
-    Self-adjoint by construction. Positive semidefinite when the eigenvalues
-    are — which the palindrome rule would deduce anyway from ``U D U*``, but is
-    cheaper to state directly here.
+    Self-adjoint by construction, and positive semidefinite when the
+    eigenvalues are all non-negative.
     """
 
     def __init__(self, factor: LinearOperator, eigenvalues: np.ndarray, /) -> None:
@@ -461,7 +459,7 @@ class LowRankEig(LinearOperator):
 
     @property
     def eigenvalues(self) -> np.ndarray:
-        """The approximate eigenvalues, largest first."""
+        """The approximate eigenvalues, largest in magnitude first."""
         return self._eigenvalues
 
     @property
@@ -598,13 +596,15 @@ def random_eig(
     """A randomized eigendecomposition of a self-adjoint operator.
 
     Builds a range basis ``Q``, forms the small matrix ``T`` with
-    ``T_ij == (A q_i, q_j)`` — a ``k x k`` array assembled from inner products
-    alone — and diagonalizes it. The eigenvectors come back as ``Q S``.
+    ``T_ij == (A q_i, q_j)`` -- a ``k x k`` array that needs only inner
+    products -- and diagonalizes it. The eigenvectors come back as ``Q S``,
+    ordered by the magnitude of their eigenvalues, largest first.
 
     Args:
         operator: a self-adjoint endomorphism.
         rank: how many eigenpairs to keep. Adaptive if omitted, growing the
-            basis until a fresh block adds nothing.
+            basis until a fresh block of probes adds less than the range
+            finder's ``rtol``.
         rng: the generator for the probes.
         **kwargs: passed to :func:`random_range` -- oversampling, power
             iterations, the adaptive tolerance, ``n_jobs``.
@@ -613,8 +613,8 @@ def random_eig(
         The decomposition, itself an operator.
 
     Raises:
-        ValueError: if the operator does not claim self-adjointness, or is not
-            an endomorphism -- an eigendecomposition needs both.
+        ValueError: if the operator does not claim self-adjointness, for a
+            non-positive rank, or when the operator's range appears trivial.
     """
     if Traits.SELF_ADJOINT & operator.traits != Traits.SELF_ADJOINT:
         raise ValueError(
@@ -673,8 +673,10 @@ def random_svd(
     are those of ``B == Q* A``. Rather than forming ``B``, this assembles the
     ``k x k`` Gram matrix ``C_ij == (A* q_i, A* q_j)``, whose eigendecomposition
     ``C == S L S^T`` gives ``sigma == sqrt(L)``, left vectors ``Q S`` and right
-    vectors ``(A* Q) S / sigma``. Every step is an inner product, so no
-    component map is used.
+    vectors ``(A* Q) S / sigma``. Every step needs only inner products, so no
+    component map is required; where the spaces have one, the arithmetic is
+    done on component arrays. Singular values below ``1e-14`` of the largest
+    are dropped, so the result may have lower rank than asked for.
 
     Args:
         operator: any linear operator; unlike :func:`random_eig` it need not
@@ -687,7 +689,9 @@ def random_svd(
         The decomposition, itself an operator.
 
     Raises:
-        ValueError: for a rank exceeding the smaller dimension.
+        ValueError: for a non-positive rank, or when the operator's range
+            appears trivial. A rank above the smaller dimension is not an
+            error: the result is capped there.
     """
     domain, codomain = operator.domain, operator.codomain
     options = _range_options(kwargs)
@@ -813,9 +817,10 @@ def random_trace(
     """The Hutchinson trace estimate, coordinate-free.
 
     ``E[(A x, x)] == tr A`` when ``x`` is white noise *on the space*, since the
-    identity covariance is what makes the expectation the trace. With v1's
-    probes the expectation is ``tr(G A)`` instead, which on a mass-weighted
-    space is a different number.
+    identity covariance is what makes the expectation the trace -- the trace
+    of the component matrix ``A_c``. Probes with standard normal components
+    would give ``tr(G A_c)`` instead, which on a weighted space is a different
+    number.
 
     Args:
         operator: an endomorphism.
@@ -823,9 +828,6 @@ def random_trace(
             given.
         rtol: draw further blocks until the standard error falls to this
             fraction of the estimate, rather than stopping at a fixed count.
-            v1 grew the sample count until the *estimate* stopped moving,
-            which is a noisy test of a noisy quantity; the standard error is
-            already computed here and says the same thing properly.
         max_samples: a ceiling on the adaptive route. Defaults to twenty
             blocks past the first.
         block_size: how many probes to add per round.
@@ -839,8 +841,8 @@ def random_trace(
         The estimate, with the standard error that earns it.
 
     Raises:
-        ValueError: for a non-square operator, fewer than two samples, or a
-            tolerance outside ``(0, 1)``.
+        ValueError: for an operator that is not an endomorphism, fewer than
+            two samples, or a tolerance outside ``(0, 1)``.
     """
     if not operator.is_endomorphism:
         raise ValueError("A trace needs an operator from a space to itself.")
@@ -916,8 +918,8 @@ def deflated_diagonal(
         rank: how many eigenpairs to remove.
         samples: probes for the remainder, or the first batch of them when
             ``rtol`` is given.
-        rtol: stop adding probes once the remainder's estimate settles to
-            this relative change, as :func:`random_diagonal` does.
+        rtol: stop adding probes once the remainder's estimate reaches this
+            relative accuracy, measured as for :func:`random_diagonal`.
         max_samples: the cap on that.
         block_size: probes per step on that.
         form: which matrix's diagonal, as for :func:`random_diagonal`.
@@ -929,8 +931,9 @@ def deflated_diagonal(
         The diagonal, as an array.
 
     Raises:
-        ValueError: for a non-positive rank or sample count, or an unknown
-            form.
+        ValueError: for a negative rank, an operator that does not claim
+            self-adjointness (when ``rank`` is positive), an unknown form, or
+            a tolerance outside ``(0, 1)``.
     """
     require_coordinates(operator.domain, operator.codomain)
     if rank < 0:
@@ -1000,8 +1003,9 @@ def random_diagonal(
     """The Bekas-Kokiopoulou-Saad diagonal estimate.
 
     Needs coordinates, because a diagonal is a statement about a basis, and
-    needs to be told *which* matrix's diagonal is wanted, because no trait
-    implies it (DECISIONS.md D-25). The Galerkin form is the default: it is the
+    needs to be told *which* matrix's diagonal is wanted, the components or
+    the Galerkin matrix, because no trait implies it. The Galerkin form is the
+    default: it is the
     representation in which a self-adjoint operator is symmetric, so it is the
     diagonal a symmetric preconditioner wants.
 
@@ -1015,15 +1019,12 @@ def random_diagonal(
             this, measured as ``||standard error|| / ||estimate||`` over the
             whole diagonal.
 
-            The norm, rather than the worst entry: a diagonal is a vector, a
-            per-entry relative test never passes on a near-zero entry, and the
-            worst entry's own standard error does not predict the worst
-            realized error -- the maximum over many entries runs several
-            standard errors out. The norm ratio does predict it. Measured
-            against the truth on a 120-dimensional operator, the ratio and the
-            achieved relative error track each other within a few per cent all
-            the way from 20 probes (0.042 against 0.045) to 420 (0.0094
-            against 0.0094).
+            The norm, rather than the worst entry: a per-entry relative test
+            never passes on a near-zero entry, and the worst entry's own
+            standard error does not predict the worst realized error, the
+            maximum over many entries running several standard errors out.
+            The norm ratio does track the achieved relative error of the
+            whole diagonal.
         max_samples: a ceiling on that. Defaults to twenty blocks past the
             first.
         block_size: probes added per round.

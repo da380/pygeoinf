@@ -45,11 +45,9 @@ def _(
         space: the sphere whose fields will be drawn.
         rows: number of panel rows.
         columns: number of panel columns.
-        projection: a cartopy projection. Defaults to ``PlateCarree``, which is
-            v1's default: it is the projection in which the grid is stored, so
-            it is the one that shows the data rather than an opinion about it.
-            A downstream wrapper is free to prefer another -- pyslfp defaults
-            to Robinson -- and that is its business.
+        projection: a cartopy projection. Defaults to ``PlateCarree``, the
+            projection in which the grid is stored, so the one that shows the
+            data as it is held.
         **kwargs: passed through to ``matplotlib.pyplot.subplots``.
 
     Returns:
@@ -98,15 +96,15 @@ def _(
             grid values.
         ax: axes to draw on. A new figure is made if omitted, on a
             ``PlateCarree`` projection.
-        cmap: color map. ``RdBu`` by default, as in v1: most fields drawn
-            here are signed anomalies, and a diverging map is what those want.
+        cmap: color map. ``RdBu`` by default: most fields drawn here are
+            signed anomalies, and a diverging map is what those want.
         symmetric: put zero at the middle of the color scale. Use it for
             anything signed. Off by default.
         vmin: lower color limit; the field's minimum if omitted.
         vmax: upper color limit; the field's maximum if omitted.
-        colorbar: attach a colorbar. Off by default, as in v1 -- a bar takes
-            room from the map, and a panel in a grid usually shares one --
-            unless a *colorbar_label* is given, since asking for a label is
+        colorbar: attach a colorbar. Off by default -- a bar takes room from
+            the map, and a panel in a grid usually shares one -- unless a
+            *colorbar_label* is given, since asking for a label is
             asking for the bar it goes on. Pass ``False`` to override that. The
             bar is left on the returned mappable as ``.colorbar``, so it can be
             restyled afterwards.
@@ -115,8 +113,8 @@ def _(
         borders: draw national borders. Off by default.
         rivers: draw rivers. Off by default.
         gridlines: draw a latitude and longitude graticule, left on the axes as
-            ``.gridliner``. On by default, as in v1: a map without a graticule
-            leaves the reader to guess where anything is.
+            ``.gridliner``. On by default: a map without a graticule leaves
+            the reader to guess where anything is.
         gridlines_kwargs: passed to ``gridlines``. ``lat_interval`` and
             ``lon_interval`` are translated into the locators cartopy wants,
             since those are what a caller actually has in mind.
@@ -227,8 +225,7 @@ def _rolled_to_the_dateline(
     The grid a sphere hands over starts at Greenwich; cartopy's projections are
     cut at the antimeridian. Handing them a mesh in ``[0, 360)`` puts the cut
     through the middle of the data, and every cell that straddles it sends
-    cartopy down its per-polygon wrapping path -- 1028 cells at lmax 128, and
-    with them 1.2 s of the 1.3 s a map used to cost. Rolling costs a copy.
+    cartopy down its slow per-polygon wrapping path. Rolling costs a copy.
 
     Args:
         longitudes: the grid longitudes in degrees, increasing over ``[0, 360)``.
@@ -333,8 +330,7 @@ def _(
     A scatter of stations is one thing; a scatter of *measurements* is the
     other, and it is the one an altimetry or gravity figure is made of. Passing
     the values as *data* colors the markers by them and gives them a bar to be
-    read against, which is v1's ``plot_points(points, data=...)``. Without it
-    every marker is the one flat *color*.
+    read against. Without it every marker is the one flat *color*.
 
     Args:
         space: the sphere.
@@ -345,7 +341,7 @@ def _(
         marker: matplotlib marker.
         size: marker area.
         color: marker color, used when there is no *data*.
-        cmap: color map for *data*. ``RdBu`` by default, as in v1.
+        cmap: color map for *data*. ``RdBu`` by default.
         symmetric: put zero at the middle of the color scale. Use it for
             anything signed. Off by default.
         vmin: lower color limit; the data's minimum if omitted.
@@ -422,10 +418,9 @@ def _(
     in the projection — which for a global network is most of them.
 
     All of them go on as one ``LineCollection`` rather than one ``plot`` call
-    each. A ray network is thousands of paths, and cartopy re-projects every
-    line it is given separately: at 960 paths (1178 pieces once the dateline
-    crossings are split) the per-line route cost 528 ms of drawing against
-    36 ms for the collection on ``PlateCarree``, 838 against 303 on Robinson.
+    each: a ray network is thousands of paths, and cartopy would otherwise
+    re-project every line separately. A path crossing the dateline is split
+    there, so no piece is drawn across the whole map.
 
     Args:
         space: the sphere.
@@ -489,13 +484,14 @@ def _(
     """Outline spherical caps of one radius on a map.
 
     Each cap's rim is the set of points at the angular distance
-    ``radius / R`` from its center along every bearing, and goes on as one
-    ``LineCollection`` with the paths' dateline splitting.
+    ``radius / R`` from its center along every bearing. All the rims go on as
+    one ``LineCollection``, split at the dateline as the paths are.
 
     Args:
         space: the sphere.
         centers: ``(latitude, longitude)`` pairs in degrees.
-        radius: the *physical* cap radius, in the units of the sphere's.
+        radius: the *physical* cap radius, in the units of the sphere's
+            radius.
         ax: axes to draw on. A new map is made if omitted.
         count: points around each rim.
         color: line color.

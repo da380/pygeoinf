@@ -1,13 +1,12 @@
 """
 Periodic boxes in any dimension, through the real FFT.
 
-One implementation covers what v1 spreads over four files and roughly 4.1k
-lines: the circle is a one-dimensional box, the torus a two-dimensional one,
-and the three-dimensional case — the one that was not there — comes free.
+One implementation for every dimension: the circle is a one-dimensional box,
+the torus a two-dimensional one, and a periodic cube a three-dimensional one.
 
 Fields are grid arrays; components are coefficients in a real Fourier basis
 that is **orthonormal in L2**, so the Lebesgue space has an identity Gram
-matrix and v1's factor-of-two bookkeeping disappears. The Sobolev space is the
+matrix. The Sobolev space is the
 same coordinate map with the Sobolev symbol as its metric, so it is a
 ``DiagonalMetricSpace`` too and no mass-weighted construction is needed.
 
@@ -228,8 +227,8 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     def component_of(self, wavevector: Any, /, *, phase: Any = 0) -> Any:
         """The position of the component with a given wavevector and phase.
 
-        v1's ``index_to_integer``, vectorized: one wavevector of length
-        ``spatial_dimension`` gives an integer, an array of shape
+        Vectorized: one wavevector of length ``spatial_dimension`` gives an
+        integer, an array of shape
         ``(spatial_dimension, n)`` gives ``n`` positions. Wavevectors are
         taken modulo the grid, so a mode may be named by either sign of its
         aliased wavenumber.
@@ -313,9 +312,10 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         Tagged by geometry rather than by ``type(self)``, as the sphere's is
         and for the same reason: ``Circle``, ``Torus``, ``Lebesgue`` and
         ``Sobolev`` are thin subclasses over one grid and one point map, so
-        keying on the concrete class said two views of one field were different
-        fields -- and a formal-adjoint lift between them round-tripped through
-        components instead of passing the vector straight through.
+        keying on the concrete class would make two views of one field
+        different fields, and a formal-adjoint lift between them would
+        round-trip through components instead of passing the vector straight
+        through.
         """
         return ("periodic_box", self._shape, self._lengths)
 
@@ -496,8 +496,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         """The points as one contiguous array of angles per axis.
 
         The conversion the non-uniform FFT starts with, done once for an
-        operator rather than once per application: it was 32 of 61 ms on a
-        512-square torus at 10^5 points (measured 2026-08-29).
+        operator rather than once per application.
 
         Args:
             points: points of the box, or an already prepared set.
@@ -635,7 +634,11 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         return components
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
-        """Sample a function on the grid."""
+        """Sample a function on the grid.
+
+        The function receives a point: a float on a one-dimensional box, an
+        array of coordinates otherwise.
+        """
         mesh = np.meshgrid(*self.grid_axes, indexing="ij")
         points = np.stack([m.ravel() for m in mesh], axis=1)
         values = np.array([float(function(p if p.size > 1 else p[0])) for p in points])
@@ -723,14 +726,15 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     def to_coefficients(self, x: np.ndarray, /) -> np.ndarray:
         """The field's complex Fourier coefficients, in numpy's convention.
 
-        The other half of the seam that components open: components are this
-        library's packed *real* vector, ordered by the packing and scaled to be
-        orthonormal in ``L2``, and this is exactly what ``rfftn`` returns for
-        the same field -- half the spectrum, on the unnormalized scale numpy
-        and scipy share, shaped like the grid. The two differ by a factor: a
-        component is its coefficient times ``_component_scale``, and times a
-        further ``sqrt(2)`` where the coefficient has a conjugate partner that
-        the half-spectrum drops.
+        For interchange with other FFT code. Components are this library's
+        packed *real* vector, ordered by the packing and scaled to be
+        orthonormal in ``L2``; this is exactly what ``rfftn`` returns for the
+        same field -- half the spectrum, on the unnormalized scale numpy and
+        scipy share, shaped like the grid. The two differ by a factor: a
+        component is the real or imaginary part of its coefficient times
+        ``sqrt(V) / N``, with ``V`` the box's volume and ``N`` its number of
+        grid points, and times a further ``sqrt(2)`` where the coefficient has
+        a conjugate partner.
 
         That convention rather than this library's, because the point of
         handing out coefficients is to hand them to something else.
@@ -859,9 +863,10 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         target does not have is dropped, and anything it has and this does not
         is left zero.
 
-        The adjoint is derived rather than written down, which matters: it is
-        the other one of the pair only when the two spaces carry the same
-        metric on their shared components, and it is the ratio of the two
+        The adjoint is derived through the metrics rather than written down,
+        which matters: the adjoint of a restriction is the matching
+        zero-padding only when the two spaces carry the same metric on their
+        shared components, and carries the ratio of the two metrics
         otherwise.
 
         Args:
@@ -1089,11 +1094,12 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     ) -> "PeriodicBox":
         """The same domain with some of its parameters changed.
 
-        **Returns the D-3 subclass its order names** rather than the base
-        class, which is what makes ``isinstance(X.with_order(0.0), Lebesgue)``
-        true (measured 2026-08-29). Each geometry over this one -- a circle, a torus, a
-        bounded box -- overrides this and nothing else, so there is a single
-        place per family that knows which class goes with which order.
+        **Returns the subclass its order names**, :class:`Lebesgue` or
+        :class:`Sobolev`, rather than the base class, which is what makes
+        ``isinstance(X.with_order(0.0), Lebesgue)`` true. Each geometry over
+        this one -- a circle, a torus, a bounded box -- overrides this and
+        nothing else, so there is a single place per family that knows which
+        class goes with which order.
 
         Args:
             shape: the new grid. Unchanged if omitted.
@@ -1125,7 +1131,8 @@ class Lebesgue(PeriodicBox):
         """
         Args:
             shape: grid points along each axis.
-            lengths: the period along each axis. Unit lengths by default.
+            lengths: the period along each axis. ``2 pi`` on every axis by
+                default.
         """
         super().__init__(shape, lengths=lengths, order=0.0)
 
@@ -1153,6 +1160,7 @@ class Sobolev(PeriodicBox):
             shape: grid points along each axis.
             order: the Sobolev order.
             length_scale: the length at which the Sobolev weight turns over.
-            lengths: the period along each axis. Unit lengths by default.
+            lengths: the period along each axis. ``2 pi`` on every axis by
+                default.
         """
         super().__init__(shape, lengths=lengths, order=order, length_scale=length_scale)

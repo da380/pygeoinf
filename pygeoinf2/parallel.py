@@ -1,12 +1,10 @@
 """Running independent work in parallel, *around* operators.
 
-The distinction that decides where this is used, from DECISIONS.md
-D-6 and D-52: parallelism belongs at the embarrassingly parallel loops that surround an
+Parallelism belongs at the embarrassingly parallel loops that surround an
 operator, never inside its action. Drawing a thousand samples is a thousand
 independent applications of one factor; applying that factor once is not
-something this can help with, and threading a ``parallel=`` flag down into an
-operator's own arithmetic is how v1 ended up with the flag on methods that
-could not use it.
+something this can help with, and an operator's own arithmetic takes no
+``parallel=`` flag.
 
 So the loops that take an ``n_jobs`` are the ones whose iterations are
 genuinely independent and each expensive:
@@ -18,12 +16,10 @@ genuinely independent and each expensive:
 * pointwise variance at a list of points;
 * the support values of a feasible set in many directions.
 
-``joblib`` does the work. It is a required dependency, as it was in v1. With
-``n_jobs`` unset the loop is a list comprehension and joblib is never
-touched.
+``joblib`` does the work. It is a required dependency. With ``n_jobs`` unset
+the loop is a list comprehension and joblib is never touched.
 
 **Which regime a problem is in decides whether to ask for this at all.**
-Measured on 2026-08-29 (the appendix of ``DECISIONS.md``):
 
 * *NumPy-bound* work -- dense matrices, Euclidean spaces, anything whose cost
   is a BLAS call -- gains nothing from processes: the serial loop with BLAS
@@ -40,12 +36,11 @@ Measured on 2026-08-29 (the appendix of ``DECISIONS.md``):
 
 **Threads inside the workers.** Each worker is given one OpenMP/BLAS thread.
 joblib's own default is ``cores // n_jobs``, which for the small transforms
-this library does is a net loss -- measured at 8.6 s against 5.5 s for one
-dense assembly at four workers -- and, for the ``pyshtools`` transforms, the
+this library does is a net loss and, for the ``pyshtools`` transforms, the
 same oversubscription the ``nthreads=1`` default on the NUFFT avoids. A
 variable already exported in the environment (``OMP_NUM_THREADS`` and its
-BLAS siblings, set before Python starts as pyslfp's ``run_all.sh`` does) is
-respected by joblib and wins over this.
+BLAS siblings, set before Python starts) is respected by joblib and wins over
+this.
 
 **Steering from outside.** Everything here goes through
 ``joblib.Parallel`` with only ``n_jobs`` set, so a ``joblib.parallel_config``
@@ -57,9 +52,9 @@ context around the call decides the rest::
 That is where a threading backend, a dask or ray cluster, or a different
 thread budget is chosen; when a context is set it is respected entirely and
 the one-thread default above is not applied. There is no ``backend``
-argument on the loops themselves, because the one value it was there to
-offer -- ``"threading"`` -- is the one that crashes on a sphere and is never
-faster than BLAS threading where it is safe.
+argument on the loops themselves: the obvious alternative to processes,
+``"threading"``, crashes on a sphere and is never faster than BLAS threading
+where it is safe.
 
 **Nesting.** A loop that finds itself already inside a worker runs serially.
 joblib would otherwise turn the inner request into *threads* inside that
@@ -71,8 +66,8 @@ another without ever producing threads.
 methods of ordinary objects are, and so are closures over them, which is why
 the loops here can pass small lambdas; a function defined in ``__main__`` is
 serialized *by value* and drags its module globals with it, so one that has a
-Fortran extension in scope fails with ``cannot pickle 'fortran' object``. That
-is the reason v1 keeps its workers in a module of top-level functions. Large
+Fortran extension in scope fails with ``cannot pickle 'fortran' object``; keep
+such workers as top-level functions in an importable module. Large
 arrays reached through the closure -- a dense forward operator inside a
 posterior -- are written once to shared memory by joblib and mapped by every
 worker, not copied per task.

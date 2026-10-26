@@ -6,8 +6,6 @@ field to the torus and use a non-uniform FFT. The first is obviously right and
 unusably slow; the second is neither. So every test here forces both and
 compares, and the ones about the delicate parts — the quadrature weights and
 the pole the grid does not sample — carry a negative control.
-
-See DECISIONS.md D-89.
 """
 
 import numpy as np
@@ -137,7 +135,7 @@ class TestTheLebesgueInnerProductIsTheQuadrature:
         assert X.norm(x) > 0.0
 
     def test_one_raw_product_still_agrees(self, rng):
-        """The case that matters after DECISIONS.md D-87: a pointwise product is
+        """The case that matters once a pointwise product is
         left on the grid, and pairing one with a field of the space gives the
         same number either way -- exactly, not nearly."""
         from pygeoinf2.algebra.spaces import DiagonalMetricSpace
@@ -483,7 +481,7 @@ class TestRandomDomainPoints:
 class TestGaussLegendreGrid:
     """The same space on a Gauss-Legendre grid: fewer points, exact weights,
     no pole row, and the fast point evaluation borrowed from a Driscoll-Healy
-    sibling (DECISIONS.md D-86)."""
+    sibling."""
 
     @pytest.fixture(params=[4, 9])
     def pair(self, request):

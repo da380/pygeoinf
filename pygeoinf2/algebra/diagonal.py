@@ -1,14 +1,13 @@
 """
 Operators that are diagonal in a space's own basis.
 
-This is the v2 home for what v1 calls ``InvariantLinearAutomorphism``: an
-operator stored as its eigenvalues, closed under the algebra, and carrying a
-complete functional calculus evaluated pointwise on the spectrum.
+An operator stored as its eigenvalues, closed under the algebra, and carrying
+a complete functional calculus evaluated pointwise on the spectrum. On the
+symmetric spaces these are the operators invariant under the group action.
 
-It is a **class**, not a trait, because it carries data. That is the rule from
-DECISIONS.md D-36: mathematical properties are traits, representations are
-classes. Self-adjointness is a trait this class happens to claim; being
-diagonal is a fact about how it is stored.
+It is a **class**, not a trait, because it carries data: mathematical
+properties are traits, representations are classes. Self-adjointness is a
+trait this class may claim; being diagonal is a fact about how it is stored.
 
 Self-adjointness holds only when the space's metric is also diagonal. With
 component matrix ``diag(d)`` the Galerkin matrix is ``G diag(d)``, symmetric
@@ -54,6 +53,10 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
             eigenvalues: one value per basis direction.
             traits: extra claims. Symmetry and definiteness are deduced from
                 the values and the metric, so they rarely need supplying.
+
+        Raises:
+            TypeError: if the domain has no coordinate map.
+            ValueError: if the number of eigenvalues is not the dimension.
         """
         if not isinstance(domain, CoordinateSpace):
             raise TypeError(
@@ -126,9 +129,10 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
     #                      Structure-preserving algebra                 #
     # ----------------------------------------------------------------- #
     #
-    # The specialization protocol of DECISIONS.md D-32. Without these, the sum of
-    # two diagonal operators would be a generic node and would lose both the
-    # eigenvalues and the functional calculus that makes them worth storing.
+    # The specialization protocol (see ``Operator._combine_add``). Without
+    # these, the sum of two diagonal operators would be a generic node and
+    # would lose both the eigenvalues and the functional calculus that makes
+    # them worth storing.
 
     def _rebuild(self, eigenvalues: np.ndarray) -> DiagonalLinearOperator[V]:
         """Build an operator of this class. Subclasses override to stay in theirs."""
@@ -139,7 +143,7 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
     # diagonal metric the two agree; on any other the constructor deduces
     # nothing, and without this a product of two self-adjoint diagonals --
     # ``(sigma I)(sigma I)``, the covariance of every isotropic measure --
-    # came out claiming nothing at all.
+    # would claim nothing at all.
 
     def _combine_add(self, other: Operator) -> Operator | None:
         if isinstance(other, DiagonalLinearOperator) and other.domain == self.domain:
@@ -421,7 +425,7 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         -- so ``f(A)`` is ``diag(f(d))`` on any space, and what ``f`` needs is
         that ``d`` lies in its domain.
 
-        Gating on ``POSITIVE_SEMIDEFINITE`` instead, as this used to, refused
+        Gating on ``POSITIVE_SEMIDEFINITE`` instead would refuse
         :attr:`sqrt`, :attr:`log`, :attr:`log_determinant` and fractional
         powers outright on every space whose Gram matrix is not diagonal:
         there ``G diag(d)`` is symmetric only where the two commute, so

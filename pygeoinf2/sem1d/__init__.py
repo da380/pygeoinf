@@ -14,8 +14,8 @@ operators and Gaussian measures. The domain is reached by restriction: the mesh
 extends past it by a padding, so that the boundary conditions ``A`` needs act
 at a distance and leave no mark on the fields where they matter.
 
-**One submodule per geometry**, each exporting ``Lebesgue`` and ``Sobolev``
-(DECISIONS.md D-3), and the geometries differ first in their measure:
+**One submodule per geometry**, each exporting ``Lebesgue`` and ``Sobolev``,
+and the geometries differ first in their measure:
 
 ``interval``
     an interval of the *line*, under ``dx``. The coordinate is a position and
