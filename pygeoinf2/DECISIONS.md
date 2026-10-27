@@ -1265,6 +1265,37 @@ route reproduces the present numbers to `1e-10`; the phase-delay problem at
 recorded; the flexure bounds move by under a few per cent between the two
 finest truncations; `n_jobs` and `via=` change nothing but cost.
 
+**D-153. The one-multiplier reduction is sound, and it is a scalar
+minimisation of the partially minimised dual** (2026-10-27, measured;
+Stage 0.1 of `CONVEX_PLAN.md`, scripts in `benchmarks/`). Cleaner than
+eliminating a multiplier through the constraint quadratics: with `s = γt`
+the dual `ψ(s, t) = ½(b, M⁻¹b) + (s + t)/2 − (t/2)(Pd′, d′)` becomes
+`A(γ)/(2t) + B(γ) + tC(γ)/2` with `A = (c, u₁)`, `B = (c, u₂)`,
+`C = (A*Pd′, u₂) + γ + 1 − (Pd′, d′)` from the two solves
+`u₁ = M(γ)⁻¹c`, `u₂ = M(γ)⁻¹A*Pd′`; the minimum over `t` is closed form,
+`t* = sqrt(A/C)`, leaving `φ(γ) = B + sqrt(AC)` to minimise over `γ ≥ 0`,
+with `φ(∞)` the prior-only bound and `φ(0)` the data-only bound where
+`A*PA` is invertible. Measured on twelve problem families (balls,
+ellipsoids, off-centre sets, prior condition numbers to `1e8`, noise from
+loose to very tight, overdetermined, `dim P = 15`), 24 directions each:
+`φ` evaluated in the data-space formalism is unimodal in every direction;
+its minimum agrees with a direct minimisation of `ψ(s, t)` to `1e-13` and
+with the present bisection route to `1e-13` wherever that route runs; a
+warm-started bracketed Brent in `log γ` from the neighbouring direction's
+root takes about 11 evaluations per direction at a tolerance of `1e-3` in
+`log γ`, which is enough because the value is stationary there (second
+order in the parameter error), against 3600 fixed-depth steps today.
+Two cautions that shape Stage 3: the data-space evaluation must use the
+resolvent identity, `A(γ) = κ/γ + (ACc, G⁻¹RK⁻¹ACc)` with the kernel part
+`κ = (c, Cc) − (ACc, G⁻¹ACc)` computed once per direction (the dense
+model-space solve of `γQ + A*PA` loses five digits at tight noise and
+produces spurious minima below `γ ≈ 1e-7` in the underdetermined case); and
+both ends `γ = 0` and `γ = ∞` are candidates to be evaluated explicitly,
+since an overdetermined problem's prior is slack and the present route
+crashes or returns a value off by `6e-5` there. `B(γ)` is
+direction-independent apart from the pairing, so with `K(γ)⁻¹d′` cached by
+`γ` (D-145) a sweep costs about one solve per `γ` per direction.
+
 ---
 
 ## 10. Symmetric spaces

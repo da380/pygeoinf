@@ -70,16 +70,13 @@ reported values are the outer ones.
 
 Nothing user-facing changes in this stage.
 
-1. **The one-multiplier reduction (D-144).** In a scratch script, on the
-   present `_BisectionRoute`'s test problems and on a reduced flexure
-   problem (Stage 7's second benchmark at small size): at fixed `γ = s/t`
-   solve `u₁ = M(γ)⁻¹ T*q` and `u₂ = M(γ)⁻¹ A*P d′`, form the two
-   constraints as quadratics in `1/t`, eliminate `t`, and tabulate the
-   remaining residual against `γ` over several decades for many directions.
-   Decide: monotone (or single-rooted on the bracket) in every case seen, or
-   not. Record the outcome as a D-entry with the figures. Whatever the
-   answer, the nested monotone root finds stay as the fallback and are
-   wired in from the start (D-144).
+1. **DONE (D-153).** The one-multiplier reduction is sound: with `s = γt`
+   the dual minimised over `t` is closed form and `φ(γ) = B + sqrt(AC)` is
+   unimodal in every direction of twelve problem families when evaluated
+   in the data-space formalism through the resolvent identity; about 11
+   evaluations per direction warm-started. `benchmarks/stage0_unimodality.py`
+   and `benchmarks/stage0_checks.py` are the record. The nested root finds
+   stay as the fallback (D-144) but are not expected to run.
 2. **`SpectralFamilySolver`** in `numerics/solvers.py` (D-145): a
    `LinearSolver` for a one-parameter family `K + γ S`, factoring the
    whitened `K` once (dense `eigh`; the whitening by the Cholesky factor of
@@ -106,6 +103,57 @@ Nothing user-facing changes in this stage.
    surrogate-dimension matrix per multiplier).
 
 Fast suite green; D-entries for 1 and any surprise.
+
+**Implementation notes for 2–4, from reading the code on 2026-10-27**
+(nothing written yet):
+
+- One protocol serves the family-aware solver and the family-aware
+  preconditioners, since a preconditioner is a `LinearSolver`:
+  `for_family(base, shift) -> bound`, and `bound.at(multiplier, member) ->
+  InverseOperator` for that member (exact for the solver, approximate for a
+  preconditioner). `DampedSolves._solver_for` grows two branches ahead of
+  the `refresh` rule: a family-aware solver is bound once (cached on the
+  instance) and `at()` answers each member; an iterative solver whose
+  deferred preconditioner is family-aware gets a clone carrying
+  `bound.at(multiplier, member)` as its resolved preconditioner (the
+  `copy.copy` route `resolved_for` uses, since `with_preconditioner`
+  refuses to replace). Plain solvers and preconditioners are untouched.
+- `SpectralFamilySolver(LinearSolver)` in `numerics/solvers.py`: standalone
+  `_invert` behaves as `EigenSolver`; `for_family` extracts the Galerkin
+  matrices of `base` and `shift` once (as `DampedSolves._matrices` does for
+  direct solvers), takes `shift = LLᵀ`, `W = L⁻¹`, `W base Wᵀ = VΛVᵀ`, and
+  `at(γ, member)` solves by `Wᵀ V (Λ + γ)⁻¹ Vᵀ W G_Y c_y`, mirroring
+  `DirectSolver.solve_fn`'s Gram handling for the Galerkin form;
+  `requires = SELF_ADJOINT`, `requires_coordinates = True`.
+- `NormalDiagonalPreconditioner.for_family`: on the first member, probe
+  `diag(A Q A*)` (the existing blocks machinery) and read `diag(R)` off the
+  member's `error_covariance`; `at(γ, member)` uses
+  `member.scale · (diag(AQA*) + γ·diag(R))` — the member's `damping` is
+  the multiplier and `scale` is `t` in the data space (see
+  `TikhonovNormalOperator.scale`). `SpectralPreconditioner.for_family`:
+  deflate `base` once by `random_eig`; `at(γ, ·)` shifts the resolved
+  eigenvalues by `γ·(uᵢ, S uᵢ)` and the floor likewise, exact when `S` is a
+  multiple of the identity (a ball) and an approximation otherwise.
+  `WoodburyPreconditioner` needs no `at()`: its build is lazy and its inner
+  factorisation is of surrogate dimension, so `refresh=1.0` already makes
+  it per-member and cheap; the plan's "family-aware Woodbury" reduces to
+  documenting that and passing the member's `R` scaled by `γ`.
+- The fold: `BundleResult(OptimizationResult)` as a frozen dataclass
+  subclass adding `gap`, `lower_bound`, `serious_steps`; `history` the
+  best value per iteration; `gradient_norm = nan`. `ProximalBundleMethod`
+  and `LevelBundleMethod` subclass `Optimizer`, calling
+  `super().__init__(max_iterations=...)`, renaming the attribute
+  `_tolerance` to `_gap_tolerance` (it shadows `Optimizer._tolerance()`),
+  and overriding `minimize(functional, x0, /, *, subgradient=None)` as
+  `NewtonCG` overrides it, because `Optimizer.minimize` demands a
+  derivative and these take a subgradient. The dead code after
+  `qp_solver`'s `return` moves into `__init__`. `SaddlePointResult` and
+  `KKTResult` become `OptimizationResult` subclasses (`minimizer` the model,
+  `value = −(c, m)` per D-150, extra fields `discrepancy`, `certificate`,
+  `residual` and `multipliers`); readers: `inference/backus.py` and the
+  tests in `test_quadratic_programming.py` (lines 126–157 read `gap`,
+  `lower_bound`, `serious_steps`) and `test_convex.py:568` (the
+  field-comparison test, to become `issubclass`).
 
 ## Stage 1 — relocate the damped-family machinery (D-142)
 
@@ -163,19 +211,25 @@ the quadratic tier once Stage 3 lands; `+∞` handling.
 
 ## Stage 3 — the quadratic tier, matrix-free
 
-1. **`Primal` (D-144)**: the two-multiplier algorithm around a
-   `TikhonovFamily` built with the prior's `Q` and the noise's `P`
-   (`formalism="data_space"` by default, D-147; `"model_space"` on request
-   and required when the prior has no covariance), the one-multiplier
-   reduction when Stage 0 showed it sound and the nested monotone root
-   finds otherwise, each root find a bracketed secant or Brent on
-   `monotone_root` at the `1e-6` relative constraint tolerance, every solve
-   warm-started through `DampedSolves`. The prior-only branch (the prior's
-   support point already fits) exits with no solve. Returns a
-   `SupportResult` with the outer value from the dual certificate
-   `λ = t·P(d′ − Au)` evaluated in closed form, the inner value from the
-   model scaled into both sets, the contact point, the extremal model and
-   the multipliers (D-148).
+1. **`Primal` (D-144, D-153)**: minimise `φ(γ) = B(γ) + sqrt(A(γ)C(γ))`
+   over `γ ∈ [0, ∞]` around a `TikhonovFamily` built with the prior's `Q`
+   and the noise's `P` (`formalism="data_space"` by default, D-147;
+   `"model_space"` on request and required when the prior has no
+   covariance). In the data-space formalism the three coefficients are
+   `A = κ/γ + (ACc, G⁻¹RK⁻¹ACc)` with the kernel part `κ` once per
+   direction, `B = (ACc, K⁻¹d′)`, `C = 1 + γ(1 − (d′, K⁻¹d′))`, where
+   `K(γ) = G + γR` is the family member; in the model-space formalism the
+   two direct solves. A bracketed Brent in `log γ` from the neighbouring
+   direction's root (cold: expand from `γ = 1`), tolerance `1e-3` in
+   `log γ` (the value is stationary, second order); `γ = ∞` (prior-only,
+   zero solves) and `γ = 0` (data-only, when `A*PA` is invertible) tested
+   as candidates; every solve warm-started through `DampedSolves`, with
+   `K⁻¹d′` cached by `γ` (D-145). The nested monotone root finds remain as
+   a fallback behind the same object. At the minimum `t* = sqrt(A/C)`,
+   `s* = γt*`, the model `u = u₁/t* + u₂`. Returns a `SupportResult` with
+   the outer value from the dual certificate `λ = t*·P(d′ − Au)` evaluated
+   in closed form, the inner value from the model scaled into both sets,
+   the contact point, the extremal model and the multipliers (D-148).
 2. **`Search` (D-137)**: the membership and feasibility algorithm. Without
    a property value: `misfit_search` over the family on the shifted data,
    giving the fitting model and emptiness. With a value `p`: the
@@ -300,6 +354,10 @@ workable, B the floor).
    Each script records application counts and wall time for the spectral
    route, unpreconditioned CG, deflated CG (10c's C, the `SpectralPreconditioner`
    by `random_eig`) and surrogate-Woodbury CG, with `n_jobs=1` and `k`.
+   Seeds: `work/sphere_dli_example.py` (phase delay, real catalogues) and
+   `work/dynamic_topography.py` (flexure–gravity, variable rigidity, the
+   surrogate Woodbury preconditioner), both written against v1; the timing
+   harnesses in `work/` join this directory.
 2. **Measurements into DECISIONS.md's appendix**, and the defaults they
    set: whether deflation becomes the data-space default and at what rank,
    the `refresh` factor, any crossover between the spectral solver and CG.

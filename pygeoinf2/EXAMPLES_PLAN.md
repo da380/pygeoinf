@@ -94,10 +94,28 @@ problem, real or realistic data, several features composed, minutes to run.
    and inner hull, the outer ellipsoid, convergence under refinement.
 6. **Sampling the posterior** (post-release, the student's) — pCN against
    the Laplace Gaussian where the Gaussian is visibly wrong.
+7. **Choosing the truncation by evidence** — the Bayesian evidence
+   (`GaussianPosterior.log_normalizer`) as a function of the truncation
+   degree of a spectral space, with a surrogate for the large degrees; the
+   question every user of a spectral space has. Seeded by `work/evidence.py`.
+8. **Making a large solve finish** — one problem at scale, the
+   preconditioning strategies the library offers compared on it (none,
+   Jacobi, block, spectral deflation, Woodbury around a surrogate), with
+   iteration counts and application counts in a table; example 24 is the
+   one-idea version. Seeded by `work/preconditioning_examples.py` and
+   `work/dynamic_topography.py`.
+
+Seeds in `work/` for the earlier entries: `sphere_dli_example.py` (real
+stations and earthquakes, cap averages, the feasible set) extends mini-app 1
+with the set-valued answer on the same data; `dynamic_topography.py` and
+`correlated.py` are the Bayesian half and the correlated-prior specification
+of mini-app 5. The timing harnesses (`point_evaluation.py`,
+`path_average.py`, `torus_point.py`) move to `benchmarks/` when it exists,
+so that `work/` can go at the release.
 
 ## Sequencing
 
 Tier 2 and mini-apps 1-3 are docs-phase work before the release; mini-apps
-4-6 may trail it. Coverage: every module of the package map appears except
+4-8 may trail it. Coverage: every module of the package map appears except
 the deeper convex machinery (deliberately quiet pending the redesign);
 `datasets` is carried inside mini-app 1.
