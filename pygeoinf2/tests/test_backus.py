@@ -301,6 +301,34 @@ class TestLinearCertificate:
             certified.estimate
         )
 
+    def test_on_quadratic_sets_the_sum_has_one_ellipsoid(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.2)
+        problem = LinearForwardProblem(forward, error=noise)
+        prior = Ball(model, radius=3.0)
+        certified = BackusGilbert(problem, target, prior)(data)
+        space = target.codomain
+        for criterion in ("trace", "volume"):
+            ellipsoid = certified.outer_ellipsoid(criterion=criterion)
+            assert np.allclose(
+                space.to_components(ellipsoid.center),
+                space.to_components(certified.estimate),
+            )
+            assert ellipsoid.contains(target(truth))
+            for direction in directions(space):
+                assert ellipsoid.support_function()(direction) >= (
+                    certified.support(direction) - 1e-9
+                )
+        # A certificate evaluated against a general set has no ellipsoid.
+        general = BackusGilbert.from_operator(
+            problem,
+            target,
+            BackusGilbert(problem, target, prior).operator,
+            Ball(model, radius=2.0) + Ball(model, radius=1.0),
+        )(data)
+        with pytest.raises(TypeError, match="ball or an ellipsoid"):
+            general.outer_ellipsoid()
+
     def test_the_error_bars_split_into_two_causes(self, setting):
         model, forward, target, truth, data = setting
         problem = LinearForwardProblem(
@@ -540,6 +568,7 @@ class TestOneEstimator:
             "support": ("splitting",),
             "inclusion": (),
             "feasibility": (),
+            "outer_ellipsoid": (),
         }
         fat = BackusGilbertParker(
             noisy, target, Ball(model, radius=2.0) + Ball(model, radius=1.0)
@@ -548,12 +577,14 @@ class TestOneEstimator:
             "support": ("dual",),
             "inclusion": ("distance",),
             "feasibility": ("dual",),
+            "outer_ellipsoid": (),
         }
         quadratic = BackusGilbertParker(noisy, target, ball)(data)
         assert quadratic.algorithms == {
             "support": ("primal", "dual", "splitting"),
             "inclusion": ("search", "distance"),
             "feasibility": ("search", "dual"),
+            "outer_ellipsoid": ("s_procedure",),
         }
         closed = BackusGilbertParker(exact, target, ball)(data)
         assert closed.has_projection and isinstance(closed.ellipsoid, Ellipsoid)

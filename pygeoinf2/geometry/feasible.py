@@ -141,11 +141,35 @@ class InclusionResult:
 
 
 @dataclass(frozen=True)
+class EllipsoidResult:
+    """An ellipsoid containing the set, with how it was chosen.
+
+    ``ellipsoid`` is certified: every point of the set lies in it. ``weight``
+    is the parameter the algorithm optimized, where it has one -- for the
+    S-procedure the weight ``θ`` on the prior against ``1 − θ`` on the
+    data -- and ``criterion`` says what it was optimized for.
+    """
+
+    ellipsoid: Ellipsoid
+    criterion: str
+    converged: bool
+    algorithm: str
+    evaluations: int
+    weight: float | None = None
+    message: str = ""
+
+    def __repr__(self) -> str:
+        return (
+            f"EllipsoidResult(criterion={self.criterion!r}, "
+            f"algorithm={self.algorithm!r}, converged={self.converged})"
+        )
+
+
+@dataclass(frozen=True)
 class SweepResult:
     """The support in many directions, one result each.
 
-    What :meth:`FeasiblePropertySet.polytope` and
-    :meth:`FeasiblePropertySet.outer_ellipsoid` consume: they need to know
+    What :meth:`FeasiblePropertySet.polytope` consumes: it needs to know
     which directions came back infinite.
     """
 
@@ -456,6 +480,16 @@ class Algorithm:
         """The gradient of the inclusion level in the value, or None where the algorithm has none."""
         return None
 
+    def outer_ellipsoid(
+        self, feasible: "FeasiblePropertySet", criterion: str, /
+    ) -> EllipsoidResult:
+        """An ellipsoid containing the set, chosen by a criterion.
+
+        Raises:
+            NotImplementedError: if this algorithm does not build one.
+        """
+        raise NotImplementedError(f"{self.name} does not build outer ellipsoids.")
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 
@@ -483,7 +517,7 @@ class ClosedForm(Algorithm):
     """
 
     name = "closed_form"
-    probes = frozenset({"support", "inclusion", "feasibility"})
+    probes = frozenset({"support", "inclusion", "feasibility", "outer_ellipsoid"})
 
     def accepts(self, structure: FeasibleStructure) -> bool:
         """Exact data and a quadratic prior."""
@@ -578,6 +612,24 @@ class ClosedForm(Algorithm):
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
         )
         return Ellipsoid(space, precision, center=fit["center"], covariance=covariance)
+
+    def outer_ellipsoid(
+        self, feasible: "FeasiblePropertySet", criterion: str, /
+    ) -> EllipsoidResult:
+        """The set itself, which no criterion can improve on.
+
+        Raises:
+            ValueError: if the set is empty.
+        """
+        _check_criterion(criterion)
+        return EllipsoidResult(
+            ellipsoid=self.ellipsoid(feasible),
+            criterion=criterion,
+            converged=True,
+            algorithm=self.name,
+            evaluations=0,
+            message="exact",
+        )
 
     def prior_only(self, structure: FeasibleStructure) -> Ellipsoid:
         """What the prior alone says: ``{ p : ((T C T*)⁻¹ (p − T a), p − T a) <= 1 }``."""
@@ -825,6 +877,31 @@ class _QuadraticFamily:
             The solver's result.
         """
         return self.solves.solve(multiplier, right_hand_side, x0=x0)
+
+
+def _quadratic_family(
+    structure: FeasibleStructure,
+    /,
+    *,
+    formalism: Literal["model_space", "data_space"],
+    solver: LinearSolver | None,
+) -> _QuadraticFamily:
+    """The damped family in one formalism, shared by every algorithm that sweeps it."""
+    if solver is None:
+        solver = structure.solver_for(
+            structure.model_space
+            if formalism == "model_space"
+            else structure.data_space
+        )
+    return structure.shared(
+        ("family", formalism, id(solver)),
+        lambda: _QuadraticFamily(structure, formalism=formalism, solver=solver),
+    )
+
+
+def _check_criterion(criterion: str) -> None:
+    if criterion not in ("trace", "volume"):
+        raise ValueError(f"The criterion is 'trace' or 'volume', got {criterion!r}.")
 
 
 def _dual_cost(
@@ -1548,20 +1625,8 @@ class Primal(Algorithm):
         return structure.form == "quadratic"
 
     def _family(self, structure: FeasibleStructure) -> _QuadraticFamily:
-        solver = (
-            self._solver
-            if self._solver is not None
-            else structure.solver_for(
-                structure.model_space
-                if self._formalism == "model_space"
-                else structure.data_space
-            )
-        )
-        return structure.shared(
-            ("family", self._formalism, id(solver)),
-            lambda: _QuadraticFamily(
-                structure, formalism=self._formalism, solver=solver
-            ),
+        return _quadratic_family(
+            structure, formalism=self._formalism, solver=self._solver
         )
 
     def support(
@@ -1761,6 +1826,217 @@ class Primal(Algorithm):
             message="unimodal search converged"
             if converged
             else "evaluation budget exhausted",
+        )
+
+
+class SProcedure(Algorithm):
+    """An outer ellipsoid on two quadratic sets, by weighting the two constraints.
+
+    For a weight ``θ`` in ``(0, 1)`` every feasible model satisfies
+    ``θ (C⁻¹u, u) + (1 − θ)(R⁻¹(A u − d′), A u − d′) <= 1`` with
+    ``u == m − a``, because it satisfies each term's constraint on its own.
+    That one inequality is an ellipsoid in the model space, centred at the
+    damped estimate ``u_θ == C_θ (1 − θ) A* R⁻¹ d′`` with
+    ``C_θ == (θ C⁻¹ + (1 − θ) A* R⁻¹ A)⁻¹``, and its image under ``T`` is
+
+    .. code-block:: text
+
+        { p : ((T C_θ T*)⁻¹ (p − T(a + u_θ)), p − T(a + u_θ)) <= 1 − r_θ }
+
+    with ``r_θ`` the weighted sum at its minimum. Every ``θ`` gives a
+    certified outer ellipsoid; the weight is chosen to minimize the trace
+    or the volume of it, a scalar minimization in ``log γ`` with
+    ``γ == θ / (1 − θ)`` of a function that is unimodal, with ``γ == ∞``
+    the prior's own image and ``γ == 0`` the data-only ellipsoid where
+    ``A* R⁻¹ A`` is invertible. One weight costs ``dim P + 1`` solves of
+    the damped family ``A C A* + γ R`` (or ``γ C⁻¹ + A* R⁻¹ A``), the
+    family the primal sweeps for support values, warm-started along the
+    search. The data enter the constraint, which is what makes this tighter
+    than the Minkowski sum a linear certificate gives, and it is checked
+    against support values direction by direction.
+    """
+
+    name = "s_procedure"
+    probes = frozenset({"outer_ellipsoid"})
+
+    def __init__(
+        self,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+        tolerance: float = 1e-2,
+        max_iterations: int = 60,
+        solver: LinearSolver | None = None,
+    ) -> None:
+        """
+        Args:
+            formalism: which space the family is solved in.
+            tolerance: on ``log γ`` at the minimum. The criterion is
+                stationary there, so its error is second order in this,
+                and the ellipsoid is certified whatever the weight.
+            max_iterations: the minimization's budget of evaluations, each
+                ``dim P + 1`` solves.
+            solver: how the family is inverted; the set's solver if omitted.
+        """
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError(
+                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
+            )
+        self._formalism = formalism
+        self._tolerance = tolerance
+        self._max_iterations = max_iterations
+        self._solver = solver
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The formalism, the tolerance, the budget and the solver."""
+        return (
+            self._formalism,
+            self._tolerance,
+            self._max_iterations,
+            id(self._solver),
+        )
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Two quadratic sets, the noise not a point."""
+        return structure.form == "quadratic"
+
+    def outer_ellipsoid(
+        self, feasible: "FeasiblePropertySet", criterion: str, /
+    ) -> EllipsoidResult:
+        """The ellipsoid of the best weight, by the criterion.
+
+        Raises:
+            ValueError: if the set is empty, or the criterion is unknown.
+        """
+        _check_criterion(criterion)
+        structure = feasible.structure
+        if feasible.is_empty():
+            raise ValueError("The feasible set is empty; nothing contains it.")
+        model_space, data_space, space = (
+            structure.model_space,
+            structure.data_space,
+            structure.property_space,
+        )
+        A, T = structure.forward, structure.property_operator
+        C, R = structure.prior_covariance(), structure.noise_covariance()
+        a = structure.prior_center()
+        shifted = structure.shifted_data(feasible.data)
+        family = _quadratic_family(
+            structure, formalism=self._formalism, solver=self._solver
+        )
+        rhs = family.right_hand_side(shifted)
+        pulls = [T.adjoint(space.basis_vector(j)) for j in range(space.dim)]
+        if self._formalism == "data_space":
+            images = [C(c) for c in pulls]
+            columns_rhs = [A(image) for image in images]
+        else:
+            columns_rhs = pulls
+            P = structure.noise_precision()
+            data_term = float(data_space.inner_product(P(shifted), shifted))
+
+        # The natural scale of γ: where the two terms of the family balance.
+        probe = (
+            shifted
+            if data_space.norm(shifted) > 0.0
+            else data_space.from_components(np.ones(data_space.dim))
+        )
+        scale = float(
+            data_space.inner_product(A(C(A.adjoint(probe))), probe)
+            / data_space.inner_product(R(probe), probe)
+        )
+        start = [float(np.log(scale)) if scale > 0.0 else 0.0]
+
+        warm: dict[str, Any] = {"at": None, "centre": None, "columns": None}
+        memo: dict[float, tuple[float, float, Any, np.ndarray]] = {}
+        evaluations = [0]
+
+        def pieces(x: float) -> tuple[float, float, Any, np.ndarray]:
+            """``(θ, r_θ, u_θ, T C_θ T* in components)`` at ``log γ == x``."""
+            if x in memo:
+                return memo[x]
+            evaluations[0] += 1
+            gamma = float(np.exp(x))
+            theta = gamma / (1.0 + gamma)
+            # Warm-start from the last weight within a few decades: further
+            # away the scales differ too much to help.
+            near = warm["at"] is not None and abs(warm["at"] - x) <= 6.0
+            centre = family.solve(
+                gamma, rhs, x0=warm["centre"] if near else None
+            ).solution
+            offset = family.model_from(centre)
+            if self._formalism == "data_space":
+                residual = theta * float(data_space.inner_product(centre, shifted))
+            else:
+                residual = (1.0 - theta) * (
+                    data_term - float(model_space.inner_product(rhs, centre))
+                )
+            previous = warm["columns"] if near else [None] * space.dim
+            solutions, columns = [], []
+            for j in range(space.dim):
+                solution = family.solve(gamma, columns_rhs[j], x0=previous[j]).solution
+                solutions.append(solution)
+                if self._formalism == "data_space":
+                    column = model_space.subtract(images[j], C(A.adjoint(solution)))
+                    column = T(model_space.scale((1.0 + gamma) / gamma, column))
+                else:
+                    column = T(model_space.scale(1.0 + gamma, solution))
+                columns.append(space.to_components(column))
+            shape = np.column_stack(columns)
+            if space.is_orthonormal:
+                shape = 0.5 * (shape + shape.T)
+            warm.update(at=x, centre=centre, columns=solutions)
+            memo[x] = (theta, residual, offset, shape)
+            return memo[x]
+
+        def objective(x: float) -> float:
+            theta, residual, _, shape = pieces(x)
+            budget = 1.0 - residual
+            if budget <= 0.0:
+                return np.inf
+            if criterion == "trace":
+                return budget * float(np.trace(shape))
+            sign, log_det = np.linalg.slogdet(shape)
+            if sign <= 0.0:
+                return np.inf
+            return space.dim * float(np.log(budget)) + float(log_det)
+
+        x, _, converged = _minimize_unimodal(
+            objective,
+            start,
+            tolerance=self._tolerance,
+            max_iterations=self._max_iterations,
+        )
+        theta, residual, offset, shape = pieces(x)
+        budget = 1.0 - residual
+        if budget <= 0.0:
+            raise ValueError(
+                "No model satisfies both constraints: the weighted sum's "
+                f"minimum is {residual:.4g} against 1."
+            )
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        ellipsoid = Ellipsoid(
+            space,
+            LinearOperator.from_matrix(
+                space,
+                space,
+                np.linalg.inv(shape) / budget,
+                form="components",
+                traits=traits,
+            ),
+            center=T(model_space.add(a, offset)),
+            covariance=LinearOperator.from_matrix(
+                space, space, budget * shape, form="components", traits=traits
+            ),
+        )
+        return EllipsoidResult(
+            ellipsoid=ellipsoid,
+            criterion=criterion,
+            converged=converged,
+            algorithm=self.name,
+            evaluations=evaluations[0],
+            weight=theta,
+            message="" if converged else "the weight search did not converge",
         )
 
 
@@ -2287,6 +2563,7 @@ _DEFAULTS: dict[str, tuple[Algorithm, ...]] = {
     "support": (ClosedForm(), Primal(), Dual(), Splitting()),
     "inclusion": (ClosedForm(), Search(), Distance()),
     "feasibility": (ClosedForm(), Search(), Dual()),
+    "outer_ellipsoid": (ClosedForm(), SProcedure()),
 }
 """The algorithms for each probe, in the order ``auto`` tries them."""
 
@@ -2321,7 +2598,8 @@ class FeasiblePropertySet(ConvexSet):
     the set from outside, direction by direction: :meth:`support`,
     :meth:`support_values`, :meth:`polytope`; each value comes with a
     certified bracket (:meth:`support_bracket`) and, where the algorithm
-    exhibits one, the contact point and the model attaining it. The
+    exhibits one, the contact point and the model attaining it;
+    :meth:`outer_ellipsoid` bounds it from outside as a whole. The
     **level side** decides points: :meth:`contains`, :meth:`inclusion_level`
     and :meth:`level_function`, with :meth:`extent` and :meth:`inner_hull`
     bounding the set from inside. Which algorithm answers each probe is
@@ -2688,20 +2966,50 @@ class FeasiblePropertySet(ConvexSet):
                 return True
         return False
 
-    def outer_ellipsoid(self) -> Ellipsoid:
+    def outer_ellipsoid_result(
+        self,
+        *,
+        criterion: Literal["trace", "volume"] = "trace",
+        via: Any = None,
+    ) -> EllipsoidResult:
+        """A certified ellipsoid containing the set, with how it was chosen.
+
+        Args:
+            criterion: what the ellipsoid is smallest in -- the sum of its
+                squared semi-axes, or its volume.
+            via: an algorithm's name or instance, to force one.
+        """
+        _check_criterion(criterion)
+        algorithm = self._resolve("outer_ellipsoid", via)
+        return self.cached(
+            ("outer_ellipsoid", algorithm.name, algorithm.settings, criterion),
+            lambda: algorithm.outer_ellipsoid(self, criterion),
+        )
+
+    def outer_ellipsoid(
+        self,
+        *,
+        criterion: Literal["trace", "volume"] = "trace",
+        via: Any = None,
+    ) -> Ellipsoid:
         """A certified ellipsoid containing the set.
 
-        On the closed form, the set itself.
+        On the closed form, the set itself; on two quadratic sets, the
+        S-procedure ellipsoid of the best weight, which is tighter than a
+        linear certificate's Minkowski sum because the data enter the
+        constraint. Its support in any direction is at least the set's.
+
+        Args:
+            criterion: what the ellipsoid is smallest in -- the sum of its
+                squared semi-axes, or its volume.
+            via: an algorithm's name or instance, to force one.
 
         Raises:
-            NotImplementedError: on other forms, until the S-procedure
-                ellipsoid is built.
+            ValueError: if the set is empty.
+            NotImplementedError: on the general form, where no algorithm
+                builds one.
         """
-        if self.form == "closed_form":
-            return self.ellipsoid
-        raise NotImplementedError(
-            "An outer ellipsoid is available on the closed form only, for now."
-        )
+        return self.outer_ellipsoid_result(criterion=criterion, via=via).ellipsoid
 
     # -- the level side ---------------------------------------------------
 

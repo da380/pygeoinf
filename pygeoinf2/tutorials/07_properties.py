@@ -183,9 +183,28 @@ print("the true averages are admissible:", feasible.contains(T(truth)))
 print("so is the estimate:", feasible.contains(estimate))
 print("(0, 3) is not:", feasible.contains(P.from_components(np.array([0.0, 3.0]))))
 
+# %% [markdown]
+# Both sets can also be summarised by one ellipsoid each. For the
+# Backus-Gilbert set it is the smallest ellipsoid of a family containing
+# the sum of its two parts; for the feasible set it is the image of the
+# weighted constraint $\theta\,\text{prior} + (1 - \theta)\,\text{misfit}
+# \le 1$, which every feasible model satisfies, at the weight that
+# minimises the volume. Both are certified outer bounds, and the second is
+# tighter because the data enter its constraint.
+
+# %%
+certified_ellipsoid = certified.outer_ellipsoid(criterion="volume")
+feasible_ellipsoid = feasible.outer_ellipsoid(criterion="volume")
+print(
+    "ellipsoid half-widths along arc 0:",
+    f"Backus-Gilbert {certified_ellipsoid.support_function()(P.basis_vector(0)) - estimate[0]:.3f},",
+    f"feasible {feasible_ellipsoid.support_function()(P.basis_vector(0)) - P.to_components(feasible_ellipsoid.center)[0]:.3f}",
+)
+
 # %%
 fig, ax = plt.subplots(figsize=(5.5, 5.0), layout="constrained")
 plotting.plot_set(certified, ax=ax, color="C1", alpha=0.3)
+plotting.plot_set(feasible_ellipsoid, ax=ax, color="C0", alpha=0.15)
 plotting.plot_set(feasible, ax=ax, color="C0", alpha=0.6)
 angles = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
 hull = feasible.inner_hull(
@@ -199,8 +218,8 @@ ax.plot(*estimate, "o", color="C1", label="Backus-Gilbert estimate")
 ax.set_xlabel("average over arc 0")
 ax.set_ylabel("average over arc 1")
 ax.set_title(
-    "The feasible set (blue) inside the Backus-Gilbert set (orange),\n"
-    "with the inner hull of its contact points (green)"
+    "The feasible set (blue) inside its outer ellipsoid (pale blue) and\n"
+    "the Backus-Gilbert set (orange), with its inner hull (green)"
 )
 ax.legend(loc="lower right", fontsize=8)
 

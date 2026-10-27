@@ -857,3 +857,133 @@ class TestDistanceAndTheGeneralSearch:
         # The level side and the support side agree on the scalar property.
         far = target.codomain.from_components(np.array([5.0, 5.0]))
         assert not feasible.contains(far)
+
+
+class TestTheOuterEllipsoid:
+    """The S-procedure ellipsoid on two quadratic sets: certified, and
+    checked against the support values direction by direction."""
+
+    @pytest.fixture
+    def noisy(self, setting):
+        model, forward, target, truth, data = setting
+        return model, forward, target, truth, data, Ball(forward.codomain, radius=0.1)
+
+    def test_it_contains_the_set_and_the_formalisms_agree(self, noisy):
+        from pygeoinf2.geometry.feasible import SProcedure
+
+        model, forward, target, truth, data, noise = noisy
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        assert feasible.algorithms["outer_ellipsoid"] == ("s_procedure",)
+        result = feasible.outer_ellipsoid_result()
+        assert result.converged and result.algorithm == "s_procedure"
+        assert 0.0 < result.weight < 1.0
+        ellipsoid = result.ellipsoid
+        assert ellipsoid.contains(target(truth))
+        h = ellipsoid.support_function()
+        for q in directions(target.codomain) + [
+            target.codomain.from_components(np.array([np.cos(a), np.sin(a)]))
+            for a in np.linspace(0.0, np.pi, 7)
+        ]:
+            assert h(q) >= feasible.support(q) - 1e-9
+        other = feasible.outer_ellipsoid_result(via=SProcedure(formalism="model_space"))
+        assert other.weight == pytest.approx(result.weight, rel=1e-6)
+        assert np.allclose(
+            target.codomain.to_components(other.ellipsoid.center),
+            target.codomain.to_components(ellipsoid.center),
+        )
+        # Asked again, nothing is recomputed.
+        assert feasible.outer_ellipsoid_result() is result
+
+    def test_each_criterion_wins_on_its_own_measure(self, noisy):
+        model, forward, target, truth, data, noise = noisy
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        space = target.codomain
+
+        def matrix(ellipsoid):
+            return np.column_stack(
+                [
+                    space.to_components(ellipsoid.covariance(space.basis_vector(j)))
+                    for j in range(space.dim)
+                ]
+            )
+
+        by_trace = matrix(feasible.outer_ellipsoid(criterion="trace"))
+        by_volume = matrix(feasible.outer_ellipsoid(criterion="volume"))
+        assert np.trace(by_trace) <= np.trace(by_volume) * (1.0 + 1e-9)
+        assert np.linalg.slogdet(by_volume)[1] <= np.linalg.slogdet(by_trace)[1] + 1e-9
+        with pytest.raises(ValueError, match="criterion"):
+            feasible.outer_ellipsoid(criterion="area")
+
+    def test_ellipsoids_on_both_sides_off_centre_and_a_metric_property_space(
+        self, setting, rng
+    ):
+        model, forward, _, truth, _ = setting
+        property_space = make_dense_metric_space(2)
+        target = LinearOperator.from_matrix(
+            model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
+        )
+        prior = ellipsoid_on(
+            model, rng, center=model.scale(0.3, truth), scale=1.0 / 9.0
+        )
+        noise = ellipsoid_on(
+            forward.codomain, rng, center=forward.codomain.random(rng=rng), scale=100.0
+        )
+        data = forward.codomain.add(forward(truth), noise.center)
+        feasible = FeasiblePropertySet(forward, target, prior, data, noise=noise)
+        ellipsoid = feasible.outer_ellipsoid(criterion="volume")
+        assert ellipsoid.contains(target(truth))
+        h = ellipsoid.support_function()
+        for _ in range(12):
+            q = property_space.random(rng=rng)
+            assert h(q) >= feasible.support(q) - 1e-9 * max(1.0, abs(h(q)))
+
+    def test_the_closed_form_is_the_set_itself(self, setting):
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(forward, target, Ball(model, radius=3.0), data)
+        assert feasible.algorithms["outer_ellipsoid"] == ("closed_form",)
+        result = feasible.outer_ellipsoid_result(criterion="volume")
+        assert result.algorithm == "closed_form" and result.weight is None
+        space = target.codomain
+        assert np.allclose(
+            space.to_components(result.ellipsoid.center),
+            space.to_components(feasible.ellipsoid.center),
+        )
+        for q in directions(space):
+            assert result.ellipsoid.support_function()(q) == pytest.approx(
+                feasible.support(q)
+            )
+
+    def test_an_empty_set_and_a_general_set_are_refused(self, setting):
+        model, forward, target, truth, data = setting
+        far = forward.codomain.scale(50.0, data)
+        empty = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            far,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        with pytest.raises(ValueError, match="empty"):
+            empty.outer_ellipsoid()
+        general = FeasiblePropertySet(
+            forward,
+            target,
+            quartic_ball(model, 3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        assert general.algorithms["outer_ellipsoid"] == ()
+        with pytest.raises(NotImplementedError, match="outer_ellipsoid"):
+            general.outer_ellipsoid()
+        with pytest.raises(ValueError, match="does not apply"):
+            FeasiblePropertySet(
+                forward,
+                target,
+                Ball(model, radius=3.0),
+                data,
+                noise=Ball(forward.codomain, radius=0.1),
+            ).outer_ellipsoid(via="closed_form")

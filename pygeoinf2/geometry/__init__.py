@@ -10,10 +10,13 @@ from .convex import (
     Ellipsoid,
     HalfSpace,
     Hyperplane,
+    enclosing_ellipsoid,
+    sum_of_ellipsoids,
 )
 from .feasible import (
     Algorithm,
     ClosedForm,
+    EllipsoidResult,
     FeasiblePropertySet,
     InclusionResult,
     SupportResult,
@@ -35,6 +38,7 @@ __all__ = [
     "AffineSubspace",
     "Algorithm",
     "ClosedForm",
+    "EllipsoidResult",
     "FeasiblePropertySet",
     "InclusionResult",
     "SupportResult",
@@ -58,4 +62,6 @@ __all__ = [
     "Subset",
     "Union",
     "UniversalSet",
+    "enclosing_ellipsoid",
+    "sum_of_ellipsoids",
 ]

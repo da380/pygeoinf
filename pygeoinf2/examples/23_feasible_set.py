@@ -188,6 +188,14 @@ hull = projected.inner_hull(
     [projected.domain.from_components(np.array([np.cos(a), np.sin(a)])) for a in angles]
 )
 print(f"inner hull of the contact points on caps 0 and 1: {hull}")
+# One ellipsoid containing the whole set, from the same damped family the
+# support values sweep: the data enter its constraint, so it is tighter
+# than the sum a linear certificate gives.
+outer = projected.outer_ellipsoid_result(criterion="volume")
+print(
+    f"outer ellipsoid by the S-procedure: weight {outer.weight:.3f} on the "
+    f"prior, {outer.evaluations} weights tried"
+)
 print()
 
 # ---------------------------------------------------------------------------
@@ -226,14 +234,18 @@ ax.set_title("The model that maximizes cap 0, with the caps")
 # the estimator returns, drawn from its support function, with the truth.
 # ---------------------------------------------------------------------------
 
-ax, _ = plotting.plot_set(projected, color="tab:blue", alpha=0.4)
+ax, _ = plotting.plot_set(outer.ellipsoid, color="tab:orange", alpha=0.2)
+plotting.plot_set(projected, ax=ax, color="tab:blue", alpha=0.4)
 plotting.plot_set(
     hull, ax=ax, bounds=(ax.get_xlim(), ax.get_ylim()), color="tab:green", alpha=0.4
 )
 ax.plot(truth_values[0], truth_values[1], "k*", markersize=12, label="truth")
 ax.set_xlabel("cap 0 average")
 ax.set_ylabel("cap 1 average")
-ax.set_title("The feasible set on caps 0 and 1, with the inner hull (green)")
+ax.set_title(
+    "The feasible set on caps 0 and 1, between the inner hull (green)\n"
+    "and the outer ellipsoid (orange)"
+)
 ax.legend()
 
 print("three figures drawn")

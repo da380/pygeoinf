@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import threading
 from abc import abstractmethod
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import numpy as np
 
@@ -47,6 +47,8 @@ __all__ = [
     "HalfSpace",
     "Hyperplane",
     "Ellipsoid",
+    "sum_of_ellipsoids",
+    "enclosing_ellipsoid",
 ]
 
 
@@ -767,8 +769,277 @@ class _MinkowskiSum(ConvexSet):
             "splitting of the point between the summands."
         )
 
+    def outer_ellipsoid(
+        self, *, criterion: Literal["trace", "volume"] = "trace"
+    ) -> Ellipsoid:
+        """An ellipsoid containing the sum, when every summand is a ball or an ellipsoid.
+
+        See :func:`sum_of_ellipsoids`: the sum of ellipsoids is not one, and
+        this is the smallest ellipsoid of a family that contains it.
+
+        Args:
+            criterion: what the ellipsoid is smallest in -- the sum of its
+                squared semi-axes, or its volume.
+
+        Raises:
+            TypeError: if a summand is not a ball or an ellipsoid carrying
+                its covariance.
+        """
+        covariances, center = [], self.domain.zero()
+        for part in _flatten_sum(self):
+            covariances.append(_covariance_of(part))
+            center = self.domain.add(center, part.center)
+        return sum_of_ellipsoids(
+            self.domain, covariances, center=center, criterion=criterion
+        )
+
     def __repr__(self) -> str:
         return f"MinkowskiSum({self._first!r}, {self._second!r})"
+
+
+def _flatten_sum(subset: ConvexSet) -> list[ConvexSet]:
+    if isinstance(subset, _MinkowskiSum):
+        first, second = subset.summands
+        return _flatten_sum(first) + _flatten_sum(second)
+    return [subset]
+
+
+def _covariance_of(subset: ConvexSet) -> LinearOperator:
+    """The covariance of a ball or an ellipsoid, in the ellipsoid's normalized units."""
+    if isinstance(subset, Ball):
+        return (LinearOperator.identity(subset.domain) * subset.radius**2).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+    if isinstance(subset, Ellipsoid) and subset.covariance is not None:
+        return subset.covariance
+    raise TypeError(
+        "Each summand must be a ball or an ellipsoid carrying its "
+        f"covariance; got {subset!r}."
+    )
+
+
+def _component_matrix(space: HilbertSpace, operator: LinearOperator) -> np.ndarray:
+    """The matrix of an operator on a small space, column by column."""
+    return np.column_stack(
+        [space.to_components(operator(space.basis_vector(j))) for j in range(space.dim)]
+    )
+
+
+def _ellipsoid_from_components(
+    space: HilbertSpace, covariance: np.ndarray, center: Any
+) -> Ellipsoid:
+    """The ellipsoid with this covariance, given as a component matrix."""
+    traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+    try:
+        precision = np.linalg.inv(covariance)
+    except np.linalg.LinAlgError as error:
+        raise ValueError(
+            "The ellipsoid is flat: its covariance is singular."
+        ) from error
+    return Ellipsoid(
+        space,
+        LinearOperator.from_matrix(
+            space, space, precision, form="components", traits=traits
+        ),
+        center=center,
+        covariance=LinearOperator.from_matrix(
+            space, space, covariance, form="components", traits=traits
+        ),
+    )
+
+
+def sum_of_ellipsoids(
+    space: HilbertSpace,
+    covariances: Sequence[LinearOperator],
+    /,
+    *,
+    center: Any = None,
+    criterion: Literal["trace", "volume"] = "trace",
+) -> Ellipsoid:
+    """An ellipsoid containing the Minkowski sum of ellipsoids with these covariances.
+
+    The sum of ``{ C_i^½ u : |u| <= 1 }`` over ``i`` is not an ellipsoid, but
+    for any weights ``α_i > 0`` summing to one it lies in the ellipsoid of
+    covariance ``Σ C_i / α_i``, by the Cauchy-Schwarz inequality applied to
+    the sum. Minimizing the trace of that covariance -- the sum of the
+    squared semi-axes -- has the closed form ``α_i`` proportional to
+    ``sqrt(tr C_i)``; for two summands it is ``(1 + 1/p) C₁ + (1 + p) C₂``
+    with ``p == sqrt(tr C₁ / tr C₂)``. Minimizing the volume is a scalar
+    minimization in ``log p`` for two summands, of a function that is
+    unimodal.
+
+    This is what a linear certificate's set reduces to on quadratic sets:
+    one ellipsoid about the estimate in place of a sum of two.
+
+    Args:
+        space: the space the ellipsoids lie on; small, as the covariances
+            are assembled as matrices on it.
+        covariances: the summands' covariances, as operators on the space.
+            A summand that is a point has covariance zero and may be left
+            out; one that is given is dropped.
+        center: the sum of the summands' centres. The origin if omitted.
+        criterion: what the ellipsoid is smallest in -- the sum of its
+            squared semi-axes, or its volume.
+
+    Returns:
+        The ellipsoid, carrying its covariance.
+
+    Raises:
+        ValueError: if no covariance is nonzero, the criterion is unknown,
+            or the sum is flat; NotImplementedError for the volume
+            criterion with more than two summands.
+    """
+    if criterion not in ("trace", "volume"):
+        raise ValueError(f"The criterion is 'trace' or 'volume', got {criterion!r}.")
+    center = space.zero() if center is None else center
+    matrices = [_component_matrix(space, covariance) for covariance in covariances]
+    traces = [float(np.trace(matrix)) for matrix in matrices]
+    kept = [(matrix, trace) for matrix, trace in zip(matrices, traces) if trace > 0.0]
+    if not kept:
+        raise ValueError("Every covariance is zero: the sum is a point.")
+    if len(kept) == 1:
+        return _ellipsoid_from_components(space, kept[0][0], center)
+    if criterion == "trace":
+        roots = [np.sqrt(trace) for _, trace in kept]
+        total = sum(roots)
+        combined = total * sum(matrix / root for (matrix, _), root in zip(kept, roots))
+        return _ellipsoid_from_components(space, combined, center)
+    if len(kept) > 2:
+        raise NotImplementedError(
+            "The volume criterion is available for two summands; the trace "
+            "criterion for any number."
+        )
+    from scipy.optimize import minimize_scalar
+
+    (first, trace_1), (second, trace_2) = kept
+
+    def log_volume(x: float) -> float:
+        p = np.exp(x)
+        sign, log_det = np.linalg.slogdet((1.0 + 1.0 / p) * first + (1.0 + p) * second)
+        return float(log_det) if sign > 0.0 else np.inf
+
+    guess = 0.5 * np.log(trace_1 / trace_2)
+    result = minimize_scalar(
+        log_volume,
+        bounds=(guess - 20.0, guess + 20.0),
+        method="bounded",
+        options=dict(xatol=1e-8),
+    )
+    p = float(np.exp(result.x))
+    return _ellipsoid_from_components(
+        space, (1.0 + 1.0 / p) * first + (1.0 + p) * second, center
+    )
+
+
+def enclosing_ellipsoid(
+    space: HilbertSpace,
+    points: Sequence[Any],
+    /,
+    *,
+    tolerance: float = 1e-7,
+    max_iterations: int = 10_000,
+) -> Ellipsoid:
+    """The minimum-volume ellipsoid enclosing a set of points, by Khachiyan's algorithm.
+
+    A description of the points' convex hull and nothing more: applied to
+    the contact points of a set it encloses the inner hull, which lies
+    inside the set, and says nothing about the set's extent beyond them.
+    An outer bound of the set is :meth:`Polytope.inscribed_ellipsoid` on
+    the polytope of its support values, or the set's own
+    ``outer_ellipsoid``.
+
+    The algorithm is the Frank-Wolfe iteration on the dual, with away
+    steps (Todd and Yildirim, 2007): weights on the points, moved towards
+    the point furthest outside the current ellipsoid or away from the
+    weighted point furthest inside, until both are within the tolerance.
+    The ellipsoid is then inflated to the furthest point, so that it
+    encloses every point whatever the tolerance; the tolerance only
+    governs how far from the smallest it is. It is dense in the dimension
+    of the space and linear in the number of points per iteration.
+
+    Args:
+        space: the space the points lie on; small.
+        points: the points, at least one more than the dimension and not
+            all on one hyperplane.
+        tolerance: on the relative excess of the furthest point.
+        max_iterations: the iteration budget.
+
+    Returns:
+        The ellipsoid, carrying its covariance.
+
+    Raises:
+        ValueError: if the points do not span the space.
+    """
+    components = np.stack([space.to_components(point) for point in points]).astype(
+        float
+    )
+    count, dim = components.shape
+    if count <= dim:
+        raise ValueError(
+            f"{count} points cannot span {dim} dimensions; an enclosing "
+            "ellipsoid needs at least one more point than the dimension."
+        )
+    lifted = np.column_stack([components, np.ones(count)])
+    weights = np.full(count, 1.0 / count)
+    target = dim + 1.0
+    for _ in range(max_iterations):
+        gram = lifted.T @ (weights[:, None] * lifted)
+        try:
+            solved = np.linalg.solve(gram, lifted.T)
+        except np.linalg.LinAlgError as error:
+            raise ValueError(
+                "The points lie on a hyperplane and span no volume."
+            ) from error
+        distances = np.einsum("ij,ji->i", lifted, solved)
+        furthest = int(np.argmax(distances))
+        carried = np.flatnonzero(weights > 0.0)
+        nearest = int(carried[np.argmin(distances[carried])])
+        excess = distances[furthest] - target
+        deficit = target - distances[nearest]
+        if max(excess, deficit) <= tolerance * target:
+            break
+        if excess >= deficit:
+            step = excess / (target * (distances[furthest] - 1.0))
+            weights *= 1.0 - step
+            weights[furthest] += step
+        else:
+            share = weights[nearest]
+            step = min(
+                share / (1.0 - share),
+                deficit / (target * max(distances[nearest] - 1.0, 1e-300)),
+            )
+            weights *= 1.0 + step
+            weights[nearest] = max(weights[nearest] - step, 0.0)
+    center_components = weights @ components
+    scatter = components.T @ (weights[:, None] * components) - np.outer(
+        center_components, center_components
+    )
+    # In components the ellipsoid is (x − c)ᵀ M (x − c) <= 1 with
+    # M == scatter⁻¹ / dim; that is the Galerkin matrix of the precision.
+    try:
+        precision_galerkin = np.linalg.inv(scatter) / dim
+    except np.linalg.LinAlgError as error:
+        raise ValueError(
+            "The points lie on a hyperplane and span no volume."
+        ) from error
+    offsets = components - center_components
+    inflation = float(
+        np.max(np.einsum("ij,jk,ik->i", offsets, precision_galerkin, offsets))
+    )
+    precision_galerkin /= inflation
+    gram_matrix = space.gram_matrix()
+    covariance = (inflation * dim) * scatter @ gram_matrix
+    traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+    return Ellipsoid(
+        space,
+        LinearOperator.from_matrix(
+            space, space, precision_galerkin, form="galerkin", traits=traits
+        ),
+        center=space.from_components(center_components),
+        covariance=LinearOperator.from_matrix(
+            space, space, covariance, form="components", traits=traits
+        ),
+    )
 
 
 def _dykstra(space: Any, parts: Sequence[Any], x: Any, max_iterations: int) -> Any:
@@ -930,6 +1201,216 @@ class Polytope(ConvexSet):
             self.domain,
             self._half_spaces + other.half_spaces,
             outer=self._outer,
+        )
+
+    def inscribed_ellipsoid(
+        self, *, tolerance: float = 1e-8, max_iterations: int = 200
+    ) -> Ellipsoid:
+        """The maximum-volume ellipsoid inside the polytope.
+
+        A description of the polytope, not of the set it bounds: an outer
+        polytope's inscribed ellipsoid need not contain the set and need
+        not lie inside it. It is the ellipsoid a plot of the polytope
+        reads off -- its centre and its principal widths -- and a
+        description that stays stable as more half-spaces are added.
+
+        The ellipsoid ``{ c + B u : |u| <= 1 }`` lies in a half-space
+        ``(n, x) <= b`` exactly when ``|B n| + (n, c) <= b``, so the
+        maximum volume is ``max log det B`` under one such constraint per
+        half-space, a convex program in the ``dim (dim + 3) / 2`` entries
+        of ``B`` and ``c`` (Boyd and Vandenberghe, section 8.4.2). It is
+        solved by Newton's method on the logarithmic barrier, from the
+        Chebyshev centre, and is dense in the dimension of the space.
+
+        Args:
+            tolerance: on the duality gap of the barrier method, relative
+                to the number of half-spaces.
+            max_iterations: the budget of Newton steps, over all barrier
+                stages.
+
+        Returns:
+            The ellipsoid, carrying its covariance.
+
+        Raises:
+            ValueError: if the polytope is empty, flat or unbounded, or the
+                Newton iteration runs out of budget.
+        """
+        from scipy.optimize import linprog
+
+        space = self.domain
+        gram_matrix = space.gram_matrix()
+        normals = np.stack(
+            [
+                gram_matrix @ space.to_components(plane.normal)
+                for plane in self._half_spaces
+            ]
+        )
+        offsets = np.array([plane.offset for plane in self._half_spaces], dtype=float)
+        dim = space.dim
+        count = len(self._half_spaces)
+        if count < dim + 1:
+            raise ValueError(
+                f"{count} half-spaces cannot bound {dim} dimensions; the polytope "
+                "is unbounded."
+            )
+        lengths = np.linalg.norm(normals, axis=1)
+        # Bounded in every coordinate direction, or not at all.
+        for j in range(dim):
+            for sign in (1.0, -1.0):
+                extreme = linprog(
+                    sign * np.identity(dim)[j],
+                    A_ub=normals,
+                    b_ub=offsets,
+                    bounds=[(None, None)] * dim,
+                    method="highs",
+                )
+                if extreme.status == 3:
+                    raise ValueError(
+                        "The polytope is unbounded; it has no largest ellipsoid."
+                    )
+        # The Chebyshev centre: the largest ball inside, as a start.
+        program = linprog(
+            np.append(np.zeros(dim), -1.0),
+            A_ub=np.column_stack([normals, lengths]),
+            b_ub=offsets,
+            bounds=[(None, None)] * dim + [(0.0, None)],
+            method="highs",
+        )
+        if program.status == 3:
+            raise ValueError("The polytope is unbounded; it has no largest ellipsoid.")
+        if program.status != 0 or program.x[-1] <= 0.0:
+            raise ValueError("The polytope is empty or flat; it has no interior.")
+        center = program.x[:-1]
+        radius = program.x[-1]
+
+        # A basis of the symmetric matrices, orthonormal in the Frobenius norm.
+        basis = []
+        for k in range(dim):
+            for ell in range(k, dim):
+                matrix = np.zeros((dim, dim))
+                if k == ell:
+                    matrix[k, k] = 1.0
+                else:
+                    matrix[k, ell] = matrix[ell, k] = 1.0 / np.sqrt(2.0)
+                basis.append(matrix)
+        basis = np.stack(basis)
+        size = len(basis)
+        # Columns: for each half-space, E_k n_i for every basis matrix.
+        images = np.einsum("kpq,iq->ipk", basis, normals)  # (count, dim, size)
+
+        def unpack(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            return np.einsum("k,kpq->pq", z[:size], basis), z[size:]
+
+        def slacks(z: np.ndarray) -> np.ndarray | None:
+            shape, centre = unpack(z)
+            try:
+                np.linalg.cholesky(shape)
+            except np.linalg.LinAlgError:
+                return None
+            reach = np.linalg.norm(normals @ shape, axis=1)
+            slack = offsets - normals @ centre - reach
+            return slack if np.all(slack > 0.0) else None
+
+        def objective(z: np.ndarray, weight: float) -> float:
+            shape, _ = unpack(z)
+            slack = slacks(z)
+            if slack is None:
+                return np.inf
+            sign, log_det = np.linalg.slogdet(shape)
+            if sign <= 0.0:
+                return np.inf
+            return -weight * float(log_det) - float(np.sum(np.log(slack)))
+
+        def derivatives(z: np.ndarray, weight: float) -> tuple[np.ndarray, np.ndarray]:
+            shape, _ = unpack(z)
+            slack = slacks(z)
+            inverse = np.linalg.inv(shape)
+            gradient = np.zeros(size + dim)
+            hessian = np.zeros((size + dim, size + dim))
+            # −weight log det B.
+            gradient[:size] = -weight * np.einsum("pq,kqp->k", inverse, basis)
+            products = np.einsum("pq,kqr->kpr", inverse, basis)
+            hessian[:size, :size] = weight * np.einsum(
+                "kpq,lqp->kl", products, products
+            )
+            # −Σ log s_i with s_i == b_i − (n_i, c) − |B n_i|.
+            reaches = normals @ shape  # rows v_i == B n_i
+            for i in range(count):
+                v = reaches[i]
+                g = np.linalg.norm(v)
+                w = images[i]  # (dim, size): E_k n_i by column
+                d = w.T @ v / g  # ∂|B n_i| / ∂z_k
+                ds = np.concatenate([-d, -normals[i]])
+                second = (w.T @ w - np.outer(d, d)) / g  # ∂²|B n_i|
+                gradient -= ds / slack[i]
+                hessian += np.outer(ds, ds) / slack[i] ** 2
+                hessian[:size, :size] += second / slack[i]
+            return gradient, hessian
+
+        z = np.concatenate(
+            [np.einsum("kpq,pq->k", basis, 0.5 * radius * np.identity(dim)), center]
+        )
+        weight = 1.0
+        steps = 0
+        while True:
+            # Newton's method on the barrier at this weight.
+            while True:
+                gradient, hessian = derivatives(z, weight)
+                try:
+                    step = -np.linalg.solve(hessian, gradient)
+                except np.linalg.LinAlgError as error:
+                    raise ValueError(
+                        "The Newton system is singular; the polytope may be flat."
+                    ) from error
+                decrement = -float(gradient @ step)
+                # The objective carries the weight, so the stop does too.
+                if decrement / 2.0 <= 1e-12 * weight:
+                    break
+                value = objective(z, weight)
+                length = 1.0
+                while (
+                    objective(z + length * step, weight)
+                    > value - 0.25 * length * decrement
+                ):
+                    length *= 0.5
+                    if length < 1e-10:
+                        break
+                if length < 1e-10:
+                    # Rounding has caught up with the line search: nothing
+                    # further to resolve at this weight.
+                    break
+                z = z + length * step
+                steps += 1
+                if steps >= max_iterations:
+                    raise ValueError(
+                        f"The inscribed ellipsoid did not converge in {max_iterations} "
+                        "Newton steps."
+                    )
+            if 1.0 / weight <= tolerance:
+                break
+            weight *= 20.0
+        shape, centre = unpack(z)
+        # In components the ellipsoid is (x − c)ᵀ B⁻² (x − c) <= 1: the
+        # Galerkin matrix of the precision is B⁻².
+        shape_inverse = np.linalg.inv(shape)
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        return Ellipsoid(
+            space,
+            LinearOperator.from_matrix(
+                space,
+                space,
+                shape_inverse @ shape_inverse,
+                form="galerkin",
+                traits=traits,
+            ),
+            center=space.from_components(centre),
+            covariance=LinearOperator.from_matrix(
+                space,
+                space,
+                shape @ shape @ gram_matrix,
+                form="components",
+                traits=traits,
+            ),
         )
 
     def __repr__(self) -> str:

@@ -1083,7 +1083,11 @@ trace-optimal outer ellipsoid `(1 + 1/p)Q₁ + (1 + p)Q₂`, which makes
 Planned as well, droppable: the maximum-volume inscribed ellipsoid of the
 outer polytope (a `dim P` log-det program; a description of the bound, not
 of the set) and a point-set minimum-volume enclosing ellipsoid (encloses the
-inner hull and certifies nothing, documented as such).
+inner hull and certifies nothing, documented as such). Built 2026-10-27, all
+four: `SProcedure` as the `outer_ellipsoid` probe's algorithm (the closed
+form answers with the set itself), `sum_of_ellipsoids` and the Minkowski
+sum's `outer_ellipsoid()`, `Polytope.inscribed_ellipsoid()` and
+`enclosing_ellipsoid()`; the last two dense in `dim P` as planned.
 
 **D-142. The damped-family machinery moves to `numerics`; the feasible set
 and its algorithms live in `geometry`; the estimators stay in `inference`**

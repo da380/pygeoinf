@@ -6,9 +6,9 @@ import pytest
 from pygeoinf2 import EuclideanSpace, LinearOperator, Traits
 from pygeoinf2.geometry import (
     AffineSubspace,
-    ConvexSet,
     Ball,
     BallSurface,
+    ConvexSet,
     Ellipsoid,
     EmptySet,
     HalfSpace,
@@ -19,6 +19,8 @@ from pygeoinf2.geometry import (
     Polytope,
     Union,
     UniversalSet,
+    enclosing_ellipsoid,
+    sum_of_ellipsoids,
 )
 from pygeoinf2.numerics.convex import ProximalGradient, SquaredDistance, SupportFunction
 from pygeoinf2.numerics.solvers import CholeskySolver, LinearSolver
@@ -1314,3 +1316,183 @@ class TestConvexIntersection:
         indicator = (ball & half).indicator()
         point = X.scale(2.0, X.random(rng=rng))
         assert (ball & half).contains(indicator.prox(point, 1.0), rtol=1e-6)
+
+
+class TestEllipsoidsOfSetsAndPoints:
+    """The bound on a Minkowski sum, the largest ellipsoid in a polytope and
+    the smallest around points, each on a space with a dense metric."""
+
+    @staticmethod
+    def ellipsoid(space, rng, *, scale=1.0, center=None):
+        root = rng.normal(size=(space.dim, space.dim))
+        matrix = scale * (root @ root.T + space.dim * np.identity(space.dim))
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        covariance = LinearOperator.from_matrix(
+            space, space, matrix, form="components", traits=traits
+        )
+        precision = LinearOperator.from_matrix(
+            space, space, np.linalg.inv(matrix), form="components", traits=traits
+        )
+        return Ellipsoid(space, precision, center=center, covariance=covariance)
+
+    @staticmethod
+    def components(space, ellipsoid):
+        return np.column_stack(
+            [
+                space.to_components(ellipsoid.covariance(space.basis_vector(j)))
+                for j in range(space.dim)
+            ]
+        )
+
+    def test_the_sum_of_two_ellipsoids_lies_in_its_bound(self, rng):
+        space = make_dense_metric_space(3)
+        first = self.ellipsoid(space, rng, center=space.random(rng=rng))
+        second = self.ellipsoid(space, rng, scale=0.2)
+        total = first + second
+        for criterion in ("trace", "volume"):
+            bound = total.outer_ellipsoid(criterion=criterion)
+            assert np.allclose(
+                space.to_components(bound.center), space.to_components(first.center)
+            )
+            for _ in range(20):
+                q = space.random(rng=rng)
+                assert bound.support_function()(q) >= total.support_function()(q) - 1e-9
+        by_trace = self.components(space, total.outer_ellipsoid(criterion="trace"))
+        by_volume = self.components(space, total.outer_ellipsoid(criterion="volume"))
+        assert np.trace(by_trace) <= np.trace(by_volume) * (1.0 + 1e-9)
+        assert np.linalg.slogdet(by_volume)[1] <= np.linalg.slogdet(by_trace)[1] + 1e-9
+        # The trace-optimal weights are in closed form: (1 + 1/p) C₁ + (1 + p) C₂.
+        one, two = self.components(space, first), self.components(space, second)
+        p = np.sqrt(np.trace(one) / np.trace(two))
+        assert np.allclose(by_trace, (1.0 + 1.0 / p) * one + (1.0 + p) * two)
+
+    def test_balls_points_and_three_summands(self, rng):
+        space = make_dense_metric_space(2)
+        ball = Ball(space, radius=0.5, center=space.random(rng=rng))
+        ellipsoid = self.ellipsoid(space, rng)
+        total = ball + ellipsoid + Ball(space, radius=0.25)
+        bound = total.outer_ellipsoid()
+        for _ in range(20):
+            q = space.random(rng=rng)
+            assert bound.support_function()(q) >= total.support_function()(q) - 1e-9
+        with pytest.raises(NotImplementedError, match="two summands"):
+            total.outer_ellipsoid(criterion="volume")
+        zero = LinearOperator.from_matrix(
+            space,
+            space,
+            np.zeros((2, 2)),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        alone = sum_of_ellipsoids(space, [ellipsoid.covariance, zero])
+        assert np.allclose(
+            self.components(space, alone), self.components(space, ellipsoid)
+        )
+        with pytest.raises(ValueError, match="point"):
+            sum_of_ellipsoids(space, [zero])
+        with pytest.raises(TypeError, match="covariance"):
+            (
+                ball
+                + Polytope(space, [HalfSpace(space, space.random(rng=rng))], outer=True)
+            ).outer_ellipsoid()
+
+    def test_the_largest_ellipsoid_in_a_box_and_in_a_random_polytope(self, rng):
+        space = EuclideanSpace(3)
+        box = Polytope(
+            space,
+            [
+                HalfSpace(
+                    space,
+                    space.scale(sign, space.basis_vector(i)),
+                    offset=1.0 if sign > 0 else 2.0,
+                )
+                for i in range(3)
+                for sign in (1.0, -1.0)
+            ],
+            outer=True,
+        )
+        inside = box.inscribed_ellipsoid()
+        assert np.allclose(space.to_components(inside.center), -0.5, atol=1e-6)
+        assert np.allclose(
+            self.components(space, inside), 2.25 * np.identity(3), atol=1e-5
+        )
+        metric = make_dense_metric_space(4)
+        polytope = Polytope(
+            metric,
+            [
+                HalfSpace(metric, metric.random(rng=rng), offset=1.0 + rng.uniform())
+                for _ in range(24)
+            ],
+            outer=True,
+        )
+        inside = polytope.inscribed_ellipsoid()
+        for _ in range(100):
+            assert polytope.contains(
+                inside.support_maximizer(metric.random(rng=rng)), rtol=1e-6
+            )
+        # Every polytope touches its largest ellipsoid on at least dim planes.
+        touching = sum(
+            abs(inside.support_function()(plane.normal) - plane.offset) < 1e-5
+            for plane in polytope.half_spaces
+        )
+        assert touching >= metric.dim
+
+    def test_an_unbounded_or_empty_polytope_has_no_largest_ellipsoid(self):
+        space = EuclideanSpace(2)
+        e0, e1 = space.basis_vector(0), space.basis_vector(1)
+        with pytest.raises(ValueError, match="unbounded"):
+            Polytope(
+                space, [HalfSpace(space, e0), HalfSpace(space, e1)], outer=True
+            ).inscribed_ellipsoid()
+        with pytest.raises(ValueError, match="unbounded"):
+            Polytope(
+                space,
+                [
+                    HalfSpace(space, e0, offset=1.0),
+                    HalfSpace(space, space.negative(e0), offset=1.0),
+                    HalfSpace(space, e1, offset=1.0),
+                ],
+                outer=True,
+            ).inscribed_ellipsoid()
+        with pytest.raises(ValueError, match="empty"):
+            Polytope(
+                space,
+                [
+                    HalfSpace(space, e0, offset=-1.0),
+                    HalfSpace(space, space.negative(e0), offset=-1.0),
+                    HalfSpace(space, e1, offset=1.0),
+                    HalfSpace(space, space.negative(e1), offset=1.0),
+                ],
+                outer=True,
+            ).inscribed_ellipsoid()
+
+    def test_the_smallest_ellipsoid_around_points(self, rng):
+        import itertools
+
+        space = EuclideanSpace(3)
+        corners = [
+            space.from_components(np.array(v, dtype=float))
+            for v in itertools.product((-1.0, 1.0), repeat=3)
+        ]
+        around = enclosing_ellipsoid(space, corners)
+        assert np.allclose(space.to_components(around.center), 0.0, atol=1e-6)
+        assert np.allclose(
+            self.components(space, around), 3.0 * np.identity(3), atol=1e-5
+        )
+        metric = make_dense_metric_space(3)
+        points = [metric.random(rng=rng) for _ in range(40)]
+        around = enclosing_ellipsoid(metric, points)
+        levels = [around.mahalanobis_squared(point) for point in points]
+        assert max(levels) <= 1.0 + 1e-12
+        assert sum(level > 1.0 - 1e-6 for level in levels) >= metric.dim + 1
+        for _ in range(20):
+            q = metric.random(rng=rng)
+            assert (
+                around.support_function()(q)
+                >= max(metric.inner_product(q, point) for point in points) - 1e-9
+            )
+        with pytest.raises(ValueError, match="span"):
+            enclosing_ellipsoid(metric, points[:3])
+        flat = [metric.scale(t, points[0]) for t in np.linspace(-1.0, 1.0, 8)]
+        with pytest.raises(ValueError, match="hyperplane"):
+            enclosing_ellipsoid(metric, flat)

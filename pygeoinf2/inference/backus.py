@@ -19,13 +19,13 @@ it is loose against.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
-from ..geometry.convex import Ball, ConvexSet
+from ..geometry.convex import Ball, ConvexSet, Ellipsoid, sum_of_ellipsoids
 from ..geometry.feasible import FeasiblePropertySet, FeasibleStructure
 from ..geometry.sets import SublevelSet
 from ..numerics.convex import SupportFunction
@@ -99,6 +99,17 @@ def _confidence_set(
         "The problem's error is neither a measure nor a convex set; pass "
         "noise= to say what confidence set to use."
     )
+
+
+def _covariance_if_quadratic(subset: ConvexSet | None) -> LinearOperator | None:
+    """The covariance of a ball or an ellipsoid carrying one; None for any other set."""
+    if isinstance(subset, Ball):
+        return (LinearOperator.identity(subset.domain) * subset.radius**2).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+    if isinstance(subset, Ellipsoid):
+        return subset.covariance
+    return None
 
 
 def _center_of(subset: Any, space: HilbertSpace) -> Any:
@@ -270,6 +281,9 @@ class BackusGilbertSet(ConvexSet):
         resolution: SupportFunction,
         noise: SupportFunction | None,
         /,
+        *,
+        resolution_covariance: LinearOperator | None = None,
+        noise_covariance: LinearOperator | None = None,
     ) -> None:
         """
         Args:
@@ -278,12 +292,18 @@ class BackusGilbertSet(ConvexSet):
             resolution: the support function of ``(T − X A)(S_prior − a)``,
                 on the property space.
             noise: that of ``(−X)(S_noise − b)``, or None for exact data.
+            resolution_covariance: ``(T − X A) C (T − X A)*`` when the prior
+                is a ball or an ellipsoid of covariance ``C``, which makes
+                :meth:`outer_ellipsoid` available.
+            noise_covariance: ``X R X*`` likewise, for a quadratic noise set.
         """
         space = resolution.domain
         super().__init__(space)
         self._estimate = estimate
         self._resolution = resolution
         self._noise = noise
+        self._resolution_covariance = resolution_covariance
+        self._noise_covariance = noise_covariance
         total = SupportFunction.of_point(space, estimate) + resolution
         if noise is not None:
             total = total + noise
@@ -367,6 +387,37 @@ class BackusGilbertSet(ConvexSet):
     def support_maximizer(self, direction: Any, /) -> Any:
         """The point attaining the support: the sum of the parts' maximizers."""
         return self._support.subgradient(direction)
+
+    def outer_ellipsoid(
+        self, *, criterion: Literal["trace", "volume"] = "trace"
+    ) -> Ellipsoid:
+        """One ellipsoid about the estimate containing the sum, on quadratic sets.
+
+        The resolution part is the ellipsoid of covariance
+        ``(T − X A) C (T − X A)*`` and the noise part that of ``X R X*``;
+        their sum is not an ellipsoid, and this is the smallest of the
+        family ``C₁/α + C₂/(1 − α)`` that contains it
+        (:func:`~pygeoinf2.geometry.sum_of_ellipsoids`).
+
+        Args:
+            criterion: what the ellipsoid is smallest in -- the sum of its
+                squared semi-axes, or its volume.
+
+        Raises:
+            TypeError: if either set was not a ball or an ellipsoid.
+        """
+        if self._resolution_covariance is None or (
+            self._noise is not None and self._noise_covariance is None
+        ):
+            raise TypeError(
+                "An outer ellipsoid needs a ball or an ellipsoid on each side."
+            )
+        covariances = [self._resolution_covariance]
+        if self._noise_covariance is not None:
+            covariances.append(self._noise_covariance)
+        return sum_of_ellipsoids(
+            self.domain, covariances, center=self._estimate, criterion=criterion
+        )
 
     def project(self, x: Any, /) -> Any:
         """The nearest point, by the dual of the nearest-point problem."""
@@ -481,7 +532,16 @@ class BackusGilbert(SetEstimator):
             normal.with_traits(Traits.POSITIVE_DEFINITE)
         )
         operator = property_operator @ covariance @ forward.adjoint @ inverse
-        self._attach(problem, property_operator, operator, prior, noise, level)
+        self._attach(
+            problem,
+            property_operator,
+            operator,
+            prior,
+            noise,
+            level,
+            prior_covariance=covariance,
+            noise_covariance=(None if noise is None else structure.noise_covariance()),
+        )
 
     def _attach(
         self,
@@ -491,6 +551,9 @@ class BackusGilbert(SetEstimator):
         prior: ConvexSet,
         noise: ConvexSet | None,
         level: float,
+        *,
+        prior_covariance: LinearOperator | None,
+        noise_covariance: LinearOperator | None,
     ) -> None:
         self._problem = problem
         self._property_operator = property_operator
@@ -529,6 +592,19 @@ class BackusGilbert(SetEstimator):
                     data_space, data_space.negative(noise_center)
                 )
             ).compose_with(-operator)
+        )
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        self._resolution_covariance = (
+            None
+            if prior_covariance is None
+            else (unresolved @ prior_covariance @ unresolved.adjoint).with_traits(
+                traits
+            )
+        )
+        self._noise_covariance = (
+            None
+            if noise_covariance is None
+            else (operator @ noise_covariance @ operator.adjoint).with_traits(traits)
         )
 
     @classmethod
@@ -583,7 +659,16 @@ class BackusGilbert(SetEstimator):
             if subset.domain != space:
                 raise ValueError(f"The {name} set lies on the wrong space.")
         estimator = cls.__new__(cls)
-        estimator._attach(problem, property_operator, operator, prior, noise, level)
+        estimator._attach(
+            problem,
+            property_operator,
+            operator,
+            prior,
+            noise,
+            level,
+            prior_covariance=_covariance_if_quadratic(prior),
+            noise_covariance=_covariance_if_quadratic(noise),
+        )
         return estimator
 
     # -- what it holds -----------------------------------------------------
@@ -652,7 +737,11 @@ class BackusGilbert(SetEstimator):
     def __call__(self, data: Any) -> BackusGilbertSet:
         """The set of property values the certificate allows for these data."""
         return BackusGilbertSet(
-            self.estimate(data), self._resolution_support, self._noise_support
+            self.estimate(data),
+            self._resolution_support,
+            self._noise_support,
+            resolution_covariance=self._resolution_covariance,
+            noise_covariance=self._noise_covariance,
         )
 
     def push_forward(self, operator: LinearOperator, /) -> "BackusGilbert":

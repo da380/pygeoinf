@@ -71,6 +71,8 @@ from .geometry import (
     SublevelSet,
     LevelSet,
     UniversalSet,
+    enclosing_ellipsoid,
+    sum_of_ellipsoids,
 )
 from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
 from .probability.absolutely_continuous import AbsolutelyContinuousMeasure
@@ -237,6 +239,8 @@ __all__ = [
     "LinearSubspace",
     "OrthogonalProjector",
     "Polytope",
+    "enclosing_ellipsoid",
+    "sum_of_ellipsoids",
     "Subset",
     "SublevelSet",
     "LevelSet",

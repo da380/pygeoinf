@@ -266,6 +266,31 @@ tolerance on that example's family, which the example meets with
 
 ## Stage 6 — ellipsoidal probes (D-141)
 
+**DONE 2026-10-27, all four items.** `SProcedure` in `geometry/feasible.py`
+answers a new probe `outer_ellipsoid` (`ClosedForm` answers it with the set
+itself); `FeasiblePropertySet.outer_ellipsoid(*, criterion=, via=)` and
+`outer_ellipsoid_result` (an `EllipsoidResult` with the weight `θ` and the
+evaluation count). The search is in `log γ`, `γ = θ/(1 − θ)`, from the
+Rayleigh scale of `A C A*` against `R`, by the primal's bracketing-then-Brent
+minimizer; both criteria were unimodal on 300 random problems. The two
+formalisms agree on `θ` to `1e-11`. In `geometry/convex.py`:
+`sum_of_ellipsoids(space, covariances, *, center, criterion)` (trace in
+closed form for any number of summands, volume by a scalar search for two),
+`(E₁ + E₂).outer_ellipsoid()` on a Minkowski sum of balls and ellipsoids,
+`Polytope.inscribed_ellipsoid()` (Newton on the log barrier from the
+Chebyshev centre, after an LP check that the polytope is bounded) and
+`enclosing_ellipsoid(space, points)` (Khachiyan with away steps, inflated
+to the furthest point so it encloses whatever the tolerance). All three are
+dense in `dim P` and metric-aware (tested on a dense Gram).
+`BackusGilbertSet.outer_ellipsoid()` is the sum bound about the estimate,
+available when both sets were balls or ellipsoids with covariances. Example
+23 and tutorial 7 draw the S-procedure ellipsoid; on tutorial 7's arc 0 its
+half-width is 0.34 against the Backus-Gilbert ellipsoid's 0.46.
+
+Observed, not a defect: a Backus-Gilbert ellipsoid can be narrower than the
+S-procedure's in some directions (the criteria are global); the S-procedure
+is tighter on the criterion and contains the set, which is the claim.
+
 1. `feasible.outer_ellipsoid(*, criterion="trace" | "volume")` on the
    quadratic tier: the S-procedure ellipsoid `T C_θ T*`,
    `C_θ = (θQ + (1 − θ)A*PA)⁻¹`, `dim P` warm-started family solves per

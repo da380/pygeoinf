@@ -40,7 +40,7 @@ is what most of the rest follows from:
 | `algebra` | `HilbertSpace`, `CoordinateSpace`, `HilbertModule`, `MassWeightedSpace`, `DirectSum`; `Operator`, `LinearOperator`, `Functional`, the expression nodes, `DiagonalLinearOperator`, `Linearization` |
 | `traits` | the seven trait flags and their closure and propagation rules |
 | `probability` | `ProbabilityMeasure`, `GaussianMeasure`, `GaussianMixture`, `AbsolutelyContinuousMeasure` (D-132), products and push-forwards, conditioning, credible sets |
-| `geometry` | convex sets (balls, ellipsoids including semidefinite ones, half-spaces, polytopes, intersections, oracle sets), the conversions between a set's descriptions (D-135), level and sublevel sets, affine and linear subspaces, projectors, support functions; the feasible property set with its algorithms `ClosedForm`, `Primal`, `Search`, `Dual`, `Splitting`, `Distance` (D-142; the estimators still use the old routes until Stage 5) |
+| `geometry` | convex sets (balls, ellipsoids including semidefinite ones, half-spaces, polytopes, intersections, oracle sets), the conversions between a set's descriptions (D-135), level and sublevel sets, affine and linear subspaces, projectors, support functions; the feasible property set with its algorithms `ClosedForm`, `Primal`, `Search`, `Dual`, `Splitting`, `Distance`, `SProcedure` (D-142), and the ellipsoidal descriptions of D-141: the S-procedure outer ellipsoid, the bound on a Minkowski sum of ellipsoids, a polytope's inscribed ellipsoid, a point set's enclosing ellipsoid |
 | `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval |
 | `sem1d` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies: `interval` on the line under `dx`, `radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, `layered` for piecewise-continuous fields over adjacent layers of any one of them (their direct sum, with points, jumps, integrals and layer-by-layer priors); Robin ends, a batched harmonic transform, a fit over the domain for sampled functions; wraps `planetmodel.randomfield`, an optional extra, and is imported explicitly (D-115 to D-124, D-126) |
@@ -52,7 +52,7 @@ is what most of the rest follows from:
 | `parallel` | `parallel_map` and `resolve_jobs`, the one place joblib is called (D-52) |
 | `compat` | v1 class-name aliases and the v1-space adapter; goes with v1 (D-101) |
 
-109 names are re-exported at the top level and the subpackages are importable
+111 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
 `compat` and `sem1d` are imported explicitly. Thirty-three examples under `examples/`
 run as a slow test; their README says what each shows.
@@ -115,11 +115,11 @@ both alike.
 and `via=` on a probe names another or passes an instance with tuning
 (D-136):
 
-| form | support | inclusion | feasibility |
-|---|---|---|---|
-| `closed_form` (quadratic prior, exact data) | `closed_form` | `closed_form` | `closed_form` |
-| `quadratic` (a ball or an ellipsoid each side) | `primal`, then `dual`, `splitting` | `search`, then `distance` | `search`, then `dual` |
-| `general` | `dual` (support functions, converted from a smooth level function if need be), `splitting` (projections) | `search` (smooth level functions), `distance` (a finite support function) | `search`, `dual` |
+| form | support | inclusion | feasibility | outer ellipsoid |
+|---|---|---|---|---|
+| `closed_form` (quadratic prior, exact data) | `closed_form` | `closed_form` | `closed_form` | `closed_form` (the set itself) |
+| `quadratic` (a ball or an ellipsoid each side) | `primal`, then `dual`, `splitting` | `search`, then `distance` | `search`, then `dual` | `s_procedure` (D-141) |
+| `general` | `dual` (support functions, converted from a smooth level function if need be), `splitting` (projections) | `search` (smooth level functions), `distance` (a finite support function) | `search`, `dual` | none |
 
 Every support value is an outer bound with a certified bracket (D-148);
 the level side decides points and gives inner bounds. Algorithms that both
@@ -127,7 +127,11 @@ apply must agree, and the parity tests are the point of the layer: the
 primal and the dual agree to `1e-6` on balls, the dual with the quadratic
 tier to `1e-4` on a quartic prior, the splitting with the dual to `1e-5`.
 `BackusGilbert` returns a `BackusGilbertSet`, the Minkowski sum a linear
-certificate allows, valid for any `X` by weak duality (D-140).
+certificate allows, valid for any `X` by weak duality (D-140); on quadratic
+sets its `outer_ellipsoid()` is one ellipsoid about the estimate. The
+S-procedure ellipsoid is certified and checked against support values; a
+polytope's `inscribed_ellipsoid()` describes the polytope and a point set's
+`enclosing_ellipsoid()` the points, neither the set (D-141).
 
 ## 5. Where a dense matrix is still formed
 
@@ -148,6 +152,10 @@ column, and a composition never expands a low-rank product (D-33).
 - The feasible set's closed form holds a `dim P × dim P` shape matrix and
   `Search` a `dim P × dim P` kernel Gram, shared across data; the only
   dense-in-`N_d` piece is the opt-in `SpectralFamilySolver` (D-145).
+- Every ellipsoid on the property space is a `dim P × dim P` matrix: the
+  S-procedure's shape per weight, `sum_of_ellipsoids`, a polytope's
+  inscribed ellipsoid (Newton on `dim P (dim P + 3) / 2` unknowns) and a
+  point set's enclosing ellipsoid (D-141).
 - `backends.mfem.operator_from_bilinear_form` densifies and is documented as
   not the route for a real problem; `solver_from_bilinear_form` and
   `mfem_hilbert` are (D-96).
