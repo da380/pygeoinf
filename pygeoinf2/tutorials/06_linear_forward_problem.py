@@ -207,4 +207,6 @@ ax.legend()
 # second, for when there is no prior to be had, and a third, where the
 # prior and the noise are bounds rather than distributions and the answer
 # is a set from the start.
+
+# %%
 plotting.show()

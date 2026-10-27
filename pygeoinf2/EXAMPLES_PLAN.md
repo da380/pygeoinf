@@ -68,6 +68,14 @@ Kept as notebooks, exactly two: a Colab quickstart (tutorial 1 in notebook
 form, with the bootstrap cell) and a visual tour of the plotting layer,
 where inline output earns the format.
 
+> **Superseded 2026-10-27 (David):** every tutorial gets a notebook,
+> generated from its script by `tutorials/make_notebooks.py` into
+> `tutorials/notebooks/` (the pyslfp pattern), with a Colab install cell
+> and a badge per tutorial in the tutorials README, so that the library can
+> be tried without installing it. The scripts stay the source and a test
+> checks the notebooks are current. Examples and mini-apps get no
+> notebooks.
+
 ## Tier 3: mini-apps (`miniapps/`, new)
 
 MFEM-spirit: each a self-contained directory with a README stating the
@@ -110,8 +118,21 @@ stations and earthquakes, cap averages, the feasible set) extends mini-app 1
 with the set-valued answer on the same data; `dynamic_topography.py` and
 `correlated.py` are the Bayesian half and the correlated-prior specification
 of mini-app 5. The timing harnesses (`point_evaluation.py`,
-`path_average.py`, `torus_point.py`) move to `benchmarks/` when it exists,
-so that `work/` can go at the release.
+`path_average.py`, `torus_point.py`) moved to `benchmarks/operator_timings.py`
+on 2026-10-27, ported to v2, so that `work/` can go at the release.
+
+## A nonlinear ray operator (David, 2026-10-27)
+
+The linear ray-tomography operators exist; a nonlinear one would be a
+small, real nonlinear operator for the examples and the tests. The forward
+map is Hamiltonian ray tracing in the symmetric space's own domain
+(sphere, plane, torus; it belongs in `symmetric_space`), with a root find
+for the two-point problem; the derivative is Fermat's principle about the
+reference ray, which is the existing path integral along it, so the
+adjoint is the linear operator already built; applied adjoints and the
+second-order term give a Hessian. Planned after the Stage 7 benchmarks,
+before the tomography mini-app, which could then use it (tutorial 9 and
+example 28 are the nonlinear places it would illustrate).
 
 ## Sequencing
 

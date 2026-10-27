@@ -69,3 +69,24 @@ def test_every_tutorial_is_listed_in_the_readme():
         script.name for script in tutorial_scripts() if script.name not in readme
     ]
     assert not missing, f"not mentioned in the README: {missing}"
+
+
+def test_the_notebooks_are_current():
+    """Each tutorial has a notebook generated from it, and it is up to date.
+
+    The notebooks are what Colab opens, so a stale one teaches an older
+    tutorial than the script the suite ran. ``make_notebooks.py`` regenerates
+    them.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "make_notebooks", TUTORIALS / "make_notebooks.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    changes = module.stale()
+    assert not changes, (
+        "the notebooks are stale; run pygeoinf2/tutorials/make_notebooks.py: "
+        + ", ".join(changes)
+    )

@@ -283,4 +283,6 @@ left.set_ylabel("slowness")
 # away from the interface. Example 33 is the same construction for a planet,
 # with mass and moment of inertia as the integrals; tutorial 11 turns to the
 # spaces each layer is built from.
+
+# %%
 plotting.show()

@@ -847,7 +847,7 @@ class BlockPreconditioner(LinearSolver):
         )
 
 
-class WoodburyPreconditioner(LinearSolver):
+class WoodburyPreconditioner(FamilySolver):
     """Invert a normal operator through the *other* space.
 
     The two normal operators of a linear Gaussian problem are
@@ -888,6 +888,14 @@ class WoodburyPreconditioner(LinearSolver):
     Which identity is used is decided by the operator handed to
     :meth:`__call__`: one acts on the model space and the other on the data
     space, and their dimensions say which is which.
+
+    **Along a damped family** ``A C A* + t R`` or ``t C⁻¹ + A* R⁻¹ A`` the
+    multiplier only scales the noise covariance in the Gaussian reading, so
+    handed the family through :meth:`for_family` the preconditioner keeps
+    ``Q⁻¹`` and ``R⁻¹`` resolved once and refactorizes the inner operator,
+    which lives on the surrogate's own space, at each multiplier it is
+    asked for. The surrogate pieces are its own; only the multiplier is
+    read off the member.
 
     Note:
         With an inexact inner solve the result is no longer exactly symmetric,
@@ -1085,43 +1093,118 @@ class WoodburyPreconditioner(LinearSolver):
         chosen = solver if solver is not None else self._inner_solver()
         return chosen(operator.with_traits(Traits.POSITIVE_DEFINITE))
 
-    def model_form(self) -> LinearOperator:
-        """``Q - Q A* (R + A Q A*)^-1 A Q``, an approximate ``N_m^-1``.
+    def model_form(self, *, multiplier: float = 1.0) -> LinearOperator:
+        """``Q - Q A* (t R + A Q A*)^-1 A Q``, an approximate ``N_m^-1``.
 
         Built without ever inverting ``Q`` or ``R``.
+
+        Args:
+            multiplier: ``t``, the factor on the noise covariance; one for
+                the Gaussian normal operator itself.
         """
         forward, prior, noise = self._forward, self._prior, self._noise
-        inner = noise + forward @ prior @ forward.adjoint
+        inner = multiplier * noise + forward @ prior @ forward.adjoint
         inverse = self._inner_solver()(inner.with_traits(Traits.POSITIVE_DEFINITE))
         cross = prior @ forward.adjoint
         return (prior - cross @ inverse @ cross.adjoint).with_traits(
             Traits.SELF_ADJOINT
         )
 
-    def data_form(self) -> LinearOperator:
-        """``R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1``, an approximate ``N_d^-1``.
-
-        Needs ``Q^-1`` and ``R^-1``, so it wants covariances given in inverse
-        form; see the class docstring. With a ``prior_damping`` the first is
-        ``(Q + prior_damping I)^-1`` instead, the approximate inverse of a
-        prior that has no exact one.
-        """
-        forward = self._forward
+    def _resolved_prior_inverse(self) -> LinearOperator:
+        """``Q^-1``, or the damped ``(Q + prior_damping I)^-1``."""
         prior = self._prior
         if self._prior_damping > 0.0:
             # Semidefinite plus definite is definite by the trait closure
             # rules, so the sum needs no claim of its own.
             prior = prior + self._prior_damping * LinearOperator.identity(prior.domain)
-        prior_inverse = self._resolve(self._prior_inverse, prior, self._prior_solver)
-        noise_inverse = self._resolve(
-            self._noise_inverse, self._noise, self._noise_solver
-        )
+        return self._resolve(self._prior_inverse, prior, self._prior_solver)
+
+    def _resolved_noise_inverse(self) -> LinearOperator:
+        """``R^-1``."""
+        return self._resolve(self._noise_inverse, self._noise, self._noise_solver)
+
+    def data_form(
+        self,
+        *,
+        multiplier: float = 1.0,
+        prior_inverse: LinearOperator | None = None,
+        noise_inverse: LinearOperator | None = None,
+    ) -> LinearOperator:
+        """``(tR)^-1 - (tR)^-1 A (Q^-1 + A* (tR)^-1 A)^-1 A* (tR)^-1``, an approximate ``N_d^-1``.
+
+        Needs ``Q^-1`` and ``R^-1``, so it wants covariances given in inverse
+        form; see the class docstring. With a ``prior_damping`` the first is
+        ``(Q + prior_damping I)^-1`` instead, the approximate inverse of a
+        prior that has no exact one.
+
+        Args:
+            multiplier: ``t``, the factor on the noise covariance; one for
+                the Gaussian normal operator itself.
+            prior_inverse: ``Q^-1`` already resolved, from a previous call
+                along a family; resolved here if omitted.
+            noise_inverse: ``R^-1`` likewise.
+        """
+        forward = self._forward
+        if prior_inverse is None:
+            prior_inverse = self._resolved_prior_inverse()
+        if noise_inverse is None:
+            noise_inverse = self._resolved_noise_inverse()
+        if multiplier != 1.0:
+            noise_inverse = (1.0 / multiplier) * noise_inverse
         inner = prior_inverse + forward.adjoint @ noise_inverse @ forward
         inverse = self._inner_solver()(inner.with_traits(Traits.POSITIVE_DEFINITE))
         cross = noise_inverse @ forward
         return (noise_inverse - cross @ inverse @ cross.adjoint).with_traits(
             Traits.SELF_ADJOINT
         )
+
+    def _is_model_form(self, operator: LinearOperator) -> bool:
+        dim = operator.domain.dim
+        if dim == self.model_space.dim and dim == self.data_space.dim:
+            # Ambiguous by dimension alone, so ask the spaces themselves.
+            return operator.domain == self.model_space
+        return dim == self.model_space.dim
+
+    def _approximate_inverse(
+        self, operator: LinearOperator, approximate: LinearOperator
+    ) -> InverseOperator:
+        # The forms invert the Gaussian reading of the factors; the operator
+        # in hand may be a scalar multiple of that (a Tikhonov operator in
+        # the data space is ``t`` times it), and says so.
+        scale = float(getattr(operator, "scale", 1.0))
+        if scale != 1.0:
+            approximate = (1.0 / scale) * approximate
+
+        def solve_fn(y, x0):
+            return SolveResult(approximate(y), 1, 0.0, True)
+
+        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+    def for_family(
+        self, base: LinearOperator, shift: LinearOperator, /
+    ) -> "_WoodburyFamily":
+        """Prepare for ``base + t * shift``: the surrogate's inverses resolved once.
+
+        The family's members are read as Gaussian normal operators whose
+        noise covariance carries the multiplier, ``A C A* + t R`` in the
+        data space and ``t (C⁻¹ + A* (t R)⁻¹ A)`` in the model space, and
+        each member's approximate inverse is the Woodbury form with ``t R``
+        in place of ``R``. The surrogate pieces are this preconditioner's;
+        the base and the shift only say which space the family lives on.
+
+        Args:
+            base: the undamped part.
+            shift: what the multiplier scales.
+
+        Returns:
+            The prepared family.
+
+        Raises:
+            ValueError: if the family lives on neither of the surrogate's
+                spaces.
+        """
+        self._validate(base + shift)
+        return _WoodburyFamily(self)
 
     def _validate(self, operator: LinearOperator) -> None:
         super()._validate(operator)
@@ -1135,24 +1218,49 @@ class WoodburyPreconditioner(LinearSolver):
             )
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
-        dim = operator.domain.dim
-        if dim == self.model_space.dim and dim == self.data_space.dim:
-            # Ambiguous by dimension alone, so ask the spaces themselves.
-            model = operator.domain == self.model_space
-        else:
-            model = dim == self.model_space.dim
-        approximate = self.model_form() if model else self.data_form()
-        # The forms invert the Gaussian reading of the factors; the operator
-        # in hand may be a scalar multiple of that (a Tikhonov operator in
-        # the data space is ``t`` times it), and says so.
-        scale = float(getattr(operator, "scale", 1.0))
-        if scale != 1.0:
-            approximate = (1.0 / scale) * approximate
+        approximate = (
+            self.model_form() if self._is_model_form(operator) else self.data_form()
+        )
+        return self._approximate_inverse(operator, approximate)
 
-        def solve_fn(y, x0):
-            return SolveResult(approximate(y), 1, 0.0, True)
 
-        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+class _WoodburyFamily(BoundFamily):
+    """The Woodbury form at each multiplier, the surrogate's inverses resolved once."""
+
+    def __init__(self, preconditioner: WoodburyPreconditioner) -> None:
+        self._preconditioner = preconditioner
+        self._prior_inverse: LinearOperator | None = None
+        self._noise_inverse: LinearOperator | None = None
+        self._forms: dict[tuple[bool, float], LinearOperator] = {}
+
+    def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
+        """The Woodbury form of the member at one multiplier.
+
+        At a multiplier of zero the forms have no ``(t R)⁻¹`` to speak of
+        and the surrogate's own normal operator may be singular, so the
+        member is approximated by the form at the smallest positive
+        multiplier asked for so far, or at one: positive definite, and as a
+        preconditioner it only has to be close.
+        """
+        preconditioner = self._preconditioner
+        model = preconditioner._is_model_form(member)
+        if multiplier <= 0.0:
+            positive = [t for same, t in self._forms if same == model and t > 0.0]
+            multiplier = min(positive) if positive else 1.0
+        key = (model, float(multiplier))
+        if key not in self._forms:
+            if model:
+                self._forms[key] = preconditioner.model_form(multiplier=multiplier)
+            else:
+                if self._prior_inverse is None:
+                    self._prior_inverse = preconditioner._resolved_prior_inverse()
+                    self._noise_inverse = preconditioner._resolved_noise_inverse()
+                self._forms[key] = preconditioner.data_form(
+                    multiplier=multiplier,
+                    prior_inverse=self._prior_inverse,
+                    noise_inverse=self._noise_inverse,
+                )
+        return preconditioner._approximate_inverse(member, self._forms[key])
 
 
 class ColumnThresholdedPreconditioner(LinearSolver):

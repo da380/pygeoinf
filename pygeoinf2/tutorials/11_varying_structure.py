@@ -283,4 +283,6 @@ ax.set_title("A layered planet: one space per layer, jumps between")
 # tutorial 10 did on an interval; example 31 does the mantle of the ball
 # section above at a resolution worth looking at, with a standard deviation
 # that varies with depth.
+
+# %%
 plotting.show()

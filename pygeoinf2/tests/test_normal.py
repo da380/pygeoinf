@@ -321,6 +321,43 @@ class TestPreconditionedInversion:
                 data.subtract(normal(approximate(vector)), vector)
             ) == pytest.approx(0.0, abs=1e-8 * data.norm(vector))
 
+    def test_along_a_damped_family_each_member_is_inverted_exactly(self, setup, rng):
+        """With the true pieces as the surrogate the family's Woodbury form is
+        the member's inverse at every multiplier, in both formalisms."""
+        from pygeoinf2.numerics import DampedSolves
+        from pygeoinf2.numerics.normal import DampedNormalOperator
+
+        forward, prior, error = setup
+        C, R = prior.covariance, error.covariance
+        preconditioner = WoodburyPreconditioner.from_normal(
+            NormalOperator(forward, prior, error=error), solver=CholeskySolver()
+        )
+        for formalism in ("data_space", "model_space"):
+            kwargs = dict(
+                prior_precision=prior.precision,
+                noise_precision=error.precision,
+                formalism=formalism,
+            )
+            solves = DampedSolves(
+                DampedNormalOperator(forward, C, R, 0.0, **kwargs),
+                (R if formalism == "data_space" else prior.precision),
+                CGSolver(rtol=1e-12, max_iterations=3).with_preconditioner(
+                    preconditioner
+                ),
+                assemble=lambda t, kwargs=kwargs: DampedNormalOperator(
+                    forward, C, R, t, **kwargs
+                ),
+            )
+            space = forward.codomain if formalism == "data_space" else forward.domain
+            for t in (0.3, 1.0, 7.0):
+                member = solves.operator(t)
+                vector = space.random(rng=rng)
+                # Three iterations suffice only if the preconditioner is exact.
+                result = solves.solve(t, vector)
+                assert space.norm(
+                    space.subtract(member(result.solution), vector)
+                ) == pytest.approx(0.0, abs=1e-8 * space.norm(vector)), (formalism, t)
+
     def test_from_normal_refuses_an_operator_without_factors(self, normal):
         with pytest.raises(TypeError, match="factors"):
             WoodburyPreconditioner.from_normal(normal.assembled)

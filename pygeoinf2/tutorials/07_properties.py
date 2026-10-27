@@ -242,4 +242,6 @@ ax.legend(loc="lower right", fontsize=8)
 # that can be defended. The library keeps the three forms of answer — a
 # point, a measure, a set — as different types, because confusing them is a
 # common way to report an uncertainty that was never computed.
+
+# %%
 plotting.show()

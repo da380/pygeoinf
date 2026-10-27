@@ -5,7 +5,7 @@
 # question is simpler: which single model should be reported? This tutorial
 # is about the deterministic answers — least squares, the Tikhonov family,
 # the minimum-norm model and the discrepancy principle — what each assumes,
-# what each costs, and how they relate to the Bayesian answer of tutorial 6.
+# what each costs, and where the Bayesian answer of tutorial 6 differs.
 #
 # The test case is the classic ill-posed problem: undoing a blur.
 
@@ -162,15 +162,16 @@ ax.set_title("Deblurring: the smallest model that fits, in three norms")
 # %% [markdown]
 # All three round off the narrow bump at 4, which is sharper than anything
 # the blurred data can resolve, and the smoother norms round it most: the
-# norm is an assumption about what kind of function the truth is,
-# and a wrong assumption costs accuracy just as a wrong prior would. Choosing
-# it is choosing a prior, by another name.
+# norm is an assumption about what kind of function the truth is, and a
+# wrong assumption costs accuracy. Choosing it is a modelling decision, and
+# it should be made as one: on what is known about the truth, not on what
+# makes the algebra convenient.
 #
-# ## The Bayesian reading, and why you need not make it
+# ## An algebraic coincidence, not a hidden prior
 #
-# Tikhonov's minimisation is the negative log-posterior of a Gaussian problem
-# whose prior covariance is $I / t$, so the least-squares model *is* a
-# posterior mean, exactly.
+# Tikhonov's minimiser is also the posterior mean of a Gaussian problem
+# whose prior covariance is $I / t$: the same linear system, solved for the
+# same vector.
 
 # %%
 damping = chosen.damping
@@ -181,15 +182,19 @@ agreement = X.norm(bayes - model) / X.norm(model)
 print(f"Tikhonov and the Gaussian posterior mean agree to {agreement:.1e}")
 
 # %% [markdown]
-# So why keep both? Because reading the damping as a prior is a claim, and
-# here it would be a strange one: a covariance proportional to the identity
-# on $L^2$ is *white noise*, which tutorial 5 showed is not a measure on
-# functions at all — its draws have no values, and refining the grid makes
-# them rougher without limit. The Tikhonov estimate is a perfectly good
-# answer to the question "what is the smallest model that fits?" The
-# posterior it coincides with is a bad answer to the question "what is
-# probably true?" The library keeps them as different classes for that
-# reason, and lets the caller say which question they are asking.
+# The coincidence is one of formulas, not of questions. Regularisation asks
+# for the smallest model that fits the data; it names no probability and
+# claims nothing about what is likely, and the number it returns is a
+# complete answer to the question it asked. Reading the damping as a prior
+# adds a claim that was never made — and here a strange one: a covariance
+# proportional to the identity on $L^2$ is *white noise*, which tutorial 5
+# showed is not a measure on functions at all. Its draws have no values,
+# and refining the grid makes them rougher without limit. Nobody who
+# regularises a deblurring problem believes that, and they need not: you
+# do not have to be a Bayesian to regularise, and calling the method
+# Bayesian would not make its answer any better. What the two share is a
+# matrix. The library keeps them as different classes for that reason, and
+# lets the caller say which question they are asking.
 #
 # What the deterministic estimators do *not* give is an uncertainty. For
 # that, a prior you believe (tutorial 6), or a bound you believe
@@ -197,4 +202,6 @@ print(f"Tikhonov and the Gaussian posterior mean agree to {agreement:.1e}")
 # at a point, a boundary condition — `ConstrainedLeastSquares` and
 # `ConstrainedMinimumNorm` impose it exactly rather than as a penalty;
 # example 18 shows the subspaces they are built on.
+
+# %%
 plotting.show()

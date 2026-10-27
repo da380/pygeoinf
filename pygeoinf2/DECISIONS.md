@@ -1942,10 +1942,45 @@ color scale.
 
 ---
 
+**D-154. Noise-free problems stay at small scale** (2026-10-27, David).
+Exact data are numerically brittle -- the closed form inverts `A C A*`
+outright, the worst-conditioned member of the damped family -- and of no
+practical interest, so they are not benchmark or example material at scale.
+The closed form keeps its unit tests on small problems, where it is what
+the quadratic tier is checked against; D-152's point-data benchmark
+measures the quadratic tier at a working noise level (a tenth of the
+data's size), its noise-to-zero sweep against the closed form demoted to an
+opt-in check (`--limit`), and the slow tests assert the tier's parity, not
+the limit.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling
 laptop and should be re-measured before being quoted.
+
+- Feasible-set benchmarks (D-152, 2026-10-27, `benchmarks/`, a 16-core
+  desktop with four workers per sweep, applications counted on the forward
+  operator and its adjoint together):
+  - Flexure–gravity (`flexure_gravity.py`, truncations 24, 32, 48, 64; 610
+    data in two blocks at a signal-to-noise of 20; cap averages in field
+    units; 32 directions): the primal with the spectral solver and with
+    unpreconditioned CG at `rtol=1e-10` agree to `1e-10` at every
+    truncation; the spectral sweep costs 2 470 applications and 8 to 16 s,
+    the CG sweep 50 000 to 53 000 and 100 to 270 s. The truth is inside, the
+    contact hull of twelve directions lies in the polytope, the S-procedure's
+    volume-optimal weight rises from 0.82 to 0.92 with the truncation. The
+    dual (300 bundle iterations, and 1 500 on the small run) does not
+    converge on this problem: open. The bounds change by at most 44%, 40%
+    and 14% (9%, 10%, 4% on average) between consecutive truncations, so
+    degree 64 does not yet meet the few-per-cent criterion for a cap of
+    radius 0.15 R; degrees 96 and 128 were run next.
+  - Tutorial 10's tomography (degree 64, 1 024 rays, noise 0.05 on data of
+    rms 0.09, heat prior) as a check that the solves inside a support value
+    cost what the Bayesian solve costs: the posterior mean with a Woodbury
+    surrogate at degree 16 takes 3 CG iterations at `rtol=1e-6` and 4 at
+    `1e-10` (57 and 89 unpreconditioned); each of the roughly forty solves
+    behind one support value takes 6 and 9 with the same surrogate, for
+    463 and 673 applications and brackets of `1.6e-4` and `5.5e-7`.
 
 - Operator calculus (D-49): `(dim, 1e-10)` costs 69 applications at dim 200
   cond 1e2 (sqrt), 149 at cond 1e4, 183 at cond 1e6 (log), 677 at dim 1000

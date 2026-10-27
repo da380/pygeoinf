@@ -1571,7 +1571,10 @@ class Primal(Algorithm):
     ``γ == 0`` the data-only bound, available when ``A* R⁻¹ A`` is
     invertible. In the data-space formalism the coefficients are evaluated
     through the resolvent identity, with the kernel part of ``c`` computed
-    once per direction, so that nothing cancels.
+    once per direction at a small multiplier ``γ₀`` -- a fraction of the
+    family's own scale rather than zero, because the undamped member
+    ``A C A*`` is the worst-conditioned of the family and the identity
+    holds at any ``γ₀`` -- so that nothing cancels.
 
     At the minimum the model is ``u₁/t* + u₂`` with ``t* == sqrt(A/C)``; the
     certificate ``λ == t* R⁻¹(A u − d′)`` gives the outer bound by weak
@@ -1591,6 +1594,7 @@ class Primal(Algorithm):
         tolerance: float = 1e-4,
         max_iterations: int = 100,
         solver: LinearSolver | None = None,
+        floor: float = 1e-4,
     ) -> None:
         """
         Args:
@@ -1600,24 +1604,34 @@ class Primal(Algorithm):
                 inner value's is first order, which is the bracket's width.
             max_iterations: the minimization's budget of evaluations.
             solver: how the family is inverted; the set's solver if omitted.
+            floor: in the data-space formalism, the multiplier at which the
+                kernel part of a direction is computed, as a fraction of
+                the family's scale ``(A C A* v, v) / (R v, v)``. Zero asks
+                for the undamped member, which a direct or spectral solver
+                inverts exactly and conjugate gradients may not; the
+                result does not depend on it beyond the solver's accuracy.
         """
         if formalism not in ("model_space", "data_space"):
             raise ValueError(
                 f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
             )
+        if floor < 0.0:
+            raise ValueError(f"The floor must be non-negative, got {floor}.")
         self._formalism = formalism
         self._tolerance = tolerance
         self._max_iterations = max_iterations
         self._solver = solver
+        self._floor = floor
 
     @property
     def settings(self) -> tuple[Any, ...]:
-        """The formalism, the tolerance, the budget and the solver."""
+        """The formalism, the tolerance, the budget, the solver and the floor."""
         return (
             self._formalism,
             self._tolerance,
             self._max_iterations,
             id(self._solver),
+            self._floor,
         )
 
     def accepts(self, structure: FeasibleStructure) -> bool:
@@ -1701,13 +1715,27 @@ class Primal(Algorithm):
 
         if self._formalism == "data_space":
             v = A(image)  # A C c
+            # The kernel part of the direction, through the family at a
+            # small multiplier γ₀: kappa₀ == (c, C c) − (v, K(γ₀)⁻¹ v), and
+            # (c, C c) − (v, K(γ)⁻¹ v) == kappa₀ + (γ − γ₀)(K(γ₀)⁻¹ v, R K(γ)⁻¹ v)
+            # by the resolvent identity, exactly, for any γ₀.
+            weight = float(data_space.inner_product(R(v), v))
+            gamma_floor = (
+                self._floor
+                * float(data_space.inner_product(A(C(A.adjoint(v))), v))
+                / weight
+                if weight > 0.0
+                else 0.0
+            )
             try:
-                g_inv_v = family.solve(0.0, v).solution
+                g_inv_v = family.solve(gamma_floor, v).solution
             except ConvergenceError as error:
                 raise ValueError(
-                    "The data-space family is singular at γ = 0: the forward "
-                    "operator has no full row rank; use "
-                    "Primal(formalism='model_space')."
+                    "The data-space family could not be solved at "
+                    f"γ = {gamma_floor:.3g}, where a direction's kernel part is "
+                    "computed; a preconditioner, the dense spectral solver "
+                    "(solver=SpectralFamilySolver()) or "
+                    "Primal(formalism='model_space') may be needed."
                 ) from error
             kappa = max(
                 float(model_space.inner_product(image, c))
@@ -1740,9 +1768,11 @@ class Primal(Algorithm):
             k_d = solve_u2(gamma)
             if self._formalism == "data_space":
                 k_v = family.solve(gamma, v, x0=g_inv_v).solution
-                a_coef = kappa / gamma + float(
-                    data_space.inner_product(g_inv_v, R(k_v))
-                )
+                a_coef = (
+                    kappa
+                    + (gamma - gamma_floor)
+                    * float(data_space.inner_product(g_inv_v, R(k_v)))
+                ) / gamma
                 b_coef = float(data_space.inner_product(v, k_d))
                 c_coef = 1.0 + gamma * (
                     1.0 - float(data_space.inner_product(shifted, k_d))
@@ -2220,14 +2250,53 @@ class Dual(Algorithm):
         """Support functions and maximizers on both sides, cheaply or by conversion."""
         return _computes_support(structure.prior) and _computes_support(structure.noise)
 
-    def _minimizer(self) -> Any:
+    def _minimizer(self, *, weight: float = 1.0) -> Any:
         if self._method is not None:
             return self._method
         from ..numerics.convex import ProximalBundleMethod
 
         return ProximalBundleMethod(
-            tolerance=self._tolerance, max_iterations=self._max_iterations
+            weight=weight,
+            tolerance=self._tolerance,
+            max_iterations=self._max_iterations,
         )
+
+    @staticmethod
+    def _scaled_start(cost: Functional, start: Any) -> tuple[Any, float]:
+        """A first step along the subgradient, and the proximal weight it implies.
+
+        A bundle's proximal weight is in the units of the certificate, and
+        the certificate's natural size is anything: a tight noise set and a
+        wide prior put the optimum at ``1e-9`` in the data metric, where a
+        weight of one steps a billion times too far and every step is a
+        null step until the weight has doubled thirty times. One scalar
+        minimization along the first subgradient finds the step that the
+        model would take at the right weight; the bundle starts from there
+        with that weight, and nothing else about it depends on the units.
+        """
+        space = cost.domain
+        slope = cost.subgradient(start)
+        length = space.norm(slope)
+        if not np.isfinite(length) or length == 0.0:
+            return start, 1.0
+
+        def along(log_step: float) -> float:
+            value = cost(space.axpy(-np.exp(log_step), slope, space.copy(start)))
+            return value if np.isfinite(value) else np.inf
+
+        log_step, value, _ = _minimize_unimodal(
+            along, [0.0], tolerance=0.1, max_iterations=40
+        )
+        if log_step >= _LIMIT - 1.0 and value < cost(start):
+            raise ValueError(
+                "The dual cost falls without bound along its first subgradient: "
+                "no model lies both inside the prior set and within the noise "
+                "set of the data, so the feasible set is empty."
+            )
+        step = float(np.exp(log_step))
+        if value >= cost(start):
+            return start, 1.0 / step
+        return space.axpy(-step, slope, space.copy(start)), 1.0 / step
 
     def _space(self, structure: FeasibleStructure) -> tuple[HilbertSpace, Any]:
         """The space the dual runs in, and the map from the data-space gradient to its own."""
@@ -2239,15 +2308,17 @@ class Dual(Algorithm):
             if structure.noise is not None and _is_quadratic(structure.noise):
                 precision = structure.noise_precision()
                 covariance = structure.noise_covariance()
-                # The metric's shape is the noise set's; its scale is
-                # normalized away, so that a tiny or a huge noise set does
-                # not reach the bundle as a tiny or a huge proximal weight.
+                # The metric's shape is the noise set's covariance, which is
+                # the curvature of the noise term of the dual cost in the
+                # certificate; its scale is normalized away, so that a tiny
+                # or a huge noise set does not reach the bundle as a tiny or
+                # a huge proximal weight.
                 probe = data_space.from_components(np.ones(data_space.dim))
                 scale = data_space.squared_norm(probe) / float(
-                    data_space.inner_product(precision(probe), probe)
+                    data_space.inner_product(covariance(probe), probe)
                 )
-                weighted = MassWeightedSpace(data_space, precision * scale)
-                return weighted, covariance * (1.0 / scale)
+                weighted = MassWeightedSpace(data_space, covariance * scale)
+                return weighted, precision * (1.0 / scale)
             return data_space, None
 
         return structure.shared(("dual", "space"), build)
@@ -2332,7 +2403,8 @@ class Dual(Algorithm):
         structure = feasible.structure
         data_space, model_space = structure.data_space, structure.model_space
         cost = self.cost(feasible, direction)
-        result = self._minimizer().minimize(cost, self._start_for(feasible, direction))
+        start, weight = self._scaled_start(cost, self._start_for(feasible, direction))
+        result = self._minimizer(weight=weight).minimize(cost, start)
         if not result.converged and result.value < -_UNBOUNDED:
             raise ValueError(
                 f"The dual fell to {result.value:.3g} without converging: no "

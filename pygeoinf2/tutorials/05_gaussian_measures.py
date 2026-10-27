@@ -244,4 +244,6 @@ print("R^3 does not:          ", R3.is_function_space)
 # the data misfit and is finite for every draw. Tutorial 6 meets it, as the
 # density a posterior carries. Sampling methods are built on that, and it is
 # why they can be made to work in any dimension.
+
+# %%
 plotting.show()
