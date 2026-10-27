@@ -566,23 +566,20 @@ class TestTheBundleSubproblem:
 
 
 class TestBundleResultReadsLikeAnOptimizationResult:
-    def test_the_field_names_match(self):
-        from dataclasses import fields
+    def test_it_is_one(self):
+        from pygeoinf2.numerics.convex import (
+            BundleResult,
+            KKTResult,
+            LevelBundleMethod,
+            ProximalBundleMethod,
+            SaddlePointResult,
+        )
+        from pygeoinf2.numerics.optimization import OptimizationResult, Optimizer
 
-        from pygeoinf2.numerics.convex import BundleResult
-        from pygeoinf2.numerics.optimization import OptimizationResult
-
-        shared = {f.name for f in fields(BundleResult)} & {
-            f.name for f in fields(OptimizationResult)
-        }
-        assert {
-            "value",
-            "minimizer",
-            "iterations",
-            "evaluations",
-            "converged",
-            "message",
-        } <= shared
+        for result in (BundleResult, KKTResult, SaddlePointResult):
+            assert issubclass(result, OptimizationResult)
+        for method in (ProximalBundleMethod, LevelBundleMethod):
+            assert issubclass(method, Optimizer)
 
     def test_the_evaluations_are_counted(self, rng):
         from pygeoinf2.numerics.convex import ProximalBundleMethod

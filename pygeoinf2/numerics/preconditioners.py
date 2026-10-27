@@ -29,6 +29,8 @@ from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits
 from .randomized import random_diagonal, random_eig
 from .solvers import (
+    FamilySolver,
+    BoundFamily,
     CGSolver,
     InverseOperator,
     LinearSolver,
@@ -153,7 +155,7 @@ class JacobiPreconditioner(LinearSolver):
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
 
 
-class SpectralPreconditioner(LinearSolver):
+class SpectralPreconditioner(FamilySolver):
     """Invert the dominant eigenmodes exactly, and damp the rest.
 
     A randomized eigendecomposition finds the leading ``rank`` modes; those are
@@ -163,6 +165,15 @@ class SpectralPreconditioner(LinearSolver):
 
     The damping defaults to the smallest resolved eigenvalue, which is the only
     value that makes the preconditioner continuous at the truncation.
+
+    **Along a damped family** ``base + t * shift`` the deflation is paid
+    once. Handed the family through :meth:`for_family`, it deflates the base,
+    takes the shift's quadratic form on each resolved mode, and at a
+    multiplier ``t`` moves every resolved eigenvalue by ``t`` times that
+    form and the tail's damping by ``t`` times their mean. Exact when the
+    shift is a multiple of the identity, where the base's eigenvectors are
+    the member's; an approximation otherwise, which is all a preconditioner
+    needs.
     """
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
@@ -204,8 +215,8 @@ class SpectralPreconditioner(LinearSolver):
         self._rng = rng
         self._n_jobs = n_jobs
 
-    def _invert(self, operator: LinearOperator) -> InverseOperator:
-        space = operator.domain
+    def _deflate(self, operator: LinearOperator) -> tuple[LinearOperator, np.ndarray]:
+        """The leading modes of an operator: ``(factor, eigenvalues)``."""
         low_rank = random_eig(
             operator,
             rank=self._rank,
@@ -215,15 +226,25 @@ class SpectralPreconditioner(LinearSolver):
             block_size=self._block_size,
             n_jobs=self._n_jobs,
         )
-        values = low_rank.eigenvalues
+        return low_rank.factor, low_rank.eigenvalues
+
+    def _floor(self, values: np.ndarray) -> float:
         floor = self._damping
         if floor is None:
             positive = values[values > 0.0]
             floor = float(positive.min()) if positive.size else 1.0
         if floor <= 0.0:
             raise ValueError(f"The damping must be positive, got {floor}.")
+        return floor
 
-        factor = low_rank.factor
+    def _inverse_of(
+        self,
+        operator: LinearOperator,
+        factor: LinearOperator,
+        values: np.ndarray,
+        floor: float,
+    ) -> InverseOperator:
+        space = operator.domain
         # (1/d) I  +  U (1/lambda - 1/d) U*, which inverts the resolved modes
         # and leaves everything else divided by the damping.
         adjustment = 1.0 / np.where(values > 0.0, values, floor) - 1.0 / floor
@@ -236,6 +257,70 @@ class SpectralPreconditioner(LinearSolver):
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+    def _invert(self, operator: LinearOperator) -> InverseOperator:
+        factor, values = self._deflate(operator)
+        return self._inverse_of(operator, factor, values, self._floor(values))
+
+    def for_family(
+        self, base: LinearOperator, shift: LinearOperator, /
+    ) -> "_SpectralFamilyPreconditioner":
+        """Deflate the base once, and take the shift's form on each resolved mode.
+
+        Args:
+            base: the undamped part, self-adjoint; what is deflated.
+            shift: what the multiplier scales; applied once to each resolved
+                mode.
+
+        Returns:
+            The prepared family.
+
+        Raises:
+            ValueError: if the two operators are not on one space, or the base
+                does not claim self-adjointness.
+        """
+        if not (base.domain == base.codomain == shift.domain == shift.codomain):
+            raise ValueError(
+                "A family's base and shift must both be operators on one space."
+            )
+        _require_self_adjoint_claim(base, type(self).__name__)
+        factor, values = self._deflate(base)
+        space = base.domain
+        modes = factor.domain
+        forms = np.array(
+            [
+                space.inner_product(mode, shift(mode))
+                for mode in (factor(modes.basis_vector(i)) for i in range(modes.dim))
+            ]
+        )
+        return _SpectralFamilyPreconditioner(
+            self, factor, values, forms, self._floor(values)
+        )
+
+
+class _SpectralFamilyPreconditioner(BoundFamily):
+    """A deflated base whose eigenvalues move with the multiplier."""
+
+    def __init__(
+        self,
+        preconditioner: SpectralPreconditioner,
+        factor: LinearOperator,
+        values: np.ndarray,
+        forms: np.ndarray,
+        floor: float,
+    ) -> None:
+        self._preconditioner = preconditioner
+        self._factor = factor
+        self._values = values
+        self._forms = forms
+        self._floor = floor
+
+    def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
+        """The deflated inverse of the member at one multiplier."""
+        values = self._values + multiplier * self._forms
+        tail = float(np.mean(self._forms)) if self._forms.size else 1.0
+        floor = self._floor + multiplier * tail
+        return self._preconditioner._inverse_of(member, self._factor, values, floor)
 
 
 def _sparse_factorization(

@@ -924,3 +924,126 @@ class TestTikhonovFamilyAccessors:
         assert problem.model_space.norm(
             problem.model_space.subtract(built, stated)
         ) == pytest.approx(0.0, abs=1e-12)
+
+
+class TestFamilyAwarePreconditioners:
+    """A preconditioner that knows the family is built once for the sweep."""
+
+    @staticmethod
+    def dampings():
+        return (0.05, 0.2, 1.0, 5.0, 30.0, 200.0)
+
+    def test_the_diagonal_is_probed_once_and_right_at_every_damping(self, setup, rng):
+        problem = setup
+        forward, error = problem.forward_operator, problem.error_measure
+        data = forward.codomain
+        y = data.random(rng=rng)
+        family = TikhonovFamily(
+            forward,
+            error=error,
+            solver=CGSolver(rtol=1e-12, max_iterations=2000).with_preconditioner(
+                NormalDiagonalPreconditioner()
+            ),
+        )
+        # References built outside the counted region: the exact solve and
+        # what a fresh preconditioner gives at each damping.
+        members = {t: family.at(t) for t in self.dampings()}
+        exact = {t: CholeskySolver()(member)(y) for t, member in members.items()}
+        fresh = {
+            t: NormalDiagonalPreconditioner()(member)(y)
+            for t, member in members.items()
+        }
+
+        probed = []
+        original = NormalDiagonalPreconditioner._base_diagonal
+
+        def counting(self, normal):
+            probed.append(normal)
+            return original(self, normal)
+
+        NormalDiagonalPreconditioner._base_diagonal = counting
+        try:
+            for damping in self.dampings():
+                solution = family.solve(damping, y).solution
+                assert data.norm(data.subtract(solution, exact[damping])) <= (
+                    1e-8 * data.norm(y)
+                )
+                bound = family._solves._bound_preconditioner
+                swept = bound.at(damping, members[damping])(y)
+                assert data.norm(data.subtract(swept, fresh[damping])) <= (
+                    1e-12 * data.norm(y)
+                )
+        finally:
+            NormalDiagonalPreconditioner._base_diagonal = original
+        assert len(probed) == 1
+
+    def test_a_deflation_moves_with_the_damping(self, rng):
+        """On an identity shift the base's eigenvectors are the member's, so
+        the family preconditioner inverts the member exactly on the resolved
+        modes at every damping."""
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.numerics.preconditioners import SpectralPreconditioner
+        from pygeoinf2.numerics.solvers import FamilySolver
+
+        space = EuclideanSpace(30)
+        root = rng.standard_normal((30, 6))
+        base = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        shift = LinearOperator.identity(space)
+        preconditioner = SpectralPreconditioner(rank=6, rng=rng)
+        assert isinstance(preconditioner, FamilySolver)
+        bound = preconditioner.for_family(base, shift)
+        for damping in self.dampings():
+            member = (base + damping * shift).with_traits(Traits.POSITIVE_DEFINITE)
+            approximate = bound.at(damping, member)
+            for i in range(6):
+                mode = bound._factor(bound._factor.domain.basis_vector(i))
+                back = member(approximate(mode))
+                assert space.norm(space.subtract(back, mode)) <= 1e-8 * space.norm(mode)
+
+    def test_damped_solves_binds_a_family_preconditioner_instead_of_refreshing(
+        self, rng
+    ):
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.numerics.preconditioners import SpectralPreconditioner
+
+        space = EuclideanSpace(40)
+        root = rng.standard_normal((40, 40))
+        base = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        deflations = []
+        original = SpectralPreconditioner._deflate
+
+        def counting(self, operator):
+            deflations.append(operator)
+            return original(self, operator)
+
+        SpectralPreconditioner._deflate = counting
+        try:
+            solves = DampedSolves(
+                base,
+                LinearOperator.identity(space),
+                CGSolver(rtol=1e-10, max_iterations=5000).with_preconditioner(
+                    SpectralPreconditioner(rank=10, rng=rng)
+                ),
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            )
+            y = space.random(rng=rng)
+            for damping in (1.0, 10.0, 1e3, 1e5):
+                solution = solves.solve(damping, y).solution
+                expected = np.linalg.solve(root @ root.T + damping * np.identity(40), y)
+                assert solution == pytest.approx(expected, rel=1e-7)
+        finally:
+            SpectralPreconditioner._deflate = original
+        assert len(deflations) == 1
+        assert solves._prepared is None  # the refresh rule never ran

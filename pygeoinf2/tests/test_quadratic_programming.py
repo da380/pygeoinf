@@ -363,7 +363,7 @@ class TestTheTwoRoutesMeet:
         assert (
             model_space.norm(
                 model_space.subtract(
-                    estimator._prior.project(result.model), result.model
+                    estimator._prior.project(result.minimizer), result.minimizer
                 )
             )
             < 1e-8
@@ -372,7 +372,7 @@ class TestTheTwoRoutesMeet:
             data_space.norm(
                 data_space.subtract(
                     data_space.add(
-                        estimator._problem.forward_operator(result.model),
+                        estimator._problem.forward_operator(result.minimizer),
                         result.discrepancy,
                     ),
                     data,
@@ -497,7 +497,7 @@ class TestTheKKTRouteAgreesWhereItApplies:
         objective = forward.domain.random(rng=rng)
         result = solver.solve(objective)
         assert result.multipliers[1] == 0.0
-        assert result.value == pytest.approx(
+        assert -result.value == pytest.approx(
             forward.domain.inner_product(objective, prior.support_maximizer(objective))
         )
 

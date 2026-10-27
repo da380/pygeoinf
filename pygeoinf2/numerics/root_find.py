@@ -39,6 +39,7 @@ from .solvers import (
     DirectSolver,
     IterativeSolver,
     LinearSolver,
+    FamilySolver,
 )
 
 _UNSET: Any = object()
@@ -381,6 +382,14 @@ class DampedSolves:
     where it was built, and rebuilt when it wanders further. A preconditioner
     is an approximation, so reuse costs accuracy rather than correctness; the
     threshold is where that stops being a good trade.
+
+    **A family-aware solver or preconditioner is asked once.** One that is a
+    :class:`~pygeoinf2.numerics.solvers.FamilySolver` is handed the base and
+    the shift up front and answers every multiplier from the work it did
+    then, exactly rather than to within a refresh window: a spectral solver
+    factorizes once, a probed diagonal adds the shift's own, a deflation
+    moves its eigenvalues with the multiplier. The refresh rule applies only
+    to preconditioners that cannot do this.
     """
 
     base: LinearOperator
@@ -407,6 +416,8 @@ class DampedSolves:
     _prepared: LinearSolver | None = field(default=None, repr=False)
     _prepared_at: float | None = field(default=None, repr=False)
     _family_matrices: Any = field(default=_UNSET, repr=False)
+    _bound_solver: Any = field(default=None, repr=False)
+    _bound_preconditioner: Any = field(default=None, repr=False)
 
     def operator(self, multiplier: float) -> LinearOperator:
         """The member at one multiplier, assembled once and kept.
@@ -466,7 +477,12 @@ class DampedSolves:
         """
         if self._family_matrices is _UNSET:
             self._family_matrices = None
-            if isinstance(self.solver, DirectSolver):
+            if isinstance(self.solver, DirectSolver) and not isinstance(
+                self.solver, FamilySolver
+            ):
+                # A family solver extracts what it needs in for_family, once;
+                # assembling the member as a matrix as well would pay the
+                # same applications a second time for a matrix never solved.
                 form = type(self.solver).form
                 # One probe of the chain, discarded: it says whether the
                 # member reads its matrix or has to be applied for it, and
@@ -486,6 +502,13 @@ class DampedSolves:
             solver.preconditioner, LinearSolver
         ):
             return solver
+
+        if isinstance(solver.preconditioner, FamilySolver):
+            if self._bound_preconditioner is None:
+                self._bound_preconditioner = solver.preconditioner.for_family(
+                    self.base, self.shift
+                )
+            return solver._carrying(self._bound_preconditioner.at(multiplier, operator))
 
         stale = self._prepared_at is None or not (
             1.0 / self.refresh <= multiplier / self._prepared_at <= self.refresh
@@ -510,5 +533,10 @@ class DampedSolves:
             The solver's own result, with its diagnostics.
         """
         operator = self.operator(multiplier)
+        if isinstance(self.solver, FamilySolver):
+            if self._bound_solver is None:
+                self._bound_solver = self.solver.for_family(self.base, self.shift)
+            inverse = self._bound_solver.at(multiplier, operator)
+            return inverse.solve(right_hand_side, x0=x0)
         solver = self._solver_for(multiplier, operator)
         return solver(operator).solve(right_hand_side, x0=x0)

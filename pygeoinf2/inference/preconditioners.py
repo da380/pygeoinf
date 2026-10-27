@@ -35,7 +35,13 @@ from ..algebra.spaces import (
     OrthonormalSpace,
 )
 from ..numerics.randomized import random_eig
-from ..numerics.solvers import InverseOperator, LinearSolver, SolveResult
+from ..numerics.solvers import (
+    BoundFamily,
+    FamilySolver,
+    InverseOperator,
+    LinearSolver,
+    SolveResult,
+)
 from ..traits import Traits
 from .normal import FactoredNormalOperator
 
@@ -67,7 +73,7 @@ def _require_normal(operator: LinearOperator, name: str) -> FactoredNormalOperat
     return operator
 
 
-class NormalDiagonalPreconditioner(LinearSolver):
+class NormalDiagonalPreconditioner(FamilySolver):
     """Invert the diagonal of ``A Q A* + R``, obtained without forming it.
 
     The identity is ``<v, A Q A* v> == <A* v, Q A* v>``, so a diagonal entry
@@ -88,6 +94,14 @@ class NormalDiagonalPreconditioner(LinearSolver):
     take on a weighted data space: a diagonal is a statement about a basis,
     and the Galerkin form is the one in which a self-adjoint operator is
     symmetric.
+
+    **Along a damped family** ``base + t * shift`` the probes are paid once.
+    Handed the family through :meth:`for_family`, it probes the diagonal of
+    the base off the first member it meets -- ``scale * (A* e, Q A* e)``,
+    which does not depend on the multiplier as long as the member's
+    ``scale * prior_covariance`` does not, true of a Tikhonov family and of
+    any family whose multiplier scales the error term -- reads the shift's
+    diagonal once, and adds ``t`` times it for every member thereafter.
     """
 
     requires: ClassVar[Traits] = Traits.NONE
@@ -133,13 +147,32 @@ class NormalDiagonalPreconditioner(LinearSolver):
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         normal = _require_normal(operator, type(self).__name__)
+        diagonal = self._base_diagonal(normal)
+        error_covariance = normal.error_covariance
+        if error_covariance is not None:
+            diagonal = (
+                diagonal
+                + normal.scale
+                * (error_covariance.diagonals(offsets=(0,), form="galerkin")[0])
+            )
+        return self._inverse_of(operator, normal.data_space, diagonal)
+
+    def _base_diagonal(self, normal: FactoredNormalOperator) -> np.ndarray:
+        """``scale * diag(A Q A*)``, probed through the factors.
+
+        At a scale of zero -- a Tikhonov member at zero damping, which has no
+        prior reading -- the undamped operator's own diagonal is read
+        instead, at a cost of one application per datum.
+        """
         data_space = normal.data_space
         model_space = normal.model_space
         require_coordinates(data_space, data_space)
+        dimension = data_space.dim
+        if normal.scale <= 0.0:
+            return normal.diagonals(offsets=(0,), form="galerkin")[0]
 
         adjoint = normal.forward.adjoint
         prior_covariance = normal.prior_covariance
-        dimension = data_space.dim
         blocks = self._partition(dimension)
 
         from ..parallel import parallel_map
@@ -155,16 +188,13 @@ class NormalDiagonalPreconditioner(LinearSolver):
             blocks, parallel_map(probe, blocks, n_jobs=self._n_jobs)
         ):
             diagonal[block] = value
-
-        error_covariance = normal.error_covariance
-        if error_covariance is not None:
-            diagonal = (
-                diagonal + error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
-            )
-        # The diagonal of the Gaussian reading A Q A* + R; the operator is
+        # The diagonal of the Gaussian reading A Q A*; the operator's base is
         # ``normal.scale`` times that.
-        diagonal = normal.scale * diagonal
+        return normal.scale * diagonal
 
+    def _inverse_of(
+        self, operator: LinearOperator, data_space: HilbertSpace, diagonal: np.ndarray
+    ) -> InverseOperator:
         safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
         inverse_diagonal = 1.0 / safe
 
@@ -175,6 +205,44 @@ class NormalDiagonalPreconditioner(LinearSolver):
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+    def for_family(
+        self, base: LinearOperator, shift: LinearOperator, /
+    ) -> "_NormalDiagonalFamily":
+        """Prepare for ``base + t * shift``: the shift's diagonal now, the base's at the first member.
+
+        Args:
+            base: the undamped part; its diagonal is probed off the first
+                member's factors.
+            shift: what the multiplier scales; its Galerkin diagonal is read
+                once.
+
+        Returns:
+            The prepared family.
+        """
+        require_coordinates(shift.domain, shift.codomain)
+        return _NormalDiagonalFamily(
+            self, shift.diagonals(offsets=(0,), form="galerkin")[0]
+        )
+
+
+class _NormalDiagonalFamily(BoundFamily):
+    """The probed base diagonal plus ``t`` times the shift's, for any ``t``."""
+
+    def __init__(
+        self, preconditioner: NormalDiagonalPreconditioner, shift_diagonal: np.ndarray
+    ) -> None:
+        self._preconditioner = preconditioner
+        self._shift_diagonal = shift_diagonal
+        self._base_diagonal: np.ndarray | None = None
+
+    def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
+        """The inverted diagonal of the member at one multiplier."""
+        normal = _require_normal(member, type(self._preconditioner).__name__)
+        if self._base_diagonal is None:
+            self._base_diagonal = self._preconditioner._base_diagonal(normal)
+        diagonal = self._base_diagonal + multiplier * self._shift_diagonal
+        return self._preconditioner._inverse_of(member, normal.data_space, diagonal)
 
 
 class LocalisedPreconditioner(LinearSolver):

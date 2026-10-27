@@ -77,83 +77,32 @@ Nothing user-facing changes in this stage.
    evaluations per direction warm-started. `benchmarks/stage0_unimodality.py`
    and `benchmarks/stage0_checks.py` are the record. The nested root finds
    stay as the fallback (D-144) but are not expected to run.
-2. **`SpectralFamilySolver`** in `numerics/solvers.py` (D-145): a
-   `LinearSolver` for a one-parameter family `K + γ S`, factoring the
-   whitened `K` once (dense `eigh`; the whitening by the Cholesky factor of
-   `S`'s inverse on components moves here from `_BisectionRoute._whitening`)
-   and answering any member by spectral division. Plugs into `DampedSolves`
-   and `TikhonovFamily` as `solver=`. Its interface is "a factorisation of
-   the data Gram", so that a randomised low-rank version (`random_eig`) can
-   be added later without changing callers.
-3. **Results fold (D-150).** `ProximalBundleMethod` and `LevelBundleMethod`
-   become `Optimizer` subclasses returning `OptimizationResult` subclasses
-   (`BundleResult` keeps its name as such a subclass, with gap and cut
-   count); Chambolle-Pock returns an `OptimizationResult` subclass with the
-   primal-dual gap, its maximiser in `minimizer` with the sign handled
-   inside, `.model` dropped; `gradient_norm` is `NaN` where a method has
-   none. Two traps noted on 2026-10-24: `self._tolerance` as an attribute
-   shadows `Optimizer._tolerance()`, and `ProximalBundleMethod.qp_solver`
-   has dead code after its `return`. The field-comparison test in
-   `tests/test_convex.py` becomes an `isinstance` assertion.
-4. **The family-aware preconditioner protocol (D-146).** A preconditioner
-   may implement `at(multiplier)`; `DampedSolves` prefers it to the
-   `refresh` rule. `NormalDiagonalPreconditioner`, `SpectralPreconditioner`
-   and `WoodburyPreconditioner` implement it (the Woodbury one by keeping
-   `Q_s⁻¹` and `A_s* P A_s` separately and refactorising the
-   surrogate-dimension matrix per multiplier).
+2. **DONE.** `SpectralFamilySolver` in `numerics/solvers.py`: an
+   `EigenSolver` standalone, and through `for_family(base, shift)` one
+   whitened eigendecomposition serving every multiplier; the pseudo-inverse
+   at `t = 0` is the minimum-norm solution in the shift's inner product.
+   The whitening by the noise precision's factor is its business, not the
+   route's.
+3. **DONE.** `BundleResult`, `SaddlePointResult`, `KKTResult` are
+   `OptimizationResult` subclasses (`value = -(c, m)` on the maximizing
+   solvers, `minimizer` the model, `gradient_norm` NaN, `history` the best
+   value or the residual per iteration); `ProximalBundleMethod` and
+   `LevelBundleMethod` are `Optimizer`s with `minimize(functional, x0, /, *,
+   subgradient=None)`; readers in `backus.py` and the tests re-spelled;
+   the field-comparison test is an `issubclass` test.
+4. **DONE.** The protocol is `FamilySolver.for_family(base, shift) ->
+   BoundFamily` with `BoundFamily.at(multiplier, member) -> InverseOperator`,
+   serving solvers and preconditioners alike; `DampedSolves` binds once and
+   asks `at()` for each member, ahead of the `refresh` rule, and skips the
+   member-matrix assembly for a family solver. `NormalDiagonalPreconditioner`
+   (base diagonal probed off the first member's factors, the shift's
+   diagonal read once) and `SpectralPreconditioner` (base deflated once, the
+   shift's quadratic form on each resolved mode) implement it;
+   `WoodburyPreconditioner` does not need to, since its build is lazy and
+   its inner factorization is of surrogate dimension, so `refresh=1.0`
+   already makes it per-member and cheap (D-146 corrected in place).
 
 Fast suite green; D-entries for 1 and any surprise.
-
-**Implementation notes for 2–4, from reading the code on 2026-10-27**
-(nothing written yet):
-
-- One protocol serves the family-aware solver and the family-aware
-  preconditioners, since a preconditioner is a `LinearSolver`:
-  `for_family(base, shift) -> bound`, and `bound.at(multiplier, member) ->
-  InverseOperator` for that member (exact for the solver, approximate for a
-  preconditioner). `DampedSolves._solver_for` grows two branches ahead of
-  the `refresh` rule: a family-aware solver is bound once (cached on the
-  instance) and `at()` answers each member; an iterative solver whose
-  deferred preconditioner is family-aware gets a clone carrying
-  `bound.at(multiplier, member)` as its resolved preconditioner (the
-  `copy.copy` route `resolved_for` uses, since `with_preconditioner`
-  refuses to replace). Plain solvers and preconditioners are untouched.
-- `SpectralFamilySolver(LinearSolver)` in `numerics/solvers.py`: standalone
-  `_invert` behaves as `EigenSolver`; `for_family` extracts the Galerkin
-  matrices of `base` and `shift` once (as `DampedSolves._matrices` does for
-  direct solvers), takes `shift = LLᵀ`, `W = L⁻¹`, `W base Wᵀ = VΛVᵀ`, and
-  `at(γ, member)` solves by `Wᵀ V (Λ + γ)⁻¹ Vᵀ W G_Y c_y`, mirroring
-  `DirectSolver.solve_fn`'s Gram handling for the Galerkin form;
-  `requires = SELF_ADJOINT`, `requires_coordinates = True`.
-- `NormalDiagonalPreconditioner.for_family`: on the first member, probe
-  `diag(A Q A*)` (the existing blocks machinery) and read `diag(R)` off the
-  member's `error_covariance`; `at(γ, member)` uses
-  `member.scale · (diag(AQA*) + γ·diag(R))` — the member's `damping` is
-  the multiplier and `scale` is `t` in the data space (see
-  `TikhonovNormalOperator.scale`). `SpectralPreconditioner.for_family`:
-  deflate `base` once by `random_eig`; `at(γ, ·)` shifts the resolved
-  eigenvalues by `γ·(uᵢ, S uᵢ)` and the floor likewise, exact when `S` is a
-  multiple of the identity (a ball) and an approximation otherwise.
-  `WoodburyPreconditioner` needs no `at()`: its build is lazy and its inner
-  factorisation is of surrogate dimension, so `refresh=1.0` already makes
-  it per-member and cheap; the plan's "family-aware Woodbury" reduces to
-  documenting that and passing the member's `R` scaled by `γ`.
-- The fold: `BundleResult(OptimizationResult)` as a frozen dataclass
-  subclass adding `gap`, `lower_bound`, `serious_steps`; `history` the
-  best value per iteration; `gradient_norm = nan`. `ProximalBundleMethod`
-  and `LevelBundleMethod` subclass `Optimizer`, calling
-  `super().__init__(max_iterations=...)`, renaming the attribute
-  `_tolerance` to `_gap_tolerance` (it shadows `Optimizer._tolerance()`),
-  and overriding `minimize(functional, x0, /, *, subgradient=None)` as
-  `NewtonCG` overrides it, because `Optimizer.minimize` demands a
-  derivative and these take a subgradient. The dead code after
-  `qp_solver`'s `return` moves into `__init__`. `SaddlePointResult` and
-  `KKTResult` become `OptimizationResult` subclasses (`minimizer` the model,
-  `value = −(c, m)` per D-150, extra fields `discrepancy`, `certificate`,
-  `residual` and `multipliers`); readers: `inference/backus.py` and the
-  tests in `test_quadratic_programming.py` (lines 126–157 read `gap`,
-  `lower_bound`, `serious_steps`) and `test_convex.py:568` (the
-  field-comparison test, to become `issubclass`).
 
 ## Stage 1 — relocate the damped-family machinery (D-142)
 

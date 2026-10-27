@@ -31,13 +31,24 @@ from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
 
 import numpy as np
-from scipy.linalg import cho_factor, cho_solve, eigh, lu_factor, lu_solve
+from scipy.linalg import (
+    cho_factor,
+    cho_solve,
+    cholesky,
+    eigh,
+    lu_factor,
+    lu_solve,
+    solve_triangular,
+)
 
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits, adjoint_traits, inverse_traits
 
 __all__ = [
+    "BoundFamily",
+    "FamilySolver",
+    "SpectralFamilySolver",
     "SolverLike",
     "resolve_solver",
     "ConvergenceError",
@@ -708,6 +719,190 @@ class EigenSolver(DirectSolver):
 
 
 # --------------------------------------------------------------------- #
+#                     Solvers for a family of operators                 #
+# --------------------------------------------------------------------- #
+
+
+class BoundFamily(ABC):
+    """A family ``base + t * shift`` with its multiplier-independent work done.
+
+    What :meth:`FamilySolver.for_family` returns. Whatever is expensive and
+    does not depend on the multiplier -- a factorization, a probed diagonal,
+    a deflation -- has been computed, and :meth:`at` answers each member of
+    the family from it.
+    """
+
+    @abstractmethod
+    def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
+        """The inverse of the member at one multiplier, exact or approximate.
+
+        Args:
+            multiplier: ``t``.
+            member: the member itself, ``base + t * shift`` as the sweep
+                assembled it. It is what the returned operator inverts, and
+                it is where a preconditioner reads the factors it needs on
+                the first call.
+
+        Returns:
+            The inverse, applied as an operator or through ``solve``.
+        """
+
+
+class FamilySolver(LinearSolver):
+    """A solver, or a preconditioner, that serves a whole family at once.
+
+    Applied to one operator it is an ordinary :class:`LinearSolver`. Handed
+    a family ``base + t * shift`` through :meth:`for_family` it does its
+    expensive work once and answers every multiplier from that, which is
+    what a sweep over a damped family needs from it: an eigendecomposition
+    reused across the sweep, a probed diagonal updated by the shift's own,
+    a deflation whose eigenvalues move with the multiplier.
+    :class:`~pygeoinf2.numerics.root_find.DampedSolves` asks this of its
+    solver and of its solver's preconditioner, and rebuilds at intervals
+    the ones that cannot answer.
+    """
+
+    @abstractmethod
+    def for_family(self, base: LinearOperator, shift: LinearOperator, /) -> BoundFamily:
+        """Prepare for ``base + t * shift``, doing the multiplier-independent work.
+
+        Args:
+            base: the undamped part.
+            shift: what the multiplier scales.
+
+        Returns:
+            The prepared family.
+        """
+
+
+class SpectralFamilySolver(EigenSolver, FamilySolver):
+    """Factor a family ``base + t * shift`` once; solve every member by spectral division.
+
+    With ``S == L L^T`` the Galerkin matrix of the shift and ``W == L^-1``,
+    the whitened base ``W B W^T == V diag(lambda) V^T`` is diagonalized once,
+    and the member at ``t`` is inverted as ``W^T V diag(1 / (lambda + t))
+    V^T W``: one factorization at the cost of a dense eigendecomposition in
+    the family's dimension, then a solve at any ``t`` for two matrix-vector
+    products, with nothing refactorized as the multiplier moves. That is the
+    right tool for a root find that visits tens of multipliers on a family
+    whose dimension is small enough to factor, and the wrong one when it is
+    not: it is dense in the family's dimension, and it is used only when
+    passed as a solver, never assumed.
+
+    Applied to a single operator it is an :class:`EigenSolver`. Eigenvalues
+    ``lambda + t`` at or below ``rtol`` times the largest in magnitude are
+    treated as zero and their directions dropped, so at ``t == 0`` a
+    singular base is inverted in the pseudo-inverse sense, the minimum-norm
+    solution in the shift's inner product.
+    """
+
+    def for_family(
+        self, base: LinearOperator, shift: LinearOperator, /
+    ) -> "_SpectralFamily":
+        """Whiten by the shift and diagonalize the base, once.
+
+        Args:
+            base: the undamped part, self-adjoint.
+            shift: what the multiplier scales, claiming positive definiteness.
+
+        Returns:
+            The prepared family.
+
+        Raises:
+            ValueError: if the two operators are not on one space, if the base
+                does not claim self-adjointness, or if the shift does not
+                claim to be positive definite.
+        """
+        if not (base.domain == base.codomain == shift.domain == shift.codomain):
+            raise ValueError(
+                "A family's base and shift must both be operators on one space."
+            )
+        if not Traits.SELF_ADJOINT & base.traits:
+            raise ValueError(
+                f"{type(self).__name__} diagonalizes the base, which must claim "
+                f"self-adjointness; it claims {base.traits!s}."
+            )
+        if not Traits.POSITIVE_DEFINITE & shift.traits:
+            raise ValueError(
+                f"{type(self).__name__} whitens by the shift, which must claim "
+                f"positive definiteness; it claims {shift.traits!s}."
+            )
+        require_coordinates(base.domain, base.codomain)
+        base_matrix = base.matrix(form="galerkin", n_jobs=self._n_jobs)
+        shift_matrix = shift.matrix(form="galerkin", n_jobs=self._n_jobs)
+        base_matrix = 0.5 * (base_matrix + base_matrix.T)
+        shift_matrix = 0.5 * (shift_matrix + shift_matrix.T)
+        lower = cholesky(shift_matrix, lower=True)
+        # W B W^T with W == L^-1, by two triangular solves.
+        half = solve_triangular(lower, base_matrix, lower=True)
+        whitened = solve_triangular(lower, half.T, lower=True)
+        values, vectors = eigh(0.5 * (whitened + whitened.T))
+        # Z == W^T V == L^-T V, so that the inverse is Z diag(.) Z^T G.
+        basis = solve_triangular(lower, vectors, lower=True, trans="T")
+        return _SpectralFamily(self, base.domain, values, basis, self._rtol)
+
+
+class _SpectralFamily(BoundFamily):
+    """The eigenpairs of a whitened family, and the inverse they give at any ``t``."""
+
+    def __init__(
+        self,
+        solver: SpectralFamilySolver,
+        space: CoordinateSpace,
+        values: np.ndarray,
+        basis: np.ndarray,
+        rtol: float,
+    ) -> None:
+        self._solver = solver
+        self._space = space
+        self._values = values
+        self._basis = basis
+        self._rtol = rtol
+
+    @property
+    def eigenvalues(self) -> np.ndarray:
+        """The eigenvalues of the base in the shift's inner product."""
+        return self._values
+
+    def _inverted(self, multiplier: float) -> np.ndarray:
+        shifted = self._values + multiplier
+        largest = float(np.max(np.abs(shifted))) if shifted.size else 0.0
+        return np.where(np.abs(shifted) > self._rtol * largest, 1.0 / shifted, 0.0)
+
+    def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
+        """The member's inverse by spectral division."""
+        if member.domain != self._space or member.codomain != self._space:
+            raise ValueError(
+                f"The member must be an operator on {self._space!r}, the space "
+                "the family was prepared on."
+            )
+        space, basis = self._space, self._basis
+        inverted = self._inverted(multiplier)
+
+        def components_action(cy: np.ndarray) -> np.ndarray:
+            return basis @ (inverted * (basis.T @ space.apply_gram(cy)))
+
+        def solve_fn(y, x0):
+            cx = components_action(space.to_components(y))
+            return SolveResult(space.from_components(cx), 0, 0.0, True)
+
+        def known_matrix(form: str) -> np.ndarray:
+            inverse = basis @ ((inverted[:, None] * basis.T) @ space.gram_matrix())
+            if form == "components":
+                return inverse
+            return space.apply_gram_to_columns(inverse)
+
+        return InverseOperator(
+            member,
+            self._solver,
+            solve_fn,
+            known_matrix=known_matrix,
+            components_action=components_action,
+            components_adjoint_action=components_action,
+        )
+
+
+# --------------------------------------------------------------------- #
 #                          Iterative solvers                            #
 # --------------------------------------------------------------------- #
 
@@ -886,8 +1081,17 @@ class IterativeSolver(LinearSolver):
             self._preconditioner, LinearSolver
         ):
             return self
+        return self._carrying(self._preconditioner(operator))
+
+    def _carrying(self, preconditioner: LinearOperator, /) -> "IterativeSolver":
+        """A copy of this solver with a *resolved* preconditioner in place.
+
+        For library routines that have already built the preconditioner for
+        the operator at hand, where :meth:`with_preconditioner` would refuse
+        to replace the deferred one the caller attached.
+        """
         clone = copy.copy(self)
-        clone._preconditioner = self._preconditioner(operator)
+        clone._preconditioner = preconditioner
         return clone
 
     def _resolve_preconditioner(

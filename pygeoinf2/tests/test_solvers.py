@@ -1415,3 +1415,145 @@ class TestAdaptiveKnobs:
         )
         with pytest.raises(ValueError, match="positive"):
             SpectralPreconditioner(rank=0)
+
+
+class TestSpectralFamilySolver:
+    """One factorization serves every member of ``base + t * shift``."""
+
+    @staticmethod
+    def family(space, rng, *, counter=None, singular=False):
+        from pygeoinf2.numerics import DampedSolves, SpectralFamilySolver
+
+        n = space.dim
+        root = rng.standard_normal((n, n - 2 if singular else n))
+        base_matrix = root @ root.T  # Galerkin form: symmetric
+        shift_root = rng.standard_normal((n, n))
+        shift_matrix = shift_root @ shift_root.T + n * np.identity(n)
+
+        if counter is None:
+            base = LinearOperator.from_matrix(
+                space,
+                space,
+                base_matrix,
+                form="galerkin",
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            )
+        else:
+
+            def apply(x):
+                counter.append(1)
+                return space.from_components(
+                    space.solve_gram(base_matrix @ space.to_components(x))
+                )
+
+            base = LinearOperator.self_adjoint(
+                space, apply, traits=Traits.POSITIVE_SEMIDEFINITE
+            )
+        shift = LinearOperator.from_matrix(
+            space,
+            space,
+            shift_matrix,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        solves = DampedSolves(
+            base,
+            shift,
+            SpectralFamilySolver(),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        return base_matrix, shift_matrix, base, shift, solves
+
+    def test_every_member_is_solved_exactly_on_a_dense_metric(self, rng):
+        space = make_dense_metric_space(9)
+        base_matrix, shift_matrix, _, _, solves = self.family(space, rng)
+        gram = space.gram_matrix()
+        for damping in (0.0, 0.3, 2.0, 50.0):
+            y = space.random(rng=rng)
+            result = solves.solve(damping, y)
+            # (B + t S) c_x == G c_y in the Galerkin form.
+            expected = np.linalg.solve(
+                base_matrix + damping * shift_matrix, gram @ space.to_components(y)
+            )
+            assert space.to_components(result.solution) == pytest.approx(
+                expected, rel=1e-10, abs=1e-12
+            )
+            assert result.iterations == 0 and result.converged
+
+    def test_the_base_is_applied_once_for_the_whole_sweep(self, rng):
+        space = EuclideanSpace(12)
+        counter: list[int] = []
+        base_matrix, shift_matrix, _, _, solves = self.family(
+            space, rng, counter=counter
+        )
+        y = space.random(rng=rng)
+        for damping in (0.1, 1.0, 10.0, 100.0, 1000.0):
+            solution = solves.solve(damping, y).solution
+            expected = np.linalg.solve(base_matrix + damping * shift_matrix, y)
+            assert solution == pytest.approx(expected, rel=1e-9)
+        assert len(counter) == space.dim
+
+    def test_the_inverse_knows_its_matrix(self, rng):
+        space = make_dense_metric_space(6)
+        base_matrix, shift_matrix, base, shift, solves = self.family(space, rng)
+        damping = 0.7
+        from pygeoinf2.numerics import SpectralFamilySolver
+
+        bound = SpectralFamilySolver().for_family(base, shift)
+        inverse = bound.at(damping, solves.operator(damping))
+        member = base + damping * shift
+        components = member.matrix(form="components")
+        assert inverse.matrix(form="components") == pytest.approx(
+            np.linalg.inv(components), rel=1e-9
+        )
+        check_operator(inverse, rng=rng, rtol=1e-8)
+
+    def test_zero_damping_on_a_singular_base_is_the_pseudo_inverse(self, rng):
+        """The minimum-norm solution in the *shift's* inner product: it
+        solves the system on the range, and it is S-orthogonal to the
+        kernel, which is what whitening by the shift makes the dropped
+        directions mean."""
+        space = EuclideanSpace(8)
+        base_matrix, shift_matrix, _, _, solves = self.family(space, rng, singular=True)
+        y = base_matrix @ rng.standard_normal(8)  # in the range
+        solution = solves.solve(0.0, y).solution
+        assert base_matrix @ solution == pytest.approx(y, rel=1e-8)
+        _, vectors = np.linalg.eigh(base_matrix)
+        kernel = vectors[:, :2]  # the two zero modes
+        assert kernel.T @ (shift_matrix @ solution) == pytest.approx(
+            np.zeros(2), abs=1e-8
+        )
+
+    def test_standalone_it_is_an_eigen_solver(self, rng):
+        from pygeoinf2.numerics import EigenSolver, SpectralFamilySolver
+
+        space = make_dense_metric_space(7)
+        root = rng.standard_normal((7, 7))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            root @ root.T + np.identity(7),
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        y = space.random(rng=rng)
+        assert space.to_components(
+            SpectralFamilySolver()(operator)(y)
+        ) == pytest.approx(space.to_components(EigenSolver()(operator)(y)), rel=1e-10)
+
+    def test_an_unclaimed_shift_or_a_foreign_member_is_refused(self, rng):
+        from pygeoinf2.numerics import SpectralFamilySolver
+
+        space = EuclideanSpace(5)
+        _, _, base, shift, solves = self.family(space, rng)
+        unclaimed = LinearOperator.from_matrix(
+            space, space, 2.0 * np.identity(5), form="galerkin"
+        )
+        with pytest.raises(ValueError, match="positive definite"):
+            SpectralFamilySolver().for_family(base, unclaimed)
+        with pytest.raises(ValueError, match="self-adjoint"):
+            SpectralFamilySolver().for_family(unclaimed, shift)
+        bound = SpectralFamilySolver().for_family(base, shift)
+        other = make_dense_metric_space(5)
+        with pytest.raises(ValueError, match="prepared on"):
+            bound.at(1.0, LinearOperator.identity(other))

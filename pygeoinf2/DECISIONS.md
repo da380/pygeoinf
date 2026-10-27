@@ -1161,7 +1161,13 @@ the data-space default is measured on the benchmark (D-152), not guessed.
 David: in real applications the Woodbury preconditioner built around a
 surrogate with a low-dimensional model space has been by far the best
 general method, so it is the documented route and the benchmark includes
-it.
+it. Built 2026-10-27 as `FamilySolver.for_family(base, shift)` returning a
+`BoundFamily` whose `at(multiplier, member)` answers each member, the same
+protocol for a solver (`SpectralFamilySolver`) and a preconditioner; the
+probed diagonal and the spectral deflation implement it. Corrected the
+same day: the Woodbury preconditioner needs no `at()`, because its build is
+lazy and its inner factorization is of surrogate dimension, so
+`refresh=1.0` already rebuilds it per member at negligible cost.
 
 **D-147. `formalism="data_space"` here too** (2026-10-27, David). D-74's
 rule holds: `"auto"` is the default nowhere. The first of D-74's reasons

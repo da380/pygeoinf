@@ -1580,7 +1580,7 @@ class _DualRoute(SetEstimator):
             solver = self._kkt_solver(data, **kwargs)
             return np.array(
                 [
-                    solver.solve(self._property_operator.adjoint(direction)).value
+                    -solver.solve(self._property_operator.adjoint(direction)).value
                     for direction in directions
                 ]
             )
@@ -1593,9 +1593,9 @@ class _DualRoute(SetEstimator):
                     self._property_operator.adjoint(direction),
                     start=start if warm_start else None,
                 )
-                values.append(result.value)
+                values.append(-result.value)
                 if warm_start:
-                    start = result.model
+                    start = result.minimizer
             return np.array(values)
 
         values, start = [], None
@@ -1631,7 +1631,7 @@ class _DualRoute(SetEstimator):
         return (
             self._kkt_solver(data)
             .solve(self._property_operator.adjoint(direction))
-            .model
+            .minimizer
         )
 
     def support(self, direction: Any, data: Any, /, *, start: Any = None) -> float:

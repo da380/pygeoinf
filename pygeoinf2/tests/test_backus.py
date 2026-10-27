@@ -1213,10 +1213,12 @@ class TestLevelKKT:
         for direction in directions(target.codomain):
             result = solver.solve(target.adjoint(direction))
             assert result.converged
-            assert result.value == pytest.approx(reference.support(direction), rel=1e-6)
-            assert prior.contains(result.model, rtol=1e-6)
+            assert -result.value == pytest.approx(
+                reference.support(direction), rel=1e-6
+            )
+            assert prior.contains(result.minimizer, rtol=1e-6)
             assert noise.contains(
-                forward.codomain.subtract(data, forward(result.model)), rtol=1e-6
+                forward.codomain.subtract(data, forward(result.minimizer)), rtol=1e-6
             )
 
     def test_a_quartic_prior_takes_the_kkt_route(self, pieces):
@@ -1267,9 +1269,9 @@ class TestLevelKKT:
         direction = target.codomain.basis_vector(0)
         result = solver.solve(target.adjoint(direction))
         assert result.converged and result.multipliers[1] == 0.0
-        assert model.norm(result.model) == pytest.approx(0.05, rel=1e-6)
+        assert model.norm(result.minimizer) == pytest.approx(0.05, rel=1e-6)
         pulled = target.adjoint(direction)
-        assert result.value == pytest.approx(0.05 * model.norm(pulled), rel=1e-6)
+        assert -result.value == pytest.approx(0.05 * model.norm(pulled), rel=1e-6)
 
     def test_a_set_without_a_gradient_is_refused(self, pieces):
         from pygeoinf2.geometry.convex import HalfSpace, Polytope

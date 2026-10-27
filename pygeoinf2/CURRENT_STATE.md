@@ -158,6 +158,9 @@ column, and a composition never expands a low-rank product (D-33).
   `mfem_hilbert` are (D-96).
 - `with_probed_adjoint()` and `DirectSolver` assemble what they are asked to,
   once, on first use (D-34, D-40).
+- `SpectralFamilySolver` factors a damped family's two Galerkin matrices
+  once, dense in the family's dimension, and only when passed as the
+  solver (D-145).
 
 ## 6. Writing a backend
 

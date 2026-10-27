@@ -1022,33 +1022,16 @@ class ProximalPoint(Optimizer):
 
 
 @dataclass(frozen=True)
-class BundleResult:
+class BundleResult(OptimizationResult):
     """The outcome of a bundle minimization.
 
-    The field names are
-    :class:`~pygeoinf2.numerics.optimization.OptimizationResult`'s, so a caller
-    can read either without looking up which it has.
+    An :class:`~pygeoinf2.numerics.optimization.OptimizationResult` whose
+    ``gradient_norm`` is ``NaN``, a bundle method having no gradient to
+    report, and whose ``history`` is the best value after each iteration;
+    the fields below are the bundle's own.
     """
 
-    value: float
-    """The least value found."""
-
-    minimizer: Any
-    """Where it was found."""
-
-    iterations: int
-    """How many bundle iterations were taken."""
-
-    evaluations: int
-    """How many times the functional was evaluated."""
-
-    converged: bool
-    """Whether the gap fell below the tolerance."""
-
-    message: str
-    """Why it stopped."""
-
-    gap: float
+    gap: float = float("inf")
     """The model's predicted decrease at the last step.
 
     A *practical* stopping criterion, and stated as one. The cutting-plane
@@ -1078,7 +1061,7 @@ class BundleResult:
         )
 
 
-class ProximalBundleMethod:
+class ProximalBundleMethod(Optimizer):
     """Minimize a convex function from values and subgradients alone.
 
     A subgradient is a *lower* bound on a convex function everywhere, not just
@@ -1127,13 +1110,16 @@ class ProximalBundleMethod:
         """
         if not 0.0 < descent < 1.0:
             raise ValueError(f"The descent fraction lies in (0, 1), got {descent}.")
+        super().__init__(max_iterations=max_iterations)
         self._weight = weight
-        self._tolerance = tolerance
-        self._max_iterations = max_iterations
+        self._gap_tolerance = tolerance
         self._capacity = capacity
         self._descent = descent
         self._qp_solver = qp_solver
         self._warm: np.ndarray | None = None
+        # The cuts a stored Gram matrix was built from, and the matrix. Reset
+        # at the start of each minimization.
+        self._cache: tuple[list[int], np.ndarray] = ([], np.empty((0, 0)))
 
     @property
     def qp_solver(self) -> Any:
@@ -1149,23 +1135,23 @@ class ProximalBundleMethod:
                 except ImportError:  # pragma: no cover - depends on the install
                     continue
         return None if self._qp_solver == "builtin" else self._qp_solver
-        # The cuts a stored Gram matrix was built from, and the matrix. Reset
-        # at the start of each minimization.
-        self._cache: tuple[list[int], np.ndarray] = ([], np.empty((0, 0)))
 
     def minimize(
         self,
         functional: Functional,
-        start: Any,
+        x0: Any,
         /,
         *,
         subgradient: Any = None,
     ) -> BundleResult:
         """Minimize a convex functional from a starting point.
 
+        A subgradient is what the method needs, not a derivative, so the
+        base class's requirement of one is not imposed here.
+
         Args:
             functional: convex, and able to supply a subgradient.
-            start: where to begin.
+            x0: where to begin.
             subgradient: an override, called with a point and returning a
                 subgradient. Defaults to the functional's own.
 
@@ -1173,7 +1159,13 @@ class ProximalBundleMethod:
             The least value found, where it was found, and the model's gap at
             the last step (a practical bound, not a certified one).
         """
+        return self._minimize(functional, x0, subgradient=subgradient)
+
+    def _minimize(
+        self, functional: Functional, x0: Any, *, subgradient: Any = None
+    ) -> BundleResult:
         space = functional.domain
+        start = x0
         slope = subgradient or functional.subgradient
 
         self._cache = ([], np.empty((0, 0)))
@@ -1196,18 +1188,21 @@ class ProximalBundleMethod:
         # exactly singular.
         cuts.append((space.copy(slope(center)), best, space.copy(center)))
         evaluations = 1
+        history: list[float] = []
 
         for iteration in range(1, self._max_iterations + 1):
             candidate, gap = self._solve_model(space, center, best, cuts, weight)
-            if gap <= self._tolerance * max(abs(best), 1.0):
+            if gap <= self._gap_tolerance * max(abs(best), 1.0):
                 return BundleResult(
-                    best,
-                    center,
-                    iteration,
-                    evaluations,
-                    True,
-                    "gap tolerance reached",
-                    gap,
+                    minimizer=center,
+                    value=best,
+                    gradient_norm=float("nan"),
+                    iterations=iteration,
+                    evaluations=evaluations,
+                    converged=True,
+                    message="gap tolerance reached",
+                    history=history,
+                    gap=gap,
                 )
 
             value = float(functional(candidate))
@@ -1221,15 +1216,18 @@ class ProximalBundleMethod:
                 weight = max(weight * 0.5, 1e-8)
             else:
                 weight = min(weight * 2.0, 1e12)  # a null step: trust less
+            history.append(best)
 
         return BundleResult(
-            best,
-            center,
-            self._max_iterations,
-            evaluations,
-            False,
-            "iteration limit reached",
-            gap,
+            minimizer=center,
+            value=best,
+            gradient_norm=float("nan"),
+            iterations=self._max_iterations,
+            evaluations=evaluations,
+            converged=False,
+            message="iteration limit reached",
+            history=history,
+            gap=gap,
         )
 
     def _gram(self, space: Any, cuts: Any) -> np.ndarray:
@@ -1456,7 +1454,7 @@ def _minimize_on_simplex(
     return weights
 
 
-class LevelBundleMethod:
+class LevelBundleMethod(Optimizer):
     """Minimize a convex function, with a *certified* bound on how far off it is.
 
     The other bundle method here, :class:`ProximalBundleMethod`, stops on its
@@ -1525,9 +1523,9 @@ class LevelBundleMethod:
         """
         if not 0.0 < alpha < 1.0:
             raise ValueError(f"alpha lies in (0, 1), got {alpha}.")
+        super().__init__(max_iterations=max_iterations)
         self._alpha = alpha
-        self._tolerance = tolerance
-        self._max_iterations = max_iterations
+        self._gap_tolerance = tolerance
         self._capacity = capacity
         self._qp_solver = qp_solver
 
@@ -1640,16 +1638,19 @@ class LevelBundleMethod:
     def minimize(
         self,
         functional: Functional,
-        start: Any,
+        x0: Any,
         /,
         *,
         subgradient: Callable[[Any], Any] | None = None,
     ) -> BundleResult:
         """Minimize a convex functional from a starting point.
 
+        A subgradient is what the method needs, not a derivative, so the
+        base class's requirement of one is not imposed here.
+
         Args:
             functional: convex, and able to supply a subgradient.
-            start: where to begin.
+            x0: where to begin.
             subgradient: an override, called with a point and returning a
                 subgradient. Defaults to the functional's own.
 
@@ -1660,9 +1661,19 @@ class LevelBundleMethod:
         Raises:
             TypeError: if the domain has no component map.
         """
+        return self._minimize(functional, x0, subgradient=subgradient)
+
+    def _minimize(
+        self,
+        functional: Functional,
+        x0: Any,
+        *,
+        subgradient: Callable[[Any], Any] | None = None,
+    ) -> BundleResult:
         from ..algebra.operators import require_coordinates
 
         space = functional.domain
+        start = x0
         require_coordinates(space, space)
         slope = subgradient or functional.subgradient
 
@@ -1678,22 +1689,25 @@ class LevelBundleMethod:
         serious = 0
         message = "iteration limit reached"
         iteration = 0
+        history: list[float] = []
 
         for iteration in range(1, self._max_iterations + 1):
             center_components = space.to_components(center)
             lower = max(lower, self._lower_bound(space, cuts, center_components))
             gap = upper - lower
-            if gap <= self._tolerance * max(abs(upper), 1.0):
+            if gap <= self._gap_tolerance * max(abs(upper), 1.0):
                 return BundleResult(
-                    upper,
-                    best_point,
-                    iteration,
-                    evaluations,
-                    True,
-                    "gap tolerance reached",
-                    gap,
-                    lower,
-                    serious,
+                    minimizer=best_point,
+                    value=upper,
+                    gradient_norm=float("nan"),
+                    iterations=iteration,
+                    evaluations=evaluations,
+                    converged=True,
+                    message="gap tolerance reached",
+                    history=history,
+                    gap=gap,
+                    lower_bound=lower,
+                    serious_steps=serious,
                 )
 
             candidate = None
@@ -1743,45 +1757,47 @@ class LevelBundleMethod:
             if value < center_value:
                 center, center_value = point, value
                 serious += 1
+            history.append(upper)
 
         # ``iteration`` rather than the cap, so that a break on a failed
         # master problem is not reported as a full run.
         return BundleResult(
-            upper,
-            best_point,
-            iteration,
-            evaluations,
-            False,
-            message,
-            upper - lower,
-            lower,
-            serious,
+            minimizer=best_point,
+            value=upper,
+            gradient_norm=float("nan"),
+            iterations=iteration,
+            evaluations=evaluations,
+            converged=False,
+            message=message,
+            history=history,
+            gap=upper - lower,
+            lower_bound=lower,
+            serious_steps=serious,
         )
 
 
 @dataclass(frozen=True)
-class SaddlePointResult:
-    """The outcome of a primal-dual feasibility solve."""
+class SaddlePointResult(OptimizationResult):
+    """The outcome of a primal-dual feasibility solve.
 
-    value: float
-    """``(c, m)`` at the point found: the support value being sought."""
+    An :class:`~pygeoinf2.numerics.optimization.OptimizationResult` read as
+    the minimization of ``-(c, m)``: ``minimizer`` is the maximizing model
+    and ``value`` is ``-(c, m)`` there, so the support value being sought
+    is ``-value``. ``gradient_norm`` is ``NaN``, the method having no
+    gradient to report; ``history`` is the feasibility residual after each
+    iteration; the fields below are the splitting's own.
+    """
 
-    model: Any
-    """The maximizing model."""
+    discrepancy: Any = None
+    """The data-error vector ``v`` that goes with the model."""
 
-    discrepancy: Any
-    """The data-error vector ``v`` that goes with it."""
-
-    certificate: Any
+    certificate: Any = None
     """The dual variable, which is the same object the dual route calls a
     certificate: a weighting of the data."""
 
-    residual: float
+    residual: float = float("nan")
     """``||G m + v - d||``, the feasibility gap. This is what convergence is
     declared on -- not the objective, which is monotone in neither variable."""
-
-    iterations: int
-    converged: bool
 
     def __repr__(self) -> str:
         return (
@@ -1927,6 +1943,7 @@ class ChambollePockSolver:
         certificate = data_space.zero()
         model_bar, discrepancy_bar = model, discrepancy
         residual = float("inf")
+        history: list[float] = []
 
         for iteration in range(1, self._max_iterations + 1):
             # Dual ascent on the extrapolated primal point.
@@ -1967,51 +1984,81 @@ class ChambollePockSolver:
                     data_space.add(self._forward(model), discrepancy), self._data
                 )
             )
+            history.append(residual)
             if residual < self._tolerance:
                 return SaddlePointResult(
-                    float(model_space.inner_product(objective, model)),
-                    model,
-                    discrepancy,
-                    certificate,
-                    residual,
-                    iteration,
-                    True,
+                    minimizer=model,
+                    value=-float(model_space.inner_product(objective, model)),
+                    gradient_norm=float("nan"),
+                    iterations=iteration,
+                    evaluations=iteration,
+                    converged=True,
+                    message="feasibility residual reached the tolerance",
+                    history=history,
+                    discrepancy=discrepancy,
+                    certificate=certificate,
+                    residual=residual,
                 )
 
         return SaddlePointResult(
-            float(model_space.inner_product(objective, model)),
-            model,
-            discrepancy,
-            certificate,
-            residual,
-            self._max_iterations,
-            False,
+            minimizer=model,
+            value=-float(model_space.inner_product(objective, model)),
+            gradient_norm=float("nan"),
+            iterations=self._max_iterations,
+            evaluations=self._max_iterations,
+            converged=False,
+            message="iteration limit reached",
+            history=history,
+            discrepancy=discrepancy,
+            certificate=certificate,
+            residual=residual,
         )
 
 
 @dataclass(frozen=True)
-class KKTResult:
-    """The outcome of a KKT solve for a quadratically constrained maximum."""
+class KKTResult(OptimizationResult):
+    """The outcome of a KKT solve for a constrained maximum.
 
-    value: float
-    """``(c, m)`` at the maximizer."""
+    An :class:`~pygeoinf2.numerics.optimization.OptimizationResult` read as
+    the minimization of ``-(c, m)``: ``minimizer`` is the maximizer and
+    ``value`` is ``-(c, m)`` there, so the maximum sought is ``-value``.
+    ``gradient_norm`` is ``NaN``; ``iterations`` and ``evaluations`` both
+    count the root find's residual evaluations.
+    """
 
-    model: Any
-    """The maximizer."""
-
-    multipliers: tuple[float, float]
+    multipliers: tuple[float, float] = (float("nan"), float("nan"))
     """``(lambda, mu)``, on the prior and the data constraint. A zero second
     multiplier means the data constraint is slack: the answer is the prior's
     own support point and the data never bit."""
-
-    iterations: int
-    converged: bool
 
     def __repr__(self) -> str:
         return (
             f"KKTResult(value={self.value:.6g}, "
             f"multipliers={self.multipliers}, converged={self.converged})"
         )
+
+
+def _kkt_result(
+    value: float,
+    model: Any,
+    multipliers: tuple[float, float],
+    evaluations: int,
+    converged: bool,
+) -> KKTResult:
+    return KKTResult(
+        minimizer=model,
+        value=value,
+        gradient_norm=float("nan"),
+        iterations=evaluations,
+        evaluations=evaluations,
+        converged=converged,
+        message=(
+            "the constraint equations hold"
+            if converged
+            else "the root find did not satisfy the constraint equations"
+        ),
+        multipliers=multipliers,
+    )
 
 
 class PrimalKKTSolver:
@@ -2210,8 +2257,8 @@ class PrimalKKTSolver:
         if float(
             data_space.inner_product(self._noise_weight(residual), residual)
         ) <= self._noise_radius**2 * (1.0 + 1e-9):
-            return KKTResult(
-                float(model_space.inner_product(objective, best)),
+            return _kkt_result(
+                -float(model_space.inner_product(objective, best)),
                 best,
                 (float("inf"), 0.0),
                 1,
@@ -2299,8 +2346,8 @@ class PrimalKKTSolver:
         # not a root of anything.
         self._previous = multipliers if status == 1 else None
         model = self._model(multipliers, objective)
-        return KKTResult(
-            float(model_space.inner_product(objective, model)),
+        return _kkt_result(
+            -float(model_space.inner_product(objective, model)),
             model,
             multipliers,
             int(info["nfev"]),
@@ -2477,8 +2524,8 @@ class LevelKKTSolver:
         best = self._model(scale, 0.0, objective)
         residual = data_space.subtract(self._data, self._forward(best))
         if alone.converged and float(g(residual)) <= b * (1.0 + 1e-9):
-            return KKTResult(
-                float(space.inner_product(objective, best)),
+            return _kkt_result(
+                -float(space.inner_product(objective, best)),
                 best,
                 (scale, 0.0),
                 alone.evaluations,
@@ -2527,8 +2574,8 @@ class LevelKKTSolver:
         multipliers = tuple(float(v) for v in np.exp(np.clip(found, -30.0, 25.0)))
         self._previous = multipliers if status == 1 else None
         model = self._model(multipliers[0], multipliers[1], objective)
-        return KKTResult(
-            float(space.inner_product(objective, model)),
+        return _kkt_result(
+            -float(space.inner_product(objective, model)),
             model,
             multipliers,
             int(info["nfev"]),
