@@ -175,14 +175,12 @@ class _BoxChart(_Chart):
         """The points as vectors of the embedding, one row each."""
         return np.stack([np.atleast_1d(np.asarray(p, dtype=float)) for p in points])
 
-    def unembed(self, vectors: np.ndarray) -> list[Any]:
-        """Vectors of the embedding back as points of the space."""
+    def unembed(self, vectors: np.ndarray) -> Any:
+        """Vectors of the embedding back as points of the space: an array of rows."""
         wrap = getattr(self.space, "_wrap", None)
         if wrap is not None and not hasattr(self.space, "bounds"):
             vectors = wrap(vectors)
-        if self.dimension == 1:
-            return [float(v[0]) for v in vectors]
-        return [np.asarray(v, dtype=float) for v in vectors]
+        return np.asarray(vectors, dtype=float)
 
     def separation_end(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
         """The receiver, placed so that the geodesic from the source is direct."""

@@ -2015,7 +2015,15 @@ integrated along the ray for the responses to `δm₁` and to the take-off
 angle, combined so the receiver is kept, with the derivative operator
 differenced along that response. Both match differences of the derivative
 to `1e-3` or better and are symmetric in their two directions; the
-second difference of the value matches `H[δm, δm]` to `3e-4`.
+second difference of the value matches `H[δm, δm]` to `3e-4`. With it,
+`MaximumAPosteriori`'s objective carries the exact Hessian whenever the
+forward operator has a second derivative -- the Gauss-Newton term plus
+the operator's curvature weighted by the residual -- so a Newton optimizer
+can be passed to it; a composition with a linear map keeps the second
+derivative, which is what the whitened inversion of tutorial 13 uses.
+Tutorial 13 is the operator's showcase: the rays, the kernels of the
+adjoint, the Hessian with the ray's response, and the inversion by
+gradients and by Newton against straight-ray tomography.
 
 ## Appendix: measurements behind the defaults
 

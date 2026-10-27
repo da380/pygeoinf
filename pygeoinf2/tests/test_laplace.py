@@ -197,6 +197,93 @@ class TestOnANonlinearProblem:
         )
 
 
+class TestWithTheExactHessian:
+    """A forward operator that supplies its second derivative gets the exact
+    Hessian in the objective, and a Newton optimizer can use it."""
+
+    @pytest.fixture
+    def curved(self, nonlinear_setting, rng):
+        forward, prior, error, truth, data = nonlinear_setting
+        model, data_space = forward.domain, forward.codomain
+        matrix = None
+        # Recover the matrix from the derivative at zero: exp(0) == 1.
+        matrix = forward.derivative(model.zero()).matrix(form="components")
+
+        def value(components):
+            return np.exp(matrix @ components)
+
+        def derivative(components):
+            return LinearOperator.from_matrix(
+                model,
+                data_space,
+                np.diag(np.exp(matrix @ components)) @ matrix,
+                form="components",
+            )
+
+        def second_derivative(components, direction):
+            # F''(m)[dm, .] == diag(exp(B m) (B dm)) B
+            return LinearOperator.from_matrix(
+                model,
+                data_space,
+                np.diag(np.exp(matrix @ components) * (matrix @ direction)) @ matrix,
+                form="components",
+            )
+
+        operator = Operator.from_callables(
+            model,
+            data_space,
+            value,
+            derivative=derivative,
+            second_derivative=second_derivative,
+        )
+        return operator, prior, error, truth, data
+
+    def test_the_hessian_is_the_derivative_of_the_gradient(self, curved, rng):
+        operator, prior, error, truth, data = curved
+        objective = MaximumAPosteriori(
+            ForwardProblem(operator, error=error), prior
+        ).objective(data)
+        assert objective.has_hessian
+        space = operator.domain
+        point = space.random(rng=rng)
+        direction = space.random(rng=rng)
+        action = objective.hessian(point)(direction)
+        step = 1.0e-5
+        differences = space.scale(
+            1.0 / (2.0 * step),
+            space.subtract(
+                objective.gradient(space.add(point, space.scale(step, direction))),
+                objective.gradient(space.add(point, space.scale(-step, direction))),
+            ),
+        )
+        assert np.allclose(action, differences, rtol=1e-5, atol=1e-8)
+
+    def test_newton_finds_the_mode_in_fewer_iterations(self, curved):
+        from pygeoinf2.numerics.optimization import LBFGS, NewtonCG
+
+        operator, prior, error, truth, data = curved
+        problem = ForwardProblem(operator, error=error)
+        by_lbfgs = MaximumAPosteriori(
+            problem, prior, optimizer=LBFGS(max_iterations=500)
+        )(data)
+        by_newton = MaximumAPosteriori(
+            problem, prior, optimizer=NewtonCG(max_iterations=50)
+        )(data)
+        assert by_newton.converged
+        space = operator.domain
+        assert space.norm(space.subtract(by_newton.model, by_lbfgs.model)) < 1e-4 * max(
+            space.norm(by_lbfgs.model), 1.0
+        )
+        assert by_newton.optimization.iterations < by_lbfgs.optimization.iterations
+
+    def test_without_a_second_derivative_there_is_no_hessian(self, nonlinear_setting):
+        forward, prior, error, truth, data = nonlinear_setting
+        objective = MaximumAPosteriori(
+            ForwardProblem(forward, error=error), prior
+        ).objective(data)
+        assert not objective.has_hessian
+
+
 class TestWhatItRefuses:
     def test_a_prior_on_the_wrong_space(self, linear_setting):
         forward, _, error, _ = linear_setting

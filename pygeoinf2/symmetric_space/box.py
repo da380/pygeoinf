@@ -171,7 +171,8 @@ class Box(PeriodicBox):
         route evaluate at the same place.
 
         The move is a Python loop over the points, which is why doing it once
-        per operator rather than once per application matters most here.
+        per operator rather than once per application matters most here; an
+        array of rows is moved in one step.
 
         Args:
             points: points of the domain, or an already prepared set.
@@ -181,8 +182,14 @@ class Box(PeriodicBox):
         """
         if isinstance(points, PreparedPoints):
             return points
-        points = tuple(points)
-        inside = [self._to_enclosing(point) for point in points]
+        lower = np.array([a for a, _ in self._bounds])
+        shift = np.asarray(self._padding) - lower
+        if isinstance(points, np.ndarray) and points.ndim == 2:
+            # An array of rows moves into the enclosing box in one step.
+            inside = np.asarray(points, dtype=float) + shift
+        else:
+            points = tuple(points)
+            inside = [self._to_enclosing(point) for point in points]
         return PreparedPoints(points, data=super().prepare_points(inside).data)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:

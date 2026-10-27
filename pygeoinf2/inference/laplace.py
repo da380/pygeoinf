@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..algebra.linearization import QuadraticModel
-from ..algebra.operators import Functional, LinearFunctional
+from ..algebra.operators import LinearOperator, Functional, LinearFunctional
 from ..algebra.spaces import HilbertSpace
 from ..numerics.optimization import LBFGS, Optimizer
 from ..numerics.solvers import LinearSolver
@@ -113,10 +113,11 @@ class MaximumAPosteriori:
             provides.
         prior: a Gaussian prior on the model space.
         optimizer: how to find the mode. L-BFGS with 500 iterations by
-            default, which needs only gradients -- the exact Hessian of a
-            nonlinear misfit carries a second-derivative term that a forward
-            operator is rarely asked to supply. Pass a Newton-type optimizer
-            if it can.
+            default, which needs only gradients. A Newton-type optimizer can
+            be passed when the forward operator supplies its second
+            derivative: the objective then carries the exact Hessian, the
+            Gauss-Newton term plus the operator's curvature weighted by the
+            residual.
         solver: how to invert the linearized normal operator for the
             covariance: a :class:`~pygeoinf2.numerics.solvers.LinearSolver`,
             or a callable receiving the normal operator and returning one.
@@ -205,6 +206,32 @@ class MaximumAPosteriori:
         def value(model: Any) -> float:
             return self._problem.chi_squared(model, data) + prior_term(model)[1]
 
+        def hessian_at(model: Any, linearization: Any, weighted: Any) -> LinearOperator:
+            """``2 P + 2 J* R⁻¹ J − 2 F''(m)[., .]* (R⁻¹ r)``: the exact Hessian.
+
+            The last term is the forward operator's curvature weighted by
+            the residual, which vanishes at a perfect fit; it is included
+            whenever the operator can supply it, so that a Newton optimizer
+            gets the Hessian it asks for rather than the Gauss-Newton half.
+            """
+            jacobian = linearization.derivative
+
+            def apply(direction: Any) -> Any:
+                curvature = forward.second_derivative(model, direction).adjoint(
+                    weighted
+                )
+                return space.axpy(
+                    2.0,
+                    precision(direction),
+                    space.axpy(
+                        2.0,
+                        jacobian.adjoint(error.precision(jacobian(direction))),
+                        space.scale(-2.0, curvature),
+                    ),
+                )
+
+            return LinearOperator.self_adjoint(space, apply)
+
         def linearize(model: Any) -> QuadraticModel:
             # One forward evaluation serves both halves: the misfit is read
             # from the linearization's value and the derivative from its
@@ -223,9 +250,22 @@ class MaximumAPosteriori:
                 model,
                 self._problem.chi_squared_from_residual(residual) + offset_term,
                 LinearFunctional.from_representer(space, gradient),
+                hessian=(
+                    hessian_at(model, linearization, weighted)
+                    if forward.has_second_derivative
+                    else None
+                ),
             )
 
-        return Functional.from_callables(space, value, linearize=linearize)
+        def hessian(model: Any) -> LinearOperator:
+            return linearize(model).hessian
+
+        return Functional.from_callables(
+            space,
+            value,
+            linearize=linearize,
+            hessian=hessian if forward.has_second_derivative else None,
+        )
 
     def log_posterior(self, data: Any, /) -> Functional:
         """The log posterior density, up to an additive constant.

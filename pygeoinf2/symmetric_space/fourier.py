@@ -510,10 +510,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         """
         if isinstance(points, PreparedPoints):
             return points
-        points = tuple(points)
-        positions = np.asarray(
-            [np.atleast_1d(np.asarray(point, dtype=float)) for point in points]
-        )
+        if isinstance(points, np.ndarray) and points.ndim == 2:
+            # An array of rows is taken as it is: a tracer hands over
+            # thousands of points at once, and a loop over them would cost
+            # more than the transform.
+            positions = np.asarray(points, dtype=float)
+        else:
+            points = tuple(points)
+            positions = np.asarray(
+                [np.atleast_1d(np.asarray(point, dtype=float)) for point in points]
+            )
         if positions.ndim != 2 or positions.shape[1] != self.spatial_dimension:
             raise ValueError(
                 f"Points need {self.spatial_dimension} coordinates each, got "

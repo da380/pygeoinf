@@ -37,10 +37,11 @@ the two agree.
 | 10 | `10_coupled_problems.py` | several unknowns at once: direct sums, block operators, joint priors, and fields that jump between layers | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/pygeoinf2/tutorials/notebooks/10_coupled_problems.ipynb) |
 | 11 | `11_varying_structure.py` | spaces whose correlation length varies: an interval, a function of radius, a ball, and a layered planet | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/pygeoinf2/tutorials/notebooks/11_varying_structure.ipynb) |
 | 12 | `12_writing_a_backend.py` | the contract a backend meets, the ladder of checks that verifies it, and a finite element space as the worked case | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/pygeoinf2/tutorials/notebooks/12_writing_a_backend.ipynb) |
+| 13 | `13_ray_tomography.py` | nonlinear ray tomography on a function space: the travel-time operator and the rays it bends, its derivative and the sensitivity kernels of its adjoint, its Hessian action with the ray's response inside, and the inverse problem by gradients and by Newton steps against straight-ray tomography | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/pygeoinf2/tutorials/notebooks/13_ray_tomography.ipynb) |
 
 ## What they need
 
-Tutorials 1 to 9 need only the core library. Tutorials 10 and 11 need
+Tutorials 1 to 9 and 13 need only the core library. Tutorials 10 and 11 need
 `planetmodel` (`poetry install --extras planetmodel`), tutorial 10 for its
 last section only, and tutorial 12 needs MFEM
 (`poetry install --extras mfem`); each says so at the top.

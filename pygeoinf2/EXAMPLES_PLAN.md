@@ -63,6 +63,13 @@ v2 names from the start.
 12. **Writing a backend** — the contract of CURRENT_STATE §6, the
     `check_*` ladder with `CheckReport`, MFEM the worked case, the
     lessons list.
+13. **Nonlinear ray tomography on a function space** (added 2026-10-27,
+    on D-156's operator) — the travel-time operator and the rays it
+    bends, its derivative and the sensitivity kernels of the adjoint, the
+    Hessian action with the ray's response inside, the inversion whitened
+    by the prior's factor and solved by L-BFGS and by Newton-CG against
+    straight-ray tomography, the Laplace spread. Runs on the plane in
+    under a minute.
 
 Kept as notebooks, exactly two: a Colab quickstart (tutorial 1 in notebook
 form, with the bootstrap cell) and a visual tour of the plotting layer,
