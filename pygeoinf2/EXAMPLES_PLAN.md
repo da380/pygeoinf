@@ -85,9 +85,13 @@ problem, real or realistic data, several features composed, minutes to run.
 4. **An interface from gravity** — a genuinely nonlinear forward; MAP,
    Laplace, and the low-rank posterior with an information-gain budget
    once it exists.
-5. **Two fields, one chain** — joint inversion for coupled fields on the
-   sphere with a correlated prior; starts with independent factors,
-   consumes `from_product(correlation=)` when it lands.
+5. **Two fields, one chain** — the flexure–gravity problem of Mag et al.
+   (D-152): density anomaly and basal traction on the sphere seen only
+   through a shared smoothing chain; the Bayesian joint inversion with a
+   correlated prior (independent factors first, `from_product(correlation=)`
+   when it lands), then the feasible property set of the paired cap
+   averages — the `L²` amplitude ellipsoid, the slanted set, the polytope
+   and inner hull, the outer ellipsoid, convergence under refinement.
 6. **Sampling the posterior** (post-release, the student's) — pCN against
    the Laplace Gaussian where the Gaussian is visibly wrong.
 

@@ -208,17 +208,14 @@ Recorded rather than settled, so nobody has to rediscover them.
 
 - **`power_measure` on a Sobolev space.** Closed: D-130 made it mean the
   `L2` spectrum on every space, 2026-10-24.
-- **The convex solvers' API.** Settled as D-134, 2026-10-24, in full:
-  the estimator API stays; the algorithms move into the convex sets, whose
-  probes dispatch through a form-ranked table (`via=` forces, an instance
-  carries tuning); the dispatch machinery lives in the geometry layer with
-  `FeasiblePropertySet` its first client and the rest of the hierarchy
-  adopting incrementally; the solver zoo unifies underneath. Design fixed,
-  implementation pending; D-82 and the dual-gap certificate become
-  properties of the dispatch table's entries.
-- **`route="auto"` on quadratic sets.** The KKT solver is the cheapest general
-  solver on balls and ellipsoids and `auto` could prefer it over the bundle
-  where both apply; left until measured (D-82).
+- **The convex solvers' API.** Settled as D-134 (2026-10-24) and in detail
+  as D-135 to D-152 (2026-10-27): three forms decide the algorithm, `via=`
+  forces one on a probe, every answer carries a certified bracket, the
+  feasible set and its algorithms move to `geometry` and the damped-family
+  machinery to `numerics`, matrix-free throughout with the dense spectrum
+  as an opt-in solver. Implementation pending; the plan is
+  `CONVEX_PLAN.md`. D-82's open question is closed by D-136 (the tiers are
+  nested specialisations, nothing to rank by timing).
 - **`dense_limit` on `kl_divergence` and `ambient_ball`** keys on dimension,
   not application count (D-50). Fine until a covariance that applies a PDE
   solve meets it.
@@ -303,7 +300,9 @@ planetmodel 1.3.2.
   route-by-capability style rather than as a port of v1's
   `SubspaceSlicePlotter`; plotly is the optional `plot3d` extra. Example 34
   shows it.
-- The convex solvers' API is redesigned to David's specification (§7).
+- The feasible-set layer is rebuilt to D-135 to D-152 (§7); the plan is
+  `CONVEX_PLAN.md`, seven stages from the numerical experiment to the
+  benchmarks.
 - planetmodel maintenance, half done: the pin is `planetmodel>=1.3`, the
   stale `[harmonics]` extra is gone, the venv and lock are on 1.3.2 (whose
   grids carry a `kind` that the transform now checks by name), and

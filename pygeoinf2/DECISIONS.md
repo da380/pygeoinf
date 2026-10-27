@@ -943,7 +943,327 @@ be used sparingly, which is exactly why it is not built in one go.
 Underneath, the solver zoo unifies into the engines the probes call:
 `BundleResult`, `KKTResult` and `SaddlePointResult` fold into one result
 shape and the bundle methods join the `Optimizer` hierarchy — the detailed
-sub-decisions land with the implementation.
+sub-decisions land with the implementation. Settled in detail as D-135 to
+D-152 on 2026-10-27; the form-ranked registry of (1) is deferred by D-136.
+
+**D-135. A set declares what it supplies; the convex machinery converts
+where that is affordable** (2026-10-27, David). Every closed convex set has
+a support function and a level function in principle; the `has_*` flags on
+`ConvexSet` mean "supplied cheaply", and generic code never requires more.
+Two conversions are provided as defaults behind the flags, labelled as
+conversions: a set with a smooth level function gets a support function and
+a maximiser by a one-multiplier maximisation of `(q, x)` under the level
+constraint; a *finite-dimensional* set with a support function and a
+maximiser gets a distance, hence membership with a certificate either way,
+by the concave maximisation `d(p) = max over ‖q‖ ≤ 1 of (q, p) − h(q)` whose
+supergradient is `p − p̂(q)`. The converse conversion in a model space would
+be an optimisation over infinitely many directions and is not offered. So
+the feasible property set always carries both characterisations, D-80
+becoming a guarantee; sets known by projection alone reach the support side
+through a primal-dual splitting, which is why Chambolle-Pock stays (D-139).
+
+**D-136. Three forms, one algorithm per form per probe, no registry yet**
+(2026-10-27, David). The form of the pair `(prior, noise)` is decided by two
+predicates, *exact* (the noise set is a single point) and *quadratic* (a
+ball or an ellipsoid, degenerate forms included under D-138), giving three
+tiers: the closed form (exact data, quadratic prior: Al-Attar 2021 eq. 2.84
+in the prior's own inner product, which generalises the ball case to
+ellipsoids and centres with no new mathematics and removes the construction
+crash of an ellipsoid prior with exact data), the quadratic tier (two
+quadratic sets, noise not a point), and the general tier (everything else,
+routed by capability under D-135; exact data with a general prior is the
+general tier with the point `{b}` as the noise set and needs nothing of its
+own). The feasible set exposes `form` and `algorithms`; `via=` on a probe
+forces an algorithm by name or instance (D-143). The dispatch is a predicate
+and a per-probe choice of at most three entries, written as functions. The
+form-ranked registry in `geometry` that D-134(1) and (3) described is
+deferred until a second composite set wants the same dispatch; the algorithm
+objects already have the shape it would register (`name`, `accepts`, the
+probe methods), so adding it later changes no user-facing line. D-82's open
+question is closed by this: the tiers are nested specialisations, not rival
+algorithms for one form, so there is nothing to rank by timing.
+
+**D-137. Membership is one algorithm, the inner problem chosen by form**
+(2026-10-27, David). Al-Attar (2021) §3.3: write `m = m̃ + u` with `m̃` the
+model nearest the prior's centre having property `p` (`dim P` solves, cached)
+and `u ∈ ker T`; the prior's level function separates and what remains is
+the feasibility problem again with `A` restricted to `ker T` (eq. 3.28).
+Emptiness and membership are therefore one search, with and without the
+kernel restriction, and the fitting model its by-product. On quadratic sets
+the inner minimiser is a damped least-squares solve, so the search is
+`misfit_search` over a `TikhonovFamily` whose forward operator is `A ∘ P_K`
+with the projector applied matrix-free; on general sets with smooth level
+functions it is the convex minimisation the likelihood engine already does;
+on the closed-form tier it is the ellipsoid's quadratic form; elsewhere it is
+D-135's distance. The dense projected spectrum of the "reduced" engine is a
+solver choice under D-145, not an engine, and is deleted; so are the
+separate `_minimum_norm_fits` and the dual route's own feasibility test. The
+search's multiplier is the gradient of the feasible set's level function in
+`p`, which `level_function()` carries.
+
+**D-138. Degenerate quadratic sets are admitted, and `+∞` is a legal support
+value** (2026-10-27, David). Two sets from the papers do not fit a
+positive-definite `Ellipsoid`: Mag's `L²` amplitude ball on an `H²` space
+(positive definite on the truncation, compact relative to the identity, so
+`A C A*` is severely ill-conditioned and the set unbounded in the model
+norm) and Al-Attar (2021) §4.2's semi-norm bound (a genuine kernel, a
+cylinder). `Ellipsoid` accepts a semidefinite precision for inference use;
+a `Cylinder` with an explicit kernel basis is planned for the true-kernel
+case and may be dropped if it proves hard. On the quadratic tier the family
+`γQ + A*PA` needs `ker Q ∩ ker A = {0}` and the model-space formalism when
+`C` does not exist; in the dual the certificate is constrained to keep
+`T*q − A*λ` where the prior's support function is finite, an affine
+constraint of `dim(ker Q)` equations enforced in the proximal step. Where
+the data do not see a direction the support value is `+∞`, returned as a
+value; `Polytope` omits that half-space and says so.
+
+**D-139. The general tier keeps three algorithms, one per capability**
+(2026-10-27, David). `Primal` for smooth level functions on both sides (two
+monotone root finds around an inner problem that is linear on quadratic sets
+and a Newton solve otherwise — the bisection route and `LevelKKTSolver`
+were one algorithm with two inner solves), `Dual` for support functions and
+maximisers (the proximal bundle by default; `method=` takes any
+nonsmooth-capable `Optimizer`, `SubgradientDescent` a legitimate choice),
+`Splitting` for projections (Chambolle-Pock), with `ClosedForm` on the exact
+tier. Deleted as redundant or dominated: `PrimalKKTSolver` (`fsolve` on a
+dense data Gram with a `1e-3` floor; Mag's own runs needed its
+nested-bisection fallback, which the root finds are), the level bundle
+(dense master QP in `N_d + 1`, D-56's restoration notwithstanding; in git if
+a measured case wants it), and the smoothed dual (its one general use, the
+Moreau envelope of a nonsmooth set, is not being built). The rule, David's:
+where there is a genuine choice the user makes it, as with linear solvers;
+what goes is only what is redundant or sub-optimal. What each gives back
+differs and the result says so: `Primal` the contact point and extremal
+model, `Dual` a certificate, `Splitting` both iterates.
+
+**D-140. `BackusGilbert` returns the set, takes quadratic sets, and
+evaluates any certificate** (2026-10-27, David). Both papers state the
+method more generally than the two origin-centred balls the class demanded:
+Al-Attar (2021) eq. 3.35 puts the noise covariance in the normal equation,
+and Mag eq. 42 gives the uncertainty set `X d + (T − XA) S_prior + (−X)
+S_noise` for any convex sets, centres handled by their support functions.
+So: the automatic `X = T C_Q A*(A C_Q A* + α C_R)⁻¹` for a ball or ellipsoid
+on each side (`dim P` data-space solves through the user's solver); the
+uncertainty set as a real Minkowski-sum `ConvexSet`, which `__call__`
+returns since the set is the method's value and the point `X d` is its
+centre (`estimate` and the two-part `error_bars` as conveniences on it);
+`from_operator(problem, T, X, prior, noise=)` to evaluate a user-chosen
+linear certificate against any sets with support functions, which is where
+a SOLA or Zaroli kernel can be assessed against a named prior. SOLA is this
+estimator with the trade-off parameter chosen by hand and no prior bound
+named, which is why it cannot certify a resolution error; that is a
+sentence in the docstring and tutorial 7, not a class. Point estimators
+(least squares, SOLA) remain for completeness and as tools; they take no
+prior and give no uncertainty, and the library says so.
+
+**D-141. Ellipsoidal probes: the certified ones now, the descriptive ones if
+workable** (2026-10-27, David). On the quadratic tier, for `θ ∈ (0, 1)` the
+set `{θ·prior(m) + (1 − θ)·misfit(m) ≤ 1}` contains the feasible model set
+(the S-procedure), and its image `T C_θ T*` with `C_θ = (θQ + (1 − θ)A*PA)⁻¹`
+is a certified outer ellipsoid of the feasible property set at `dim P`
+damped solves per `θ` and a coarse one-dimensional search in `θ` on the
+trace or log-determinant: tighter than Backus-Gilbert's sum because the data
+enter the constraint, checkable against exact support values, and the same
+family the primal route sweeps. The Minkowski sum of two ellipsoids gets the
+trace-optimal outer ellipsoid `(1 + 1/p)Q₁ + (1 + p)Q₂`, which makes
+`BackusGilbert`'s set a single ellipsoid when both inputs are quadratic.
+Planned as well, droppable: the maximum-volume inscribed ellipsoid of the
+outer polytope (a `dim P` log-det program; a description of the bound, not
+of the set) and a point-set minimum-volume enclosing ellipsoid (encloses the
+inner hull and certifies nothing, documented as such).
+
+**D-142. The damped-family machinery moves to `numerics`; the feasible set
+and its algorithms live in `geometry`; the estimators stay in `inference`**
+(2026-10-27, David). `FactoredNormalOperator`, `NormalOperator`,
+`choose_formalism`, `TikhonovNormalOperator`, `TikhonovFamily`, the
+structure-aware preconditioners and `misfit_search` are regularised
+least-squares machinery and belong in `numerics`, names unchanged and
+re-exported from `inference`. `FeasiblePropertySet`, `ClosedForm`, `Primal`,
+`Search`, `Dual`, `Splitting`, `Distance`, D-135's conversions and D-141's
+ellipsoids are computational convex geometry and live in `geometry`, which
+already imports `numerics`. `BackusGilbertParker` and `BackusGilbert` are
+thin estimators in `inference`: a forward problem, hardening, and the
+geometry object. D-111 holds: nothing below `inference` imports it.
+
+**D-143. The answer object's API** (2026-10-27, David). Construction:
+`BackusGilbertParker(problem, T, prior, /, *, noise=None, level=0.95,
+solver=None)(data)`, or directly `FeasiblePropertySet(A, T, prior, data, /,
+*, noise=None, solver=None)` with `noise=None` meaning exact data; `route=`,
+`membership=`, `method=`, `optimizer=` and `max_iterations=` go, tuning
+riding on an algorithm instance passed to a probe; `solver=` stays because
+it is estimator-wide and carries the preconditioner. Probes: `form`,
+`algorithms` and the read-only structure; `is_empty()`; the support side
+`support`, `support_values(..., n_jobs=, warm_start=)`, `support_bracket`,
+`support_maximizer`, `extremal_model`, `certificate`, `polytope`, `outside`,
+`outer_ellipsoid`; the level side `contains`/`admits`, `inclusion_level`,
+`level_function()` with gradient, `level`, `fitting_model`, `extent`,
+`inner_hull(..., source="contact" | "admitted")`; and the `ConvexSet`
+surface. `via=` takes an algorithm's snake-case name or an instance, the
+same name serving every probe the algorithm answers; a refused name lists
+the admissible ones. `inclusion_norm` is retired (`sqrt` of the level);
+`route`, `membership` and `algorithm` are replaced by `form` and
+`algorithms`. A construction-time default algorithm is not offered: it
+would reintroduce the choice-before-data shape D-134 removed.
+
+**D-144. The quadratic tier's root find: one multiplier eliminated if it is
+sound, nested monotone root finds as the fallback** (2026-10-27, David).
+Dividing stationarity by `t`, the family `M(γ) = γQ + A*PA` depends on
+`γ = s/t` alone and the model is affine in `1/t`: two warm-started solves at
+a `γ` give the model for every `t`, and both constraints are quadratics in
+`1/t` with closed-form roots. One multiplier is eliminated analytically and
+what remains is a scalar root find in `γ`, roughly 20–40 solves per
+direction against the 3600 fixed-depth bisection steps of the dense route.
+Its monotonicity in `γ` is not established (the cross term `(Qu₁, u₂)` has
+no sign) and is the first numerical task of the implementation; the nested
+structure (`t` outer, `s` inner, both monotone by Al-Attar 2021 lemma 3.1
+and the convexity of the partially minimised dual) is wired in from the
+start as the fallback, with bracketed secant or Brent steps and warm starts
+replacing fixed-depth bisection. A joint two-dimensional Newton stays
+rejected (Mag's `fsolve` experience is the evidence).
+
+**D-145. Two caches with clear owners, and the dense spectrum becomes a
+solver** (2026-10-27, David). The estimator owns the data-independent part
+(the kernel projector pieces and their `dim P` Cholesky, the closed-form
+pieces, the family with its solver and preconditioner) and hands it to every
+set it returns. The set owns the data-dependent part: a bounded cache of
+`u₂(γ) = M(γ)⁻¹ A*P d′`, which is direction-independent so that half the
+solves of a sweep are paid once per distinct `γ`; the last root per probe,
+from which a neighbouring direction's bracket starts; the fitting model and
+the probe results. Caches key on `γ` within the solver's tolerance, never on
+vector identity (D-38), and nothing cached is reported converged unless it
+was solved to the tolerance in force when stored. `with_data(d₂)` gives a
+directly built set the same sharing. The present eigendecomposition of the
+whitened data Gram is not lost: it is `SpectralFamilySolver`, a
+`LinearSolver` for a one-parameter family that factors once at `O(N_d³)` and
+answers every member by spectral division, passed as `solver=` by a user who
+wants it and never assumed; it reproduces the present numerics exactly and
+is how the parity bar is kept while the matrix-free path is built. Its
+interface is a factorisation of the data Gram, so a randomised low-rank
+version by `random_eig` can follow without changing callers.
+
+**D-146. Preconditioning: connect what exists, defaults by formalism,
+family-aware updates** (2026-10-27, David). The data-space family
+`A C A* + γ P⁻¹` is the Gaussian normal operator with `C` as prior
+covariance and `γ P⁻¹` as noise covariance, so built as a
+`FactoredNormalOperator` it takes every existing preconditioner unchanged,
+the structure-aware ones reading `A`, `Q`, `R` off the member through
+`DampedSolves.assemble=`. A preconditioner may implement `at(multiplier)`
+and `DampedSolves` then prefers it to the `refresh` rule; the probed
+diagonal, the spectral deflation and the Woodbury surrogate all update
+analytically in `γ` (the Woodbury one by keeping `Q_s⁻¹` and `A_s* P A_s`
+separately and refactorising the surrogate-dimension matrix per
+multiplier). Defaults: `C`-preconditioning in the model-space formalism
+(the identity plus a decaying operator; a no-op for a ball), none in the
+data-space one. The kernel-restricted family of D-137 reuses the
+unrestricted family's preconditioner (a rank-`dim P` modification). No new
+preconditioner classes; whether a randomised deflation of `A C A*` becomes
+the data-space default is measured on the benchmark (D-152), not guessed.
+David: in real applications the Woodbury preconditioner built around a
+surrogate with a low-dimensional model space has been by far the best
+general method, so it is the documented route and the benchmark includes
+it.
+
+**D-147. `formalism="data_space"` here too** (2026-10-27, David). D-74's
+rule holds: `"auto"` is the default nowhere. The first of D-74's reasons
+reverses on this side (a quadratic set always has its precision; a
+covariance is what may be missing) but the second stands (choosing by
+dimension lets a refinement switch the algebra), and the data side is where
+the preconditioners and the surrogate route live. The exceptions
+(precision-only, degenerate, semi-norm priors) are the cases where a user
+knows their prior is unusual and passes `formalism="model_space"` once; the
+data-space route refuses with a message naming that when the prior cannot
+supply `C`. "Whichever is smaller" is advice in the docstring, not a
+default.
+
+**D-148. Reported values are outer bounds; every probe carries a certified
+bracket; the solver floor is checked** (2026-10-27, David). On the
+quadratic tier the primal root find yields a model scaled into both sets
+(a rigorous inner, attainable value) and a dual certificate
+`λ = t·P(d′ − Au)` whose cost is evaluated in closed form (a rigorous outer
+value by weak duality whatever the solve's accuracy); on the general tier
+the dual gives the outer value at any `λ` and `Splitting`'s scaled primal
+iterate an inner one; the membership search's multiplier bounds its minimum
+from below. `support()` returns the outer value on every tier so that a
+quoted number is a bound; `support_bracket()` returns `(inner, outer)`,
+`(−∞, outer)` where no inner point exists; `converged` means the bracket
+closed to the instance's tolerance, a report rather than a second gate since
+non-convergence already raises through the solvers under D-8. The parity
+tests compare brackets, not floats. Mag's and D-82's acceptance rule,
+constraints met to `1e-6` relative, is the default root-find tolerance. At
+construction the estimator compares the solver's `rtol` with the noise
+radius over `‖d‖` and the prior radius over the model scale, refusing under
+D-8's strictness and warning otherwise: a radius below the solver floor is
+one no fit can be certified to.
+
+**D-149. The dual runs in the noise metric, stops on the bracket, warm-starts
+its certificate, and detects emptiness by divergence** (2026-10-27, David).
+The bundle's proximal term is an inner product on the data space and the
+Euclidean one is wrong whenever the noise set is not a ball in it; `Dual`
+runs the bundle on a `MassWeightedSpace` of the data space with the noise
+precision as metric, no change to the bundle. Stopping on D-148's bracket
+when an inner point exists and on the bundle gap otherwise, reported.
+Cuts do not transfer between directions but the certificate does: the
+neighbouring direction's `λ`, and `−λ(q)` for the antipodal direction of a
+symmetric noise set. On the support-only tier an empty set has support
+`−∞` everywhere, so the dual is unbounded below; a divergence test on the
+cost decides it, certified, rather than the iteration cap. `Dual` takes
+D-138's affine constraint on `λ` and refuses sets whose support function is
+infinite on a non-subspace region (cones go through `Splitting`). `start=`
+on the instance allows cross-seeding from a `Primal` certificate.
+
+**D-150. One result shape at the solver level, two at the probe level, and a
+sweep result** (2026-10-27, David). The bundle methods join the `Optimizer`
+hierarchy and `BundleResult`, `KKTResult`, `SaddlePointResult` fold into
+`OptimizationResult` subclasses (the bundle's gap and cut count, the
+splitting's primal-dual gap; `gradient_norm` is `NaN` where a method has
+none; Chambolle-Pock minimises `−(c, m)` so `minimizer` and `value` are
+literally right and `.model` goes). Each algorithm's probe returns a frozen
+`SupportResult` (outer value, inner, gap, converged, algorithm, evaluations,
+certificate, extremal model, multipliers) or `InclusionResult` (level,
+lower bound, converged, algorithm, evaluations, fitting model, multiplier),
+cached by the set per direction or point; the float-returning probes are
+views of one cached result, so one solve serves `support`,
+`support_bracket`, `certificate`, `support_maximizer` and `extremal_model`.
+A `SweepResult` carries a sweep's per-direction results for `polytope` and
+`outer_ellipsoid`, which must know which half-spaces are infinite;
+`support_values` keeps returning the array and `support_sweep` exposes the
+wrapper. `converged`, `iterations`, `message`, `value` mean one thing at both
+levels, and `iterations` is only ever a count (D-99).
+
+**D-151. Parallelism: threads, chunked so warm starts survive** (2026-10-27,
+David). `n_jobs=` on every independent loop (`support_values`, `polytope`,
+`outer_ellipsoid`'s `dim P` solves at one `θ`, `inner_hull` over points,
+`extent`'s two ends), through `parallel_map` (D-52). Directions are split
+into `n_jobs` contiguous chunks in the order given, so that warm starts run
+within a chunk and one cold start is paid per chunk; the `u₂(γ)` cache and
+the result caches take a lock; the preconditioner and projector pieces are
+read-only and shared. `n_jobs=1` and `n_jobs=k` must agree to tolerance and
+the tests check it. A process backend, which needs picklable operators and
+per-worker caches merged afterwards, is the sl3dpp "process-safety
+declaration" item and waits for it after the release.
+
+**D-152. The acceptance benchmark is the two papers' problems** (2026-10-27,
+David). Three problems, each for a reason: point data on the sphere
+(Al-Attar 2021 §2.5.2 and §3.3.2: 250 values, `H²` with `λ = 0.25`,
+coefficients of degree ≤ 1 and ≤ 3, exact and noisy — the closed form
+against the primal tier as noise → 0, extents against brackets,
+`dim P = 15`); flexure–gravity (Mag §3.2, Table A2: two fields, the `L²`
+amplitude ellipsoid, a chi-square ball in whitened coordinates, 156
+directions — the degenerate prior, the noise metric, ill-conditioning, the
+contact-point hull, the S-procedure ellipsoid, convergence under
+refinement); phase-delay tomography with nested acquisition (Mag §3.1,
+Fig. 9: `N_d` from `10²` to `10⁴`, ball prior, 12 directions — cost scaling
+of matrix-free against the spectral solver counted in applications,
+unpreconditioned, deflated and surrogate-Woodbury runs, `n_jobs`
+invariance). Reduced versions are slow tests; paper-scale scripts live in
+`benchmarks/`, run by hand, their measurements recorded in this file's
+appendix and used to set the defaults D-146 leaves open; the flexure–gravity
+problem is also the "two fields, one chain" mini-app of `EXAMPLES_PLAN.md`.
+Acceptance: brackets overlap wherever two algorithms apply and the spectral
+route reproduces the present numbers to `1e-10`; the phase-delay problem at
+`N_d = 9000` runs matrix-free with the surrogate preconditioner, counts
+recorded; the flexure bounds move by under a few per cent between the two
+finest truncations; `n_jobs` and `via=` change nothing but cost.
 
 ---
 
@@ -1301,9 +1621,10 @@ it. Measured on analysis plus synthesis of a Sobolev field: 8.5 ms to 1.3 ms
 at lmax 128, 57 ms to 6.7 ms at lmax 256, coefficients agreeing to 1e-13.
 
 **D-113. Also later:** full function-space MCMC (D-7 lays the hooks), PETSc
-(D-98), parallelism inside operator actions (D-6), the convex solvers' API
-(D-13, with Mag), `DualFeasibleProperty`'s certified gap (REVIEW2 question 2,
-Mag's call), and pointing Sphinx at the new package (REVIEW2 question 11).
+(D-98), parallelism inside operator actions (D-6), and pointing Sphinx at
+the new package (REVIEW2 question 11). No longer deferred (2026-10-27): the
+convex solvers' API and the certified gap, settled as D-134 to D-152
+without Mag; the gap is the bracket of D-148.
 
 ---
 
