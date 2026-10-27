@@ -12,7 +12,7 @@ space on request. With prior covariance ``Q`` and data covariance ``R``:
 and the posterior is ``mu + K (d - A mu - mu_e)`` with covariance ``Q - K A Q``
 — which in the model-space formalism is just ``N^-1``, so nothing extra is
 formed there. That algebra lives on
-:class:`~pygeoinf2.inference.normal.NormalOperator`, which is also what the
+:class:`~pygeoinf2.numerics.normal.NormalOperator`, which is also what the
 class exposes so that preconditioners can be built against it.
 
 The name says what the class does and what it needs. It is *linear* — the
@@ -47,7 +47,7 @@ from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .estimators import GaussianEstimator
-from .normal import Formalism, NormalOperator
+from ..numerics.normal import Formalism, NormalOperator
 from .problem import LinearForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -138,7 +138,7 @@ class LinearGaussianInversion(GaussianEstimator):
                 default), ``"model_space"``, or ``"auto"`` to take the
                 smaller, which for an underdetermined problem is the data
                 space and for an overdetermined one the model space; see
-                :func:`~pygeoinf2.inference.normal.choose_formalism`.
+                :func:`~pygeoinf2.numerics.normal.choose_formalism`.
         """
         if not isinstance(prior, GaussianMeasure):
             raise TypeError(
@@ -322,7 +322,7 @@ class LinearGaussianInversion(GaussianEstimator):
         because that is what a preconditioner is built from and it is the only
         part of a surrogate problem that is ever used. The surrogate may live
         on a different model space; see
-        :meth:`~pygeoinf2.inference.normal.NormalOperator.surrogate`.
+        :meth:`~pygeoinf2.numerics.normal.NormalOperator.surrogate`.
 
         Args:
             forward: a cheaper ``A``, sharing the data space.

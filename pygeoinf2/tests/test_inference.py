@@ -782,7 +782,7 @@ class TestJointInversionEndToEnd:
     def test_a_blocked_preconditioner_gets_the_same_answer(self, parts, rng):
         """On the direct-sum data space, where the blocks are the two
         instruments."""
-        from pygeoinf2.inference.preconditioners import NormalDiagonalPreconditioner
+        from pygeoinf2.numerics.preconditioners import NormalDiagonalPreconditioner
         from pygeoinf2.numerics.solvers import CGSolver
 
         problems, prior, truth, data = parts

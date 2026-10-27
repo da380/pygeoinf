@@ -30,12 +30,14 @@ from __future__ import annotations
 import numpy as np
 
 from abc import abstractmethod
-from typing import Sequence, Callable, Any, Literal
+from typing import TYPE_CHECKING, Sequence, Callable, Any, Literal
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
-from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..probability.gaussian import GaussianMeasure
 
 __all__ = [
     "FactoredNormalOperator",
@@ -101,7 +103,7 @@ class FactoredNormalOperator(LinearOperator):
     The contract a structure-aware preconditioner needs, and the reason it is
     written down rather than left implicit: there are two normal operators in
     this package — the Gaussian :class:`NormalOperator` and the Tikhonov
-    :class:`~pygeoinf2.inference.tikhonov.TikhonovNormalOperator` — and a
+    :class:`~pygeoinf2.numerics.tikhonov.TikhonovNormalOperator` — and a
     preconditioner that checked for one of them by name would silently refuse
     the other. Both are ``A ... A* + ...``; both can be preconditioned the same
     way.

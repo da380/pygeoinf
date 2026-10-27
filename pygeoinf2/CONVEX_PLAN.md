@@ -106,19 +106,13 @@ Fast suite green; D-entries for 1 and any surprise.
 
 ## Stage 1 — relocate the damped-family machinery (D-142)
 
-Move `inference/normal.py` (`FactoredNormalOperator`, `NormalOperator`,
-`choose_formalism`), `inference/tikhonov.py` (`TikhonovNormalOperator`,
-`TikhonovFamily`), `inference/preconditioners.py`, and `misfit_search` with
-its helpers from `inference/point.py`, into `numerics` (a module or small
-subpackage; names unchanged). `inference` re-exports every moved name so
-`pygeoinf2.inference.TikhonovFamily` and friends keep working;
-`LeastSquares`, `MinimumNorm`, `DiscrepancyPrinciple`, the Gaussian
-inversion and `laplace.py` import from the new home. Nothing in `numerics`
-may import `inference` or `probability` afterwards (D-111): check with the
-import-cost and layering tests. Docstrings of the moved modules lose any
-"inference" framing that no longer fits.
-
-Fast suite green; CURRENT_STATE §2 package map updated.
+**DONE 2026-10-27.** `numerics/normal.py` and `numerics/tikhonov.py` (the
+latter now holding `misfit_search`), the structure-aware preconditioners
+appended to `numerics/preconditioners.py`; `probability` is imported only
+under `TYPE_CHECKING`, so D-111 holds at runtime. `pygeoinf2.inference`
+re-exports every moved name; `pygeoinf2.numerics` exports them too. The
+discrepancy searches stay in `inference/point.py` (they read the problem's
+chi-square). Tests import from the new home.
 
 ## Stage 2 — the geometry layer gains what any convex set can use
 

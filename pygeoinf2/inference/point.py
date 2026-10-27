@@ -9,7 +9,7 @@ affine subspace, :class:`ConstrainedLeastSquares` for least squares and
 :class:`ConstrainedMinimumNorm` for the discrepancy principle.
 
 The fixed-damping estimators are built on
-:class:`~pygeoinf2.inference.tikhonov.TikhonovNormalOperator`, so they expose
+:class:`~pygeoinf2.numerics.tikhonov.TikhonovNormalOperator`, so they expose
 the operator they invert, and :class:`LeastSquares` can be preconditioned,
 given a surrogate, parameterized, data-reduced, or swept over its damping.
 
@@ -32,13 +32,13 @@ from ..geometry.sets import Subset
 from ..geometry.subspaces import AffineSubspace
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
-from ..numerics.root_find import Evaluation, RootResult, monotone_root
+from ..numerics.normal import Formalism
+from ..numerics.normal import choose_formalism as _choose
+from ..numerics.root_find import RootResult
 from ..numerics.solvers import LinearSolver, SolveStep, resolve_solver
+from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
 from .estimators import LinearPointEstimator
-from .normal import Formalism
-from .normal import choose_formalism as _choose
 from .problem import LinearForwardProblem
-from .tikhonov import TikhonovFamily, TikhonovNormalOperator
 
 __all__ = [
     "ConstrainedLeastSquares",
@@ -56,7 +56,7 @@ def choose_formalism(
     """Which space to assemble *this problem's* normal equations in.
 
     The spaces-based decision of
-    :func:`~pygeoinf2.inference.normal.choose_formalism`, read off a problem.
+    :func:`~pygeoinf2.numerics.normal.choose_formalism`, read off a problem.
 
     Args:
         problem: the forward problem.
@@ -212,7 +212,7 @@ class LeastSquares(LinearPointEstimator):
         """The same estimator at a different damping.
 
         What an L-curve walks along. Building a
-        :class:`~pygeoinf2.inference.tikhonov.TikhonovFamily` directly is
+        :class:`~pygeoinf2.numerics.tikhonov.TikhonovFamily` directly is
         cheaper for a long sweep, because it keeps the undamped pieces and can
         warm-start each solve from the last.
         """
@@ -446,62 +446,6 @@ class MinimumNorm(LeastSquares):
             atol=atol,
             minimum_damping=minimum_damping,
         )
-
-
-def misfit_search(
-    family: TikhonovFamily,
-    right_hand_side: Any,
-    misfit: Callable[[Any], float],
-    target: float,
-    /,
-    *,
-    max_iterations: int = 60,
-    rtol: float = 1e-6,
-    atol: float = 0.0,
-    minimum_damping: float = 0.0,
-) -> RootResult:
-    """Find the damping at which a misfit of the damped model reaches *target*.
-
-    The one search under the discrepancy principle and the feasibility tests
-    of the Backus-Gilbert routes: each probe solves ``N(t) w == v`` in the
-    family, warm-started from the previous probe's ``w`` to save inner
-    iterations, and measures the misfit of the model that ``w`` gives. Any misfit that
-    rises with the damping will do: the chi-squared against its critical
-    value, or the plain data-norm misfit against a noise radius.
-
-    Args:
-        family: the damped normal operators.
-        right_hand_side: the family's right-hand side for the data.
-        misfit: of a model, increasing in the damping.
-        target: the value the misfit is to reach.
-        max_iterations: the search's budget.
-        rtol: the search's bracket tolerance.
-        atol: its absolute half, for a root near zero damping.
-        minimum_damping: a floor on the damping; the search stops there and
-            reports the range exhausted rather than probing a numerically
-            singular system. Zero is no floor.
-
-    Returns:
-        The root, with its diagnostics and the saturated cases marked.
-    """
-
-    def evaluate(damping: float, previous: Any) -> Evaluation:
-        result = family.solve(damping, right_hand_side, x0=previous)
-        return Evaluation(
-            value=misfit(family.model_from(result.solution)),
-            solution=result.solution,
-            iterations=result.iterations,
-        )
-
-    return monotone_root(
-        evaluate,
-        target,
-        decreasing=False,
-        max_iterations=max_iterations,
-        rtol=rtol,
-        atol=atol,
-        minimum=minimum_damping,
-    )
 
 
 def _discrepancy_search(

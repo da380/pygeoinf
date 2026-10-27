@@ -38,7 +38,7 @@ from ..algebra.spaces import HilbertSpace
 from ..numerics.optimization import LBFGS, Optimizer
 from ..numerics.solvers import LinearSolver
 from ..probability.gaussian import GaussianMeasure
-from .normal import NormalOperator
+from ..numerics.normal import NormalOperator
 from .problem import ForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover

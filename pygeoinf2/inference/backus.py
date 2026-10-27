@@ -529,7 +529,7 @@ def _minimum_norm_fits(
     smallest model whose misfit ``||d - A m||`` is within the noise radius is
     the damped minimum-norm model at the damping where the misfit reaches it,
     because the misfit rises with the damping while the model's norm falls.
-    :func:`~pygeoinf2.inference.point.misfit_search` finds that damping with
+    :func:`~pygeoinf2.numerics.tikhonov.misfit_search` finds that damping with
     one warm-started Krylov solve in the data space per probe, each step an
     application of ``A`` and ``A*``. ``A A*`` is never formed, which would
     cost one application per datum. Only the misfit differs from the
@@ -555,8 +555,7 @@ def _minimum_norm_fits(
     Returns:
         Whether such a model exists.
     """
-    from .point import misfit_search
-    from .tikhonov import TikhonovFamily
+    from ..numerics.tikhonov import TikhonovFamily, misfit_search
 
     forward = problem.forward_operator
     data_space, model_space = forward.codomain, forward.domain
@@ -989,8 +988,7 @@ class _BisectionRoute(SetEstimator):
         space = self._problem.model_space
         shifted = self._shifted(data)
         if self._prior.is_ball and self._noise.is_ball:
-            from .point import misfit_search
-            from .tikhonov import TikhonovFamily
+            from ..numerics.tikhonov import TikhonovFamily, misfit_search
 
             forward = self._problem.forward_operator
             if self.data_space.norm(shifted) <= self._noise.scale:

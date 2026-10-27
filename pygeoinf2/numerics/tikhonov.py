@@ -9,13 +9,13 @@ Tikhonov least squares has two normal operators, as the Gaussian case does:
     data space   N(t) = A A* + t R
 
 and they are, exactly, the Gaussian normal operators of
-:mod:`~pygeoinf2.inference.normal` with an isotropic prior — ``Q^-1 == t I`` in
+:mod:`~pygeoinf2.numerics.normal` with an isotropic prior — ``Q^-1 == t I`` in
 the model space, ``Q == (1/t) I`` in the data space, where the two factors of
 ``1/t`` cancel between the gain and the operator, so the estimator is the same
 mapping and not merely a proportional one.
 
 They are kept apart anyway, and not because the identity is doubtful. A
-:class:`~pygeoinf2.inference.normal.NormalOperator` is one assembly of one
+:class:`~pygeoinf2.numerics.normal.NormalOperator` is one assembly of one
 problem. This is a *family*: its whole purpose is to be walked along, because
 the damping is what a discrepancy search solves for and what an L-curve sweeps.
 An object whose point is the sweep should say so in its type, and the warm
@@ -28,23 +28,25 @@ means, and one that a damping does not have to make.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
-from ..numerics.root_find import DampedSolves
-from ..numerics.solvers import LinearSolver, resolve_solver
-from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .normal import FactoredNormalOperator, Formalism, choose_formalism
+from .root_find import DampedSolves, Evaluation, RootResult, monotone_root
+from .solvers import LinearSolver, resolve_solver
 
-__all__ = ["TikhonovNormalOperator", "TikhonovFamily"]
+if TYPE_CHECKING:  # pragma: no cover
+    from ..probability.gaussian import GaussianMeasure
+
+__all__ = ["TikhonovNormalOperator", "TikhonovFamily", "misfit_search"]
 
 
 class TikhonovNormalOperator(FactoredNormalOperator):
     """``N(t)`` at one damping, carrying the factors it was built from.
 
-    The same bargain as :class:`~pygeoinf2.inference.normal.NormalOperator`:
+    The same bargain as :class:`~pygeoinf2.numerics.normal.NormalOperator`:
     it behaves as the assembled operator, and it still knows ``A``, ``R`` and
     ``t``, so a structure-aware preconditioner can be built against it.
     """
@@ -295,7 +297,7 @@ class TikhonovNormalOperator(FactoredNormalOperator):
     ) -> "TikhonovNormalOperator":
         """The same operator with any of its factors replaced by cheap ones.
 
-        As :meth:`~pygeoinf2.inference.normal.NormalOperator.surrogate`: the
+        As :meth:`~pygeoinf2.numerics.normal.NormalOperator.surrogate`: the
         surrogate's inverse preconditions the true operator, and correctness
         never depends on how close it is -- only the iteration count does.
 
@@ -466,3 +468,59 @@ class TikhonovFamily:
         """
         result = self.solve(damping, self.right_hand_side(data), x0=x0)
         return self.model_from(result.solution), result
+
+
+def misfit_search(
+    family: TikhonovFamily,
+    right_hand_side: Any,
+    misfit: Callable[[Any], float],
+    target: float,
+    /,
+    *,
+    max_iterations: int = 60,
+    rtol: float = 1e-6,
+    atol: float = 0.0,
+    minimum_damping: float = 0.0,
+) -> RootResult:
+    """Find the damping at which a misfit of the damped model reaches *target*.
+
+    The one search under the discrepancy principle and the feasibility tests
+    of the feasible-set routes: each probe solves ``N(t) w == v`` in the
+    family, warm-started from the previous probe's ``w`` to save inner
+    iterations, and measures the misfit of the model that ``w`` gives. Any misfit that
+    rises with the damping will do: the chi-squared against its critical
+    value, or the plain data-norm misfit against a noise radius.
+
+    Args:
+        family: the damped normal operators.
+        right_hand_side: the family's right-hand side for the data.
+        misfit: of a model, increasing in the damping.
+        target: the value the misfit is to reach.
+        max_iterations: the search's budget.
+        rtol: the search's bracket tolerance.
+        atol: its absolute half, for a root near zero damping.
+        minimum_damping: a floor on the damping; the search stops there and
+            reports the range exhausted rather than probing a numerically
+            singular system. Zero is no floor.
+
+    Returns:
+        The root, with its diagnostics and the saturated cases marked.
+    """
+
+    def evaluate(damping: float, previous: Any) -> Evaluation:
+        result = family.solve(damping, right_hand_side, x0=previous)
+        return Evaluation(
+            value=misfit(family.model_from(result.solution)),
+            solution=result.solution,
+            iterations=result.iterations,
+        )
+
+    return monotone_root(
+        evaluate,
+        target,
+        decreasing=False,
+        max_iterations=max_iterations,
+        rtol=rtol,
+        atol=atol,
+        minimum=minimum_damping,
+    )

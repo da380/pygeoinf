@@ -32,7 +32,7 @@ from ..algebra.spaces import HilbertSpace
 from ..probability.mixture import GaussianMixture
 from .estimators import MeasureEstimator
 from .gaussian import LinearGaussianInversion
-from .normal import Formalism
+from ..numerics.normal import Formalism
 from .problem import LinearForwardProblem
 
 __all__ = ["LinearGaussianMixtureInversion"]

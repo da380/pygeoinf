@@ -20,7 +20,7 @@ that is wrong.
 | `inference/backus.py` `_BisectionRoute` | on an overdetermined problem (`N_d > N_m`, the prior slack at the optimum) `_fit_norm`'s bisection widens to a damping of zero and raises `ZeroDivisionError` in `_state`, or returns a support value off by about `6e-5` relative (found 2026-10-27 in the Stage 0.1 experiment, `benchmarks/`; the replacement route evaluates `γ = 0` explicitly, D-153). Not fixed: the route is being replaced |
 | `symmetric_space/box.py` `Box.support_projection` | on a Sobolev box the operator's domain is the Lebesgue space: it cannot be composed with operators on the space, and its adjoint is wrong (re-verified) |
 | `inference/problem.py` `joint_measure`, `synthetic_model_and_data` | typed for any prior, but fail with `AttributeError` on a non-Gaussian one (a `GaussianMixture`) when there is an error measure |
-| `inference/preconditioners.py` `LocalisedPreconditioner` | blocks that do not cover every index and no noise term give a singular factorization, though the docstring allows partial covers |
+| `numerics/preconditioners.py` `LocalisedPreconditioner` (moved from `inference` 2026-10-27) | blocks that do not cover every index and no noise term give a singular factorization, though the docstring allows partial covers |
 | `numerics/randomized.py` adaptive `random_range` | a zero operator on a coordinate space raises `AttributeError` |
 | `numerics/optimization.py` `TrustRegionNewton` | a collapsed trust region is reported as "iteration limit reached" with `max_iterations` as the count |
 | `plotting/fourier.py` 1-D `plot_balls` | a ball wider than the circle is drawn as two slivers at the ends |

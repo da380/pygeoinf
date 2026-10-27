@@ -870,7 +870,19 @@ class _SpectralFamily(BoundFamily):
         return np.where(np.abs(shifted) > self._rtol * largest, 1.0 / shifted, 0.0)
 
     def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
-        """The member's inverse by spectral division."""
+        """The member's inverse by spectral division.
+
+        Args:
+            multiplier: ``t``.
+            member: the member at that multiplier, on the family's space.
+
+        Returns:
+            Its inverse.
+
+        Raises:
+            ValueError: if the member is not on the space the family was
+                prepared on.
+        """
         if member.domain != self._space or member.codomain != self._space:
             raise ValueError(
                 f"The member must be an operator on {self._space!r}, the space "

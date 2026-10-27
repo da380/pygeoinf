@@ -61,16 +61,22 @@ from .optimization import (
     gauss_newton_hessian,
     truncated_cg,
 )
+from .normal import FactoredNormalOperator, Formalism, NormalOperator, choose_formalism
 from .preconditioners import (
     BandedPreconditioner,
     BlockPreconditioner,
     ColumnThresholdedPreconditioner,
     sparse_approximation,
     IdentityPreconditioner,
+    InvariantDistancePreconditioner,
     JacobiPreconditioner,
+    LocalisedPreconditioner,
+    NormalDiagonalPreconditioner,
     SpectralPreconditioner,
     WoodburyPreconditioner,
+    gaspari_cohn,
 )
+from .tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
 from .quadratic_forms import (
     weighted_chi2_cdf,
     weighted_chi2_quantile,
@@ -203,6 +209,17 @@ __all__ = [
     "WoodburyPreconditioner",
     "ColumnThresholdedPreconditioner",
     "sparse_approximation",
+    "NormalDiagonalPreconditioner",
+    "LocalisedPreconditioner",
+    "InvariantDistancePreconditioner",
+    "gaspari_cohn",
+    "FactoredNormalOperator",
+    "NormalOperator",
+    "Formalism",
+    "choose_formalism",
+    "TikhonovFamily",
+    "TikhonovNormalOperator",
+    "misfit_search",
     "LSQRSolver",
     "LUSolver",
     "LeastSquaresSolver",

@@ -25,8 +25,8 @@ from .backus import (
 )
 from .gaussian import GaussianPosterior, LinearGaussianInversion
 from .mixture import LinearGaussianMixtureInversion
-from .normal import FactoredNormalOperator, Formalism, NormalOperator
-from .preconditioners import (
+from ..numerics.normal import FactoredNormalOperator, Formalism, NormalOperator
+from ..numerics.preconditioners import (
     InvariantDistancePreconditioner,
     LocalisedPreconditioner,
     NormalDiagonalPreconditioner,
@@ -40,7 +40,7 @@ from .estimators import (
     PointEstimator,
     SetEstimator,
 )
-from .tikhonov import TikhonovFamily, TikhonovNormalOperator
+from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator
 from .point import (
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
