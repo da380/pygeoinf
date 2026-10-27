@@ -2,9 +2,6 @@
 
 from .convex import (
     ChambollePockSolver,
-    KKTResult,
-    LevelBundleMethod,
-    PrimalKKTSolver,
     SaddlePointResult,
     BallIndicator,
     BundleResult,
@@ -129,10 +126,7 @@ from .solvers import (
 
 __all__ = [
     "SaddlePointResult",
-    "PrimalKKTSolver",
-    "KKTResult",
     "ChambollePockSolver",
-    "LevelBundleMethod",
     "best_available_qp_solver",
     "SciPyQPSolver",
     "QPSolver",

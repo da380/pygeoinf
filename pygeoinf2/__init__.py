@@ -90,6 +90,7 @@ from . import geometry, inference, numerics, plotting, probability, symmetric_sp
 from .inference import (
     BackusGilbert,
     BackusGilbertParker,
+    BackusGilbertSet,
     FeasiblePropertySet,
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
@@ -144,6 +145,7 @@ __all__ = [
     # inference: the workflow, flat
     "BackusGilbert",
     "BackusGilbertParker",
+    "BackusGilbertSet",
     "FeasiblePropertySet",
     "ConstrainedLeastSquares",
     "ConstrainedMinimumNorm",

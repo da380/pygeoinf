@@ -1085,21 +1085,20 @@ class TestFeasibilityIsAskable:
             data
         ).is_empty()
 
-        for route in ("bisection", "dual"):
-            assert BackusGilbertParker(
-                noisy, target, Ball(model, radius=1e-3), route=route
-            )(data).is_empty()
-            assert not BackusGilbertParker(
-                noisy, target, Ball(model, radius=100.0), route=route
-            )(data).is_empty()
+        for via in ("search", "dual"):
+            assert BackusGilbertParker(noisy, target, Ball(model, radius=1e-3))(
+                data
+            ).is_empty(via=via)
+            assert not BackusGilbertParker(noisy, target, Ball(model, radius=100.0))(
+                data
+            ).is_empty(via=via)
 
     def test_feasibility_is_decided_without_forming_the_data_gram(
         self, setting, monkeypatch
     ):
-        """Both noisy routes answer by a damped minimum-norm search in the data
-        space, one warm-started solve per probe. The primal route used to
-        attempt a support evaluation, which formed A A*: a forward and an
-        adjoint solve per datum, for a yes-or-no question. And the answer is
+        """Feasibility is a yes-or-no question, and neither algorithm forms
+        ``A A*`` to answer it: the search runs a damped minimum-norm family
+        in the data space, the dual a minimization in it. And the answer is
         sharp: with a noise radius small next to the data -- but above the
         solver's residual, below which no fit can be certified -- the
         threshold is the norm of the exact minimum-norm model ``A^+ d``, and
@@ -1119,22 +1118,22 @@ class TestFeasibilityIsAskable:
             "matrix",
             lambda *a, **k: (_ for _ in ()).throw(AssertionError("A A* was formed")),
         )
-        for route in ("bisection", "dual"):
+        for via in ("search", "dual"):
             assert not BackusGilbertParker(
-                noisy, target, Ball(model, radius=1.01 * threshold), route=route
-            )(data).is_empty()
+                noisy, target, Ball(model, radius=1.01 * threshold)
+            )(data).is_empty(via=via)
             assert BackusGilbertParker(
-                noisy, target, Ball(model, radius=0.99 * threshold), route=route
-            )(data).is_empty()
+                noisy, target, Ball(model, radius=0.99 * threshold)
+            )(data).is_empty(via=via)
             # A noise ball wide enough to hold the data is fitted by the zero
             # model, so any prior at all is feasible.
             roomy = LinearForwardProblem(
                 forward,
                 error=Ball(forward.codomain, radius=2.0 * float(np.linalg.norm(data))),
             )
-            assert not BackusGilbertParker(
-                roomy, target, Ball(model, radius=1e-9), route=route
-            )(data).is_empty()
+            assert not BackusGilbertParker(roomy, target, Ball(model, radius=1e-9))(
+                data
+            ).is_empty(via=via)
 
     def test_the_predicate_agrees_with_the_exception(self, setting):
         from pygeoinf2.inference import BackusGilbertParker
@@ -1146,3 +1145,5 @@ class TestFeasibilityIsAskable:
         assert estimator(data).is_empty()
         with pytest.raises(ValueError, match="No model"):
             estimator(data).ellipsoid
+        with pytest.raises(ValueError, match="empty"):
+            estimator(data).support(target.codomain.basis_vector(0))

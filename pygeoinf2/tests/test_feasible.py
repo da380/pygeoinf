@@ -67,15 +67,19 @@ def setting(rng):
     return model, forward, target, truth, forward(truth)
 
 
-class TestTheClosedFormAgreesWithThePresentRoute:
-    """On a ball prior and exact data the new set must reproduce the old."""
+class TestTheClosedFormThroughTheEstimator:
+    """On a ball prior and exact data the estimator's set is the direct one.
+
+    The route this replaced agreed with it to ``1e-10`` on the support, the
+    centre and the fitting model.
+    """
 
     def test_support_membership_and_the_centre(self, setting):
         model, forward, target, truth, data = setting
         prior = Ball(model, radius=3.0)
         new = FeasiblePropertySet(forward, target, prior, data)
         old = BackusGilbertParker(LinearForwardProblem(forward), target, prior)(data)
-        assert new.form == "closed_form"
+        assert new.form == "closed_form" == old.form
         assert all(names[0] == "closed_form" for names in new.algorithms.values())
         for q in directions(target.codomain):
             assert new.support(q) == pytest.approx(old.support(q), rel=1e-10)
@@ -424,10 +428,15 @@ def ellipsoid_on(space, rng, *, center=None, scale=1.0):
     return Ellipsoid(space, precision, center=center, covariance=covariance)
 
 
-class TestThePrimalAgreesWithThePresentRoute:
-    """Two balls, an ellipsoid on either side, centres: the new algorithms
-    reproduce the bisection route, with the dense spectrum as an opt-in
-    solver and conjugate gradients to within the bracket."""
+class TestThePrimalAgreesWithTheDual:
+    """Two balls, an ellipsoid on either side, centres: the primal against
+    the dual, with the dense spectrum as an opt-in solver and conjugate
+    gradients to within the bracket.
+
+    The bisection route these replaced agreed with the primal to ``1e-8``
+    on two balls and ``1e-7`` on ellipsoids with centres, and on the
+    inclusion level to ``1e-7`` and ``1e-6``.
+    """
 
     @pytest.fixture
     def noisy(self, setting):
@@ -439,9 +448,7 @@ class TestThePrimalAgreesWithThePresentRoute:
 
         model, forward, target, truth, data, noise = noisy
         prior = Ball(model, radius=3.0)
-        old = BackusGilbertParker(
-            LinearForwardProblem(forward), target, prior, noise=noise, route="bisection"
-        )(data)
+        old = FeasiblePropertySet(forward, target, prior, data, noise=noise)
         for solver in (SpectralFamilySolver(), CGSolver(rtol=1e-12)):
             new = FeasiblePropertySet(
                 forward, target, prior, data, noise=noise, solver=solver
@@ -452,13 +459,16 @@ class TestThePrimalAgreesWithThePresentRoute:
             for q in directions(target.codomain):
                 result = new.support_result(q)
                 assert result.converged
-                assert result.value == pytest.approx(old.support(q), rel=1e-8)
+                assert result.value == pytest.approx(
+                    old.support(q, via="dual"), rel=1e-6
+                )
                 assert result.inner <= result.value + 1e-12
                 assert result.gap <= 1e-4 * max(abs(result.value), 1.0)
             p = target(truth)
             assert new.inclusion_level(p) == pytest.approx(
                 old.inclusion_level(p), rel=1e-7
             )
+            assert new.admits(p, via="distance")
             assert new.contains(p) and not new.is_empty()
 
     def test_ellipsoids_on_both_sides_off_centre(self, noisy, rng):
@@ -471,14 +481,11 @@ class TestThePrimalAgreesWithThePresentRoute:
         )
         # Data that the shifted truth fits: inside both sets by construction.
         shifted_data = forward.codomain.add(forward(truth), noise.center)
-        old = BackusGilbertParker(
-            LinearForwardProblem(forward), target, prior, noise=noise, route="bisection"
-        )(shifted_data)
         new = FeasiblePropertySet(forward, target, prior, shifted_data, noise=noise)
         assert not new.is_empty()
         for q in directions(target.codomain):
             result = new.support_result(q)
-            assert result.value == pytest.approx(old.support(q), rel=1e-7)
+            assert result.value == pytest.approx(new.support(q, via="dual"), rel=1e-6)
             assert result.gap <= 1e-3 * max(abs(result.value), 1.0)
             extremal = result.extremal_model
             assert prior.contains(extremal, rtol=1e-8)
@@ -486,7 +493,7 @@ class TestThePrimalAgreesWithThePresentRoute:
                 forward.codomain.subtract(shifted_data, forward(extremal)), rtol=1e-8
             )
         p = target(truth)
-        assert new.inclusion_level(p) == pytest.approx(old.inclusion_level(p), rel=1e-6)
+        assert new.admits(p) and new.admits(p, via="distance")
 
     def test_the_closed_form_is_the_limit_of_vanishing_noise(self, setting):
         model, forward, target, truth, data = setting
@@ -729,18 +736,17 @@ class TestTheDual:
             assert dual.certificate is not None
             assert feasible.certificate(q, via="dual") is dual.certificate
 
-    def test_a_quartic_prior_takes_the_dual_and_agrees_with_the_present_route(
-        self, setting
-    ):
+    def test_a_quartic_prior_takes_the_dual_and_agrees_with_the_ball(self, setting):
+        """The KKT route this replaced agreed to ``1e-4`` on this prior."""
         model, forward, target, truth, data = setting
         prior = quartic_ball(model, 3.0)
         noise = Ball(forward.codomain, radius=0.1)
         feasible = FeasiblePropertySet(forward, target, prior, data, noise=noise)
         assert feasible.form == "general"
         assert feasible.algorithms["support"][0] == "dual"
-        old = BackusGilbertParker(
-            LinearForwardProblem(forward), target, prior, noise=noise
-        )(data)
+        old = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
         for q in directions(target.codomain):
             result = feasible.support_result(q)
             assert result.value == pytest.approx(old.support(q), rel=1e-4)
@@ -825,20 +831,22 @@ class TestDistanceAndTheGeneralSearch:
         result = feasible.inclusion_result(far, via="distance")
         assert result.level == np.inf and "outside" in result.message
 
-    def test_the_general_search_agrees_with_the_present_likelihood_route(self, setting):
+    def test_the_general_search_agrees_with_the_ball(self, setting):
+        """The likelihood route this replaced agreed to ``1e-5``; the ball's
+        level is the squared norm, the quartic's its square."""
         model, forward, target, truth, data = setting
         prior = quartic_ball(model, 3.0)
         noise = Ball(forward.codomain, radius=0.1)
         feasible = FeasiblePropertySet(forward, target, prior, data, noise=noise)
         assert feasible.algorithms["inclusion"] == ("search", "distance")
         assert feasible.algorithms["feasibility"] == ("search", "dual")
-        old = BackusGilbertParker(
-            LinearForwardProblem(forward), target, prior, noise=noise
-        )(data)
+        old = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
         assert not feasible.is_empty()
         p = target(truth)
         result = feasible.inclusion_result(p)
-        assert result.level == pytest.approx(old.inclusion_level(p), rel=1e-5)
+        assert result.level == pytest.approx(old.inclusion_level(p) ** 2, rel=1e-5)
         assert result.lower_bound <= result.level
         assert feasible.contains(p)
         fitting = result.fitting_model

@@ -607,6 +607,12 @@ class _LevelSupport(SupportFunction):
         start = self._start
         if start is None:
             start = space.zero()
+        if space.norm(direction) == 0.0:
+            # The zero direction: the supremum is zero, attained anywhere
+            # in the set, and the minimizer of f is a point of it.
+            answer = (0.0, optimizer.minimize(f, start).minimizer)
+            self._memo.last = (direction, answer)
+            return answer
 
         def model(multiplier: float) -> Any:
             weight = 1.0 / multiplier

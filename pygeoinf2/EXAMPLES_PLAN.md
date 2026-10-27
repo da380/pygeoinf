@@ -25,8 +25,8 @@ v2 names from the start.
 > `tests/test_tutorials.py`, which runs each one as `test_examples.py` runs
 > the examples; `tutorials` joins `examples` in `test_code_practice`'s
 > exemptions. Tutorials 10 (last section) and 11 need `planetmodel`, 12
-> needs MFEM. Tutorial 7 uses `BackusGilbertParker`'s automatic choice only,
-> so nothing in it depends on the `route=` spelling D-134 will change.
+> needs MFEM. Tutorial 7 uses `BackusGilbertParker`'s automatic choice,
+> the bracket and the inner hull (D-143).
 > Writing them turned up one library bug, fixed with a regression test:
 > `GaussianMeasure.marginal` refused the marginal of any posterior on a
 > direct sum (`_block_of` lost the covariance's claimed traits). And one

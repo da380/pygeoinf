@@ -7,9 +7,9 @@ model consistent with both can be shown to exclude.
 
 The estimate is not a number with an error bar bolted on. It is a convex set,
 and the honest way to report it is by its extent in chosen directions, which is
-what a support function is. The example computes it exactly, one constrained
-optimization per direction, and compares the result with a linear
-certificate, which bounds it from outside.
+what a support function is. The example computes it, one constrained
+optimization per direction with a certified bracket, and compares the result
+with a linear certificate, which bounds it from outside.
 
 Needs pyshtools and cartopy, which come with the 'sphere' extra.
 """
@@ -17,9 +17,11 @@ Needs pyshtools and cartopy, which come with the 'sphere' extra.
 import numpy as np
 
 from pygeoinf2 import plotting
+from pygeoinf2.algebra.operators import LinearOperator
+from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.geometry.convex import Ball
 from pygeoinf2.inference import BackusGilbert, BackusGilbertParker, LinearForwardProblem
-from pygeoinf2.numerics.solvers import CholeskySolver
+from pygeoinf2.numerics.solvers import CholeskySolver, SpectralFamilySolver
 from pygeoinf2.symmetric_space.sphere import Sobolev
 
 rng = np.random.default_rng(3)
@@ -78,22 +80,29 @@ prior = Ball(X, radius=PRIOR_RADIUS)
 # The exact bounds, one constrained optimization per direction.
 # ---------------------------------------------------------------------------
 
-exact = BackusGilbertParker(problem, target, prior)
+# The damped family behind each direction is ill-conditioned with a noise
+# ball this tight, and conjugate gradients will not reach their tolerance on
+# it. The data space is small, so the family is solved once for every
+# multiplier by a dense eigendecomposition instead.
+exact = BackusGilbertParker(problem, target, prior, solver=SpectralFamilySolver())
 P = target.codomain
 
-print("cap averages: the exact feasible interval, against the truth")
+answer = exact(data)
+print(f"the sets are {answer.form!r}: {answer.algorithms['support'][0]} answers")
+print("cap averages: the feasible interval (outer values), against the truth")
 truth_values = target(truth)
 lower, upper = [], []
 for index in range(P.dim):
     direction = P.basis_vector(index)
-    high = exact(data).support(direction)
-    low = -exact(data).support(P.scale(-1.0, direction))
+    high = answer.support(direction)
+    low = -answer.support(P.scale(-1.0, direction))
     lower.append(low)
     upper.append(high)
     inside = low - 1e-9 <= truth_values[index] <= high + 1e-9
+    inner, outer = answer.support_bracket(direction)
     print(
         f"   cap {index}: [{low:+.5f}, {high:+.5f}]   truth {truth_values[index]:+.5f}"
-        f"   {'inside' if inside else 'OUTSIDE'}"
+        f"   {'inside' if inside else 'OUTSIDE'}   bracket width {outer - inner:.1e}"
     )
 lower, upper = np.array(lower), np.array(upper)
 print()
@@ -102,11 +111,12 @@ print()
 # A linear certificate, which bounds the exact interval from outside.
 # ---------------------------------------------------------------------------
 
-# A direct solve, not CG: with a noise ball this tight the damping is
-# 4e-5 and the data-space normal operator is nearly singular. The data
-# space is small, so it can simply be factored.
+# A direct solve, not CG: with a noise ball this tight the data-space
+# operator is nearly singular. The data space is small, so it can simply be
+# factored. SOLA is this estimator with the trade-off chosen by hand and no
+# prior ball named, which is why SOLA cannot certify its resolution error.
 certificate = BackusGilbert(problem, target, prior, solver=CholeskySolver())
-estimate, resolution, noise = certificate.error_bars(data)
+estimate, resolution, noise = certificate(data).error_bars()
 print("the same, from a linear certificate -- valid always, sharp never:")
 for index in range(P.dim):
     width = resolution[index] + noise[index]
@@ -154,7 +164,6 @@ print()
 # The set is not a box: off-axis directions find the trade-offs.
 # ---------------------------------------------------------------------------
 
-answer = exact(data)
 angles = np.linspace(0.0, 2.0 * np.pi, 12, endpoint=False)
 diagonal = [
     P.from_components(np.array([np.cos(a), np.sin(a), 0.0, 0.0])) for a in angles
@@ -169,6 +178,16 @@ print(
     f"the truth survives both: {box.contains(truth_values)}"
     f" and {tighter.contains(truth_values)}"
 )
+# The contact points of the same directions are points of the set, so their
+# hull is an inner bound: the set lies between the hull and the polytope.
+pair = LinearOperator.from_matrix(
+    P, EuclideanSpace(2), np.eye(2, P.dim), form="components"
+)
+projected = answer.push_forward(pair)
+hull = projected.inner_hull(
+    [projected.domain.from_components(np.array([np.cos(a), np.sin(a)])) for a in angles]
+)
+print(f"inner hull of the contact points on caps 0 and 1: {hull}")
 print()
 
 # ---------------------------------------------------------------------------
@@ -188,7 +207,7 @@ ax, _ = plotting.plot(
 plotting.plot_network(X, paths, ax=ax, alpha=0.08)
 ax.set_title("Truth, with the ray network")
 
-extremal = exact(data).extremal_model(P.basis_vector(0))
+extremal = answer.extremal_model(P.basis_vector(0))
 ax, _ = plotting.plot(
     X,
     extremal,
@@ -207,18 +226,14 @@ ax.set_title("The model that maximizes cap 0, with the caps")
 # the estimator returns, drawn from its support function, with the truth.
 # ---------------------------------------------------------------------------
 
-from pygeoinf2.algebra.operators import LinearOperator  # noqa: E402
-from pygeoinf2.algebra.spaces import EuclideanSpace  # noqa: E402
-
-pair = LinearOperator.from_matrix(
-    P, EuclideanSpace(2), np.eye(2, P.dim), form="components"
-)
-projected = exact(data).push_forward(pair)
 ax, _ = plotting.plot_set(projected, color="tab:blue", alpha=0.4)
+plotting.plot_set(
+    hull, ax=ax, bounds=(ax.get_xlim(), ax.get_ylim()), color="tab:green", alpha=0.4
+)
 ax.plot(truth_values[0], truth_values[1], "k*", markersize=12, label="truth")
 ax.set_xlabel("cap 0 average")
 ax.set_ylabel("cap 1 average")
-ax.set_title("The feasible set, projected onto caps 0 and 1")
+ax.set_title("The feasible set on caps 0 and 1, with the inner hull (green)")
 ax.legend()
 
 print("three figures drawn")

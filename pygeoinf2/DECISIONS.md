@@ -1063,7 +1063,11 @@ estimator with the trade-off parameter chosen by hand and no prior bound
 named, which is why it cannot certify a resolution error; that is a
 sentence in the docstring and tutorial 7, not a class. Point estimators
 (least squares, SOLA) remain for completeness and as tools; they take no
-prior and give no uncertainty, and the library says so.
+prior and give no uncertainty, and the library says so. Built 2026-10-27:
+the set is `BackusGilbertSet`, `BackusGilbert` is a `SetEstimator` whose
+affine part is `point_estimator`, the trade-off is `alpha=` (one by
+default), and `error_bars` reports each part's larger reach on the two
+sides of the estimate, which is the reach itself for a symmetric set.
 
 **D-141. Ellipsoidal probes: the certified ones now, the descriptive ones if
 workable** (2026-10-27, David). On the quadratic tier, for `θ ∈ (0, 1)` the
@@ -1112,7 +1116,9 @@ same name serving every probe the algorithm answers; a refused name lists
 the admissible ones. `inclusion_norm` is retired (`sqrt` of the level);
 `route`, `membership` and `algorithm` are replaced by `form` and
 `algorithms`. A construction-time default algorithm is not offered: it
-would reintroduce the choice-before-data shape D-134 removed.
+would reintroduce the choice-before-data shape D-134 removed. Built
+2026-10-27; the estimator also exposes `form` and `structure`, and its
+`noise` is `None` for exact data.
 
 **D-144. The quadratic tier's root find: one multiplier eliminated if it is
 sound, nested monotone root finds as the fallback** (2026-10-27, David).
@@ -1254,7 +1260,9 @@ A `SweepResult` carries a sweep's per-direction results for `polytope` and
 `outer_ellipsoid`, which must know which half-spaces are infinite;
 `support_values` keeps returning the array and `support_sweep` exposes the
 wrapper. `converged`, `iterations`, `message`, `value` mean one thing at both
-levels, and `iterations` is only ever a count (D-99).
+levels, and `iterations` is only ever a count (D-99). 2026-10-27: `KKTResult`
+went with the two KKT solvers it reported for; `SaddlePointResult` stays as
+the splitting's result, carrying its certificate and discrepancy.
 
 **D-151. Parallelism: threads, chunked so warm starts survive** (2026-10-27,
 David). `n_jobs=` on every independent loop (`support_values`, `polytope`,

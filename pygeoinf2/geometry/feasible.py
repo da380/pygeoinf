@@ -681,19 +681,22 @@ class ClosedForm(Algorithm):
         space = structure.property_space
         shape = self._pieces(structure)["shape"]
         offset = space.to_components(space.subtract(value, fit["center"]))
-        try:
-            weights = np.linalg.solve(shape, offset)
-        except np.linalg.LinAlgError:
-            weights = np.linalg.lstsq(shape, offset, rcond=None)[0]
-            if not np.allclose(shape @ weights, offset, rtol=1e-10, atol=1e-14):
-                return InclusionResult(
-                    level=float("inf"),
-                    lower_bound=float("inf"),
-                    converged=True,
-                    algorithm=self.name,
-                    evaluations=1,
-                    message="no model has this property",
-                )
+        # The shape is singular when the kernel of A has fewer dimensions
+        # than the property: the set is then flat, and a value off it is
+        # unreachable however large the model, which is a proof and not a
+        # failure. The least-squares solve drops the shape's null
+        # directions, and a residual there says so.
+        weights = np.linalg.lstsq(shape, offset, rcond=1e-12)[0]
+        size = float(np.linalg.norm(offset))
+        if not np.allclose(shape @ weights, offset, rtol=1e-8, atol=1e-12 * size):
+            return InclusionResult(
+                level=float("inf"),
+                lower_bound=float("inf"),
+                converged=True,
+                algorithm=self.name,
+                evaluations=1,
+                message="no model has this property",
+            )
         level = structure.prior.level
         # (S⁻¹ (p − c), p − c) in the property space's own inner product.
         normalized = fit["used"] + float(
@@ -1084,14 +1087,21 @@ class Search(Algorithm):
                 iterations=result.iterations,
             )
 
-        root = monotone_root(
-            evaluate,
-            1.0,
-            decreasing=False,
-            max_iterations=self._max_iterations,
-            rtol=self._rtol,
-            atol=0.0,
-        )
+        try:
+            root = monotone_root(
+                evaluate,
+                1.0,
+                decreasing=False,
+                max_iterations=self._max_iterations,
+                rtol=self._rtol,
+                atol=0.0,
+            )
+        except ConvergenceError as error:
+            raise ValueError(
+                f"The damped family could not be solved at its first multiplier: "
+                f"{error}. A tighter solver, a preconditioner, or the dense "
+                "spectral solver (solver=SpectralFamilySolver()) may be needed."
+            ) from error
         model = family.model_from(root.solution)
         return root, model, float(root.value)
 
@@ -1315,10 +1325,30 @@ class Search(Algorithm):
         weights = pieces["inverse"] @ space.to_components(value)
         return T.adjoint(space.from_components(weights)), pieces["projector"]
 
+    def _singular_by_dimension(
+        self, structure: FeasibleStructure, *, restricted: bool
+    ) -> bool:
+        """Whether the data-space family has no full rank at ``γ == 0``.
+
+        ``A C A*`` on the data space has rank at most the model's dimension,
+        and restricted to the kernel of ``T`` at most that less the
+        property's; data beyond that make the family singular as the
+        multiplier vanishes, and the search runs the model-space fit
+        instead.
+        """
+        if self._formalism != "data_space":
+            return False
+        rank = structure.model_space.dim
+        if restricted:
+            rank -= structure.property_space.dim
+        return structure.data_space.dim > rank
+
     def feasibility(self, feasible: "FeasiblePropertySet", /) -> InclusionResult:
         """The smallest prior level over the models fitting the data."""
         structure = feasible.structure
-        if not structure.quadratic:
+        if not structure.quadratic or self._singular_by_dimension(
+            structure, restricted=False
+        ):
             return self._general_fit(feasible, structure.model_space.zero(), None)
         shifted = structure.shifted_data(feasible.data)
         _check_floor(structure, shifted)
@@ -1338,7 +1368,9 @@ class Search(Algorithm):
     ) -> InclusionResult:
         """The smallest prior level over the models with this value fitting the data."""
         structure = feasible.structure
-        if not structure.quadratic:
+        if not structure.quadratic or self._singular_by_dimension(
+            structure, restricted=True
+        ):
             anchor, projector = self._general_anchor(structure, value)
             return self._general_fit(feasible, anchor, projector)
         data_space, space = structure.data_space, structure.property_space
@@ -1931,8 +1963,15 @@ class Dual(Algorithm):
             if structure.noise is not None and _is_quadratic(structure.noise):
                 precision = structure.noise_precision()
                 covariance = structure.noise_covariance()
-                weighted = MassWeightedSpace(data_space, precision)
-                return weighted, covariance
+                # The metric's shape is the noise set's; its scale is
+                # normalized away, so that a tiny or a huge noise set does
+                # not reach the bundle as a tiny or a huge proximal weight.
+                probe = data_space.from_components(np.ones(data_space.dim))
+                scale = data_space.squared_norm(probe) / float(
+                    data_space.inner_product(precision(probe), probe)
+                )
+                weighted = MassWeightedSpace(data_space, precision * scale)
+                return weighted, covariance * (1.0 / scale)
             return data_space, None
 
         return structure.shared(("dual", "space"), build)
@@ -2216,11 +2255,8 @@ class Distance(Algorithm):
         return (self._tolerance, id(self._method))
 
     def accepts(self, structure: FeasibleStructure) -> bool:
-        """Whenever some algorithm computes the support with a contact point."""
-        return any(
-            algorithm.accepts(structure) and algorithm.name != self.name
-            for algorithm in _DEFAULTS["support"]
-        )
+        """Whenever the support function is finite with a contact point: both sets have one, cheaply or by conversion."""
+        return _computes_support(structure.prior) and _computes_support(structure.noise)
 
     def inclusion(
         self, feasible: "FeasiblePropertySet", value: Any, /

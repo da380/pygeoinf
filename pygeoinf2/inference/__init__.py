@@ -21,6 +21,7 @@ from .laplace import LaplaceResult, MaximumAPosteriori
 from .backus import (
     BackusGilbert,
     BackusGilbertParker,
+    BackusGilbertSet,
     FeasiblePropertySet,
 )
 from .gaussian import GaussianPosterior, LinearGaussianInversion
@@ -56,6 +57,7 @@ __all__ = [
     "MaximumAPosteriori",
     "BackusGilbert",
     "BackusGilbertParker",
+    "BackusGilbertSet",
     "FeasiblePropertySet",
     "GaussianPosterior",
     "LinearGaussianInversion",

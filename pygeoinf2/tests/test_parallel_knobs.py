@@ -196,38 +196,40 @@ class TestSupportSweeps:
         result = BackusGilbertParker(
             LinearForwardProblem(forward), target, Ball(model, radius=3.0)
         )(data)
-        assert result.route == "closed_form"
+        assert result.form == "closed_form"
         serial = result.support_values(directions)
         assert np.allclose(result.support_values(directions, n_jobs=2), serial)
-        with pytest.raises(TypeError, match="n_jobs"):
-            result.support_values(directions, warm_start=False)
 
-    def test_the_bisection_takes_workers(self, setting):
+    def test_the_primal_takes_workers(self, setting):
         model, forward, target, data, directions = setting
         result = BackusGilbertParker(
             LinearForwardProblem(forward, error=Ball(forward.codomain, radius=0.1)),
             target,
             Ball(model, radius=3.0),
-            route="bisection",
         )(data)
         serial = result.support_values(directions)
-        assert np.allclose(result.support_values(directions, n_jobs=2), serial)
+        assert np.allclose(
+            result.support_values(directions, n_jobs=2), serial, rtol=1e-8
+        )
 
-    @pytest.mark.parametrize("route", ["kkt", "dual"])
-    def test_the_general_routes_honour_the_workers(self, setting, route):
-        """Cold starts in parallel, so the comparison is with the cold
-        sweep; the dual's bundle minimization is converged to its own
-        tolerance and agrees to that."""
+    @pytest.mark.parametrize("via", ["dual", "splitting"])
+    def test_the_general_algorithms_honour_the_workers(self, setting, via):
+        """Each worker warm-starts within its own chunk, so the comparison
+        is to the algorithm's own tolerance."""
         model, forward, target, data, directions = setting
         result = BackusGilbertParker(
             LinearForwardProblem(forward, error=Ball(forward.codomain, radius=0.1)),
             target,
             Ball(model, radius=3.0),
-            route=route,
         )(data)
-        serial = result.support_values(directions, warm_start=False)
-        parallel = result.support_values(directions, n_jobs=2)
-        assert np.allclose(parallel, serial, rtol=1e-6, atol=1e-8)
+        serial = result.support_values(directions, via=via)
+        fresh = BackusGilbertParker(
+            LinearForwardProblem(forward, error=Ball(forward.codomain, radius=0.1)),
+            target,
+            Ball(model, radius=3.0),
+        )(data)
+        parallel = fresh.support_values(directions, via=via, n_jobs=2)
+        assert np.allclose(parallel, serial, rtol=1e-5, atol=1e-8)
 
 
 finufft = pytest.importorskip("finufft")

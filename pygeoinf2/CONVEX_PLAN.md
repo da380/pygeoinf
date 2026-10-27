@@ -223,38 +223,46 @@ dual when the prior's maximizer does not fit the data (it is reported as
 
 ## Stage 5 — the estimators, and the deletions
 
-1. **`BackusGilbertParker`** (D-143): signature `(problem, T, prior, /, *,
-   noise=None, level=0.95, solver=None)`; resolves the noise set as today
-   (the problem's set, the ambient ball of a Gaussian at `level`, or exact);
-   builds and owns the estimator-level part; `__call__` returns the geometry
-   object. `route`, `membership`, `algorithm`, `method`, `optimizer`,
-   `max_iterations` go. `push_forward` keeps working.
-2. **`BackusGilbert`** (D-140): accepts a ball or ellipsoid on each side,
-   centres included; `X = T C_Q A* (A C_Q A* + α C_R)⁻¹` with the user's
-   solver, `dim P` data-space solves; `__call__` returns the Minkowski-sum
-   `ConvexSet` built from the existing sum and image machinery, with the
-   estimate as its centre, `error_bars` and `estimate` on it;
-   `from_operator(problem, T, X, prior, noise=)` evaluates a given
-   certificate against any sets with support functions. `resolution`,
-   `unresolved` stay. The docstring and tutorial 7 say what SOLA is.
-3. **Delete**: `_ClosedFormRoute`, `_BisectionRoute`, `_DualRoute`,
-   `_LikelihoodRoute`, `_minimum_norm_fits`, `_Quadratic` and the two
-   choosers from `inference/backus.py`; `PrimalKKTSolver`,
-   `LevelBundleMethod` and the smoothed dual from `numerics/convex.py`;
-   `KKTResult` and `SaddlePointResult` as separate types. The old parity
-   figures are kept in a test comment as the bar they set.
-4. **Tests re-spelled**: `test_backus`, `test_quadratic_programming`,
-   `test_parallel_knobs`, `test_inference`, `test_convex`; forced routes
-   become `via=`; `auto` picks the documented algorithm for each form; a
-   refused `via=` names the admissible ones; an instance with tuning is
-   honoured.
-5. **Examples and tutorials**: example 23 and tutorial 7 use the automatic
-   choice and need wording only (SOLA sentence; outer value and bracket;
-   inner hull from contact points beside the polytope); the printed
-   `route=` of any example goes.
+**DONE 2026-10-27.** `inference/backus.py` rewritten over the geometry
+layer: `BackusGilbertParker(problem, T, prior, /, *, noise=None,
+level=0.95, solver=None)` resolves the confidence set (the problem's set,
+the ambient ball of a Gaussian at `level`, or exact data), owns one
+`FeasibleStructure`, and `__call__` returns
+`FeasiblePropertySet.from_structure` on it, so sets for different data
+share the data-independent work; `form` and `structure` on the estimator,
+`push_forward` kept. `BackusGilbert` is a `SetEstimator`: the automatic
+`X = T C A*(A C A* + α R)⁻¹` for a ball or an ellipsoid on each side with
+centres (`alpha=` the trade-off, one by default), `from_operator(problem,
+T, X, prior, noise=)` for any sets with support functions, and `__call__`
+returns a `BackusGilbertSet`, the Minkowski sum `X d + (T − XA) S_prior +
+(−X) S_noise` as a `ConvexSet` with `estimate`, `error_bars()`, `parts`,
+`support`, and membership and projection through the support-function
+oracle; `operator`, `resolution`, `unresolved`, `point_estimator`,
+`estimate(data)` on the estimator. SOLA is named in the docstring, the
+example and the tutorial. `harden_error` kept. Deleted: the five old
+routes, the two choosers and the inference `FeasiblePropertySet` (the
+geometry one is re-exported); `PrimalKKTSolver`, `LevelKKTSolver`,
+`KKTResult`, `LevelBundleMethod` from `numerics/convex.py`.
+`SaddlePointResult` stays: the splitting's certificate and discrepancy
+have no other home (D-150). Tests re-spelled with `via=`; the old parity
+bars are recorded in the test docstrings. Example 23 and tutorial 7 show
+the bracket, the inner hull beside the polytope, and the SOLA sentence.
+Top-level exports: 109 names (108 before; `BackusGilbertSet` added).
 
-Fast suite green; `inference/__init__.py` and the top-level exports
-updated (108 names before; record the new count).
+Fixed on the way: `ClosedForm.inclusion` proves unreachability on a flat
+set (a least-squares solve with a rank cut, where the plain solve gave a
+huge negative level); `Search` falls back to the model-space fit when the
+data-space family is singular by dimension (more data than the model, or
+than the kernel of `T`); `Dual` normalizes the scale of the noise metric
+(a tiny noise ball reached the bundle as a huge proximal weight and
+stopped it at once); `_LevelSupport` handles the zero direction;
+`Distance` applies only where the support function is finite.
+
+Open from here: the primal's inner value can be loose where the data
+barely constrain a direction (example 23, cap 0: bracket width 0.8 on a
+value of 6.4), and the default conjugate gradients do not reach their
+tolerance on that example's family, which the example meets with
+`solver=SpectralFamilySolver()`; both for Stage 7's benchmarks.
 
 ## Stage 6 — ellipsoidal probes (D-141)
 

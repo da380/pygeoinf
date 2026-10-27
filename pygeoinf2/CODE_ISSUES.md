@@ -1,5 +1,7 @@
 # Code issues found during the docstring review, 2026-10-26
 
+> 2026-10-27: the rows on `inference/backus.py`'s routes, `_ClosedFormRoute`, `_BisectionRoute`, `_DualRoute`, `_minimum_norm_fits` and `numerics/convex.py`'s `PrimalKKTSolver` are moot: that code was deleted when the estimators were rewired onto `geometry/feasible.py`, which handles centres and exact data with an ellipsoid prior. The other rows stand.
+
 Seen while the docstrings were being checked against the code. None of them
 is fixed: the review changed no code. Each entry gives the place, what is
 wrong, why it matters and a suggested fix. "Verified" means it was

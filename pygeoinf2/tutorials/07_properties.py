@@ -102,7 +102,8 @@ print("the prior bound alone allows +/-", np.round(prior_only, 2))
 
 # %%
 estimator = BackusGilbert(problem, T, prior, solver=CholeskySolver())
-estimate, resolution_part, noise_part = estimator.error_bars(data)
+certified = estimator(data)
+estimate, resolution_part, noise_part = certified.error_bars()
 for i in range(2):
     print(
         f"arc {i}: {estimate[i]:+.3f} +/- {resolution_part[i] + noise_part[i]:.3f}"
@@ -138,7 +139,10 @@ fig.suptitle("Resolution kernels: what the estimate actually averages")
 # %% [markdown]
 # Where sensors crowd the arc the achieved kernel is a fair copy of the box;
 # where they are sparse it can only approximate it with what it has, and
-# the resolution error is correspondingly large.
+# the resolution error is correspondingly large. SOLA is this estimator
+# with the trade-off between the two terms chosen by hand and no prior
+# ball named: it reports the same kernels but cannot certify the
+# resolution error, since there is no bound for it to be certified against.
 #
 # ## Backus-Gilbert-Parker: the set itself
 #
@@ -157,11 +161,18 @@ for i in range(2):
     q = P.basis_vector(i)
     upper = feasible.support(q)
     lower = -feasible.support(P.scale(-1.0, q))
-    print(f"arc {i}: between {lower:+.3f} and {upper:+.3f}   truth {T(truth)[i]:+.3f}")
+    inner, outer = feasible.support_bracket(q)
+    print(
+        f"arc {i}: between {lower:+.3f} and {upper:+.3f}   truth {T(truth)[i]:+.3f}"
+        f"   (bracket width {outer - inner:.1e})"
+    )
 
 # %% [markdown]
 # Each bound is a *support value*: the largest $(q, p)$ over the set in a
-# direction $q$. Support values in many directions bound the set from
+# direction $q$. The value reported is an outer bound, and it comes with a
+# bracket: the inner value is attained by a model that lies in both sets,
+# so the true support lies between the two, and the width says how far the
+# algorithm got. Support values in many directions bound the set from
 # outside, and the set can also be asked about single points directly —
 # whether a value is consistent with the data and the prior at all — which
 # bounds it from inside. The two characterisations together are what make
@@ -174,14 +185,22 @@ print("(0, 3) is not:", feasible.contains(P.from_components(np.array([0.0, 3.0])
 
 # %%
 fig, ax = plt.subplots(figsize=(5.5, 5.0), layout="constrained")
-plotting.plot_set(estimator.uncertainty(data), ax=ax, color="C1", alpha=0.3)
+plotting.plot_set(certified, ax=ax, color="C1", alpha=0.3)
 plotting.plot_set(feasible, ax=ax, color="C0", alpha=0.6)
+angles = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+hull = feasible.inner_hull(
+    [P.from_components(np.array([np.cos(a), np.sin(a)])) for a in angles]
+)
+plotting.plot_set(
+    hull, ax=ax, bounds=(ax.get_xlim(), ax.get_ylim()), color="C2", alpha=0.6
+)
 ax.plot(*T(truth), "k*", ms=12, label="truth")
 ax.plot(*estimate, "o", color="C1", label="Backus-Gilbert estimate")
 ax.set_xlabel("average over arc 0")
 ax.set_ylabel("average over arc 1")
 ax.set_title(
-    "The feasible set (blue) inside the\nBackus-Gilbert uncertainty set (orange)"
+    "The feasible set (blue) inside the Backus-Gilbert set (orange),\n"
+    "with the inner hull of its contact points (green)"
 )
 ax.legend(loc="lower right", fontsize=8)
 

@@ -44,7 +44,7 @@ is what most of the rest follows from:
 | `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval |
 | `sem1d` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies: `interval` on the line under `dx`, `radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, `layered` for piecewise-continuous fields over adjacent layers of any one of them (their direct sum, with points, jumps, integrals and layer-by-layer priors); Robin ends, a batched harmonic transform, a fit over the domain for sampled functions; wraps `planetmodel.randomfield`, an optional extra, and is imported explicitly (D-115 to D-124, D-126) |
-| `inference` | forward problems with their likelihood `potential`, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, `GaussianPosterior` (D-132), the point estimators and the Tikhonov family, `BackusGilbert` and `BackusGilbertParker`, the MAP and Laplace route; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
+| `inference` | forward problems with their likelihood `potential`, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, `GaussianPosterior` (D-132), the point estimators and the Tikhonov family, `BackusGilbert` with its `BackusGilbertSet` and `BackusGilbertParker` over the geometry layer's feasible set, the MAP and Laplace route; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
 | `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `sem1d` ball, lines on its interval and radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
 | `backends` | MFEM two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps a plain `HilbertSpace` and lets MFEM do every computation (D-96) |
 | `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
@@ -52,7 +52,7 @@ is what most of the rest follows from:
 | `parallel` | `parallel_map` and `resolve_jobs`, the one place joblib is called (D-52) |
 | `compat` | v1 class-name aliases and the v1-space adapter; goes with v1 (D-101) |
 
-108 names are re-exported at the top level and the subpackages are importable
+109 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
 `compat` and `sem1d` are imported explicitly. Thirty-three examples under `examples/`
 run as a slow test; their README says what each shows.
@@ -110,26 +110,24 @@ Anything returning an `Estimate` is stochastic and carries its standard error
 `rtol` to sample *to*. The dense route reports zero error so callers treat
 both alike.
 
-`BackusGilbertParker` answers with a `FeasiblePropertySet` that may carry two
-characterisations, chosen by the sets (D-79, D-80):
+`BackusGilbertParker` answers with the geometry layer's `FeasiblePropertySet`
+(D-142, D-143): the two sets' form decides the algorithms, one per probe,
+and `via=` on a probe names another or passes an instance with tuning
+(D-136):
 
-| support route | needs | what it is |
-|---|---|---|
-| `closed_form` | a ball prior, exact data | the ellipsoid of Al-Attar (2021), `dim(P) + 1` minimum-norm solves |
-| `bisection` | two quadratic sets | the primal route, nested monotone root finds per direction, in the sets' own inner products |
-| `dual` | any convex sets | a bundle minimisation over the data space per direction |
-| `primal`, `kkt`, `smoothed` | as their solvers allow | the general engine's alternative solvers, for cross-checks |
+| form | support | inclusion | feasibility |
+|---|---|---|---|
+| `closed_form` (quadratic prior, exact data) | `closed_form` | `closed_form` | `closed_form` |
+| `quadratic` (a ball or an ellipsoid each side) | `primal`, then `dual`, `splitting` | `search`, then `distance` | `search`, then `dual` |
+| `general` | `dual` (support functions, converted from a smooth level function if need be), `splitting` (projections) | `search` (smooth level functions), `distance` (a finite support function) | `search`, `dual` |
 
-| membership route | needs | what it is |
-|---|---|---|
-| `closed_form` | a ball prior, exact data | the joint map |
-| `reduced` | two quadratic sets | the data-space reduction |
-| `likelihood` | a ball prior, any differentiable confidence set | the minimum-norm fitting model against the prior's level |
-
-Routes that both apply must agree, and the parity tests are the point of the
-layer. On sixteen directions of the example the dual, primal, smoothed and
-KKT solvers agreed to between 1e-3 and 1e-11 of each other in August 2026,
-the KKT route's looser figure being its own limit with a tight noise set.
+Every support value is an outer bound with a certified bracket (D-148);
+the level side decides points and gives inner bounds. Algorithms that both
+apply must agree, and the parity tests are the point of the layer: the
+primal and the dual agree to `1e-6` on balls, the dual with the quadratic
+tier to `1e-4` on a quartic prior, the splitting with the dual to `1e-5`.
+`BackusGilbert` returns a `BackusGilbertSet`, the Minkowski sum a linear
+certificate allows, valid for any `X` by weak duality (D-140).
 
 ## 5. Where a dense matrix is still formed
 
@@ -145,14 +143,11 @@ column, and a composition never expands a low-rank product (D-33).
   eigenproblem below 1024 (D-50).
 - `GaussianMeasure.from_covariance_matrix`, `as_multivariate_normal` and
   `matrix(form=)` are dense by name, as is `nuclear_norm(method="dense")`.
-- `PrimalKKTSolver` and `LevelKKTSolver` form two matrices on the **data**
-  space, deliberately: that is what keeps the model space undiscretised.
-- `LevelBundleMethod`'s master QP and LP bound are dense in the data dimension
-  plus one (401 MB per master at 5000 data), v1's arrangement and a limit on
-  the data size; `ProximalBundleMethod`'s subproblem is dense in the number of
-  cuts, which is small by construction (D-56).
-- `BackusGilbertParker`'s closed form computes the joint spectrum once per
-  estimator; its property-space pseudo-inverse is a handful of rows (D-39).
+- `ProximalBundleMethod`'s subproblem is dense in the number of cuts, which
+  is small by construction (D-56).
+- The feasible set's closed form holds a `dim P × dim P` shape matrix and
+  `Search` a `dim P × dim P` kernel Gram, shared across data; the only
+  dense-in-`N_d` piece is the opt-in `SpectralFamilySolver` (D-145).
 - `backends.mfem.operator_from_bilinear_form` densifies and is documented as
   not the route for a real problem; `solver_from_bilinear_form` and
   `mfem_hilbert` are (D-96).
