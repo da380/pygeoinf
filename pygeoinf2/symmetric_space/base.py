@@ -2580,8 +2580,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``at(m)`` traces once and returns the value and a derivative whose
         adjoint is the one the linear path operators carry. At ``m == 0`` it
         is :meth:`path_integral_operator` scaled by ``−1 / c₀``, to the
-        quadrature. The returned operator also carries ``trace_rays(m)``,
-        the traced rays as lists of points, for drawing.
+        quadrature. The second derivative is available too, as
+        ``second_derivative(m, δm₁)``: the ray's own response to ``δm₁``
+        enters it, through the reduced Hessian of the discrete travel time
+        for bending and through the tangent linear system along the ray
+        for shooting, so an exact Newton step can be built on it. The
+        returned operator also carries ``trace_rays(m)``, the traced rays
+        as lists of points, for drawing.
 
         Args:
             paths: ``(source, receiver)`` pairs.

@@ -448,53 +448,50 @@ class _Polylines:
         return np.sum(weights * slowness.values(points), axis=-1)
 
 
-def _bend(
-    polylines: _Polylines,
-    slowness: _Slowness,
-    *,
-    tolerance: float,
-    max_iterations: int,
-) -> np.ndarray:
-    """The offsets making every path's discrete travel time stationary.
+class _Bands:
+    """The gradient and tridiagonal Hessian of a sum over segments, by coloured differences.
 
-    A damped Newton method on all paths at once. Per iteration the segment
-    travel times are evaluated at the current offsets and at six
-    perturbations -- each of three colours of nodes moved by ``±h`` -- and
-    three mixed ones, which give the gradient, the diagonal and the
-    off-diagonal of the tridiagonal Hessian by differences, every segment
-    seeing at most one perturbed node per colour. Ten batched evaluations
-    of the field, whatever the number of paths and nodes.
+    For a function of the node offsets that is a sum of segment terms, each
+    depending on the two nodes it joins, the nodes are coloured three ways
+    so that no segment sees two perturbed nodes of one colour. Six
+    perturbed evaluations give the gradient and the Hessian's diagonal,
+    six joint ones its off-diagonal, all second order in the step,
+    whatever the number of paths.
     """
-    chart = polylines.chart
-    P, N = polylines.base.shape[:2]
-    if N == 0:
-        return np.zeros((P, 0))
-    lengths = chart.length(polylines.start, polylines.end)
-    spacing = lengths / (N + 1)
-    h = 1.0e-3 * spacing  # per path
-    offsets = np.zeros((P, N))
-    damping = np.full(P, 1.0e-3)
-    colours = [np.arange(N) % 3 == r for r in range(3)]
 
-    def times(u: np.ndarray) -> np.ndarray:
-        """The travel times, one per path."""
-        return polylines.segment_times(slowness, u)
+    def __init__(self, count: int) -> None:
+        self.colours = [np.arange(count) % 3 == r for r in range(3)]
 
-    current = times(offsets)
-    total = current.sum(axis=1)
-    scale = np.full(P, np.inf)
-    for _ in range(max_iterations):
+    def gradient(
+        self,
+        times: Any,
+        offsets: np.ndarray,
+        h: np.ndarray,
+        current: np.ndarray,
+        *,
+        hessian: bool,
+    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+        """``(gradient, diagonal, off_diagonal)`` of the segment sum at the offsets.
+
+        Args:
+            times: the segment terms as a function of the offsets, ``(P, S)``.
+            offsets: where to differentiate, ``(P, N)``.
+            h: the step per path.
+            current: ``times(offsets)``, already evaluated.
+            hessian: whether the bands are wanted as well.
+        """
+        P, N = offsets.shape
         gradient = np.zeros((P, N))
-        diagonal = np.zeros((P, N))
-        off = np.zeros((P, max(N - 1, 0)))
+        diagonal = np.zeros((P, N)) if hessian else None
+        off = np.zeros((P, max(N - 1, 0))) if hessian else None
         plus_times, minus_times = [], []
         for r in range(3):
-            step = np.where(colours[r][None, :], h[:, None], 0.0)
+            step = np.where(self.colours[r][None, :], h[:, None], 0.0)
             plus = times(offsets + step)
             minus = times(offsets - step)
             plus_times.append(plus)
             minus_times.append(minus)
-            nodes = np.flatnonzero(colours[r])
+            nodes = np.flatnonzero(self.colours[r])
             # Node i sits between segments i and i + 1.
             left = (
                 plus[:, nodes]
@@ -503,51 +500,112 @@ def _bend(
                 - minus[:, nodes + 1]
             )
             gradient[:, nodes] = left / (2.0 * h[:, None])
-            curvature = (
-                plus[:, nodes]
-                + plus[:, nodes + 1]
-                - 2.0 * (current[:, nodes] + current[:, nodes + 1])
-                + minus[:, nodes]
-                + minus[:, nodes + 1]
-            )
-            diagonal[:, nodes] = curvature / h[:, None] ** 2
-        for r in range(3):
-            # Nodes of colour r and r + 1 moved together: the mixed term of
-            # the segment between consecutive nodes i (colour r) and i + 1.
-            step = np.where(
-                (colours[r] | colours[(r + 1) % 3])[None, :], h[:, None], 0.0
-            )
-            both = times(offsets + step)
-            nodes = np.flatnonzero(colours[r])
-            nodes = nodes[nodes + 1 < N]
-            segment = nodes + 1  # between node i and node i + 1
-            mixed = (
-                both[:, segment]
-                - plus_times[r][:, segment]
-                - plus_times[(r + 1) % 3][:, segment]
-                + current[:, segment]
-            ) / h[:, None] ** 2
-            off[:, nodes] = mixed
-        # Newton step per path, with Levenberg damping, retried on failure.
-        from scipy.linalg import solve_banded
+            if hessian:
+                curvature = (
+                    plus[:, nodes]
+                    + plus[:, nodes + 1]
+                    - 2.0 * (current[:, nodes] + current[:, nodes + 1])
+                    + minus[:, nodes]
+                    + minus[:, nodes + 1]
+                )
+                diagonal[:, nodes] = curvature / h[:, None] ** 2
+        if hessian:
+            for r in range(3):
+                # Nodes of colours r and r + 1 moved together: the mixed term
+                # of the segment between consecutive nodes i and i + 1.
+                step = np.where(
+                    (self.colours[r] | self.colours[(r + 1) % 3])[None, :],
+                    h[:, None],
+                    0.0,
+                )
+                both_plus = times(offsets + step)
+                both_minus = times(offsets - step)
+                nodes = np.flatnonzero(self.colours[r])
+                nodes = nodes[nodes + 1 < N]
+                segment = nodes + 1
+                # Second order in h, from the two joint moves and the four
+                # single ones already taken.
+                other = (r + 1) % 3
+                mixed = (
+                    both_plus[:, segment]
+                    + both_minus[:, segment]
+                    - plus_times[r][:, segment]
+                    - minus_times[r][:, segment]
+                    - plus_times[other][:, segment]
+                    - minus_times[other][:, segment]
+                    + 2.0 * current[:, segment]
+                ) / (2.0 * h[:, None] ** 2)
+                off[:, nodes] = mixed
+        return gradient, diagonal, off
 
-        proposal = np.zeros((P, N))
-        for p in range(P):
-            band = np.zeros((3, N))
-            band[1] = diagonal[p] + damping[p] * np.maximum(
-                np.abs(diagonal[p]), 1.0e-300
-            )
-            if N > 1:
-                band[0, 1:] = off[p]
-                band[2, :-1] = off[p]
-            try:
-                proposal[p] = solve_banded((1, 1), band, -gradient[p])
-            except (np.linalg.LinAlgError, ValueError):
-                proposal[p] = -gradient[p] * spacing[p] ** 2
+
+def _solve_banded(
+    diagonal: np.ndarray, off: np.ndarray, right: np.ndarray, damping: np.ndarray | None
+) -> np.ndarray:
+    """Solve the tridiagonal systems of every path, with optional Levenberg damping."""
+    from scipy.linalg import solve_banded
+
+    P, N = right.shape
+    solution = np.zeros((P, N))
+    for p in range(P):
+        band = np.zeros((3, N))
+        band[1] = diagonal[p]
+        if damping is not None:
+            band[1] = band[1] + damping[p] * np.maximum(np.abs(diagonal[p]), 1.0e-300)
+        if N > 1:
+            band[0, 1:] = off[p]
+            band[2, :-1] = off[p]
+        try:
+            solution[p] = solve_banded((1, 1), band, right[p])
+        except (np.linalg.LinAlgError, ValueError):
+            solution[p] = np.nan
+    return solution
+
+
+def _bend(
+    polylines: _Polylines,
+    slowness: _Slowness,
+    *,
+    tolerance: float,
+    max_iterations: int,
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """The offsets making every path's discrete travel time stationary, and the Hessian there.
+
+    A damped Newton method on all paths at once, the gradient and the
+    tridiagonal Hessian of the travel time in the offsets by the coloured
+    differences of :class:`_Bands`: thirteen batched evaluations of the
+    field per step, whatever the number of paths and nodes. Returned with the
+    Hessian's bands and the step they were taken at, which the second
+    derivative in the model reuses.
+    """
+    chart = polylines.chart
+    P, N = polylines.base.shape[:2]
+    lengths = chart.length(polylines.start, polylines.end)
+    spacing = lengths / (N + 1)
+    h = 1.0e-3 * spacing
+    offsets = np.zeros((P, N))
+    if N == 0:
+        return offsets, (np.zeros((P, 0)), np.zeros((P, 0)), h)
+    damping = np.full(P, 1.0e-3)
+    bands = _Bands(N)
+
+    def times(u: np.ndarray) -> np.ndarray:
+        return polylines.segment_times(slowness, u)
+
+    current = times(offsets)
+    total = current.sum(axis=1)
+    scale = np.full(P, np.inf)
+    for _ in range(max_iterations):
+        gradient, diagonal, off = bands.gradient(
+            times, offsets, h, current, hessian=True
+        )
+        proposal = _solve_banded(diagonal, off, -gradient, damping)
+        failed = ~np.all(np.isfinite(proposal), axis=1)
+        proposal[failed] = -gradient[failed] * spacing[failed, None] ** 2
         scale = np.max(np.abs(proposal), axis=1)
         converged = scale <= tolerance * lengths
         if np.all(converged):
-            return offsets
+            return offsets, (diagonal, off, h)
         trial = offsets + np.where(converged[:, None], 0.0, proposal)
         trial_times = times(trial)
         trial_total = trial_times.sum(axis=1)
@@ -587,14 +645,27 @@ def _trace(
     end: np.ndarray,
     angle: np.ndarray,
     steps: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Rays from the sources at the take-off angles: miss, travel time, nodes and weights.
+    *,
+    tangent: Any = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Any]:
+    """Rays from the sources at the take-off angles: miss, travel time, nodes, tangents.
 
-    Fourth-order Runge-Kutta in arc length on ``dx/dl = t``,
+    Fourth-order Runge-Kutta in arc length on ``dx/dl = v(t)``,
     ``dt/dl = ∇_⊥ ln s`` (plus the curvature term of the geometry) and
     ``dT/dl = s``, stepped until the ray passes the receiver's position
     along the geodesic; the miss is the transverse coordinate there, by
-    interpolation between the last two states.
+    interpolation between the last two states. The nodes returned end at
+    the receiver: every node from the crossing on is the receiver itself,
+    so a polyline's last segment has its exact length and the padding
+    segments none.
+
+    With ``tangent`` a model direction ``δm₁``, two columns of the tangent
+    linear system are integrated alongside, through the same stages: the
+    ray's response to ``δm₁`` at a fixed take-off angle, and its response
+    to a unit change of the angle. The field's second derivative along a
+    response enters as a central difference of its gradient. Returned as
+    the two responses' node histories and their misses, from which the
+    response that keeps the receiver is assembled.
     """
     P = start.shape[0]
     lengths = chart.length(start, end)
@@ -606,34 +677,118 @@ def _trace(
     arrived = np.zeros(P, dtype=bool)
     miss = np.full(P, np.nan)
     times_at = np.full(P, np.nan)
-    history_x, history_w = [x.copy()], [np.zeros(P)]
-    prev_along, prev_across, prev_time = (
-        chart.along_across(start, end, x)[0],
-        np.zeros(P),
-        time.copy(),
-    )
+    cross_index = np.full(P, -1)
+    history_x = [x.copy()]
+    prev_along = chart.along_across(start, end, x)[0]
+    prev_across, prev_time = np.zeros(P), time.copy()
+
+    columns = 0 if tangent is None else 2
+    if columns:
+        along_unit, across_unit = chart.frame(start, end)
+        # Column 0: δm₁ at fixed angle, starting from rest. Column 1: a
+        # unit change of the take-off angle, which turns the tangent.
+        dx = np.zeros((2, P, x.shape[1]))
+        dt = np.stack(
+            [np.zeros_like(t), chart.takeoff(start, end, angle + 0.5 * np.pi)]
+        )
+        dmiss = np.full((2, P), np.nan)
+        prev_dacross = np.zeros((2, P))
+        prev_dalong = np.zeros((2, P))
+        history_dx = [dx.copy()]
+        scale = 1.0e-6 * (np.ones(P) if chart.dimension == 3 else lengths)
 
     def rates(
         x: np.ndarray, t: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """The derivatives of position, tangent and time with respect to arc length."""
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         g = slowness.gradient_log(x)
-        return chart.velocity(t), chart.acceleration(x, t, g), slowness.values(x)
+        return chart.velocity(t), chart.acceleration(x, t, g), slowness.values(x), g
+
+    def tangent_rates(
+        x: np.ndarray, t: np.ndarray, g: np.ndarray, dx: np.ndarray, dt: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The linearized rates at ``(x, t)`` for the two columns ``(dx, dt)``."""
+        # ∂g/∂x along each column by a central difference of the gradient,
+        # both columns' points in one transform.
+        size = np.maximum(np.linalg.norm(dx, axis=-1), 1.0e-300)
+        eps = (scale / size)[:, :, None]
+        shifted = np.concatenate([x[None] + eps * dx, x[None] - eps * dx], axis=0)
+        g_shifted = slowness.gradient_log(shifted.reshape(-1, x.shape[1])).reshape(
+            shifted.shape
+        )
+        dg = (g_shifted[:2] - g_shifted[2:]) / (2.0 * eps)
+        # The forcing: column 0 carries δm₁, whose gradient perturbs ln s.
+        forcing = np.zeros_like(dg)
+        forcing[0] = -chart.gradient_vectors(tangent, x, **slowness.kwargs)
+        dg = dg + forcing
+        tg = np.sum(t * g, axis=-1)[None, :, None]
+        da = (
+            dg
+            - np.sum(dt * g[None], axis=-1)[:, :, None] * t[None]
+            - np.sum(t[None] * dg, axis=-1)[:, :, None] * t[None]
+            - tg * dt
+        )
+        if chart.dimension == 3:
+            da = da - dx / chart.radius
+        dv = np.stack([chart.velocity(dt[c]) for c in range(2)])
+        return dv, da
+
+    def linearized_projection(
+        x: np.ndarray, t: np.ndarray, dx: Any, dt: Any
+    ) -> tuple[Any, Any]:
+        """The responses after the geometry's projection of a stage point.
+
+        Renormalizing a point onto the sphere and a tangent onto its unit
+        length are what :meth:`_Chart.project` does; their linearizations
+        drop the components along the point and along the tangent.
+        """
+        if dx is None:
+            return dx, dt
+        if chart.dimension == 3:
+            dx = dx - np.sum(dx * x[None], axis=-1, keepdims=True) * x[None]
+            dt = dt - np.sum(dt * x[None], axis=-1, keepdims=True) * x[None]
+        dt = dt - np.sum(dt * t[None], axis=-1, keepdims=True) * t[None]
+        return dx, dt
+
+    def stage(x: np.ndarray, t: np.ndarray, dx: Any, dt: Any) -> tuple:
+        v, a, s_at, g = rates(x, t)
+        if not columns:
+            return v, a, s_at, None, None
+        dx, dt = linearized_projection(x, t, dx, dt)
+        dv, da = tangent_rates(x, t, g, dx, dt)
+        return v, a, s_at, dv, da
 
     for _ in range(int(1.5 * steps) + 5):
         active = ~arrived
         if not np.any(active):
             break
-        k1 = rates(x, t)
-        k2 = rates(
-            *chart.project(x + 0.5 * dl[:, None] * k1[0], t + 0.5 * dl[:, None] * k1[1])
+        h = dl[:, None]
+        k1 = stage(x, t, dx if columns else None, dt if columns else None)
+        x2, t2 = chart.project(x + 0.5 * h * k1[0], t + 0.5 * h * k1[1])
+        k2 = stage(
+            x2,
+            t2,
+            *(
+                (dx + 0.5 * h * k1[3], dt + 0.5 * h * k1[4])
+                if columns
+                else (None, None)
+            ),
         )
-        k3 = rates(
-            *chart.project(x + 0.5 * dl[:, None] * k2[0], t + 0.5 * dl[:, None] * k2[1])
+        x3, t3 = chart.project(x + 0.5 * h * k2[0], t + 0.5 * h * k2[1])
+        k3 = stage(
+            x3,
+            t3,
+            *(
+                (dx + 0.5 * h * k2[3], dt + 0.5 * h * k2[4])
+                if columns
+                else (None, None)
+            ),
         )
-        k4 = rates(*chart.project(x + dl[:, None] * k3[0], t + dl[:, None] * k3[1]))
-        x_new = x + dl[:, None] / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
-        t_new = t + dl[:, None] / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
+        x4, t4 = chart.project(x + h * k3[0], t + h * k3[1])
+        k4 = stage(
+            x4, t4, *((dx + h * k3[3], dt + h * k3[4]) if columns else (None, None))
+        )
+        x_new = x + h / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
+        t_new = t + h / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
         x_new, t_new = chart.project(x_new, t_new)
         time_new = time + dl / 6.0 * (k1[2] + 2.0 * k2[2] + 2.0 * k3[2] + k4[2])
         along, across = chart.along_across(start, end, x_new)
@@ -652,23 +807,85 @@ def _trace(
             times_at = np.where(
                 crossing, prev_time + fraction * (time_new - prev_time), times_at
             )
-            arrived = arrived | crossing
+            # The node about to be recorded lies beyond the receiver; it and
+            # every later one are replaced by the receiver itself below.
+            cross_index = np.where(crossing, len(history_x), cross_index)
+        if columns:
+            dx_new = dx + h[None] / 6.0 * (k1[3] + 2.0 * k2[3] + 2.0 * k3[3] + k4[3])
+            dt_new = dt + h[None] / 6.0 * (k1[4] + 2.0 * k2[4] + 2.0 * k3[4] + k4[4])
+            if chart.dimension == 3:
+                # Keep the responses tangent to the sphere at the new point.
+                dx_new = (
+                    dx_new
+                    - np.sum(dx_new * x_new[None], axis=-1, keepdims=True) * x_new[None]
+                )
+                dt_new = (
+                    dt_new
+                    - np.sum(dt_new * x_new[None], axis=-1, keepdims=True) * x_new[None]
+                )
+            # The tangent stays a unit vector, so its response stays across it.
+            dt_new = (
+                dt_new
+                - np.sum(dt_new * t_new[None], axis=-1, keepdims=True) * t_new[None]
+            )
+            dacross = np.sum(dx_new * across_unit[None], axis=-1)
+            if chart.dimension == 3:
+                dacross = chart.radius * dacross
+                # along == R atan2(x · d, x · s): its linearization at x_new.
+                u = np.sum(x_new * along_unit, axis=-1)[None]
+                w = np.sum(x_new * start, axis=-1)[None]
+                dalong = (
+                    chart.radius
+                    * (
+                        np.sum(dx_new * along_unit[None], axis=-1) * w
+                        - u * np.sum(dx_new * start[None], axis=-1)
+                    )
+                    / (u**2 + w**2)
+                )
+            else:
+                dalong = np.sum(dx_new * along_unit[None], axis=-1)
+            if np.any(crossing):
+                # The miss is the across coordinate where the along one
+                # reaches the receiver's, so its change carries the across
+                # slope times the shift of that crossing point.
+                slope = np.where(
+                    along - prev_along != 0.0,
+                    (across - prev_across)
+                    / np.where(along - prev_along != 0.0, along - prev_along, 1.0),
+                    0.0,
+                )
+                dacross_at = prev_dacross + fraction[None] * (dacross - prev_dacross)
+                dalong_at = prev_dalong + fraction[None] * (dalong - prev_dalong)
+                dmiss = np.where(
+                    crossing[None], dacross_at - slope[None] * dalong_at, dmiss
+                )
+            keep = active[None, :, None]
+            dx = np.where(keep, dx_new, dx)
+            dt = np.where(keep, dt_new, dt)
+            history_dx.append(dx.copy())
+            prev_dacross = dacross
+            prev_dalong = dalong
+        arrived = arrived | crossing
         keep = active[:, None]
         x = np.where(keep, x_new, x)
         t = np.where(keep, t_new, t)
         time = np.where(active, time_new, time)
-        # The step's length, or the fraction of it to the receiver's distance
-        # for the step that crosses it; nothing after arrival.
-        weight = np.where(active, np.where(crossing, fraction * dl, dl), 0.0)
         history_x.append(x.copy())
-        history_w.append(weight)
         prev_along, prev_across, prev_time = along, across, time_new
     if not np.all(arrived):
         raise EvaluationError(
             f"{int(np.sum(~arrived))} of {P} rays did not reach their receivers' "
             "distance; the field is too strong for shooting, or the step too long."
         )
-    return miss, times_at, np.stack(history_x, axis=1), np.stack(history_w, axis=1)
+    nodes = np.stack(history_x, axis=1)
+    beyond = np.arange(nodes.shape[1])[None, :] >= cross_index[:, None]
+    nodes = np.where(beyond[:, :, None], end[:, None, :], nodes)
+    responses = None
+    if columns:
+        histories = np.stack(history_dx, axis=2)  # (2, P, n, k)
+        histories = np.where(beyond[None, :, :, None], 0.0, histories)
+        responses = (histories, dmiss)
+    return miss, times_at, nodes, responses
 
 
 def _shoot(
@@ -681,7 +898,7 @@ def _shoot(
     tolerance: float,
     max_iterations: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """The take-off angles at which the rays arrive: ``(angle, time, nodes, weights)``.
+    """The take-off angles at which the rays arrive: ``(angle, time, nodes)``.
 
     A safeguarded secant iteration on the miss as a function of the angle,
     every path in lockstep: a bracket is grown about the geodesic's angle
@@ -710,9 +927,9 @@ def _shoot(
     side = np.zeros(P)
     for _ in range(max_iterations):
         mid = hi - f_hi * (hi - lo) / (f_hi - f_lo)
-        f_mid, time, nodes, weights = _trace(chart, slowness, start, end, mid, steps)
+        f_mid, time, nodes, _ = _trace(chart, slowness, start, end, mid, steps)
         if np.all(np.abs(f_mid) <= tolerance * lengths):
-            return mid, time, nodes, weights
+            return mid, time, nodes
         same_as_hi = np.sign(f_mid) == np.sign(f_hi)
         # Illinois: halve the retained end's value when it is kept twice.
         f_lo = np.where(same_as_hi, f_lo, np.where(side == -1, 0.5 * f_lo, f_lo))
@@ -743,11 +960,19 @@ class _Rays:
         slowness_at: np.ndarray,
         *,
         times: np.ndarray | None = None,
+        bending: tuple[Any, ...] | None = None,
+        shooting: tuple[Any, ...] | None = None,
     ) -> None:
         self.points = points  # (P, n, k) embedded quadrature points
         self.weights = weights  # (P, n) arc-length weights
         self.slowness = slowness_at  # (P, n)
         self._times = times
+        # (polylines, offsets, diagonal, off, h): the stationary point and
+        # the Hessian's bands there, for the second derivative.
+        self.bending = bending
+        # (angle, steps): the arrival angles and the step count of the traced
+        # rays, for the tangent linear system.
+        self.shooting = shooting
 
     @property
     def times(self) -> np.ndarray:
@@ -774,19 +999,21 @@ def _trace_all(
         if chart.dimension == 1 or start.shape[1] == 1:
             # No direction to bend in: the ray is the interval.
             offsets = np.zeros(polylines.base.shape[:2])
+            bending = None
         else:
-            offsets = _bend(
+            offsets, (diagonal, off, h) = _bend(
                 polylines, slowness, tolerance=tolerance, max_iterations=max_iterations
             )
+            bending = (polylines, offsets, diagonal, off, h)
         points, weights = polylines.rule(polylines.nodes(offsets))
         P = points.shape[0]
         points = points.reshape(P, -1, points.shape[-1])
         weights = weights.reshape(P, -1)
-        return _Rays(points, weights, slowness.values(points))
+        return _Rays(points, weights, slowness.values(points), bending=bending)
     if method != "shooting":
         raise ValueError(f"The method is 'bending' or 'shooting', got {method!r}.")
     steps = (interior + 1) * nodes_per_segment
-    _, times, nodes, weights = _shoot(
+    angle, times, nodes = _shoot(
         chart,
         slowness,
         start,
@@ -795,15 +1022,75 @@ def _trace_all(
         tolerance=tolerance,
         max_iterations=max_iterations,
     )
-    # The trapezoid rule on the ray's own steps: each step's length split
-    # between its two ends, the last partial step included at its weight.
-    P, n, _ = nodes.shape
-    trapezoid = np.zeros((P, n))
-    trapezoid[:, :-1] += 0.5 * weights[:, 1:]
-    trapezoid[:, 1:] += 0.5 * weights[:, 1:]
+    trapezoid = _trapezoid(chart, nodes)
     # The value is the integrated time, fourth order in the step; the
     # trapezoid weights along the ray serve the derivative, second order.
-    return _Rays(nodes, trapezoid, slowness.values(nodes), times=times)
+    return _Rays(
+        nodes,
+        trapezoid,
+        slowness.values(nodes),
+        times=times,
+        shooting=(angle, steps),
+    )
+
+
+def _shooting_response(
+    chart: _Chart,
+    slowness: _Slowness,
+    start: np.ndarray,
+    end: np.ndarray,
+    rays: "_Rays",
+    direction: Any,
+    integral_operator: Any,
+) -> LinearOperator:
+    """The change of a shot ray's derivative operator along its response to ``δm₁``.
+
+    The tangent linear system is integrated along the ray for the response
+    to ``δm₁`` at a fixed take-off angle and for the response to a unit
+    change of the angle; the angle's change that keeps the receiver
+    combines them. The derivative operator is then differenced along that
+    response, the trapezoid weights following the moved nodes.
+    """
+    angle, steps = rays.shooting
+    _, _, _, responses = _trace(
+        chart, slowness, start, end, angle, steps, tangent=direction
+    )
+    histories, dmiss = responses
+    sensitivity = np.where(np.abs(dmiss[1]) > 1.0e-300, dmiss[1], 1.0e-300)
+    dangle = -dmiss[0] / sensitivity
+    response = histories[0] + dangle[:, None, None] * histories[1]
+    size = float(np.max(np.abs(response)))
+    if size == 0.0:
+        return (
+            LinearOperator.zero_map(chart.space, EuclideanSpace(start.shape[0]))
+            if hasattr(LinearOperator, "zero_map")
+            else integral_operator(rays.points, np.zeros(rays.weights.shape))
+        )
+    lengths = chart.length(start, end)
+    epsilon = 1.0e-5 * float(np.min(lengths)) / size
+
+    def derivative_at(nodes: np.ndarray) -> LinearOperator:
+        if chart.dimension == 3:
+            nodes = nodes / np.linalg.norm(nodes, axis=-1, keepdims=True)
+        weights = _trapezoid(chart, nodes)
+        return integral_operator(nodes, -weights * slowness.values(nodes))
+
+    return (
+        derivative_at(rays.points + epsilon * response)
+        - derivative_at(rays.points - epsilon * response)
+    ) * (1.0 / (2.0 * epsilon))
+
+
+def _trapezoid(chart: _Chart, nodes: np.ndarray) -> np.ndarray:
+    """Trapezoid weights along a polyline: each segment's length, by the chart, split between its ends."""
+    P, n, k = nodes.shape
+    flat_a = nodes[:, :-1, :].reshape(-1, k)
+    flat_b = nodes[:, 1:, :].reshape(-1, k)
+    segments = chart.length(flat_a, flat_b).reshape(P, n - 1)
+    weights = np.zeros((P, n))
+    weights[:, :-1] += 0.5 * segments
+    weights[:, 1:] += 0.5 * segments
+    return weights
 
 
 def ray_travel_time_operator(
@@ -871,16 +1158,85 @@ def ray_travel_time_operator(
             max_iterations=max_iterations,
         )
 
-    def derivative_of(rays: _Rays) -> LinearOperator:
-        P, n = rays.weights.shape
-        nodes = chart.unembed(rays.points.reshape(-1, rays.points.shape[-1]))
+    def integral_operator(points: np.ndarray, values: np.ndarray) -> LinearOperator:
+        """``δm -> Σ values δm(points)`` per path: a weighted path integral."""
+        P, n = values.shape
+        nodes = chart.unembed(points.reshape(-1, points.shape[-1]))
         rows = np.repeat(np.arange(P), n)
         columns = np.arange(P * n)
-        values = (-rays.weights * rays.slowness).reshape(-1)
-        sparse = _weight_matrix(P, P * n, rows, columns, values)
+        sparse = _weight_matrix(P, P * n, rows, columns, values.reshape(-1))
         return _weight_operator(sparse) @ space.point_evaluation_operator(
             nodes, unsafe=True, **kwargs
         )
+
+    def derivative_of(rays: _Rays) -> LinearOperator:
+        return integral_operator(rays.points, -rays.weights * rays.slowness)
+
+    memo: dict[str, Any] = {}
+
+    def traced_memo(model: Any) -> _Rays:
+        # The second derivative at a point follows a linearization there;
+        # one trace serves both while the model object is the same.
+        if memo.get("model") is not model:
+            memo["model"] = model
+            memo["rays"] = traced(model)
+        return memo["rays"]
+
+    def second_derivative(model: Any, direction: Any) -> LinearOperator:
+        """``F''(m)[δm₁, ·]`` as an operator in ``δm₂``: the reduced Hessian of the discrete travel time."""
+        rays = traced_memo(model)
+        slowness = _Slowness(chart, model, reference_velocity, **kwargs)
+        flat = rays.points.reshape(-1, rays.points.shape[-1])
+        along = space.evaluate(direction, chart.unembed(flat), **kwargs).reshape(
+            rays.weights.shape
+        )
+        # ∂²s/∂m² == s: the explicit term, a path integral of s δm₁ δm₂.
+        explicit = integral_operator(rays.points, rays.weights * rays.slowness * along)
+        if rays.shooting is not None:
+            # The response is the ray's own change, so its term adds.
+            return explicit + _shooting_response(
+                chart, slowness, start, end, rays, direction, integral_operator
+            )
+        if rays.bending is None:
+            return explicit
+        polylines, offsets, diagonal, off, h = rays.bending
+        if offsets.shape[1] == 0:
+            return explicit
+
+        def mixed_terms(u: np.ndarray) -> np.ndarray:
+            # ∂T_seg/∂m [δm₁] at offsets u: the segment integrals of −s δm₁.
+            points, weights = polylines.rule(polylines.nodes(u))
+            flat = points.reshape(-1, points.shape[-1])
+            s_values = slowness.values(points)
+            d_values = space.evaluate(direction, chart.unembed(flat), **kwargs)
+            return np.sum(
+                weights * (-s_values) * d_values.reshape(points.shape[:-1]), axis=-1
+            )
+
+        bands = _Bands(offsets.shape[1])
+        current = mixed_terms(offsets)
+        t_um, _, _ = bands.gradient(mixed_terms, offsets, h, current, hessian=False)
+        response = _solve_banded(diagonal, off, t_um, None)
+        response[~np.isfinite(response)] = 0.0
+        # The ray moves by −T_uu⁻¹ T_um δm₁; the derivative operator's change
+        # along that move, by a central difference in the offsets.
+        size = float(np.max(np.abs(response)))
+        if size == 0.0:
+            return explicit
+        epsilon = 1.0e-3 * float(np.min(h)) / size
+
+        def derivative_at(u: np.ndarray) -> LinearOperator:
+            points, weights = polylines.rule(polylines.nodes(u))
+            P = points.shape[0]
+            points = points.reshape(P, -1, points.shape[-1])
+            weights = weights.reshape(P, -1)
+            return integral_operator(points, -weights * slowness.values(points))
+
+        moved = (
+            derivative_at(offsets + epsilon * response)
+            - derivative_at(offsets - epsilon * response)
+        ) * (1.0 / (2.0 * epsilon))
+        return explicit - moved
 
     def value(model: Any) -> np.ndarray:
         return traced(model).times
@@ -888,12 +1244,18 @@ def ray_travel_time_operator(
     def linearize(model: Any) -> Any:
         from ..algebra.linearization import Linearization
 
-        rays = traced(model)
+        rays = traced_memo(model)
         return Linearization(
             point=model, value=rays.times, derivative=derivative_of(rays)
         )
 
-    operator = Operator.from_callables(space, data_space, value, linearize=linearize)
+    operator = Operator.from_callables(
+        space,
+        data_space,
+        value,
+        linearize=linearize,
+        second_derivative=second_derivative,
+    )
     operator.trace_rays = lambda model: [  # type: ignore[attr-defined]
         chart.unembed(points) for points in traced(model).points
     ]

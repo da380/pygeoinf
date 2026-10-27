@@ -164,3 +164,93 @@ class TestOnOneDimension:
         assert np.allclose(
             operator.at(model).derivative(direction), differences, rtol=1e-6
         )
+
+
+@pytest.mark.parametrize(
+    "make", [plane, torus, sphere], ids=["plane", "torus", "sphere"]
+)
+class TestTheHessianAction:
+    """``F''(m)[δm₁, δm₂]``: against differences of the derivative, and symmetric."""
+
+    def test_it_matches_differences_of_the_derivative(self, make, rng):
+        space = make()
+        paths = paths_on(space, rng, count=3)
+        operator = space.ray_travel_time_operator(paths, C0, count=16)
+        assert operator.has_second_derivative
+        model = mild_field(space, rng, size=0.2)
+        first = mild_field(space, rng, size=0.1)
+        second = mild_field(space, rng, size=0.1)
+        action = operator.second_derivative(model, first)(second)
+        step = 1.0e-3
+        up = operator.derivative(space.add(model, space.scale(step, first)))(second)
+        down = operator.derivative(space.add(model, space.scale(-step, first)))(second)
+        differences = (up - down) / (2.0 * step)
+        assert np.allclose(action, differences, rtol=2e-4, atol=1e-9)
+
+    def test_it_is_symmetric_in_its_two_directions(self, make, rng):
+        space = make()
+        paths = paths_on(space, rng, count=3)
+        operator = space.ray_travel_time_operator(paths, C0, count=16)
+        model = mild_field(space, rng, size=0.2)
+        first = mild_field(space, rng, size=0.1)
+        second = mild_field(space, rng, size=0.1)
+        one = operator.second_derivative(model, first)(second)
+        other = operator.second_derivative(model, second)(first)
+        assert np.allclose(one, other, rtol=1e-5, atol=1e-10)
+
+    def test_the_ray_response_matters(self, make, rng):
+        """Without the ray's response the Hessian would be the explicit term alone."""
+        space = make()
+        paths = paths_on(space, rng, count=3)
+        operator = space.ray_travel_time_operator(paths, C0, count=16)
+        model = mild_field(space, rng, size=0.2)
+        first = mild_field(space, rng, size=0.1)
+        second = mild_field(space, rng, size=0.1)
+        full = operator.second_derivative(model, first)(second)
+        rays = operator.trace_rays(model)
+        explicit = np.array(
+            [
+                float(
+                    np.sum(
+                        w
+                        * np.exp(-space.evaluate(model, pts))
+                        / C0
+                        * space.evaluate(first, pts)
+                        * space.evaluate(second, pts)
+                    )
+                )
+                for (pts, w) in (
+                    (space.geodesic_quadrature(a, b, count=40)) for a, b in paths
+                )
+            ]
+        )
+        del rays
+        # The explicit term along the geodesic is only a stand-in for the
+        # one along the ray; the point is that the two are not the same
+        # number, since the ray's response is of the same order.
+        assert not np.allclose(full, explicit, rtol=1e-3)
+
+
+@pytest.mark.parametrize("make", [plane, sphere], ids=["plane", "sphere"])
+class TestTheShootingHessian:
+    """The shooting route's Hessian action, from the tangent linear system."""
+
+    def test_it_matches_differences_of_the_derivative_and_is_symmetric(self, make, rng):
+        space = make()
+        paths = paths_on(space, rng, count=2)
+        operator = space.ray_travel_time_operator(
+            paths, C0, count=24, nodes_per_segment=6, method="shooting", tolerance=1e-10
+        )
+        model = mild_field(space, rng, size=0.2)
+        first = mild_field(space, rng, size=0.1)
+        second = mild_field(space, rng, size=0.1)
+        action = operator.second_derivative(model, first)(second)
+        step = 1.0e-2
+        up = operator.derivative(space.add(model, space.scale(step, first)))(second)
+        down = operator.derivative(space.add(model, space.scale(-step, first)))(second)
+        differences = (up - down) / (2.0 * step)
+        assert np.allclose(action, differences, rtol=1e-3, atol=1e-9)
+        # The two responses are integrated separately, so symmetry holds to
+        # the tangent linear system's accuracy rather than to rounding.
+        other = operator.second_derivative(model, second)(first)
+        assert np.allclose(action, other, rtol=5e-3, atol=1e-9)

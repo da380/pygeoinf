@@ -2007,7 +2007,15 @@ length over `c₀` to rounding, the derivative matches finite differences to
 `1e-5`, a traced ray is never slower than the geodesic through the same
 field, and bending (48 segments) and shooting (384 steps) agree to `2e-5`,
 both converging at second order to one limit; on the circle and the line
-the ray is the interval.
+the ray is the interval. The Hessian action came the same day, on David's
+asking: for bending the reduced Hessian `T_mm − T_mu T_uu⁻¹ T_um` of the
+discrete travel time, its pieces the coloured differences the Newton step
+already takes; for shooting the tangent linear (paraxial) system
+integrated along the ray for the responses to `δm₁` and to the take-off
+angle, combined so the receiver is kept, with the derivative operator
+differenced along that response. Both match differences of the derivative
+to `1e-3` or better and are symmetric in their two directions; the
+second difference of the value matches `H[δm, δm]` to `3e-4`.
 
 ## Appendix: measurements behind the defaults
 
