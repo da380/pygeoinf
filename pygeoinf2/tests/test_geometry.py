@@ -620,10 +620,18 @@ class TestEllipsoid:
         with pytest.raises(ValueError, match="must claim"):
             Ellipsoid(X, bad)
 
-    def test_the_support_function_needs_the_covariance(self, X):
+    def test_without_the_covariance_the_support_is_converted(self, X, rng):
+        """Not supplied cheaply, so the flag stays false; computed by the
+        level-function conversion, so the value is right."""
         precision = X.invariant_operator(lambda values: 1.0 + values)
-        with pytest.raises(NotImplementedError, match="covariance"):
-            Ellipsoid(X, precision).support_function()
+        covariance = X.invariant_operator(lambda values: 1.0 / (1.0 + values))
+        cheap = Ellipsoid(X, precision, covariance=covariance)
+        converted = Ellipsoid(X, precision)
+        assert cheap.has_support_function and not converted.has_support_function
+        q = X.random(rng=rng)
+        assert converted.support_function()(q) == pytest.approx(
+            cheap.support_function()(q), rel=1e-6
+        )
 
 
 class TestBoundaries:

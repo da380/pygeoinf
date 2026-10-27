@@ -61,9 +61,19 @@ class ConvexSet(Subset):
     support function bounds the set from outside one direction at a time, a
     level function decides points and gives inner bounds -- and a set may
     carry both, or one, or neither. Each is declared by a ``has_*`` property,
-    so that generic code asks before it calls, and refused by the method when
-    absent. The closed-form sets here have all four; the combinators carry
-    what their parts allow.
+    meaning that the description is supplied cheaply; the closed-form sets
+    here have all four, and the combinators carry what their parts allow.
+
+    Two descriptions can be *converted* into when absent, at the cost of an
+    optimization per evaluation, and the methods do so rather than refuse:
+    a set with a differentiable level function gets a support function and
+    a maximizer, by maximizing the pairing under the level constraint with
+    one multiplier; and a set with a support function and a maximizer gets
+    a projection, hence membership, by the dual of the nearest-point
+    problem, a strongly convex minimization over the same space that is
+    affordable when the space is small -- a property space, not a model
+    space. The ``has_*`` flags stay false for a converted description, so
+    that generic code can tell cheap from computed.
     """
 
     # ----------------------------------------------------------------- #
@@ -94,6 +104,12 @@ class ConvexSet(Subset):
     def has_level_function(self) -> bool:
         """Whether :meth:`level_function` and :attr:`level` describe the set."""
         return False
+
+    @property
+    def _level_function_is_differentiable(self) -> bool:
+        if not self.has_level_function:
+            return False
+        return bool(getattr(self.level_function(), "has_derivative", False))
 
     def level_function(self) -> Functional:
         """``f`` with the set ``{ x : f(x) <= level }``, convex.
@@ -167,12 +183,20 @@ class ConvexSet(Subset):
         Returns:
             The support function, as a functional on the space.
 
+        A set with a differentiable level function and no closed-form
+        support function gets one by conversion: each value is the
+        maximization of the pairing under the level constraint, a scalar
+        root find over one multiplier with a convex minimization inside,
+        and infinite in a direction the set is unbounded in.
+
         Raises:
-            NotImplementedError: for a set without one; see
+            NotImplementedError: for a set with neither; see
                 :attr:`has_support_function`. An intersection has none in
-                closed form, and the Backus-Gilbert-Parker estimator computes
-                the feasible property set's by minimization.
+                closed form, and the feasible property set computes its own
+                by its algorithms.
         """
+        if self._level_function_is_differentiable:
+            return _LevelSupport(self)
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support function."
         )
@@ -191,8 +215,12 @@ class ConvexSet(Subset):
             A point of the set attaining the support value.
 
         Raises:
-            NotImplementedError: for a set with no closed form.
+            NotImplementedError: for a set with no closed form and no
+                differentiable level function to convert from.
+            ValueError: if the set is unbounded in the direction.
         """
+        if self._level_function_is_differentiable:
+            return _LevelSupport(self).subgradient(direction)
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support maximizer."
         )
@@ -433,20 +461,30 @@ class _OracleSet(ConvexSet):
         certificate of *non*-membership — see :meth:`outside`. A set built
         with ``membership=`` answers exactly, by that test.
 
+        Without a test, membership is decided through the nearest-point
+        problem's dual, a strongly convex minimization over the space with
+        one support evaluation per step, when a maximizer is available: see
+        :meth:`project`.
+
         Args:
             x: a vector of the space.
-            rtol: passed to the membership test.
+            rtol: passed to the membership test, or the distance's tolerance
+                relative to ``max(||x||, 1)``.
 
         Raises:
-            NotImplementedError: if no membership test was given. Returning
-                a guess would be worse than refusing.
+            NotImplementedError: if there is neither a membership test nor a
+                maximizer. Returning a guess would be worse than refusing.
         """
         if self._membership is not None:
             return bool(self._membership(x, rtol))
-        raise NotImplementedError(
-            "Membership needs every direction. Use outside() for a "
-            "certificate of exclusion, or polytope() for an outer bound."
-        )
+        if self._maximizer is None:
+            raise NotImplementedError(
+                "Membership needs every direction, and this set has no "
+                "maximizer to convert its support function with. Use outside() "
+                "for a certificate of exclusion, or polytope() for an outer bound."
+            )
+        _, distance, _ = _project_by_support(self, x)
+        return distance <= rtol * max(self._domain.norm(x), 1.0)
 
     def outside(self, x: Any, directions: Any, /, *, rtol: float = 1e-9) -> bool:
         """True when some direction proves the point is not in the set.
@@ -466,17 +504,24 @@ class _OracleSet(ConvexSet):
         return False
 
     def project(self, x: Any, /) -> Any:
-        """Not available from a support function alone.
+        """The nearest point, by the dual of the nearest-point problem.
+
+        ``½ d(x)² == max over q of (q, x) − h(q) − ½ ||q||²``, whose maximizer
+        is ``x − P(x)``; a strongly convex problem over the space, solved by
+        a bundle method with one support evaluation and one maximizer per
+        step. Affordable on a small space; on a model space it is the wrong
+        tool, which is why :attr:`has_projection` stays false.
 
         Raises:
-            NotImplementedError: always. The nearest point of a set is not
-                determined by its support function; that is what makes
-                :meth:`outside` one-sided.
+            NotImplementedError: if the set has no maximizer, without which
+                the dual has no subgradient.
         """
-        raise NotImplementedError(
-            "A support function does not give a projection. Bound the set with "
-            "polytope() and project onto that."
-        )
+        if self._maximizer is None:
+            raise NotImplementedError(
+                "A support function without a maximizer gives no projection. "
+                "Bound the set with polytope() and project onto that."
+            )
+        return _project_by_support(self, x)[0]
 
     def polytope(self, directions: Any, /) -> "Polytope":
         """A certified outer bound, one half-space per direction."""
@@ -491,6 +536,121 @@ class _OracleSet(ConvexSet):
 
     def __repr__(self) -> str:
         return f"ConvexSet.from_support_function({self.domain!r})"
+
+
+class _LevelSupport(SupportFunction):
+    """The support function of ``{ f <= c }`` by one multiplier, for a differentiable ``f``.
+
+    ``h(q) == sup { (q, x) : f(x) <= c }``. For a multiplier ``λ > 0`` the
+    minimizer ``x_λ`` of ``f(x) − (q, x) / λ`` has ``f(x_λ)`` decreasing in
+    ``λ``, so the multiplier at which ``f(x_λ) == c`` is a monotone root
+    find, and ``x_λ`` there attains the supremum. When ``f(x_λ)`` stays
+    above ``c`` as ``λ`` falls, no point of the set attains a finite
+    supremum in that direction and the value is infinite.
+    """
+
+    def __init__(self, subset: ConvexSet, /) -> None:
+        super().__init__(subset.domain)
+        self._subset = subset
+        self._functional = subset.level_function()
+        self._level = float(subset.level)
+        self._last: tuple[Any, tuple[float, Any]] | None = None
+
+    def _solve(self, direction: Any) -> tuple[float, Any]:
+        if self._last is not None and self._last[0] is direction:
+            return self._last[1]
+        from ..numerics.optimization import LBFGS, NewtonCG
+        from ..numerics.root_find import Evaluation, monotone_root
+
+        space, f, level = self.domain, self._functional, self._level
+        optimizer = (
+            NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
+            if f.has_hessian
+            else LBFGS(rtol=1e-12, gtol=0.0, max_iterations=2000)
+        )
+        start = getattr(self._subset, "center", None)
+        if start is None:
+            start = space.zero()
+
+        def model(multiplier: float) -> Any:
+            weight = 1.0 / multiplier
+
+            def value(x: Any) -> float:
+                return float(f(x)) - weight * space.inner_product(direction, x)
+
+            def gradient(x: Any) -> Any:
+                return space.axpy(-weight, direction, space.copy(f.gradient(x)))
+
+            hessian = (lambda x: f.hessian(x)) if f.has_hessian else None
+            objective = Functional.from_callables(
+                space, value, gradient=gradient, hessian=hessian
+            )
+            return optimizer.minimize(objective, start).minimizer
+
+        root = monotone_root(
+            lambda multiplier, _: Evaluation(float(f(model(multiplier)))),
+            level,
+            decreasing=True,
+            max_iterations=80,
+            rtol=1e-9,
+            atol=0.0,
+            warm_start=False,
+        )
+        if root.exhausted == "low":
+            answer: tuple[float, Any] = (float("inf"), None)
+        else:
+            point = model(root.argument)
+            answer = (float(space.inner_product(direction, point)), point)
+        self._last = (direction, answer)
+        return answer
+
+    def _value(self, y: Any) -> float:
+        return self._solve(y)[0]
+
+    def _maximizer(self, y: Any) -> Any:
+        point = self._solve(y)[1]
+        if point is None:
+            raise ValueError(
+                "The set is unbounded in this direction; no point attains the "
+                "support."
+            )
+        return point
+
+
+def _project_by_support(
+    subset: ConvexSet, x: Any, /, *, method: Any = None
+) -> tuple[Any, float, Any]:
+    """The nearest point of a set from its support function and maximizer.
+
+    ``½ d(x)² == max over q of (q, x) − h(q) − ½ ||q||²`` (the Fenchel dual of
+    the nearest-point problem), attained at ``q* == x − P(x)``. The
+    minimization of the negated objective is strongly convex with subgradient
+    ``p̂(q) − x + q``, ``p̂`` the maximizer, and a bundle method takes it. The
+    bundle stops on the value, which is quadratic in the error of ``q``, so
+    the projection is accurate to about the square root of its gap
+    tolerance: ``1e-12`` gives a point good to ``1e-6``.
+
+    Returns:
+        ``(projection, distance, result)``.
+    """
+    from ..numerics.convex import ProximalBundleMethod
+
+    space = subset.domain
+    support = subset.support_function()
+
+    def value(q: Any) -> float:
+        return (
+            float(support(q)) - space.inner_product(q, x) + 0.5 * space.squared_norm(q)
+        )
+
+    def subgradient(q: Any) -> Any:
+        return space.axpy(1.0, q, space.subtract(support.subgradient(q), x))
+
+    objective = Functional.from_callables(space, value)
+    optimizer = method or ProximalBundleMethod(tolerance=1e-12, max_iterations=500)
+    result = optimizer.minimize(objective, space.zero(), subgradient=subgradient)
+    q = result.minimizer
+    return space.subtract(x, q), float(space.norm(q)), result
 
 
 class _MinkowskiSum(ConvexSet):
@@ -1142,15 +1302,24 @@ class HalfSpace(ConvexSet):
 
 
 class Ellipsoid(ConvexSet):
-    """``{ x : (x - center, P (x - center)) <= 1 }`` for a positive definite ``P``.
+    """``{ x : (x - center, P (x - center)) <= 1 }`` for a positive semidefinite ``P``.
 
     Given by its **precision** rather than its covariance, because that is what
     a membership test needs and what a credible region is naturally expressed
     with: the set of points whose Mahalanobis distance is at most one.
 
-    A support function is available in closed form given the covariance. The
-    projection has no closed form: :meth:`project` solves a scalar secular
-    equation by Newton's method, with linear solves at every step.
+    A support function is available in closed form given the covariance;
+    without one it is computed by the level-function conversion, a solve
+    with the precision per evaluation. The projection has no closed form:
+    :meth:`project` solves a scalar secular equation by Newton's method,
+    with linear solves at every step.
+
+    A precision that claims only positive *semi*-definiteness defines an
+    unbounded set -- a bound on a semi-norm, or an ``L²`` amplitude bound on a
+    Sobolev space -- which is admitted: membership, the level function and
+    the projection are unchanged, there is no covariance to give, and the
+    support function is infinite in the directions the set is unbounded in.
+    :attr:`is_bounded` says which case this is.
     """
 
     def __init__(
@@ -1178,10 +1347,11 @@ class Ellipsoid(ConvexSet):
 
         Raises:
             ValueError: if the precision does not claim to be self-adjoint
-                and positive definite, or an operator is on the wrong space.
+                and positive semidefinite, or an operator is on the wrong
+                space.
         """
         super().__init__(domain)
-        required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        required = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
         if required & precision.traits != required:
             raise ValueError(
                 f"The precision must claim {required!s}; it claims "
@@ -1197,7 +1367,7 @@ class Ellipsoid(ConvexSet):
         self._center = domain.zero() if center is None else center
 
     def support_maximizer(self, direction: Any, /) -> Any:
-        """``center + C q / sqrt((C q, q))``, which needs the covariance.
+        """``center + C q / sqrt((C q, q))`` given the covariance; converted without it.
 
         Args:
             direction: the direction to maximize along.
@@ -1206,15 +1376,10 @@ class Ellipsoid(ConvexSet):
             The point of the ellipsoid furthest along it.
 
         Raises:
-            AttributeError: if the ellipsoid was built without its
-                covariance. The precision alone gives the constraint but not
-                the point attaining the support.
+            ValueError: if the set is unbounded in the direction.
         """
         if self._covariance is None:
-            raise AttributeError(
-                "This ellipsoid was built without a covariance, so it cannot "
-                "exhibit the point attaining its support."
-            )
+            return super().support_maximizer(direction)
         image = self._covariance(direction)
         scale = np.sqrt(self.domain.inner_product(image, direction))
         if scale == 0.0:
@@ -1277,6 +1442,11 @@ class Ellipsoid(ConvexSet):
     def has_level_function(self) -> bool:
         """Whether a level function describes the set."""
         return True
+
+    @property
+    def is_bounded(self) -> bool:
+        """Whether the precision claims positive definiteness, which bounds the set."""
+        return bool(Traits.POSITIVE_DEFINITE & self._precision.traits)
 
     def level_function(self) -> Functional:
         """The Mahalanobis form ``(P (x - c), x - c)``, at level one."""
@@ -1391,20 +1561,16 @@ class Ellipsoid(ConvexSet):
         return space.add(self._center, point)
 
     def support_function(self) -> SupportFunction:
-        """``(center, y) + sqrt((y, C y))`` with ``C`` the covariance.
+        """``(center, y) + sqrt((y, C y))`` with ``C`` the covariance; converted without it.
 
         Returns:
-            The support function.
-
-        Raises:
-            NotImplementedError: if the ellipsoid was built without its
-                covariance.
+            The support function: closed form given the covariance, and
+            otherwise the level-function conversion, one solve with the
+            precision per evaluation and infinite where the set is
+            unbounded.
         """
         if self._covariance is None:
-            raise NotImplementedError(
-                "An ellipsoid's support function needs its covariance, the "
-                "inverse of the precision. Pass covariance= to supply it."
-            )
+            return super().support_function()
         return _EllipsoidSupport(
             self._domain, self._covariance, self._center, factor=self._factor
         )

@@ -116,41 +116,33 @@ chi-square). Tests import from the new home.
 
 ## Stage 2 — the geometry layer gains what any convex set can use
 
-1. **The conversions (D-135)**, in `geometry`/`numerics`: a support
-   function and maximiser for any set with a smooth level function, by the
-   one-multiplier maximisation of `(q, x)` subject to the level constraint
-   (the one-constraint case of `LevelKKTSolver`'s machinery; the Newton
-   inner solve stays matrix-free); and the distance of a *finite-dimensional*
-   set from its support function and maximiser, `d(p) = max over ‖q‖ ≤ 1 of
-   (q, p) − h(q)`, a concave maximisation with supergradient `p − p̂(q)`,
-   which gives membership with a certificate either way. `ConvexSet` grows
-   the two as default implementations behind the existing flags, so a set
-   that supplies neither cheaply still answers, and the answer says it is
-   converted.
-2. **Degenerate quadratic sets (D-138).** `Ellipsoid` accepts a precision
-   claiming `POSITIVE_SEMIDEFINITE` when built for inference use; its
-   support function is `+∞` off the right subspace and says so; its
-   maximiser raises there. A `Cylinder` (quadratic set with an explicit
-   kernel basis) for the true-kernel case, same behaviour, planned and
-   droppable if it proves hard. `+∞` is a legal value of `support()`
-   everywhere, and `Polytope` construction skips a half-space with infinite
-   offset and records that it did.
-3. **Probe results (D-150)**: `SupportResult`, `InclusionResult`,
-   `SweepResult` as frozen dataclasses in `geometry` (fields in D-150).
-4. **`FeasiblePropertySet`** in `geometry/feasible.py` (name open), built
-   directly from `(A, T, prior, data, *, noise=None, solver=None)`, `noise=None`
-   meaning exact data; `form`, `algorithms` and the read-only structure
-   (`prior`, `noise`, `data`, `forward_operator`, `property_operator`);
-   every probe of D-143 as a method that dispatches by form and `via=`,
-   initially with only `ClosedForm` behind it.
-5. **`ClosedForm`**, generalised from a ball to any quadratic prior
-   (minimum-`Q`-norm model, `Q`-orthogonal projection onto `ker A`), centres
-   included, `dim P + 1` solves through the supplied solver; serves bounds,
-   membership, projection and `ellipsoid`.
+**DONE 2026-10-27, except `Cylinder`.** In `geometry/convex.py`: the
+support-function conversion (`_LevelSupport`, one multiplier around a
+convex minimization, infinite where the set is unbounded) behind
+`ConvexSet.support_function` and `support_maximizer` for any set with a
+differentiable level function; the projection conversion
+(`_project_by_support`, the Fenchel dual of the nearest-point problem,
+strongly convex, by the proximal bundle) behind the oracle set's `project`
+and `contains`, accurate to the square root of the bundle's gap tolerance;
+`Ellipsoid` admits a semidefinite precision (`is_bounded` says which) and
+falls back to the conversions without a covariance. The `has_*` flags stay
+"supplied cheaply". In `geometry/feasible.py`: `SupportResult`,
+`InclusionResult`, `SweepResult`; the shared `_Structure` with its
+`form`; the `Algorithm` base; `ClosedForm` for any quadratic prior with
+its centre, the inclusion level through the shape `S` on the property
+space (no joint spectrum, nothing dense in `N_d`), the level function's
+gradient from `S`; `FeasiblePropertySet` with every probe of D-143,
+dispatch by form, `via=` by name or instance, value-keyed caches under
+reentrant locks, `with_data`. Exported from `pygeoinf2.geometry`; not yet
+at the top level (the inference set still owns that name until Stage 5).
+Tests in `tests/test_feasible.py`: parity with the present closed form,
+the ellipsoid prior against its whitened ball, centres, dispatch and
+refusals, sharing, probes, the conversions.
 
-Tests: the conversions on `make_dense_metric_space`; the closed form against
-the present `_ClosedFormRoute` on balls, and on an ellipsoid prior against
-the quadratic tier once Stage 3 lands; `+∞` handling.
+Still to do here: **`Cylinder`** (D-138), a quadratic set with an explicit
+kernel basis for the true-kernel case; deferred to after Stage 4, since
+its purpose is the affine constraint on the dual's certificate, and
+droppable.
 
 ## Stage 3 — the quadratic tier, matrix-free
 

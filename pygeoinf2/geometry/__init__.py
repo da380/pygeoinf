@@ -11,6 +11,14 @@ from .convex import (
     HalfSpace,
     Hyperplane,
 )
+from .feasible import (
+    Algorithm,
+    ClosedForm,
+    FeasiblePropertySet,
+    InclusionResult,
+    SupportResult,
+    SweepResult,
+)
 from .sets import (
     Complement,
     EmptySet,
@@ -25,6 +33,12 @@ from .subspaces import AffineSubspace, LinearSubspace, OrthogonalProjector
 
 __all__ = [
     "AffineSubspace",
+    "Algorithm",
+    "ClosedForm",
+    "FeasiblePropertySet",
+    "InclusionResult",
+    "SupportResult",
+    "SweepResult",
     "Ball",
     "BallSurface",
     "Complement",

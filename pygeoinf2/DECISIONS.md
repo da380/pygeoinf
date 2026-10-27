@@ -961,6 +961,11 @@ be an optimisation over infinitely many directions and is not offered. So
 the feasible property set always carries both characterisations, D-80
 becoming a guarantee; sets known by projection alone reach the support side
 through a primal-dual splitting, which is why Chambolle-Pock stays (D-139).
+Built 2026-10-27: the second conversion is the Fenchel dual of the
+nearest-point problem, ``½ d(p)² = max over q of (q, p) − h(q) − ½‖q‖²``,
+unconstrained and strongly convex, so it yields the projection as well as
+the distance and a proximal bundle takes it; its argument is accurate to
+the square root of the bundle's gap tolerance.
 
 **D-136. Three forms, one algorithm per form per probe, no registry yet**
 (2026-10-27, David). The form of the pair `(prior, noise)` is decided by two
@@ -981,7 +986,11 @@ deferred until a second composite set wants the same dispatch; the algorithm
 objects already have the shape it would register (`name`, `accepts`, the
 probe methods), so adding it later changes no user-facing line. D-82's open
 question is closed by this: the tiers are nested specialisations, not rival
-algorithms for one form, so there is nothing to rank by timing.
+algorithms for one form, so there is nothing to rank by timing. Built
+2026-10-27 as `geometry/feasible.py`: the closed form's membership goes
+through the property-space shape `S` (the level is `(C⁻¹ũ, ũ) + (S⁻¹(p − c),
+p − c)`), which retires the joint spectrum of `(A; T)` the old route formed,
+dense in `N_d + dim P`.
 
 **D-137. Membership is one algorithm, the inner problem chosen by form**
 (2026-10-27, David). Al-Attar (2021) §3.3: write `m = m̃ + u` with `m̃` the
