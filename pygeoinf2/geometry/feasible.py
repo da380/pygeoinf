@@ -33,7 +33,9 @@ import numpy as np
 from ..algebra.operators import Functional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..numerics.convex import SupportFunction
-from ..numerics.solvers import CGSolver, LinearSolver
+from ..numerics.normal import DampedNormalOperator
+from ..numerics.root_find import DampedSolves, Evaluation, RootResult, monotone_root
+from ..numerics.solvers import CGSolver, ConvergenceError, LinearSolver
 from ..traits import Traits
 from .convex import Ball, ConvexSet, Ellipsoid, HalfSpace, Polytope
 
@@ -41,7 +43,10 @@ __all__ = [
     "Algorithm",
     "ClosedForm",
     "FeasiblePropertySet",
+    "FeasibleStructure",
     "InclusionResult",
+    "Primal",
+    "Search",
     "SupportResult",
     "SweepResult",
 ]
@@ -162,12 +167,16 @@ def _is_quadratic(subset: ConvexSet | None) -> bool:
     return isinstance(subset, (Ball, Ellipsoid))
 
 
-class _Structure:
+class FeasibleStructure:
     """What every set from one estimator shares: operators, sets, solver, caches.
 
-    The expensive data-independent work of each algorithm -- a kernel
-    projector's pieces, a closed form's shape -- is kept here, keyed by the
-    algorithm's settings, so that sets for different data share it.
+    The data-independent part of a feasible property set: the operators,
+    the two sets, the solver, and the expensive work each algorithm does
+    once -- a kernel projector's pieces, a closed form's shape, a family
+    with its preconditioner -- kept under :meth:`shared`, keyed by the
+    algorithm's settings, so that the sets for different data share it. An
+    algorithm reads what it needs from here through the set's
+    :attr:`FeasiblePropertySet.structure`.
     """
 
     def __init__(
@@ -182,10 +191,10 @@ class _Structure:
     ) -> None:
         if property_operator.domain != forward.domain:
             raise ValueError("The property operator must act on the model space.")
-        if prior.domain != forward.domain:
-            raise ValueError("The constraint set must lie in the model space.")
         if not isinstance(prior, ConvexSet):
             raise TypeError("The constraint set must be a ConvexSet.")
+        if prior.domain != forward.domain:
+            raise ValueError("The constraint set must lie in the model space.")
         if noise is not None:
             if not isinstance(noise, ConvexSet):
                 raise TypeError(
@@ -197,9 +206,30 @@ class _Structure:
         self.property_operator = property_operator
         self.prior = prior
         self.noise = None if _is_point(noise) else noise
-        self.solver = solver if solver is not None else CGSolver(rtol=1e-12)
+        self._solver = solver
         self.cache: dict[Any, Any] = {}
         self.lock = threading.RLock()
+
+    @property
+    def solver(self) -> LinearSolver | None:
+        """The solver the caller supplied, or None for the default."""
+        return self._solver
+
+    def solver_for(self, space: HilbertSpace) -> LinearSolver:
+        """The solver for systems on a space: the caller's, or conjugate gradients.
+
+        The default is ``CGSolver(rtol=1e-10)`` with an iteration cap of at
+        least 200: a tighter tolerance is below the rounding floor of an
+        ill-conditioned family, and the solver's own cap of twice the
+        dimension is too tight for a small one. One instance per space,
+        kept, so that the families built on it share.
+        """
+        if self._solver is not None:
+            return self._solver
+        return self.shared(
+            ("default_solver", space.dim),
+            lambda: CGSolver(rtol=1e-10, max_iterations=max(2 * space.dim, 200)),
+        )
 
     @property
     def model_space(self) -> HilbertSpace:
@@ -261,7 +291,9 @@ class _Structure:
         if isinstance(prior, Ellipsoid):
             if prior.covariance is not None:
                 return prior.covariance
-            return self.solver(prior.precision.with_traits(Traits.POSITIVE_DEFINITE))
+            return self.solver_for(space)(
+                prior.precision.with_traits(Traits.POSITIVE_DEFINITE)
+            )
         raise TypeError("Only a ball or an ellipsoid has a covariance to read.")
 
     def prior_center(self) -> Any:
@@ -270,6 +302,73 @@ class _Structure:
         if isinstance(prior, (Ball, Ellipsoid)):
             return prior.center
         return self.model_space.zero()
+
+    def prior_precision(self) -> LinearOperator:
+        """``C⁻¹``, the prior's quadratic form in normalized units.
+
+        Raises:
+            TypeError: if the prior is neither a ball nor an ellipsoid.
+        """
+        return _precision_of(self.prior, self.model_space, "prior")
+
+    def noise_covariance(self) -> LinearOperator:
+        """``R`` with the noise set ``{(R⁻¹(e − b), e − b) <= 1}``.
+
+        Raises:
+            TypeError: if the noise set is neither a ball nor an ellipsoid,
+                or the data are exact.
+        """
+        noise = self.noise
+        space = self.data_space
+        if isinstance(noise, Ball):
+            return (LinearOperator.identity(space) * noise.radius**2).with_traits(
+                Traits.POSITIVE_DEFINITE
+            )
+        if isinstance(noise, Ellipsoid):
+            if noise.covariance is not None:
+                return noise.covariance
+            return self.solver_for(space)(
+                noise.precision.with_traits(Traits.POSITIVE_DEFINITE)
+            )
+        raise TypeError("Only a ball or an ellipsoid has a covariance to read.")
+
+    def noise_precision(self) -> LinearOperator:
+        """``R⁻¹``, the noise set's quadratic form in normalized units.
+
+        Raises:
+            TypeError: if the noise set is neither a ball nor an ellipsoid,
+                or the data are exact.
+        """
+        if self.noise is None:
+            raise TypeError("Exact data have no noise precision.")
+        return _precision_of(self.noise, self.data_space, "noise")
+
+    def noise_center(self) -> Any:
+        """The noise set's centre, or the origin."""
+        noise = self.noise
+        if isinstance(noise, (Ball, Ellipsoid)):
+            return noise.center
+        return self.data_space.zero()
+
+    def shifted_data(self, data: Any) -> Any:
+        """``d − A a − b``: the data relative to both centres."""
+        space = self.data_space
+        shifted = space.subtract(data, self.forward(self.prior_center()))
+        if self.noise is not None:
+            shifted = space.subtract(shifted, self.noise_center())
+        return shifted
+
+
+def _precision_of(subset: Any, space: HilbertSpace, name: str) -> LinearOperator:
+    if isinstance(subset, Ball):
+        if subset.radius <= 0.0:
+            raise ValueError(f"The {name} ball needs a positive radius.")
+        return (LinearOperator.identity(space) * (1.0 / subset.radius**2)).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+    if isinstance(subset, Ellipsoid):
+        return subset.precision
+    raise TypeError(f"The {name} must be a ball or an ellipsoid to have a precision.")
 
 
 # --------------------------------------------------------------------- #
@@ -291,7 +390,12 @@ class Algorithm:
     name: str = ""
     probes: frozenset[str] = frozenset()
 
-    def accepts(self, structure: _Structure) -> bool:
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The tuning this instance carries, by value; instances with equal settings share results."""
+        return ()
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
         """Whether this algorithm applies to sets of this structure.
 
         Raises:
@@ -327,6 +431,12 @@ class Algorithm:
         """
         raise NotImplementedError(f"{self.name} does not decide feasibility.")
 
+    def level_gradient(
+        self, feasible: "FeasiblePropertySet", value: Any, /
+    ) -> Any | None:
+        """The gradient of the inclusion level in the value, or None where the algorithm has none."""
+        return None
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 
@@ -356,22 +466,22 @@ class ClosedForm(Algorithm):
     name = "closed_form"
     probes = frozenset({"support", "inclusion", "feasibility"})
 
-    def accepts(self, structure: _Structure) -> bool:
+    def accepts(self, structure: FeasibleStructure) -> bool:
         """Exact data and a quadratic prior."""
         return structure.form == "closed_form"
 
     # -- the data-independent part ---------------------------------------
 
-    def _pieces(self, structure: _Structure) -> dict[str, Any]:
+    def _pieces(self, structure: FeasibleStructure) -> dict[str, Any]:
         return structure.shared(("closed_form",), lambda: self._build(structure))
 
-    def _build(self, structure: _Structure) -> dict[str, Any]:
+    def _build(self, structure: FeasibleStructure) -> dict[str, Any]:
         forward, T = structure.forward, structure.property_operator
         covariance = structure.prior_covariance()
         normal = (forward @ covariance @ forward.adjoint).with_traits(
             Traits.POSITIVE_DEFINITE
         )
-        normal_inverse = structure.solver(normal)
+        normal_inverse = structure.solver_for(structure.data_space)(normal)
         space = structure.property_space
         model_space = structure.model_space
         # S e_j == T C T* e_j − T C A* (A C A*)⁻¹ A C T* e_j, one solve each.
@@ -394,12 +504,12 @@ class ClosedForm(Algorithm):
 
     def _fit(self, feasible: "FeasiblePropertySet") -> dict[str, Any]:
         """``ũ``, the budget and the centre for these data, computed once."""
-        return feasible._cached(
+        return feasible.cached(
             ("closed_form", "fit"), lambda: self._compute_fit(feasible)
         )
 
     def _compute_fit(self, feasible: "FeasiblePropertySet") -> dict[str, Any]:
-        structure = feasible._structure
+        structure = feasible.structure
         pieces = self._pieces(structure)
         forward, T = structure.forward, structure.property_operator
         model_space, data_space = structure.model_space, structure.data_space
@@ -430,7 +540,7 @@ class ClosedForm(Algorithm):
                 f"smallest fitting model has level {fit['used']:.4g} against "
                 "the prior's 1."
             )
-        structure = feasible._structure
+        structure = feasible.structure
         space = structure.property_space
         shape = self._pieces(structure)["shape"]
         budget = max(fit["budget"], 0.0)
@@ -450,7 +560,7 @@ class ClosedForm(Algorithm):
         )
         return Ellipsoid(space, precision, center=fit["center"], covariance=covariance)
 
-    def prior_only(self, structure: _Structure) -> Ellipsoid:
+    def prior_only(self, structure: FeasibleStructure) -> Ellipsoid:
         """What the prior alone says: ``{ p : ((T C T*)⁻¹ (p − T a), p − T a) <= 1 }``."""
         T = structure.property_operator
         space = structure.property_space
@@ -485,7 +595,7 @@ class ClosedForm(Algorithm):
     def feasibility(self, feasible: "FeasiblePropertySet", /) -> InclusionResult:
         """The prior's level function at ``a + ũ``: what fitting the data alone costs."""
         fit = self._fit(feasible)
-        level = feasible._structure.prior.level
+        level = feasible.structure.prior.level
         return InclusionResult(
             level=fit["used"] * level,
             lower_bound=fit["used"] * level,
@@ -498,7 +608,7 @@ class ClosedForm(Algorithm):
 
     def _kernel_part(self, feasible: "FeasiblePropertySet", vector: Any) -> Any:
         """``P_K C v`` for a model vector ``v``: the kernel's share, in the prior's metric."""
-        structure = feasible._structure
+        structure = feasible.structure
         pieces = self._pieces(structure)
         forward = structure.forward
         image = pieces["covariance"](vector)
@@ -516,7 +626,7 @@ class ClosedForm(Algorithm):
             ValueError: if the set is empty.
         """
         fit = self._fit(feasible)
-        structure = feasible._structure
+        structure = feasible.structure
         space = structure.property_space
         model_space = structure.model_space
         T = structure.property_operator
@@ -548,7 +658,7 @@ class ClosedForm(Algorithm):
     ) -> InclusionResult:
         """The level of the fitting model: ``(C⁻¹ũ, ũ) + (S⁻¹(p − c), p − c)``, in the prior's units."""
         fit = self._fit(feasible)
-        structure = feasible._structure
+        structure = feasible.structure
         space = structure.property_space
         shape = self._pieces(structure)["shape"]
         offset = space.to_components(space.subtract(value, fit["center"]))
@@ -589,7 +699,7 @@ class ClosedForm(Algorithm):
     def level_gradient(self, feasible: "FeasiblePropertySet", value: Any, /) -> Any:
         """The gradient of the inclusion level in the value: ``2 S⁻¹ (p − c)``, in the prior's units."""
         fit = self._fit(feasible)
-        structure = feasible._structure
+        structure = feasible.structure
         space = structure.property_space
         shape = self._pieces(structure)["shape"]
         offset = space.to_components(space.subtract(value, fit["center"]))
@@ -598,10 +708,889 @@ class ClosedForm(Algorithm):
         )
 
 
+# --------------------------------------------------------------------- #
+#                           The quadratic tier                           #
+# --------------------------------------------------------------------- #
+
+
+class _QuadraticFamily:
+    """The damped family of two quadratic sets, solved along a sweep.
+
+    ``K(γ) == A C A* + γ R`` on the data space, or ``M(γ) == γ C⁻¹ + A* R⁻¹ A``
+    on the model space, with ``C`` the prior's covariance (or a restriction
+    of it to the kernel of the property operator) and ``R`` the noise's.
+    The same interface as a Tikhonov family -- ``solve``, ``right_hand_side``,
+    ``model_from`` -- so that the misfit search runs on it unchanged, and
+    members carry their factors for the preconditioners.
+    """
+
+    def __init__(
+        self,
+        structure: FeasibleStructure,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"],
+        solver: LinearSolver,
+        prior_covariance: LinearOperator | None = None,
+    ) -> None:
+        self.formalism = formalism
+        self.forward = structure.forward
+        self.covariance = (
+            structure.prior_covariance()
+            if prior_covariance is None
+            else prior_covariance
+        )
+        self.noise_covariance = structure.noise_covariance()
+        self.noise_precision = structure.noise_precision()
+        self.prior_precision = (
+            structure.prior_precision() if prior_covariance is None else None
+        )
+        forward = self.forward
+        if formalism == "model_space":
+            if self.prior_precision is None:
+                raise ValueError(
+                    "The model-space formalism needs the prior's precision, "
+                    "which a kernel-restricted covariance does not have."
+                )
+            base = forward.adjoint @ self.noise_precision @ forward
+            shift = self.prior_precision
+        else:
+            base = forward @ self.covariance @ forward.adjoint
+            shift = self.noise_covariance
+        self.solves = DampedSolves(
+            base.with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE),
+            shift.with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE),
+            solver,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            assemble=self.member,
+        )
+
+    def member(self, multiplier: float, /) -> DampedNormalOperator:
+        """The member at one multiplier, carrying its factors."""
+        return DampedNormalOperator(
+            self.forward,
+            self.covariance,
+            self.noise_covariance,
+            multiplier,
+            prior_precision=self.prior_precision,
+            noise_precision=self.noise_precision,
+            formalism=self.formalism,
+        )
+
+    def right_hand_side(self, shifted: Any, /) -> Any:
+        """The right-hand side for the shifted data: ``d′`` or ``A* R⁻¹ d′``."""
+        if self.formalism == "model_space":
+            return self.forward.adjoint(self.noise_precision(shifted))
+        return shifted
+
+    def model_from(self, solution: Any, /) -> Any:
+        """The model (relative to the prior's centre) from a solve's solution."""
+        if self.formalism == "model_space":
+            return solution
+        return self.covariance(self.forward.adjoint(solution))
+
+    def solve(
+        self, multiplier: float, right_hand_side: Any, /, *, x0: Any = None
+    ) -> Any:
+        """One member's solve.
+
+        Args:
+            multiplier: which member.
+            right_hand_side: the vector to solve against.
+            x0: a starting guess, usually a neighbouring member's solution.
+
+        Returns:
+            The solver's result.
+        """
+        return self.solves.solve(multiplier, right_hand_side, x0=x0)
+
+
+def _dual_cost(
+    structure: FeasibleStructure, data: Any, direction: Any, certificate: Any
+) -> float:
+    """``(λ, d) + h_prior(T*q − A*λ) + h_noise(−λ)``: the outer bound a certificate gives."""
+    model_space, data_space = structure.model_space, structure.data_space
+    pulled = structure.property_operator.adjoint(direction)
+    residual = model_space.subtract(pulled, structure.forward.adjoint(certificate))
+    prior_term = model_space.inner_product(residual, structure.prior_center()) + float(
+        np.sqrt(
+            max(
+                model_space.inner_product(
+                    residual, structure.prior_covariance()(residual)
+                ),
+                0.0,
+            )
+        )
+    )
+    noise_term = -data_space.inner_product(
+        certificate, structure.noise_center()
+    ) + float(
+        np.sqrt(
+            max(
+                data_space.inner_product(
+                    certificate, structure.noise_covariance()(certificate)
+                ),
+                0.0,
+            )
+        )
+    )
+    return float(data_space.inner_product(certificate, data)) + prior_term + noise_term
+
+
+def _largest_feasible(
+    structure: FeasibleStructure, shifted: Any, u1: Any, u2: Any
+) -> Any | None:
+    """``u₂ + x u₁`` at the largest ``x >= 0`` keeping both constraints, or None.
+
+    Along ``x == 1/t`` at a fixed ``γ`` both the prior's level and the misfit
+    are quadratics in ``x``, so the largest admissible ``x`` has closed-form
+    roots, and the model there is exactly feasible with a pairing first
+    order in the error of ``γ``. None when ``u₂`` itself violates a
+    constraint, where this ray never enters the set.
+    """
+    model_space, data_space = structure.model_space, structure.data_space
+    Q, P, A = (
+        structure.prior_precision(),
+        structure.noise_precision(),
+        structure.forward,
+    )
+
+    def largest(f0: float, cross: float, f2: float) -> float | None:
+        # f(x) == f0 + 2 x cross + x² f2 <= 1 on [0, x_max].
+        if f0 > 1.0 + 1e-12:
+            return None
+        if f2 <= 0.0:
+            return float("inf") if cross <= 0.0 else (1.0 - f0) / (2.0 * cross)
+        disc = cross * cross - f2 * (f0 - 1.0)
+        return max((-cross + float(np.sqrt(max(disc, 0.0)))) / f2, 0.0)
+
+    q2, q1 = Q(u2), Q(u1)
+    x_prior = largest(
+        model_space.inner_product(q2, u2),
+        model_space.inner_product(q2, u1),
+        model_space.inner_product(q1, u1),
+    )
+    r2 = data_space.subtract(shifted, A(u2))
+    r1 = A(u1)
+    x_misfit = largest(
+        data_space.inner_product(P(r2), r2),
+        -data_space.inner_product(P(r2), r1),
+        data_space.inner_product(P(r1), r1),
+    )
+    if x_prior is None or x_misfit is None:
+        return None
+    x = min(x_prior, x_misfit)
+    if not np.isfinite(x):
+        return None
+    return model_space.axpy(x, u1, model_space.copy(u2))
+
+
+def _scaled_inside(
+    structure: FeasibleStructure, shifted: Any, anchor: Any, model: Any
+) -> Any:
+    """The point of the segment from *anchor* to *model* nearest *model* that lies in both sets.
+
+    Both sets are quadratic, so each constraint along the segment is a
+    quadratic in the parameter with closed-form roots; *anchor* must satisfy
+    both. Relative to the prior's centre.
+    """
+    model_space, data_space = structure.model_space, structure.data_space
+    Q, P, A = (
+        structure.prior_precision(),
+        structure.noise_precision(),
+        structure.forward,
+    )
+    step = model_space.subtract(model, anchor)
+    theta = 1.0
+
+    def largest(f_anchor: float, cross: float, f_step: float) -> float:
+        # f(anchor + θ step) == f_anchor + 2 θ cross + θ² f_step <= 1
+        if f_step <= 0.0:
+            return 1.0
+        disc = cross * cross - f_step * (f_anchor - 1.0)
+        if disc < 0.0:
+            return 0.0
+        return max((-cross + float(np.sqrt(disc))) / f_step, 0.0)
+
+    q_anchor = model_space.inner_product(Q(anchor), anchor)
+    q_step = model_space.inner_product(Q(step), step)
+    q_cross = model_space.inner_product(Q(anchor), step)
+    theta = min(theta, largest(q_anchor, q_cross, q_step))
+    r_anchor = data_space.subtract(shifted, A(anchor))
+    r_step = A(step)
+    m_anchor = data_space.inner_product(P(r_anchor), r_anchor)
+    m_step = data_space.inner_product(P(r_step), r_step)
+    m_cross = -data_space.inner_product(P(r_anchor), r_step)
+    theta = min(theta, largest(m_anchor, m_cross, m_step))
+    theta = min(max(theta, 0.0), 1.0)
+    return model_space.axpy(theta, step, model_space.copy(anchor))
+
+
+class Search(Algorithm):
+    """Membership and feasibility on two quadratic sets, by one multiplier.
+
+    The smallest prior level over the models fitting the data within the
+    noise set is a damped least-squares problem: at a multiplier ``η`` the
+    minimizer of ``η (C⁻¹u, u) + (R⁻¹(d′ − Au), d′ − Au)`` is one solve of the
+    family, its misfit rises with ``η``, and the multiplier at which the
+    misfit reaches the noise level is a monotone root find with every solve
+    warm-started from the last. The multiplier also certifies the answer
+    from below, through the dual of the same problem.
+
+    A property value restricts the model to ``ũ_p + ker T``, with ``ũ_p``
+    the smallest model having the value, and the same search runs on the
+    kernel: the prior's covariance restricted to it is a rank-``dim P``
+    downdate ``C − C T*(T C T*)⁻¹ T C``, applied matrix-free, and the data
+    are shifted by ``A ũ_p``. That search is assembled in the data space,
+    where the restriction is the downdate; the formalism applies to the
+    feasibility search.
+    """
+
+    name = "search"
+    probes = frozenset({"inclusion", "feasibility"})
+
+    def __init__(
+        self,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+        max_iterations: int = 60,
+        rtol: float = 1e-6,
+        solver: LinearSolver | None = None,
+    ) -> None:
+        """
+        Args:
+            formalism: which space the feasibility search solves in.
+            max_iterations: the root find's budget.
+            rtol: the root find's bracket tolerance.
+            solver: how the family is inverted; the set's solver if omitted.
+        """
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError(
+                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
+            )
+        self._formalism = formalism
+        self._max_iterations = max_iterations
+        self._rtol = rtol
+        self._solver = solver
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The formalism, the budget, the tolerance and the solver."""
+        return (self._formalism, self._max_iterations, self._rtol, id(self._solver))
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Two quadratic sets, the noise not a point."""
+        return structure.form == "quadratic"
+
+    def _family(
+        self, structure: FeasibleStructure, *, restricted: bool
+    ) -> _QuadraticFamily:
+        if restricted:
+            solver = (
+                self._solver
+                if self._solver is not None
+                else structure.solver_for(structure.data_space)
+            )
+            return structure.shared(
+                ("search", "restricted", id(solver)),
+                lambda: _QuadraticFamily(
+                    structure,
+                    formalism="data_space",
+                    solver=solver,
+                    prior_covariance=_restricted_covariance(structure),
+                ),
+            )
+        solver = (
+            self._solver
+            if self._solver is not None
+            else structure.solver_for(
+                structure.model_space
+                if self._formalism == "model_space"
+                else structure.data_space
+            )
+        )
+        return structure.shared(
+            ("family", self._formalism, id(solver)),
+            lambda: _QuadraticFamily(
+                structure, formalism=self._formalism, solver=solver
+            ),
+        )
+
+    def _search(
+        self, structure: FeasibleStructure, family: _QuadraticFamily, shifted: Any
+    ) -> tuple[RootResult | None, Any, float]:
+        """The misfit search on shifted data: ``(root, model, misfit)``, the root None when nothing need be solved."""
+        data_space = structure.data_space
+        P, A = structure.noise_precision(), structure.forward
+        if data_space.inner_product(P(shifted), shifted) <= 1.0:
+            return (
+                None,
+                structure.model_space.zero(),
+                float(data_space.inner_product(P(shifted), shifted)),
+            )
+
+        def misfit(model: Any) -> float:
+            residual = data_space.subtract(shifted, A(model))
+            return float(data_space.inner_product(P(residual), residual))
+
+        def evaluate(multiplier: float, previous: Any) -> Evaluation:
+            result = family.solve(
+                multiplier, family.right_hand_side(shifted), x0=previous
+            )
+            return Evaluation(
+                value=misfit(family.model_from(result.solution)),
+                solution=result.solution,
+                iterations=result.iterations,
+            )
+
+        root = monotone_root(
+            evaluate,
+            1.0,
+            decreasing=False,
+            max_iterations=self._max_iterations,
+            rtol=self._rtol,
+            atol=0.0,
+        )
+        model = family.model_from(root.solution)
+        return root, model, float(root.value)
+
+    def _result(
+        self,
+        structure: FeasibleStructure,
+        root: RootResult | None,
+        relative: Any,
+        misfit: float,
+        *,
+        extra_level: float,
+        offset: Any,
+    ) -> InclusionResult:
+        model_space = structure.model_space
+        level = structure.prior.level
+        Q = structure.prior_precision()
+        own = float(model_space.inner_product(Q(relative), relative))
+        fitting = model_space.add(
+            structure.prior_center(), model_space.add(offset, relative)
+        )
+        if root is None:
+            return InclusionResult(
+                level=(extra_level + own) * level,
+                lower_bound=(extra_level + own) * level,
+                converged=True,
+                algorithm=self.name,
+                evaluations=0,
+                fitting_model=fitting,
+                multiplier=0.0,
+                message="the data are fitted without a correction",
+            )
+        if root.exhausted == "low":
+            return InclusionResult(
+                level=float("inf"),
+                lower_bound=float("inf"),
+                converged=True,
+                algorithm=self.name,
+                evaluations=root.evaluations,
+                multiplier=float(root.argument),
+                message="no model fits the data",
+            )
+        # The dual of min f s.t. g <= 1 at multiplier 1/η: f + (g − 1)/η <= min;
+        # capped at the value itself, which rounding can otherwise cross.
+        lower = min(own + (misfit - 1.0) / float(root.argument), own)
+        return InclusionResult(
+            level=(extra_level + own) * level,
+            lower_bound=(extra_level + lower) * level,
+            converged=bool(root.converged),
+            algorithm=self.name,
+            evaluations=root.evaluations,
+            fitting_model=fitting,
+            multiplier=float(root.argument),
+            message="misfit search converged"
+            if root.converged
+            else "misfit search did not converge",
+        )
+
+    def feasibility(self, feasible: "FeasiblePropertySet", /) -> InclusionResult:
+        """The smallest prior level over the models fitting the data."""
+        structure = feasible.structure
+        shifted = structure.shifted_data(feasible.data)
+        _check_floor(structure, shifted)
+        family = self._family(structure, restricted=False)
+        root, model, misfit = self._search(structure, family, shifted)
+        return self._result(
+            structure,
+            root,
+            model,
+            misfit,
+            extra_level=0.0,
+            offset=structure.model_space.zero(),
+        )
+
+    def inclusion(
+        self, feasible: "FeasiblePropertySet", value: Any, /
+    ) -> InclusionResult:
+        """The smallest prior level over the models with this value fitting the data."""
+        structure = feasible.structure
+        data_space, space = structure.data_space, structure.property_space
+        pieces = _kernel_pieces(structure)
+        offset_p = space.subtract(
+            value, structure.property_operator(structure.prior_center())
+        )
+        weights = np.linalg.solve(pieces["gram"], space.to_components(offset_p))
+        lifted = pieces["covariance"](
+            structure.property_operator.adjoint(space.from_components(weights))
+        )
+        anchor_level = float(
+            space.inner_product(space.from_components(weights), offset_p)
+        )
+        shifted = data_space.subtract(
+            structure.shifted_data(feasible.data), structure.forward(lifted)
+        )
+        family = self._family(structure, restricted=True)
+        root, kernel_model, misfit = self._search(structure, family, shifted)
+        return self._result(
+            structure,
+            root,
+            kernel_model,
+            misfit,
+            extra_level=anchor_level,
+            offset=lifted,
+        )
+
+
+def _kernel_pieces(structure: FeasibleStructure) -> dict[str, Any]:
+    """``S == T C T*`` as a matrix on the property space, and ``C`` itself, shared."""
+
+    def build() -> dict[str, Any]:
+        space = structure.property_space
+        T = structure.property_operator
+        covariance = structure.prior_covariance()
+        gram = np.column_stack(
+            [
+                space.to_components(T(covariance(T.adjoint(space.basis_vector(j)))))
+                for j in range(space.dim)
+            ]
+        )
+        return {"gram": gram, "covariance": covariance}
+
+    return structure.shared(("kernel",), build)
+
+
+def _restricted_covariance(structure: FeasibleStructure) -> LinearOperator:
+    """``C − C T* S⁻¹ T C``: the prior's covariance restricted to the kernel of ``T``."""
+    pieces = _kernel_pieces(structure)
+    covariance, T = pieces["covariance"], structure.property_operator
+    space, model_space = structure.property_space, structure.model_space
+    inverse = np.linalg.inv(pieces["gram"])
+
+    def apply(x: Any) -> Any:
+        image = covariance(x)
+        pulled = T(image)
+        back = space.from_components(inverse @ space.to_components(pulled))
+        return model_space.subtract(image, covariance(T.adjoint(back)))
+
+    return LinearOperator.self_adjoint(
+        model_space, apply, traits=Traits.POSITIVE_SEMIDEFINITE
+    )
+
+
+def _check_floor(structure: FeasibleStructure, shifted: Any) -> None:
+    """Refuse a noise set the solver cannot resolve.
+
+    The misfit is measured on the model a solve returns, so it carries the
+    solve's residual, ``rtol`` times the data in the noise metric; a noise
+    radius below that is one no fit can be certified to.
+    """
+    import warnings
+
+    from ..numerics.solvers import IterativeSolver
+
+    solver = structure.solver_for(structure.data_space)
+    if not isinstance(solver, IterativeSolver):
+        return  # a direct solver has no residual floor to speak of
+    rtol = solver.rtol
+    size = float(
+        np.sqrt(
+            max(
+                structure.data_space.inner_product(
+                    structure.noise_precision()(shifted), shifted
+                ),
+                0.0,
+            )
+        )
+    )
+    floor = rtol * size
+    if floor >= 0.1:
+        raise ValueError(
+            f"The solver's tolerance ({rtol:.1e}) times the data's size in the "
+            f"noise metric ({size:.3g}) is {floor:.2g} against a noise level of "
+            "1: the noise set is below the solver's floor and no fit to it can "
+            "be certified. Tighten the solver or widen the noise set."
+        )
+    if floor >= 1e-3:
+        warnings.warn(
+            f"The solver's floor ({floor:.2g} of the noise level) is close to "
+            "the noise set; the feasibility decision carries that error.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
+class Primal(Algorithm):
+    """The support of the set on two quadratic sets, by one multiplier.
+
+    Attaching multipliers ``s`` and ``t`` to the prior and the data
+    constraints, the stationarity condition ``(s C⁻¹ + t A* R⁻¹ A) u == T*q
+    + t A* R⁻¹ d′`` depends on ``γ == s/t`` through the family ``M(γ)``
+    alone, and the dual minimized over ``t`` is closed form:
+    ``φ(γ) == B + sqrt(A C)`` with ``A == (c, u₁)``, ``B == (c, u₂)``,
+    ``C == (A* R⁻¹ d′, u₂) + γ + 1 − (R⁻¹ d′, d′)``, from the two solves
+    ``u₁ == M(γ)⁻¹ c`` and ``u₂ == M(γ)⁻¹ A* R⁻¹ d′``. The support is the
+    minimum of ``φ`` over ``γ``, a scalar minimization in ``log γ`` of a
+    function that is unimodal, with ``γ == ∞`` the prior-only bound (taken
+    with no solve when the prior's own support point fits the data) and
+    ``γ == 0`` the data-only bound, available when ``A* R⁻¹ A`` is
+    invertible. In the data-space formalism the coefficients are evaluated
+    through the resolvent identity, with the kernel part of ``c`` computed
+    once per direction, so that nothing cancels.
+
+    At the minimum the model is ``u₁/t* + u₂`` with ``t* == sqrt(A/C)``; the
+    certificate ``λ == t* R⁻¹(A u − d′)`` gives the outer bound by weak
+    duality, evaluated in closed form, and the model scaled into both sets
+    gives the inner one, so every answer carries its bracket. ``converged``
+    reports the scalar minimization; the bracket's width is the gap.
+    """
+
+    name = "primal"
+    probes = frozenset({"support"})
+
+    def __init__(
+        self,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+        tolerance: float = 1e-4,
+        max_iterations: int = 100,
+        solver: LinearSolver | None = None,
+    ) -> None:
+        """
+        Args:
+            formalism: which space the family is solved in.
+            tolerance: on ``log γ`` at the minimum. The outer value is
+                stationary there, so its error is second order in this; the
+                inner value's is first order, which is the bracket's width.
+            max_iterations: the minimization's budget of evaluations.
+            solver: how the family is inverted; the set's solver if omitted.
+        """
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError(
+                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
+            )
+        self._formalism = formalism
+        self._tolerance = tolerance
+        self._max_iterations = max_iterations
+        self._solver = solver
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The formalism, the tolerance, the budget and the solver."""
+        return (
+            self._formalism,
+            self._tolerance,
+            self._max_iterations,
+            id(self._solver),
+        )
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Two quadratic sets, the noise not a point."""
+        return structure.form == "quadratic"
+
+    def _family(self, structure: FeasibleStructure) -> _QuadraticFamily:
+        solver = (
+            self._solver
+            if self._solver is not None
+            else structure.solver_for(
+                structure.model_space
+                if self._formalism == "model_space"
+                else structure.data_space
+            )
+        )
+        return structure.shared(
+            ("family", self._formalism, id(solver)),
+            lambda: _QuadraticFamily(
+                structure, formalism=self._formalism, solver=solver
+            ),
+        )
+
+    def support(
+        self, feasible: "FeasiblePropertySet", direction: Any, /
+    ) -> SupportResult:
+        """The support in a direction, by minimizing ``φ(γ)``.
+
+        Raises:
+            ValueError: if the set is empty, or the data-space family is
+                singular and the model-space formalism is needed.
+        """
+        structure = feasible.structure
+        model_space, data_space, space = (
+            structure.model_space,
+            structure.data_space,
+            structure.property_space,
+        )
+        if feasible.is_empty():
+            raise ValueError("The feasible set is empty; it has no support.")
+        A, T = structure.forward, structure.property_operator
+        C, P, R = (
+            structure.prior_covariance(),
+            structure.noise_precision(),
+            structure.noise_covariance(),
+        )
+        a = structure.prior_center()
+        shifted = structure.shifted_data(feasible.data)
+        c = T.adjoint(direction)
+        centre_term = float(space.inner_product(direction, T(a)))
+        evaluations = 0
+
+        # Prior-only: the prior's own support point, if it fits.
+        image = C(c)
+        prior_norm = float(np.sqrt(max(model_space.inner_product(image, c), 0.0)))
+        if prior_norm == 0.0:
+            return SupportResult(
+                value=centre_term,
+                inner=centre_term,
+                converged=True,
+                algorithm=self.name,
+                evaluations=0,
+                extremal_model=model_space.copy(a),
+                message="the property is constant",
+            )
+        flat = model_space.scale(1.0 / prior_norm, image)
+        residual = data_space.subtract(shifted, A(flat))
+        if data_space.inner_product(P(residual), residual) <= 1.0:
+            certificate = data_space.zero()
+            outer = _dual_cost(structure, feasible.data, direction, certificate)
+            return SupportResult(
+                value=outer,
+                inner=centre_term + prior_norm,
+                converged=True,
+                algorithm=self.name,
+                evaluations=0,
+                certificate=certificate,
+                extremal_model=model_space.add(a, flat),
+                multipliers=(1.0 / prior_norm, 0.0),
+                message="the data constraint is slack",
+            )
+
+        if self._formalism == "data_space" and data_space.dim > model_space.dim:
+            raise ValueError(
+                "The data outnumber the model, so the data-space family is "
+                "singular at γ = 0 and the data-only bound is out of reach; "
+                "use Primal(formalism='model_space')."
+            )
+        family = self._family(structure)
+        rhs_data = family.right_hand_side(shifted)
+        data_term = float(data_space.inner_product(P(shifted), shifted))
+        cache = feasible.cached(("primal", "u2", self._formalism), dict)
+
+        if self._formalism == "data_space":
+            v = A(image)  # A C c
+            try:
+                g_inv_v = family.solve(0.0, v).solution
+            except ConvergenceError as error:
+                raise ValueError(
+                    "The data-space family is singular at γ = 0: the forward "
+                    "operator has no full row rank; use "
+                    "Primal(formalism='model_space')."
+                ) from error
+            kappa = max(
+                float(model_space.inner_product(image, c))
+                - float(data_space.inner_product(v, g_inv_v)),
+                0.0,
+            )
+            evaluations += 1
+
+        def solve_u2(gamma: float) -> Any:
+            if gamma in cache:
+                return cache[gamma]
+            # Warm-start from the nearest cached multiplier, within a few
+            # decades: further away the scales differ too much to help.
+            nearest = (
+                min(cache, key=lambda g: abs(np.log(g) - np.log(gamma)))
+                if cache and gamma > 0.0
+                else None
+            )
+            if nearest is not None and abs(np.log(nearest) - np.log(gamma)) > 6.0:
+                nearest = None
+            result = family.solve(
+                gamma, rhs_data, x0=None if nearest is None else cache[nearest]
+            )
+            cache[gamma] = result.solution
+            return result.solution
+
+        def coefficients(gamma: float) -> tuple[float, float, float, Any, Any]:
+            nonlocal evaluations
+            evaluations += 1
+            k_d = solve_u2(gamma)
+            if self._formalism == "data_space":
+                k_v = family.solve(gamma, v, x0=g_inv_v).solution
+                a_coef = kappa / gamma + float(
+                    data_space.inner_product(g_inv_v, R(k_v))
+                )
+                b_coef = float(data_space.inner_product(v, k_d))
+                c_coef = 1.0 + gamma * (
+                    1.0 - float(data_space.inner_product(shifted, k_d))
+                )
+                u1 = model_space.scale(
+                    1.0 / gamma, model_space.subtract(image, C(A.adjoint(k_v)))
+                )
+                u2 = C(A.adjoint(k_d))
+            else:
+                u1 = family.solve(gamma, c).solution
+                u2 = k_d
+                a_coef = float(model_space.inner_product(c, u1))
+                b_coef = float(model_space.inner_product(c, u2))
+                c_coef = (
+                    float(model_space.inner_product(rhs_data, u2))
+                    + gamma
+                    + 1.0
+                    - data_term
+                )
+            return a_coef, b_coef, c_coef, u1, u2
+
+        def phi(log_gamma: float) -> float:
+            try:
+                a_coef, b_coef, c_coef, _, _ = coefficients(float(np.exp(log_gamma)))
+            except ConvergenceError as error:
+                raise ValueError(
+                    f"The family could not be solved at γ = {np.exp(log_gamma):.3g}: "
+                    f"{error}. A tighter solver, a preconditioner, or the other "
+                    "formalism may be needed."
+                ) from error
+            if c_coef <= 0.0 or a_coef < 0.0:
+                return float("inf")
+            return b_coef + float(np.sqrt(a_coef * c_coef))
+
+        # The warm start is per worker: a sweep hands each thread a
+        # contiguous run of directions, whose roots are neighbours.
+        log_gamma, value, converged = _minimize_unimodal(
+            phi,
+            feasible.cached(("primal", "start", threading.get_ident()), lambda: [0.0]),
+            tolerance=self._tolerance,
+            max_iterations=self._max_iterations,
+        )
+        gamma = float(np.exp(log_gamma))
+        if log_gamma <= -_LIMIT + 2.0 and self._formalism == "model_space":
+            # The walk reached the lower limit: the prior is slack and the
+            # data alone bound the property, at γ == 0 exactly.
+            try:
+                a0, b0, c0, _, _ = coefficients(0.0)
+            except ConvergenceError:
+                a0 = c0 = -1.0
+            if a0 >= 0.0 and c0 > 0.0:
+                gamma = 0.0
+        a_coef, b_coef, c_coef, u1, u2 = coefficients(gamma)
+        if c_coef <= 0.0:
+            raise ValueError("The dual is unbounded below: the feasible set is empty.")
+        t_star = float(np.sqrt(a_coef / c_coef)) if a_coef > 0.0 else 0.0
+        if t_star > 0.0:
+            relative = model_space.axpy(1.0 / t_star, u1, model_space.copy(u2))
+        else:
+            relative = u2
+        residual = data_space.subtract(shifted, A(relative))
+        # Stationarity: T*q − A*λ == s C⁻¹ u with λ == t R⁻¹ (A u − d′).
+        certificate = data_space.scale(-t_star, P(residual))
+        outer = _dual_cost(structure, feasible.data, direction, certificate)
+        inside = _largest_feasible(structure, shifted, u1, u2)
+        if inside is None:
+            anchor = model_space.subtract(feasible.fitting_model(), a)
+            inside = _scaled_inside(structure, shifted, anchor, relative)
+        inner = centre_term + float(model_space.inner_product(c, inside))
+        if np.isfinite(prior_norm):
+            outer = min(outer, centre_term + prior_norm)
+        return SupportResult(
+            value=outer,
+            inner=inner,
+            converged=converged,
+            algorithm=self.name,
+            evaluations=evaluations,
+            certificate=certificate,
+            extremal_model=model_space.add(a, inside),
+            multipliers=(gamma * t_star, t_star),
+            message="unimodal search converged"
+            if converged
+            else "evaluation budget exhausted",
+        )
+
+
+_LIMIT = 40.0
+"""How far the search in ``log γ`` walks before an end is taken as the minimizer."""
+
+
+def _minimize_unimodal(
+    f: Callable[[float], float],
+    start: list[float],
+    /,
+    *,
+    tolerance: float,
+    max_iterations: int,
+    limit: float = _LIMIT,
+) -> tuple[float, float, bool]:
+    """Minimize a unimodal function of one variable from a start, by bracketing then Brent.
+
+    *start* is a one-element list carrying the previous minimizer, updated
+    on return so that the next direction starts there. The bracket is found
+    by walking downhill with a growing step; a walk that reaches ``±limit``
+    reports that end as the minimizer.
+    """
+    from scipy.optimize import minimize_scalar
+
+    x = start[0]
+    step = 0.5
+    calls = [0]
+
+    def g(value: float) -> float:
+        calls[0] += 1
+        return f(value)
+
+    fx = g(x)
+    lo, hi = x - step, x + step
+    flo, fhi = g(lo), g(hi)
+    while not (fx <= flo and fx <= fhi):
+        if flo < fx:
+            hi, fhi, x, fx = x, fx, lo, flo
+            lo = x - step
+            flo = g(lo)
+        else:
+            lo, flo, x, fx = x, fx, hi, fhi
+            hi = x + step
+            fhi = g(hi)
+        step *= 1.6
+        if abs(x) >= limit:
+            # The function keeps decreasing to the end of the range: that
+            # end is the minimizer, as far as this search can tell.
+            start[0] = x
+            return x, fx, True
+        if calls[0] >= max_iterations:
+            start[0] = x
+            return x, fx, False
+    if not (fx < flo and fx < fhi):
+        # Flat to rounding on one side: nothing further to resolve.
+        start[0] = x
+        return x, fx, True
+    remaining = max(max_iterations - calls[0], 5)
+    result = minimize_scalar(
+        g,
+        bracket=(lo, x, hi),
+        method="brent",
+        options=dict(xtol=tolerance, maxiter=remaining),
+    )
+    start[0] = float(result.x)
+    return float(result.x), float(result.fun), bool(result.success)
+
+
 _DEFAULTS: dict[str, tuple[Algorithm, ...]] = {
-    "support": (ClosedForm(),),
-    "inclusion": (ClosedForm(),),
-    "feasibility": (ClosedForm(),),
+    "support": (ClosedForm(), Primal()),
+    "inclusion": (ClosedForm(), Search()),
+    "feasibility": (ClosedForm(), Search()),
 }
 """The algorithms for each probe, in the order ``auto`` tries them."""
 
@@ -654,7 +1643,6 @@ class FeasiblePropertySet(ConvexSet):
         *,
         noise: ConvexSet | None = None,
         solver: LinearSolver | None = None,
-        _structure: _Structure | None = None,
     ) -> None:
         """
         Args:
@@ -673,15 +1661,40 @@ class FeasiblePropertySet(ConvexSet):
             ValueError: if an operator or a set is on the wrong space.
             TypeError: if the prior or the noise is not a convex set.
         """
-        if _structure is None:
-            _structure = _Structure(
-                forward_operator, property_operator, prior, noise=noise, solver=solver
-            )
-        super().__init__(_structure.property_space)
-        self._structure = _structure
+        structure = FeasibleStructure(
+            forward_operator, property_operator, prior, noise=noise, solver=solver
+        )
+        self._attach(structure, data)
+
+    def _attach(self, structure: FeasibleStructure, data: Any) -> None:
+        super().__init__(structure.property_space)
+        self._structure = structure
         self._data = data
         self._cache: dict[Any, Any] = {}
         self._lock = threading.RLock()
+
+    @classmethod
+    def from_structure(
+        cls, structure: FeasibleStructure, data: Any, /
+    ) -> "FeasiblePropertySet":
+        """The set for these data on a structure already built, sharing its work.
+
+        What :meth:`with_data` and an estimator use: every set built on one
+        structure shares the data-independent pieces its algorithms keep
+        there.
+
+        Args:
+            structure: the operators, sets and solver, with their caches.
+            data: the observations.
+        """
+        feasible = cls.__new__(cls)
+        feasible._attach(structure, data)
+        return feasible
+
+    @property
+    def structure(self) -> FeasibleStructure:
+        """The data-independent part: operators, sets, solver, and the algorithms' shared work."""
+        return self._structure
 
     # -- what it holds -----------------------------------------------------
 
@@ -725,14 +1738,7 @@ class FeasiblePropertySet(ConvexSet):
 
     def with_data(self, data: Any, /) -> "FeasiblePropertySet":
         """The set for other data, sharing everything that does not depend on them."""
-        return FeasiblePropertySet(
-            self._structure.forward,
-            self._structure.property_operator,
-            self._structure.prior,
-            data,
-            noise=self._structure.noise,
-            _structure=self._structure,
-        )
+        return FeasiblePropertySet.from_structure(self._structure, data)
 
     # -- dispatch ----------------------------------------------------------
 
@@ -772,7 +1778,20 @@ class FeasiblePropertySet(ConvexSet):
             return via
         raise TypeError("via= takes an algorithm's name or an instance.")
 
-    def _cached(self, key: Any, build: Callable[[], Any]) -> Any:
+    def cached(self, key: Any, build: Callable[[], Any], /) -> Any:
+        """A data-dependent piece of an algorithm's work, built once for this set.
+
+        The counterpart of :meth:`FeasibleStructure.shared` for what depends
+        on the data: an algorithm keeps its fit, its solutions along a sweep
+        and its results here, under a key of its own.
+
+        Args:
+            key: hashable; by convention the algorithm's name first.
+            build: called once, under the set's lock, if the key is new.
+
+        Returns:
+            What was built, now or before.
+        """
         with self._lock:
             if key not in self._cache:
                 self._cache[key] = build()
@@ -798,8 +1817,8 @@ class FeasiblePropertySet(ConvexSet):
             NotImplementedError: if no algorithm answers for these sets.
         """
         algorithm = self._resolve("support", via)
-        return self._cached(
-            ("support", algorithm.name, self._key(direction)),
+        return self.cached(
+            ("support", algorithm.name, algorithm.settings, self._key(direction)),
             lambda: algorithm.support(self, direction),
         )
 
@@ -841,12 +1860,26 @@ class FeasiblePropertySet(ConvexSet):
             via: an algorithm's name or instance, to force one.
             n_jobs: workers over the directions. Serial by default.
         """
-        from ..parallel import parallel_map
+        from ..parallel import parallel_map, resolve_jobs
 
         directions = tuple(directions)
-        results = parallel_map(
-            lambda q: self.support_result(q, via=via), directions, n_jobs=n_jobs
-        )
+        workers = max(1, min(resolve_jobs(n_jobs), len(directions)))
+        if workers == 1:
+            results = [self.support_result(q, via=via) for q in directions]
+        else:
+            # Contiguous chunks, one per worker, so that the warm start of
+            # one direction serves its neighbour within a chunk.
+            bounds = np.linspace(0, len(directions), workers + 1).astype(int)
+            chunks = [directions[bounds[i] : bounds[i + 1]] for i in range(workers)]
+
+            def sweep(chunk: tuple[Any, ...]) -> list[SupportResult]:
+                return [self.support_result(q, via=via) for q in chunk]
+
+            results = [
+                result
+                for part in parallel_map(sweep, chunks, n_jobs=workers, threads=True)
+                for result in part
+            ]
         return SweepResult(directions, tuple(results))
 
     def support_values(
@@ -983,8 +2016,9 @@ class FeasiblePropertySet(ConvexSet):
             via: an algorithm's name or instance, to force one.
         """
         algorithm = self._resolve("feasibility", via)
-        return self._cached(
-            ("feasibility", algorithm.name), lambda: algorithm.feasibility(self)
+        return self.cached(
+            ("feasibility", algorithm.name, algorithm.settings),
+            lambda: algorithm.feasibility(self),
         )
 
     def is_empty(self, *, via: Any = None, rtol: float = 1e-8) -> bool:
@@ -1020,8 +2054,8 @@ class FeasiblePropertySet(ConvexSet):
             via: an algorithm's name or instance, to force one.
         """
         algorithm = self._resolve("inclusion", via)
-        return self._cached(
-            ("inclusion", algorithm.name, self._key(value)),
+        return self.cached(
+            ("inclusion", algorithm.name, algorithm.settings, self._key(value)),
             lambda: algorithm.inclusion(self, value),
         )
 
@@ -1069,7 +2103,7 @@ class FeasiblePropertySet(ConvexSet):
         """
         algorithm = self._resolve("inclusion", None)
         gradient = None
-        if hasattr(algorithm, "level_gradient"):
+        if algorithm.level_gradient(self, self.domain.zero()) is not None:
 
             def gradient(value: Any) -> Any:
                 return algorithm.level_gradient(self, value)

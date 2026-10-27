@@ -1188,7 +1188,12 @@ the preconditioners and the surrogate route live. The exceptions
 knows their prior is unusual and passes `formalism="model_space"` once; the
 data-space route refuses with a message naming that when the prior cannot
 supply `C`. "Whichever is smaller" is advice in the docstring, not a
-default.
+default. Built 2026-10-27: the data-space formalism is refused outright
+when the data outnumber the model, since its family is singular at `γ = 0`
+and the data-only bound is out of reach there; the kernel-restricted
+membership search is assembled in the data space whatever the formalism,
+because the restriction of the prior's covariance to `ker T` is a
+rank-`dim P` downdate there and has no precision.
 
 **D-148. Reported values are outer bounds; every probe carries a certified
 bracket; the solver floor is checked** (2026-10-27, David). On the
@@ -1253,7 +1258,10 @@ into `n_jobs` contiguous chunks in the order given, so that warm starts run
 within a chunk and one cold start is paid per chunk; the `u₂(γ)` cache and
 the result caches take a lock; the preconditioner and projector pieces are
 read-only and shared. `n_jobs=1` and `n_jobs=k` must agree to tolerance and
-the tests check it. A process backend, which needs picklable operators and
+the tests check it. Built 2026-10-27: `parallel_map` gained `threads=`,
+the one way the library asks joblib for its threading backend (D-52 holds:
+joblib is still called only there), because the sweep's closures hold the
+set's caches and locks, which no process backend can pickle. A process backend, which needs picklable operators and
 per-worker caches merged afterwards, is the sl3dpp "process-safety
 declaration" item and waits for it after the release.
 
@@ -1309,7 +1317,15 @@ both ends `γ = 0` and `γ = ∞` are candidates to be evaluated explicitly,
 since an overdetermined problem's prior is slack and the present route
 crashes or returns a value off by `6e-5` there. `B(γ)` is
 direction-independent apart from the pairing, so with `K(γ)⁻¹d′` cached by
-`γ` (D-145) a sweep costs about one solve per `γ` per direction.
+`γ` (D-145) a sweep costs about one solve per `γ` per direction. Built
+2026-10-27 as `Primal` in `geometry/feasible.py`; two refinements from the
+implementation: the inner value is taken at the largest feasible point of
+the ray `u₂ + x u₁` at the found `γ`, both constraints being quadratics in
+`x = 1/t` with closed-form roots, which is first order in the search
+tolerance where the outer value is second order, so the default tolerance
+is `1e-4` in `log γ`; and `converged` reports the scalar search, the
+bracket's width being the gap. The certificate is `λ = t·R⁻¹(Au − d′)`,
+the dual's sign.
 
 ---
 

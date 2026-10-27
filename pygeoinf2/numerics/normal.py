@@ -44,6 +44,7 @@ __all__ = [
     "NormalOperator",
     "Formalism",
     "choose_formalism",
+    "DampedNormalOperator",
 ]
 
 Formalism = Literal["auto", "model_space", "data_space"]
@@ -193,6 +194,141 @@ class FactoredNormalOperator(LinearOperator):
         self,
     ) -> Callable[[np.ndarray], np.ndarray] | None:
         return self._assembled._components_adjoint_action()
+
+
+class DampedNormalOperator(FactoredNormalOperator):
+    """``A C A* + t R`` or ``t C⁻¹ + A* R⁻¹ A``, from operators, with its factors.
+
+    The member at multiplier ``t`` of the family a set-valued inference
+    walks along: ``C`` is the prior set's covariance in normalized units
+    and ``R`` the noise set's, and the multiplier is the ratio of the two
+    constraints' Lagrange multipliers. Read as a Gaussian normal operator
+    with prior covariance ``C`` and error covariance ``t R``, the data-space
+    form is exactly ``A Q A* + R`` and the model-space form is ``t`` times
+    ``Q⁻¹ + A* R⁻¹ A``, which is what :attr:`scale` reports; so every
+    structure-aware preconditioner applies unchanged, and the product
+    ``scale * prior_covariance`` does not depend on ``t``, which is what a
+    family-aware one needs.
+    """
+
+    def __init__(
+        self,
+        forward: LinearOperator,
+        prior_covariance: LinearOperator,
+        noise_covariance: LinearOperator,
+        multiplier: float,
+        /,
+        *,
+        prior_precision: LinearOperator | None = None,
+        noise_precision: LinearOperator | None = None,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+    ) -> None:
+        """
+        Args:
+            forward: the forward operator ``A``.
+            prior_covariance: ``C``, on the model space.
+            noise_covariance: ``R``, on the data space.
+            multiplier: ``t``, non-negative.
+            prior_precision: ``C⁻¹``, needed by the model-space form.
+            noise_precision: ``R⁻¹``, needed by the model-space form.
+            formalism: which space to assemble in.
+
+        Raises:
+            ValueError: if the multiplier is negative, the operators do not
+                fit the forward operator's spaces, or the model-space form is
+                asked for without the precisions.
+        """
+        if multiplier < 0.0:
+            raise ValueError(f"The multiplier must be non-negative, got {multiplier}.")
+        if prior_covariance.domain != forward.domain:
+            raise ValueError("The prior covariance must act on the model space.")
+        if noise_covariance.domain != forward.codomain:
+            raise ValueError("The noise covariance must act on the data space.")
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError(
+                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
+            )
+        if formalism == "model_space":
+            if prior_precision is None or noise_precision is None:
+                raise ValueError(
+                    "The model-space form needs the prior and noise precisions."
+                )
+            assembled = forward.adjoint @ noise_precision @ forward
+            if multiplier > 0.0:
+                assembled = assembled + multiplier * prior_precision
+            space = forward.domain
+        else:
+            assembled = forward @ prior_covariance @ forward.adjoint
+            if multiplier > 0.0:
+                assembled = assembled + multiplier * noise_covariance
+            space = forward.codomain
+        super().__init__(
+            space, space, traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        self._assembled = assembled
+        self._forward = forward
+        self._prior_covariance = prior_covariance
+        self._noise_covariance = noise_covariance
+        self._prior_precision = prior_precision
+        self._noise_precision = noise_precision
+        self._multiplier = float(multiplier)
+        self._formalism = formalism
+
+    def _value(self, x: Any) -> Any:
+        return self._assembled(x)
+
+    def _adjoint_value(self, y: Any) -> Any:
+        return self._assembled(y)
+
+    @property
+    def formalism(self) -> Literal["model_space", "data_space"]:
+        """Which space this was assembled in."""
+        return self._formalism
+
+    @property
+    def forward(self) -> LinearOperator:
+        """The forward operator ``A``."""
+        return self._forward
+
+    @property
+    def multiplier(self) -> float:
+        """``t``."""
+        return self._multiplier
+
+    @property
+    def prior_covariance(self) -> LinearOperator:
+        """``C``."""
+        return self._prior_covariance
+
+    @property
+    def prior_precision(self) -> LinearOperator | None:
+        """``C⁻¹``, when given."""
+        return self._prior_precision
+
+    @property
+    def error_covariance(self) -> LinearOperator:
+        """``t R``: the noise covariance the Gaussian reading carries."""
+        return self._multiplier * self._noise_covariance
+
+    @property
+    def error_precision(self) -> LinearOperator | None:
+        """``R⁻¹ / t``, when the noise precision was given and ``t > 0``."""
+        if self._noise_precision is None or self._multiplier <= 0.0:
+            return None
+        return (1.0 / self._multiplier) * self._noise_precision
+
+    @property
+    def scale(self) -> float:
+        """One in the data space; ``t`` in the model space."""
+        return self._multiplier if self._formalism == "model_space" else 1.0
+
+    def __repr__(self) -> str:
+        parts = (
+            "A C A* + t R" if self._formalism == "data_space" else "t C^-1 + A* R^-1 A"
+        )
+        return (
+            f"DampedNormalOperator({parts}, t={self._multiplier:g}, {self._formalism})"
+        )
 
 
 class NormalOperator(FactoredNormalOperator):

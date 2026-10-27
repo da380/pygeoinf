@@ -224,20 +224,27 @@ class TestDispatch:
 
     def test_a_form_no_algorithm_answers_is_refused_by_name(self, setting):
         model, forward, target, truth, data = setting
-        noisy = FeasiblePropertySet(
-            forward,
-            target,
-            Ball(model, radius=3.0),
-            data,
-            noise=Ball(forward.codomain, radius=0.1),
+        ball = Ball(model, radius=3.0)
+        oracle = ConvexSet.from_support_function(
+            model, ball.support_function(), maximizer=ball.support_maximizer
         )
-        assert noisy.form == "quadratic"
-        assert noisy.algorithms["support"] == ()
-        with pytest.raises(NotImplementedError, match="quadratic"):
-            noisy.support(target.codomain.basis_vector(0))
+        general = FeasiblePropertySet(
+            forward, target, oracle, data, noise=Ball(forward.codomain, radius=0.1)
+        )
+        assert general.form == "general"
+        assert general.algorithms["support"] == ()
+        with pytest.raises(NotImplementedError, match="general"):
+            general.support(target.codomain.basis_vector(0))
         with pytest.raises(ValueError, match="does not apply"):
-            noisy.support(target.codomain.basis_vector(0), via="closed_form")
-        assert not noisy.has_support_function and not noisy.has_membership
+            general.support(target.codomain.basis_vector(0), via="closed_form")
+        assert not general.has_support_function and not general.has_membership
+        quadratic = FeasiblePropertySet(
+            forward, target, ball, data, noise=Ball(forward.codomain, radius=0.1)
+        )
+        assert quadratic.form == "quadratic"
+        assert quadratic.algorithms["support"] == ("primal",)
+        with pytest.raises(ValueError, match="does not apply"):
+            quadratic.support(target.codomain.basis_vector(0), via="closed_form")
 
     def test_a_zero_radius_noise_ball_is_exact_data(self, setting):
         model, forward, target, truth, data = setting
@@ -275,7 +282,7 @@ class TestSharingAndCaching:
         finally:
             ClosedForm._build = original
         assert len(builds) == 1
-        assert feasible._structure is sibling._structure
+        assert feasible.structure is sibling.structure
 
     def test_a_probe_is_computed_once_per_direction(self, setting):
         model, forward, target, truth, data = setting
@@ -410,3 +417,272 @@ class TestTheConversions:
         ) <= 1e-5 * space.norm(x)
         assert oracle.contains(ball.project(x), rtol=1e-6)
         assert not oracle.contains(x, rtol=1e-6)
+
+
+# --------------------------------------------------------------------- #
+#                           The quadratic tier                           #
+# --------------------------------------------------------------------- #
+
+
+def ellipsoid_on(space, rng, *, center=None, scale=1.0):
+    precision, covariance = spd_operator(space, rng, scale=scale)
+    return Ellipsoid(space, precision, center=center, covariance=covariance)
+
+
+class TestThePrimalAgreesWithThePresentRoute:
+    """Two balls, an ellipsoid on either side, centres: the new algorithms
+    reproduce the bisection route, with the dense spectrum as an opt-in
+    solver and conjugate gradients to within the bracket."""
+
+    @pytest.fixture
+    def noisy(self, setting):
+        model, forward, target, truth, data = setting
+        return model, forward, target, truth, data, Ball(forward.codomain, radius=0.1)
+
+    def test_two_balls_with_either_solver(self, noisy):
+        from pygeoinf2.numerics import CGSolver, SpectralFamilySolver
+
+        model, forward, target, truth, data, noise = noisy
+        prior = Ball(model, radius=3.0)
+        old = BackusGilbertParker(
+            LinearForwardProblem(forward), target, prior, noise=noise, route="bisection"
+        )(data)
+        for solver in (SpectralFamilySolver(), CGSolver(rtol=1e-12)):
+            new = FeasiblePropertySet(
+                forward, target, prior, data, noise=noise, solver=solver
+            )
+            assert new.form == "quadratic"
+            assert new.algorithms["support"] == ("primal",)
+            assert new.algorithms["inclusion"] == ("search",)
+            for q in directions(target.codomain):
+                result = new.support_result(q)
+                assert result.converged
+                assert result.value == pytest.approx(old.support(q), rel=1e-8)
+                assert result.inner <= result.value + 1e-12
+                assert result.gap <= 1e-4 * max(abs(result.value), 1.0)
+            p = target(truth)
+            assert new.inclusion_level(p) == pytest.approx(
+                old.inclusion_level(p), rel=1e-7
+            )
+            assert new.contains(p) and not new.is_empty()
+
+    def test_ellipsoids_on_both_sides_off_centre(self, noisy, rng):
+        model, forward, target, truth, data, _ = noisy
+        prior = ellipsoid_on(
+            model, rng, center=model.scale(0.3, truth), scale=1.0 / 9.0
+        )
+        noise = ellipsoid_on(
+            forward.codomain, rng, center=forward.codomain.random(rng=rng), scale=100.0
+        )
+        # Data that the shifted truth fits: inside both sets by construction.
+        shifted_data = forward.codomain.add(forward(truth), noise.center)
+        old = BackusGilbertParker(
+            LinearForwardProblem(forward), target, prior, noise=noise, route="bisection"
+        )(shifted_data)
+        new = FeasiblePropertySet(forward, target, prior, shifted_data, noise=noise)
+        assert not new.is_empty()
+        for q in directions(target.codomain):
+            result = new.support_result(q)
+            assert result.value == pytest.approx(old.support(q), rel=1e-7)
+            assert result.gap <= 1e-3 * max(abs(result.value), 1.0)
+            extremal = result.extremal_model
+            assert prior.contains(extremal, rtol=1e-8)
+            assert noise.contains(
+                forward.codomain.subtract(shifted_data, forward(extremal)), rtol=1e-8
+            )
+        p = target(truth)
+        assert new.inclusion_level(p) == pytest.approx(old.inclusion_level(p), rel=1e-6)
+
+    def test_the_closed_form_is_the_limit_of_vanishing_noise(self, setting):
+        model, forward, target, truth, data = setting
+        prior = Ball(model, radius=3.0)
+        exact = FeasiblePropertySet(forward, target, prior, data)
+        tight = FeasiblePropertySet(
+            forward, target, prior, data, noise=Ball(forward.codomain, radius=1e-5)
+        )
+        for q in directions(target.codomain):
+            assert tight.support(q) == pytest.approx(exact.support(q), rel=1e-4)
+
+    def test_a_slack_data_constraint_costs_no_solve(self, setting):
+        model, forward, target, truth, data = setting
+        roomy = Ball(forward.codomain, radius=1e6)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=roomy
+        )
+        q = target.codomain.basis_vector(0)
+        result = feasible.support_result(q)
+        assert result.evaluations == 0 and result.multipliers[1] == 0.0
+        assert result.value == pytest.approx(
+            3.0 * model.norm(target.adjoint(q)), rel=1e-10
+        )
+        assert result.gap <= 1e-10
+
+
+class TestTheSearch:
+    def test_feasibility_certifies_and_the_lower_bound_holds(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        result = feasible.feasibility_result()
+        assert result.algorithm == "search" and result.converged
+        assert result.lower_bound <= result.level <= feasible.level
+        fitting = result.fitting_model
+        assert noise.contains(
+            forward.codomain.subtract(data, forward(fitting)), rtol=1e-6
+        )
+        assert model.norm(fitting) ** 2 == pytest.approx(result.level, rel=1e-8)
+
+    def test_an_unfittable_data_set_is_empty(self, setting):
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=0.05),
+            data,
+            noise=Ball(forward.codomain, radius=0.01),
+        )
+        assert feasible.is_empty()
+        assert feasible.feasibility_result().level > feasible.level
+
+    def test_inclusion_fits_the_value_and_the_data(self, setting, rng):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        p = target(truth)
+        result = feasible.inclusion_result(p)
+        assert result.lower_bound <= result.level
+        fitting = result.fitting_model
+        assert np.allclose(target(fitting), p, atol=1e-8)
+        assert noise.contains(
+            forward.codomain.subtract(data, forward(fitting)), rtol=1e-6
+        )
+        assert model.norm(fitting) ** 2 == pytest.approx(result.level, rel=1e-6)
+        # A value no model can carry while fitting the data is excluded.
+        far = target.codomain.from_components(np.array([50.0, -50.0]))
+        assert not feasible.contains(far)
+        assert feasible.inclusion_result(far).lower_bound > feasible.level
+
+    def test_the_extent_lies_within_the_bracket(self, setting):
+        model, forward, target, truth, data = setting
+        scalar = EuclideanSpace(1)
+        row = LinearOperator.from_matrix(
+            target.codomain, scalar, np.array([[1.0, 0.5]]), form="galerkin"
+        )
+        feasible = FeasiblePropertySet(
+            forward,
+            row @ target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        e = scalar.basis_vector(0)
+        lower, upper = feasible.extent(e)
+        inner, outer = feasible.support_bracket(e)
+        assert inner - 1e-6 <= upper <= outer + 1e-6
+        assert upper == pytest.approx(outer, rel=1e-4)
+
+
+class TestKnobs:
+    def test_the_formalisms_agree_and_overdetermined_data_need_the_model_space(
+        self, rng
+    ):
+        from pygeoinf2.geometry.feasible import Primal, Search
+
+        model, data_space, prop = (
+            EuclideanSpace(6),
+            EuclideanSpace(10),
+            EuclideanSpace(2),
+        )
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(10, 6)), form="galerkin"
+        )
+        target = LinearOperator.from_matrix(
+            model, prop, rng.normal(size=(2, 6)), form="galerkin"
+        )
+        truth = model.random(rng=rng)
+        data = data_space.add(
+            forward(truth), data_space.scale(0.05, data_space.random(rng=rng))
+        )
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0 * model.norm(truth)),
+            data,
+            noise=Ball(data_space, radius=0.5),
+        )
+        q = prop.basis_vector(0)
+        with pytest.raises(ValueError, match="model_space"):
+            feasible.support(q)
+        by_model = feasible.support_result(q, via=Primal(formalism="model_space"))
+        assert by_model.converged
+        # The prior is slack: the data alone bound the property, at γ == 0.
+        assert by_model.multipliers[0] <= 1e-6 * by_model.multipliers[1]
+        # The truth fits the data, so its property is admitted; a value the
+        # data pin down away from it is excluded, with a finite certificate.
+        admitted = feasible.inclusion_result(
+            target(truth), via=Search(formalism="model_space")
+        )
+        assert admitted.level <= feasible.level * (1.0 + 1e-8)
+        excluded = feasible.inclusion_result(
+            prop.scale(50.0, prop.basis_vector(1)), via=Search(formalism="model_space")
+        )
+        assert excluded.lower_bound > feasible.level
+
+    def test_an_instance_with_tuning_is_honoured(self, setting):
+        from pygeoinf2.geometry.feasible import Primal
+
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        q = target.codomain.basis_vector(0)
+        loose = feasible.support_result(q, via=Primal(tolerance=1e-1))
+        tight = feasible.support_result(q, via=Primal(tolerance=1e-6))
+        assert loose.gap > tight.gap
+        assert loose.value == pytest.approx(tight.value, rel=1e-3)
+        with pytest.raises(ValueError, match="does not answer"):
+            feasible.inclusion_level(q, via=Primal())
+
+    def test_the_sweep_is_the_same_with_workers(self, setting):
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        prop = target.codomain
+        angles = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+        qs = [prop.from_components(np.array([np.cos(a), np.sin(a)])) for a in angles]
+        serial = feasible.support_values(qs)
+        parallel = feasible.with_data(data).support_values(qs, n_jobs=3)
+        assert parallel == pytest.approx(serial, rel=1e-8)
+        outer = feasible.polytope(qs)
+        inner = feasible.inner_hull(qs)
+        assert outer.contains(target(truth)) and not inner.is_outer
+        for q in qs:
+            assert outer.contains(feasible.support_maximizer(q), rtol=1e-6)
+
+    def test_the_solver_floor_is_checked(self, setting):
+        from pygeoinf2.numerics import CGSolver
+
+        model, forward, target, truth, data = setting
+        coarse = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=1e-9),
+            solver=CGSolver(rtol=1e-6),
+        )
+        with pytest.raises(ValueError, match="floor"):
+            coarse.is_empty()

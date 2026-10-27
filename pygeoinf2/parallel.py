@@ -137,6 +137,7 @@ def parallel_map(
     /,
     *,
     n_jobs: int | None = None,
+    threads: bool = False,
 ) -> list[Any]:
     """``[function(item) for item in items]``, possibly in parallel.
 
@@ -144,13 +145,18 @@ def parallel_map(
     worker (see the module docstring on nesting); joblib is not imported on
     the serial path. Otherwise ``joblib.Parallel`` with the process backend
     and one thread per worker, unless a ``joblib.parallel_config`` context is
-    active, in which case that context decides.
+    active, in which case that context decides, or *threads* is set.
 
     Args:
         function: called once per item. Must be picklable under a process
             backend.
         items: the work.
         n_jobs: workers. Serial by default.
+        threads: run the workers as threads of this process rather than as
+            processes. For work that closes over state that cannot be
+            pickled -- a set with its caches and locks -- and whose cost is
+            in operator applications that release the interpreter lock; a
+            pure-Python forward operator gains nothing from it.
 
     Returns:
         The results, in the order of *items*.
@@ -169,6 +175,9 @@ def parallel_map(
 
     if _context_is_set():
         return run()
+    if threads:
+        with parallel_config(backend="threading"):
+            return run()
     # The context form, not the ``Parallel(inner_max_num_threads=)`` keyword:
     # in joblib 1.5 the keyword is accepted and then ignored by the reusable
     # executor, and the workers keep joblib's cores // n_jobs. Pinned by a

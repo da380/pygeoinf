@@ -508,7 +508,9 @@ class DampedSolves:
                 self._bound_preconditioner = solver.preconditioner.for_family(
                     self.base, self.shift
                 )
-            return solver._carrying(self._bound_preconditioner.at(multiplier, operator))
+            return solver.with_resolved_preconditioner(
+                self._bound_preconditioner.at(multiplier, operator)
+            )
 
         stale = self._prepared_at is None or not (
             1.0 / self.refresh <= multiplier / self._prepared_at <= self.refresh

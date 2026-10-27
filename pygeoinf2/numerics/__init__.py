@@ -61,7 +61,13 @@ from .optimization import (
     gauss_newton_hessian,
     truncated_cg,
 )
-from .normal import FactoredNormalOperator, Formalism, NormalOperator, choose_formalism
+from .normal import (
+    DampedNormalOperator,
+    FactoredNormalOperator,
+    Formalism,
+    NormalOperator,
+    choose_formalism,
+)
 from .preconditioners import (
     BandedPreconditioner,
     BlockPreconditioner,
@@ -213,6 +219,7 @@ __all__ = [
     "LocalisedPreconditioner",
     "InvariantDistancePreconditioner",
     "gaspari_cohn",
+    "DampedNormalOperator",
     "FactoredNormalOperator",
     "NormalOperator",
     "Formalism",

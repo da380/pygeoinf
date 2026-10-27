@@ -146,56 +146,46 @@ droppable.
 
 ## Stage 3 — the quadratic tier, matrix-free
 
-1. **`Primal` (D-144, D-153)**: minimise `φ(γ) = B(γ) + sqrt(A(γ)C(γ))`
-   over `γ ∈ [0, ∞]` around a `TikhonovFamily` built with the prior's `Q`
-   and the noise's `P` (`formalism="data_space"` by default, D-147;
-   `"model_space"` on request and required when the prior has no
-   covariance). In the data-space formalism the three coefficients are
-   `A = κ/γ + (ACc, G⁻¹RK⁻¹ACc)` with the kernel part `κ` once per
-   direction, `B = (ACc, K⁻¹d′)`, `C = 1 + γ(1 − (d′, K⁻¹d′))`, where
-   `K(γ) = G + γR` is the family member; in the model-space formalism the
-   two direct solves. A bracketed Brent in `log γ` from the neighbouring
-   direction's root (cold: expand from `γ = 1`), tolerance `1e-3` in
-   `log γ` (the value is stationary, second order); `γ = ∞` (prior-only,
-   zero solves) and `γ = 0` (data-only, when `A*PA` is invertible) tested
-   as candidates; every solve warm-started through `DampedSolves`, with
-   `K⁻¹d′` cached by `γ` (D-145). The nested monotone root finds remain as
-   a fallback behind the same object. At the minimum `t* = sqrt(A/C)`,
-   `s* = γt*`, the model `u = u₁/t* + u₂`. Returns a `SupportResult` with
-   the outer value from the dual certificate `λ = t*·P(d′ − Au)` evaluated
-   in closed form, the inner value from the model scaled into both sets,
-   the contact point, the extremal model and the multipliers (D-148).
-2. **`Search` (D-137)**: the membership and feasibility algorithm. Without
-   a property value: `misfit_search` over the family on the shifted data,
-   giving the fitting model and emptiness. With a value `p`: the
-   minimum-`Q`-norm model with property `p` through the cached kernel
-   pieces, then the same search with the forward operator restricted to
-   `ker T` (`A ∘ P_K`, `P_K` applied matrix-free). Returns an
-   `InclusionResult` with the level, its lower bound from the multiplier,
-   and the fitting model; `level_function()` carries the gradient the
-   multiplier gives.
-3. **Sharing (D-145)**: the estimator-level part (kernel pieces, closed-form
-   pieces, the family with its solver and preconditioner) built once and
-   handed to every set; the set-level part (a bounded `u₂(γ)` cache keyed
-   on `γ` to the solver's tolerance, the last roots, `InclusionResult`s)
-   under a lock; `support_values` sweeps in the order given with
-   warm-started roots in contiguous chunks per worker (D-151);
-   `with_data(d₂)` returns a sibling sharing the estimator-level part.
-4. **Preconditioning (D-146)**: the family is a `FactoredNormalOperator` so
-   every existing preconditioner applies; `C`-preconditioning is the
-   model-space default, none the data-space default; the kernel-restricted
-   family reuses the unrestricted family's preconditioner.
-5. **The floor check (D-148)**: at construction, the solver's `rtol` against
-   the noise radius over `‖d‖` and the prior radius over the model scale;
-   refuse under D-8's strictness, warn otherwise.
-6. **`SpectralFamilySolver` parity**: with it passed as `solver=`, `Primal`
-   and `Search` reproduce the present `_BisectionRoute` numbers to `1e-10`
-   on every existing test; with CG they agree to the bracket.
+**DONE 2026-10-27.** In `geometry/feasible.py`: `_QuadraticFamily` (the
+damped family of the two sets in either formalism, members
+`DampedNormalOperator`s from `numerics/normal.py` carrying `A`, `C`, `γR`
+for the preconditioners, the Tikhonov-family interface so `misfit_search`
+runs on it); `Primal` (the `φ(γ)` minimization of D-153 by bracketing and
+Brent in `log γ`, the resolvent form in the data space, the prior-only
+branch at no solve, `γ = 0` evaluated when the walk reaches the lower limit
+in the model space, the certificate `λ = t·R⁻¹(Au − d′)` evaluated in closed
+form as the outer bound, the inner value from the largest feasible point on
+the ray `u₂ + x u₁` at the found `γ` — both constraints are quadratics in
+`x`, D-144 — with the segment to the fitting model as the fallback);
+`Search` (feasibility and membership by one misfit search, the kernel
+restriction a rank-`dim P` downdate of `C` applied matrix-free, the lower
+bound from the multiplier); caches: `u₂` by `γ` with warm starts within six
+decades, the warm start of the scalar search per worker thread; the sweep
+in contiguous chunks on threads (`parallel_map(threads=True)`, new in
+`parallel.py`); the floor check of D-148. Defaults settled by the tests:
+`CGSolver(rtol=1e-10, max_iterations=max(2·dim, 200))` per space, since
+`1e-12` is below the rounding floor of an ill-conditioned family; `Primal`'s
+tolerance `1e-4` in `log γ` (brackets of about `1e-5`). The data-space
+formalism is refused by dimension when the data outnumber the model
+(its family is singular at `γ = 0`), with the model-space advice; a solver
+breakdown inside `φ` surfaces as the same advice. The kernel-restricted
+search is assembled in the data space whatever the formalism, since the
+restriction is the downdate there. Parity: outer values agree with the
+present bisection route to `1e-8` with CG and with the spectral solver;
+membership levels to `1e-7`; the closed form is the limit of vanishing
+noise; the overdetermined case finds `γ = 0` with the prior slack.
 
-Tests: brackets overlap between `Primal` with CG and with the spectral
-solver; `ClosedForm` against `Primal` as the noise radius → 0; centres and
-ellipsoids on both sides; the degenerate prior on a reduced flexure problem;
-`n_jobs` invariance; the floor check.
+Not done here: the structure-aware preconditioners' sharing between the
+plain and the restricted family (each `DampedSolves` binds its own; a
+family-aware preconditioner is probed twice). Revisit with the benchmark.
+
+After the code-practice scan of the same day (`CODE_PRACTICE_SCAN.md`):
+an `Algorithm` works through the public `feasible.structure`
+(`FeasibleStructure`, exported) and `feasible.cached(key, build)`, and an
+estimator builds sets with `FeasiblePropertySet.from_structure`; the floor
+check reads `IterativeSolver.rtol`; `with_resolved_preconditioner` is the
+public name of the preconditioner swap; the level-support memo is
+thread-local.
 
 ## Stage 4 — the general tier
 

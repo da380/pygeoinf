@@ -1093,18 +1093,32 @@ class IterativeSolver(LinearSolver):
             self._preconditioner, LinearSolver
         ):
             return self
-        return self._carrying(self._preconditioner(operator))
+        return self.with_resolved_preconditioner(self._preconditioner(operator))
 
-    def _carrying(self, preconditioner: LinearOperator, /) -> "IterativeSolver":
+    def with_resolved_preconditioner(
+        self, preconditioner: LinearOperator, /
+    ) -> "IterativeSolver":
         """A copy of this solver with a *resolved* preconditioner in place.
 
-        For library routines that have already built the preconditioner for
-        the operator at hand, where :meth:`with_preconditioner` would refuse
-        to replace the deferred one the caller attached.
+        For a routine that has already built the preconditioner for the
+        operator at hand -- a family sweep asking a family-aware one for the
+        member -- where :meth:`with_preconditioner` would refuse to replace
+        the deferred one the caller attached.
+
+        Args:
+            preconditioner: the preconditioner, as an operator.
+
+        Returns:
+            The copy.
         """
         clone = copy.copy(self)
         clone._preconditioner = preconditioner
         return clone
+
+    @property
+    def rtol(self) -> float:
+        """The relative residual tolerance the solver stops at."""
+        return self._rtol
 
     def _resolve_preconditioner(
         self, operator: LinearOperator

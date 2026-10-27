@@ -25,6 +25,7 @@ rather than offering an approximation under the same name.
 
 from __future__ import annotations
 
+import threading
 from abc import abstractmethod
 from typing import Any, Sequence
 
@@ -554,11 +555,14 @@ class _LevelSupport(SupportFunction):
         self._subset = subset
         self._functional = subset.level_function()
         self._level = float(subset.level)
-        self._last: tuple[Any, tuple[float, Any]] | None = None
+        # One remembered answer per thread, so that a value and the
+        # maximizer asked for the same direction in turn cost one solve.
+        self._memo = threading.local()
 
     def _solve(self, direction: Any) -> tuple[float, Any]:
-        if self._last is not None and self._last[0] is direction:
-            return self._last[1]
+        last = getattr(self._memo, "last", None)
+        if last is not None and last[0] is direction:
+            return last[1]
         from ..numerics.optimization import LBFGS, NewtonCG
         from ..numerics.root_find import Evaluation, monotone_root
 
@@ -601,7 +605,7 @@ class _LevelSupport(SupportFunction):
         else:
             point = model(root.argument)
             answer = (float(space.inner_product(direction, point)), point)
-        self._last = (direction, answer)
+        self._memo.last = (direction, answer)
         return answer
 
     def _value(self, y: Any) -> float:
