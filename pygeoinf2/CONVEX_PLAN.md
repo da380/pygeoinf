@@ -189,30 +189,37 @@ thread-local.
 
 ## Stage 4 — the general tier
 
-1. **`Dual` (D-149)**: the bundle run on a `MassWeightedSpace` of the data
-   space with the noise precision as metric; `method=` any nonsmooth-capable
-   `Optimizer`, the proximal bundle default; stopping on the certified
-   bracket when an inner point exists and on the bundle gap otherwise;
-   certificate warm starts across a sweep with the antipodal rule for a
-   symmetric noise set; emptiness by a divergence test on the cost; an
-   optional affine constraint on `λ` enforced in the proximal step for
-   degenerate priors; refusal of sets whose support function is infinite on
-   a non-subspace region (those go through `Splitting`); `start=` for
-   cross-seeding from a `Primal` certificate.
-2. **`Splitting`**: Chambolle-Pock on the support problem given projections,
-   returning the primal iterate scaled in as the inner value and the dual
-   iterate's cost as the outer.
-3. **`Search` on general sets**: the inner convex minimisation of the
-   present `_LikelihoodRoute`, under the same outer search.
-4. **`Distance`**: Stage 2's conversion as the membership algorithm of the
-   support-only tier, and the emptiness fallback there.
-5. The general tier's `algorithms` listing by capability (D-135, D-136).
+**DONE 2026-10-27.** In `geometry/feasible.py`: `Dual` (the bundle on a
+`MassWeightedSpace` of the data space with the noise precision as metric
+when the noise set is quadratic, the gradient mapped by the covariance;
+`method=` any subgradient-taking optimizer; certificates warm-started per
+worker thread, the opposite direction's negated when seen; an unbounded
+dual raised as an empty set and used as the feasibility probe on the
+support-only tier; the prior's maximizer at the residual `T*q − A*λ` as the
+extremal model, reported as the inner value when it fits the data);
+`Splitting` (Chambolle-Pock on projections, exact data as the zero-radius
+ball, the outer value the better of the dual cost at `±` its dual variable
+where the sets have support functions and infinite otherwise); `Distance`
+(membership through the projection dual on the set's own support function
+with contact points as subgradients; the level nominal, one inside and
+infinite outside); `Search` extended to smooth level functions on both
+sides (the likelihood route's inner minimization, the model-metric kernel
+projector for a value); `SublevelSet` priors and noise admitted; the
+conversions public as `ConvexSet.has_smooth_level_function`,
+`computes_support_function`, `computes_maximizer`; `_dual_cost` through
+the sets' support functions when they are not quadratic. Parity: the dual
+agrees with the primal to `1e-6` on balls with overlapping brackets, with
+the present KKT route to `1e-4` on a quartic prior, with the closed form
+on exact data and an oracle prior to `1e-6`; the splitting agrees with the
+primal to `1e-5`; the general search agrees with the present likelihood
+route to `1e-5`. The dispatch order is `support: closed_form, primal, dual,
+splitting`; `inclusion: closed_form, search, distance`; `feasibility:
+closed_form, search, dual`.
 
-Tests: the existing cross-route parity tests re-spelled as `Primal` against
-`Dual` against `Splitting` with brackets; the ellipsoid-prior-with-exact-data
-case that crashes today; a polytope prior through `Dual`; a projection-only
-intersection through `Splitting`; `Distance` against `Search` where both
-apply.
+Not done here: the affine constraint on the dual's certificate for
+degenerate priors (D-138, with `Cylinder`), and an inner value for the
+dual when the prior's maximizer does not fit the data (it is reported as
+`−∞` then).
 
 ## Stage 5 — the estimators, and the deletions
 

@@ -76,11 +76,7 @@ class TestTheClosedFormAgreesWithThePresentRoute:
         new = FeasiblePropertySet(forward, target, prior, data)
         old = BackusGilbertParker(LinearForwardProblem(forward), target, prior)(data)
         assert new.form == "closed_form"
-        assert new.algorithms == {
-            "support": ("closed_form",),
-            "inclusion": ("closed_form",),
-            "feasibility": ("closed_form",),
-        }
+        assert all(names[0] == "closed_form" for names in new.algorithms.values())
         for q in directions(target.codomain):
             assert new.support(q) == pytest.approx(old.support(q), rel=1e-10)
             inner, outer = new.support_bracket(q)
@@ -225,9 +221,8 @@ class TestDispatch:
     def test_a_form_no_algorithm_answers_is_refused_by_name(self, setting):
         model, forward, target, truth, data = setting
         ball = Ball(model, radius=3.0)
-        oracle = ConvexSet.from_support_function(
-            model, ball.support_function(), maximizer=ball.support_maximizer
-        )
+        # A support function with no maximizer: no algorithm can use it.
+        oracle = ConvexSet.from_support_function(model, ball.support_function())
         general = FeasiblePropertySet(
             forward, target, oracle, data, noise=Ball(forward.codomain, radius=0.1)
         )
@@ -242,7 +237,7 @@ class TestDispatch:
             forward, target, ball, data, noise=Ball(forward.codomain, radius=0.1)
         )
         assert quadratic.form == "quadratic"
-        assert quadratic.algorithms["support"] == ("primal",)
+        assert quadratic.algorithms["support"][0] == "primal"
         with pytest.raises(ValueError, match="does not apply"):
             quadratic.support(target.codomain.basis_vector(0), via="closed_form")
 
@@ -452,8 +447,8 @@ class TestThePrimalAgreesWithThePresentRoute:
                 forward, target, prior, data, noise=noise, solver=solver
             )
             assert new.form == "quadratic"
-            assert new.algorithms["support"] == ("primal",)
-            assert new.algorithms["inclusion"] == ("search",)
+            assert new.algorithms["support"][0] == "primal"
+            assert new.algorithms["inclusion"][0] == "search"
             for q in directions(target.codomain):
                 result = new.support_result(q)
                 assert result.converged
@@ -686,3 +681,171 @@ class TestKnobs:
         )
         with pytest.raises(ValueError, match="floor"):
             coarse.is_empty()
+
+
+# --------------------------------------------------------------------- #
+#                             The general tier                           #
+# --------------------------------------------------------------------- #
+
+
+def quartic_ball(space, radius):
+    """``{ ||x||^4 <= r^4 }``: the ball as a sublevel set with a non-quadratic level function."""
+    from pygeoinf2.algebra.operators import Functional
+    from pygeoinf2.geometry import SublevelSet
+
+    return SublevelSet(
+        Functional.from_callables(
+            space,
+            lambda x: space.squared_norm(x) ** 2,
+            gradient=lambda x: space.scale(4.0 * space.squared_norm(x), x),
+        ),
+        level=radius**4,
+    )
+
+
+def oracle_of(ball):
+    return ConvexSet.from_support_function(
+        ball.domain, ball.support_function(), maximizer=ball.support_maximizer
+    )
+
+
+class TestTheDual:
+    def test_it_agrees_with_the_primal_on_balls_and_the_brackets_overlap(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        assert feasible.algorithms["support"] == ("primal", "dual", "splitting")
+        for q in directions(target.codomain):
+            primal = feasible.support_result(q)
+            dual = feasible.support_result(q, via="dual")
+            assert dual.converged and dual.algorithm == "dual"
+            assert dual.value == pytest.approx(primal.value, rel=1e-6)
+            assert dual.inner <= dual.value + 1e-9
+            assert (
+                primal.inner <= dual.value + 1e-9 and dual.inner <= primal.value + 1e-9
+            )
+            assert dual.certificate is not None
+            assert feasible.certificate(q, via="dual") is dual.certificate
+
+    def test_a_quartic_prior_takes_the_dual_and_agrees_with_the_present_route(
+        self, setting
+    ):
+        model, forward, target, truth, data = setting
+        prior = quartic_ball(model, 3.0)
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(forward, target, prior, data, noise=noise)
+        assert feasible.form == "general"
+        assert feasible.algorithms["support"][0] == "dual"
+        old = BackusGilbertParker(
+            LinearForwardProblem(forward), target, prior, noise=noise
+        )(data)
+        for q in directions(target.codomain):
+            result = feasible.support_result(q)
+            assert result.value == pytest.approx(old.support(q), rel=1e-4)
+            extremal = result.extremal_model
+            assert model.norm(extremal) <= 3.0 * (1.0 + 1e-4)
+
+    def test_exact_data_with_a_general_prior_is_the_closed_form(self, setting):
+        model, forward, target, truth, data = setting
+        ball = Ball(model, radius=3.0)
+        exact = FeasiblePropertySet(forward, target, ball, data)
+        general = FeasiblePropertySet(forward, target, oracle_of(ball), data)
+        assert general.form == "general" and general.noise is None
+        for q in directions(target.codomain):
+            assert general.support(q) == pytest.approx(exact.support(q), rel=1e-6)
+        assert not general.is_empty()
+
+    def test_an_empty_set_is_an_unbounded_dual(self, setting):
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            oracle_of(Ball(model, radius=0.05)),
+            data,
+            noise=oracle_of(Ball(forward.codomain, radius=0.01)),
+        )
+        assert feasible.algorithms["feasibility"] == ("dual",)
+        assert feasible.is_empty()
+        with pytest.raises(ValueError, match="empty"):
+            feasible.support(target.codomain.basis_vector(0))
+
+    def test_the_antipodal_warm_start_and_the_outer_bounds(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        prop = target.codomain
+        angles = np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False)
+        qs = [prop.from_components(np.array([np.cos(a), np.sin(a)])) for a in angles]
+        outer = feasible.polytope(qs, via="dual")
+        inner = feasible.inner_hull(qs, via="dual")
+        assert outer.contains(target(truth)) and not inner.is_outer
+        with pytest.raises(ValueError, match="does not apply"):
+            feasible.support(qs[0], via="closed_form")
+
+
+class TestTheSplitting:
+    def test_it_agrees_with_the_primal_on_balls(self, setting):
+        from pygeoinf2.geometry.feasible import Splitting
+
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        splitting = Splitting(tolerance=1e-9, max_iterations=50_000)
+        for q in directions(target.codomain)[:2]:
+            primal = feasible.support_result(q)
+            split = feasible.support_result(q, via=splitting)
+            assert split.converged
+            assert split.inner == pytest.approx(primal.value, rel=1e-5)
+            assert split.value >= split.inner - 1e-9
+            assert split.value == pytest.approx(primal.value, rel=1e-4)
+            assert noise.contains(
+                forward.codomain.subtract(data, forward(split.extremal_model)),
+                rtol=1e-6,
+            )
+
+
+class TestDistanceAndTheGeneralSearch:
+    def test_distance_agrees_with_the_search_on_balls(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        assert feasible.algorithms["inclusion"] == ("search", "distance")
+        inside = target(truth)
+        assert feasible.contains(inside) and feasible.admits(inside, via="distance")
+        far = target.codomain.from_components(np.array([5.0, 5.0]))
+        assert not feasible.contains(far) and not feasible.admits(far, via="distance")
+        result = feasible.inclusion_result(far, via="distance")
+        assert result.level == np.inf and "outside" in result.message
+
+    def test_the_general_search_agrees_with_the_present_likelihood_route(self, setting):
+        model, forward, target, truth, data = setting
+        prior = quartic_ball(model, 3.0)
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(forward, target, prior, data, noise=noise)
+        assert feasible.algorithms["inclusion"] == ("search", "distance")
+        assert feasible.algorithms["feasibility"] == ("search", "dual")
+        old = BackusGilbertParker(
+            LinearForwardProblem(forward), target, prior, noise=noise
+        )(data)
+        assert not feasible.is_empty()
+        p = target(truth)
+        result = feasible.inclusion_result(p)
+        assert result.level == pytest.approx(old.inclusion_level(p), rel=1e-5)
+        assert result.lower_bound <= result.level
+        assert feasible.contains(p)
+        fitting = result.fitting_model
+        assert np.allclose(target(fitting), p, atol=1e-6)
+        assert noise.contains(
+            forward.codomain.subtract(data, forward(fitting)), rtol=1e-6
+        )
+        # The level side and the support side agree on the scalar property.
+        far = target.codomain.from_components(np.array([5.0, 5.0]))
+        assert not feasible.contains(far)

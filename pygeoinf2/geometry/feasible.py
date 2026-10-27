@@ -37,19 +37,34 @@ from ..numerics.normal import DampedNormalOperator
 from ..numerics.root_find import DampedSolves, Evaluation, RootResult, monotone_root
 from ..numerics.solvers import CGSolver, ConvergenceError, LinearSolver
 from ..traits import Traits
-from .convex import Ball, ConvexSet, Ellipsoid, HalfSpace, Polytope
+from .convex import (
+    Ball,
+    ConvexSet,
+    Ellipsoid,
+    HalfSpace,
+    Polytope,
+    _LevelSupport,
+    _project_by_support,
+)
+from .sets import SublevelSet
 
 __all__ = [
     "Algorithm",
     "ClosedForm",
+    "Distance",
+    "Dual",
     "FeasiblePropertySet",
     "FeasibleStructure",
     "InclusionResult",
     "Primal",
     "Search",
+    "Splitting",
     "SupportResult",
     "SweepResult",
 ]
+
+_UNBOUNDED = 1.0e6
+"""How far below zero a non-converged dual must fall to be read as unbounded."""
 
 Form = Literal["closed_form", "quadratic", "general"]
 
@@ -191,14 +206,18 @@ class FeasibleStructure:
     ) -> None:
         if property_operator.domain != forward.domain:
             raise ValueError("The property operator must act on the model space.")
-        if not isinstance(prior, ConvexSet):
-            raise TypeError("The constraint set must be a ConvexSet.")
+        if not isinstance(prior, (ConvexSet, SublevelSet)):
+            raise TypeError(
+                "The constraint set must be a ConvexSet, or a SublevelSet of a "
+                "convex functional."
+            )
         if prior.domain != forward.domain:
             raise ValueError("The constraint set must lie in the model space.")
         if noise is not None:
-            if not isinstance(noise, ConvexSet):
+            if not isinstance(noise, (ConvexSet, SublevelSet)):
                 raise TypeError(
-                    "The noise set must be a ConvexSet, or None for exact data."
+                    "The noise set must be a ConvexSet or a SublevelSet of a "
+                    "convex functional, or None for exact data."
                 )
             if noise.domain != forward.codomain:
                 raise ValueError("The noise set must lie in the data space.")
@@ -808,10 +827,25 @@ class _QuadraticFamily:
 def _dual_cost(
     structure: FeasibleStructure, data: Any, direction: Any, certificate: Any
 ) -> float:
-    """``(λ, d) + h_prior(T*q − A*λ) + h_noise(−λ)``: the outer bound a certificate gives."""
+    """``(λ, d) + h_prior(T*q − A*λ) + h_noise(−λ)``: the outer bound a certificate gives.
+
+    Valid for any certificate by weak duality. Closed form on quadratic
+    sets; through the sets' support functions otherwise, exact data being
+    the point ``{0}`` whose support function vanishes.
+    """
     model_space, data_space = structure.model_space, structure.data_space
     pulled = structure.property_operator.adjoint(direction)
     residual = model_space.subtract(pulled, structure.forward.adjoint(certificate))
+    if not structure.quadratic:
+        prior_term = float(_support_of(structure.prior)(residual))
+        noise_term = (
+            0.0
+            if structure.noise is None
+            else float(_support_of(structure.noise)(data_space.negative(certificate)))
+        )
+        return (
+            float(data_space.inner_product(certificate, data)) + prior_term + noise_term
+        )
     prior_term = model_space.inner_product(residual, structure.prior_center()) + float(
         np.sqrt(
             max(
@@ -980,8 +1014,14 @@ class Search(Algorithm):
         return (self._formalism, self._max_iterations, self._rtol, id(self._solver))
 
     def accepts(self, structure: FeasibleStructure) -> bool:
-        """Two quadratic sets, the noise not a point."""
-        return structure.form == "quadratic"
+        """Two quadratic sets, or two smooth level functions; the noise not a point."""
+        if structure.form == "quadratic":
+            return True
+        return (
+            structure.noise is not None
+            and _smooth_level(structure.prior) is not None
+            and _smooth_level(structure.noise) is not None
+        )
 
     def _family(
         self, structure: FeasibleStructure, *, restricted: bool
@@ -1109,9 +1149,177 @@ class Search(Algorithm):
             else "misfit search did not converge",
         )
 
+    # -- general sets: a convex minimization inside the one-multiplier search --
+
+    def _optimizer(self, prior: Functional, noise: Functional) -> Any:
+        from ..numerics.optimization import LBFGS, NewtonCG
+
+        if prior.has_hessian and noise.has_hessian:
+            return NewtonCG(forcing=1e-10, rtol=1e-12, gtol=0.0, ftol=1e-15)
+        return LBFGS(rtol=1e-12, gtol=0.0, max_iterations=2000)
+
+    def _general_fit(
+        self,
+        feasible: "FeasiblePropertySet",
+        anchor: Any,
+        projector: LinearOperator | None,
+    ) -> InclusionResult:
+        """``min f(m)`` over ``m == anchor + P v`` with ``g(d − A m) <= b``, by one multiplier.
+
+        The misfit's infimum over the subspace is found first: above the
+        level, nothing fits; at it, that minimizer is the answer; below it,
+        the multiplier at which the misfit of the minimizer of ``f/η + g``
+        reaches the level is bracketed by a monotone search, each probe a
+        convex minimization started cold.
+        """
+        structure = feasible.structure
+        space, data_space = structure.model_space, structure.data_space
+        forward, data = structure.forward, feasible.data
+        f, a = _smooth_level(structure.prior)
+        g, b = _smooth_level(structure.noise)
+        optimizer = self._optimizer(f, g)
+        if projector is None:
+            projector = LinearOperator.identity(space)
+
+        def model_of(v: Any) -> Any:
+            return space.add(anchor, projector(v))
+
+        def misfit_point(m: Any) -> Any:
+            return data_space.subtract(data, forward(m))
+
+        def objective(multiplier: float | None) -> Functional:
+            weight = 1.0 if multiplier is None else 1.0 / multiplier
+
+            def value(v: Any) -> float:
+                m = model_of(v)
+                fit = float(g(misfit_point(m)))
+                return fit if multiplier is None else weight * float(f(m)) + fit
+
+            def gradient(v: Any) -> Any:
+                m = model_of(v)
+                pulled = forward.adjoint(g.gradient(misfit_point(m)))
+                if multiplier is None:
+                    return projector(space.negative(pulled))
+                return projector(
+                    space.axpy(-1.0, pulled, space.scale(weight, f.gradient(m)))
+                )
+
+            hessian = None
+            if g.has_hessian and (multiplier is None or f.has_hessian):
+
+                def hessian(v: Any) -> LinearOperator:
+                    m = model_of(v)
+                    curvature = g.hessian(misfit_point(m))
+                    pulled = (
+                        projector @ forward.adjoint @ curvature @ forward @ projector
+                    )
+                    if multiplier is None:
+                        return pulled.with_traits(Traits.POSITIVE_SEMIDEFINITE)
+                    own = projector @ f.hessian(m) @ projector
+                    return (own * weight + pulled).with_traits(
+                        Traits.POSITIVE_SEMIDEFINITE
+                    )
+
+            return Functional.from_callables(
+                space, value, gradient=gradient, hessian=hessian
+            )
+
+        start = space.zero()
+        limit = optimizer.minimize(objective(None), start)
+        floor = float(limit.value)
+        evaluations = int(limit.evaluations)
+        if floor > b * (1.0 + self._rtol):
+            return InclusionResult(
+                level=float("inf"),
+                lower_bound=float("inf"),
+                converged=bool(limit.converged),
+                algorithm=self.name,
+                evaluations=evaluations,
+                message="no model fits the data",
+            )
+        if floor >= b * (1.0 - self._rtol):
+            model = model_of(limit.minimizer)
+            level = float(f(model))
+            return InclusionResult(
+                level=level,
+                lower_bound=level,
+                converged=bool(limit.converged),
+                algorithm=self.name,
+                evaluations=evaluations,
+                fitting_model=model,
+                multiplier=float("inf"),
+                message="the data constraint is tight",
+            )
+
+        def probe(multiplier: float, previous: Any) -> Evaluation:
+            result = optimizer.minimize(objective(multiplier), start)
+            m = model_of(result.minimizer)
+            return Evaluation(
+                float(g(misfit_point(m))), result.minimizer, result.evaluations
+            )
+
+        root = monotone_root(
+            probe,
+            b,
+            decreasing=True,
+            max_iterations=self._max_iterations,
+            rtol=self._rtol,
+            expansions=40,
+            warm_start=False,
+        )
+        if root.breakdown is not None:
+            raise root.breakdown
+        model = model_of(root.solution)
+        level = float(f(model))
+        misfit = float(root.value)
+        # The dual of min f s.t. g <= b at multiplier η: f + η (g − b) <= min.
+        lower = min(level + float(root.argument) * (misfit - b), level)
+        return InclusionResult(
+            level=level,
+            lower_bound=lower,
+            converged=bool(root.converged),
+            algorithm=self.name,
+            evaluations=evaluations + root.inner_iterations,
+            fitting_model=model,
+            multiplier=float(root.argument),
+            message=(
+                "multiplier search converged"
+                if root.converged
+                else "multiplier search did not converge"
+            ),
+        )
+
+    def _general_anchor(
+        self, structure: FeasibleStructure, value: Any
+    ) -> tuple[Any, LinearOperator]:
+        """A model with the property, and the projector onto the property's kernel."""
+        from .subspaces import OrthogonalProjector
+
+        T = structure.property_operator
+        space = structure.property_space
+        solver = structure.solver_for(structure.data_space)
+
+        def build() -> dict[str, Any]:
+            gram = np.column_stack(
+                [
+                    space.to_components(T(T.adjoint(space.basis_vector(j))))
+                    for j in range(space.dim)
+                ]
+            )
+            return {
+                "inverse": np.linalg.inv(gram),
+                "projector": OrthogonalProjector.onto_kernel(T, solver=solver),
+            }
+
+        pieces = structure.shared(("search", "general_kernel"), build)
+        weights = pieces["inverse"] @ space.to_components(value)
+        return T.adjoint(space.from_components(weights)), pieces["projector"]
+
     def feasibility(self, feasible: "FeasiblePropertySet", /) -> InclusionResult:
         """The smallest prior level over the models fitting the data."""
         structure = feasible.structure
+        if not structure.quadratic:
+            return self._general_fit(feasible, structure.model_space.zero(), None)
         shifted = structure.shifted_data(feasible.data)
         _check_floor(structure, shifted)
         family = self._family(structure, restricted=False)
@@ -1130,6 +1338,9 @@ class Search(Algorithm):
     ) -> InclusionResult:
         """The smallest prior level over the models with this value fitting the data."""
         structure = feasible.structure
+        if not structure.quadratic:
+            anchor, projector = self._general_anchor(structure, value)
+            return self._general_fit(feasible, anchor, projector)
         data_space, space = structure.data_space, structure.property_space
         pieces = _kernel_pieces(structure)
         offset_p = space.subtract(
@@ -1587,10 +1798,459 @@ def _minimize_unimodal(
     return float(result.x), float(result.fun), bool(result.success)
 
 
+# --------------------------------------------------------------------- #
+#                             The general tier                           #
+# --------------------------------------------------------------------- #
+
+
+def _smooth_level(subset: Any) -> tuple[Functional, float] | None:
+    """``(f, c)`` with the set ``{ f <= c }`` and ``f`` carrying a gradient, or None."""
+    if isinstance(subset, SublevelSet):
+        functional, level = subset.functional, float(subset.level)
+    elif getattr(subset, "has_level_function", False):
+        functional, level = subset.level_function(), float(subset.level)
+    else:
+        return None
+    if not getattr(functional, "has_derivative", False):
+        return None
+    return functional, level
+
+
+def _computes_support(subset: Any) -> bool:
+    """Whether a support function with a maximizer can be had, cheaply or by conversion."""
+    if subset is None:
+        return True  # exact data: the point {0}
+    if isinstance(subset, ConvexSet):
+        return subset.computes_support_function and subset.computes_maximizer
+    return _smooth_level(subset) is not None
+
+
+def _support_of(subset: Any) -> SupportFunction:
+    """A set's support function, converting from a smooth level function when needed."""
+    if isinstance(subset, ConvexSet):
+        return subset.support_function()
+    smooth = _smooth_level(subset)
+    if smooth is None:
+        raise TypeError(
+            f"{type(subset).__name__} has no support function to convert from."
+        )
+    functional, level = smooth
+    return _LevelSupport(subset.domain, functional, level)
+
+
+def _maximizer_of(subset: Any, direction: Any) -> Any:
+    if isinstance(subset, ConvexSet):
+        return subset.support_maximizer(direction)
+    return _support_of(subset).subgradient(direction)
+
+
+def _has_projection(subset: Any) -> bool:
+    return subset is None or bool(getattr(subset, "has_projection", False))
+
+
+class Dual(Algorithm):
+    """The support by the dual: a nonsmooth minimization over the data space.
+
+    ``h(q) == inf over λ of (λ, d) + h_prior(T*q − A*λ) + h_noise(−λ)``,
+    using only the two sets' support functions and their maximizers (the
+    maximizers are the subgradients), so any convex sets with those will
+    do, including ones whose support function is converted from a smooth
+    level function. Every ``λ`` certifies an outer bound by weak duality,
+    and the minimizer is the best certificate; the prior's maximizer at the
+    residual ``T*q − A*λ`` is the model attaining the bound, so the contact
+    point comes with it, and it is reported as the inner value when it fits
+    the data.
+
+    The minimization runs in the noise set's own metric when that set is
+    quadratic -- the data space reweighted by its precision -- since the
+    bundle's proximal term is an inner product and the Euclidean one is
+    the wrong geometry for a coloured noise set. Certificates warm-start
+    across a sweep: the last direction's, or the negated certificate of the
+    opposite direction when that was seen and the noise set is symmetric.
+    An unbounded dual is an empty feasible set, raised rather than returned.
+    """
+
+    name = "dual"
+    probes = frozenset({"support", "feasibility"})
+
+    def __init__(
+        self,
+        /,
+        *,
+        method: Any = None,
+        tolerance: float = 1e-10,
+        max_iterations: int = 300,
+        start: Any = None,
+    ) -> None:
+        """
+        Args:
+            method: the minimizer of the dual cost: any ``Optimizer`` that
+                takes a subgradient. A proximal bundle method with the
+                tolerance and budget below by default.
+            tolerance: the default method's gap tolerance.
+            max_iterations: its budget.
+            start: a certificate to start every direction from, instead of
+                the sweep's warm start; for cross-seeding from another
+                algorithm's certificate.
+        """
+        self._method = method
+        self._tolerance = tolerance
+        self._max_iterations = max_iterations
+        self._start = start
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The method, the tolerance, the budget and the start."""
+        return (
+            id(self._method),
+            self._tolerance,
+            self._max_iterations,
+            id(self._start),
+        )
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Support functions and maximizers on both sides, cheaply or by conversion."""
+        return _computes_support(structure.prior) and _computes_support(structure.noise)
+
+    def _minimizer(self) -> Any:
+        if self._method is not None:
+            return self._method
+        from ..numerics.convex import ProximalBundleMethod
+
+        return ProximalBundleMethod(
+            tolerance=self._tolerance, max_iterations=self._max_iterations
+        )
+
+    def _space(self, structure: FeasibleStructure) -> tuple[HilbertSpace, Any]:
+        """The space the dual runs in, and the map from the data-space gradient to its own."""
+
+        def build() -> tuple[HilbertSpace, Any]:
+            from ..algebra.spaces import MassWeightedSpace
+
+            data_space = structure.data_space
+            if structure.noise is not None and _is_quadratic(structure.noise):
+                precision = structure.noise_precision()
+                covariance = structure.noise_covariance()
+                weighted = MassWeightedSpace(data_space, precision)
+                return weighted, covariance
+            return data_space, None
+
+        return structure.shared(("dual", "space"), build)
+
+    def cost(self, feasible: "FeasiblePropertySet", direction: Any, /) -> Functional:
+        """The dual cost functional of a direction, on the space the dual runs in.
+
+        Args:
+            feasible: the set.
+            direction: the direction in the property space.
+        """
+        structure = feasible.structure
+        space, to_metric = self._space(structure)
+        data_space, model_space = structure.data_space, structure.model_space
+        forward, data = structure.forward, feasible.data
+        pulled = structure.property_operator.adjoint(direction)
+        prior_support = _support_of(structure.prior)
+        noise = structure.noise
+        noise_support = None if noise is None else _support_of(noise)
+        memo = threading.local()
+
+        def parts(certificate: Any) -> tuple[Any, Any]:
+            # A bundle asks for the value and the subgradient at one point
+            # in turn; the residual and the negation are shared between them.
+            last = getattr(memo, "last", None)
+            if last is None or last[0] is not certificate:
+                last = (
+                    certificate,
+                    (
+                        model_space.subtract(pulled, forward.adjoint(certificate)),
+                        data_space.negative(certificate),
+                    ),
+                )
+                memo.last = last
+            return last[1]
+
+        def value(certificate: Any) -> float:
+            residual, negated = parts(certificate)
+            total = data_space.inner_product(certificate, data) + float(
+                prior_support(residual)
+            )
+            if noise_support is not None:
+                total += float(noise_support(negated))
+            return total
+
+        def gradient(certificate: Any) -> Any:
+            residual, negated = parts(certificate)
+            slope = data_space.subtract(
+                data, forward(prior_support.subgradient(residual))
+            )
+            if noise_support is not None:
+                slope = data_space.subtract(slope, noise_support.subgradient(negated))
+            return slope if to_metric is None else to_metric(slope)
+
+        return Functional.from_callables(space, value, gradient=gradient)
+
+    def _start_for(self, feasible: "FeasiblePropertySet", direction: Any) -> Any:
+        if self._start is not None:
+            return self._start
+        structure = feasible.structure
+        space = structure.data_space
+        memo = feasible.cached(("dual", "warm", threading.get_ident()), dict)
+        # The opposite direction's certificate, negated, when the noise set
+        # is symmetric about its centre (every quadratic set is).
+        key = feasible._key(structure.property_space.negative(direction))
+        opposite = memo.get(key)
+        if opposite is not None and (
+            structure.noise is None or _is_quadratic(structure.noise)
+        ):
+            return space.negative(opposite)
+        last = memo.get("last")
+        return space.zero() if last is None else last
+
+    def support(
+        self, feasible: "FeasiblePropertySet", direction: Any, /
+    ) -> SupportResult:
+        """The support in a direction, by minimizing the dual cost.
+
+        Raises:
+            ValueError: if the dual is unbounded, which is an empty set.
+        """
+        structure = feasible.structure
+        data_space, model_space = structure.data_space, structure.model_space
+        cost = self.cost(feasible, direction)
+        result = self._minimizer().minimize(cost, self._start_for(feasible, direction))
+        if not result.converged and result.value < -_UNBOUNDED:
+            raise ValueError(
+                f"The dual fell to {result.value:.3g} without converging: no "
+                "model lies both inside the prior set and within the noise "
+                "set of the data, so the feasible set is empty."
+            )
+        certificate = result.minimizer
+        memo = feasible.cached(("dual", "warm", threading.get_ident()), dict)
+        memo["last"] = certificate
+        memo[feasible._key(direction)] = certificate
+        # The model attaining the bound: the prior's maximizer at the
+        # residual, which fits the data at the exact optimum.
+        pulled = structure.property_operator.adjoint(direction)
+        residual = model_space.subtract(pulled, structure.forward.adjoint(certificate))
+        extremal = _maximizer_of(structure.prior, residual)
+        error = data_space.subtract(feasible.data, structure.forward(extremal))
+        fits = (
+            data_space.norm(error) <= 1e-8 * max(data_space.norm(feasible.data), 1.0)
+            if structure.noise is None
+            else structure.noise.contains(error, rtol=1e-6)
+        )
+        inner = (
+            float(model_space.inner_product(pulled, extremal))
+            if fits
+            else float("-inf")
+        )
+        return SupportResult(
+            value=float(result.value),
+            inner=inner,
+            converged=bool(result.converged),
+            algorithm=self.name,
+            evaluations=int(result.evaluations),
+            certificate=certificate,
+            extremal_model=extremal,
+            message=result.message,
+        )
+
+    def feasibility(self, feasible: "FeasiblePropertySet", /) -> InclusionResult:
+        """Emptiness by the dual's boundedness in one direction; no fitting model.
+
+        A bounded dual means a non-empty set; the level reported is zero,
+        since the prior's level at a fitting model is not what this
+        algorithm computes, and the message says so.
+        """
+        direction = feasible.domain.basis_vector(0)
+        try:
+            result = feasible.support_result(direction, via=self)
+        except ValueError:
+            return InclusionResult(
+                level=float("inf"),
+                lower_bound=float("inf"),
+                converged=True,
+                algorithm=self.name,
+                evaluations=0,
+                message="the dual is unbounded: no model fits",
+            )
+        return InclusionResult(
+            level=0.0,
+            lower_bound=0.0,
+            converged=bool(result.converged),
+            algorithm=self.name,
+            evaluations=result.evaluations,
+            message="the dual is bounded: some model fits; its level is not computed",
+        )
+
+
+class Splitting(Algorithm):
+    """The support by primal-dual splitting: Chambolle-Pock on the two sets' projections.
+
+    ``maximize (T*q, m)`` subject to ``m`` in the prior, ``d − A m`` in the
+    noise set, by the first-order primal-dual method, which needs nothing of
+    the sets but their projections. The primal iterate is a model of the
+    set to the feasibility tolerance and gives the inner value; its dual
+    iterate is a certificate, and where the sets have support functions it
+    gives the outer value through the dual cost, the better of the two
+    signs since either certifies. Without support functions the outer
+    value is infinite, honestly: a projection cannot bound a set from
+    outside.
+    """
+
+    name = "splitting"
+    probes = frozenset({"support"})
+
+    def __init__(
+        self,
+        /,
+        *,
+        tolerance: float = 1e-6,
+        max_iterations: int = 1000,
+        rng: Any = None,
+    ) -> None:
+        """
+        Args:
+            tolerance: on the feasibility residual.
+            max_iterations: the cap.
+            rng: for the power iteration that sets the step sizes.
+        """
+        self._tolerance = tolerance
+        self._max_iterations = max_iterations
+        self._rng = rng
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The tolerance and the budget."""
+        return (self._tolerance, self._max_iterations)
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Projections on both sides."""
+        return _has_projection(structure.prior) and _has_projection(structure.noise)
+
+    def _solver(self, feasible: "FeasiblePropertySet") -> Any:
+        from ..numerics.convex import ChambollePockSolver
+
+        structure = feasible.structure
+        noise = structure.noise
+        if noise is None:
+            noise = Ball(structure.data_space, radius=0.0)
+        return feasible.cached(
+            ("splitting", self.settings),
+            lambda: ChambollePockSolver(
+                structure.prior,
+                noise,
+                structure.forward,
+                feasible.data,
+                tolerance=self._tolerance,
+                max_iterations=self._max_iterations,
+                rng=self._rng,
+            ),
+        )
+
+    def support(
+        self, feasible: "FeasiblePropertySet", direction: Any, /
+    ) -> SupportResult:
+        """The support in a direction, by the splitting."""
+        structure = feasible.structure
+        data_space = structure.data_space
+        pulled = structure.property_operator.adjoint(direction)
+        memo = feasible.cached(("splitting", "warm", threading.get_ident()), dict)
+        result = self._solver(feasible).solve(pulled, start=memo.get("last"))
+        memo["last"] = result.minimizer
+        inner = -float(result.value)
+        outer = float("inf")
+        if _computes_support(structure.prior) and _computes_support(structure.noise):
+            outer = min(
+                _dual_cost(structure, feasible.data, direction, result.certificate),
+                _dual_cost(
+                    structure,
+                    feasible.data,
+                    direction,
+                    data_space.negative(result.certificate),
+                ),
+            )
+        return SupportResult(
+            value=outer,
+            inner=inner,
+            converged=bool(result.converged),
+            algorithm=self.name,
+            evaluations=int(result.evaluations),
+            certificate=result.certificate,
+            extremal_model=result.minimizer,
+            message=result.message,
+        )
+
+
+class Distance(Algorithm):
+    """Membership from the support side: the distance to the set by the projection dual.
+
+    ``½ d(p)² == max over q of (q, p) − h(q) − ½ ||q||²`` on the property
+    space, with ``h`` the set's own support function answered by whichever
+    algorithm computes it and the contact points as subgradients; a
+    strongly convex problem in ``dim P`` unknowns, each evaluation one
+    support solve. A point is in the set when its distance is at most the
+    tolerance, relative to its size; the result carries the distance, and
+    a positive one comes with a separating direction, the certificate of
+    exclusion. The level reported is the prior's when inside and infinite
+    when outside: this algorithm has no fitting model to measure.
+    """
+
+    name = "distance"
+    probes = frozenset({"inclusion"})
+
+    def __init__(self, /, *, tolerance: float = 1e-8, method: Any = None) -> None:
+        """
+        Args:
+            tolerance: the relative distance under which a point counts as
+                inside.
+            method: the minimizer of the projection dual; a proximal bundle
+                method by default.
+        """
+        self._tolerance = tolerance
+        self._method = method
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The tolerance and the method."""
+        return (self._tolerance, id(self._method))
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Whenever some algorithm computes the support with a contact point."""
+        return any(
+            algorithm.accepts(structure) and algorithm.name != self.name
+            for algorithm in _DEFAULTS["support"]
+        )
+
+    def inclusion(
+        self, feasible: "FeasiblePropertySet", value: Any, /
+    ) -> InclusionResult:
+        """Membership by the distance from the set's support function."""
+        space = feasible.domain
+        oracle = ConvexSet.from_support_function(
+            space, feasible.support, maximizer=feasible.support_maximizer
+        )
+        _, distance, result = _project_by_support(oracle, value, method=self._method)
+        inside = distance <= self._tolerance * max(space.norm(value), 1.0)
+        level = feasible.level if inside else float("inf")
+        return InclusionResult(
+            level=level,
+            lower_bound=level,
+            converged=bool(result.converged),
+            algorithm=self.name,
+            evaluations=int(result.evaluations),
+            message=(
+                f"distance {distance:.3g}: inside"
+                if inside
+                else f"distance {distance:.3g}: outside"
+            ),
+        )
+
+
 _DEFAULTS: dict[str, tuple[Algorithm, ...]] = {
-    "support": (ClosedForm(), Primal()),
-    "inclusion": (ClosedForm(), Search()),
-    "feasibility": (ClosedForm(), Search()),
+    "support": (ClosedForm(), Primal(), Dual(), Splitting()),
+    "inclusion": (ClosedForm(), Search(), Distance()),
+    "feasibility": (ClosedForm(), Search(), Dual()),
 }
 """The algorithms for each probe, in the order ``auto`` tries them."""
 
@@ -2073,8 +2733,16 @@ class FeasiblePropertySet(ConvexSet):
 
     @property
     def level(self) -> float:
-        """The prior's level, which :meth:`inclusion_level` is compared with."""
-        return float(self.prior.level)
+        """The prior's level, which :meth:`inclusion_level` is compared with.
+
+        One, nominally, for a prior without a level function: there the
+        inclusion level is one inside the set and infinite outside, decided
+        from the support side.
+        """
+        try:
+            return float(self.prior.level)
+        except (NotImplementedError, AttributeError):
+            return 1.0
 
     def admits(self, value: Any, /, *, rtol: float = 1e-8, via: Any = None) -> bool:
         """Whether a property value is consistent with the data and the prior.

@@ -1229,7 +1229,13 @@ symmetric noise set. On the support-only tier an empty set has support
 cost decides it, certified, rather than the iteration cap. `Dual` takes
 D-138's affine constraint on `λ` and refuses sets whose support function is
 infinite on a non-subspace region (cones go through `Splitting`). `start=`
-on the instance allows cross-seeding from a `Primal` certificate.
+on the instance allows cross-seeding from a `Primal` certificate. Built
+2026-10-27, with one addition: at the optimal certificate the prior's
+maximizer at the residual `T*q − A*λ` is the model attaining the bound, so
+the dual exhibits a contact point after all, reported as the inner value
+when that model fits the data and as `−∞` otherwise; it is what makes the
+distance conversion of D-135 available on the support-only tier. The
+affine constraint for degenerate priors waits for `Cylinder`.
 
 **D-150. One result shape at the solver level, two at the probe level, and a
 sweep result** (2026-10-27, David). The bundle methods join the `Optimizer`

@@ -107,10 +107,21 @@ class ConvexSet(Subset):
         return False
 
     @property
-    def _level_function_is_differentiable(self) -> bool:
+    def has_smooth_level_function(self) -> bool:
+        """Whether a level function with a gradient describes the set: what the conversions start from."""
         if not self.has_level_function:
             return False
         return bool(getattr(self.level_function(), "has_derivative", False))
+
+    @property
+    def computes_support_function(self) -> bool:
+        """Whether :meth:`support_function` answers, cheaply or by conversion."""
+        return self.has_support_function or self.has_smooth_level_function
+
+    @property
+    def computes_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` answers, cheaply or by conversion."""
+        return self.has_maximizer or self.has_smooth_level_function
 
     def level_function(self) -> Functional:
         """``f`` with the set ``{ x : f(x) <= level }``, convex.
@@ -196,8 +207,13 @@ class ConvexSet(Subset):
                 closed form, and the feasible property set computes its own
                 by its algorithms.
         """
-        if self._level_function_is_differentiable:
-            return _LevelSupport(self)
+        if self.has_smooth_level_function:
+            return _LevelSupport(
+                self.domain,
+                self.level_function(),
+                self.level,
+                start=getattr(self, "center", None),
+            )
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support function."
         )
@@ -220,8 +236,8 @@ class ConvexSet(Subset):
                 differentiable level function to convert from.
             ValueError: if the set is unbounded in the direction.
         """
-        if self._level_function_is_differentiable:
-            return _LevelSupport(self).subgradient(direction)
+        if self.has_smooth_level_function:
+            return self.support_function().subgradient(direction)
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support maximizer."
         )
@@ -550,11 +566,27 @@ class _LevelSupport(SupportFunction):
     supremum in that direction and the value is infinite.
     """
 
-    def __init__(self, subset: ConvexSet, /) -> None:
-        super().__init__(subset.domain)
-        self._subset = subset
-        self._functional = subset.level_function()
-        self._level = float(subset.level)
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        functional: Functional,
+        level: float,
+        /,
+        *,
+        start: Any = None,
+    ) -> None:
+        """
+        Args:
+            domain: the space.
+            functional: ``f``, convex with a gradient.
+            level: ``c``.
+            start: where each inner minimization begins; a point of the
+                set, such as its centre. The origin if omitted.
+        """
+        super().__init__(domain)
+        self._functional = functional
+        self._level = float(level)
+        self._start = start
         # One remembered answer per thread, so that a value and the
         # maximizer asked for the same direction in turn cost one solve.
         self._memo = threading.local()
@@ -572,7 +604,7 @@ class _LevelSupport(SupportFunction):
             if f.has_hessian
             else LBFGS(rtol=1e-12, gtol=0.0, max_iterations=2000)
         )
-        start = getattr(self._subset, "center", None)
+        start = self._start
         if start is None:
             start = space.zero()
 
