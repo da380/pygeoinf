@@ -1746,6 +1746,40 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             [float(np.dot(self.basis_at(point), components)) for point in points]
         )
 
+    def evaluate_gradient(
+        self,
+        x: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float | None = None,
+        nthreads: int | None = None,
+    ) -> np.ndarray:
+        """The field's gradient at several points, in the geometry's own frame.
+
+        One row per point, one column per tangent direction, in physical
+        units: on a box the partial derivatives along its axes; on the
+        sphere the southward and eastward components, ``∂_θ f / R`` and
+        ``∂_φ f / (R sin θ)``. What a ray tracer needs, and anything else
+        that follows a field rather than samples it.
+
+        Args:
+            x: a field of this space.
+            points: where to evaluate the gradient.
+            eps: accuracy for the non-uniform transform behind it, where
+                one is used; the geometry's own default if omitted.
+            nthreads: threads for that transform, likewise.
+
+        Returns:
+            An array of shape ``(len(points), spatial_dimension)``.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement evaluate_gradient."
+        )
+
     def accumulate(self, weights: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
         """The derivative components of ``x -> sum_i y_i x(r_i)``.
 
@@ -2505,6 +2539,85 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # than a point -- was checked by _require_path_evaluation above.
         return _weight_operator(sparse) @ self.point_evaluation_operator(
             nodes, unsafe=True, eps=eps, nthreads=nthreads
+        )
+
+    def ray_travel_time_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        reference_velocity: float,
+        /,
+        *,
+        count: int | None = None,
+        nodes_per_segment: int = 4,
+        method: str = "bending",
+        tolerance: float = 1.0e-8,
+        max_iterations: int = 50,
+        eps: float | None = None,
+        nthreads: int | None = None,
+    ) -> Any:
+        """Travel times along the rays of a velocity ``c₀ exp(m)``: a nonlinear operator.
+
+        The model ``m`` is a field of this space and the velocity is
+        ``reference_velocity`` times ``exp(m)``, positive whatever ``m`` is,
+        with ``m == 0`` the constant background whose rays are the geodesics.
+        Each datum is the integral of the slowness ``exp(−m) / c₀`` along the
+        ray between a source and a receiver, the ray being the path through
+        the field that makes that integral stationary.
+
+        The ray is found by bending by default: the geodesic's nodes are
+        moved across the path by a damped Newton method on the discrete
+        travel time, every path at once, with the field evaluated at all
+        nodes in one transform per step. ``method="shooting"`` integrates
+        the ray equation from the source instead and solves for the take-off
+        angle by a root find on the miss at the receiver. Both find the ray
+        continuously connected to the geodesic, which is not provably the
+        first arrival where several rays connect a pair. A trace that does
+        not converge raises ``EvaluationError``, which an optimizer treats
+        as a step too far.
+
+        The derivative in the model is Fermat's principle: the path integral
+        of ``−exp(−m) / c₀`` along the traced ray, so the operator's
+        ``at(m)`` traces once and returns the value and a derivative whose
+        adjoint is the one the linear path operators carry. At ``m == 0`` it
+        is :meth:`path_integral_operator` scaled by ``−1 / c₀``, to the
+        quadrature. The returned operator also carries ``trace_rays(m)``,
+        the traced rays as lists of points, for drawing.
+
+        Args:
+            paths: ``(source, receiver)`` pairs.
+            reference_velocity: ``c₀``.
+            count: nodes along each ray, as for :meth:`path_integral_operator`;
+                from the length scale if omitted.
+            nodes_per_segment: Gauss-Legendre nodes between consecutive ray
+                nodes, where the slowness is integrated.
+            method: ``"bending"`` or ``"shooting"``.
+            tolerance: on the ray's position, relative to the path's length.
+            max_iterations: the budget of Newton steps, or of root-find
+                iterations.
+            eps: accuracy for the non-uniform transforms behind the
+                evaluations, where used.
+            nthreads: threads for them.
+
+        Returns:
+            The operator, from this space to ``EuclideanSpace(len(paths))``.
+
+        Raises:
+            ValueError: if no paths are given, or the method is unknown.
+            NotImplementedError: on a geometry without a ray tracer.
+        """
+        from .rays import ray_travel_time_operator
+
+        return ray_travel_time_operator(
+            self,
+            paths,
+            reference_velocity,
+            count=count,
+            nodes_per_segment=nodes_per_segment,
+            method=method,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+            eps=eps,
+            nthreads=nthreads,
         )
 
     def geodesic_ball_average_operator(

@@ -1953,6 +1953,62 @@ data's size), its noise-to-zero sweep against the closed form demoted to an
 opt-in check (`--limit`), and the slow tests assert the tier's parity, not
 the limit.
 
+**D-155. The paper-scale benchmarks are deferred; the examples build up
+from what worked in v1** (2026-10-27, David). The three problems of D-152
+were written and run at reduced size (`benchmarks/`), and they found three
+defects that are now fixed, but the Mag-motivated problems are not ones
+David has run, and tuning their regime cost more than it measured. They
+stay as exploratory scripts, outside the suite, to be returned to fresh;
+their slow tests are removed. The defaults D-146 left open are settled by
+tutorial 10's numbers rather than a sweep: no preconditioner by default,
+the surrogate Woodbury route documented as the one to reach for. What
+replaces the benchmark as the proof of scale is a series of mini-apps that
+grow out of problems known to work well in v1 -- tutorial 10's tomography
+and the preconditioning example first -- with the pyslfp application, the
+largest to date, taken up after the release.
+
+**D-156. A nonlinear ray operator on every symmetric space** (2026-10-27,
+David). Travel times through a velocity `c₀ e^{m}` along the rays traced
+in it, as the first real nonlinear operator for the examples and the
+tests: `ray_travel_time_operator(paths, reference_velocity, ...)` on the
+symmetric-space base beside the linear path operators, on the sphere, the
+torus and the plane (and the 1-D spaces for completeness, where a ray is
+the interval), returning an `Operator` whose `linearize` traces once and
+gives the value and the derivative together. The model is `δ ln c`, as the
+v1 sphere example and the linear operators are written, so the speed stays
+positive and the linearisation about `m = 0` is the constant-background
+path-integral operator up to the scale `−1/c₀`, which is the first parity
+test and keeps that operator as the special case it is. The derivative is
+Fermat's principle: the path integral along the traced ray, so the adjoint
+is the existing one. The two-point problem is solved by **bending** by
+default -- the nodes of the geodesic relaxed in their transverse offsets
+to make the discrete travel time stationary, a damped Newton whose
+tridiagonal Hessian is recovered by three coloured finite differences of
+the batched gradient, every path in one batch so that the field and its
+gradient at all nodes come from one transform -- with **shooting** as the
+option (`method="shooting"`: the Hamiltonian ray from a take-off angle,
+Brent on the miss at the receiver, the geodesic's angle as the start),
+since David has worked with it and knows its failure modes; the two are
+checked against each other. Both find the ray continuously connected to
+the geodesic, not provably the first arrival, which is documented;
+neither converging raises `EvaluationError` (D-129). The Hessian is
+Gauss–Newton from the derivative first; the true second derivative, which
+needs the paraxial system, is a later addition. Gradients at scattered
+points become a method of the spaces, `evaluate_gradient`, through ducc0's
+spin-1 synthesis on the sphere (the scalar's coefficients scaled by
+`sqrt(l(l+1))`, which measured 2e-8 against finite differences and 6 ms
+for 20 000 points at degree 128, with the adjoint provided) and the
+`ik`-scaled non-uniform transform on the boxes. Built on the plane first,
+where everything is checked against finite differences cheaply, then the
+torus and the sphere. Built 2026-10-27: `symmetric_space/rays.py`, the
+spaces' `evaluate_gradient`, and `SymmetricSpace.ray_travel_time_operator`;
+on the plane, torus and sphere the travel time at `m = 0` is the geodesic
+length over `c₀` to rounding, the derivative matches finite differences to
+`1e-5`, a traced ray is never slower than the geodesic through the same
+field, and bending (48 segments) and shooting (384 steps) agree to `2e-5`,
+both converging at second order to one limit; on the circle and the line
+the ray is the interval.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

@@ -130,9 +130,9 @@ map is Hamiltonian ray tracing in the symmetric space's own domain
 for the two-point problem; the derivative is Fermat's principle about the
 reference ray, which is the existing path integral along it, so the
 adjoint is the linear operator already built; applied adjoints and the
-second-order term give a Hessian. Planned after the Stage 7 benchmarks,
-before the tomography mini-app, which could then use it (tutorial 9 and
-example 28 are the nonlinear places it would illustrate).
+second-order term give a Hessian. Built 2026-10-27 as D-156
+(`symmetric_space/rays.py`); an example and the tomography mini-app's
+nonlinear half are to be written on it.
 
 ## Sequencing
 

@@ -237,6 +237,40 @@ def _packing_for(lmax: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 @lru_cache(maxsize=8)
+def _complex_layout_for(
+    lmax: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """How the packed real components map onto complex coefficients in ``m``-major order.
+
+    ducc0 and healpy store ``a_lm`` for ``m >= 0`` with ``m`` outermost and
+    ``l`` running from ``m`` to ``lmax``. For real orthonormal harmonics
+    without the Condon-Shortley phase, ``a_l0`` is the cosine coefficient and
+    ``a_lm == (-1)^m (c_lm - i s_lm) / sqrt(2)`` for ``m > 0``, with ``c`` and
+    ``s`` the cosine and sine coefficients; verified against pyshtools' own
+    point evaluation. Returned as the component index feeding each complex
+    entry's real part and imaginary part (``-1`` where there is none), the
+    sign and scale to apply, and ``sqrt(l (l + 1))``, the factor that turns
+    the field's coefficients into those of its gradient as a spin-1 field.
+    """
+    parts, degrees, orders = _packing_for(lmax)
+    cosine = np.full((lmax + 1, lmax + 1), -1, dtype=int)
+    sine = np.full((lmax + 1, lmax + 1), -1, dtype=int)
+    index = np.arange(parts.size)
+    cosine[degrees[parts == 0], orders[parts == 0]] = index[parts == 0]
+    sine[degrees[parts == 1], orders[parts == 1]] = index[parts == 1]
+    ms = np.concatenate([np.full(lmax + 1 - m, m) for m in range(lmax + 1)])
+    ls = np.concatenate([np.arange(m, lmax + 1) for m in range(lmax + 1)])
+    real = cosine[ls, ms]
+    imaginary = sine[ls, ms]
+    scale = np.where(ms == 0, 1.0, ((-1.0) ** ms) / np.sqrt(2.0))
+    gradient = np.sqrt(ls * (ls + 1.0))
+    tables = (real, imaginary, scale, gradient)
+    for table in tables:
+        table.flags.writeable = False
+    return tables
+
+
+@lru_cache(maxsize=8)
 def _legendre_indices_for(lmax: int) -> np.ndarray:
     """Where each component sits in pyshtools' packed Legendre array.
 
@@ -1337,6 +1371,60 @@ class Sphere(SymmetricSpace[Any]):
             nthreads=nthreads,
         )
         return np.ascontiguousarray(np.atleast_1d(values).real)
+
+    def _complex_coefficients(self, x: Any, /) -> np.ndarray:
+        """The field's coefficients as complex ``a_lm`` in ``m``-major order."""
+        real, imaginary, scale, _ = _complex_layout_for(self._lmax)
+        coefficients = self.to_components(x) / self._radius
+        values = coefficients[real].astype(complex)
+        has_sine = imaginary >= 0
+        values[has_sine] -= 1j * coefficients[imaginary[has_sine]]
+        return values * scale
+
+    def evaluate_gradient(
+        self,
+        x: Any,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float | None = None,
+        nthreads: int | None = None,
+    ) -> np.ndarray:
+        """The gradient at scattered points, southward and eastward, by ducc0.
+
+        The gradient of a scalar field is a spin-1 field whose coefficients
+        are the scalar's times ``sqrt(l (l + 1))``, and ducc0 synthesizes a
+        spin-1 field at arbitrary points from those alone: one call for any
+        number of points, threaded, with the angular derivatives
+        ``∂_θ f`` and ``∂_φ f / sin θ`` coming back together. Divided by the
+        radius, they are the physical gradient.
+
+        Args:
+            x: a field on this sphere.
+            points: ``(latitude, longitude)`` pairs in degrees.
+            eps: the synthesis's requested accuracy; ``1e-10`` by default.
+            nthreads: threads for it; one by default.
+
+        Returns:
+            An array of shape ``(len(points), 2)``: the southward component
+            (along increasing colatitude) and the eastward one.
+        """
+        import ducc0
+
+        _, _, _, gradient_scale = _complex_layout_for(self._lmax)
+        alm = (self._complex_coefficients(x) * gradient_scale)[None, :]
+        colatitudes, longitudes = self._angles(points)
+        location = np.column_stack([colatitudes, longitudes])
+        components = ducc0.sht.synthesis_general(
+            alm=alm,
+            spin=1,
+            lmax=self._lmax,
+            loc=np.ascontiguousarray(location),
+            epsilon=1.0e-10 if eps is None else eps,
+            nthreads=1 if nthreads is None else nthreads,
+            mode="GRAD_ONLY",
+        )
+        return np.ascontiguousarray(components.T) / self._radius
 
     def accumulate(
         self,

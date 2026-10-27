@@ -309,7 +309,7 @@ is tighter on the criterion and contains the set, which is the claim.
 Items 3 and 4 are droppable if the release schedule needs it (D-141: C if
 workable, B the floor).
 
-## Stage 7 — benchmarks, mini-app, documents (D-152)
+## Stage 7 — benchmarks, mini-app, documents (D-152; benchmarks deferred by D-155)
 
 **In progress, 2026-10-27.** Done so far: `benchmarks/_common.py`
 (application counter, timing, tables), `point_data_sphere.py` (restructured
@@ -319,8 +319,8 @@ chain on an `L²` amplitude ellipsoid and the chi-squared noise set, cap
 averages in field units, truncations as a sweep), `phase_delay.py` (nested
 catalogue acquisition, spectral against CG plain, deflated and
 surrogate-Woodbury), `operator_timings.py` (the three `work/` harnesses
-ported); `tests/test_benchmarks.py` runs each at a reduced size under
-`slow`. On the way: `WoodburyPreconditioner` is family-aware (`for_family`
+ported); a slow test ran each at a reduced size until D-155
+removed it. On the way: `WoodburyPreconditioner` is family-aware (`for_family`
 / `at`, refactorizing the surrogate-dimension inner operator per
 multiplier, with a positive fallback at zero); the primal's kernel-part
 solve moved from `γ = 0` to a floor `Primal(floor=1e-4)` of the family's
@@ -337,9 +337,11 @@ ellipsoid noise) even at 1500 bundle iterations, its inner QP warning
 throughout; the primal is certified there and is what the benchmark
 reports. Unpreconditioned CG at `rtol=1e-10` needs more than twice the
 data count in iterations on the phase-delay family and a quarter-degree
-surrogate brings it to tens. Paper-scale numbers go into DECISIONS'
-appendix once the runs finish; then the mini-apps (flexure–gravity,
-tomography, point data, per David) and the document pass.
+surrogate brings it to tens. Deferred by D-155 on 2026-10-27:
+the paper-scale runs, their appendix entries beyond what was measured, and
+the slow tests (deleted); the scripts stay for a fresh return. Next: the
+library items still open, the nonlinear ray operator, then mini-apps that
+grow out of tutorial 10 and the preconditioning example.
 
 1. **`benchmarks/`** (new, outside the test suite, run by hand): the three
    problems of D-152 at paper scale — point data on the sphere (Al-Attar

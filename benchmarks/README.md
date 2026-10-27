@@ -1,5 +1,9 @@
 # Benchmarks
 
+> Exploratory, 2026-10-27 (D-155): the three feasible-set problem scripts
+> were run at reduced size, found three defects since fixed, and are kept
+> here for a later return; nothing in the test suite runs them.
+
 Scripts run by hand, outside the test suite, whose measurements set the
 library's defaults; the figures they produce are recorded in
 `pygeoinf2/DECISIONS.md` (its appendix, and the entry each one belongs to).
@@ -16,6 +20,5 @@ library's defaults; the figures they produce are recorded in
 Run from the repository root: `poetry run python benchmarks/<script>.py`;
 the three problem scripts take `--help`. `_common.py` holds what they
 share: an application counter around the forward operator, timing, and
-the markdown tables. Their `build` and `measure` functions are what
-`pygeoinf2/tests/test_benchmarks.py` runs at a reduced size under the
-`slow` marker.
+the markdown tables. Their `build` and `measure` functions run at any
+size, which is how they were checked.

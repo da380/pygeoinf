@@ -579,6 +579,87 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         )
         return np.ascontiguousarray(np.atleast_1d(values).real)
 
+    def _spectrum(self, x: np.ndarray, /) -> np.ndarray:
+        """The full complex spectrum the non-uniform transform synthesizes from."""
+        sizes, plus, minus, amplitude, fixed = self._nufft_layout
+        components = self.to_components(x)
+        real = np.concatenate([components[:fixed], components[fixed::2]])
+        imaginary = np.concatenate([np.zeros(fixed), components[fixed + 1 :: 2]])
+        weights = amplitude * (real + 1j * imaginary)
+        spectrum = np.zeros(int(np.prod(sizes)), dtype=complex)
+        np.add.at(spectrum, plus, 0.5 * weights)
+        np.add.at(spectrum, minus, 0.5 * np.conj(weights))
+        return spectrum.reshape(sizes)
+
+    def evaluate_gradient(
+        self,
+        x: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float | None = None,
+        nthreads: int | None = None,
+    ) -> np.ndarray:
+        """The gradient at scattered points: the spectrum times ``i k``, transformed.
+
+        Each axis's derivative multiplies the mode ``exp(i k . θ)`` by
+        ``i k 2π / L``, with ``L`` the period of that axis, and the partial
+        derivatives of every axis go through one batched type-2 transform.
+        Without finufft, central differences of :meth:`evaluate` at a step
+        of a thousandth of the grid spacing.
+
+        Args:
+            x: a field on this box.
+            points: where to evaluate the gradient.
+            eps: the NUFFT's requested accuracy; ``1e-12`` by default.
+            nthreads: threads for it; one by default, as in :meth:`evaluate`.
+
+        Returns:
+            An array of shape ``(len(points), spatial_dimension)``.
+        """
+        layout = self._nufft_layout
+        points = self.prepare_points(points)
+        if layout is None:
+            return self._gradient_by_differences(x, points)
+        import finufft
+
+        sizes = layout[0]
+        spectrum = self._spectrum(x)
+        dimension = self.spatial_dimension
+        stacked = np.empty((dimension, *sizes), dtype=complex)
+        for axis in range(dimension):
+            wavenumbers = np.arange(sizes[axis]) - sizes[axis] // 2
+            shape = [1] * dimension
+            shape[axis] = sizes[axis]
+            factor = (1j * 2.0 * np.pi / self._lengths[axis]) * wavenumbers
+            stacked[axis] = spectrum * factor.reshape(shape)
+        transform = (finufft.nufft1d2, finufft.nufft2d2, finufft.nufft3d2)[
+            dimension - 1
+        ]
+        values = transform(
+            *points.data,
+            stacked,
+            isign=+1,
+            eps=1.0e-12 if eps is None else eps,
+            nthreads=1 if nthreads is None else nthreads,
+        )
+        return np.ascontiguousarray(np.atleast_2d(values).real.T)
+
+    def _gradient_by_differences(self, x: np.ndarray, points: Any) -> np.ndarray:
+        """Central differences along each axis, for a box without the transform."""
+        positions = np.stack(
+            [np.atleast_1d(np.asarray(point, dtype=float)) for point in points.points]
+        )
+        gradient = np.empty((positions.shape[0], self.spatial_dimension))
+        for axis in range(self.spatial_dimension):
+            step = 1.0e-3 * self._lengths[axis] / self._shape[axis]
+            offset = np.zeros(self.spatial_dimension)
+            offset[axis] = step
+            forward = self.evaluate(x, list(self._wrap(positions + offset)))
+            backward = self.evaluate(x, list(self._wrap(positions - offset)))
+            gradient[:, axis] = (forward - backward) / (2.0 * step)
+        return gradient
+
     def accumulate(
         self,
         weights: np.ndarray,
