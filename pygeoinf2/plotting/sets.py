@@ -211,14 +211,14 @@ class _Picture:
 
 def _choose(subset: Any, picture: _Picture, route: str) -> str:
     offers = {
-        "support": bool(getattr(subset, "has_support_function", False))
+        "support": subset.has_support_function
         and not picture.sliced
         # In three dimensions the support route draws the points attaining
         # the support, so it needs the maximizer; a support value alone does
         # not determine the point.
-        and (picture.dimension < 3 or bool(getattr(subset, "has_maximizer", False))),
-        "level": bool(getattr(subset, "has_level_function", False)),
-        "membership": bool(getattr(subset, "has_membership", True)),
+        and (picture.dimension < 3 or subset.has_maximizer),
+        "level": subset.has_level_function,
+        "membership": subset.has_membership,
     }
     if route == "auto":
         for name in ("support", "level", "membership"):
@@ -247,7 +247,7 @@ def _bounds(subset: Any, picture: _Picture, given: Any, padding: float) -> np.nd
         if np.any(box[:, 0] >= box[:, 1]):
             raise ValueError("Each bound must have low < high.")
         return box
-    if not getattr(subset, "has_support_function", False):
+    if not subset.has_support_function:
         raise ValueError(
             "Bounds are needed to sample a set without a support function: "
             "pass bounds=(low, high) in one dimension, or one (low, high) "
@@ -423,7 +423,7 @@ def _support_hull_3d(
     interior point and a half-space intersection; the hull of points the
     set exhibits is the honest cheap one.
     """
-    from scipy.spatial import ConvexHull
+    from scipy.spatial import ConvexHull, QhullError
 
     if directions < 4:
         raise ValueError(f"At least four directions are needed, got {directions}.")
@@ -437,7 +437,7 @@ def _support_hull_3d(
     )
     try:
         hull = ConvexHull(points)
-    except Exception as error:
+    except QhullError as error:
         raise ValueError(
             "The supporting points span no volume, so there is no solid hull "
             "to draw; slice a flat set along its own plane instead."

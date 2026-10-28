@@ -36,9 +36,9 @@ from ..traits import Traits
 from .normal import FactoredNormalOperator
 from .randomized import random_diagonal, random_eig
 from .solvers import (
-    FamilySolver,
     BoundFamily,
     CGSolver,
+    FamilySolver,
     InverseOperator,
     LinearSolver,
     SolveResult,
@@ -55,8 +55,9 @@ __all__ = [
     "BlockPreconditioner",
     "WoodburyPreconditioner",
     "ColumnThresholdedPreconditioner",
+    "sparse_approximation",
     "NormalDiagonalPreconditioner",
-    "LocalisedPreconditioner",
+    "LocalizedPreconditioner",
     "InvariantDistancePreconditioner",
     "gaspari_cohn",
 ]
@@ -334,6 +335,8 @@ class _SpectralFamilyPreconditioner(BoundFamily):
         values = self._values + multiplier * self._forms
         tail = float(np.mean(self._forms)) if self._forms.size else 1.0
         floor = self._floor + multiplier * tail
+        # The family is the preconditioner's own companion, built only by
+        # its ``for_family``, so it shares the assembly step by name.
         return self._preconditioner._inverse_of(member, self._factor, values, floor)
 
 
@@ -390,9 +393,9 @@ def _sparse_inverse_traits(operator: LinearOperator, /, *, galerkin: bool) -> Tr
     Returns:
         ``SELF_ADJOINT`` where that is true, ``NONE`` otherwise.
     """
-    domain = operator.domain
+    domain: CoordinateSpace = operator.domain
     self_adjoint = bool(Traits.SELF_ADJOINT & operator.traits) and (
-        galerkin or bool(getattr(domain, "is_orthonormal", False))
+        galerkin or domain.is_orthonormal
     )
     return Traits.SELF_ADJOINT if self_adjoint else Traits.NONE
 
@@ -588,6 +591,56 @@ def _thresholded_matrix(
     return (thresholded + missing).tocsc()
 
 
+def _capped_rows(
+    measure: np.ndarray, kept: np.ndarray, index: int, cap: int | None, /
+) -> np.ndarray:
+    """The rows kept in one column, the diagonal always among them.
+
+    Args:
+        measure: the size of each entry by the column's own test.
+        kept: the rows that passed the test.
+        index: the column, which is the diagonal's row.
+        cap: at most this many rows, the largest by *measure*; None for
+            no cap.
+
+    Returns:
+        The row indices, sorted.
+    """
+    if cap is not None and kept.size > cap:
+        masked = measure.copy()
+        masked[index] = -1.0
+        largest = np.argpartition(masked, -(cap - 1))[-(cap - 1) :] if cap > 1 else []
+        kept = np.asarray(largest, dtype=int)
+    return np.union1d(kept, [index])
+
+
+def _column_rows(
+    column: np.ndarray, index: int, /, *, threshold: float, cap: int | None
+) -> np.ndarray:
+    """The ``"column"`` criterion: rows at least *threshold* times the diagonal.
+
+    The column's largest entry stands in for a diagonal that is zero. Shared
+    by :func:`sparse_approximation` and
+    :class:`ColumnThresholdedPreconditioner`, which is this test with a
+    factorization behind it.
+
+    Args:
+        column: one column of the Galerkin matrix.
+        index: which column, so which row holds the diagonal.
+        threshold: the fraction of the diagonal an entry must reach.
+        cap: at most this many rows per column; None for no cap.
+
+    Returns:
+        The row indices, sorted.
+    """
+    magnitudes = np.abs(column)
+    reference = magnitudes[index]
+    if reference < 1e-14:
+        reference = magnitudes.max(initial=0.0)
+    kept = np.flatnonzero(magnitudes >= threshold * reference)
+    return _capped_rows(magnitudes, kept, index, cap)
+
+
 def sparse_approximation(
     operator: LinearOperator,
     /,
@@ -666,25 +719,11 @@ def sparse_approximation(
         scale = np.sqrt(np.where(np.abs(diagonal) < 1e-14, 1.0, np.abs(diagonal)))
 
     def keep(column: np.ndarray, index: int) -> np.ndarray:
-        if criterion == "correlation":
-            measure = np.abs(column) / (scale * scale[index])
-            kept = np.flatnonzero(measure >= threshold)
-        else:
-            measure = np.abs(column)
-            reference = measure[index]
-            if reference < 1e-14:
-                reference = measure.max(initial=0.0)
-            kept = np.flatnonzero(measure >= threshold * reference)
-        if max_per_column is not None and kept.size > max_per_column:
-            masked = measure.copy()
-            masked[index] = -1.0
-            largest = (
-                np.argpartition(masked, -(max_per_column - 1))[-(max_per_column - 1) :]
-                if max_per_column > 1
-                else []
-            )
-            kept = np.asarray(largest, dtype=int)
-        return np.union1d(kept, [index])
+        if criterion == "column":
+            return _column_rows(column, index, threshold=threshold, cap=max_per_column)
+        measure = np.abs(column) / (scale * scale[index])
+        kept = np.flatnonzero(measure >= threshold)
+        return _capped_rows(measure, kept, index, max_per_column)
 
     matrix = _thresholded_matrix(operator, keep, n_jobs=n_jobs)
     return LinearOperator.from_matrix(
@@ -992,7 +1031,7 @@ class WoodburyPreconditioner(FamilySolver):
     @classmethod
     def from_normal(
         cls,
-        normal: Any,
+        normal: FactoredNormalOperator,
         /,
         *,
         solver: LinearSolver | None = None,
@@ -1002,12 +1041,11 @@ class WoodburyPreconditioner(FamilySolver):
     ) -> "WoodburyPreconditioner":
         """Read ``A``, ``Q`` and ``R`` off a normal operator.
 
-        Takes anything exposing ``forward``, ``prior_covariance`` and
-        ``error_covariance`` — in practice a
-        :class:`~pygeoinf2.numerics.normal.NormalOperator`, from an
-        inversion's ``normal_operator`` or, more usefully, from a
-        ``surrogate`` of one. Precisions are picked up when the measures carry
-        them, which is what lets the data form avoid a solve.
+        Takes a :class:`~pygeoinf2.numerics.normal.FactoredNormalOperator`
+        -- in practice a :class:`~pygeoinf2.numerics.normal.NormalOperator`,
+        from an inversion's ``normal_operator`` or, more usefully, from a
+        ``surrogate`` of one. Precisions are picked up when the operator
+        carries them, which is what lets the data form avoid a solve.
 
         This is the ordinary way to build the preconditioner: the arguments are
         exactly what an inversion already holds, so there is no reason for a
@@ -1027,18 +1065,17 @@ class WoodburyPreconditioner(FamilySolver):
             The preconditioner.
 
         Raises:
-            TypeError: if the object does not expose the three factors.
+            TypeError: if the operator does not carry its factors.
             ValueError: if the problem has no error covariance, if the
                 factors do not fit together, or if the damping is negative.
         """
-        for attribute in ("forward", "prior_covariance", "error_covariance"):
-            if not hasattr(normal, attribute):
-                raise TypeError(
-                    f"from_normal needs an operator carrying its factors — "
-                    f"{type(normal).__name__} has no {attribute!r}. Build one "
-                    f"with pygeoinf2.numerics.NormalOperator, or pass A, Q "
-                    f"and R to the constructor directly."
-                )
+        if not isinstance(normal, FactoredNormalOperator):
+            raise TypeError(
+                f"from_normal needs an operator carrying its factors A, Q and "
+                f"R, got {type(normal).__name__}. Build one with "
+                f"pygeoinf2.numerics.NormalOperator, or pass A, Q and R to "
+                f"the constructor directly."
+            )
         error_covariance = normal.error_covariance
         if error_covariance is None:
             raise ValueError(
@@ -1053,12 +1090,8 @@ class WoodburyPreconditioner(FamilySolver):
             solver=solver,
             prior_solver=prior_solver,
             noise_solver=noise_solver,
-            prior_inverse=(
-                None
-                if prior_damping > 0.0
-                else getattr(normal, "prior_precision", None)
-            ),
-            noise_inverse=getattr(normal, "error_precision", None),
+            prior_inverse=None if prior_damping > 0.0 else normal.prior_precision,
+            noise_inverse=normal.error_precision,
             prior_damping=prior_damping,
         )
 
@@ -1171,7 +1204,11 @@ class WoodburyPreconditioner(FamilySolver):
         # The forms invert the Gaussian reading of the factors; the operator
         # in hand may be a scalar multiple of that (a Tikhonov operator in
         # the data space is ``t`` times it), and says so.
-        scale = float(getattr(operator, "scale", 1.0))
+        scale = (
+            float(operator.scale)
+            if isinstance(operator, FactoredNormalOperator)
+            else 1.0
+        )
         if scale != 1.0:
             approximate = (1.0 / scale) * approximate
 
@@ -1331,29 +1368,16 @@ class ColumnThresholdedPreconditioner(LinearSolver):
 
     def _keep(self, column: np.ndarray, index: int) -> np.ndarray:
         """Which rows of one column survive."""
-        magnitudes = np.abs(column)
-        reference = magnitudes[index]
-        if reference < 1e-14:
-            reference = magnitudes.max(initial=0.0)
-        kept = np.flatnonzero(magnitudes >= self._threshold * reference)
-        cap = self._max_per_column
-        if cap is not None and kept.size > cap:
-            masked = magnitudes.copy()
-            masked[index] = -1.0
-            largest = (
-                np.argpartition(masked, -(cap - 1))[-(cap - 1) :] if cap > 1 else []
-            )
-            kept = np.asarray(largest, dtype=int)
-        return np.union1d(kept, [index])
+        return _column_rows(
+            column, index, threshold=self._threshold, cap=self._max_per_column
+        )
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         domain: CoordinateSpace = operator.domain
         require_coordinates(domain, operator.codomain)
-        dimension = domain.dim
 
         # One pass, keeping only what survives each column's own test; the
         # whole matrix is never held. Shared with sparse_approximation.
-        del dimension
         thresholded = _thresholded_matrix(operator, self._keep, n_jobs=self._n_jobs)
 
         factorized = _sparse_factorization(
@@ -1365,8 +1389,10 @@ class ColumnThresholdedPreconditioner(LinearSolver):
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             weighted = domain.apply_gram(domain.to_components(y))
+            # One sparse solve, counted as one iteration, as the banded and
+            # block preconditioners count theirs.
             return SolveResult(
-                domain.from_components(factorized.solve(weighted)), 0, 0.0, True
+                domain.from_components(factorized.solve(weighted)), 1, 0.0, True
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
@@ -1402,6 +1428,46 @@ def _require_normal(operator: LinearOperator, name: str) -> FactoredNormalOperat
             f"identity it uses has no counterpart."
         )
     return operator
+
+
+def _probe_normal_diagonal(
+    normal: FactoredNormalOperator,
+    blocks: Sequence[Sequence[int]],
+    /,
+    *,
+    n_jobs: int | None,
+) -> list[float]:
+    """``<A* v, Q A* v>`` for the normalized indicator ``v`` of each block.
+
+    The identity ``<v, A Q A* v> == <A* v, Q A* v>``: for a singleton block
+    this is one Galerkin diagonal entry of ``A Q A*``, read off the factors
+    at one adjoint and one prior application rather than an application of
+    the normal operator; for a larger block it is the value the block's
+    members share.
+
+    Args:
+        normal: the data-space normal operator carrying its factors.
+        blocks: the index groups to probe.
+        n_jobs: workers, one block per worker. Serial by default.
+
+    Returns:
+        One value per block, in order.
+    """
+    data_space = normal.data_space
+    model_space = normal.model_space
+    dimension = data_space.dim
+    adjoint = normal.forward.adjoint
+    prior_covariance = normal.prior_covariance
+
+    from ..parallel import parallel_map
+
+    def probe(block: Sequence[int]) -> float:
+        components = np.zeros(dimension)
+        components[list(block)] = 1.0 / len(block)
+        pulled = adjoint(data_space.from_components(components))
+        return model_space.inner_product(pulled, prior_covariance(pulled))
+
+    return parallel_map(probe, [list(block) for block in blocks], n_jobs=n_jobs)
 
 
 class NormalDiagonalPreconditioner(FamilySolver):
@@ -1496,27 +1562,15 @@ class NormalDiagonalPreconditioner(FamilySolver):
         instead, at a cost of one application per datum.
         """
         data_space = normal.data_space
-        model_space = normal.model_space
         require_coordinates(data_space, data_space)
         dimension = data_space.dim
         if normal.scale <= 0.0:
             return normal.diagonals(offsets=(0,), form="galerkin")[0]
 
-        adjoint = normal.forward.adjoint
-        prior_covariance = normal.prior_covariance
         blocks = self._partition(dimension)
-
-        from ..parallel import parallel_map
-
-        def probe(block: Sequence[int]) -> float:
-            components = np.zeros(dimension)
-            components[block] = 1.0 / len(block)
-            pulled = adjoint(data_space.from_components(components))
-            return model_space.inner_product(pulled, prior_covariance(pulled))
-
         diagonal = np.zeros(dimension)
         for block, value in zip(
-            blocks, parallel_map(probe, blocks, n_jobs=self._n_jobs)
+            blocks, _probe_normal_diagonal(normal, blocks, n_jobs=self._n_jobs)
         ):
             diagonal[block] = value
         # The diagonal of the Gaussian reading A Q A*; the operator's base is
@@ -1570,13 +1624,15 @@ class _NormalDiagonalFamily(BoundFamily):
     def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
         """The inverted diagonal of the member at one multiplier."""
         normal = _require_normal(member, type(self._preconditioner).__name__)
+        # The family is the preconditioner's own companion, built only by
+        # its ``for_family``, so it shares the probe and the assembly by name.
         if self._base_diagonal is None:
             self._base_diagonal = self._preconditioner._base_diagonal(normal)
         diagonal = self._base_diagonal + multiplier * self._shift_diagonal
         return self._preconditioner._inverse_of(member, normal.data_space, diagonal)
 
 
-class LocalisedPreconditioner(LinearSolver):
+class LocalizedPreconditioner(LinearSolver):
     """Approximate ``A Q A* + R`` by the blocks that actually couple.
 
     Data that are near each other — stations in a region, rays sharing a
@@ -1597,6 +1653,11 @@ class LocalisedPreconditioner(LinearSolver):
     need not cover every index: this is an approximation to the operator, not a
     partition of it. Where blocks overlap their estimates are **averaged**,
     which is what makes an overlapping cover behave sensibly at the seams.
+    An index outside every block keeps its exact diagonal entry of
+    ``A Q A*``, read off the factors at one adjoint application each as
+    :class:`NormalDiagonalPreconditioner` reads it, so a partial cover is
+    block-diagonal where the blocks are and diagonal elsewhere, and never
+    singular.
 
     Note:
         Only ``A Q A*`` is treated block-wise; the error covariance contributes
@@ -1622,13 +1683,21 @@ class LocalisedPreconditioner(LinearSolver):
         *,
         rank: int = 10,
         rng: Generator | None = None,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
-            blocks: index groups that couple strongly. May overlap.
+            blocks: index groups that couple strongly. May overlap, and need
+                not cover every index.
             rank: the rank of the eigendecomposition within each block,
                 capped at the block size.
             rng: the generator for the randomized range finder.
+            n_jobs: workers for the probes within each block's range finder
+                and for the diagonal entries of the uncovered indices.
+                Serial by default.
+
+        Raises:
+            ValueError: for no blocks at all, or a rank below one.
         """
         self._blocks = [list(block) for block in blocks]
         if not self._blocks:
@@ -1637,6 +1706,7 @@ class LocalisedPreconditioner(LinearSolver):
             raise ValueError(f"The rank must be positive, got {rank}.")
         self._rank = rank
         self._rng = rng
+        self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         normal = _require_normal(operator, type(self).__name__)
@@ -1695,7 +1765,10 @@ class LocalisedPreconditioner(LinearSolver):
                 traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
             )
             decomposition = random_eig(
-                block_operator, rank=min(self._rank, size), rng=self._rng
+                block_operator,
+                rank=min(self._rank, size),
+                rng=self._rng,
+                n_jobs=self._n_jobs,
             )
             factor = decomposition.factor.matrix(form="components")
             approximation = (factor * decomposition.eigenvalues) @ factor.T
@@ -1704,6 +1777,22 @@ class LocalisedPreconditioner(LinearSolver):
             rows.append(grid_rows.ravel())
             columns.append(grid_columns.ravel())
             values.append(approximation.ravel())
+
+        # An index no block covers would otherwise get an empty row and
+        # column, filled only by the noise diagonal -- nothing at all for
+        # exact data -- and the factorization would be singular. It keeps
+        # its exact diagonal entry of A Q A* instead, probed off the factors.
+        covered = np.zeros(dimension, dtype=bool)
+        for block in self._blocks:
+            covered[block] = True
+        uncovered = np.flatnonzero(~covered)
+        if uncovered.size:
+            entries = _probe_normal_diagonal(
+                normal, [[int(index)] for index in uncovered], n_jobs=self._n_jobs
+            )
+            rows.append(uncovered)
+            columns.append(uncovered)
+            values.append(np.asarray(entries, dtype=float))
 
         all_rows = np.concatenate(rows)
         all_columns = np.concatenate(columns)
@@ -1766,7 +1855,7 @@ def _metric_diagonal(space: HilbertSpace, name: str, /) -> np.ndarray:
         f"{name} needs a data space with a diagonal metric: it assembles a "
         f"sparse kernel matrix, and a full Gram matrix would fill it in. The "
         f"data space is {type(space).__name__}. Use a general preconditioner "
-        f"such as JacobiPreconditioner or LocalisedPreconditioner instead."
+        f"such as JacobiPreconditioner or LocalizedPreconditioner instead."
     )
 
 
@@ -1959,3 +2048,7 @@ class InvariantDistancePreconditioner(LinearSolver):
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+
+# The former spelling, kept only until ``inference/__init__.py`` imports the
+# new one; not exported.

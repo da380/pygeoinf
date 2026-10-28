@@ -64,7 +64,7 @@ def test_the_tutorial_runs(script, capsys):
 
 def test_every_tutorial_is_listed_in_the_readme():
     """A tutorial nobody is pointed at is a tutorial nobody reads."""
-    readme = (TUTORIALS / "README.md").read_text()
+    readme = (TUTORIALS / "README.md").read_text(encoding="utf-8")
     missing = [
         script.name for script in tutorial_scripts() if script.name not in readme
     ]

@@ -88,10 +88,10 @@ class ForwardProblem:
             which situation it is refusing.
 
         Raises:
-            AttributeError: if the problem has no uncertainty at all.
+            ValueError: if the problem has no uncertainty at all.
         """
         if self._error is None:
-            raise AttributeError("This problem has no data uncertainty.")
+            raise ValueError("This problem has no data uncertainty.")
         return self._error
 
     @property
@@ -99,19 +99,19 @@ class ForwardProblem:
         """The data uncertainty, when it is a measure.
 
         Raises:
-            AttributeError: if the problem has no uncertainty at all.
+            ValueError: if the problem has no uncertainty at all.
             TypeError: if it has one but it is a *set*. That is not a missing
-                attribute, it is a different kind of problem: bounded errors
+                ingredient, it is a different kind of problem: bounded errors
                 are handled by the Backus-Gilbert routes, which give a range
                 of admissible values rather than a distribution over them.
                 Saying so by type, and by name, saves the caller working out
                 which of the two situations they are in.
         """
         if self._error is None:
-            raise AttributeError("This problem has no data uncertainty.")
+            raise ValueError("This problem has no data uncertainty.")
         if not isinstance(self._error, ProbabilityMeasure):
             raise TypeError(
-                "This method needs a Gaussian error measure; the problem's "
+                "This method needs a measure-valued error; the problem's "
                 f"uncertainty is a set ({type(self._error).__name__}). Bounded "
                 "errors are handled by the Backus-Gilbert routes -- see "
                 "pygeoinf2.inference.backus."
@@ -123,12 +123,12 @@ class ForwardProblem:
         """The data uncertainty, when it is a set.
 
         Raises:
-            AttributeError: if the problem has no uncertainty at all.
+            ValueError: if the problem has no uncertainty at all.
             TypeError: if it has one but it is a measure. The counterpart of
                 :attr:`error_measure`, and refused the same way.
         """
         if self._error is None:
-            raise AttributeError("This problem has no data uncertainty.")
+            raise ValueError("This problem has no data uncertainty.")
         if not isinstance(self._error, Subset):
             raise TypeError(
                 "This method needs a set-valued error; the problem's "
@@ -191,14 +191,12 @@ class ForwardProblem:
                 "A chi-squared statistic needs a Gaussian error measure; this "
                 f"one is a {type(measure).__name__}."
             )
-        centered = self.data_space.subtract(residual, measure.expectation)
         # unsafe=True passes the gate that refuses densities on function
         # spaces: a misfit is a likelihood potential, not a density on the
         # data space, and it is well defined whenever the residual lies in
-        # the error's Cameron-Martin space.
-        return measure.mahalanobis_squared(
-            self.data_space.add(centered, measure.expectation), unsafe=True
-        )
+        # the error's Cameron-Martin space. The measure subtracts its own
+        # expectation.
+        return measure.mahalanobis_squared(residual, unsafe=True)
 
     def critical_chi_squared(self, /, *, level: float = 0.95) -> float:
         """The chi-squared threshold at a given confidence level.
@@ -381,11 +379,9 @@ class LinearForwardProblem(ForwardProblem):
         )
         carries_error = [problem.has_error for problem in problems]
         if all(carries_error):
-            from ..probability.gaussian import GaussianMeasure as Gaussian
+            from ..probability.base import product
 
-            error = Gaussian.from_product(
-                [problem.error_measure for problem in problems]
-            )
+            error = product([problem.error_measure for problem in problems])
         elif any(carries_error):
             without = [i for i, has in enumerate(carries_error) if not has]
             raise ValueError(
@@ -429,10 +425,23 @@ class LinearForwardProblem(ForwardProblem):
 
         The model is drawn from *measure* and the data are its prediction plus
         an independent draw of the error, so one sample of this is a
-        consistent ``(model, data)`` pair. With an error measure, *measure*
-        and the error must both be Gaussian.
+        consistent ``(model, data)`` pair. The independent product of the
+        two measures is pushed through ``(m, e) -> (m, A m + e)``: Gaussian
+        when both are Gaussian, and otherwise a measure that samples -- a
+        mixture prior, say -- without claiming a closed form.
+
+        Args:
+            measure: the measure on the model space.
+
+        Returns:
+            The joint measure on the direct sum of the model and data spaces.
+
+        Raises:
+            ValueError: if the measure is not on the model space.
         """
         model_space, data_space = self.model_space, self.data_space
+        if measure.domain != model_space:
+            raise ValueError("The measure is not defined on the model space.")
         if not self.has_error:
             return measure.push_forward(
                 ColumnLinearOperator(
@@ -441,7 +450,7 @@ class LinearForwardProblem(ForwardProblem):
             )
 
         from ..algebra.direct_sum import BlockLinearOperator
-        from ..probability.gaussian import GaussianMeasure as Gaussian
+        from ..probability.base import product
 
         block = BlockLinearOperator(
             [
@@ -452,13 +461,22 @@ class LinearForwardProblem(ForwardProblem):
                 [self._forward_operator, LinearOperator.identity(data_space)],
             ]
         )
-        joint = Gaussian.from_product([measure, self.error_measure])
+        joint = product([measure, self.error_measure])
         return joint.push_forward(block)
 
     def synthetic_model_and_data(
         self, prior: ProbabilityMeasure, /, *, rng: Generator | None = None
     ) -> tuple[Any, Any]:
-        """A model drawn from the prior, and data consistent with it."""
+        """A model drawn from the prior, and data consistent with it.
+
+        Args:
+            prior: the measure on the model space to draw from; any measure
+                that can sample.
+            rng: the generator to draw with.
+
+        Returns:
+            The ``(model, data)`` pair, one draw of :meth:`joint_measure`.
+        """
         sample = self.joint_measure(prior).sample(rng=rng)
         return sample[0], sample[1]
 

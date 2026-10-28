@@ -31,8 +31,10 @@ from pygeoinf2.inference import (
     TikhonovFamily,
     TikhonovNormalOperator,
 )
-from pygeoinf2.numerics.preconditioners import NormalDiagonalPreconditioner
-from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
+from pygeoinf2.numerics.preconditioners import (
+    JacobiPreconditioner,
+    NormalDiagonalPreconditioner,
+)
 from pygeoinf2.numerics.root_find import (
     DampedSolves,
     Evaluation,
@@ -414,7 +416,7 @@ class TestTikhonovNormalOperator:
         on the assembled operator, and a full-rank localized block must be the
         exact inverse; both held on a Gaussian operator and failed by ``t``
         on a Tikhonov one."""
-        from pygeoinf2.numerics.preconditioners import LocalisedPreconditioner
+        from pygeoinf2.numerics.preconditioners import LocalizedPreconditioner
 
         problem = setup
         normal = TikhonovNormalOperator(
@@ -423,7 +425,7 @@ class TestTikhonovNormalOperator:
         data = normal.data_space
         cheap = NormalDiagonalPreconditioner()(normal)
         generic = JacobiPreconditioner()(normal)
-        exact = LocalisedPreconditioner(
+        exact = LocalizedPreconditioner(
             [list(range(data.dim))], rank=data.dim, rng=np.random.default_rng(3)
         )(normal)
         for _ in range(5):

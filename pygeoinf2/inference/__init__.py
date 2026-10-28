@@ -17,21 +17,19 @@ operator is the identity, so there is one code path.
     property_posterior = post.push_forward(T)(data)    # D -> Measure(P)
 """
 
-from .laplace import LaplaceResult, MaximumAPosteriori
+from ..numerics.normal import FactoredNormalOperator, Formalism, NormalOperator
+from ..numerics.preconditioners import (
+    InvariantDistancePreconditioner,
+    LocalizedPreconditioner,
+    NormalDiagonalPreconditioner,
+    gaspari_cohn,
+)
+from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator
 from .backus import (
     BackusGilbert,
     BackusGilbertParker,
     BackusGilbertSet,
     FeasiblePropertySet,
-)
-from .gaussian import GaussianPosterior, LinearGaussianInversion
-from .mixture import LinearGaussianMixtureInversion
-from ..numerics.normal import FactoredNormalOperator, Formalism, NormalOperator
-from ..numerics.preconditioners import (
-    InvariantDistancePreconditioner,
-    LocalisedPreconditioner,
-    NormalDiagonalPreconditioner,
-    gaspari_cohn,
 )
 from .estimators import (
     Estimator,
@@ -41,7 +39,9 @@ from .estimators import (
     PointEstimator,
     SetEstimator,
 )
-from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator
+from .gaussian import GaussianPosterior, LinearGaussianInversion
+from .laplace import LaplaceResult, MaximumAPosteriori
+from .mixture import LinearGaussianMixtureInversion
 from .point import (
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
@@ -66,7 +66,7 @@ __all__ = [
     "Formalism",
     "NormalOperator",
     "NormalDiagonalPreconditioner",
-    "LocalisedPreconditioner",
+    "LocalizedPreconditioner",
     "InvariantDistancePreconditioner",
     "gaspari_cohn",
     "ConstrainedLeastSquares",

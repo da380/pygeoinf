@@ -19,6 +19,17 @@ The names a typical workflow needs are also exported here, flat.
 separately.
 """
 
+# The subpackages, so that ``gi.inference.X`` works without a separate import.
+# compat, backends, datasets and testing are deliberately not pulled in.
+from . import (
+    algebra,
+    geometry,
+    inference,
+    numerics,
+    plotting,
+    probability,
+    symmetric_space,
+)
 from .algebra.diagonal import DiagonalLinearOperator
 from .algebra.direct_sum import (
     BlockDiagonalLinearOperator,
@@ -64,48 +75,32 @@ from .geometry import (
     EmptySet,
     HalfSpace,
     Hyperplane,
+    LevelSet,
     LinearSubspace,
     OrthogonalProjector,
     Polytope,
-    Subset,
     SublevelSet,
-    LevelSet,
+    Subset,
     UniversalSet,
     enclosing_ellipsoid,
     sum_of_ellipsoids,
 )
-from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
-from .probability.absolutely_continuous import AbsolutelyContinuousMeasure
-from .probability.base import (
-    ProbabilityMeasure,
-    ProductMeasure,
-    PushForwardMeasure,
-    product,
-)
-from .probability.gaussian import GaussianMeasure
-from .probability.mixture import GaussianMixture
-from .traits import Traits
-
-# The subpackages, so that ``gi.inference.X`` works without a separate import.
-# compat, backends, datasets and testing are deliberately not pulled in.
-from . import geometry, inference, numerics, plotting, probability, symmetric_space
 from .inference import (
     BackusGilbert,
     BackusGilbertParker,
     BackusGilbertSet,
-    FeasiblePropertySet,
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
     DiscrepancyPrinciple,
+    FeasiblePropertySet,
     ForwardProblem,
+    GaussianPosterior,
+    LaplaceResult,
     LeastSquares,
     LinearForwardProblem,
-    LaplaceResult,
-    GaussianPosterior,
     LinearGaussianInversion,
-    MaximumAPosteriori,
     LinearGaussianMixtureInversion,
-    LocalisedPreconditioner,
+    MaximumAPosteriori,
     MinimumNorm,
     NormalDiagonalPreconditioner,
     NormalOperator,
@@ -116,6 +111,7 @@ from .numerics.preconditioners import (
     BandedPreconditioner,
     IdentityPreconditioner,
     JacobiPreconditioner,
+    LocalizedPreconditioner,
     SpectralPreconditioner,
     WoodburyPreconditioner,
 )
@@ -135,9 +131,21 @@ from .numerics.solvers import (
     SolveStep,
 )
 from .plotting import plot, plot_corner, plot_densities, plot_points, subplots
+from .probability.absolutely_continuous import AbsolutelyContinuousMeasure
+from .probability.base import (
+    ProbabilityMeasure,
+    ProductMeasure,
+    PushForwardMeasure,
+    product,
+)
+from .probability.gaussian import GaussianMeasure
+from .probability.mixture import GaussianMixture
+from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
+from .traits import Traits
 
 __all__ = [
     # subpackages
+    "algebra",
     "geometry",
     "inference",
     "numerics",
@@ -174,7 +182,7 @@ __all__ = [
     "GMRESSolver",
     "IdentityPreconditioner",
     "JacobiPreconditioner",
-    "LocalisedPreconditioner",
+    "LocalizedPreconditioner",
     "LSQRSolver",
     "LUSolver",
     "MinResSolver",
@@ -262,3 +270,13 @@ __all__ = [
     # traits
     "Traits",
 ]
+
+# ``sem1d`` needs the optional ``planetmodel`` extra. It is loaded, when
+# installed, by the plotting registry above; it is listed among the
+# subpackages exactly when that succeeded.
+try:
+    from . import sem1d  # noqa: F401
+except ImportError:  # pragma: no cover - depends on the installed extras
+    pass
+else:
+    __all__.append("sem1d")

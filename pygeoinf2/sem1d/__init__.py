@@ -53,8 +53,17 @@ except ImportError as error:  # pragma: no cover
         "pip install pygeoinf[planetmodel]."
     ) from error
 
-if not hasattr(_randomfield, "SpectralBasis"):  # pragma: no cover
+import planetmodel.sampling as _sampling
+
+# 1.3 is where a grid carries its kind, which the ball's transform checks.
+_grid_fields = getattr(
+    getattr(_sampling, "AngularGrid", None), "__dataclass_fields__", {}
+)
+if (
+    not hasattr(_randomfield, "SpectralBasis") or "kind" not in _grid_fields
+):  # pragma: no cover
     raise ImportError(
-        "pygeoinf2.sem1d needs planetmodel 1.2 or later, whose randomfield "
-        "package has the spectral bases: pip install -U planetmodel."
+        "pygeoinf2.sem1d needs planetmodel 1.3 or later, whose grids carry "
+        "their kind: pip install -U planetmodel."
     )
+del _grid_fields

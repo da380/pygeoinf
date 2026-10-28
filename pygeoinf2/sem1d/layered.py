@@ -42,7 +42,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-from ..algebra.direct_sum import BlockDiagonalLinearOperator, _CoordinateDirectSum
+from ..algebra.direct_sum import BlockDiagonalLinearOperator, CoordinateDirectSum
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import EuclideanSpace, HilbertModule
 from ..probability.gaussian import GaussianMeasure
@@ -83,7 +83,7 @@ def _bounds(layer: AxisSpace | Ball, /) -> tuple[float, float]:
     return layer.bounds
 
 
-class Layered(_CoordinateDirectSum, HilbertModule):
+class Layered(CoordinateDirectSum, HilbertModule):
     """Piecewise-continuous fields over layers that are adjacent in space."""
 
     def __init__(
@@ -273,12 +273,12 @@ class Layered(_CoordinateDirectSum, HilbertModule):
         land here."""
         if self is other:
             return True
-        if not isinstance(other, _CoordinateDirectSum):
+        if not isinstance(other, CoordinateDirectSum):
             return NotImplemented
         return self._key() == other._key()
 
-    def __hash__(self) -> int:
-        return hash((_CoordinateDirectSum, self._key()))
+    # Defining __eq__ discards the inherited hash; the sum's is the right one.
+    __hash__ = CoordinateDirectSum.__hash__
 
     def __repr__(self) -> str:
         spans = ", ".join(f"[{lower:g}, {upper:g}]" for lower, upper in self._ends)
@@ -456,11 +456,22 @@ class Layered(_CoordinateDirectSum, HilbertModule):
         return values
 
     def _require_point_evaluation(
-        self, what: str, points: Sequence[Any], side: str | None, /, *, unsafe: bool
+        self,
+        what: str,
+        /,
+        *,
+        points: Sequence[Any] | None = None,
+        side: str | None = None,
+        unsafe: bool,
     ) -> None:
-        """Each layer's own guard, on the points that are in it."""
+        """Each layer's own guard, on the points that are in it; every
+        layer's, at any point, when no points are given."""
+        if points is None:
+            for layer in self.layers:
+                layer._require_point_evaluation(what, unsafe=unsafe)
+            return
         for i, _, inside in self._grouped(points, side):
-            self.layers[i]._require_point_evaluation(what, inside, unsafe=unsafe)
+            self.layers[i]._require_point_evaluation(what, points=inside, unsafe=unsafe)
 
     def dirac(
         self, point: Any, /, *, side: str | None = None, unsafe: bool = False
@@ -481,7 +492,7 @@ class Layered(_CoordinateDirectSum, HilbertModule):
                 not set.
         """
         self._require_point_evaluation(
-            "A Dirac functional", [point], side, unsafe=unsafe
+            "A Dirac functional", points=[point], side=side, unsafe=unsafe
         )
         return LinearFunctional.from_derivative_components(
             self, self.basis_matrix([point], side=side)[0]
@@ -515,7 +526,7 @@ class Layered(_CoordinateDirectSum, HilbertModule):
         if not points:
             raise ValueError("At least one point is needed.")
         self._require_point_evaluation(
-            "A point evaluation operator", points, side, unsafe=unsafe
+            "A point evaluation operator", points=points, side=side, unsafe=unsafe
         )
         return LinearOperator.from_matrix(
             self,
@@ -567,7 +578,7 @@ class Layered(_CoordinateDirectSum, HilbertModule):
             points = [position]
         for side in ("below", "above"):
             self._require_point_evaluation(
-                "A jump operator", points, side, unsafe=unsafe
+                "A jump operator", points=points, side=side, unsafe=unsafe
             )
         matrix = self.basis_matrix(points, side="above") - self.basis_matrix(
             points, side="below"

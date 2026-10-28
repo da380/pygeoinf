@@ -458,7 +458,7 @@ class _Bands:
     """
 
     def __init__(self, count: int) -> None:
-        self.colours = [np.arange(count) % 3 == r for r in range(3)]
+        self.colors = [np.arange(count) % 3 == r for r in range(3)]
 
     def gradient(
         self,
@@ -484,12 +484,12 @@ class _Bands:
         off = np.zeros((P, max(N - 1, 0))) if hessian else None
         plus_times, minus_times = [], []
         for r in range(3):
-            step = np.where(self.colours[r][None, :], h[:, None], 0.0)
+            step = np.where(self.colors[r][None, :], h[:, None], 0.0)
             plus = times(offsets + step)
             minus = times(offsets - step)
             plus_times.append(plus)
             minus_times.append(minus)
-            nodes = np.flatnonzero(self.colours[r])
+            nodes = np.flatnonzero(self.colors[r])
             # Node i sits between segments i and i + 1.
             left = (
                 plus[:, nodes]
@@ -512,13 +512,13 @@ class _Bands:
                 # Nodes of colours r and r + 1 moved together: the mixed term
                 # of the segment between consecutive nodes i and i + 1.
                 step = np.where(
-                    (self.colours[r] | self.colours[(r + 1) % 3])[None, :],
+                    (self.colors[r] | self.colors[(r + 1) % 3])[None, :],
                     h[:, None],
                     0.0,
                 )
                 both_plus = times(offsets + step)
                 both_minus = times(offsets - step)
-                nodes = np.flatnonzero(self.colours[r])
+                nodes = np.flatnonzero(self.colors[r])
                 nodes = nodes[nodes + 1 < N]
                 segment = nodes + 1
                 # Second order in h, from the two joint moves and the four

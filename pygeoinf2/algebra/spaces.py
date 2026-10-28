@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Any, TYPE_CHECKING, Hashable, Sequence
+from typing import TYPE_CHECKING, Any, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator, default_rng
@@ -34,18 +34,37 @@ __all__ = [
     "EuclideanSpace",
     "Reals",
     "default_rng",
+    "resolve_rng",
+    "REORTHOGONALIZATION_THRESHOLD",
 ]
 
 
-_DEFAULT_RNG = default_rng()
-
 # Reorthogonalize when a projection loses more than this fraction of the norm.
 # The classical Daniel-Gragg-Kaufman-Stewart criterion, with the usual value.
-_REORTHOGONALISATION_THRESHOLD = 1.0 / np.sqrt(2.0)
+# Shared by every Gram-Schmidt loop in the package -- the vector and the
+# column routines here, and the Lanczos recurrence -- so that they agree on
+# when a second pass is needed.
+REORTHOGONALIZATION_THRESHOLD = 1.0 / np.sqrt(2.0)
 
 
-def _resolve_rng(rng: Generator | None) -> Generator:
-    return _DEFAULT_RNG if rng is None else rng
+def resolve_rng(rng: Generator | None) -> Generator:
+    """The generator to draw from: *rng* itself, or a fresh one when None.
+
+    The one convention for every ``rng=None`` in the package. A fresh
+    ``default_rng()`` is seeded from the operating system, so two calls
+    without a generator are independent and nothing is shared between
+    callers; pass a generator whenever the draws should be reproducible.
+
+    Args:
+        rng: the caller's generator, or None.
+
+    Returns:
+        A generator.
+    """
+    return default_rng() if rng is None else rng
+
+
+# The former private spelling, kept while the backends still import it.
 
 
 class HilbertSpace[V](ABC):
@@ -229,7 +248,7 @@ class HilbertSpace[V](ABC):
         """
         result: list[V] = []
         for i, vector in enumerate(vectors):
-            v, norm, original = self._orthogonalize_against(vector, result)
+            v, norm, original = self.orthogonalize_against(vector, result)
             if norm <= rtol * original:
                 raise ValueError(
                     f"Vector {i} is linearly dependent on its predecessors "
@@ -259,30 +278,41 @@ class HilbertSpace[V](ABC):
         """
         result: list[V] = []
         for vector in vectors:
-            v, norm, original = self._orthogonalize_against(vector, result)
+            v, norm, original = self.orthogonalize_against(vector, result)
             if norm > rtol * original:
                 result.append(self.scale_inplace(1.0 / norm, v))
         return result
 
-    def _orthogonalize_against(
-        self, vector: V, basis: Sequence[V]
+    def orthogonalize_against(
+        self, vector: V, basis: Sequence[V], /
     ) -> tuple[V, float, float]:
         """Project a vector off an orthonormal basis, reorthogonalizing once.
 
-        A single modified Gram-Schmidt pass loses orthogonality when the new
-        vector is nearly in the span, which is exactly the regime a
-        rank-revealing method works in. The classical remedy is to repeat the
-        projection when the norm drops sharply -- "twice is enough" -- which
-        costs one extra pass only in the cases that need it.
+        The step :meth:`gram_schmidt` and :meth:`orthonormal_basis` repeat,
+        exposed for a loop that extends an orthonormal basis one block at a
+        time and wants the residuals back rather than a rebuilt basis -- a
+        randomized range finder. A single modified Gram-Schmidt pass loses
+        orthogonality when the new vector is nearly in the span, which is
+        exactly the regime a rank-revealing method works in. The classical
+        remedy is to repeat the projection when the norm drops sharply --
+        "twice is enough" -- which costs one extra pass only in the cases
+        that need it.
 
-        Returns the projected vector, its norm, and the norm it started with.
+        Args:
+            vector: the vector to project. It is copied, not changed.
+            basis: an orthonormal sequence to project off.
+
+        Returns:
+            The projected vector, which is not normalized; its norm; and the
+            norm the vector started with, floored away from zero so that a
+            ratio of the two is always defined.
         """
         original = self.norm(vector)
         v = self.copy(vector)
         for w in basis:
             v = self.axpy(-self.inner_product(v, w), w, v)
         norm = self.norm(v)
-        if norm < _REORTHOGONALISATION_THRESHOLD * original:
+        if norm < REORTHOGONALIZATION_THRESHOLD * original:
             for w in basis:
                 v = self.axpy(-self.inner_product(v, w), w, v)
             norm = self.norm(v)
@@ -393,7 +423,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         caching the factor. Subclasses with a cheaper factor override this,
         as :class:`DiagonalMetricSpace` and :class:`OrthonormalSpace` do.
         """
-        xi = _resolve_rng(rng).standard_normal(self.dim)
+        xi = resolve_rng(rng).standard_normal(self.dim)
         return solve_triangular(self._gram_cholesky.T, xi, lower=False)
 
     @cached_property
@@ -549,7 +579,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
             [self.solve_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1
         )
 
-    def _orthonormalize_columns(
+    def orthonormalize_columns(
         self,
         columns: np.ndarray,
         /,
@@ -559,6 +589,12 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         strict: bool = False,
     ) -> tuple[np.ndarray, list[int]]:
         """Gram-Schmidt on component columns, in the space's metric.
+
+        The array form of :meth:`gram_schmidt` and :meth:`orthonormal_basis`,
+        which those call where :attr:`uses_component_fast_paths` allows. It
+        is public for a loop that holds its basis as columns -- a randomized
+        range finder -- and wants to extend an orthonormal block without
+        synthesizing vectors or rebuilding what it already has.
 
         Classical Gram-Schmidt with a second pass whenever the first one
         removes more than ``1 - 1/sqrt(2)`` of a column's norm -- Kahan's
@@ -598,7 +634,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
                     v -= current @ (current.T @ weighted)
                     weighted = self.apply_gram(v)
                     before, norm = norm, float(np.sqrt(max(float(v @ weighted), 0.0)))
-                    if norm >= _REORTHOGONALISATION_THRESHOLD * before:
+                    if norm >= REORTHOGONALIZATION_THRESHOLD * before:
                         break
             if norm <= rtol * max(original, 1e-300):
                 if strict:
@@ -631,7 +667,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """
         if not self.uses_component_fast_paths:
             return super().gram_schmidt(vectors, rtol=rtol)
-        orthonormal, _ = self._orthonormalize_columns(
+        orthonormal, _ = self.orthonormalize_columns(
             self.components_of(vectors), rtol=rtol, strict=True
         )
         return self.vectors_from(orthonormal)
@@ -653,7 +689,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """
         if not self.uses_component_fast_paths:
             return super().orthonormal_basis(vectors, rtol=rtol)
-        orthonormal, _ = self._orthonormalize_columns(
+        orthonormal, _ = self.orthonormalize_columns(
             self.components_of(vectors), rtol=rtol
         )
         return self.vectors_from(orthonormal)
@@ -688,7 +724,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         Not white noise: its covariance is ``G``, not the identity. Use
         :meth:`white_noise` when the distribution matters.
         """
-        return self.from_components(_resolve_rng(rng).standard_normal(self.dim))
+        return self.from_components(resolve_rng(rng).standard_normal(self.dim))
 
     def white_noise(self, *, rng: Generator | None = None) -> V:
         """A sample with identity covariance on this space.
@@ -771,15 +807,14 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
             total[positions] = np.asarray(y, dtype=float)
             return total
 
-        operator = LinearOperator.from_callables(
+        return LinearOperator.from_callables(
             self,
             codomain,
             lambda x: self.to_components(x)[positions],
             adjoint=lambda y: self.representer(scatter(y)),
+            components_action=lambda c: c[positions],
+            components_adjoint_action=lambda y: self.solve_gram(scatter(y)),
         )
-        operator._components_action_fn = lambda c: c[positions]
-        operator._components_adjoint_action_fn = lambda y: self.solve_gram(scatter(y))
-        return operator
 
     def representer(self, derivative_components: np.ndarray) -> V:
         """The Riesz representer of the functional with the given derivative.
@@ -1063,7 +1098,7 @@ class _CoordinateMassWeightedSpace[V](MassWeightedSpace[V], CoordinateSpace[V]):
         self, c: np.ndarray, operator: "LinearOperator"
     ) -> np.ndarray:
         """An operator on the base applied to components, directly where it can."""
-        action = operator._components_action()
+        action = operator.components_action()
         if action is not None:
             return action(c)
         return self._base.to_components(operator(self._base.from_components(c)))
@@ -1188,7 +1223,7 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
 
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, G^-1)``, using the diagonal factor."""
-        xi = _resolve_rng(rng).standard_normal(self.dim)
+        xi = resolve_rng(rng).standard_normal(self.dim)
         return xi / self._sqrt_metric_values
 
     def inner_product(self, x: V, y: V) -> float:
@@ -1305,7 +1340,7 @@ class OrthonormalSpace[V](CoordinateSpace[V], ABC):
 
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Standard normal components, since ``G`` is the identity here."""
-        return _resolve_rng(rng).standard_normal(self.dim)
+        return resolve_rng(rng).standard_normal(self.dim)
 
     def gram_matrix(self) -> np.ndarray:
         """The identity matrix."""

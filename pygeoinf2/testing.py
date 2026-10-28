@@ -24,10 +24,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
-from numpy.random import Generator, default_rng
+from numpy.random import Generator
 
 from .algebra.operators import Functional, LinearOperator, Operator
-from .algebra.spaces import CoordinateSpace, HilbertSpace
+from .algebra.spaces import CoordinateSpace, HilbertSpace, resolve_rng
 from .geometry.convex import ConvexSet
 from .probability.base import ProbabilityMeasure
 from .traits import Traits
@@ -166,7 +166,7 @@ def check_space(
     Returns:
         The report, carrying the worst defect of each axiom.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
 
     def close(a: object, b: object, axiom: str) -> None:
@@ -331,7 +331,7 @@ def check_coordinates(
         AssertionError: naming the axiom that failed and the numbers that
             failed it.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
 
     if not isinstance(space, CoordinateSpace):
@@ -399,7 +399,7 @@ def check_coordinates(
         ):
             _fail("solve_gram inverts apply_gram", "the round trip does not return c")
 
-        nested = check_representer(space, cx, rng=rng, rtol=rtol)
+        nested = check_representer(space, cx, rng=rng, measure=measure, rtol=rtol)
         for axiom, defect in nested.defects.items():
             _record(defects, axiom, defect)
 
@@ -447,7 +447,7 @@ def check_representer(
     Raises:
         AssertionError: if a representer does not reproduce its functional.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     g = np.asarray(derivative_components, dtype=float)
     v = space.representer(g)
@@ -512,7 +512,7 @@ def check_white_noise(
         AssertionError: if the sample covariance is not the identity on the
             space to within *rtol*.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     if space.dim == 0:
         return CheckReport("check_white_noise", defects)
@@ -594,7 +594,7 @@ def check_operator(
     Raises:
         AssertionError: naming the axiom that failed.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     domain, codomain = operator.domain, operator.codomain
     defects: dict[str, float] = {}
 
@@ -668,7 +668,7 @@ def check_traits(
     Raises:
         AssertionError: naming the trait that is claimed but does not hold.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     traits = operator.traits
     domain, codomain = operator.domain, operator.codomain
@@ -760,7 +760,7 @@ def check_derivative(
     step: float = 1e-6,
     trials: int = 3,
     rtol: float = 1e-5,
-) -> None:
+) -> CheckReport:
     """Check the derivative against central finite differences.
 
     Args:
@@ -783,7 +783,7 @@ def check_derivative(
         AssertionError: if the operator carries no derivative, or the
             difference disagrees with it.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     if not operator.has_derivative:
         _fail(
@@ -828,7 +828,7 @@ def check_gradient(
     step: float = 1e-6,
     trials: int = 3,
     rtol: float = 1e-5,
-) -> None:
+) -> CheckReport:
     """Check that the gradient really is the gradient, not the derivative.
 
     Compares ``(grad, d)`` against the central difference of the functional
@@ -854,7 +854,7 @@ def check_gradient(
     Raises:
         AssertionError: if the gradient is not the derivative's representer.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     domain = functional.domain
     gradient = functional.at(point).gradient
@@ -894,7 +894,7 @@ def check_second_derivative(
     step: float = 1e-5,
     trials: int = 3,
     rtol: float = 1e-4,
-) -> None:
+) -> CheckReport:
     """Check ``F''(x)[d, .]`` against finite differences of the derivative.
 
     Args:
@@ -915,7 +915,7 @@ def check_second_derivative(
         AssertionError: if the operator carries no second derivative, or it
             disagrees with the differences.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     if not operator.has_second_derivative:
         _fail(
@@ -993,7 +993,7 @@ def check_measure(
     Raises:
         AssertionError: if a declared moment disagrees with the samples.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     space = measure.domain
     if space.dim == 0:
@@ -1086,7 +1086,13 @@ def check_projection(
         trials: how many points to project.
         probes: how many nearby points of the set to compare distances with,
             for each projection.
-        rtol: the agreement required of the idempotency identity.
+        rtol: the agreement required of the idempotency identity. The two
+            membership tests have fixed tolerances of their own: a projected
+            point counts as a member at ``contains(..., rtol=1e-6)``, which
+            allows an iterative projection its own stopping tolerance, and a
+            nearby point is compared only when it is a member at ``1e-9``,
+            so that a point just outside the set cannot be mistaken for a
+            closer one inside it.
 
     Returns:
         The report, carrying the worst idempotency defect.
@@ -1095,7 +1101,7 @@ def check_projection(
         AssertionError: if the projection does not land in the set, is not
             idempotent, or a nearby point of the set is closer than it.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     space = subset.domain
 
@@ -1165,7 +1171,7 @@ def check_convexity(
     Raises:
         AssertionError: if a pair violates the inequality.
     """
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     space = functional.domain
     for _ in range(trials):
@@ -1231,7 +1237,7 @@ def check_affine(
         raise TypeError(
             f"check_affine needs an AffineOperator, got {type(operator).__name__}."
         )
-    rng = default_rng() if rng is None else rng
+    rng = resolve_rng(rng)
     defects: dict[str, float] = {}
     domain, codomain = operator.domain, operator.codomain
     linear = operator.linear_part
@@ -1266,7 +1272,7 @@ def check_affine(
             rtol=rtol,
             record=defects,
         )
-    nested = check_operator(linear, rng=rng, trials=trials)
+    nested = check_operator(linear, rng=rng, measure=measure, trials=trials, rtol=rtol)
     for axiom, defect in nested.defects.items():
         _record(defects, axiom, defect)
     return CheckReport("check_affine", defects)

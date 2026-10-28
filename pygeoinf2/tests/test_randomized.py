@@ -5,6 +5,7 @@ import pytest
 
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
+from pygeoinf2.numerics.functional_calculus import log_determinant
 from pygeoinf2.numerics.randomized import (
     Estimate,
     LowRankCholesky,
@@ -17,7 +18,6 @@ from pygeoinf2.numerics.randomized import (
     random_svd,
     random_trace,
 )
-from pygeoinf2.numerics.functional_calculus import log_determinant
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
@@ -662,3 +662,44 @@ class TestComponentFastPaths:
         # operation, so the range finder is fed probes drawn on the base.
         probes = [operator(base.white_noise(rng=rng)) for _ in range(3)]
         assert len(strict.orthonormal_basis(probes)) == 2
+
+
+class TestDegenerateInputs:
+    """The edge cases the range finder and the estimators are handed."""
+
+    @pytest.mark.parametrize("make", [EuclideanSpace, make_weighted_space])
+    def test_a_zero_operator_has_an_empty_range(self, make, rng):
+        """On a coordinate space the adaptive loop keeps its basis as an
+        array; a zero operator must hand back an empty one, not a list the
+        callers cannot read the shape of."""
+        X = make(6) if make is EuclideanSpace else make()
+        zero = LinearOperator.zero(X)
+        assert random_range(zero, rng=rng) == []
+        with pytest.raises(ValueError, match="trivial"):
+            random_eig(zero, rng=rng)
+        with pytest.raises(ValueError, match="trivial"):
+            random_svd(zero, rng=rng)
+
+    def test_the_block_size_is_validated(self, exact_low_rank, rng):
+        _, A, _ = exact_low_rank
+        with pytest.raises(ValueError, match="block size"):
+            random_range(A, rng=rng, block_size=0)
+        with pytest.raises(ValueError, match="block size"):
+            random_eig(A, rng=rng, block_size=0)
+
+    @pytest.mark.parametrize("rtol", [0.0, 1.0, -0.1])
+    def test_the_tolerance_is_validated(self, exact_low_rank, rng, rtol):
+        _, A, _ = exact_low_rank
+        with pytest.raises(ValueError, match=r"\(0, 1\)"):
+            random_range(A, rng=rng, rtol=rtol)
+        with pytest.raises(ValueError, match=r"\(0, 1\)"):
+            random_eig(A, rng=rng, rtol=rtol)
+
+    def test_the_diagonal_needs_at_least_one_probe(self, exact_low_rank, rng):
+        """With no probes the estimate was ``0 / 0``, an all-NaN diagonal
+        returned without a word."""
+        _, A, _ = exact_low_rank
+        with pytest.raises(ValueError, match="probe"):
+            random_diagonal(A, samples=0, rng=rng)
+        with pytest.raises(ValueError, match="probe"):
+            random_diagonal(A, samples=-3, rng=rng)

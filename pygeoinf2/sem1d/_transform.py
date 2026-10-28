@@ -73,6 +73,7 @@ class ShellTransform:
         """The degree of the grid."""
         return self._lmax
 
+    # synthesise and analyse mirror planetmodel's SpectralBasis names.
     def synthesise(self, coefficients: np.ndarray, /) -> np.ndarray:
         """Values on every shell from coefficient functions.
 

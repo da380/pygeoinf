@@ -16,10 +16,10 @@ from pygeoinf2.numerics import (
     IdentityPreconditioner,
     InverseOperator,
     JacobiPreconditioner,
-    SpectralPreconditioner,
     LSQRSolver,
     LUSolver,
     MinResSolver,
+    SpectralPreconditioner,
 )
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
@@ -318,6 +318,35 @@ class TestConvergenceReporting:
         with pytest.warns(RuntimeWarning, match="did not converge"):
             result = CGSolver(rtol=1e-16, max_iterations=1, strict=False)(A).solve(b)
         assert not result.converged
+
+    def test_lsqr_downgrades_to_the_same_warning(self, rng):
+        """Every other iterative solver warns under ``strict=False``; LSQR
+        returned the unconverged solve in silence."""
+        A = LinearOperator.from_matrix(
+            EuclideanSpace(12),
+            EuclideanSpace(20),
+            rng.normal(size=(20, 12)),
+            form="components",
+        )
+        b = rng.normal(size=20)
+        with pytest.raises(ConvergenceError, match="did not converge"):
+            LSQRSolver(max_iterations=1)(A).solve(b)
+        with pytest.warns(RuntimeWarning, match="did not converge"):
+            result = LSQRSolver(max_iterations=1, strict=False)(A).solve(b)
+        assert not result.converged
+
+    def test_lsqr_refuses_a_non_finite_residual(self, rng):
+        """A NaN is a breakdown, refused at once as the other solvers refuse
+        it, not run to the cap and reported as slow convergence."""
+        X = EuclideanSpace(6)
+        poisoned = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: np.full(6, np.nan),
+            adjoint=lambda y: np.full(6, np.nan),
+        )
+        with pytest.raises(ConvergenceError, match="non-finite"):
+            LSQRSolver(strict=False)(poisoned).solve(X.random(rng=rng))
 
     def test_diagnostics_come_back_with_the_answer(self, spd_problem):
         A, b, _ = spd_problem
@@ -689,7 +718,6 @@ class TestProgressCallback:
         """The workflow it exists for: pyslfp prints the iteration count after
         every solve, and ``est(data)`` discards the SolveResult."""
         import pygeoinf2 as gi
-
         from pygeoinf2.numerics.solvers import ProgressCallback
 
         model, data_space = EuclideanSpace(30), EuclideanSpace(15)
@@ -950,7 +978,9 @@ class TestPreconditionedMinRes:
         )
 
         solver = MinResSolver(max_iterations=50).with_preconditioner(flipped)
-        with pytest.raises(ValueError, match="positive-definite"):
+        # A ConvergenceError, as CG reports its indefinite preconditioner:
+        # one kind of failure, one exception to catch.
+        with pytest.raises(ConvergenceError, match="positive-definite"):
             solver(operator).solve(space.random(rng=rng))
 
 

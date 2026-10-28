@@ -52,7 +52,7 @@ print()
 # A reference that jumps, given piece by piece, and the prior about it.
 # ---------------------------------------------------------------------------
 
-# One smooth piece per layer, each even in r as a field regular at the centre
+# One smooth piece per layer, each even in r as a field regular at the center
 # is. A single function would do for a field that does not jump; one that does
 # is asked about the interface by both layers, and cannot tell them apart.
 reference = X.project_function(
@@ -159,7 +159,7 @@ left.legend(fontsize=7)
 
 # The band layer by layer, so that it breaks where the field does. At the two
 # ends of a layer the side is named, which matters only on an interface; the
-# centre is left out, a point there wanting an order of three halves.
+# center is left out, a point there wanting an order of three halves.
 for lower, upper in X.layer_bounds:
     radii = np.linspace(max(lower, 0.01), upper, 60)
     sides = ["above"] + [None] * (radii.size - 2) + ["below"]
@@ -167,14 +167,14 @@ for lower, upper in X.layer_bounds:
     look = LinearOperator.from_matrix(
         X, EuclideanSpace(radii.size), rows, form="galerkin"
     )
-    centre = look(posterior.expectation)
+    center = look(posterior.expectation)
     width = np.sqrt(
         np.diag((look @ posterior.covariance @ look.adjoint).matrix(form="components"))
     )
     right.fill_between(
         radii,
-        centre - 2.0 * width,
-        centre + 2.0 * width,
+        center - 2.0 * width,
+        center + 2.0 * width,
         color="tab:blue",
         alpha=0.25,
         linewidth=0.0,

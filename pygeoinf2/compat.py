@@ -46,7 +46,7 @@ import numpy as np
 from numpy.random import Generator
 
 from .algebra.operators import LinearFunctional, LinearOperator
-from .algebra.spaces import CoordinateSpace, _resolve_rng
+from .algebra.spaces import CoordinateSpace, resolve_rng
 from .traits import Traits
 
 __all__ = [
@@ -174,7 +174,7 @@ class AdaptedSpace(CoordinateSpace):
         legacy global state.
         """
         # v1's random() ignores any generator and uses the legacy global state.
-        return self._space.from_components(_resolve_rng(rng).standard_normal(self.dim))
+        return self._space.from_components(resolve_rng(rng).standard_normal(self.dim))
 
     # ----------------------------------------------------------------- #
     #                            Coordinates                            #
@@ -222,7 +222,7 @@ class AdaptedSpace(CoordinateSpace):
         covariance ``G`` on any space whose basis is not orthonormal -- that
         is, on every v1 Sobolev space.
         """
-        rng = _resolve_rng(rng)
+        rng = resolve_rng(rng)
         diagonal = self._diagonal_gram()
         if diagonal is not None:
             return rng.standard_normal(self.dim) / np.sqrt(diagonal)

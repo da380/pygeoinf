@@ -26,17 +26,16 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-
 from ..algebra.operators import LinearOperator, Operator
 from ..geometry.sets import Subset
 from ..geometry.subspaces import AffineSubspace
-from ..probability.base import ProbabilityMeasure
-from ..probability.gaussian import GaussianMeasure
 from ..numerics.normal import Formalism
 from ..numerics.normal import choose_formalism as _choose
 from ..numerics.root_find import RootResult
 from ..numerics.solvers import LinearSolver, SolveStep, resolve_solver
 from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
+from ..probability.base import ProbabilityMeasure
+from ..probability.gaussian import GaussianMeasure
 from .estimators import LinearPointEstimator
 from .problem import LinearForwardProblem
 

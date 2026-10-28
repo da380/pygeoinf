@@ -7,20 +7,19 @@ import pytest
 
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace, HilbertSpace, Reals
-from pygeoinf2.traits import Traits
 from pygeoinf2.testing import (
     check_coordinates,
     check_representer,
     check_space,
     check_white_noise,
 )
+from pygeoinf2.traits import Traits
 
 from .conftest import (
     WeightedSpace,
     make_dense_metric_space,
     make_weighted_space,
 )
-
 
 SPACES = {
     "euclidean": (lambda: EuclideanSpace(4)),
@@ -555,8 +554,8 @@ class TestMassWeightedCoordinates:
         assert space.norm(space.subtract(lifted.adjoint(y), expected)) < 1e-9 * (
             space.norm(expected) + 1.0
         )
-        assert lifted._components_action() is not None
-        assert lifted._components_adjoint_action() is not None
+        assert lifted.components_action() is not None
+        assert lifted.components_adjoint_action() is not None
 
     def test_over_a_module_the_pointwise_operations_survive(self):
         from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
@@ -606,7 +605,7 @@ class TestCoordinateSelection:
         expected = np.zeros(4)
         expected[3] = 1.0 / space.metric_values[3]
         assert np.allclose(pulled, expected)
-        assert selection._components_action() is not None
+        assert selection.components_action() is not None
 
     def test_bad_positions_are_refused(self):
         space = make_weighted_space()

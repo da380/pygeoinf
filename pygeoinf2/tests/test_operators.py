@@ -1343,3 +1343,112 @@ class TestChecksTakeAMeasure:
         check_affine(
             AffineOperator(A, measure.sample(rng=rng)), rng=rng, measure=measure
         )
+
+
+class TestPublicStructureAccessors:
+    """What an operator will say about itself without being applied: the
+    matrix it already holds, its action on component arrays, and whether it
+    is the identity. Read-only views on the protected extension hooks."""
+
+    def test_known_matrix_is_the_stored_matrix_or_none(self, rng):
+        X = make_dense_metric_space(4)
+        matrix = rng.normal(size=(4, 4))
+        stored = LinearOperator.from_matrix(X, X, matrix, form="components")
+        assert np.allclose(stored.known_matrix(form="components"), matrix)
+        assert np.allclose(
+            stored.known_matrix(form="galerkin"), X.gram_matrix() @ matrix
+        )
+        callable_only = LinearOperator.from_callables(
+            X, X, lambda x: X.from_components(matrix @ X.to_components(x))
+        )
+        assert callable_only.known_matrix(form="components") is None
+        with pytest.raises(ValueError, match="form"):
+            stored.known_matrix(form="dense")
+
+    def test_from_callables_takes_the_component_actions(self, rng):
+        """Supplied through the constructor, not written onto the result."""
+        X = make_dense_metric_space(4)
+        matrix = rng.normal(size=(4, 4))
+        plain = LinearOperator.from_callables(
+            X, X, lambda x: X.from_components(matrix @ X.to_components(x))
+        )
+        assert plain.components_action() is None
+        assert plain.components_adjoint_action() is None
+        adjoint_matrix = X.solve_gram_to_columns(matrix.T @ X.gram_matrix())
+        fused = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: X.from_components(matrix @ X.to_components(x)),
+            adjoint=lambda y: X.from_components(adjoint_matrix @ X.to_components(y)),
+            components_action=lambda c: matrix @ c,
+            components_adjoint_action=lambda c: adjoint_matrix @ c,
+        )
+        check_operator(fused, rng=rng)
+        x = X.random(rng=rng)
+        assert np.allclose(
+            fused.components_action()(X.to_components(x)), X.to_components(fused(x))
+        )
+        assert np.allclose(
+            fused.components_adjoint_action()(X.to_components(x)),
+            X.to_components(fused.adjoint(x)),
+        )
+
+    def test_is_identity_is_true_only_for_the_identity(self, rng):
+        X = make_dense_metric_space(3)
+        assert LinearOperator.identity(X).is_identity
+        assert not LinearOperator.from_matrix(
+            X, X, np.identity(3), form="components"
+        ).is_identity
+        assert not LinearOperator.zero(X).is_identity
+        assert not (2.0 * LinearOperator.identity(X)).is_identity
+        assert not LinearOperator.from_callables(X, X, lambda x: x).is_identity
+
+
+class TestCheckAffineForwardsItsKnobs:
+    """The nested ``check_operator`` on the linear part is held to the caller's
+    tolerance and probed from the caller's measure, not to the defaults."""
+
+    def test_the_tolerance_reaches_the_linear_part(self, rng):
+        X = make_dense_metric_space(4)
+        matrix = rng.normal(size=(4, 4))
+        exact_adjoint = X.solve_gram_to_columns(matrix.T @ X.gram_matrix())
+        slightly_off = exact_adjoint * (1.0 + 1e-6)
+        inexact = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: X.from_components(matrix @ X.to_components(x)),
+            adjoint=lambda y: X.from_components(slightly_off @ X.to_components(y)),
+        )
+        from pygeoinf2.testing import check_affine
+
+        affine = AffineOperator(inexact, X.random(rng=rng))
+        with pytest.raises(AssertionError, match="adjoint"):
+            check_affine(affine, rng=rng)
+        report = check_affine(affine, rng=rng, rtol=1e-4)
+        assert report.defects["the adjoint satisfies (A x, y) == (x, A* y)"] > 1e-8
+
+    def test_the_measure_reaches_the_linear_part(self, rng, monkeypatch):
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+        from pygeoinf2.testing import check_affine
+
+        X = make_dense_metric_space(4)
+        identity = LinearOperator.identity(X)
+        measure = GaussianMeasure(X, covariance=identity, covariance_factor=identity)
+        drawn = {"n": 0}
+        real = measure.sample
+
+        def counting(*, rng=None):
+            drawn["n"] += 1
+            return real(rng=rng)
+
+        monkeypatch.setattr(measure, "sample", counting)
+        matrix = rng.normal(size=(4, 4))
+        linear = LinearOperator.from_matrix(X, X, matrix, form="components")
+        check_affine(
+            AffineOperator(linear, X.random(rng=rng)),
+            rng=rng,
+            measure=measure,
+            trials=2,
+        )
+        # Three draws per affine trial, and check_operator's own on top.
+        assert drawn["n"] > 6

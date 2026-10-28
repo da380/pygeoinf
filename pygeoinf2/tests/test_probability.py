@@ -116,7 +116,7 @@ class TestConstruction:
         """
         X = build()
         galerkin = spd(rng, X.dim)
-        mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
         components = np.column_stack([X.solve_gram(c) for c in galerkin.T])
 
         assert mu.precision is not None
@@ -147,7 +147,7 @@ class TestConstruction:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
 
         assert mu.covariance.matrix(form="galerkin") == pytest.approx(
             galerkin, abs=1e-12
@@ -165,7 +165,7 @@ class TestConstruction:
         galerkin = rotation @ np.diag(spectrum) @ rotation.T
 
         with pytest.warns(UserWarning, match="small negative eigenvalues"):
-            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
         assert mu.covariance.matrix(form="galerkin") == pytest.approx(
             galerkin, abs=1e-12
         )
@@ -178,7 +178,7 @@ class TestConstruction:
         galerkin = rotation @ np.diag(spectrum) @ rotation.T
 
         with pytest.raises(ValueError, match="not positive"):
-            GaussianMeasure.from_covariance_matrix(X, galerkin)
+            GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
 
     def test_the_singular_sample_stays_in_the_range(self, rng):
         """The check that the accepted factor is the right one: every draw
@@ -191,7 +191,7 @@ class TestConstruction:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
 
         draws = np.array([X.to_components(mu.sample(rng=rng)) for _ in range(4000)])
         inverse = np.linalg.inv(gram)
@@ -237,7 +237,7 @@ class TestMomentsMatchSamples:
 
     def test_from_a_covariance_matrix(self, rng):
         X = make_weighted_space()
-        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, X.dim))
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, X.dim), form="galerkin")
         check_measure(mu, rng=rng, samples=SAMPLES)
 
     def test_from_samples(self, rng):
@@ -587,7 +587,9 @@ class TestStochasticNorms:
         matrix = rng.standard_normal((20, 20))
         galerkin = matrix @ matrix.T + 0.5 * np.identity(20)
         components = np.linalg.solve(X.gram_matrix(), galerkin)
-        return GaussianMeasure.from_covariance_matrix(X, galerkin), components
+        return GaussianMeasure.from_covariance_matrix(
+            X, galerkin, form="galerkin"
+        ), components
 
     def test_the_nuclear_norm_is_a_trace_of_the_component_matrix(self, measure, rng):
         """Not of the Galerkin one, which carries an extra factor of ``G``.
@@ -704,7 +706,7 @@ class TestStochasticDivergence:
         if shift:
             expectation = space.from_components(shift * np.ones(space.dim))
         return GaussianMeasure.from_covariance_matrix(
-            space, galerkin, expectation=expectation
+            space, galerkin, form="galerkin", expectation=expectation
         )
 
     @pytest.fixture(
@@ -847,7 +849,7 @@ class TestConditioningAppliesTheCovarianceTwice:
         target = EuclideanSpace(2)
         gram = X.gram_matrix()
         galerkin = spd(rng, 5)
-        base = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        base = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
 
         tally = []
 
@@ -907,7 +909,7 @@ class TestTheAmbientBall:
         ``G^-1 C_gal`` and not of any symmetric matrix in sight."""
         X = make_dense_metric_space(20)
         galerkin = spd(rng, 20)
-        mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
 
         exact = np.linalg.eigvals(np.linalg.solve(X.gram_matrix(), galerkin)).real
         from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
@@ -929,7 +931,7 @@ class TestTheAmbientBall:
         """Which is the honest reading of a randomized route: the tail it
         drops is positive, so the ball it gives is too small."""
         X = make_dense_metric_space(20)
-        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20))
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20), form="galerkin")
         full = mu.ambient_ball(level=0.9, method="dense").radius
         truncated = mu.ambient_ball(
             level=0.9, method="spectral", rank=5, rng=np.random.default_rng(1)
@@ -938,7 +940,7 @@ class TestTheAmbientBall:
 
     def test_the_ball_covers_what_it_claims(self, rng):
         X = make_dense_metric_space(12)
-        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 12))
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 12), form="galerkin")
         ball = mu.ambient_ball(level=0.9)
         draws = mu.samples(8000, rng=rng)
         assert np.mean([ball.contains(x) for x in draws]) == pytest.approx(
@@ -1055,6 +1057,14 @@ class TestDenseCovariance:
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 
+    def test_a_two_point_covariance_needs_the_covariance(self):
+        from pygeoinf2.symmetric_space import Sobolev
+
+        space = Sobolev((16,), 2.0, 0.3)
+        measure = GaussianMeasure(space, precision=LinearOperator.identity(space))
+        with pytest.raises(ValueError, match="two-point covariance needs"):
+            measure.two_point_covariance(0.5)
+
     @pytest.fixture
     def precision_only(self):
         from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
@@ -1116,6 +1126,17 @@ class TestStandardDeviations:
                 deviation**2 * space.squared_norm(direction), rel=1e-12
             )
         check_measure(mu, rng=rng, samples=SAMPLES)
+
+    def test_a_non_diagonal_metric_is_refused(self):
+        """``diag(sigma)`` is not self-adjoint there, so ``L L*`` is not
+        ``diag(sigma^2)``: on a dense metric the construction would give a
+        covariance with off-diagonal entries and the wrong variances, and it
+        says what to use instead."""
+        space = make_dense_metric_space(4)
+        with pytest.raises(ValueError, match="from_covariance_matrix"):
+            GaussianMeasure.from_standard_deviations(
+                space, np.array([1.0, 2.0, 3.0, 4.0])
+            )
 
     def test_the_singular_form_refuses_an_array(self):
         with pytest.raises(ValueError, match="from_standard_deviations"):
@@ -1498,9 +1519,9 @@ class TestTheFunctionSpaceMarkerGatesDensities:
         return Sobolev((16,), 2.0, 0.3)
 
     def test_the_marker_and_its_propagation(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
         from pygeoinf2.algebra.direct_sum import DirectSum
         from pygeoinf2.algebra.spaces import MassWeightedSpace
-        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
 
         space = self.function_space()
         finite = EuclideanSpace(3)
@@ -1568,7 +1589,7 @@ class TestTheFunctionSpaceMarkerGatesDensities:
             lambda **k: measure.credible_set(level=0.9, **k),
             lambda **k: measure.weakened_ellipsoid(level=0.9, power=1.0, **k),
         ):
-            with pytest.raises(ValueError, match="D-131"):
+            with pytest.raises(ValueError, match="discretises a function space"):
                 call()
             call(unsafe=True)
 
@@ -1598,9 +1619,9 @@ class TestTheFunctionSpaceMarkerGatesDensities:
         ]
         mixture = GaussianMixture(components, weights=np.array([0.5, 0.5]))
         x = mixture.sample(rng=rng)
-        with pytest.raises(ValueError, match="D-131"):
+        with pytest.raises(ValueError, match="discretises a function space"):
             mixture.log_density(x)
-        with pytest.raises(ValueError, match="D-131"):
+        with pytest.raises(ValueError, match="discretises a function space"):
             mixture.marginal_probabilities(x)
         probabilities = mixture.marginal_probabilities(x, unsafe=True)
         assert probabilities.sum() == pytest.approx(1.0)

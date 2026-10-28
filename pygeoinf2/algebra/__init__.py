@@ -8,6 +8,7 @@ from .direct_sum import (
     BlockOperator,
     ColumnLinearOperator,
     ColumnOperator,
+    CoordinateDirectSum,
     DirectSum,
     RowLinearOperator,
     RowOperator,
@@ -15,6 +16,7 @@ from .direct_sum import (
 from .linearization import Linearization, QuadraticModel
 from .operators import (
     AffineOperator,
+    EvaluationError,
     Functional,
     LinearFunctional,
     LinearOperator,
@@ -23,6 +25,7 @@ from .operators import (
     require_coordinates,
 )
 from .spaces import (
+    REORTHOGONALIZATION_THRESHOLD,
     ArrayVectorMixin,
     CoordinateSpace,
     DiagonalMetricSpace,
@@ -33,6 +36,7 @@ from .spaces import (
     OrthonormalSpace,
     Reals,
     require_module,
+    resolve_rng,
 )
 
 __all__ = [
@@ -44,7 +48,11 @@ __all__ = [
     "BlockOperator",
     "ColumnLinearOperator",
     "ColumnOperator",
+    "CoordinateDirectSum",
     "DirectSum",
+    "EvaluationError",
+    "REORTHOGONALIZATION_THRESHOLD",
+    "resolve_rng",
     "RowLinearOperator",
     "RowOperator",
     "ArrayVectorMixin",

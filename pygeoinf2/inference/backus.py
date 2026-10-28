@@ -71,8 +71,9 @@ def harden_error(problem: LinearForwardProblem, /, *, level: float) -> Ball:
         return problem.error
     if isinstance(problem.error, ConvexSet):
         raise TypeError(
-            "The problem's error is a convex set that is not a ball; pass it "
-            "as noise= to an estimator that takes a general set."
+            "The problem's error is a convex set that is not a ball, so it "
+            "cannot be hardened to one; BackusGilbertParker takes any convex "
+            "set as its confidence set."
         )
     return problem.error_measure.ambient_ball(level=level)
 
@@ -103,19 +104,16 @@ def _confidence_set(
 
 def _covariance_if_quadratic(subset: ConvexSet | None) -> LinearOperator | None:
     """The covariance of a ball or an ellipsoid carrying one; None for any other set."""
-    if isinstance(subset, Ball):
-        return (LinearOperator.identity(subset.domain) * subset.radius**2).with_traits(
-            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
-        )
-    if isinstance(subset, Ellipsoid):
+    if isinstance(subset, (Ball, Ellipsoid)):
         return subset.covariance
     return None
 
 
 def _center_of(subset: Any, space: HilbertSpace) -> Any:
-    """A set's centre, or the origin for a set without one."""
-    center = getattr(subset, "center", None)
-    return space.zero() if center is None else center
+    """A ball's or ellipsoid's centre, or the origin for any other set."""
+    if isinstance(subset, (Ball, Ellipsoid)):
+        return subset.center
+    return space.zero()
 
 
 # --------------------------------------------------------------------- #

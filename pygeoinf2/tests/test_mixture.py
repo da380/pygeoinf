@@ -66,6 +66,18 @@ class TestGaussianMixture:
         within = 0.3 * 0.09 + 0.7 * 0.25
         assert stated[0, 0] > 10.0 * within
 
+    def test_a_precision_only_component_is_named(self, mixture):
+        """The law of total covariance needs every live component's
+        covariance operator; a component given only a precision is refused
+        by index rather than failing inside the sum."""
+        space, _ = mixture
+        without = GaussianMeasure(space, precision=LinearOperator.identity(space))
+        mix = GaussianMixture(
+            [isotropic(space, space.zero(), 1.0), without], weights=np.array([0.5, 0.5])
+        )
+        with pytest.raises(ValueError, match="component 1 has none"):
+            mix.covariance
+
     def test_sampling_picks_components_in_proportion(self, mixture, rng):
         space, mix = mixture
         draws = np.stack(

@@ -467,3 +467,21 @@ class TestMeasures:
         assert np.allclose(far[20:-20], farther[20:-20], rtol=1e-3)
         # A reflecting end doubles the variance there, by the method of images.
         assert none[0] / farther[0] == pytest.approx(2.0, rel=5e-3)
+
+
+class TestExtensions:
+    def test_an_unknown_extension_is_refused(self):
+        space = build(0.0, modes=8)
+        with pytest.raises(ValueError, match="odd"):
+            space.project_function(np.cos, extension="even")
+
+    def test_the_continuation_helper_leaves_fit_to_its_callers(self):
+        """``"fit"`` is not a continuation across the padding, and the helper
+        must not quietly hand back the constant one in its place."""
+        from pygeoinf2.sem1d.base import _sampled_with_extension
+
+        nodes = np.linspace(-0.5, 1.5, 9)
+        with pytest.raises(ValueError, match="fit"):
+            _sampled_with_extension(nodes, 0.0, 1.0, lambda x: x, "fit")
+        constant = _sampled_with_extension(nodes, 0.0, 1.0, lambda x: x, "constant")
+        assert constant[0] == 0.0 and constant[-1] == 1.0

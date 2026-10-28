@@ -25,7 +25,6 @@ A solver turns an operator into its inverse, *as an operator*:
 from __future__ import annotations
 
 import copy
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
@@ -410,6 +409,58 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
 # --------------------------------------------------------------------- #
 #                              Callbacks                                #
 # --------------------------------------------------------------------- #
+
+
+def _record_residual(
+    name: str,
+    iteration: int,
+    residual: float,
+    history: list,
+    callback: Callable[[SolveStep], None] | None,
+    form: Callable[[], Any],
+) -> None:
+    """Note one step's residual, refusing a non-finite one.
+
+    Shared by every iterative method, LSQR included, so that a breakdown is
+    reported the same way wherever it happens; see
+    :meth:`IterativeSolver._record` for why it is refused regardless of
+    ``strict``.
+
+    Raises:
+        ConvergenceError: for a NaN or infinite residual.
+    """
+    residual = float(residual)
+    if not np.isfinite(residual):
+        raise ConvergenceError(
+            f"{name} met a non-finite residual ({residual}) at iteration "
+            f"{iteration}. The operator or the preconditioner returned NaN or "
+            f"inf, or the problem needs rescaling; this is a breakdown, so "
+            f"strict=False does not downgrade it."
+        )
+    history.append(residual)
+    if callback is not None:
+        callback(SolveStep(iteration, residual, form))
+
+
+def _finish_solve(
+    name: str, result: SolveResult, strict: bool, what: str
+) -> SolveResult:
+    """Raise or warn on a solve that did not converge, and hand it back.
+
+    Raises:
+        ConvergenceError: when *strict* and the result is not converged.
+    """
+    if not result.converged:
+        message = (
+            f"{name} did not converge in {result.iterations} iterations; the "
+            f"{what} norm is {result.residual_norm:.3g}."
+        )
+        if strict:
+            raise ConvergenceError(message)
+        import warnings
+
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
+    return result
 
 
 class ProgressCallback:
@@ -1161,31 +1212,12 @@ class IterativeSolver(LinearSolver):
         solve would run to its iteration cap and report non-convergence, with
         the cause unmentioned and the cap's worth of applications spent.
         """
-        residual = float(residual)
-        if not np.isfinite(residual):
-            raise ConvergenceError(
-                f"{type(self).__name__} met a non-finite residual ({residual}) "
-                f"at iteration {iteration}. The operator or the preconditioner "
-                f"returned NaN or inf, or the problem needs rescaling; this is a "
-                f"breakdown, so strict=False does not downgrade it."
-            )
-        history.append(residual)
-        if self._callback is not None:
-            self._callback(SolveStep(iteration, residual, form))
+        _record_residual(
+            type(self).__name__, iteration, residual, history, self._callback, form
+        )
 
     def _finish(self, result: SolveResult) -> SolveResult:
-        if not result.converged:
-            message = (
-                f"{type(self).__name__} did not converge in "
-                f"{result.iterations} iterations; the residual norm is "
-                f"{result.residual_norm:.3g}."
-            )
-            if self._strict:
-                raise ConvergenceError(message)
-            import warnings
-
-            warnings.warn(message, RuntimeWarning, stacklevel=3)
-        return result
+        return _finish_solve(type(self).__name__, result, self._strict, "residual")
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         preconditioner = self._resolve_preconditioner(operator)
@@ -1628,7 +1660,9 @@ class MinResSolver(IterativeSolver):
             """``sqrt((u, M u))``, from ``u`` and ``M u`` already in hand."""
             squared = space.inner_product(vector, image)
             if squared < 0.0:
-                raise ValueError(
+                # A ConvergenceError, as CG reports its indefinite
+                # preconditioner: the two are one kind of failure.
+                raise ConvergenceError(
                     "MINRES needs a positive-definite preconditioner: the "
                     f"inner product it induces gave {squared:.3e} for a "
                     "vector's own norm."
@@ -1838,8 +1872,8 @@ class LSQRSolver(LeastSquaresSolver):
             rtol: relative tolerance, applied to both the residual and the
                 normal residual.
             max_iterations: iteration cap. Four times the domain dimension by default.
-            strict: raise :class:`ConvergenceError` rather than warn when the
-                cap is reached.
+            strict: raise :class:`ConvergenceError` rather than warn with a
+                ``RuntimeWarning`` when the cap is reached.
             callback: called with a :class:`SolveStep` each step, whose
                 residual is the *normal* residual; the same numbers are kept
                 in :attr:`SolveResult.history`.
@@ -1857,13 +1891,13 @@ class LSQRSolver(LeastSquaresSolver):
 
     def _invert(self, operator: LinearOperator) -> LinearOperator:
         def solve_fn(b, x0):
-            result = self._solve(operator, b, x0)
-            if not result.converged and self._strict:
-                raise ConvergenceError(
-                    f"LSQR did not converge in {result.iterations} iterations; "
-                    f"the normal residual is {result.residual_norm:.3g}."
-                )
-            return result
+            # Raise or warn as the other iterative solvers do, by ``strict``.
+            return _finish_solve(
+                type(self).__name__,
+                self._solve(operator, b, x0),
+                self._strict,
+                "normal residual",
+            )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.NONE)
 
@@ -1874,10 +1908,14 @@ class LSQRSolver(LeastSquaresSolver):
         history: list,
         form: Callable[[], Any],
     ) -> None:
-        """Note one step's normal residual, and tell the callback about it."""
-        history.append(float(residual))
-        if self._callback is not None:
-            self._callback(SolveStep(iteration, float(residual), form))
+        """Note one step's normal residual, and tell the callback about it.
+
+        A non-finite one is refused as a breakdown, as every other iterative
+        solver refuses it, rather than being run to the iteration cap.
+        """
+        _record_residual(
+            type(self).__name__, iteration, residual, history, self._callback, form
+        )
 
     def _solve(self, operator: LinearOperator, b: Any, x0: Any | None) -> SolveResult:
         """The bidiagonalization, started from *x0* when one is given.

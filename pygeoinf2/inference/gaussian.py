@@ -32,22 +32,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-
 from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
-from ..numerics.randomized import random_svd
 from ..geometry.sets import Subset
+from ..numerics.normal import Formalism, NormalOperator
+from ..numerics.randomized import random_svd
 from ..numerics.solvers import LinearSolver, resolve_solver
 from ..probability.absolutely_continuous import (
     AbsolutelyContinuousMeasure,
-    _combine_log_normalizer,
+    combine_log_normalizer,
 )
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .estimators import GaussianEstimator
-from ..numerics.normal import Formalism, NormalOperator
 from .problem import LinearForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -555,7 +554,7 @@ class LinearGaussianInversion(GaussianEstimator):
                 Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
             )
             error_volume = log_determinant(definite)
-            return _combine_log_normalizer(
+            return combine_log_normalizer(
                 [(0.5, error_volume), (-0.5, volume), (-0.5, misfit)]
             )
 

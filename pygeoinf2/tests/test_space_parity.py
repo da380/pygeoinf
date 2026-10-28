@@ -1003,6 +1003,7 @@ class TestTheGeometryIsRequired:
             "geodesic_ball_quadrature",
             "project_function",
             "random_point",
+            "length_scale",
         ],
     )
     def test_each_geometric_primitive_is_required(self, name):

@@ -30,12 +30,11 @@ property set of :mod:`pygeoinf2.geometry.feasible` uses.
 
 from __future__ import annotations
 
+import warnings
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
-
-import warnings
 
 import numpy as np
 from numpy.random import Generator
@@ -1108,7 +1107,11 @@ class ProximalBundleMethod(Optimizer):
         self._capacity = capacity
         self._descent = descent
         self._qp_solver = qp_solver
+        # The previous subproblem's weights, and whether the bundle dropped
+        # its oldest cut since they were computed, which is what decides how
+        # they line up with the current cuts.
         self._warm: np.ndarray | None = None
+        self._dropped = False
         # The cuts a stored Gram matrix was built from, and the matrix. Reset
         # at the start of each minimization.
         self._cache: tuple[list[int], np.ndarray] = ([], np.empty((0, 0)))
@@ -1162,6 +1165,7 @@ class ProximalBundleMethod(Optimizer):
 
         self._cache = ([], np.empty((0, 0)))
         self._warm = None
+        self._dropped = False
         center = space.copy(start)
         best = float(functional(center))
         # Each cut is (gradient, value, point). The point matters: a cut taken
@@ -1202,6 +1206,7 @@ class ProximalBundleMethod(Optimizer):
             cuts.append((space.copy(slope(candidate)), value, space.copy(candidate)))
             if len(cuts) > self._capacity:
                 cuts.pop(0)
+                self._dropped = True
 
             if best - value >= self._descent * gap:
                 center, best = candidate, value  # a serious step
@@ -1303,22 +1308,27 @@ class ProximalBundleMethod(Optimizer):
         """``argmin w' Q w / 2 + e' w`` over the unit simplex.
 
         Through the QP backend when one was given, warm-started from the
-        previous subproblem's weights padded with a zero for the new cut, and
-        through the built-in accelerated projected gradient otherwise.
+        previous subproblem's weights, and through the built-in accelerated
+        projected gradient otherwise. The warm start follows the cuts: the
+        previous weights are padded with a zero for the cut appended since,
+        and when the bundle was full and dropped its oldest cut the weights
+        shift along by one, the dropped cut's weight going with it.
         """
         size = errors.size
         backend = self.qp_solver
         if backend is None:
             return _minimize_on_simplex(quadratic, -errors)
         warm = None
-        if self._warm is not None and self._warm.size in (size, size - 1):
+        if self._warm is not None:
             warm = np.zeros(size)
-            warm[: self._warm.size] = self._warm
-        elif self._warm is not None:
-            # The bundle dropped its oldest cut: shift the weights along.
-            warm = np.zeros(size)
-            kept = self._warm[-(size - 1) :] if size > 1 else self._warm[:0]
+            previous = self._warm[1:] if self._dropped else self._warm
+            kept = previous[: size - 1]
             warm[: kept.size] = kept
+            if kept.sum() < 1.0 - 1e-12:
+                # Keep the start on the simplex: the newest cut takes the
+                # weight the dropped one held.
+                warm[size - 1] = 1.0 - kept.sum()
+        self._dropped = False
         # sum w == 1, then 0 <= w_i.
         rows = np.vstack([np.ones((1, size)), np.eye(size)])
         lower = np.concatenate([[1.0], np.zeros(size)])

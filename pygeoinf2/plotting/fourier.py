@@ -419,7 +419,10 @@ def _(
         for center in centers:
             middle = float(np.atleast_1d(np.asarray(center, dtype=float))[0])
             low, high = middle - radius, middle + radius
-            if _periodic(space) and (low < 0.0 or high > length):
+            if _periodic(space) and 2.0 * radius >= length:
+                # Wider than the circle: the ball is the whole of it.
+                spans.append(ax.axvspan(0.0, length, color=color, **kwargs))
+            elif _periodic(space) and (low < 0.0 or high > length):
                 low, high = low % length, high % length
                 spans.append(ax.axvspan(low, length, color=color, **kwargs))
                 spans.append(ax.axvspan(0.0, high, color=color, **kwargs))

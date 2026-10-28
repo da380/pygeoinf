@@ -18,7 +18,9 @@ four in the same style:
 An ordered course, narrative, runnable top to bottom, written against the
 v2 names from the start.
 
-> **Status, 2026-10-24: all twelve drafted, the notebooks not started.**
+> **Status, 2026-10-27: thirteen drafted (13 is the ray-tomography showcase
+> of D-156), notebooks generated from each by `make_notebooks.py` with
+> Colab badges and checked current by `tests/test_tutorials.py`.**
 > First drafts are in `pygeoinf2/tutorials/` as percent-cell scripts
 > (`# %%` / `# %% [markdown]`, so Jupyter and VS Code open them as notebooks
 > and the two kept notebooks can be converted from them), with a README and

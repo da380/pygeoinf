@@ -131,11 +131,11 @@ class LinearPointEstimator(AffineOperator):
             The operator on the target space.
 
         Raises:
-            AttributeError: if the estimator was built without a forward
+            ValueError: if the estimator was built without a forward
                 operator, in which case there is no ``A`` to compose with.
         """
         if self._forward_operator is None:
-            raise AttributeError(
+            raise ValueError(
                 "This estimator was built without a forward operator, so it "
                 "cannot form its resolution."
             )
@@ -151,13 +151,11 @@ class LinearPointEstimator(AffineOperator):
             The covariance operator on the target space.
 
         Raises:
-            AttributeError: if the estimator was built without a data error
+            ValueError: if the estimator was built without a data error
                 measure, there being no ``R`` to propagate.
         """
         if self._error is None:
-            raise AttributeError(
-                "This estimator was built without a data error measure."
-            )
+            raise ValueError("This estimator was built without a data error measure.")
         return self._operator @ self._error.covariance @ self._operator.adjoint
 
     def push_forward(self, operator: LinearOperator, /) -> "LinearPointEstimator":
@@ -176,7 +174,7 @@ class LinearPointEstimator(AffineOperator):
         the data error propagated through it.
 
         Raises:
-            AttributeError: if the estimator was built without a data error
+            ValueError: if the estimator was built without a data error
                 measure.
         """
         return GaussianEstimator(self, self.propagated_covariance())

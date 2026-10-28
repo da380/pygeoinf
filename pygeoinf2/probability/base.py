@@ -17,16 +17,13 @@ Gaussian-plus-affine case but otherwise returns something that can still be
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, TYPE_CHECKING, Sequence
+from typing import Any, Sequence
 
 from numpy.random import Generator
 
 from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
 from ..algebra.operators import AffineOperator, LinearOperator, Operator
-from ..algebra.spaces import HilbertSpace
-
-if TYPE_CHECKING:
-    pass
+from ..algebra.spaces import HilbertSpace, resolve_rng
 
 __all__ = ["ProbabilityMeasure", "ProductMeasure", "PushForwardMeasure", "product"]
 
@@ -49,7 +46,7 @@ def _require_density(space: HilbertSpace, what: str, /, *, unsafe: bool) -> None
     raise ValueError(
         f"{what} is refused on {type(space).__name__}: the space discretises "
         "a function space, so a density against its own volume measure "
-        "depends on the truncation and vanishes in the limit (D-131). Use a "
+        "depends on the truncation and vanishes in the limit. Use a "
         "density relative to a reference measure, or pass unsafe=True to see "
         "the discretisation's own number."
     )
@@ -130,11 +127,9 @@ class ProbabilityMeasure[X](ABC):
         """
         if n < 0:
             raise ValueError("n must be non-negative.")
-        from numpy.random import default_rng
-
         from ..parallel import parallel_map
 
-        parent = default_rng() if rng is None else rng
+        parent = resolve_rng(rng)
         return parallel_map(
             lambda stream: self.sample(rng=stream), parent.spawn(n), n_jobs=n_jobs
         )
@@ -227,6 +222,7 @@ class ProbabilityMeasure[X](ABC):
         Raises:
             TypeError: on a domain with no point evaluation (no ``dirac``),
                 there being no "two points" to take the covariance between.
+            ValueError: for a measure with no covariance operator.
         """
         space = self.domain
         dirac = getattr(space, "dirac", None)
@@ -235,7 +231,13 @@ class ProbabilityMeasure[X](ABC):
                 f"{type(space).__name__} has no evaluation functional, so a "
                 "two-point covariance is not defined on it."
             )
-        return self.covariance(dirac(point).representer)
+        covariance = self.covariance
+        if covariance is None:
+            raise ValueError(
+                f"A two-point covariance needs the covariance operator, and "
+                f"this {type(self).__name__} has none."
+            )
+        return covariance(dirac(point).representer)
 
     def log_density(self, x: X, *, unsafe: bool = False) -> float:
         """The log density at ``x``, up to an additive constant.

@@ -36,6 +36,7 @@ from typing import Sequence
 import numpy as np
 from numpy.random import Generator
 
+from ..algebra.spaces import resolve_rng
 from .axis import AxisSpace
 from .base import Boundary, LengthScale
 
@@ -160,7 +161,7 @@ class Radial(AxisSpace):
 
     def random_point(self, *, rng: Generator | None = None) -> float:
         """A radius of the domain, drawn uniformly over its volume."""
-        rng = np.random.default_rng() if rng is None else rng
+        rng = resolve_rng(rng)
         inner, outer = self._bounds
         return float(np.cbrt(rng.uniform(inner**3, outer**3)))
 

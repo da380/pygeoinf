@@ -8,11 +8,13 @@ were reached is in git, at commit `83658d0` and before, where the design
 journal, the review rounds and the functionality audit lived until they were
 retired on 2026-09-18.
 
-Last reconciled against the code on 2026-10-24, at 3053 passing tests in the
-fast suite and 32 marked slow, the 35 examples all running. The release plan
-in §10 was settled with David on that date and its first tranche landed the
-same day as D-127 to D-133; the remaining items carry their D-numbers as
-each change lands.
+Last reconciled against the code on 2026-10-28, at 3206 passing tests in the
+fast suite and 32 marked slow; the 35 examples and 13 tutorials last ran in
+full on 2026-10-27. The release plan in §10 was settled with David on
+2026-10-24 and its first tranche landed the same day as D-127 to D-133; the
+feasible-set rebuild and the ray operator followed on 2026-10-27 (D-134 to
+D-156) and the review clean-up on 2026-10-28 (D-157 to D-160); the
+remaining items carry their D-numbers as each change lands.
 
 ---
 
@@ -54,7 +56,7 @@ is what most of the rest follows from:
 
 111 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
-`compat` and `sem1d` are imported explicitly. Thirty-three examples under `examples/`
+`compat` and `sem1d` are imported explicitly. Thirty-five examples under `examples/`
 run as a slow test; their README says what each shows.
 
 ## 3. Conventions and units
@@ -156,9 +158,8 @@ column, and a composition never expands a low-rank product (D-33).
   S-procedure's shape per weight, `sum_of_ellipsoids`, a polytope's
   inscribed ellipsoid (Newton on `dim P (dim P + 3) / 2` unknowns) and a
   point set's enclosing ellipsoid (D-141).
-- `backends.mfem.operator_from_bilinear_form` densifies and is documented as
-  not the route for a real problem; `solver_from_bilinear_form` and
-  `mfem_hilbert` are (D-96).
+- `backends.mfem.operator_from_bilinear_form` keeps MFEM's sparse matrix
+  (D-96); nothing in the MFEM backends densifies.
 - `with_probed_adjoint()` and `DirectSolver` assemble what they are asked to,
   once, on first use (D-34, D-40).
 - `SpectralFamilySolver` factors a damped family's two Galerkin matrices
@@ -219,9 +220,16 @@ Recorded rather than settled, so nobody has to rediscover them.
   forces one on a probe, every answer carries a certified bracket, the
   feasible set and its algorithms move to `geometry` and the damped-family
   machinery to `numerics`, matrix-free throughout with the dense spectrum
-  as an opt-in solver. Implementation pending; the plan is
-  `CONVEX_PLAN.md`. D-82's open question is closed by D-136 (the tiers are
-  nested specialisations, nothing to rank by timing).
+  as an opt-in solver. Built 2026-10-27 (D-153); the paper-scale
+  benchmarks are deferred and the scripts in `benchmarks/` wait for a fresh
+  return (D-155). Left open from the build: `Cylinder` (D-138), a quadratic
+  set with an explicit kernel basis for the true-kernel case, droppable;
+  the affine constraint on the dual's certificate for degenerate priors;
+  and the dual does not converge on the flexure–gravity problem (610 data
+  in two blocks of different units, chi-squared noise set) at 1 500 bundle
+  iterations, where the primal is certified and is what is reported.
+  D-82's open question is closed by D-136 (the tiers are nested
+  specialisations, nothing to rank by timing).
 - **`dense_limit` on `kl_divergence` and `ambient_ball`** keys on dimension,
   not application count (D-50). Fine until a covariance that applies a PDE
   solve meets it.
@@ -306,9 +314,13 @@ planetmodel 1.3.2.
   route-by-capability style rather than as a port of v1's
   `SubspaceSlicePlotter`; plotly is the optional `plot3d` extra. Example 34
   shows it.
-- The feasible-set layer is rebuilt to D-135 to D-152 (§7); the plan is
-  `CONVEX_PLAN.md`, seven stages from the numerical experiment to the
-  benchmarks.
+- DONE 2026-10-27 (D-153 to D-155). The feasible-set layer is rebuilt to
+  D-135 to D-152 (§7); its plan was `CONVEX_PLAN.md`, retired 2026-10-28,
+  and the benchmarks are deferred by D-155.
+- DONE 2026-10-27 (D-156). The nonlinear ray operator on every symmetric
+  space, bending or shooting, with its derivative and Hessian action;
+  tutorial 13 is its showcase and the tomography mini-app's nonlinear half
+  is to be written on it.
 - planetmodel maintenance, half done: the pin is `planetmodel>=1.3`, the
   stale `[harmonics]` extra is gone, the venv and lock are on 1.3.2 (whose
   grids carry a `kind` that the transform now checks by name), and
@@ -351,10 +363,13 @@ minimization, BiCG, and a separate deflated pointwise-variance estimator.
 
 **Docs phase:** three tiers. The reference examples here stay as they are,
 one idea each. The v1 notebooks under `tutorials/` are replaced by
-tutorial *scripts* covering the whole core, with a small number of
-notebooks kept as entry points. Mini-apps in the MFEM spirit — each a
-realistic inverse problem end to end, deeper than any one feature — are
-new. The approved list is `EXAMPLES_PLAN.md`, a working document that is
+tutorial *scripts* covering the whole core, thirteen drafted as of
+2026-10-27 under `pygeoinf2/tutorials/` with notebooks generated from them
+by `make_notebooks.py` (Colab entry points; the suite checks they are
+current). Mini-apps in the MFEM spirit — each a realistic inverse problem
+end to end, deeper than any one feature — are new and not started; the
+first grow out of tutorial 10's tomography and the preconditioning example
+(D-155). The approved list is `EXAMPLES_PLAN.md`, a working document that is
 deleted when the phase completes. `README.md` and the Sphinx tree are
 rewritten against the new name, after the rename, not before.
 

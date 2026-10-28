@@ -1,8 +1,13 @@
 """
-The catalogue's remaining algebra, numerics, probability and geometry.
+Assorted features across the algebra, numerics, probability and geometry.
 
-Nothing here blocks an example, which is why it comes last; but each row was
-marked as used in practice, so each one is ported rather than dropped."""
+Sparse and coordinate operators, diagonals, GMRES and flexible CG, solver
+diagnostics, measure adjustments, subspace constructions, surfaces,
+acquisition helpers, correlated measures, the deflated diagonal, the
+preconditioners, quadratic forms, hardening, conditioning, the function
+calculus and the spectral block operator: each used in practice, and each
+small enough not to need a file of its own.
+"""
 
 import numpy as np
 import pytest
@@ -291,6 +296,21 @@ class TestMeasureAdjustments:
         with pytest.raises(ValueError, match="not positive"):
             original.rescale_directional_variance(original.domain.zero(), 1.0)
 
+    def test_a_non_positive_target_is_refused(self, measure):
+        """Zero would be a point mass and a negative deviation is not one."""
+        space, _, original = measure
+        direction = space.basis_vector(0)
+        for target in (0.0, -1.0):
+            with pytest.raises(ValueError, match="must be positive"):
+                original.rescale_directional_variance(direction, target)
+
+    def test_the_covariance_form_is_required(self):
+        """No default: a Galerkin matrix read as components is a silent
+        error of one Gram factor."""
+        space = make_weighted_space()
+        with pytest.raises(TypeError):
+            GaussianMeasure.from_covariance_matrix(space, np.identity(space.dim))
+
     def test_the_sparse_covariance_is_an_operator_built_without_the_matrix(
         self, measure, monkeypatch
     ):
@@ -409,7 +429,7 @@ class TestSubspaceConstructions:
         X = make_weighted_space()
         subspace = AffineSubspace.from_tangent_basis(X, [X.random(rng=rng)])
         assert not subspace.has_explicit_equation
-        with pytest.raises(AttributeError, match="explicit equation"):
+        with pytest.raises(ValueError, match="explicit equation"):
             subspace.constraint_operator
 
     def test_the_pseudo_inverse_gives_the_translation(self, constrained):
@@ -1048,7 +1068,9 @@ class TestHardening:
                 (
                     space,
                     GaussianMeasure.from_covariance_matrix(
-                        space, root @ root.T + space.dim * np.identity(space.dim)
+                        space,
+                        root @ root.T + space.dim * np.identity(space.dim),
+                        form="galerkin",
                     ),
                 )
             )
@@ -1176,7 +1198,7 @@ class TestConditioning:
         space = make_weighted_space()
         root = rng.normal(size=(space.dim, space.dim))
         measure = GaussianMeasure.from_covariance_matrix(
-            space, root @ root.T + space.dim * np.identity(space.dim)
+            space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
         )
         operator = LinearOperator.from_matrix(
             space, EuclideanSpace(2), rng.normal(size=(2, space.dim)), form="galerkin"
@@ -1192,12 +1214,12 @@ class TestConditioning:
     def test_a_noisy_constraint_is_the_bayesian_posterior(self, rng):
         """Two routes to one answer: a statement about a measure, and a
         statement about an inverse problem."""
-        from pygeoinf2.inference import LinearGaussianInversion, LinearForwardProblem
+        from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 
         space = make_weighted_space()
         root = rng.normal(size=(space.dim, space.dim))
         prior = GaussianMeasure.from_covariance_matrix(
-            space, root @ root.T + space.dim * np.identity(space.dim)
+            space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
         )
         data_space = EuclideanSpace(2)
         operator = LinearOperator.from_matrix(
@@ -1223,7 +1245,7 @@ class TestConditioning:
         space = make_weighted_space()
         root = rng.normal(size=(space.dim, space.dim))
         measure = GaussianMeasure.from_covariance_matrix(
-            space, root @ root.T + space.dim * np.identity(space.dim)
+            space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
         )
         operator = LinearOperator.from_matrix(
             space, EuclideanSpace(2), rng.normal(size=(2, space.dim)), form="galerkin"
@@ -1362,20 +1384,19 @@ class TestWoodburyPreconditioner:
     def test_from_normal_damps_instead_of_reading_a_precision(self, pieces, rng):
         """With a damping the precision a measure carries is not picked up:
         the point of damping is that ``Q`` has no usable inverse of its own."""
-        from types import SimpleNamespace
-
+        from pygeoinf2.numerics.normal import NormalOperator
         from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
 
         forward, _, noise = pieces
         model, data = forward.domain, forward.codomain
         prior, damping = self.singular(model, rng), 0.1
         # A precision that is plainly wrong, to prove it is ignored.
-        normal = SimpleNamespace(
-            forward=forward,
-            prior_covariance=prior,
-            error_covariance=noise,
-            prior_precision=5.0 * LinearOperator.identity(model),
-            error_precision=None,
+        normal = NormalOperator(
+            forward,
+            GaussianMeasure(
+                model, covariance=prior, precision=5.0 * LinearOperator.identity(model)
+            ),
+            error=GaussianMeasure(data, covariance=noise),
         )
         wood = WoodburyPreconditioner.from_normal(
             normal, solver=CholeskySolver(), prior_damping=damping
@@ -1794,8 +1815,8 @@ class TestSpectralBlockOperator:
         return counts
 
     def test_it_agrees_with_the_grid_of_diagonal_blocks(self, rng):
-        from pygeoinf2.algebra.direct_sum import BlockLinearOperator, DirectSum
         from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.direct_sum import BlockLinearOperator, DirectSum
         from pygeoinf2.symmetric_space.base import SpectralBlockLinearOperator
         from pygeoinf2.testing import check_operator
 

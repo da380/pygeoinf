@@ -111,8 +111,9 @@ class Optimizer(ABC):
                 absolute, and a slow method in a narrow valley -- the
                 Rosenbrock function is the standard example -- would be
                 stopped far from the minimizer. Set it to zero to rely on the
-                gradient test alone. The line-search methods apply it;
-                :class:`TrustRegionNewton` does not.
+                gradient test alone. Every method applies it to its accepted
+                steps; a trust-region step that was rejected made no
+                progress to measure and is not tested.
             max_iterations: iteration cap.
             line_search: the step rule. Each method supplies a suitable default.
         """
@@ -745,6 +746,30 @@ class TrustRegionNewton(Optimizer):
         history = [model.value]
         evaluations = 1
 
+        def collapsed(iteration: int) -> OptimizationResult:
+            # The region shrank below what a step can represent, so no
+            # further progress is possible here. Converged exactly when the
+            # gradient is as small as the arithmetic allows, as a failed
+            # line search is judged; otherwise an honest stop short.
+            limited = gradient_norm <= tolerance or self._precision_limited(
+                model.value, gradient_norm
+            )
+            return OptimizationResult(
+                x,
+                model.value,
+                gradient_norm,
+                iteration,
+                evaluations,
+                limited,
+                (
+                    "no further decrease is representable in double precision"
+                    if limited
+                    else "the trust region collapsed before the gradient "
+                    "tolerance was reached"
+                ),
+                history,
+            )
+
         for iteration in range(1, self._max_iterations + 1):
             if gradient_norm <= tolerance:
                 return OptimizationResult(
@@ -771,7 +796,7 @@ class TrustRegionNewton(Optimizer):
             if predicted <= 0.0:
                 radius *= 0.25
                 if radius < 1e-14:
-                    break
+                    return collapsed(iteration)
                 continue
 
             trial = space.axpy(1.0, step, space.copy(x))
@@ -783,13 +808,13 @@ class TrustRegionNewton(Optimizer):
                 evaluations += 1
                 radius *= 0.25
                 if radius < 1e-14:
-                    break
+                    return collapsed(iteration)
                 continue
             evaluations += 1
             if not np.isfinite(trial_value):
                 radius *= 0.25
                 if radius < 1e-14:
-                    break
+                    return collapsed(iteration)
                 continue
             ratio = (model.value - trial_value) / predicted
 
@@ -811,13 +836,29 @@ class TrustRegionNewton(Optimizer):
                         history,
                         error,
                     )
+                previous_value = model.value
                 x, model = trial, accepted
                 evaluations += 1
                 gradient_norm = space.norm(model.gradient)
                 history.append(model.value)
 
+                decrease = previous_value - model.value
+                if 0.0 <= decrease <= self._ftol * abs(model.value):
+                    # Flat: the step was accepted but bought nothing, as the
+                    # line-search methods judge it.
+                    return OptimizationResult(
+                        x,
+                        model.value,
+                        gradient_norm,
+                        iteration,
+                        evaluations,
+                        True,
+                        "value tolerance reached",
+                        history,
+                    )
+
             if radius < 1e-14:
-                break
+                return collapsed(iteration)
 
         return OptimizationResult(
             x,

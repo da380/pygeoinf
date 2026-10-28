@@ -30,7 +30,14 @@ __all__ = [
 
 
 class Subset(ABC):
-    """A subset of a Hilbert space, defined by membership."""
+    """A subset of a Hilbert space, defined by membership.
+
+    Membership is the one description every subset has. The others -- a
+    projection, a support function with a maximizer, a level function whose
+    sublevel set this is -- are declared by the ``has_*`` properties, false
+    here and true on the subsets that supply them, so that generic code asks
+    the set what it offers rather than probing for attributes.
+    """
 
     def __init__(self, domain: HilbertSpace, /) -> None:
         """
@@ -43,6 +50,69 @@ class Subset(ABC):
     def domain(self) -> HilbertSpace:
         """The space the subset lives in."""
         return self._domain
+
+    # ----------------------------------------------------------------- #
+    #                          What this set can do                     #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def has_membership(self) -> bool:
+        """Whether :meth:`contains` decides membership."""
+        return True
+
+    @property
+    def has_projection(self) -> bool:
+        """Whether a nearest-point projection is available; see :class:`~pygeoinf2.geometry.convex.ConvexSet`."""
+        return False
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether a support function is available in closed form."""
+        return False
+
+    @property
+    def has_maximizer(self) -> bool:
+        """Whether a point attaining the support value can be exhibited."""
+        return False
+
+    @property
+    def has_level_function(self) -> bool:
+        """Whether :meth:`level_function` and :attr:`level` describe the set."""
+        return False
+
+    @property
+    def has_smooth_level_function(self) -> bool:
+        """Whether a level function with a gradient describes the set: what the convex conversions start from."""
+        if not self.has_level_function:
+            return False
+        return self.level_function().has_derivative
+
+    def level_function(self) -> Functional:
+        """``f`` with the set ``{ x : f(x) <= level }``.
+
+        The sublevel-set characterization: a ball is the squared distance to
+        its center, an ellipsoid its Mahalanobis form, a half-space its linear
+        form, an intersection the largest of its parts' excesses, a sublevel
+        set the functional it was built from, and a feasible property set
+        the minimum norm of a model with that property.
+
+        Raises:
+            NotImplementedError: for a set without one; see
+                :attr:`has_level_function`.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no level function; it is known "
+            "through its other descriptions."
+        )
+
+    @property
+    def level(self) -> float:
+        """The level the level function is bounded by.
+
+        Raises:
+            NotImplementedError: for a set without a level function.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no level function.")
 
     @abstractmethod
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
@@ -213,6 +283,10 @@ class Intersection(Subset):
         Args:
             subsets: the subsets to intersect. Nested intersections are
                 flattened, so the structure stays readable.
+
+        Raises:
+            ValueError: if no subsets are given, or they do not share a
+                space.
         """
         parts: list[Subset] = []
         for subset in subsets:
@@ -255,6 +329,10 @@ class Union(Subset):
         """
         Args:
             subsets: the subsets to unite. Nested unions are flattened.
+
+        Raises:
+            ValueError: if no subsets are given, or they do not share a
+                space.
         """
         parts: list[Subset] = []
         for subset in subsets:
@@ -319,6 +397,15 @@ class SublevelSet(Subset):
     @property
     def functional(self) -> Functional:
         """``f``."""
+        return self._functional
+
+    @property
+    def has_level_function(self) -> bool:
+        """True: the set is defined by one."""
+        return True
+
+    def level_function(self) -> Functional:
+        """``f``, the functional the set was built from."""
         return self._functional
 
     @property

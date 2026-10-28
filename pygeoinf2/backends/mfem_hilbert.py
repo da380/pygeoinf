@@ -59,8 +59,9 @@ from ..algebra.spaces import (
     EuclideanSpace,
     HilbertSpace,
     MassWeightedSpace,
-    _resolve_rng,
+    resolve_rng,
 )
+from ..numerics.solvers import ConvergenceError
 from ..traits import Traits
 from .mfem import (
     _as_indices,
@@ -257,7 +258,7 @@ class MfemDofSpace(HilbertSpace):
     def random(self, *, rng: Generator | None = None) -> Any:
         """Independent standard normal values on the free degrees of freedom."""
         vector = self.zero()
-        vector.GetDataArray()[:] = _resolve_rng(rng).standard_normal(self._size)
+        vector.GetDataArray()[:] = resolve_rng(rng).standard_normal(self._size)
         return self.constrain(vector)
 
     def white_noise(self, *, rng: Generator | None = None) -> Any:
@@ -341,18 +342,20 @@ def _mfem_solver(
     make_solver: Callable[[Any], Any] | None,
     rtol: float,
     max_iterations: int,
-) -> Any:
+) -> tuple[Any, tuple[Any, ...]]:
     """An MFEM solver for a system, with a preconditioner MFEM can build.
 
     Gauss-Seidel on a sparse matrix, and the operator's own Jacobi smoother
     when there is no matrix — the latter being the one that works without
     ever assembling, which is what a partially assembled form is for.
+
+    Returns:
+        The solver, and the objects it holds raw pointers to, which whoever
+        owns the solver must keep alive for as long as it is used.
     """
     mfem = _require_mfem()
     if make_solver is not None:
-        solver = make_solver(system.operator)
-        solver._pygeoinf_keepalive = (system,)
-        return solver
+        return make_solver(system.operator), (system,)
     if system.is_sparse:
         smoother = mfem.GSSmoother(mfem.OperatorHandle2SparseMatrix(system.handle))
     else:
@@ -367,8 +370,7 @@ def _mfem_solver(
     solver.SetPrintLevel(-1)
     # MFEM's solver holds raw pointers to its operator and preconditioner and
     # owns neither; see _System for what happens otherwise.
-    solver._pygeoinf_keepalive = (system, smoother)
-    return solver
+    return solver, (system, smoother)
 
 
 def _solve_with(solver: Any, space: MfemDofSpace, b: Any, /, *, strict: bool) -> Any:
@@ -376,7 +378,7 @@ def _solve_with(solver: Any, space: MfemDofSpace, b: Any, /, *, strict: bool) ->
     solution = space.zero()
     solver.Mult(b, solution)
     if strict and hasattr(solver, "GetConverged") and not solver.GetConverged():
-        raise RuntimeError(
+        raise ConvergenceError(
             f"The MFEM solver did not converge in {solver.GetNumIterations()} "
             f"iterations. Loosen rtol, raise max_iterations, or supply a "
             f"better preconditioner through make_solver."
@@ -475,14 +477,14 @@ class MfemHilbertSpace(MassWeightedSpace):
         form.AddDomainIntegrator(mfem.MassIntegrator())
         form.Assemble()
         system = _system_of(self, form)
-        solver = _mfem_solver(
+        solver, retained = _mfem_solver(
             system, make_solver=make_solver, rtol=rtol, max_iterations=max_iterations
         )
 
         def mass_apply(x: Any, _system: _System = system) -> Any:
             return _system.apply(x)
 
-        def mass_solve(b: Any, _solver: Any = solver) -> Any:
+        def mass_solve(b: Any, _solver: Any = solver, _retained: Any = retained) -> Any:
             return _solve_with(_solver, dof_space, b, strict=True)
 
         mass = LinearOperator.self_adjoint(
@@ -493,6 +495,9 @@ class MfemHilbertSpace(MassWeightedSpace):
         )
         super().__init__(dof_space, mass, mass_solver=inverse)
         self._mass_system = system
+        # This space owns the mass solver, and with it everything the solver
+        # holds raw pointers to.
+        self._mass_solver_parts = (solver, *retained)
 
     # ----------------------------------------------------------------- #
     #                              Structure                            #
@@ -670,15 +675,17 @@ def solver_from_bilinear_form(
         The inverse, as a ``LinearOperator`` on *space*.
 
     Raises:
-        RuntimeError: from an application of the returned operator, when
+        ConvergenceError: from an application of the returned operator, when
             *strict* and MFEM's solver reports that it did not converge.
     """
     system = _as_system(space, form)
-    solver = _mfem_solver(
+    solver, retained = _mfem_solver(
         system, make_solver=make_solver, rtol=rtol, max_iterations=max_iterations
     )
 
-    def solve(x: Any, _solver: Any = solver) -> Any:
+    # The operator built below owns the solver, through this closure, and with
+    # it everything the solver points to.
+    def solve(x: Any, _solver: Any = solver, _retained: Any = retained) -> Any:
         return _solve_with(_solver, space.dof_space, space.mass(x), strict=strict)
 
     return LinearOperator.from_callables(
@@ -813,7 +820,7 @@ def white_noise_load(
         An ``mfem.Vector``.
     """
     mfem = _require_mfem()
-    seed = int(_resolve_rng(rng).integers(1, 2**31 - 1))
+    seed = int(resolve_rng(rng).integers(1, 2**31 - 1))
     # Bound to a name, not passed inline: AddDomainIntegrator does not take
     # ownership of an integrator built this way, so a temporary would be
     # collected before Assemble runs and the form would integrate freed memory.

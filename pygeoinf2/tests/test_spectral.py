@@ -284,10 +284,10 @@ class TestMeasureStatistics:
         return (
             X,
             GaussianMeasure.from_covariance_matrix(
-                X, first @ first.T + size * np.identity(size)
+                X, first @ first.T + size * np.identity(size), form="galerkin"
             ),
             GaussianMeasure.from_covariance_matrix(
-                X, second @ second.T + size * np.identity(size)
+                X, second @ second.T + size * np.identity(size), form="galerkin"
             ),
         )
 

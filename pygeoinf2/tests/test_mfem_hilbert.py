@@ -25,6 +25,7 @@ from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import CoordinateSpace, MassWeightedSpace
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 from pygeoinf2.numerics import CGSolver
+from pygeoinf2.numerics.solvers import ConvergenceError
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import (
     check_operator,
@@ -298,7 +299,7 @@ class TestSolvingWithMfem:
             bilinear(elements, assembly, mfem.DiffusionIntegrator()),
             max_iterations=1,
         )
-        with pytest.raises(RuntimeError, match="did not converge"):
+        with pytest.raises(ConvergenceError, match="did not converge"):
             S(V.random(rng=rng))
 
     def test_a_caller_may_supply_the_solver(self, V, elements, assembly, rng):

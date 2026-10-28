@@ -28,8 +28,8 @@ from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
-    from ..numerics.randomized import Estimate
     from ..geometry.convex import Ellipsoid
+    from ..numerics.randomized import Estimate
 from .base import ProbabilityMeasure, _require_density
 
 __all__ = ["GaussianMeasure"]
@@ -291,15 +291,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The covariance factor is the diagonal operator ``diag(sigma)`` **on the
         space**, its factor domain the space itself, which generalizes
         :meth:`from_standard_deviation`; the precision factor is
-        ``diag(1/sigma)``. On a space whose metric is diagonal -- every
-        symmetric space, every orthonormal one -- the covariance is then
-        ``diag(sigma^2)``. On a space with a non-diagonal metric
-        ``diag(sigma)`` is not self-adjoint, and the covariance is
-        ``L L*`` with ``L == diag(sigma)``, which is not diagonal in the
-        components.
-
-        Both a factor and a precision factor are supplied, so the result can be
+        ``diag(1/sigma)``, and the covariance is ``diag(sigma^2)``. Both a
+        factor and a precision factor are supplied, so the result can be
         sampled and has a density.
+
+        Only on a space whose metric is diagonal in its basis -- every
+        symmetric space, every orthonormal one, a weighted coordinate space.
+        There ``diag(sigma)`` is self-adjoint and ``Var((x, e_i))`` is
+        ``sigma_i^2 ||e_i||^2``, one variance per basis direction as the name
+        says. On a space with a non-diagonal metric ``diag(sigma)`` is not
+        self-adjoint and ``L L*`` is not diagonal in the components, so the
+        construction is refused: give the covariance explicitly with
+        :meth:`from_covariance_matrix`, or build an isotropic measure with
+        :meth:`from_standard_deviation` and rescale it.
 
         Args:
             domain: the space the measure lives on.
@@ -311,10 +315,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Raises:
             ValueError: if the array is the wrong length or has an entry that
-                is not positive.
+                is not positive, or if the space's metric is not diagonal.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
 
+        if not domain.has_diagonal_metric:
+            raise ValueError(
+                f"from_standard_deviations needs a space whose metric is "
+                f"diagonal in its basis, and {type(domain).__name__}'s is not: "
+                "diag(sigma) is not self-adjoint there, so its square is not "
+                "diag(sigma^2). Give the covariance with "
+                "from_covariance_matrix, or start from the isotropic "
+                "from_standard_deviation."
+            )
         values = np.asarray(standard_deviations, dtype=float)
         if values.shape != (domain.dim,):
             raise ValueError(
@@ -455,7 +468,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         matrix: np.ndarray,
         /,
         *,
-        form: Literal["galerkin", "components"] = "galerkin",
+        form: Literal["galerkin", "components"],
         expectation: X | None = None,
         rtol: float = 1e-10,
     ) -> GaussianMeasure[X]:
@@ -493,9 +506,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Args:
             domain: the space.
             matrix: the covariance, as an array.
-            form: which representation *matrix* is in, ``"galerkin"`` by
-                default. Getting it wrong is a silent error of one factor of
-                the Gram matrix, so it is worth passing explicitly.
+            form: which representation *matrix* is in. No default: getting
+                it wrong is a silent error of one factor of the Gram matrix,
+                so the caller names it, as ``LinearOperator.from_matrix``
+                requires.
             expectation: the mean. Zero if omitted.
             rtol: how negative an eigenvalue may be, relative to the largest in
                 magnitude, before the matrix is refused rather than clipped.
@@ -781,7 +795,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if slices is not None:
             # tr(C^2) == sum over modes of tr(S_k^2), the blocks being diagonal.
             return float(np.sqrt(np.einsum("kij,kji->", slices, slices)))
-        known = covariance._known_matrix("components")
+        known = covariance.known_matrix(form="components")
         if known is not None:
             return float(np.sqrt(np.sum(known * known.T)))
         # The diagonal of C C, one basis vector at a time: (C C)_ii is the
@@ -1083,13 +1097,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             else:
                 raise ValueError(
                     "Neither exact route applies here, and the stochastic one "
-                    "is not accurate enough to be chosen on your behalf: on a "
-                    "Sobolev spectrum it has returned -88.6 +/- 21.7 for a "
-                    "divergence whose true value is zero. Ask for it by name "
-                    "with method='stochastic' if an estimate with that error "
-                    "bar is what you want; raise dense_limit if the space can "
-                    "afford two dense matrices; or give both measures diagonal "
-                    "covariances, which is the exact O(dim) route."
+                    "is not chosen on your behalf: it returns an estimate with "
+                    "an error bar, and a divergence reported as a bare number "
+                    "would be read as exact. Ask for it by name with "
+                    "method='stochastic' if an estimate is what you want; "
+                    "raise dense_limit if the space can afford two dense "
+                    "matrices; or give both measures diagonal covariances, "
+                    "which is the exact O(dim) route."
                 )
 
         if method == "spectral":
@@ -1209,10 +1223,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """
         from ..numerics.solvers import resolve_solver
 
-        if other._precision is not None:
-            inverse = other._precision
-        elif other._precision_factor is not None:
-            inverse = other._precision_factor.adjoint @ other._precision_factor
+        if other.precision is not None:
+            inverse = other.precision
+        elif other.precision_factor is not None:
+            inverse = other.precision_factor.adjoint @ other.precision_factor
         else:
             reference = other._require_covariance("A stochastic divergence")
             if Traits.POSITIVE_DEFINITE not in reference.traits:
@@ -1229,8 +1243,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self._covariance_factor is not None:
             factor = self._covariance_factor
             return factor.adjoint @ inverse @ factor, inverse
-        if other._precision_factor is not None:
-            root = other._precision_factor
+        if other.precision_factor is not None:
+            root = other.precision_factor
             covariance = self._require_covariance("A stochastic divergence")
             return root @ covariance @ root.adjoint, inverse
         raise ValueError(
@@ -1252,13 +1266,24 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Every other variance moves by the same factor, which is what makes it
         a recalibration rather than a change of shape.
 
+        Args:
+            direction: the vector whose reading is recalibrated.
+            standard_deviation: the standard deviation the reading is to
+                have; positive.
+
         Returns:
             The rescaled measure, of the same class.
 
         Raises:
-            ValueError: for a direction in which this measure has no variance,
-                there being no factor that would give it one.
+            ValueError: for a non-positive target, or for a direction in
+                which this measure has no variance, there being no factor
+                that would give it one.
         """
+        if standard_deviation <= 0.0:
+            raise ValueError(
+                f"The target standard deviation must be positive, got "
+                f"{standard_deviation}."
+            )
         current = self.directional_variance(direction)
         if current <= 0.0:
             raise ValueError(
@@ -1368,7 +1393,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # one product instead of two, and a matrix the operator algebra can
         # read straight off.
         factored = GaussianMeasure.from_covariance_matrix(
-            self._domain, symmetric, expectation=self._expectation
+            self._domain, symmetric, form="galerkin", expectation=self._expectation
         )
         dense = LinearOperator.from_matrix(
             self._domain,
@@ -2448,8 +2473,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
     def _combine_affine(
         self, operator: LinearOperator, translation: X | None
-    ) -> GaussianMeasure[X]:
-        """A Gaussian stays Gaussian under an affine map."""
+    ) -> GaussianMeasure[X] | None:
+        """A Gaussian stays Gaussian under an affine map.
+
+        ``None`` for a precision-only measure under a map that does not carry
+        the precision across, where the base class's push-forward takes over.
+        """
         codomain = operator.codomain
         mean = operator(self.expectation)
         if translation is not None:
@@ -2521,9 +2550,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         kind of hidden cost the library is trying not to have.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
-        from ..algebra.nodes import _Identity
 
-        if isinstance(operator, _Identity):
+        if operator.is_identity:
             return self._precision, self._precision_factor
 
         if isinstance(operator, DiagonalLinearOperator):

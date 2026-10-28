@@ -63,15 +63,17 @@ from planetmodel.randomfield import (
 from planetmodel.sampling import AngularGrid, gauss_legendre
 
 from ..algebra.operators import LinearFunctional
+from ..algebra.spaces import resolve_rng
 from ._transform import ShellTransform
 from .base import (
+    _EXTENSIONS,
     _NODES_PER_MODE,
     Boundary,
     LengthScale,
     SpectralElementSpace,
     _clamped_length_scale,
-    _length_scale_key,
     _fitted_over_the_domain,
+    _length_scale_key,
     _resolved_boundary,
     _resolved_padding,
     _sampled_with_extension,
@@ -494,6 +496,8 @@ class Ball(SpectralElementSpace):
                     )
             return np.stack([shells[float(r)] for r in radii])
 
+        if extension not in _EXTENSIONS:
+            raise ValueError("extension must be 'odd', 'constant' or 'fit'.")
         if extension == "fit":
             return self._fitted(sample(self.interior_radii))
         return _sampled_with_extension(self.radii, *self._radii, sample, extension)
@@ -521,7 +525,7 @@ class Ball(SpectralElementSpace):
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point of the domain, drawn uniformly over its volume."""
-        rng = np.random.default_rng() if rng is None else rng
+        rng = resolve_rng(rng)
         inner, outer = self._radii
         return np.array(
             [

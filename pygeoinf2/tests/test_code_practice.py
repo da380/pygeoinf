@@ -34,7 +34,7 @@ def source_files() -> list[pathlib.Path]:
 
 def functions_and_classes(path: pathlib.Path):
     """Yield ``(node, class_name_or_None)`` for every top-level definition."""
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             yield node, None
@@ -60,7 +60,7 @@ def is_dunder(name: str) -> bool:
 
 def source_line(path, number: int) -> str:
     """One line of a file, for reading an inline escape comment."""
-    return path.read_text().split("\n")[number - 1]
+    return path.read_text(encoding="utf-8").split("\n")[number - 1]
 
 
 @pytest.mark.parametrize("path", source_files(), ids=lambda p: p.name)
@@ -219,7 +219,7 @@ def documentation_gaps(path) -> list[str]:
     currently explain *why*. This targets what a reader cannot infer.
     """
     gaps = []
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     # Only what a caller can reach: module-level functions and methods. A
     # closure defined inside one is an implementation detail, and requiring
     # its arguments to be documented documents nothing.
@@ -354,9 +354,10 @@ class TestImportCost:
 
     At the first review it cost 0.32 s; at the second, 0.43 s, and half of
     the growth was `scipy.stats` and `scipy.optimize` imported at module
-    scope by two modules that most sessions never call. They are reached
-    through the package's own ``__init__``, so a session that only builds a
-    space and solves a system still pays for them.
+    scope by two modules that most sessions never call. Both now import them
+    on first use. The quadratic-form module is the one reached through the
+    package's own ``__init__`` -- a session that only builds a space and
+    solves a system would pay for it -- so that is the one pinned here.
     """
 
     def test_the_quadratic_form_module_does_not_import_scipy_at_module_scope(self):
@@ -398,3 +399,48 @@ class TestImportCost:
         assert quadratic_forms._brentq()(lambda t: t - 1.0, 0.0, 2.0) == pytest.approx(
             1.0
         )
+
+
+class TestNothingCitesADecision:
+    """The decision log is a record of why, not a vocabulary.
+
+    A docstring, comment, message or test that says "D-131" or points at
+    ``DECISIONS.md`` sends the reader to a planning document to learn what
+    the code does; the code has to say it itself. The rule is checked over
+    the package, its examples, tutorials and tests, in every text file but
+    the planning documents themselves.
+    """
+
+    PATTERNS = (r"\bD-\d+\b", r"DECISIONS\.md")
+
+    @staticmethod
+    def text_files():
+        import os
+
+        for path in sorted(PACKAGE.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            if path.suffix in (".md", ".pyc", ".png", ".pdf", ".npz", ".npy"):
+                continue
+            if os.path.getsize(path) > 5_000_000:
+                continue
+            yield path
+
+    def test_no_file_cites_a_decision_number(self):
+        import re
+
+        here = pathlib.Path(__file__).resolve()
+        offenders = []
+        for path in self.text_files():
+            if path == here:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for number, line in enumerate(text.split("\n"), start=1):
+                if any(re.search(pattern, line) for pattern in self.PATTERNS):
+                    offenders.append(
+                        f"{path.relative_to(PACKAGE)}:{number}: {line.strip()[:80]}"
+                    )
+        assert not offenders, "decision citations:\n  " + "\n  ".join(offenders)

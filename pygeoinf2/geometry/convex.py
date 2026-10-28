@@ -84,36 +84,9 @@ class ConvexSet(Subset):
     # ----------------------------------------------------------------- #
 
     @property
-    def has_membership(self) -> bool:
-        """Whether :meth:`contains` decides membership."""
-        return True
-
-    @property
     def has_projection(self) -> bool:
         """Whether :meth:`project` is available."""
         return True
-
-    @property
-    def has_support_function(self) -> bool:
-        """Whether :meth:`support_function` is available."""
-        return False
-
-    @property
-    def has_maximizer(self) -> bool:
-        """Whether :meth:`support_maximizer` can exhibit a point."""
-        return False
-
-    @property
-    def has_level_function(self) -> bool:
-        """Whether :meth:`level_function` and :attr:`level` describe the set."""
-        return False
-
-    @property
-    def has_smooth_level_function(self) -> bool:
-        """Whether a level function with a gradient describes the set: what the conversions start from."""
-        if not self.has_level_function:
-            return False
-        return bool(getattr(self.level_function(), "has_derivative", False))
 
     @property
     def computes_support_function(self) -> bool:
@@ -124,32 +97,6 @@ class ConvexSet(Subset):
     def computes_maximizer(self) -> bool:
         """Whether :meth:`support_maximizer` answers, cheaply or by conversion."""
         return self.has_maximizer or self.has_smooth_level_function
-
-    def level_function(self) -> Functional:
-        """``f`` with the set ``{ x : f(x) <= level }``, convex.
-
-        The sublevel-set characterization: a ball is the squared distance to
-        its center, an ellipsoid its Mahalanobis form, a half-space its linear
-        form, an intersection the largest of its parts' excesses, and a
-        feasible property set the minimum norm of a model with that property.
-
-        Raises:
-            NotImplementedError: for a set without one; see
-                :attr:`has_level_function`.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} has no level function; it is known "
-            "through its other descriptions."
-        )
-
-    @property
-    def level(self) -> float:
-        """The level the level function is bounded by.
-
-        Raises:
-            NotImplementedError: for a set without a level function.
-        """
-        raise NotImplementedError(f"{type(self).__name__} has no level function.")
 
     def intersect(self, other: Subset, /) -> Subset:
         """The intersection, which stays *convex* when the other set is.
@@ -454,12 +401,12 @@ class _OracleSet(ConvexSet):
             The maximizing point.
 
         Raises:
-            AttributeError: unless the support function was built with a
+            NotImplementedError: unless the support function was built with a
                 maximizer. A support *value* does not determine the point that
                 attains it.
         """
         if self._maximizer is None:
-            raise AttributeError(
+            raise NotImplementedError(
                 "This set was given a support function but no maximizer, so it "
                 "can bound itself from outside but not exhibit a point."
             )
@@ -1099,11 +1046,22 @@ class Polytope(ConvexSet):
             half_spaces: the constraints, as :class:`HalfSpace` objects.
             outer: ``True`` if this contains the set it approximates,
                 ``False`` if it is contained in it.
+
+        Raises:
+            TypeError: if a constraint is not a :class:`HalfSpace`.
+            ValueError: if no half-spaces are given, or one lives on another
+                space.
         """
         super().__init__(domain)
         self._half_spaces = tuple(half_spaces)
         if not self._half_spaces:
             raise ValueError("A polytope needs at least one half-space.")
+        for plane in self._half_spaces:
+            if not isinstance(plane, HalfSpace):
+                raise TypeError(
+                    f"A polytope is built from HalfSpace objects, got "
+                    f"{type(plane).__name__}."
+                )
         if any(plane.domain != domain for plane in self._half_spaces):
             raise ValueError("Every half-space must live on the same space.")
         self._outer = bool(outer)
@@ -1156,10 +1114,7 @@ class Polytope(ConvexSet):
         Returns:
             Whether the set contains the point.
         """
-        return all(
-            plane.contains(x, rtol=rtol) if hasattr(plane, "contains") else False
-            for plane in self._half_spaces
-        )
+        return all(plane.contains(x, rtol=rtol) for plane in self._half_spaces)
 
     def project(self, x: Any, /, *, max_iterations: int = 1000) -> Any:
         """The nearest point of the polytope, by Dykstra's algorithm.
@@ -1489,6 +1444,34 @@ class Ball(ConvexSet):
             self._center, self.domain.scale(self._radius / length, direction)
         )
 
+    @property
+    def covariance(self) -> LinearOperator:
+        """``r² I``: the ball as the ellipsoid ``{(C⁻¹(x − c), x − c) <= 1}``.
+
+        What makes a ball interchangeable with an :class:`Ellipsoid` wherever
+        a quadratic set's shape operator is read; the identity carries the
+        space's own metric.
+        """
+        return (LinearOperator.identity(self._domain) * self._radius**2).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+
+    @property
+    def precision(self) -> LinearOperator:
+        """``I / r²``: the inverse of :attr:`covariance`.
+
+        Raises:
+            ValueError: for a ball of zero radius, the single point at the
+                center, whose quadratic form is not finite.
+        """
+        if self._radius <= 0.0:
+            raise ValueError(
+                "A ball of zero radius is a single point and has no precision."
+            )
+        return (
+            LinearOperator.identity(self._domain) * (1.0 / self._radius**2)
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+
     def translate(self, vector: Any, /) -> "Ball":
         """The same ball, moved by a vector."""
         return Ball(
@@ -1612,6 +1595,9 @@ class Hyperplane(ConvexSet):
             domain: the space.
             normal: the normal vector, which must be nonzero.
             offset: the level.
+
+        Raises:
+            ValueError: for a zero normal.
         """
         super().__init__(domain)
         squared = domain.squared_norm(normal)
@@ -1708,6 +1694,9 @@ class HalfSpace(ConvexSet):
             domain: the space.
             normal: the outward normal, which must be nonzero.
             offset: the level.
+
+        Raises:
+            ValueError: for a zero normal.
         """
         super().__init__(domain)
         squared = domain.squared_norm(normal)
@@ -2160,6 +2149,9 @@ class BallSurface(Subset):
             domain: the space.
             radius: the radius, which must be positive.
             center: the center. Defaults to zero.
+
+        Raises:
+            ValueError: for a radius that is not positive.
         """
         super().__init__(domain)
         if radius <= 0.0:
@@ -2257,6 +2249,10 @@ class EllipsoidSurface(Subset):
             domain: the space.
             precision: a positive definite operator on it.
             center: the center. Defaults to zero.
+
+        Raises:
+            ValueError: if the precision does not claim to be self-adjoint
+                and positive definite.
         """
         super().__init__(domain)
         required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE

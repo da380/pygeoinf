@@ -139,12 +139,10 @@ def _(
 
     # The transform's grid, without an extended space's wrap column and pole
     # row: the seam is closed below from the grid's own longitudes.
-    values = space._core_values(field)
+    colatitudes, longitudes, values = space.plotting_grid(field)
 
-    latitudes = 90.0 - np.degrees(space._core_colatitudes)
-    longitudes, values = _rolled_to_the_dateline(
-        np.degrees(space._core_longitudes), values
-    )
+    latitudes = 90.0 - np.degrees(colatitudes)
+    longitudes, values = _rolled_to_the_dateline(np.degrees(longitudes), values)
 
     low, high = color_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
     common = dict(transform=crs.PlateCarree(), cmap=cmap, vmin=low, vmax=high)

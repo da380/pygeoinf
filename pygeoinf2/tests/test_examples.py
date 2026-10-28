@@ -120,7 +120,7 @@ def test_the_example_runs(script, capsys):
 
 def test_every_example_is_listed_in_the_readme():
     """A script nobody is pointed at is a script nobody reads."""
-    readme = (EXAMPLES / "README.md").read_text()
+    readme = (EXAMPLES / "README.md").read_text(encoding="utf-8")
     missing = [
         script.stem
         for script in example_scripts()

@@ -233,8 +233,12 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         return self._shift
 
     @property
-    def assembled(self) -> LinearOperator:
-        """The plain operator, with the structure forgotten."""
+    def plain_operator(self) -> LinearOperator:
+        """The plain operator, with the structure forgotten.
+
+        The sum as an expression, without the factors; see
+        :attr:`~pygeoinf2.numerics.normal.NormalOperator.plain_operator`.
+        """
         return self._assembled
 
     def __repr__(self) -> str:

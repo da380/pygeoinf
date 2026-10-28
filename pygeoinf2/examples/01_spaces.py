@@ -36,5 +36,3 @@ print()
 # Spaces are values: two spaces of the same shape are equal, and hashable.
 print("EuclideanSpace(4) == EuclideanSpace(4):", X == EuclideanSpace(4))
 print("usable as a dict key:", bool({X: "yes"}))
-print()
-print("In v1 this last line raises TypeError: unhashable type.")

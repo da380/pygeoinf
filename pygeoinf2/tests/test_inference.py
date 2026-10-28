@@ -15,10 +15,10 @@ from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.geometry.convex import Ball
 from pygeoinf2.inference import (
-    LinearGaussianInversion,
     ForwardProblem,
     LeastSquares,
     LinearForwardProblem,
+    LinearGaussianInversion,
     LinearPointEstimator,
     MeasureEstimator,
     MinimumNorm,
@@ -116,14 +116,47 @@ class TestForwardProblem:
         with pytest.raises(TypeError, match="gaussian"):
             problem.error_set
 
-    def test_no_error_at_all_is_still_a_missing_attribute(self, problem):
-        """Which it is: nothing was supplied, so there is nothing to be the
-        wrong type."""
+    def test_no_error_at_all_is_a_missing_ingredient(self, problem):
+        """Nothing was supplied, so there is nothing to be the wrong type:
+        a ``ValueError``, as every other missing ingredient is, and not an
+        ``AttributeError``, which ``hasattr`` would swallow."""
         bare = LinearForwardProblem(problem.forward_operator)
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError, match="no data uncertainty"):
+            bare.error
+        with pytest.raises(ValueError, match="no data uncertainty"):
             bare.error_measure
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError, match="no data uncertainty"):
             bare.error_set
+
+    def test_the_joint_measure_takes_a_mixture_prior(self, problem, rng):
+        """A prior that is not Gaussian still gives consistent pairs: the
+        product with the error is generic, and only samples are asked of
+        it."""
+        from pygeoinf2.probability.mixture import GaussianMixture
+
+        space = problem.model_space
+        components = [
+            GaussianMeasure.from_standard_deviation(
+                space, 1.0, expectation=space.random(rng=rng)
+            )
+            for _ in range(2)
+        ]
+        mixture = GaussianMixture(components, weights=np.array([0.3, 0.7]))
+        joint = problem.joint_measure(mixture)
+        assert joint.can_sample
+        model, data = problem.synthetic_model_and_data(mixture, rng=rng)
+        residual = problem.data_space.subtract(data, problem.forward_operator(model))
+        # The residual is one draw of the error, so its chi-squared is of
+        # order the data dimension.
+        assert (
+            problem.chi_squared_from_residual(residual) < 50.0 * problem.data_space.dim
+        )
+
+    def test_a_measure_on_the_wrong_space_is_refused_by_the_joint(self, problem):
+        with pytest.raises(ValueError, match="model space"):
+            problem.joint_measure(
+                GaussianMeasure.from_standard_deviation(EuclideanSpace(9), 1.0)
+            )
 
     def test_synthetic_data_carries_the_error(self, problem, prior, rng):
         model = prior.sample(rng=rng)
@@ -946,10 +979,8 @@ class TestConstrainedEstimatorsCanBeReduced:
     def test_a_subspace_without_an_equation_is_still_refused(self, setting, rng):
         """A basis fixes the solution set but not which equation defines it,
         and inventing one would be a different equation."""
-        from pygeoinf2.geometry.subspaces import AffineSubspace
+        from pygeoinf2.geometry.subspaces import AffineSubspace, OrthogonalProjector
         from pygeoinf2.inference.point import ConstrainedLeastSquares
-
-        from pygeoinf2.geometry.subspaces import OrthogonalProjector
 
         problem, _, _, _, parameterization, _ = setting
         model = problem.model_space

@@ -383,6 +383,63 @@ class TestDeclaredCapabilities:
             y = space.scale(2.0, space.random(rng=rng))
             assert (f(y) <= 1e-12) == box.contains(y)
 
+    def test_a_polytope_is_built_from_half_spaces_only(self, space, rng):
+        with pytest.raises(TypeError, match="HalfSpace"):
+            Polytope(space, [Ball(space, radius=1.0)], outer=True)
+
+    def test_a_missing_maximizer_is_not_implemented(self, space, rng):
+        """The base contract: a set without the description refuses with
+        ``NotImplementedError``, which is what generic code over convex sets
+        catches, not an ``AttributeError`` that reads as a typo."""
+        ball = Ball(space, radius=1.0)
+        bare = ConvexSet.from_support_function(space, ball.support_function())
+        with pytest.raises(NotImplementedError, match="no maximizer"):
+            bare.support_maximizer(space.random(rng=rng))
+
+    def test_a_sublevel_set_declares_its_level_function(self, space, rng):
+        """Declared on every subset, so generic code asks the flags rather
+        than testing the type."""
+        from pygeoinf2.geometry.sets import SublevelSet
+
+        ball = Ball(space, radius=1.0)
+        sublevel = SublevelSet(ball.level_function(), level=1.0)
+        assert self.flags(sublevel) == (True, False, False, False, True)
+        assert sublevel.has_smooth_level_function
+        assert sublevel.level_function() is sublevel.functional
+        assert sublevel.level == 1.0
+        y = space.random(rng=rng)
+        assert sublevel.contains(y) == ball.contains(y)
+        intersection = Intersection([ball, sublevel])
+        assert not intersection.has_level_function
+        with pytest.raises(NotImplementedError):
+            intersection.level_function()
+
+    def test_a_ball_reads_as_an_ellipsoid(self, space, rng):
+        """``covariance`` is ``r² I`` and ``precision`` is ``I / r²`` on the
+        space, so the two quadratic sets are interchangeable wherever a
+        shape operator is read, and a zero-radius ball has no precision."""
+        ball = Ball(space, radius=1.5, center=space.random(rng=rng))
+        x = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(ball.covariance(x), space.scale(2.25, x))
+        ) < 1e-12 * space.norm(x)
+        assert space.norm(
+            space.subtract(ball.precision(x), space.scale(1.0 / 2.25, x))
+        ) < 1e-12 * space.norm(x)
+        assert Traits.POSITIVE_DEFINITE in ball.covariance.traits
+        assert Traits.POSITIVE_DEFINITE in ball.precision.traits
+        as_ellipsoid = Ellipsoid(
+            space, ball.precision, center=ball.center, covariance=ball.covariance
+        )
+        for _ in range(6):
+            q = space.random(rng=rng)
+            assert as_ellipsoid.support_function()(q) == pytest.approx(
+                ball.support_function()(q)
+            )
+            assert as_ellipsoid.contains(q) == ball.contains(q)
+        with pytest.raises(ValueError, match="zero radius"):
+            Ball(space, radius=0.0).precision
+
     def test_the_intersection_bound_reads_the_flags(self, space, rng):
         """A part without a support function contributes nothing; a part
         whose support function *fails* is no longer silently skipped."""

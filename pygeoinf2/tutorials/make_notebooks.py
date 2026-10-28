@@ -82,7 +82,9 @@ def _cells(script: Path) -> list[tuple[str, str]]:
     """The script's cells as (kind, source) pairs, kind 'markdown' or
     'code', with empty cells dropped."""
     blocks: list[tuple[str, list[str]]] = []
-    for number, line in enumerate(script.read_text().splitlines(), start=1):
+    for number, line in enumerate(
+        script.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         if line.startswith(MARKER):
             tag = line[len(MARKER) :].strip()
             if tag not in ("", "[markdown]"):
@@ -139,7 +141,9 @@ def stale() -> list[str]:
     for script in scripts():
         target = NOTEBOOKS / (script.stem + ".ipynb")
         wanted.add(target)
-        if not target.exists() or target.read_text() != notebook(script):
+        if not target.exists() or target.read_text(encoding="utf-8") != notebook(
+            script
+        ):
             changes.append(f"write {target.name}")
     for orphan in sorted(set(NOTEBOOKS.glob("*.ipynb")) - wanted):
         changes.append(f"delete {orphan.name}")
@@ -154,8 +158,8 @@ def main() -> int:
         target = NOTEBOOKS / (script.stem + ".ipynb")
         wanted.add(target)
         text = notebook(script)
-        if not target.exists() or target.read_text() != text:
-            target.write_text(text)
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
+            target.write_text(text, encoding="utf-8")
             changed.append(f"wrote {target.relative_to(HERE.parent.parent)}")
     for orphan in sorted(set(NOTEBOOKS.glob("*.ipynb")) - wanted):
         orphan.unlink()

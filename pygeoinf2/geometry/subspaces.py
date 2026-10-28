@@ -24,11 +24,11 @@ A set of hyperplanes is an equation with one row per plane.
 
 from __future__ import annotations
 
-import numpy as np
-
 from typing import Any, Sequence
 
-from ..algebra.operators import require_coordinates, LinearOperator
+import numpy as np
+
+from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import HilbertSpace
 from ..numerics.solvers import CGSolver, LinearSolver
 from ..traits import Traits
@@ -170,6 +170,7 @@ class OrthogonalProjector(LinearOperator):
         /,
         *,
         solver: LinearSolver | None = None,
+        inverse: LinearOperator | None = None,
     ) -> OrthogonalProjector:
         """Projection onto ``{ x : A x == 0 }``.
 
@@ -194,22 +195,16 @@ class OrthogonalProjector(LinearOperator):
             operator: the operator whose kernel is wanted. Must have full row
                 rank.
             solver: the solver for ``A A*``. Defaults to conjugate gradients.
+            inverse: ``(A A*)^-1`` already built, for a caller that needed
+                it for its own sake -- the minimum-norm translation of an
+                affine subspace -- and would otherwise pay for a second.
+                Takes precedence over *solver*.
 
         Returns:
             The orthogonal projector onto the kernel.
         """
-        return cls._onto_kernel(operator, _normal_inverse(operator, solver))
-
-    @classmethod
-    def _onto_kernel(
-        cls, operator: LinearOperator, inverse: LinearOperator, /
-    ) -> OrthogonalProjector:
-        """The projector, given an already-built ``(A A*)^-1``.
-
-        Split out so that a caller which needed that inverse for its own sake
-        -- the minimum-norm translation of an affine subspace -- can hand the
-        one it has over rather than pay for a second.
-        """
+        if inverse is None:
+            inverse = _normal_inverse(operator, solver)
         domain = operator.domain
 
         def project(x: Any) -> Any:
@@ -319,13 +314,10 @@ class AffineSubspace(ConvexSet):
         inverse = _normal_inverse(operator, solver)
         translation = operator.adjoint(inverse(value))
         subspace = cls(
-            OrthogonalProjector._onto_kernel(operator, inverse),
+            OrthogonalProjector.onto_kernel(operator, inverse=inverse),
             translation=translation,
         )
-        subspace._equation = (operator, value)
-        subspace._solver = solver
-        subspace._inverse = inverse
-        return subspace
+        return subspace._with_equation(operator, value, solver, inverse)
 
     @classmethod
     def from_tangent_basis(
@@ -453,13 +445,13 @@ class AffineSubspace(ConvexSet):
             The constraint operator.
 
         Raises:
-            AttributeError: if the subspace was built from a basis rather
+            ValueError: if the subspace was built from a basis rather
                 than an equation. A basis fixes the solution set but not which
                 equation defines it; :meth:`to_hyperplanes` gives an equation
                 with the same solutions.
         """
         if self._equation is None:
-            raise AttributeError(
+            raise ValueError(
                 "This subspace was not built from an explicit equation, so it "
                 "has no constraint operator. Use to_hyperplanes() for an "
                 "equation with the same solution set."
@@ -474,11 +466,24 @@ class AffineSubspace(ConvexSet):
             The constraint value.
 
         Raises:
-            AttributeError: if the subspace was not built from an equation.
+            ValueError: if the subspace was not built from an equation.
         """
         if self._equation is None:
-            raise AttributeError("This subspace was not built from an equation.")
+            raise ValueError("This subspace was not built from an equation.")
         return self._equation[1]
+
+    def _with_equation(
+        self,
+        operator: LinearOperator,
+        value: Any,
+        solver: LinearSolver | None,
+        inverse: LinearOperator | None,
+    ) -> "AffineSubspace":
+        """Record the equation ``A x == b`` this subspace solves, with the solver and ``(A A*)^-1`` behind it; returns self."""
+        self._equation = (operator, value)
+        self._solver = solver
+        self._inverse = inverse
+        return self
 
     def with_translation(self, translation: Any, /) -> AffineSubspace:
         """The same tangent space, through a different point.
@@ -491,9 +496,9 @@ class AffineSubspace(ConvexSet):
         moved = AffineSubspace(self._projector, translation=translation)
         if self._equation is not None:
             operator, _ = self._equation
-            moved._equation = (operator, operator(translation))
-            moved._solver = self._solver
-            moved._inverse = self._inverse
+            moved._with_equation(
+                operator, operator(translation), self._solver, self._inverse
+            )
         return moved
 
     def with_constraint_value(self, value: Any, /) -> AffineSubspace:
@@ -516,10 +521,7 @@ class AffineSubspace(ConvexSet):
         moved = AffineSubspace(
             self._projector, translation=operator.adjoint(inverse(value))
         )
-        moved._equation = (operator, value)
-        moved._solver = self._solver
-        moved._inverse = inverse
-        return moved
+        return moved._with_equation(operator, value, self._solver, inverse)
 
     def pseudo_inverse(self) -> LinearOperator:
         """``A* (A A*)^-1``: the map from a constraint value to its subspace.
@@ -631,10 +633,8 @@ class LinearSubspace(AffineSubspace):
             The kernel, which remembers that it is ``A x == 0``.
         """
         inverse = _normal_inverse(operator, solver)
-        subspace = cls(OrthogonalProjector._onto_kernel(operator, inverse))
-        subspace._equation = (operator, operator.codomain.zero())
-        subspace._solver = solver
-        subspace._inverse = inverse
+        subspace = cls(OrthogonalProjector.onto_kernel(operator, inverse=inverse))
+        subspace._with_equation(operator, operator.codomain.zero(), solver, inverse)
         return subspace
 
     def __repr__(self) -> str:

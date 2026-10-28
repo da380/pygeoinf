@@ -39,9 +39,9 @@ degree zero, which is reachable as ``basis``.
 
 from __future__ import annotations
 
-import numpy as np
 from numpy.random import Generator
 
+from ..algebra.spaces import resolve_rng
 from .axis import AxisSpace
 from .base import Boundary, LengthScale
 
@@ -127,7 +127,7 @@ class Interval(AxisSpace):
 
     def random_point(self, *, rng: Generator | None = None) -> float:
         """A point of the domain, drawn uniformly."""
-        rng = np.random.default_rng() if rng is None else rng
+        rng = resolve_rng(rng)
         return float(rng.uniform(*self._bounds))
 
     def __repr__(self) -> str:

@@ -222,12 +222,15 @@ def _sampled_with_extension(
     A mirror image that would fall past the far end of the domain stops at it.
 
     Raises:
-        ValueError: for an extension other than ``"odd"``, ``"constant"`` or
-            ``"fit"``. Callers handle ``"fit"`` themselves before reaching
-            here; passed through, it gives the constant continuation.
+        ValueError: for an extension other than ``"odd"`` or ``"constant"``.
+            ``"fit"`` is not a continuation and is the caller's to handle
+            before coming here.
     """
-    if extension not in _EXTENSIONS:
-        raise ValueError("extension must be 'odd', 'constant' or 'fit'.")
+    if extension not in ("odd", "constant"):
+        raise ValueError(
+            "extension must be 'odd' or 'constant' here; 'fit' is handled by "
+            "the caller."
+        )
     nodes = np.asarray(nodes, dtype=float)
     values = np.array(sample(np.clip(nodes, lower, upper)), dtype=float)
     if extension == "odd":
@@ -502,10 +505,18 @@ class SpectralElementSpace(
         return self.spatial_dimension / 2.0
 
     def _require_point_evaluation(
-        self, what: str, points: Sequence[Any], /, *, unsafe: bool
+        self,
+        what: str,
+        /,
+        *,
+        points: Sequence[Any] | None = None,
+        side: str | None = None,
+        unsafe: bool,
     ) -> None:
         """Refuse point evaluation at or below :meth:`point_evaluation_order`,
-        where it has no representer, unless *unsafe*."""
+        where it has no representer, unless *unsafe*. ``points`` are the ones
+        in question, any point of the domain when omitted; ``side`` is unused
+        here and belongs to the signature a layered space shares."""
         threshold = self.point_evaluation_order(points=points)
         if unsafe or self._order > threshold:
             return
@@ -545,7 +556,9 @@ class SpectralElementSpace(
                 dimension and *unsafe* is not set, or the point lies outside
                 the domain.
         """
-        self._require_point_evaluation("A Dirac functional", [point], unsafe=unsafe)
+        self._require_point_evaluation(
+            "A Dirac functional", points=[point], unsafe=unsafe
+        )
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
     def point_evaluation_operator(
@@ -573,7 +586,7 @@ class SpectralElementSpace(
         if not points:
             raise ValueError("At least one point is needed.")
         self._require_point_evaluation(
-            "A point evaluation operator", points, unsafe=unsafe
+            "A point evaluation operator", points=points, unsafe=unsafe
         )
         return LinearOperator.from_matrix(
             self,

@@ -93,7 +93,7 @@ problem = LinearForwardProblem(forward, error=noise)
 
 truth = X.from_components(np.array([1.9, -0.5]))  # the second scenario
 data = problem.synthetic_data(truth, rng=rng)
-print(f"truth {np.round(X.to_components(truth), 3)} (scenario 2)")
+print(f"truth {np.round(X.to_components(truth), 3)} (scenario 1)")
 print(f"one datum: {float(forward.codomain.to_components(data)[0]):+.4f}")
 print()
 

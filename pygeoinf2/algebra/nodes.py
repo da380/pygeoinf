@@ -15,9 +15,9 @@ be one.
 
 from __future__ import annotations
 
-import numpy as np
+from typing import Any, Callable, Sequence
 
-from typing import Callable, Any, Sequence
+import numpy as np
 
 from ..traits import (
     Traits,
@@ -37,7 +37,7 @@ from .operators import (
     LinearOperator,
     Operator,
 )
-from .spaces import HilbertSpace
+from .spaces import CoordinateSpace, HilbertSpace
 
 __all__ = ["make_sum", "make_scaled", "make_composition"]
 
@@ -67,8 +67,6 @@ class _Identity[X](LinearOperator[X, X]):
         return y
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
-        from .spaces import CoordinateSpace
-
         if not isinstance(self.domain, CoordinateSpace):
             return None
         if form == "components":
@@ -79,7 +77,6 @@ class _Identity[X](LinearOperator[X, X]):
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:
         from .diagonal import DiagonalLinearOperator
-        from .spaces import CoordinateSpace
 
         if not isinstance(self.domain, CoordinateSpace):
             return None
@@ -106,8 +103,6 @@ class _Identity[X](LinearOperator[X, X]):
         return list(vectors)
 
     def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
-        from .spaces import CoordinateSpace
-
         if not isinstance(self.domain, CoordinateSpace):
             return None
         return lambda c: c
@@ -116,6 +111,11 @@ class _Identity[X](LinearOperator[X, X]):
         self,
     ) -> Callable[[np.ndarray], np.ndarray] | None:
         return self._components_action()
+
+    @property
+    def is_identity(self) -> bool:
+        """True: this is the identity on its space."""
+        return True
 
     def _combine_compose(self, other: Operator) -> Operator | None:
         return other
@@ -136,9 +136,6 @@ class _Identity[X](LinearOperator[X, X]):
         Only where the space has a basis to be diagonal in; elsewhere the
         scaled node is still the best available.
         """
-        import numpy as np
-
-        from ..algebra.spaces import CoordinateSpace
         from .diagonal import DiagonalLinearOperator
 
         if not isinstance(self.domain, CoordinateSpace):
@@ -175,8 +172,6 @@ class _Zero[X, Y](LinearOperator[X, Y]):
         return self.domain.zero()
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
-        from .spaces import CoordinateSpace
-
         if not isinstance(self.domain, CoordinateSpace) or not isinstance(
             self.codomain, CoordinateSpace
         ):
@@ -186,8 +181,6 @@ class _Zero[X, Y](LinearOperator[X, Y]):
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:
-        from .spaces import CoordinateSpace
-
         if not isinstance(self.domain, CoordinateSpace) or not isinstance(
             self.codomain, CoordinateSpace
         ):
@@ -214,8 +207,6 @@ class _Zero[X, Y](LinearOperator[X, Y]):
         return [self.domain.zero() for _ in vectors]
 
     def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
-        from .spaces import CoordinateSpace
-
         if not isinstance(self.domain, CoordinateSpace) or not isinstance(
             self.codomain, CoordinateSpace
         ):
@@ -738,7 +729,9 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # expand, as above.
         if offsets != (0,) or self.domain.dim != self.codomain.dim:
             return None
-        if form == "galerkin" and not getattr(self.codomain, "is_orthonormal", False):
+        if form == "galerkin" and not (
+            isinstance(self.codomain, CoordinateSpace) and self.codomain.is_orthonormal
+        ):
             return None
         known = self._known_factors()
         if known is None or len(known) < 2:

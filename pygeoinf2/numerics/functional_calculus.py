@@ -35,7 +35,7 @@ from scipy.linalg import eigh_tridiagonal
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import (
-    _REORTHOGONALISATION_THRESHOLD,
+    REORTHOGONALIZATION_THRESHOLD,
     CoordinateSpace,
     HilbertSpace,
 )
@@ -252,7 +252,7 @@ def _iter_lanczos_on_components(
             w -= current @ coefficients
             weighted = space.apply_gram(w)
             beta = float(np.sqrt(max(float(w @ weighted), 0.0)))
-            if beta < _REORTHOGONALISATION_THRESHOLD * before:
+            if beta < REORTHOGONALIZATION_THRESHOLD * before:
                 w -= current @ (current.T @ weighted)
                 weighted = space.apply_gram(w)
                 beta = float(np.sqrt(max(float(w @ weighted), 0.0)))
@@ -798,10 +798,10 @@ def log_determinant(
             method = "stochastic"
         else:
             # Above the probe budget the dense route is taken only if the
-            # matrix can be *read*: ``_known_matrix`` applies the operator
+            # matrix can be *read*: ``known_matrix`` applies the operator
             # zero times by contract, so this costs nothing when it answers
             # None, and hands over the matrix when it does not.
-            matrix = operator._known_matrix("galerkin")
+            matrix = operator.known_matrix(form="galerkin")
             method = (
                 "dense"
                 if matrix is not None or space.dim <= samples * max_iterations

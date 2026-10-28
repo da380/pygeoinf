@@ -36,15 +36,12 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator
+from ..algebra.spaces import resolve_rng
 from ..traits import Traits
 from .base import ProbabilityMeasure, _require_density
 from .gaussian import GaussianMeasure
 
 __all__ = ["GaussianMixture"]
-
-
-def _resolve_rng(rng: Generator | None) -> Generator:
-    return np.random.default_rng() if rng is None else rng
 
 
 class GaussianMixture[X](ProbabilityMeasure[X]):
@@ -166,7 +163,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             )
         if count < 1:
             raise ValueError(f"At least one parameter draw is needed, got {count}.")
-        generator = _resolve_rng(rng)
+        generator = resolve_rng(rng)
         return cls([build(parameters.sample(rng=generator)) for _ in range(count)])
 
     # ----------------------------------------------------------------- #
@@ -218,7 +215,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         Exact, and the whole of what makes a mixture easy to sample even when
         it is hard to write down.
         """
-        generator = _resolve_rng(rng)
+        generator = resolve_rng(rng)
         index = int(generator.choice(len(self._components), p=self._weights))
         return self._components[index].sample(rng=generator)
 
@@ -250,8 +247,21 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         lives. It has rank at most ``K - 1``, so it is built as a low-rank
         factor rather than assembled — the components are few, which is the
         whole premise.
+
+        Raises:
+            ValueError: if a component of positive weight has no covariance
+                operator, having been given only a precision.
         """
         mean = self.expectation
+        for index, (component, weight) in enumerate(
+            zip(self._components, self._weights)
+        ):
+            if weight > 0.0 and not component.has_covariance:
+                raise ValueError(
+                    f"A mixture covariance needs every live component's "
+                    f"covariance operator, and component {index} has none: "
+                    "it was given only a precision."
+                )
         pieces = [
             weight * component.covariance
             for component, weight in zip(self._components, self._weights)

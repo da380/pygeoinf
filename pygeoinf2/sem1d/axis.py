@@ -23,14 +23,15 @@ from planetmodel.randomfield import (
 
 from ..algebra.operators import LinearFunctional
 from .base import (
+    _EXTENSIONS,
     _NODES_PER_MODE,
     Boundary,
     LengthScale,
     SpectralElementSpace,
     _clamped_length_scale,
+    _fitted_over_the_domain,
     _length_scale_key,
     _resolved_boundary,
-    _fitted_over_the_domain,
     _resolved_padding,
     _sampled_with_extension,
 )
@@ -295,6 +296,8 @@ class AxisSpace(SpectralElementSpace):
         def sample(positions: np.ndarray) -> np.ndarray:
             return np.array([float(function(float(x))) for x in positions])
 
+        if extension not in _EXTENSIONS:
+            raise ValueError("extension must be 'odd', 'constant' or 'fit'.")
         if extension == "fit":
             interior = self._basis.modes()[self._basis.restriction.nodes]
             fitted = _fitted_over_the_domain(

@@ -280,3 +280,31 @@ class TestDenseObservationOperators:
         for build in builders:
             serial = build(None).matrix(form="galerkin")
             assert np.allclose(build(2).matrix(form="galerkin"), serial)
+
+
+class TestTheContextProbe:
+    """``parallel_map`` asks joblib whether a ``parallel_config`` context has
+    chosen a backend, through two internals joblib does not export. The
+    current spelling is pinned here, and a renamed internal must degrade to
+    "no context" rather than break every parallel loop."""
+
+    def test_the_current_spelling_answers(self):
+        from joblib import parallel_config
+
+        from pygeoinf2.parallel import _context_is_set
+
+        assert not _context_is_set()
+        with parallel_config(backend="threading"):
+            assert _context_is_set()
+        assert not _context_is_set()
+
+    def test_a_renamed_internal_degrades_to_the_default(self, monkeypatch):
+        import joblib.parallel
+
+        from pygeoinf2.parallel import _context_is_set
+
+        monkeypatch.delattr(joblib.parallel, "default_parallel_config")
+        assert _context_is_set() is False
+        monkeypatch.undo()
+        monkeypatch.delattr(joblib.parallel, "_backend")
+        assert _context_is_set() is False

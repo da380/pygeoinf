@@ -842,6 +842,7 @@ class TestLanczosOnComponents:
     def test_the_sphere_pays_one_analysis_per_step(self, monkeypatch):
         pytest.importorskip("pyshtools")
         import pyshtools.expand as expand
+
         from pygeoinf2.symmetric_space.sphere import Sobolev
 
         space = Sobolev(12, 2.0, 0.3)
@@ -1012,3 +1013,25 @@ class TestTheDenseLimit:
         assert log_determinant(stored, method="dense").value == pytest.approx(
             float(np.linalg.slogdet(matrix)[1])
         )
+
+
+class TestWeightedChi2RefusesAnUnknownMethod:
+    """``quadratic_forms`` lives beside the calculus. An unknown method was
+    refused only off the general route; equal weights, a non-positive value
+    and the quantile's chi-square shortcut returned before looking at it."""
+
+    @pytest.mark.parametrize("weights", [[1.0, 1.0, 1.0], [3.0, 1.0, 0.5]])
+    def test_the_cdf_refuses_it_before_any_shortcut(self, weights):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_cdf
+
+        with pytest.raises(ValueError, match="imhoff"):
+            weighted_chi2_cdf(np.array(weights), 2.0, method="imhoff")
+        with pytest.raises(ValueError, match="imhoff"):
+            weighted_chi2_cdf(np.array(weights), -1.0, method="imhoff")
+
+    @pytest.mark.parametrize("weights", [[1.0, 1.0, 1.0], [3.0, 1.0, 0.5]])
+    def test_the_quantile_refuses_it_too(self, weights):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        with pytest.raises(ValueError, match="imhoff"):
+            weighted_chi2_quantile(np.array(weights), 0.9, method="imhoff")

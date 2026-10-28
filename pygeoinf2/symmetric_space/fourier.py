@@ -28,7 +28,7 @@ from numpy.random import Generator
 from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
-from ..algebra.spaces import ArrayVectorMixin
+from ..algebra.spaces import ArrayVectorMixin, resolve_rng
 from .base import PreparedPoints, SymmetricSpace, _gauss_legendre, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
@@ -733,7 +733,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly from the box."""
-        generator = np.random.default_rng() if rng is None else rng
+        generator = resolve_rng(rng)
         return np.array([generator.uniform(0.0, length) for length in self._lengths])
 
     # ----------------------------------------------------------------- #

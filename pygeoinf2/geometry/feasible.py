@@ -46,7 +46,7 @@ from .convex import (
     _LevelSupport,
     _project_by_support,
 )
-from .sets import SublevelSet
+from .sets import SublevelSet, Subset
 
 __all__ = [
     "Algorithm",
@@ -325,19 +325,7 @@ class FeasibleStructure:
         Raises:
             TypeError: if the prior is neither.
         """
-        prior = self.prior
-        space = self.model_space
-        if isinstance(prior, Ball):
-            return (LinearOperator.identity(space) * prior.radius**2).with_traits(
-                Traits.POSITIVE_DEFINITE
-            )
-        if isinstance(prior, Ellipsoid):
-            if prior.covariance is not None:
-                return prior.covariance
-            return self.solver_for(space)(
-                prior.precision.with_traits(Traits.POSITIVE_DEFINITE)
-            )
-        raise TypeError("Only a ball or an ellipsoid has a covariance to read.")
+        return _covariance_of(self.prior, self.model_space, self.solver_for)
 
     def prior_center(self) -> Any:
         """The prior's centre, or the origin for a set without one."""
@@ -361,19 +349,7 @@ class FeasibleStructure:
             TypeError: if the noise set is neither a ball nor an ellipsoid,
                 or the data are exact.
         """
-        noise = self.noise
-        space = self.data_space
-        if isinstance(noise, Ball):
-            return (LinearOperator.identity(space) * noise.radius**2).with_traits(
-                Traits.POSITIVE_DEFINITE
-            )
-        if isinstance(noise, Ellipsoid):
-            if noise.covariance is not None:
-                return noise.covariance
-            return self.solver_for(space)(
-                noise.precision.with_traits(Traits.POSITIVE_DEFINITE)
-            )
-        raise TypeError("Only a ball or an ellipsoid has a covariance to read.")
+        return _covariance_of(self.noise, self.data_space, self.solver_for)
 
     def noise_precision(self) -> LinearOperator:
         """``R⁻¹``, the noise set's quadratic form in normalized units.
@@ -402,13 +378,25 @@ class FeasibleStructure:
         return shifted
 
 
+def _covariance_of(
+    subset: Any, space: HilbertSpace, solver_for: Callable[[HilbertSpace], LinearSolver]
+) -> LinearOperator:
+    """A ball's or ellipsoid's covariance, inverting an ellipsoid's precision if it has no other."""
+    if isinstance(subset, Ball):
+        return subset.covariance
+    if isinstance(subset, Ellipsoid):
+        if subset.covariance is not None:
+            return subset.covariance
+        return solver_for(space)(subset.precision.with_traits(Traits.POSITIVE_DEFINITE))
+    raise TypeError("Only a ball or an ellipsoid has a covariance to read.")
+
+
 def _precision_of(subset: Any, space: HilbertSpace, name: str) -> LinearOperator:
+    """A ball's or ellipsoid's precision; a zero-radius ball has none."""
     if isinstance(subset, Ball):
         if subset.radius <= 0.0:
             raise ValueError(f"The {name} ball needs a positive radius.")
-        return (LinearOperator.identity(space) * (1.0 / subset.radius**2)).with_traits(
-            Traits.POSITIVE_DEFINITE
-        )
+        return subset.precision
     if isinstance(subset, Ellipsoid):
         return subset.precision
     raise TypeError(f"The {name} must be a ball or an ellipsoid to have a precision.")
@@ -2141,17 +2129,11 @@ def _minimize_unimodal(
 # --------------------------------------------------------------------- #
 
 
-def _smooth_level(subset: Any) -> tuple[Functional, float] | None:
+def _smooth_level(subset: Subset) -> tuple[Functional, float] | None:
     """``(f, c)`` with the set ``{ f <= c }`` and ``f`` carrying a gradient, or None."""
-    if isinstance(subset, SublevelSet):
-        functional, level = subset.functional, float(subset.level)
-    elif getattr(subset, "has_level_function", False):
-        functional, level = subset.level_function(), float(subset.level)
-    else:
+    if not subset.has_smooth_level_function:
         return None
-    if not getattr(functional, "has_derivative", False):
-        return None
-    return functional, level
+    return subset.level_function(), float(subset.level)
 
 
 def _computes_support(subset: Any) -> bool:
@@ -2182,8 +2164,8 @@ def _maximizer_of(subset: Any, direction: Any) -> Any:
     return _support_of(subset).subgradient(direction)
 
 
-def _has_projection(subset: Any) -> bool:
-    return subset is None or bool(getattr(subset, "has_projection", False))
+def _has_projection(subset: Subset | None) -> bool:
+    return subset is None or subset.has_projection
 
 
 class Dual(Algorithm):

@@ -32,8 +32,7 @@ from pygeoinf2.testing import (
 )
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
-from .conftest import make_dense_metric_space
+from .conftest import make_dense_metric_space, make_weighted_space
 from .doubles import OpaqueSpace
 
 
@@ -549,3 +548,34 @@ class TestBlocksDoNotAllocateForNothing:
         y = BlockLinearOperator([[zero, zero], [zero, zero]])(x)
         for part in y:
             assert space.norm(part) == pytest.approx(0.0)
+
+
+class TestCoordinateDirectSumIsPublic:
+    """A direct sum of coordinate spaces is a named, subclassable class, and
+    a subclass that compares equal to the plain sum hashes equal to it
+    without restating the formula."""
+
+    def test_the_sum_of_coordinate_spaces_is_one(self):
+        from pygeoinf2.algebra import CoordinateDirectSum
+
+        plain = DirectSum([EuclideanSpace(2), EuclideanSpace(3)])
+        assert type(plain) is CoordinateDirectSum
+        assert isinstance(plain, CoordinateSpace)
+
+    def test_a_subclass_hashes_as_the_plain_sum(self):
+        from pygeoinf2.algebra import CoordinateDirectSum
+
+        class Tagged(CoordinateDirectSum):
+            def __eq__(self, other):
+                if not isinstance(other, CoordinateDirectSum):
+                    return NotImplemented
+                return self._key() == other._key()
+
+            __hash__ = CoordinateDirectSum.__hash__
+
+        summands = [EuclideanSpace(2), EuclideanSpace(3)]
+        plain = DirectSum(summands)
+        tagged = Tagged(summands)
+        assert tagged == plain and plain == tagged
+        assert hash(tagged) == hash(plain)
+        assert len({plain, tagged}) == 1

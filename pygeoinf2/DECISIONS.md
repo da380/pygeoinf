@@ -413,7 +413,7 @@ symmetrised or checked: `ColumnThresholdedPreconditioner` thresholds the
 pattern and reads values off the symmetric Galerkin matrix; an inexact inner
 Woodbury solve is the caller's to fix with `FlexibleCGSolver`.
 
-**D-48. `LocalisedPreconditioner` drops the error covariance's off-diagonal
+**D-48. `LocalizedPreconditioner` drops the error covariance's off-diagonal
 and says so; `NormalDiagonalPreconditioner` never applies the assembled
 operator** (2026-08). Only `A Q A*` is treated block-wise; `R` contributes
 its diagonal, and a test asserts exactness stops when `R` is correlated. The
@@ -492,8 +492,12 @@ unchanged.
 inner product, so there is no array to put in the wrong convention (v1 handed
 SciPy `G⁻¹ dJ/dc` as `jac` beside a Galerkin `hess`). `SteepestDescent`,
 `NonlinearCG` and `LBFGS` default to `StrongWolfeLineSearch` with the
-slope-ratio initial step, because Armijo cannot grow a step and crawled by two
-orders of magnitude on a badly scaled metric; its zoom interpolates
+slope-ratio initial step, because Armijo cannot grow a step and costs about twice the
+evaluations on a badly scaled metric (measured on a quadratic with a
+metric spread of 1e3: Wolfe 3376 against Armijo 6744, and 417 against
+743 at a spread of 1e2, same iterations and answer; an earlier draft of
+this entry said two orders of magnitude, which the measurement does not
+support); its zoom interpolates
 (2026-09-16: Rosenbrock nonlinear CG 224 to 113 evaluations, cond-1e4
 quadratic 4321 to 2013). `truncated_cg` is Steihaug's and treats negative
 curvature as a direction.
@@ -873,9 +877,10 @@ set. `LevelKKTSolver` handles differentiable non-quadratic sets on either side
 with a cold-started convex minimisation per probe, two multipliers in log
 coordinates (David's choice over a joint Newton). Both KKT solvers accept a
 root only if the equations hold to 1e-6 of their levels, after `fsolve`
-reported success 2 per cent low. Recorded as open: `"kkt"` is the cheapest
+reported success 2 per cent low. Recorded as open at the time: `"kkt"` is the cheapest
 general solver on balls and ellipsoids and `auto` could prefer it over the
-bundle, left until measured. The finite-difference dual gradient is dropped:
+bundle; closed by D-136, where the sets' forms choose the algorithm and
+the quadratic tier is matrix-free. The finite-difference dual gradient is dropped:
 on a nonsmooth cost, one evaluation per data dimension, silently, it is not a
 subgradient; a maximiser is asked for by name.
 
@@ -1514,8 +1519,9 @@ zeros on constrained dofs.
 **D-96. MFEM solves MFEM's systems; this library composes the results**
 (2026-08). `solver_from_bilinear_form` wraps MFEM's own solve (components,
 mass multiply, solve, components back; omitting the mass multiply is wrong by
-a mass matrix); `operator_from_bilinear_form` densifies and is not the route
-for a real problem. In the coordinate backend `FormSystemMatrix` is not used
+a mass matrix); `operator_from_bilinear_form` keeps the sparse matrix (`MfemSpace.restrict`
+keeps CSR and `from_matrix` keeps a sparse input sparse; an earlier
+version densified, and this entry said so until 2026-10-28). In the coordinate backend `FormSystemMatrix` is not used
 because it takes ownership and a later `SpMat()` is a use-after-free;
 `_default_mfem_solver` keeps explicit references because `SetPreconditioner`
 stores a raw pointer. `MfemHilbertSpace` (`mfem_hilbert`) is the second,
@@ -1566,7 +1572,9 @@ spelling.
 (2026-08, 2026-09-17). The five v1 inversion class names are aliased; a
 renamed keyword raises `TypeError` at the call, the loud, easy failure a shim
 would hide. The v1 adapter in the same module is scaffolding: nothing in the
-package imports it, and it goes with its test when v1 is removed. It
+package imports it, and it goes with its test when v1 is removed, so
+the adapters do not ship in 2.0 (the release mechanics in
+`CURRENT_STATE.md` §10 delete `compat.py` with v1). It
 deliberately does not delegate `white_noise` to v1 (D-19).
 
 **D-102. All imports inside the package are relative** (2026-08), so the
@@ -1721,7 +1729,9 @@ harmonics, which leaves the name free for a three-dimensional mesh). Sobolev spa
 the eigenbasis of `A = 1 - div(L² grad)` on a Gauss-Lobatto-Legendre mesh,
 for what the Fourier `line` cannot do: a length scale that varies, a mesh that
 is not uniform, the `r² dr` measure. The optional extra is
-`planetmodel[harmonics]>=1.2`, which brings pyshtools and ducc0 for the ball
+`planetmodel>=1.3` (1.2 at first; 1.3's grids carry the `kind` the batched
+transform of D-123 checks, and the stale `[harmonics]` extra went on
+2026-10-24), which brings pyshtools and ducc0 for the ball
 (D-114), and the package is imported on demand, as the sphere is. One submodule per
 geometry exporting `Lebesgue` and `Sobolev` (D-3); `base.SpectralElementSpace`
 holds everything but the geometry. It is *not* a `SymmetricSpace`: nothing
@@ -2025,6 +2035,133 @@ Tutorial 13 is the operator's showcase: the rays, the kernels of the
 adjoint, the Hessian with the ray's response, and the inversion by
 gradients and by Newton against straight-ray tomography.
 
+**D-157. Small choices recovered from the docstring review** (2026-10-28).
+The review of 2026-10-26 took measurements and reasons out of docstrings
+that this file did not hold. The measurements are in the appendix under
+that date; the choices they settled, none of them recorded before, are:
+- Iterative solvers run on a `ComponentView` and `assembled()` stores the
+  components form, because on a sphere the vector algebra alone was seven
+  transforms per iteration against the operator's two, and CG on a stored
+  Galerkin matrix over a dense Gram matrix was three times slower than on
+  stored components.
+- `Optimizer` has `ftol` with no absolute floor and a precision-limited
+  outcome counted as success, because with `rtol=1e-10` alone L-BFGS and
+  nonlinear CG stopped at a gradient of 1e-6 to 1e-7 on a well-conditioned
+  quadratic and reported failure, and steepest descent ran to its cap.
+- `monotone_root` is Brent in `log t`, not bisection: half the solves per
+  root on a chi-squared-like quantity.
+- `Polytope.project` allows a thousand Dykstra cycles, since two hundred
+  left a ball cut by a half-space 3.7e-4 off its boundary.
+- The stochastic KL divergence is one trace of `g(M) = M - 1 - log M`, with
+  a round-trip check on the reference solve: estimating the trace and the two
+  log-determinants separately gave `KL(mu || mu)` as 369 +/- 35 at
+  dimension 289, and a CG reference solve at `rtol=1e-8` on a covariance of
+  condition 4e10 returned a trace of 217 against 289 without complaint.
+- The chi-square quantile switches from Imhof to the moment-matched
+  chi-square above 1000 positive weights or an effective rank above 100,
+  where Imhof takes seconds and the match agrees to 1e-4 relative. `_imhof`
+  integrates by a trapezoid rule because `quad` exhausted 800 evaluations on
+  three weights and was thirty times slower.
+- `plot_corner` densities are binned kernel estimates with the full kernel,
+  not an axis-aligned filter, which is wrong by 8% of the peak on a
+  correlated cloud; binned is three orders faster than `gaussian_kde`.
+- The model-space normal operator refuses an error-free problem: `Q^-1 + A* A`
+  is not the noise-free posterior, and its mean was wrong by a third of the
+  true mean's norm on a random problem.
+- Points are prepared once (`PreparedPoints`, `prepare_points`): the
+  conversion was 40% of an application on a sphere, half on a torus and 91%
+  on a bounded box at 1e5 points.
+- `nthreads=1` for the NUFFT on every geometry, since finufft's default of
+  every core was four to twenty times slower at every size measured.
+- `Box.project_function` tapers by default: a hard cutoff puts a 5% error in
+  a path integral that reaches the padding.
+- The sphere's Lebesgue inner product is the grid quadrature even when both
+  arguments are off-span grid products, where the two routes differ by up to
+  2% and the quadrature is the more accurate.
+- The direct Legendre sum is used below 200 points and dimension 256, the
+  transform above, measured at `lmax` 4 to 64 across six point counts.
+- An open point noted in the deleted likelihood route (why warm-started
+  Newton-CG stopped a step short, and whether the stopping rules should
+  change) is moot with that route (D-142); the question is kept here in case
+  it recurs in `Search`.
+
+**D-158. Private hooks that other subpackages needed are public accessors**
+(2026-10-28, from the code-practice scan of 2026-10-27). The protected
+extension hooks stay the override points; what other code reads goes
+through a public, None-returning accessor: `LinearOperator.known_matrix(form=)`
+(the matrix if it is already held), `components_action()` and
+`components_adjoint_action()`, `is_identity`; `from_callables` takes
+`components_action=` and `components_adjoint_action=` rather than a caller
+writing private fields on its result. `resolve_rng` in `algebra.spaces`
+returns a fresh `default_rng()` when given None, and there is no shared
+module-level generator anywhere. `REORTHOGONALIZATION_THRESHOLD`,
+`CoordinateSpace.orthonormalize_columns`, `HilbertSpace.orthogonalize_against`
+(a separate method, since the range finder needs the residual and both norms
+back), `CoordinateDirectSum` (its hash keyed on the class so a subclass
+inherits it), `Sphere.plotting_grid` (the transform grid's colatitudes,
+longitudes and values, without the wrap column and pole row, as copies),
+`combine_log_normalizer`, `OrthogonalProjector.onto_kernel(inverse=)`,
+`FactoredNormalOperator.prior_precision` and `error_precision` (None by
+default) are all public for the same reason. `Ball` exposes `covariance`
+and `precision` so it is interchangeable with `Ellipsoid` wherever a
+quadratic set's shape is read, and the Ball-or-Ellipsoid chains are gone.
+The capability flags (`has_membership`, `has_projection`,
+`has_support_function`, `has_maximizer`, `has_level_function`,
+`has_smooth_level_function`) with `level_function()` and `level` are
+declared on `Subset`, so a `SublevelSet` is a level-function set like any
+other and nothing probes with `getattr`; the conversions stay on
+`ConvexSet`. The normal operators' property "this operator with its
+structure forgotten" is `plain_operator`; it was `assembled`, which
+shadowed the base method `assembled()` and broke substitutability.
+
+**D-159. Refusals and failure reports settled by the docstring review**
+(2026-10-28, from `CODE_ISSUES.md` of 2026-10-26). `from_covariance_matrix`
+requires `form=` like every matrix constructor (it defaulted to Galerkin).
+`from_standard_deviations` is defined only on a diagonal metric and refuses
+otherwise, naming the alternatives, because its factor is not self-adjoint
+on any other and no real use needs one. A missing ingredient (a subspace's
+equation, an estimator's forward or error, a problem's error, a measure's
+covariance) is a `ValueError` everywhere, never an `AttributeError`, which
+`hasattr` would swallow. Non-convergence in the MFEM backends and an
+indefinite preconditioner in MINRES raise `ConvergenceError`, as CG does;
+LSQR warns when not strict, as every other iterative solver does.
+`TrustRegionNewton` reports a collapsed trust region by its own message and
+the true iteration count, and applies `ftol` to accepted steps.
+`random_range` validates `block_size` and `rtol`, returns an empty basis for
+a zero operator, and `random_diagonal` refuses `samples < 1`; the
+chi-square quantile functions validate `method` before any shortcut.
+`rescale_directional_variance` refuses a non-positive target. `sem1d`
+requires planetmodel 1.3 (its grids carry `kind`) and says so at import;
+`_sampled_with_extension` refuses `"fit"`, which is the callers' branch.
+`joint_measure` and `from_direct_sum` take any samplable prior through the
+generic product, a non-Gaussian prior giving a sampling-only joint measure.
+`parallel._context_is_set` degrades to "no context" if joblib renames the
+internals it reads.
+
+**D-160. The rest of the clean-up of 2026-10-28.** `LocalizedPreconditioner`
+is the spelling (it was `LocalisedPreconditioner`, against D-100), and an
+index outside every block keeps its exact `A Q A*` diagonal entry, probed
+off the factors, so a partial cover is never singular; it takes `n_jobs=`.
+MFEM keep-alive references live on the pygeoinf object that owns the
+solver (the operator's closure or the space), never as attributes on SWIG
+objects, and the solver factories return the solver with its parts. The
+point-evaluation gate on every space family shares one private signature,
+`_require_point_evaluation(what, /, *, points=None, side=None, unsafe)`.
+`Box.support_projection` on a Sobolev box now has the Sobolev space on
+both sides (it had the Lebesgue space as its domain, a wrong adjoint that
+the action-only test could not see). D-10 is enforced by a test that greps
+the package, examples, tutorials and tests for a decision citation.
+`tests/test_phase_four.py` is `tests/test_assorted.py`. The review
+documents (`CODE_ISSUES.md`, `DOCSTRING_REVIEW.md`, `CODE_PRACTICE_SCAN.md`)
+are deleted with this entry; their measurements are in the appendix under
+D-157, and what was declined is recorded here: LSQR records no
+iteration-0 history entry; the plotting functions keep setting
+`center_line`, `contour_set` and `gridliner` on the Axes because their
+two-tuple returns are unpacked by callers; `mahalanobis_squared` and
+`grad_log_density` keep `NotImplementedError` for a missing precision; the
+`estimate_truncation_degree` naming (v1's name means v2's
+`sufficient_degree`) is open for David.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling
@@ -2181,3 +2318,91 @@ laptop and should be re-measured before being quoted.
   `H²` with `L` 0.3, against the fixed 0.06 the check then had (D-125). With
   the metric `[1, 4, 9]` scaled by 1e4 a correct space gave an off-diagonal
   310 against that 0.06; scaled by 1e-4 the v1 construction passed it.
+
+- Recovered from docstrings on 2026-10-28 (D-157; measured between
+  2026-08 and 2026-10 on the same laptop unless said otherwise):
+  - Orthonormalising 50 fields on a sphere: 1.9 s through `inner_product`
+    against 0.1 s on components (100 transforms); a 30-step Lanczos run,
+    1047 analyses against 152. CG on a 2000-dimensional operator over a
+    dense Gram matrix: 320 ms stored as Galerkin against 95 ms as components.
+  - `rtol` default (D-8): a 40 000-dimensional five-point Laplacian with a
+    0.01 shift, CG takes 147 / 243 / 301 iterations at `rtol` 1e-5 / 1e-8 /
+    1e-10 with solution errors 4e-5 / 4e-8 / 4e-10.
+  - `BlockPreconditioner` in blocks of 20: 3.5 MB at dimension 2000 against
+    97 MB for the dense matrix; a dict-of-sets pattern cost 11 MB where the
+    pattern itself is 1.6. `ColumnThresholdedPreconditioner` at 2000 with
+    threshold 0.1 peaks at 1.2 MB.
+  - `random_diagonal`'s norm-ratio error estimate against the achieved
+    error on a 120-dimensional operator: 0.042 against 0.045 at 20 probes,
+    0.0094 against 0.0094 at 420.
+  - Lanczos reorthogonalisation: on a spectrum 1e-6 to 1e6 over 200 steps,
+    a run to 250 of 300 dimensions and tenfold repeated eigenvalues, a second
+    pass moves `max |Q Q^T - I|` from 1.3e-15 to between 1.1e-15 and 1.8e-15.
+    `eigh_tridiagonal` against `np.linalg.eigh` at k = 3/5/10/20/40:
+    7.6/8.4/12.5/26.2/65.9 us against 3.5/4.5/8.6/22.7/80.4 us, one BLAS
+    thread, crossover between 20 and 40, hence the limit 32. A convergence
+    check every k steps is slower (200 probes, `log` at `rtol` 1e-3: dim 300,
+    0.037/0.038/0.041 s for checks every 1/2/3 steps; dim 2000,
+    1.06/1.23/1.37 s), the check itself 27% of a stochastic log-determinant
+    at dimension 300.
+  - `log_determinant`'s dense limit (D-50): slogdet at 4000 takes 0.8 s on
+    one thread and 2.0 s at 4096 on this BLAS; dense against stochastic on a
+    well-conditioned operator, 4.2x faster at 2000 and 3.6x at 3000; the
+    stochastic estimate of a diagonal operator at dimension 1000, 455.4 +/-
+    2.8 against 456.7; factorising the identity at 3000 cost 0.37 s and
+    doubled the memory.
+  - Import time: `scipy.stats` and `scipy.optimize` were 0.26 s of a 0.48 s
+    `import pygeoinf2`, 0.22 s once `quadratic_forms` and `inference.problem`
+    import them lazily.
+  - `_imhof` by trapezoid against `quad` at three weights: 3.7 ms against
+    106 ms. Brent in `log t` against bisection on a chi-squared-like
+    quantity from three starts: 10-13 against 23-28 solves per root.
+  - `ftol` (D-157): on a 60-dimensional quadratic of condition 4.9, L-BFGS
+    stopped at |g| = 1.8e-7 after 19 iterations and reported failure,
+    nonlinear CG at 1.1e-6, steepest descent took 2000 iterations and 5330
+    evaluations; with `ftol` and the precision outcome the four converge in
+    16 to 25 iterations and 40 to 119 evaluations.
+  - `_minimize_on_simplex`: a general nonlinear solver cost fifty seconds per
+    bundle minimisation; over 30 random bundles at 400 iterations the
+    accelerated method left a smaller KKT residual on 93 per cent, by a
+    median factor of 3300, and ended behind on 2 of 30; keeping the best
+    iterate took the median from 557 to 3300; across the Backus tests the
+    median `Q` condition number was 1e23 and the residual 4.8e-7 at the
+    median, 3.5e-3 at the 99th percentile, the reason `tolerance` and
+    `warn_above` are separate.
+  - The retired KKT route against `ChambollePockSolver` over sixteen
+    directions at noise radius 0.05: fourteen agree to 1e-11, two where the
+    multiplier hit its clip to 2.4e-3. The retired dual route against its
+    primal: 1e-10 (strong duality checked); dual against primal 1.7e-8
+    relative, primal against KKT 2.7e-11, on the support values. The retired
+    likelihood route's fitted misfit sat 0.8 per cent above the level on one
+    seed in twenty-five before the multiplier scaling.
+  - KL divergence: dense at dimension 4000 exact in 4.4 s, a hundred probes
+    37 s to reach +/- 1.5; dense 0.09 / 0.63 / 4.4 s against probes' 1.4 /
+    9.3 / 37 s at 960 / 2000 / 4000. The folded stochastic route on a dense
+    reference of dimension 400 and condition 1e6: 15.14 +/- 0.30 against
+    15.67, where the old three-estimate route gave -7.0 +/- 22.8. The
+    generalised symmetric eigenproblem `(C_gal, G)` for `ambient_ball`
+    against a non-symmetric decomposition of `C_c`: 0.05 s against 0.26 s at
+    1000, 4.0 s against 15.2 s at 4000. Imhof 0.8 s at 500 weights and
+    10.4 s at 2000; the matched chi-square agrees to 9e-5 and 3e-5 relative
+    in 0.001 s.
+  - Binned density: an axis-aligned filter is wrong by 8% of the peak and
+    moves contour levels by 6% on a correlated cloud; the full kernel 1.5%
+    and 0.7%; 2.2 ms against `gaussian_kde`'s 5.0 s per panel at 20 000
+    draws on a 160 x 160 grid (8.9 s of example 26's 12.2 s).
+  - The false noise-free model-space posterior `Q^-1 + A* A`: mean wrong by
+    0.86 against a mean of norm 2.6 on a random 12-by-8 problem.
+  - Preparing points once (2026-08-29): the conversion was 14.5 of 37 ms on
+    a sphere at 1e5 points, 32 of 61 ms on a torus, 230 of 254 ms on a
+    bounded box. finufft at every core against one thread on a 16-core
+    machine: 21 ms against 4.4 ms at `lmax` 128 for every point count from
+    200 to 10 000. The sphere's point-evaluation thresholds: the old ones
+    left a factor of 13 at `lmax` 64 and 1000 points (34 ms direct against
+    2.6 ms transform). The sphere's quadrature inner product agrees with the
+    component route to 6e-15 at every truncation, radius and sampling
+    tested, 2e-14 with one raw pointwise product as an argument, 0.05% to 2%
+    apart with both. `Box.project_function` without the taper: a path
+    integral from 0.05 to 0.95 of the constant one over `[0, 1]` gives
+    0.851 against 0.9, 7e-6 for a path from 0.4 to 0.6.
+  - `_to_mfem` entry-by-entry conversion: 16 ms for 33 000 stored entries.

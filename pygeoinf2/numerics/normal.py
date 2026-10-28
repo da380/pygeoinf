@@ -27,10 +27,10 @@ family of preconditioner factories.
 
 from __future__ import annotations
 
-import numpy as np
-
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Sequence, Callable, Any, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
+
+import numpy as np
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
@@ -132,6 +132,23 @@ class FactoredNormalOperator(LinearOperator):
     @abstractmethod
     def error_covariance(self) -> LinearOperator | None:
         """``R``, or None when the problem is noise-free."""
+
+    @property
+    def prior_precision(self) -> LinearOperator | None:
+        """``Q^-1`` when the operator carries one, else None.
+
+        What lets a preconditioner built through the other space avoid a
+        solve. None here; a subclass that holds a precision overrides it.
+        """
+        return None
+
+    @property
+    def error_precision(self) -> LinearOperator | None:
+        """``R^-1`` when the operator carries one, else None.
+
+        As :attr:`prior_precision`: None here, overridden where held.
+        """
+        return None
 
     @property
     def scale(self) -> float:
@@ -522,12 +539,13 @@ class NormalOperator(FactoredNormalOperator):
         return None if self._error is None else self._error.precision
 
     @property
-    def assembled(self) -> LinearOperator:
+    def plain_operator(self) -> LinearOperator:
         """The plain operator, with the structure forgotten.
 
-        Rarely wanted — this object already *is* the assembled operator. It is
-        here for the case where an operator of exactly this type would be
-        picked up by a structure-aware routine that should not fire.
+        Rarely wanted — this object already *is* that operator. It is here
+        for the case where an operator of exactly this type would be picked
+        up by a structure-aware routine that should not fire. A property
+        rather than a reading of :meth:`assembled`, which forms the matrix.
         """
         return self._assembled
 

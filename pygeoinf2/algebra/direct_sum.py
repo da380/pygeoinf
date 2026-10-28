@@ -43,6 +43,7 @@ __all__ = [
     "RowLinearOperator",
     "BlockDiagonalOperator",
     "BlockDiagonalLinearOperator",
+    "CoordinateDirectSum",
 ]
 
 
@@ -64,7 +65,7 @@ class DirectSum[V](HilbertSpace[tuple]):
         labels: Sequence[str] | None = None,
     ) -> DirectSum:
         if cls is DirectSum and all(isinstance(s, CoordinateSpace) for s in spaces):
-            return object.__new__(_CoordinateDirectSum)
+            return object.__new__(CoordinateDirectSum)
         return object.__new__(cls)
 
     def __init__(
@@ -260,12 +261,25 @@ class DirectSum[V](HilbertSpace[tuple]):
         return self.projection(key).adjoint
 
 
-class _CoordinateDirectSum(DirectSum, CoordinateSpace):
+class CoordinateDirectSum(DirectSum, CoordinateSpace):
     """A direct sum all of whose summands provide coordinates.
 
     Components are the summands' components concatenated, so the Gram matrix is
-    block diagonal and every metric operation splits.
+    block diagonal and every metric operation splits. :class:`DirectSum`
+    builds one whenever every summand has coordinates, so this is rarely
+    named directly; it is public so that a space which *is* a direct sum of
+    coordinate spaces with more structure -- a layered radial model -- can
+    subclass it, and so hash and compare as the plain sum it is.
     """
+
+    def __hash__(self) -> int:
+        """The hash of the plain direct sum of the same summands.
+
+        Keyed on this class rather than on ``type(self)``, so a subclass
+        that compares equal to the plain sum of its summands hashes equal
+        to it as well, without restating the formula.
+        """
+        return hash((CoordinateDirectSum, self._key()))
 
     def __init__(
         self,
@@ -891,3 +905,6 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
             for i, operator in enumerate(self._operators)
         ]
         return [tuple(part[k] for part in parts) for k in range(len(vectors))]
+
+
+# The former private spelling, kept while ``sem1d.layered`` still imports it.

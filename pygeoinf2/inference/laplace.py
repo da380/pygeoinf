@@ -33,12 +33,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..algebra.linearization import QuadraticModel
-from ..algebra.operators import LinearOperator, Functional, LinearFunctional
+from ..algebra.operators import Functional, LinearFunctional, LinearOperator
 from ..algebra.spaces import HilbertSpace
+from ..numerics.normal import NormalOperator
 from ..numerics.optimization import LBFGS, Optimizer
 from ..numerics.solvers import LinearSolver
 from ..probability.gaussian import GaussianMeasure
-from ..numerics.normal import NormalOperator
 from .problem import ForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover

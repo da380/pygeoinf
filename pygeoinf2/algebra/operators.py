@@ -15,16 +15,13 @@ back to a generic expression node, so that a family closed under the algebra
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Literal, Self, Sequence
+from typing import Any, Callable, Literal, Self, Sequence
 
 import numpy as np
 
 from ..traits import Traits
 from .linearization import Linearization, QuadraticModel
 from .spaces import CoordinateSpace, EuclideanSpace, HilbertSpace, Reals
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = [
     "EvaluationError",
@@ -975,6 +972,42 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """
         return None
 
+    def known_matrix(
+        self, /, *, form: Literal["components", "galerkin"]
+    ) -> np.ndarray | None:
+        """The matrix in *form* if the operator already holds it, else None.
+
+        What :meth:`matrix` reads before it probes, made available to a
+        caller who wants the matrix only when it is free: a direct solver
+        deciding whether a factorization costs a read or ``dim``
+        applications, a norm that has a closed form on a stored matrix. By
+        contract this applies the operator zero times, so asking costs
+        nothing when the answer is None.
+
+        Args:
+            form: ``"components"`` or ``"galerkin"``.
+
+        Returns:
+            The matrix, or None when producing it would mean applying the
+            operator.
+
+        Raises:
+            ValueError: for an unknown *form*.
+        """
+        if form not in ("components", "galerkin"):
+            raise ValueError(f"Unknown matrix form {form!r}.")
+        return self._known_matrix(form)
+
+    @property
+    def is_identity(self) -> bool:
+        """True only for the identity operator on a space.
+
+        The identity built by :meth:`identity`, not an operator that happens
+        to act as one: a code path that can skip a composition or a
+        push-forward asks this rather than testing the type.
+        """
+        return False
+
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:
@@ -1046,6 +1079,30 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> Callable[[np.ndarray], np.ndarray] | None:
         """:meth:`_components_action` for the adjoint: ``c_y -> c_{A* y}``."""
         return None
+
+    def components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        """The action on component arrays, when the operator has one.
+
+        ``c_x -> c_{Ax}`` as a function on arrays, bypassing the space's
+        vector type, which is what lets a mass operator or a fused product
+        stay on arrays. None when the operator has no such shortcut; the
+        caller then goes through ``from_components`` and ``to_components``.
+        Read-only: an operator supplies one by overriding the protected hook.
+
+        Returns:
+            The array action, or None.
+        """
+        return self._components_action()
+
+    def components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        """As :meth:`components_action`, for the adjoint.
+
+        Returns:
+            The adjoint's array action, or None.
+        """
+        return self._components_adjoint_action()
 
     def diagonals(
         self,
@@ -1242,6 +1299,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
         *,
         adjoint: Callable[[Y], X] | None = None,
         traits: Traits = Traits.NONE,
+        components_action: Callable[[np.ndarray], np.ndarray] | None = None,
+        components_adjoint_action: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> LinearOperator[X, Y]:
         """Build a linear operator from its action and, ideally, its adjoint.
 
@@ -1256,12 +1315,24 @@ class LinearOperator[X, Y](Operator[X, Y]):
                 whenever it is known.
             traits: claims about the operator. Not verified here;
                 ``testing.check_traits`` does that.
+            components_action: the same action on component arrays,
+                ``c_x -> c_{Ax}``, for an operator on coordinate spaces
+                whose action is naturally written that way. Optional; it is
+                what :meth:`components_action` then returns, and lets a
+                mass operator or a fused product stay on arrays.
+            components_adjoint_action: likewise for the adjoint.
 
         Returns:
             The operator.
         """
         return _CallableLinearOperator(
-            domain, codomain, value, adjoint=adjoint, traits=traits
+            domain,
+            codomain,
+            value,
+            adjoint=adjoint,
+            traits=traits,
+            components_action=components_action,
+            components_adjoint_action=components_adjoint_action,
         )
 
     @classmethod
@@ -1559,9 +1630,6 @@ class LinearOperator[X, Y](Operator[X, Y]):
                     domain.solve_gram(base_domain.apply_gram(pulled))
                 )
 
-            lifted = _CallableLinearOperator(
-                domain, codomain, value, adjoint=adjoint, traits=traits
-            )
             # Where the two spaces on each side share their component map,
             # the operator's action on components is the lifted operator's,
             # and the adjoint's is the same formula as above on arrays. So a
@@ -1570,12 +1638,11 @@ class LinearOperator[X, Y](Operator[X, Y]):
             same_components = domain.shares_vectors_with(
                 base_domain
             ) and codomain.shares_vectors_with(base_codomain)
-            action = operator._components_action() if same_components else None
+            action = operator.components_action() if same_components else None
             adjoint_action = (
-                operator._components_adjoint_action() if same_components else None
+                operator.components_adjoint_action() if same_components else None
             )
-            if action is not None:
-                lifted._components_action_fn = action
+            lifted_adjoint_action = None
             if adjoint_action is not None:
 
                 def lifted_adjoint_action(c: np.ndarray) -> np.ndarray:
@@ -1584,8 +1651,15 @@ class LinearOperator[X, Y](Operator[X, Y]):
                         base_domain.apply_gram(adjoint_action(weighted))
                     )
 
-                lifted._components_adjoint_action_fn = lifted_adjoint_action
-            return lifted
+            return _CallableLinearOperator(
+                domain,
+                codomain,
+                value,
+                adjoint=adjoint,
+                traits=traits,
+                components_action=action,
+                components_adjoint_action=lifted_adjoint_action,
+            )
 
         # The coordinate-free route, for a mass-weighted space over a backend
         # with no component map.
@@ -1829,13 +1903,14 @@ class _CallableLinearOperator[X, Y](LinearOperator[X, Y]):
         *,
         adjoint: Callable[[Y], X] | None = None,
         traits: Traits = Traits.NONE,
+        components_action: Callable[[np.ndarray], np.ndarray] | None = None,
+        components_adjoint_action: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> None:
         super().__init__(domain, codomain, traits=traits)
         self._value_fn = value
         self._adjoint_fn = adjoint
-
-    _components_action_fn: Callable[[np.ndarray], np.ndarray] | None = None
-    _components_adjoint_action_fn: Callable[[np.ndarray], np.ndarray] | None = None
+        self._components_action_fn = components_action
+        self._components_adjoint_action_fn = components_adjoint_action
 
     def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
         return self._components_action_fn

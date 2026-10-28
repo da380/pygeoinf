@@ -1,15 +1,15 @@
 """Subsets of a Hilbert space: predicates, convex sets, and subspaces."""
 
 from .convex import (
-    ConvexIntersection,
-    Polytope,
-    BallSurface,
-    EllipsoidSurface,
     Ball,
+    BallSurface,
+    ConvexIntersection,
     ConvexSet,
     Ellipsoid,
+    EllipsoidSurface,
     HalfSpace,
     Hyperplane,
+    Polytope,
     enclosing_ellipsoid,
     sum_of_ellipsoids,
 )

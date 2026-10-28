@@ -409,14 +409,14 @@ class TestComponentsAction:
     def test_every_expression_agrees_when_chained(self, family, rng):
         space, expressions = family
         for name, operator in expressions.items():
-            action = operator._components_action()
+            action = operator.components_action()
             assert action is not None, name
             x = operator.domain.random(rng=rng)
             fused = operator.codomain.from_components(
                 action(operator.domain.to_components(x))
             )
             assert np.allclose(fused, probed(operator)(x)), name
-            adjoint = operator._components_adjoint_action()
+            adjoint = operator.components_adjoint_action()
             assert adjoint is not None, name
             y = operator.codomain.random(rng=rng)
             fused = operator.domain.from_components(

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from pygeoinf2.numerics import CGSolver
+from pygeoinf2.numerics.solvers import ConvergenceError
 from pygeoinf2.testing import (
     check_coordinates,
     check_operator,
@@ -24,15 +25,15 @@ from pygeoinf2.traits import Traits
 mfem = pytest.importorskip("mfem.ser")
 
 from pygeoinf2.backends.mfem import (  # noqa: E402
+    MfemSpace,
+    _to_scipy,
     essential_dofs_of,
+    functional_from_linear_form,
     matern_measure,
+    operator_from_bilinear_form,
     operator_from_linear_forms,
     solver_from_bilinear_form,
     white_noise_load,
-    MfemSpace,
-    _to_scipy,
-    functional_from_linear_form,
-    operator_from_bilinear_form,
 )
 
 
@@ -357,7 +358,7 @@ class TestSolvingWithMfem:
         quietly not the one it claims to be."""
         _, space, form = constrained
         inverse = solver_from_bilinear_form(space, form, rtol=1e-16, max_iterations=1)
-        with pytest.raises(RuntimeError, match="did not converge"):
+        with pytest.raises(ConvergenceError, match="did not converge"):
             inverse(space.random(rng=rng))
 
 

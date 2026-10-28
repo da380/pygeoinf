@@ -147,6 +147,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def with_order(self, order: float, /) -> "SymmetricSpace":
         """The same coordinate map, viewed with a different Sobolev order."""
 
+    @property
+    @abstractmethod
+    def length_scale(self) -> float:
+        """The Sobolev length scale, in the units of the domain.
+
+        Where the Sobolev weight turns over, and the scale the averaging
+        operators resolve their paths at when no node count is given.
+        """
+
     def _coordinate_key(self) -> Hashable:
         """Identifies the component map alone, with the metric left out.
 
@@ -801,7 +810,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
         /,
         *,
-        expectation: np.ndarray | None = None,
+        expectation: V | None = None,
         pointwise_std: float | None = None,
         norm_std: float | None = None,
     ) -> GaussianMeasure:
@@ -891,7 +900,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         /,
         *,
         amplitude: float = 1.0,
-        expectation: np.ndarray | None = None,
+        expectation: V | None = None,
         pointwise_std: float | None = None,
         norm_std: float | None = None,
     ) -> GaussianMeasure:
@@ -966,7 +975,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         spectral_cross_covariances: np.ndarray,
         /,
         *,
-        expectation: Sequence[np.ndarray] | None = None,
+        expectation: Sequence[V] | None = None,
         labels: Sequence[str] | None = None,
     ) -> GaussianMeasure:
         """Several fields on this domain, correlated scale by scale.
@@ -1055,7 +1064,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # field; applying the factor as an operator would take three
         # transforms per field (synthesize the noise, analyze it, synthesize
         # the result) where one suffices.
-        action = factor._components_action()
+        action = factor.components_action()
 
         def sample(rng: Generator | None) -> tuple:
             return space.from_components(action(space.white_noise_components(rng=rng)))
@@ -1075,7 +1084,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         correlations: np.ndarray,
         /,
         *,
-        expectation: Sequence[np.ndarray] | None = None,
+        expectation: Sequence[V] | None = None,
         labels: Sequence[str] | None = None,
     ) -> GaussianMeasure:
         """The same, from marginal spectra and a correlation matrix.
@@ -1157,7 +1166,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         power: np.ndarray | Callable[[np.ndarray], np.ndarray],
         /,
         *,
-        expectation: np.ndarray | None = None,
+        expectation: V | None = None,
     ) -> GaussianMeasure:
         """A Gaussian with a prescribed ``L2`` power *per degree*.
 
@@ -1603,7 +1612,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     #                        Point evaluation                           #
     # ----------------------------------------------------------------- #
 
-    def _require_point_evaluation(self, what: str, /, *, unsafe: bool) -> None:
+    def _require_point_evaluation(
+        self,
+        what: str,
+        /,
+        *,
+        points: Sequence[Any] | None = None,
+        side: str | None = None,
+        unsafe: bool,
+    ) -> None:
         r"""Refuse point evaluation on a space too rough to admit it.
 
         Sobolev embedding: point evaluation is a bounded functional on ``H^s``
@@ -1622,6 +1639,10 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Args:
             what: the operation, named for the message.
+            points: where; unused here, where the threshold is the same
+                everywhere, and part of the signature every function space
+                shares with the spectral-element ones.
+            side: likewise, for a layered space's interfaces.
             unsafe: proceed regardless.
 
         Raises:
@@ -2923,6 +2944,9 @@ class _FlexureOperator(LinearOperator):
         self._buoyancy = np.asarray(buoyancy, dtype=float)
 
     def _analyze(self, grid: np.ndarray) -> np.ndarray:
+        # The no-copy wrap is safe here: every array handed in is one
+        # _action has just built from products of its own synthesized grids,
+        # and nothing else holds a reference to it.
         space = self._space
         return space.to_components(space._own_grid_values(grid))
 

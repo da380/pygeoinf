@@ -32,8 +32,8 @@ import numpy as np
 
 __all__ = ["plot_densities", "plot_corner", "moments"]
 
-_PRIOR_COLOURS = ("green", "orange", "purple", "brown", "olive", "teal")
-_POSTERIOR_COLOURS = ("tab:blue", "tab:red", "darkgreen", "tab:orange", "purple")
+_PRIOR_COLORS = ("green", "orange", "purple", "brown", "olive", "teal")
+_POSTERIOR_COLORS = ("tab:blue", "tab:red", "darkgreen", "tab:orange", "purple")
 
 
 def moments(
@@ -414,8 +414,8 @@ def plot_densities(
     prior_axis = None
     if prior_summary:
         prior_axis = axis.twinx()
-        prior_axis.set_ylabel("prior density", color=_PRIOR_COLOURS[0])
-        prior_axis.tick_params(axis="y", labelcolor=_PRIOR_COLOURS[0])
+        prior_axis.set_ylabel("prior density", color=_PRIOR_COLORS[0])
+        prior_axis.tick_params(axis="y", labelcolor=_PRIOR_COLORS[0])
         for position, (mean, deviation, draws) in enumerate(prior_summary):
             label = (
                 prior_labels[position]
@@ -428,7 +428,7 @@ def plot_densities(
                 mean,
                 deviation,
                 draws,
-                color=_PRIOR_COLOURS[position % len(_PRIOR_COLOURS)],
+                color=_PRIOR_COLORS[position % len(_PRIOR_COLORS)],
                 label=label,
                 style=":",
                 fill=fill,
@@ -449,7 +449,7 @@ def plot_densities(
             mean,
             deviation,
             draws,
-            color=_POSTERIOR_COLOURS[position % len(_POSTERIOR_COLOURS)],
+            color=_POSTERIOR_COLORS[position % len(_POSTERIOR_COLORS)],
             label=label,
             style="-",
             fill=fill,
@@ -641,7 +641,7 @@ def plot_corner(
                             prior_mean[row],
                             prior_deviation[row],
                             None if prior_draws is None else prior_draws[:, row],
-                            color=_PRIOR_COLOURS[0],
+                            color=_PRIOR_COLORS[0],
                             label=None,
                             style=":",
                             fill=False,
@@ -791,7 +791,7 @@ def _corner_legend(
     handles = [Line2D([], [], color=color, ls="-", label=posterior_label)]
     if with_prior:
         handles.append(
-            Line2D([], [], color=_PRIOR_COLOURS[0], ls=":", label=prior_label)
+            Line2D([], [], color=_PRIOR_COLORS[0], ls=":", label=prior_label)
         )
     if with_truth:
         handles.append(

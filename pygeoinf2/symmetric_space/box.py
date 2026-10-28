@@ -29,6 +29,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator
+from ..algebra.spaces import resolve_rng
 from ..traits import Traits
 from .base import PreparedPoints
 from .fourier import PeriodicBox
@@ -194,7 +195,7 @@ class Box(PeriodicBox):
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly from the domain, never from the padding."""
-        generator = np.random.default_rng() if rng is None else rng
+        generator = resolve_rng(rng)
         return np.array(
             [generator.uniform(lower, upper) for lower, upper in self._bounds]
         )
@@ -388,7 +389,7 @@ class Box(PeriodicBox):
             from .base import lift_formal_adjoint
 
             base = self.with_order(0.0)
-            return lift_formal_adjoint(base.support_projection(), base, codomain=self)
+            return lift_formal_adjoint(base.support_projection(), self)
         return LinearOperator.self_adjoint(
             self,
             lambda x: mask * x,

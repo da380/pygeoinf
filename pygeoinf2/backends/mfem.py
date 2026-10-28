@@ -40,7 +40,8 @@ import scipy.sparse.linalg as spla
 from numpy.random import Generator
 
 from ..algebra.operators import LinearFunctional, LinearOperator
-from ..algebra.spaces import CoordinateSpace, EuclideanSpace, _resolve_rng
+from ..algebra.spaces import CoordinateSpace, EuclideanSpace, resolve_rng
+from ..numerics.solvers import ConvergenceError
 from ..traits import Traits
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -349,7 +350,7 @@ class MfemSpace(CoordinateSpace):
 
     def random(self, *, rng: Generator | None = None) -> Any:
         """A vector with independent standard normal degree-of-freedom values."""
-        return self.from_components(_resolve_rng(rng).standard_normal(self._dim))
+        return self.from_components(resolve_rng(rng).standard_normal(self._dim))
 
     # ----------------------------------------------------------------- #
     #                             Coordinates                           #
@@ -495,13 +496,19 @@ def _to_mfem(matrix: Any) -> Any:
     return built
 
 
-def _default_mfem_solver(matrix: Any, rtol: float, max_iterations: int) -> Any:
+def _default_mfem_solver(
+    matrix: Any, rtol: float, max_iterations: int
+) -> tuple[Any, tuple[Any, ...]]:
     """Conjugate gradients with a Gauss-Seidel smoother, MFEM's own.
 
     A reasonable default for a symmetric positive definite finite element
     system, and the point is that it is MFEM's: the mesh, the assembly and the
     solve all stay on one side of the boundary, and this library only says what
     the result *is*.
+
+    Returns:
+        The solver, and the objects it holds raw pointers to, which whoever
+        owns the solver must keep alive for as long as it is used.
     """
     mfem = _require_mfem()
     solver = mfem.CGSolver()
@@ -512,11 +519,10 @@ def _default_mfem_solver(matrix: Any, rtol: float, max_iterations: int) -> Any:
     solver.SetMaxIter(int(max_iterations))
     solver.SetPrintLevel(-1)
     # MFEM's solver holds raw pointers to its operator and preconditioner and
-    # owns neither. Without these references Python is free to collect the
-    # smoother the moment this function returns, and the next solve reads freed
-    # memory — which does not raise, it segfaults.
-    solver._pygeoinf_keepalive = (matrix, smoother)
-    return solver
+    # owns neither. Without a reference held by the solver's owner Python is
+    # free to collect the smoother the moment this function returns, and the
+    # next solve reads freed memory — which does not raise, it segfaults.
+    return solver, (matrix, smoother)
 
 
 def solver_from_bilinear_form(
@@ -577,17 +583,18 @@ def solver_from_bilinear_form(
 
     Raises:
         ImportError: without MFEM installed.
-        RuntimeError: from an application of the returned operator, when
+        ConvergenceError: from an application of the returned operator, when
             *strict* and MFEM's solver reports that it did not converge.
     """
     mfem = _require_mfem()
     system = _to_mfem(sp.csr_matrix(space.restrict(form.SpMat())))
-    solver = (
-        _default_mfem_solver(system, rtol, max_iterations)
-        if make_solver is None
-        else make_solver(system)
-    )
-    retained = (system, solver)
+    if make_solver is None:
+        solver, parts = _default_mfem_solver(system, rtol, max_iterations)
+    else:
+        solver, parts = make_solver(system), ()
+    # The operator built below owns the solver, through this closure, and with
+    # it everything the solver points to.
+    retained = (system, solver, *parts)
     size = space.dim
 
     def solve(x: Any, _retained: Any = retained) -> Any:
@@ -601,7 +608,7 @@ def solver_from_bilinear_form(
         solution.Assign(0.0)
         solver.Mult(right_hand_side, solution)
         if strict and hasattr(solver, "GetConverged") and not solver.GetConverged():
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"The MFEM solver did not converge in "
                 f"{solver.GetNumIterations()} iterations. Loosen rtol, raise "
                 f"max_iterations, or supply a better preconditioner through "
@@ -684,13 +691,16 @@ def _white_noise_integrator(seed: int) -> Any:
     ``WhiteGaussianNoiseDomainLFIntegrator.__init__`` in PyMFEM ends with
     ``self._coeff = QG``, and ``QG`` is not defined anywhere — so the
     constructor raises ``NameError`` every time, after the underlying C++
-    object has already been made. This does the SWIG initialization directly
-    and skips the line that fails.
-
-    A workaround for an upstream bug, and narrow on purpose: if PyMFEM fixes
-    it, the plain constructor will work and this can go.
+    object has already been made. The public constructor is tried first, so
+    that a PyMFEM which fixes this takes the ordinary path; on that
+    ``NameError`` the SWIG initialization is done directly here, skipping the
+    line that fails.
     """
-    _require_mfem()
+    mfem = _require_mfem()
+    try:
+        return mfem.WhiteGaussianNoiseDomainLFIntegrator(int(seed))
+    except NameError:
+        pass
     from mfem._ser import _lininteg, lininteg
 
     integrator = lininteg.WhiteGaussianNoiseDomainLFIntegrator.__new__(
@@ -721,7 +731,7 @@ def white_noise_load(
             is reproducible from a NumPy generator like everything else here.
     """
     mfem = _require_mfem()
-    seed = int(_resolve_rng(rng).integers(1, 2**31 - 1))
+    seed = int(resolve_rng(rng).integers(1, 2**31 - 1))
     # Bound to a name, not passed inline. AddDomainIntegrator does not take
     # ownership of an object built the way _white_noise_integrator has to build
     # it, so a temporary is collected before Assemble runs and the form

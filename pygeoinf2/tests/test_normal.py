@@ -25,12 +25,12 @@ from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.inference import (
     LinearForwardProblem,
     LinearGaussianInversion,
-    LocalisedPreconditioner,
     NormalDiagonalPreconditioner,
     NormalOperator,
 )
 from pygeoinf2.numerics.preconditioners import (
     JacobiPreconditioner,
+    LocalizedPreconditioner,
     WoodburyPreconditioner,
 )
 from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
@@ -190,7 +190,7 @@ class TestNormalDiagonalPreconditioner:
         """It cannot do its job without the factors, and says so rather than
         falling back to something that would quietly work worse."""
         with pytest.raises(TypeError, match="still carries them"):
-            NormalDiagonalPreconditioner()(normal.assembled)
+            NormalDiagonalPreconditioner()(normal.plain_operator)
 
     def test_the_model_space_formalism_is_refused(self, setup):
         forward, prior, error = setup
@@ -199,14 +199,14 @@ class TestNormalDiagonalPreconditioner:
             NormalDiagonalPreconditioner()(model)
 
 
-class TestLocalisedPreconditioner:
+class TestLocalizedPreconditioner:
     """Nystrom on the blocks that couple, sparse LU on the assembly."""
 
     def test_one_full_rank_block_is_the_exact_inverse(self, normal, rng):
         """With a diagonal error covariance, which is what the class documents.
         Nothing is dropped, so nothing may be lost."""
         data = normal.data_space
-        exact = LocalisedPreconditioner(
+        exact = LocalizedPreconditioner(
             [list(range(data.dim))], rank=data.dim, rng=np.random.default_rng(3)
         )(normal)
         for _ in range(10):
@@ -225,10 +225,10 @@ class TestLocalisedPreconditioner:
         """
         data = normal.data_space
         indices = list(range(data.dim))
-        once = LocalisedPreconditioner(
+        once = LocalizedPreconditioner(
             [indices], rank=data.dim, rng=np.random.default_rng(3)
         )(normal)
-        twice = LocalisedPreconditioner(
+        twice = LocalizedPreconditioner(
             [indices, indices], rank=data.dim, rng=np.random.default_rng(3)
         )(normal)
 
@@ -255,7 +255,7 @@ class TestLocalisedPreconditioner:
         normal = NormalOperator(
             forward, prior, error=correlated, formalism="data_space"
         )
-        exact = LocalisedPreconditioner(
+        exact = LocalizedPreconditioner(
             [list(range(data.dim))], rank=data.dim, rng=np.random.default_rng(3)
         )(normal)
         vector = data.random(rng=rng)
@@ -264,7 +264,7 @@ class TestLocalisedPreconditioner:
 
     def test_overlapping_blocks_are_allowed(self, normal, rng):
         data = normal.data_space
-        overlapping = LocalisedPreconditioner(
+        overlapping = LocalizedPreconditioner(
             [list(range(0, data.dim - 1)), list(range(1, data.dim))],
             rank=3,
             rng=np.random.default_rng(5),
@@ -273,7 +273,44 @@ class TestLocalisedPreconditioner:
 
     def test_out_of_range_blocks_are_refused(self, normal):
         with pytest.raises(ValueError, match="lie in"):
-            LocalisedPreconditioner([[0, normal.data_space.dim]])(normal)
+            LocalizedPreconditioner([[0, normal.data_space.dim]])(normal)
+
+    def test_an_uncovered_index_keeps_its_exact_diagonal(self, normal, rng):
+        """A singleton block at full rank is exact, and every other index is
+        uncovered: the assembly is then the exact diagonal of ``A Q A* + R``
+        throughout, which is what the normal-diagonal preconditioner inverts.
+        """
+        data = normal.data_space
+        localized = LocalizedPreconditioner(
+            [[0]], rank=1, rng=np.random.default_rng(3)
+        )(normal)
+        diagonal = NormalDiagonalPreconditioner()(normal)
+        for _ in range(5):
+            vector = data.random(rng=rng)
+            expected = diagonal(vector)
+            assert data.norm(
+                data.subtract(localized(vector), expected)
+            ) == pytest.approx(0.0, abs=1e-10 * data.norm(expected))
+
+    def test_a_partial_cover_of_exact_data_is_not_singular(self, setup, rng):
+        """With no error measure an uncovered index had an empty row and
+        column, and the sparse LU reported an exactly singular factor."""
+        forward, prior, _ = setup
+        exact = NormalOperator(forward, prior, formalism="data_space")
+        data = exact.data_space
+        localized = LocalizedPreconditioner(
+            [[0, 1]], rank=2, rng=np.random.default_rng(3)
+        )(exact)
+        vector = data.random(rng=rng)
+        image = localized(vector)
+        assert np.all(np.isfinite(data.to_components(image)))
+        # Block-diagonal where the blocks are, diagonal elsewhere: on a basis
+        # vector of an uncovered index it is the diagonal preconditioner.
+        unit = data.from_components(np.eye(data.dim)[-1])
+        expected = NormalDiagonalPreconditioner()(exact)(unit)
+        assert data.norm(data.subtract(localized(unit), expected)) == pytest.approx(
+            0.0, abs=1e-10 * data.norm(expected)
+        )
 
 
 class TestPreconditionedInversion:
@@ -294,7 +331,7 @@ class TestPreconditionedInversion:
         candidates = {
             "jacobi": JacobiPreconditioner(),
             "diagonal": NormalDiagonalPreconditioner(),
-            "localized": LocalisedPreconditioner(
+            "localized": LocalizedPreconditioner(
                 [list(range(data.dim))], rank=4, rng=np.random.default_rng(5)
             ),
             "woodbury": WoodburyPreconditioner.from_normal(
@@ -360,7 +397,7 @@ class TestPreconditionedInversion:
 
     def test_from_normal_refuses_an_operator_without_factors(self, normal):
         with pytest.raises(TypeError, match="factors"):
-            WoodburyPreconditioner.from_normal(normal.assembled)
+            WoodburyPreconditioner.from_normal(normal.plain_operator)
 
     def test_a_surrogate_preconditions_the_true_operator(self, inversion, rng):
         """The point of the whole arrangement, on a small problem: a surrogate

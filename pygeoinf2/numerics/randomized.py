@@ -28,7 +28,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
-from ..algebra.spaces import CoordinateSpace
+from ..algebra.spaces import CoordinateSpace, resolve_rng
 from ..traits import Traits, close
 
 __all__ = [
@@ -163,8 +163,21 @@ def _fast(space: Any) -> bool:
 
 def _orthonormal_columns(space: CoordinateSpace, vectors: Sequence[Any]) -> np.ndarray:
     """``orthonormal_basis`` on components, returning the columns."""
-    columns, _ = space._orthonormalize_columns(space.components_of(vectors), rtol=1e-10)
+    columns, _ = space.orthonormalize_columns(space.components_of(vectors), rtol=1e-10)
     return columns
+
+
+def _validate_range_options(block_size: int, rtol: float) -> None:
+    """The adaptive range finder's knobs, checked once for both routes.
+
+    Raises:
+        ValueError: for a non-positive block size, or a tolerance outside
+            ``(0, 1)``.
+    """
+    if block_size < 1:
+        raise ValueError(f"The block size must be positive, got {block_size}.")
+    if not 0.0 < rtol < 1.0:
+        raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
 
 
 def _range_with_columns(
@@ -206,6 +219,7 @@ def _range_with_columns(
             ),
             None,
         )
+    _validate_range_options(block_size, rtol)
     ceiling = max_rank if max_rank is not None else min(domain.dim, codomain.dim)
     if ceiling <= 0:
         return [], None
@@ -289,6 +303,7 @@ def random_range(
         ValueError: for a non-positive rank or block size, or a tolerance
             outside ``(0, 1)``.
     """
+    _validate_range_options(block_size, rtol)
     codomain = operator.codomain
     ceiling = (
         max_rank if max_rank is not None else min(operator.domain.dim, codomain.dim)
@@ -344,7 +359,7 @@ def random_range(
 
         residuals, largest = [], 0.0
         for probe in block:
-            residual, norm, _ = codomain._orthogonalize_against(probe, basis)
+            residual, norm, _ = codomain.orthogonalize_against(probe, basis)
             largest = max(largest, norm)
             if norm > 1e-12 * scale:
                 residuals.append(codomain.scale_inplace(1.0 / norm, residual))
@@ -395,7 +410,9 @@ def _adaptive_range_on_components(
         if scale is None:
             scale = float(norms.max()) if norms.size else 0.0
             if scale == 0.0:
-                return []
+                # A zero operator: an empty basis, in the array form the
+                # callers read the shape of.
+                return np.zeros((codomain.dim, 0))
 
         # Project the block off the basis, twice, and read the residual norms.
         residual = block.copy()
@@ -411,7 +428,7 @@ def _adaptive_range_on_components(
 
         keep = residual_norms > 1e-12 * scale
         # The residuals are orthogonal to the basis but not yet to each other.
-        fresh, _ = codomain._orthonormalize_columns(
+        fresh, _ = codomain.orthonormalize_columns(
             residual[:, keep] / np.where(keep, residual_norms, 1.0)[keep],
             rtol=1e-10,
             against=columns[:, :count] if count > 0 else None,
@@ -783,7 +800,10 @@ def random_cholesky(
     decomposition = random_eig(operator, rank=rank, rng=rng, **kwargs)
     values = np.clip(decomposition.eigenvalues, 0.0, None)
     space = operator.domain
-    columns = getattr(decomposition.factor, "columns", None)
+    # The factor's component matrix is its columns; read when it is stored,
+    # which it is on a coordinate space, and synthesized from the vectors
+    # otherwise.
+    columns = decomposition.factor.known_matrix(form="components")
     if columns is not None:
         return LowRankCholesky(
             LinearOperator.from_component_columns(space, columns * np.sqrt(values))
@@ -852,11 +872,9 @@ def random_trace(
         raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
 
     space = operator.domain
-    from numpy.random import default_rng
-
     from ..parallel import parallel_map
 
-    parent = default_rng() if rng is None else rng
+    parent = resolve_rng(rng)
 
     def probe_once(stream: Any) -> float:
         probe = space.white_noise(rng=stream)
@@ -949,7 +967,7 @@ def deflated_diagonal(
             rng=rng,
             n_jobs=n_jobs,
         )
-    generator = rng if rng is not None else np.random.default_rng()
+    generator = resolve_rng(rng)
     low_rank = random_eig(operator, rank=rank, rng=generator, n_jobs=n_jobs)
     domain: CoordinateSpace = operator.domain
 
@@ -958,7 +976,7 @@ def deflated_diagonal(
     # sum_i lambda_i (G c_i)(G c_i)^T, so which diagonal is wanted decides
     # how many times the metric appears -- once or twice. On an orthonormal
     # basis the two coincide, which is why this needs a weighted space to test.
-    stored = getattr(low_rank.factor, "columns", None)
+    stored = low_rank.factor.known_matrix(form="components")
     columns = (
         stored.T
         if stored is not None
@@ -1038,18 +1056,20 @@ def random_diagonal(
         One value per component.
 
     Raises:
-        ValueError: for an unknown form, or a tolerance outside ``(0, 1)``.
+        ValueError: for an unknown form, fewer than one sample, or a
+            tolerance outside ``(0, 1)``.
     """
     require_coordinates(operator.domain, operator.codomain)
     domain: CoordinateSpace = operator.domain
     codomain: CoordinateSpace = operator.codomain
     if form not in ("galerkin", "components"):
         raise ValueError(f"Unknown form {form!r}.")
-
+    if samples < 1:
+        raise ValueError(f"At least one probe is needed, got samples={samples}.")
     if rtol is not None and not 0.0 < rtol < 1.0:
         raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
 
-    generator = rng if rng is not None else np.random.default_rng()
+    generator = resolve_rng(rng)
     dimension = min(domain.dim, codomain.dim)
     numerator = np.zeros(dimension)
     denominator = np.zeros(dimension)

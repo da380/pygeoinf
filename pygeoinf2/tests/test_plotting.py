@@ -369,7 +369,7 @@ class TestDensityResolution:
 
         space = EuclideanSpace(2)
         measure = GaussianMeasure.from_covariance_matrix(
-            space, np.array([[1.0, 0.4], [0.4, 0.6]])
+            space, np.array([[1.0, 0.4], [0.4, 0.6]]), form="galerkin"
         )
 
         def center_minus_corner(**kwargs):
@@ -1236,6 +1236,18 @@ class TestBoxPointsPathsAndBalls:
         space = BoxLebesgue((32,), lengths=(1.0,))
         ax, spans = plotting.plot_balls(space, [np.array([0.5]), np.array([0.05])], 0.1)
         assert len(spans) == 3
+
+    def test_a_ball_wider_than_the_circle_covers_it(self):
+        """``2 r >= length`` is the whole circle: one span over ``[0, L]``,
+        not two slivers at the ends with the middle left unshaded."""
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as BoxLebesgue
+
+        space = BoxLebesgue((32,), lengths=(1.0,))
+        ax, spans = plotting.plot_balls(space, [np.array([0.5])], 0.6)
+        assert len(spans) == 1
+        (span,) = spans
+        assert span.get_x() == pytest.approx(0.0)
+        assert span.get_x() + span.get_width() == pytest.approx(1.0)
 
     def test_the_network_marks_distinct_sources_and_receivers(self):
         space = self.torus()

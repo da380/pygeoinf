@@ -37,9 +37,9 @@ from ..traits import Traits
 from .solvers import (
     ConvergenceError,
     DirectSolver,
+    FamilySolver,
     IterativeSolver,
     LinearSolver,
-    FamilySolver,
 )
 
 _UNSET: Any = object()
@@ -487,7 +487,7 @@ class DampedSolves:
                 # One probe of the chain, discarded: it says whether the
                 # member reads its matrix or has to be applied for it, and
                 # asking costs no applications either way.
-                if (self.base + self.shift)._known_matrix(form) is None:
+                if (self.base + self.shift).known_matrix(form=form) is None:
                     self._family_matrices = (
                         self.base.matrix(form=form),
                         self.shift.matrix(form=form),

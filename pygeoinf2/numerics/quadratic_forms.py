@@ -19,16 +19,20 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from numpy.random import Generator
+from numpy.random import Generator, default_rng
 
 __all__ = ["weighted_chi2_cdf", "weighted_chi2_quantile"]
+
+_METHODS = ("auto", "imhof", "saddlepoint", "matched", "monte_carlo")
 
 
 # ``scipy.stats`` and ``scipy.optimize`` are imported on first use, not at
 # module scope. This module is reached by ``import pygeoinf2`` through the
 # ``numerics`` package, and the two are a large part of the package's import
 # time, for functions most sessions never call. tests/test_code_practice.py
-# checks that loading this module imports neither.
+# checks that loading this module imports neither, and loads it on its own
+# to do so -- which is why it resolves ``rng=None`` itself rather than
+# through the package's helper.
 
 
 def _chi2() -> "Any":
@@ -63,6 +67,20 @@ def _validate(weights: np.ndarray) -> np.ndarray:
     if live.size == 0:
         raise ValueError("At least one weight must be positive.")
     return live
+
+
+def _validate_method(method: str) -> None:
+    """Refuse an unknown method before any shortcut can return without it.
+
+    Raises:
+        ValueError: for a method not in ``_METHODS``.
+    """
+    if method not in _METHODS:
+        raise ValueError(
+            f"Unknown method {method!r}; the methods are "
+            + ", ".join(repr(name) for name in _METHODS)
+            + "."
+        )
 
 
 def _imhof_integrand(grid: np.ndarray, weights: np.ndarray, value: float) -> np.ndarray:
@@ -238,6 +256,7 @@ def weighted_chi2_cdf(
             all zero -- a weighted sum of squares with no positive weight is
             not a distribution this can invert.
     """
+    _validate_method(method)
     live = _validate(weights)
     if value <= 0.0:
         return 0.0
@@ -252,20 +271,18 @@ def weighted_chi2_cdf(
     if method == "saddlepoint":
         return _saddlepoint(live, value)
     if method == "monte_carlo":
-        generator = np.random.default_rng() if rng is None else rng
+        generator = default_rng() if rng is None else rng
         draws = generator.standard_normal((samples, live.size))
         return float(np.mean(draws**2 @ live <= value))
-    if method in ("imhof", "auto"):
-        try:
-            return _imhof(live, value, tolerance=tolerance)
-        except (ArithmeticError, ValueError):  # pragma: no cover - rare
-            # Named rather than bare: an overflow or a degenerate weight set
-            # is a reason to fall back on the moment-matched approximation,
-            # and a KeyboardInterrupt or a bug in the integrand is not.
-            if method == "imhof":
-                raise
-            return _matched(live, value)
-    raise ValueError(f"Unknown method {method!r}.")
+    try:
+        return _imhof(live, value, tolerance=tolerance)
+    except (ArithmeticError, ValueError):  # pragma: no cover - rare
+        # Named rather than bare: an overflow or a degenerate weight set
+        # is a reason to fall back on the moment-matched approximation,
+        # and a KeyboardInterrupt or a bug in the integrand is not.
+        if method == "imhof":
+            raise
+        return _matched(live, value)
 
 
 def weighted_chi2_quantile(
@@ -300,16 +317,18 @@ def weighted_chi2_quantile(
         The quantile.
 
     Raises:
-        ValueError: for a probability outside ``(0, 1)``, or bad weights.
+        ValueError: for a probability outside ``(0, 1)``, an unknown method,
+            or bad weights.
     """
     if not 0.0 < probability < 1.0:
         raise ValueError(f"A probability lies in (0, 1), got {probability}.")
+    _validate_method(method)
     live = _validate(weights)
     if np.allclose(live, live[0]):
         return float(live[0] * _chi2().ppf(probability, live.size))
 
     if method == "monte_carlo":
-        generator = np.random.default_rng() if rng is None else rng
+        generator = default_rng() if rng is None else rng
         draws = generator.standard_normal((samples, live.size)) ** 2 @ live
         return float(np.quantile(draws, probability))
 

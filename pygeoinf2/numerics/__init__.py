@@ -1,14 +1,14 @@
 """Numerical methods built on the algebraic core."""
 
 from .convex import (
-    ChambollePockSolver,
-    SaddlePointResult,
     BallIndicator,
     BundleResult,
+    ChambollePockSolver,
     NormFunctional,
     ProximalBundleMethod,
     ProximalGradient,
     ProximalPoint,
+    SaddlePointResult,
     SquaredDistance,
     SubgradientDescent,
     SupportFunction,
@@ -27,7 +27,56 @@ from .functional_calculus import (
     operator_quadratic_form,
     operator_sqrt,
 )
-
+from .line_search import (
+    ArmijoLineSearch,
+    LineSearch,
+    LineSearchResult,
+    StrongWolfeLineSearch,
+)
+from .normal import (
+    DampedNormalOperator,
+    FactoredNormalOperator,
+    Formalism,
+    NormalOperator,
+    choose_formalism,
+)
+from .optimization import (
+    LBFGS,
+    NewtonCG,
+    NonlinearCG,
+    OptimizationResult,
+    Optimizer,
+    SteepestDescent,
+    TrustRegionNewton,
+    gauss_newton_hessian,
+    truncated_cg,
+)
+from .preconditioners import (
+    BandedPreconditioner,
+    BlockPreconditioner,
+    ColumnThresholdedPreconditioner,
+    IdentityPreconditioner,
+    InvariantDistancePreconditioner,
+    JacobiPreconditioner,
+    LocalizedPreconditioner,
+    NormalDiagonalPreconditioner,
+    SpectralPreconditioner,
+    WoodburyPreconditioner,
+    gaspari_cohn,
+    sparse_approximation,
+)
+from .quadratic_forms import (
+    weighted_chi2_cdf,
+    weighted_chi2_quantile,
+)
+from .quadratic_programming import (
+    ClarabelQPSolver,
+    OSQPQPSolver,
+    QPResult,
+    QPSolver,
+    SciPyQPSolver,
+    best_available_qp_solver,
+)
 from .randomized import (
     Estimate,
     LowRankCholesky,
@@ -41,88 +90,38 @@ from .randomized import (
     random_svd,
     random_trace,
 )
-from .line_search import (
-    ArmijoLineSearch,
-    LineSearch,
-    LineSearchResult,
-    StrongWolfeLineSearch,
-)
-from .optimization import (
-    LBFGS,
-    NewtonCG,
-    NonlinearCG,
-    OptimizationResult,
-    Optimizer,
-    SteepestDescent,
-    TrustRegionNewton,
-    gauss_newton_hessian,
-    truncated_cg,
-)
-from .normal import (
-    DampedNormalOperator,
-    FactoredNormalOperator,
-    Formalism,
-    NormalOperator,
-    choose_formalism,
-)
-from .preconditioners import (
-    BandedPreconditioner,
-    BlockPreconditioner,
-    ColumnThresholdedPreconditioner,
-    sparse_approximation,
-    IdentityPreconditioner,
-    InvariantDistancePreconditioner,
-    JacobiPreconditioner,
-    LocalisedPreconditioner,
-    NormalDiagonalPreconditioner,
-    SpectralPreconditioner,
-    WoodburyPreconditioner,
-    gaspari_cohn,
-)
-from .tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
-from .quadratic_forms import (
-    weighted_chi2_cdf,
-    weighted_chi2_quantile,
-)
 from .root_find import (
     DampedSolves,
     Evaluation,
     RootResult,
     monotone_root,
 )
-from .quadratic_programming import (
-    ClarabelQPSolver,
-    OSQPQPSolver,
-    QPResult,
-    QPSolver,
-    SciPyQPSolver,
-    best_available_qp_solver,
-)
 from .solvers import (
     BiCGStabSolver,
+    BoundFamily,
     CGSolver,
     CholeskySolver,
     ConvergenceError,
     DirectSolver,
-    BoundFamily,
     EigenSolver,
     FamilySolver,
     FlexibleCGSolver,
     GMRESSolver,
     InverseOperator,
     IterativeSolver,
-    ProgressCallback,
-    SolutionTrackingCallback,
-    SolveStep,
     LeastSquaresSolver,
     LinearSolver,
     LSQRSolver,
     LUSolver,
     MinResSolver,
-    SpectralFamilySolver,
+    ProgressCallback,
+    SolutionTrackingCallback,
     SolveResult,
+    SolveStep,
+    SpectralFamilySolver,
     resolve_solver,
 )
+from .tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
 
 __all__ = [
     "SaddlePointResult",
@@ -210,7 +209,7 @@ __all__ = [
     "ColumnThresholdedPreconditioner",
     "sparse_approximation",
     "NormalDiagonalPreconditioner",
-    "LocalisedPreconditioner",
+    "LocalizedPreconditioner",
     "InvariantDistancePreconditioner",
     "gaspari_cohn",
     "DampedNormalOperator",

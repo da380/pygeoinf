@@ -122,13 +122,24 @@ def _inside_a_worker() -> bool:
 
 
 def _context_is_set() -> bool:
-    """Whether a ``joblib.parallel_config`` context has chosen a backend."""
-    from joblib.parallel import _backend, default_parallel_config
+    """Whether a ``joblib.parallel_config`` context has chosen a backend.
 
-    config = getattr(_backend, "config", None)
-    if config is None:
+    joblib keeps the active context on a thread-local it does not export,
+    so this reads two of its internals. Should a release rename them the
+    read fails and the answer is False: the library's own default -- the
+    process backend with one thread per worker -- is then applied whether
+    or not a context is active, which is a degraded answer and not a
+    crash. The current spelling is pinned by a test.
+    """
+    try:
+        from joblib.parallel import _backend, default_parallel_config
+
+        config = getattr(_backend, "config", None)
+        if config is None:
+            return False
+        return config.get("backend") is not default_parallel_config["backend"]
+    except (ImportError, AttributeError, KeyError, TypeError):
         return False
-    return config.get("backend") is not default_parallel_config["backend"]
 
 
 def parallel_map(

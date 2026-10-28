@@ -10,8 +10,6 @@ from pygeoinf2.algebra.operators import (
     Operator,
 )
 from pygeoinf2.algebra.spaces import EuclideanSpace
-
-from .conftest import DenseMetricSpace
 from pygeoinf2.numerics.line_search import (
     ArmijoLineSearch,
     StrongWolfeLineSearch,
@@ -28,7 +26,7 @@ from pygeoinf2.numerics.optimization import (
 )
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import DenseMetricSpace, make_weighted_space
 from .doubles import OpaqueSpace
 
 
@@ -829,3 +827,63 @@ class TestEvaluationFailureProtocol:
         assert result.failure is None
         assert result.value < functional(start)
         assert space.to_components(result.minimizer)[0] >= wall
+
+
+class TestTrustRegionReportsHowItStopped:
+    """The result's count and message say what happened, not what the cap was."""
+
+    def test_a_collapsed_region_is_not_an_iteration_limit(self):
+        """Every trial fails, so the radius quarters until it is nothing. That
+        was reported as "iteration limit reached" with ``max_iterations`` as
+        the count, although the loop had stopped long before."""
+        from pygeoinf2.algebra.operators import EvaluationError
+
+        space = EuclideanSpace(2)
+        start = space.from_components(np.array([0.9, 0.0]))
+
+        def value(x):
+            c = space.to_components(x)
+            # Exactly the start and nowhere else: a tolerance here would let
+            # a tiny late step through as an accepted, flat move.
+            if not np.array_equal(c, space.to_components(start)):
+                raise EvaluationError("the forward did not converge")
+            return float(c @ c)
+
+        def derivative(x):
+            return LinearFunctional.from_derivative_components(
+                space, 2.0 * space.to_components(x)
+            )
+
+        def hessian(x):
+            return LinearOperator.identity(space) * 2.0
+
+        functional = Functional.from_callables(
+            space, value, derivative=derivative, hessian=hessian
+        )
+        result = TrustRegionNewton(max_iterations=100).minimize(functional, start)
+        assert not result.converged
+        assert "trust region collapsed" in result.message
+        assert 0 < result.iterations < 100
+        assert np.allclose(
+            space.to_components(result.minimizer), space.to_components(start)
+        )
+
+    def test_the_value_tolerance_is_applied(self, rng):
+        """``ftol`` is documented for every optimizer; the trust region used to
+        ignore it. A step that buys less than ``ftol |f|`` ends the run."""
+        space = EuclideanSpace(4)
+        offset = rng.normal(size=4)
+        base = quadratic(space, np.identity(4), offset)
+        lifted = Functional.from_callables(
+            space,
+            lambda x: base(x) + 100.0,
+            derivative=base.derivative,
+            hessian=base.hessian,
+        )
+        start = space.from_components(offset + 1e-3 * rng.normal(size=4))
+        loose = TrustRegionNewton(ftol=1e-3).minimize(lifted, start)
+        assert loose.converged
+        assert loose.message == "value tolerance reached"
+        strict = TrustRegionNewton(ftol=0.0).minimize(lifted, start)
+        assert strict.converged
+        assert strict.message == "gradient tolerance reached"

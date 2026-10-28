@@ -565,6 +565,58 @@ class TestTheBundleSubproblem:
             _minimize_on_simplex(quadratic, linear, max_iterations=1000)
 
 
+class TestTheBundleWarmStart:
+    """The QP backend's warm start must line up with the cuts: padded with a
+    zero for the cut appended since, and shifted along by one when the full
+    bundle dropped its oldest cut -- the case where the bundle's size does
+    not change, so size alone cannot tell the two apart."""
+
+    class RecordingBackend:
+        def __init__(self):
+            self.starts = []
+
+        def solve(self, quadratic, linear, rows, lower, upper, *, x0=None):
+            from pygeoinf2.numerics.quadratic_programming import QPResult
+
+            self.starts.append(None if x0 is None else np.array(x0))
+            size = linear.size
+            weights = np.arange(1.0, size + 1.0)
+            weights /= weights.sum()
+            return QPResult(x=weights, objective=0.0, status="solved")
+
+    @pytest.fixture
+    def method(self):
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        method = ProximalBundleMethod(capacity=3)
+        method._qp_solver = self.RecordingBackend()
+        return method
+
+    def test_a_growing_bundle_pads_with_a_zero(self, method):
+        backend = method.qp_solver
+        first = method._simplex_weights(np.eye(2), np.zeros(2))
+        method._simplex_weights(np.eye(3), np.zeros(3))
+        assert backend.starts[0] is None
+        assert np.allclose(backend.starts[1], np.concatenate([first, [0.0]]))
+
+    def test_a_full_bundle_shifts_the_weights_along(self, method):
+        """At capacity a cut is appended and the oldest popped, so the size
+        is unchanged and the weights must move by one, the dropped cut's
+        weight going to the new one so the start stays on the simplex."""
+        backend = method.qp_solver
+        previous = method._simplex_weights(np.eye(3), np.zeros(3))
+        method._dropped = True  # what the minimizer records on a pop
+        method._simplex_weights(np.eye(3), np.zeros(3))
+        start = backend.starts[1]
+        assert np.allclose(start[:2], previous[1:])
+        assert start[2] == pytest.approx(previous[0])
+        assert start.sum() == pytest.approx(1.0)
+        # The flag is consumed: a later growth pads again rather than shifts.
+        current = np.array(method._warm)
+        method._simplex_weights(np.eye(4), np.zeros(4))
+        assert np.allclose(backend.starts[2], np.concatenate([current, [0.0]]))
+
+
 class TestBundleResultReadsLikeAnOptimizationResult:
     def test_it_is_one(self):
         from pygeoinf2.numerics.convex import (
@@ -595,8 +647,8 @@ class TestReportedCounts:
     """The counts a result carries are the ones actually spent."""
 
     def test_subgradient_descent_evaluates_once_per_iteration(self, rng):
-        from pygeoinf2.numerics.convex import NormFunctional, SubgradientDescent
         from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.numerics.convex import NormFunctional, SubgradientDescent
 
         space = EuclideanSpace(4)
         base = NormFunctional(space)

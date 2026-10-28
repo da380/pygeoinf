@@ -41,6 +41,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearFunctional, LinearOperator
+from ..algebra.spaces import resolve_rng
 from .base import PreparedPoints, SymmetricSpace, _distribute, _gauss_legendre
 
 __all__ = ["Sphere", "Lebesgue", "Sobolev"]
@@ -812,7 +813,7 @@ class Sphere(SymmetricSpace[Any]):
         parts, degrees, orders = self._packing
         return self._radius * coefficients[parts, degrees, orders]
 
-    def from_components(self, c: np.ndarray) -> np.ndarray:
+    def from_components(self, c: np.ndarray) -> Any:
         """The field with the given harmonic coefficients.
 
         Args:
@@ -987,6 +988,31 @@ class Sphere(SymmetricSpace[Any]):
     def _core_longitudes(self) -> np.ndarray:
         """The transform grid's longitudes, without the wrap column."""
         return self._grid.core_longitudes
+
+    def plotting_grid(self, x: Any, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """A field's values on the transform's grid, with the grid's angles.
+
+        What a map of the field is drawn from: on an extended space the wrap
+        column and the pole row are left out, since they repeat the first
+        column and the pole value, and a plotter closes the seam from the
+        angles itself; on a plain space it is the whole grid.
+
+        Args:
+            x: a field of this space.
+
+        Returns:
+            ``(colatitudes, longitudes, values)``: the colatitudes and
+            longitudes in radians, and the values as a ``(colatitudes,
+            longitudes)`` array, a copy the caller may edit.
+
+        Raises:
+            ValueError: if the field is not this sphere's shape.
+        """
+        return (
+            self._core_colatitudes.copy(),
+            self._core_longitudes.copy(),
+            self._core_values(x).copy(),
+        )
 
     def basis_at(self, point: Any, /) -> np.ndarray:
         """The value of each orthonormal harmonic at a point.
@@ -1312,7 +1338,7 @@ class Sphere(SymmetricSpace[Any]):
 
     def evaluate(
         self,
-        x: np.ndarray,
+        x: Any,
         points: Sequence[Any],
         /,
         *,
@@ -1524,7 +1550,7 @@ class Sphere(SymmetricSpace[Any]):
         uniformly would crowd the poles, which is the classic way to bias a
         set of station locations.
         """
-        generator = np.random.default_rng() if rng is None else rng
+        generator = resolve_rng(rng)
         return np.array(
             [
                 float(np.degrees(np.arcsin(generator.uniform(-1.0, 1.0)))),
@@ -1807,7 +1833,9 @@ class Sphere(SymmetricSpace[Any]):
         )
 
         if angle < 1.0e-12:
-            return [np.asarray(start, dtype=float)] * count, np.zeros(count)
+            # Separate copies, so that a caller editing one node edits one node.
+            nodes = [np.array(start, dtype=float) for _ in range(count)]
+            return nodes, np.zeros(count)
         if abs(angle - np.pi) < 1.0e-10:
             raise ValueError(
                 "The endpoints are antipodal, so the great circle through "
@@ -1854,7 +1882,8 @@ class Sphere(SymmetricSpace[Any]):
                 f"[0, pi * {self._radius}], got {radius}."
             )
         if radius == 0.0:
-            return [np.asarray(center, dtype=float)] * count, np.zeros(count)
+            nodes = [np.array(center, dtype=float) for _ in range(count)]
+            return nodes, np.zeros(count)
 
         angular_radius = radius / self._radius
         cosine = np.cos(angular_radius)
@@ -2205,7 +2234,7 @@ class Sphere(SymmetricSpace[Any]):
         if count < 0:
             raise ValueError("The count must not be negative.")
         on_land = _land_test(resolution)
-        generator = np.random.default_rng() if rng is None else rng
+        generator = resolve_rng(rng)
         kept: list[np.ndarray] = []
         # Land is about three tenths of the surface, so over-draw accordingly.
         surplus = 1.5 if ocean else 4.0
@@ -2246,7 +2275,7 @@ class Sphere(SymmetricSpace[Any]):
             The ``(source, receiver)`` pairs that survive the separation
             filter, so there may be fewer than ``sources * receivers``.
         """
-        generator = np.random.default_rng() if rng is None else rng
+        generator = resolve_rng(rng)
         origins = self.earthquakes(
             count=sources, minimum_magnitude=minimum_magnitude, rng=generator
         )
@@ -2451,7 +2480,7 @@ def _subsample(
             f"Asked for {count} points from a table of {len(points)}; "
             f"pygeoinf2.datasets.{refresh} writes a larger one into the cache."
         )
-    generator = np.random.default_rng() if rng is None else rng
+    generator = resolve_rng(rng)
     chosen = generator.choice(len(points), size=count, replace=False)
     return [points[index] for index in chosen]
 

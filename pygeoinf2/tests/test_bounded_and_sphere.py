@@ -142,6 +142,18 @@ class TestBoundedDomains:
         assert projector.traits == Traits.NONE
         check_operator(projector, rng=rng)
 
+    def test_on_a_sobolev_space_both_sides_are_that_space(self, rng):
+        """The lift presents the domain as well as the codomain as the
+        Sobolev space: the projector composes with operators on it, and its
+        adjoint is taken in its metric, not the Lebesgue one."""
+        space = Interval(32, lower=0.0, upper=1.0, order=2.0, length_scale=0.1)
+        projector = space.support_projection()
+
+        assert projector.domain == space
+        assert projector.codomain == space
+        check_operator(projector, rng=rng)
+        check_operator(projector @ space.laplacian, rng=rng)
+
     def test_the_lift_is_the_one_a_caller_would_have_written(self, rng):
         lebesgue = Interval(32, lower=0.0, upper=1.0)
         sobolev = Interval(32, lower=0.0, upper=1.0, order=2.0, length_scale=0.1)
@@ -425,3 +437,48 @@ class TestGeometrySubmodules:
 
         with pytest.raises(ValueError, match="two axes"):
             torus.Lebesgue((4, 4, 4))
+
+
+class TestSphereGrids:
+    """What a sphere hands out about its grid and its degenerate paths."""
+
+    def test_degenerate_quadratures_return_independent_nodes(self):
+        """Coincident endpoints and a zero radius give ``count`` nodes at one
+        point, each its own array: editing one node edits one node, and never
+        the caller's point."""
+        space = sphere_module.Lebesgue(8)
+        point = np.array([10.0, 20.0])
+
+        nodes, weights = space.geodesic_quadrature(point, point, count=3)
+        nodes[0][0] = -5.0
+        assert nodes[1][0] == 10.0 and nodes[2][0] == 10.0 and point[0] == 10.0
+        assert np.all(weights == 0.0)
+
+        nodes, weights = space.geodesic_ball_quadrature(point, 0.0, count=3)
+        nodes[0][0] = -5.0
+        assert nodes[1][0] == 10.0 and nodes[2][0] == 10.0 and point[0] == 10.0
+        assert np.all(weights == 0.0)
+
+    @pytest.mark.parametrize("extend", [False, True])
+    def test_the_plotting_grid_is_the_transform_grid(self, extend, rng):
+        """Without the wrap column and the pole row an extended space carries,
+        and as a copy a caller may edit."""
+        space = sphere_module.Lebesgue(6, extend=extend)
+        field = space.random(rng=rng)
+        colatitudes, longitudes, values = space.plotting_grid(field)
+
+        rows, columns = values.shape
+        assert colatitudes.shape == (rows,) and longitudes.shape == (columns,)
+        assert np.allclose(values, space.grid_values(field)[:rows, :columns])
+        assert rows == space.grid_shape[0] - int(extend)
+        assert columns == space.grid_shape[1] - int(extend)
+        assert np.allclose(longitudes, space.longitudes[:columns])
+        assert np.allclose(colatitudes, space.colatitudes[:rows])
+
+        values[0, 0] += 1.0
+        assert space.grid_values(field)[0, 0] != values[0, 0]
+
+    def test_the_plotting_grid_checks_the_shape(self):
+        space = sphere_module.Lebesgue(6)
+        with pytest.raises(ValueError, match="shape"):
+            space.plotting_grid(np.zeros((3, 3)))

@@ -36,7 +36,7 @@ from .base import ProbabilityMeasure
 if TYPE_CHECKING:
     from ..numerics.randomized import Estimate
 
-__all__ = ["AbsolutelyContinuousMeasure"]
+__all__ = ["AbsolutelyContinuousMeasure", "combine_log_normalizer"]
 
 
 class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
@@ -171,9 +171,9 @@ class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
             raise ValueError(
                 "relative_to needs the same reference on both sides: a "
                 "density between measures over different references is not "
-                "defined by this construction (D-132)."
+                "defined by this construction."
             )
-        return self._relative_log_density - other._relative_log_density
+        return self._relative_log_density - other.relative_log_density
 
     def sample(self, *, rng: Generator | None = None) -> X:
         """Refused: a density states where probability is, not how to draw it.
@@ -195,13 +195,24 @@ class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
         )
 
 
-def _combine_log_normalizer(
+def combine_log_normalizer(
     terms: list[tuple[float, "Estimate | float"]],
 ) -> "Estimate":
     """A linear combination of exact floats and ``Estimate`` values.
 
     The standard errors add in quadrature, which assumes independence of the
-    stochastic parts -- true where each comes from its own probe draws.
+    stochastic parts -- true where each comes from its own probe draws. This
+    is how a posterior's log normalizer is assembled from the prior's and
+    the likelihood's when some of the terms are stochastic estimates.
+
+    Args:
+        terms: ``(weight, value)`` pairs, each value an exact float or an
+            :class:`~pygeoinf2.numerics.randomized.Estimate`.
+
+    Returns:
+        The weighted sum as an ``Estimate``, with the standard errors
+        combined in quadrature and the sample count the largest of the
+        terms'.
     """
     import numpy as np
 
