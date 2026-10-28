@@ -122,7 +122,8 @@ class TestShell:
         from pygeoinf2.plotting.ball import _on_a_shell
 
         shell = _on_a_shell(space, x, space.interior_radii[node])
-        assert np.allclose(shell, space.interior_values(x)[node], atol=1e-11)
+        expected = space.interior_values(x)[node]
+        assert np.allclose(shell, expected, atol=1e-10 * np.abs(expected).max())
 
     def test_plot_is_the_shell_at_the_surface_on_a_map(self, ball, rng):
         x = ball.random(rng=rng)
@@ -130,9 +131,10 @@ class TestShell:
         assert hasattr(ax, "projection")
         # The sphere's renderer repeats a column to close the seam at the
         # dateline, so the cells drawn are the grid's values and no others.
-        drawn = np.unique(np.round(np.asarray(mappable.get_array()).ravel(), 9))
-        surface = np.unique(np.round(ball.interior_values(x)[-1].ravel(), 9))
-        assert np.array_equal(drawn, surface)
+        drawn = np.unique(np.asarray(mappable.get_array()).ravel())
+        surface = np.unique(ball.interior_values(x)[-1].ravel())
+        assert drawn.shape == surface.shape
+        assert np.allclose(drawn, surface, atol=1e-9 * np.abs(surface).max())
         low, high = mappable.get_clim()
         assert low == pytest.approx(-high)
 

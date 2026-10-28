@@ -6,6 +6,11 @@ on:
   push:
   pull_request:
     branches: [ main ]
+  # The slow set (parity checks and Monte Carlo estimates, worth minutes
+  # rather than seconds) runs weekly on every platform, and on request.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 jobs:
   # Linting, formatting and the notebook-output rule, straight from
@@ -41,6 +46,7 @@ jobs:
       run: pre-commit run --all-files --show-diff-on-failure --color=always
 
   build-and-test:
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -68,3 +74,31 @@ jobs:
 
     - name: Build package
       run: poetry build
+
+  # The slow set, without coverage tracing, which would double its time.
+  slow-tests:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+
+    - name: Install Poetry
+      run: |
+        pip install poetry
+        poetry config virtualenvs.create false
+
+    - name: Install dependencies
+      run: poetry install --with dev --all-extras
+
+    - name: Run the slow set
+      run: poetry run pytest pygeoinf2 -m slow

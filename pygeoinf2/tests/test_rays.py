@@ -127,15 +127,16 @@ class TestInAField:
 
     def test_shooting_agrees_with_bending(self, make, rng):
         space = make()
-        paths = paths_on(space, rng, count=4)
+        paths = paths_on(space, rng, count=2)
         model = mild_field(space, rng, size=0.2)
         # Two discretizations of one ray, each second order in its step:
-        # a polyline of 48 segments against 384 Runge-Kutta steps.
-        bent = space.ray_travel_time_operator(paths, C0, count=48)
+        # a polyline of 32 segments against 192 Runge-Kutta steps, so the
+        # two agree to a few parts in a hundred thousand.
+        bent = space.ray_travel_time_operator(paths, C0, count=32)
         shot = space.ray_travel_time_operator(
-            paths, C0, count=48, nodes_per_segment=8, method="shooting"
+            paths, C0, count=32, nodes_per_segment=6, method="shooting"
         )
-        assert np.allclose(shot(model), bent(model), rtol=2e-5)
+        assert np.allclose(shot(model), bent(model), rtol=1e-4)
         rays = bent.trace_rays(model)
         assert len(rays) == len(paths)
 

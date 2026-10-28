@@ -191,21 +191,27 @@ into 4 and 1.
 7. **MFEM as a mini-app, not a backend** (David, 2026-10-28, to be
    decided). The MFEM backend now in the core (`backends/mfem`, D-96) would
    become a mini-app in the spirit of 9: a mesh, a bilinear form and a
-   finite-element inverse problem, linking to the PyMFEM Python library
-   first, and possibly a second variant showing how to link to native MFEM
-   code through nanobind as 9 does for a bare vector type. Open: what the
-   core keeps (the `backends` contract of CURRENT_STATE §6 and the no-array
-   test of D-169 are what the library promises; the MFEM-specific code is
-   a user of it, not part of it), which tests move with it, and whether the
-   `mfem` extra stays in `pyproject.toml`.
-8. **A parallel (MPI) forward code** (David, 2026-10-28, new). A mini-app
-   whose forward operator runs under MPI, something the library has not
-   looked at: the library sees one operator, the vectors it holds are the
-   handles of distributed data (as 9 holds a C++ vector), and the inner
-   product and the applications reduce across ranks. Candidates to settle:
-   mpi4py with a toy distributed PDE solve, or PETSc through petsc4py
-   (deferred from 2.0 by D-112, which this would revisit as a mini-app
-   rather than a backend). To be planned after 1 to 3.
+   finite-element inverse problem, linking to the PyMFEM Python library.
+   A native C++ binding of MFEM itself is overkill (David, later the same
+   day): PyMFEM only. Open: what the core keeps (the `backends` contract
+   of CURRENT_STATE §6 and the no-array test of D-169 are what the library
+   promises; the MFEM-specific code is a user of it, not part of it),
+   which tests move with it, and whether the `mfem` extra stays in
+   `pyproject.toml`.
+8. **2-D acoustic waveform inversion on a C++ finite-difference code**
+   (David, 2026-10-28, replacing a bare "link to an MPI code" item). A
+   simple acoustic finite-difference solver in a simple geometry, written
+   from scratch in C++ with MPI optional for the mesh partitioning, and
+   bound with nanobind as 9 is: the forward (time stepping), the adjoint
+   (the adjoint-state gradient) and the second-order adjoint (the Hessian
+   action), each wrapped as the library's operators so that `check_*`
+   proves the discrete adjoints to rounding and MAP, Laplace, Occam and
+   Newton-CG run on a real nonlinear forward. Hits the MPI goal and the
+   nonlinear-at-scale goal at once; the model is slowness squared on the
+   grid under a Sobolev-type prior from the library's box space, the data
+   receiver traces. The library sees one process: under MPI the vectors
+   live on rank 0 and the operator's application scatters and gathers.
+   To be planned after 1 to 3; the largest build on this list.
 9. **A vector backend in C++** (DONE 2026-10-28, D-169): `cpp_backend/`,
    the vector type and sparse operators in C++ behind nanobind, a
    finite-element mass matrix as the Gram, the check ladder and the inverse

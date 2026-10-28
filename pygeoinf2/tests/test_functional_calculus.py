@@ -264,9 +264,9 @@ class TestSpectrumGuard:
     that roundoff makes negative, at ``-1e-13`` or so; the Lanczos Ritz
     values inherit the sign, and ``log``, ``sqrt`` and a fractional power of
     a negative number are NaN. Half the draws came out NaN and every
-    stochastic log-determinant did. v1 floored the log at ``1e-15`` inside
-    its evidence routine; the guard now lives in the Lanczos kernels and is
-    keyed on the claim, so every function benefits.
+    stochastic log-determinant did. The guard lives in the Lanczos kernels
+    and is keyed on the claim, so every function benefits, rather than one
+    evidence routine flooring the log at ``1e-15``.
     """
 
     @staticmethod
@@ -626,7 +626,6 @@ class TestLogDeterminant:
         assert estimate.value == pytest.approx(expected, abs=1e-9)
         assert estimate.standard_error == 0.0
 
-    @pytest.mark.slow
     def test_the_stochastic_route_agrees_within_its_error(self, operator):
         """A stochastic estimate without its error is uninterpretable, so the
         test is written in units of that error rather than in a fixed
@@ -646,7 +645,6 @@ class TestLogDeterminant:
         assert estimate.standard_error > 0.0
         assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
 
-    @pytest.mark.slow
     def test_auto_goes_dense_only_when_it_can_afford_to(self, operator):
         from pygeoinf2.numerics.functional_calculus import log_determinant
 
@@ -684,13 +682,14 @@ class TestLogDeterminant:
 class TestDiagonalLogDeterminant:
     """``sum(log lambda)`` when the spectrum is already known."""
 
-    @pytest.mark.parametrize("dim", [300, 1000])
+    @pytest.mark.parametrize("dim", [50, 300])
     def test_it_is_exact_and_costs_no_applications(self, dim):
         """Both alternatives are bad here. Below ``dense_limit`` the dense
         route spends ``dim`` applications assembling a matrix whose diagonal is
         the answer; above it the stochastic route estimates that answer, and at
-        dimension 1000 returned 455.4 +/- 2.8 for an exact 456.7. The claim
-        that used to send it there was ``with_traits``, which lost the class.
+        dimension 1000 returned 455.4 +/- 2.8 for an exact 456.7. A
+        ``with_traits`` on the operator must keep its class, or that is where
+        it is sent.
         """
         values = np.linspace(1.0, 2.0, dim)
         operator = DiagonalLinearOperator(EuclideanSpace(dim), values)
@@ -777,25 +776,28 @@ class TestLanczosStopsEarly:
         basis at every step to compare cost O(k^2) vector operations over the
         run: measured 2595 axpy against 1371, for the same answer to every
         digit."""
-        space = EuclideanSpace(300)
+        from .doubles import Opaque, OpaqueSpace
+
+        # On a space with coordinates the Lanczos run works on component
+        # columns and calls no axpy at all; the count is taken on a space
+        # without them, where every recombination is paid for.
+        space = OpaqueSpace(np.ones(300))
         eigenvalues = np.linspace(1.0, 40.0, 300)
-        operator, basis = self.spectrum(space, eigenvalues, rng)
+        basis, _ = np.linalg.qr(rng.standard_normal((300, 300)))
+        matrix = basis @ np.diag(eigenvalues) @ basis.T
+        operator = LinearOperator.self_adjoint(
+            space,
+            lambda x: Opaque(matrix @ x.data),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
         vector = space.random(rng=rng)
 
-        counted = {"n": 0}
-        original = type(space).axpy
-        type(space).axpy = lambda self, a, x, y: (
-            counted.__setitem__("n", counted["n"] + 1),
-            original(self, a, x, y),
-        )[1]
-        try:
-            result = apply_operator_function(operator, np.sqrt, vector)
-        finally:
-            type(space).axpy = original
+        space.calls.reset()
+        result = apply_operator_function(operator, np.sqrt, vector).data
 
-        exact = basis @ np.diag(np.sqrt(eigenvalues)) @ basis.T @ vector
+        exact = basis @ np.diag(np.sqrt(eigenvalues)) @ basis.T @ vector.data
         assert np.linalg.norm(result - exact) < 1e-8 * np.linalg.norm(exact)
-        assert counted["n"] < 2000  # the O(k^2) route needed 2595
+        assert 0 < space.calls["axpy"] < 2000  # the O(k^2) route needed 2595
 
 
 class TestLanczosOnComponents:

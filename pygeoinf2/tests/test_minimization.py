@@ -26,10 +26,7 @@ from pygeoinf2.traits import Traits
 
 from .conftest import make_dense_metric_space
 
-try:
-    from pygeoinf2.inference.point import DiscrepancyPrinciple as _MinimumNorm
-except ImportError:  # the renamed class
-    from pygeoinf2.inference.point import MinimumNorm as _MinimumNorm
+from pygeoinf2.inference.point import MinimumNorm as _MinimumNorm
 
 
 def damped_fit(space, data_space, forward, damping):
@@ -70,7 +67,7 @@ def damped_fit(space, data_space, forward, damping):
         data_space,
         space,
         objective,
-        optimizer=LBFGS(gtol=1e-12),
+        optimizer=LBFGS(gtol=1e-10),
         mixed_derivative=mixed,
     )
 
@@ -205,7 +202,7 @@ class TestNonlinearLeastSquares:
         estimator = NonlinearLeastSquares(
             ForwardProblem(forward, error=error),
             damping=0.7,
-            optimizer=LBFGS(gtol=1e-12),
+            optimizer=LBFGS(gtol=1e-10),
         )
         assert estimator.damping == 0.7
         assert estimator.forward_problem.forward_operator is forward
@@ -225,7 +222,7 @@ class TestNonlinearLeastSquares:
         space, data_space, forward, error, data = linear
         reference = LeastSquares(LinearForwardProblem(forward), damping=0.2)
         estimator = NonlinearLeastSquares(
-            ForwardProblem(forward), damping=0.2, optimizer=LBFGS(gtol=1e-12)
+            ForwardProblem(forward), damping=0.2, optimizer=LBFGS(gtol=1e-10)
         )
         assert estimator(data) == pytest.approx(reference(data), abs=1e-7)
 
@@ -234,10 +231,10 @@ class TestNonlinearLeastSquares:
         reference_model = space.random(rng=rng)
         problem = ForwardProblem(forward, error=error)
         loose = NonlinearLeastSquares(
-            problem, damping=0.1, reference=reference_model, optimizer=LBFGS(gtol=1e-12)
+            problem, damping=0.1, reference=reference_model, optimizer=LBFGS(gtol=1e-10)
         )
         tight = NonlinearLeastSquares(
-            problem, damping=1e4, reference=reference_model, optimizer=LBFGS(gtol=1e-12)
+            problem, damping=1e4, reference=reference_model, optimizer=LBFGS(gtol=1e-10)
         )
         assert tight.reference is reference_model
         assert tight.starting_point(data) is reference_model
@@ -331,7 +328,7 @@ class TestConstrainedMinimization:
             space,
             objective,
             equalities=[plane],
-            optimizer=LBFGS(gtol=1e-12),
+            optimizer=LBFGS(gtol=1e-10),
             tolerance=1e-8,
             gtol=1e-8,
         )
@@ -381,7 +378,7 @@ class TestOccam:
         estimator = Occam(
             ForwardProblem(forward, error=error),
             level=0.95,
-            optimizer=LBFGS(gtol=1e-12),
+            optimizer=LBFGS(gtol=1e-10),
             tolerance=1e-8,
             gtol=1e-8,
         )

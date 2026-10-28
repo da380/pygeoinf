@@ -169,8 +169,7 @@ class TestAverages:
         )
 
     def test_the_closed_form_agrees_with_the_rotated_indicator(self, lebesgue, rng):
-        """The components used to come from
-        ``SHCoeffs.from_cap``, which builds the cap at the pole and rotates it
+        """``SHCoeffs.from_cap`` builds the cap at the pole and rotates it
         -- 8.5 ms a center at lmax 128, against 0.2 ms for the addition
         theorem. This is the check that they are the same components."""
         from pyshtools import SHCoeffs
@@ -238,9 +237,8 @@ class TestAverages:
         assert A(one)[0] == pytest.approx(1.0)
 
     def test_the_path_integral_of_one_is_the_arc_length(self, lebesgue, rng):
-        """The integral is its own method now, rather than a keyword on the
-        average: a travel time is an integral along a ray, and v1 computes
-        exactly this while calling it an average."""
+        """The integral is its own method, rather than a keyword on the
+        average: a travel time is an integral along a ray, not an average."""
         one = lebesgue.project_function(lambda point: 1.0)
         a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
         A = lebesgue.path_integral_operator([(a, b)], count=12, unsafe=True)
@@ -248,7 +246,7 @@ class TestAverages:
 
     def test_the_node_count_follows_the_length_scale(self, rng):
         """Left to itself, the quadrature resolves the field it is integrating:
-        two nodes per length scale, as v1 does. A fixed count is
+        two nodes per length scale. A fixed count is
         under-resolved for a long path on a short-scale space."""
         from pygeoinf2.symmetric_space.sphere import Sobolev
 
@@ -314,9 +312,9 @@ class TestPathGuard:
     comment and did not check. Measured on a sphere of radius two, the
     representer norm of one path integral as ``lmax`` doubles from 16 to
     256: order 0 runs 2.5, 3.5, 5.0, 7.1, 10.0; order 0.5 runs 2.2, 2.7,
-    3.1, 3.5, 3.9; order 0.75 settles at 2.9 and order 1.5 at 1.90. v1
-    guarded path integrals with the point threshold, which is safe and too
-    strict; v2 dropped the guard; this is the right one.
+    3.1, 3.5, 3.9; order 0.75 settles at 2.9 and order 1.5 at 1.90. The
+    point-evaluation threshold would be safe and too strict for a path
+    integral, and no guard at all is wrong; this is the right one.
     """
 
     def test_the_sphere_refuses_at_and_below_one_half(self, rng):
@@ -395,7 +393,7 @@ class TestCoefficients:
         assert np.allclose(representer[1:], 0.0)
 
     def test_degrees_outside_the_space_are_padded_with_zeros(self, space, rng):
-        """v1 zero-padded to any lmax; the band past the space reports zeros."""
+        """The band past the space reports zeros."""
         padded = space.coefficient_operator(lmax=space.lmax + 1)
         assert padded.codomain.dim == (space.lmax + 2) ** 2
         assert np.allclose(padded(space.random(rng=rng))[space.dim :], 0.0)
@@ -523,8 +521,7 @@ class TestPointwiseVariance:
             )
 
     def test_between_the_grid_points_an_even_axis_is_the_exception(self, rng):
-        """The claim the docstring used to make and could not keep, pinned
-        both ways round. An even axis holds a Nyquist cosine whose sine the
+        """Pinned both ways round. An even axis holds a Nyquist cosine whose sine the
         grid cannot see, so the basis is orthonormal on the grid and not
         isotropic off it, and the interpolated variance dips between samples.
         With every axis odd there is no such mode and the value is constant
@@ -681,8 +678,8 @@ class TestPointConvention:
         assert back == pytest.approx(points)
 
     def test_a_catalogue_point_is_the_catalogue_s_numbers(self, space):
-        """The loaders used to convert privately, so a caller who read the same
-        file themselves got different answers from the same numbers."""
+        """The loaders do not convert privately: a caller who reads the same
+        file gets the same numbers."""
         first = space.stations()[0]
         assert first[0] == pytest.approx(42.6375)
         assert first[1] == pytest.approx(74.4942)

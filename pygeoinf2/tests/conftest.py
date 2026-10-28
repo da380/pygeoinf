@@ -1,7 +1,21 @@
-"""Shared fixtures and example spaces for the v2 test suite."""
+"""Shared fixtures and example spaces for the v2 test suite.
+
+**Threads.** The suite runs with the BLAS and OpenMP thread pools capped,
+by :func:`_cap_threads` below, at ``PYGEOINF2_TEST_THREADS`` (default two).
+Sixteen BLAS threads on a laptop make a seconds-long test swamp the
+machine for no gain, and a test that measures iteration counts or wall
+time should not depend on how many cores the runner has. A test that needs
+more threads, or exactly one, says so with ``threadpool_limits`` of its
+own; a test of the worker pools (``n_jobs``) sets its own
+``inner_max_num_threads``, which wins over this cap inside the workers.
+The same rule applies to anything run by hand next to the suite: one heavy
+job at a time, with ``OMP_NUM_THREADS`` set, so that two runs do not
+contend for the same cores and inflate each other's timings.
+"""
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Hashable
 
@@ -23,14 +37,28 @@ def rng():
     return default_rng(SEED)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _cap_threads():
+    """Cap the BLAS and OpenMP pools for the whole session; see the module
+    docstring. ``PYGEOINF2_TEST_THREADS=0`` lifts the cap."""
+    limit = int(os.environ.get("PYGEOINF2_TEST_THREADS", "2"))
+    if limit <= 0:
+        yield
+        return
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=limit):
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _close_figures():
     """Every test ends with no open figures, so none leaks into the next.
 
     The examples and tutorials are run whole and leave their figures open,
-    and v1's plotting draws on ``plt.gca()``: a figure left over from here
-    fails v1's tests, which run after these. pyplot is touched only if
-    something has already imported it.
+    and the sibling package ``pygeoinf`` draws on ``plt.gca()``: a figure
+    left over from here fails its tests, which run after these. pyplot is
+    touched only if something has already imported it.
     """
     yield
     plt = sys.modules.get("matplotlib.pyplot")
@@ -73,10 +101,10 @@ class DenseMetricSpace(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
 
         self._gram = np.asarray(gram, dtype=float)
         self._chol = np.linalg.cholesky(self._gram)
-        # Factorized once: ``solve_gram`` used to call ``np.linalg.solve`` on
-        # the full matrix every time, which at dimension 2000 made a
-        # ``solve_gram_to_columns`` -- 2000 solves -- run for hours, and made
-        # the fixture useless for measuring anything the metric enters.
+        # Factorized once: with a fresh ``np.linalg.solve`` per call,
+        # ``solve_gram_to_columns`` at dimension 2000 would be 2000 full
+        # solves, hours, and the fixture would be useless for measuring
+        # anything the metric enters.
         self._factor = cho_factor(self._gram)
 
     @property
@@ -163,3 +191,27 @@ def values(space, *fields):
     """
     unwrapped = [space.grid_values(field) for field in fields]
     return unwrapped[0] if len(unwrapped) == 1 else unwrapped
+
+
+def coastlines_are_cached() -> bool:
+    """True when cartopy already has the Natural Earth land shapefile on disk.
+
+    A test that needs the coastlines skips when it is not, rather than
+    downloading on a fresh runner: a network fetch inside the suite is slow,
+    may fail, and is not what the test is checking.
+    """
+    try:
+        from cartopy.io import shapereader
+    except ImportError:
+        return False
+    import unittest.mock
+
+    with unittest.mock.patch("cartopy.io.Downloader.acquire_resource") as blocked:
+        blocked.side_effect = AssertionError("would download")
+        try:
+            shapereader.natural_earth(
+                resolution="110m", category="physical", name="land"
+            )
+        except Exception:
+            return False
+    return True

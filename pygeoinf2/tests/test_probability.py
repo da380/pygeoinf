@@ -108,8 +108,8 @@ class TestConstruction:
         [lambda: EuclideanSpace(3), make_weighted_space, make_dense_metric_space],
     )
     def test_a_covariance_matrix_brings_its_precision(self, build, rng):
-        """v1 attached the inverse factor and v2 had stopped, which left every
-        measure built this way without a density.
+        """The inverse factor comes with the covariance matrix; without it
+        every measure built this way would have no density.
 
         The closed form carries the metric twice: the precision's component
         matrix is ``C_c^-1``, so the factor's is ``R^-1 G`` and not ``R^-1``.
@@ -136,8 +136,8 @@ class TestConstruction:
     )
     def test_a_singular_covariance_is_accepted(self, build, rng):
         """A covariance is positive *semi*definite, and the Cholesky route
-        refused every degenerate one. v1 took an eigendecomposition and so
-        accepted them; the measure is still samplable, and still has no
+        refuses every degenerate one; an eigendecomposition accepts them, and
+        the measure is still samplable, and still has no
         density, which is the truth about a degenerate Gaussian."""
         X = build()
         rotation, _ = np.linalg.qr(rng.standard_normal((X.dim, X.dim)))
@@ -196,7 +196,11 @@ class TestConstruction:
         draws = np.array([X.to_components(mu.sample(rng=rng)) for _ in range(4000)])
         inverse = np.linalg.inv(gram)
         expected = inverse @ galerkin @ inverse
-        assert np.cov(draws.T) == pytest.approx(expected, abs=0.2)
+        # Six standard errors of a covariance entry at this many draws: the
+        # factor's eigenvector signs differ between LAPACK builds, so one
+        # seed is a different realization on another platform.
+        tolerance = 6.0 * np.sqrt(2.0 / len(draws)) * np.abs(expected).max()
+        assert np.cov(draws.T) == pytest.approx(expected, abs=tolerance)
         # every draw is in the range: the two null directions carry nothing.
         # The residue is the square root of eigh's own error on a zero
         # eigenvalue, so 1e-16 in the spectrum is 1e-8 in the factor.
@@ -268,7 +272,7 @@ class TestWhiteNoiseCorrection:
     it actually bites: sampling."""
 
     def test_isotropic_covariance_is_the_identity_on_the_space(self, rng):
-        """v1 produces sigma^2 G here, not sigma^2 I."""
+        """sigma^2 I on the space, not sigma^2 G in components."""
         X = make_weighted_space()
         sigma = 1.5
         mu = GaussianMeasure.from_standard_deviation(X, sigma)
@@ -290,12 +294,12 @@ class TestWhiteNoiseCorrection:
     def test_the_check_catches_a_component_space_draw(self, rng):
         X = make_weighted_space()
 
-        class V1StyleMeasure(GaussianMeasure):
+        class ComponentNoiseMeasure(GaussianMeasure):
             def sample(self, *, rng=None):
                 rng = np.random.default_rng() if rng is None else rng
                 return X.from_components(rng.standard_normal(X.dim))
 
-        mu = V1StyleMeasure(X, covariance=LinearOperator.identity(X))
+        mu = ComponentNoiseMeasure(X, covariance=LinearOperator.identity(X))
         with pytest.raises(AssertionError, match="sample covariance"):
             check_measure(mu, rng=rng, samples=8000)
 
@@ -469,7 +473,13 @@ class TestCoordinateFree:
         mu = GaussianMeasure.from_samples(strict, draws)
         u = strict.random(rng=rng)
         assert strict.inner_product(mu.covariance(u), u) > 0.0
-        assert strict.norm(mu.expectation) >= 0.0
+        total = draws[0]
+        for draw in draws[1:]:
+            total = strict.add(total, draw)
+        mean = strict.scale(1.0 / len(draws), total)
+        assert strict.norm(strict.subtract(mu.expectation, mean)) < 1e-10 * strict.norm(
+            mean
+        )
 
     def test_sampling_needs_a_factor(self, rng):
         X = EuclideanSpace(4)
@@ -490,7 +500,7 @@ class TestCoordinateFree:
 
 class TestReproducibility:
     def test_the_same_seed_gives_the_same_samples(self):
-        """v1 draws from the legacy global state, so nothing is reproducible."""
+        """Draws come from the generator passed in, never from the global state."""
         X = make_weighted_space()
         mu = GaussianMeasure.from_standard_deviation(X, 1.0)
         first = mu.sample(rng=np.random.default_rng(42))
@@ -499,7 +509,7 @@ class TestReproducibility:
 
 
 class TestPrecisionSurvivesTheAlgebra:
-    """Every operation used to drop the precision, including translation."""
+    """No operation drops the precision, translation included."""
 
     @pytest.fixture(params=["euclidean", "weighted"])
     def measure(self, request):
@@ -577,9 +587,9 @@ class TestPrecisionSurvivesTheAlgebra:
 
 
 class TestStochasticNorms:
-    """The ``"stochastic"`` option used to form the dense component matrix and
-    return the exact answer, which is the one thing a matrix-free estimator is
-    supposed not to do. It is now a Hutchinson trace, as v1's was."""
+    """The ``"stochastic"`` option is a Hutchinson trace; forming the dense
+    component matrix and returning the exact answer is the one thing a
+    matrix-free estimator is supposed not to do."""
 
     @pytest.fixture
     def measure(self, rng):
@@ -629,8 +639,8 @@ class TestStochasticNorms:
         assert len(applications) == 200
 
     def test_the_exact_norms_never_form_the_matrix(self, measure, rng, monkeypatch):
-        """v1's exact route summed a probed diagonal in linear memory; the
-        port formed the dense component matrix by default. A covariance that
+        """The exact route sums a probed diagonal in linear memory and never
+        forms the dense component matrix. A covariance that
         refuses to be assembled still has exact norms: N applications for the
         trace and 2N for the trace of the square."""
         mu, components = measure
@@ -688,7 +698,7 @@ class TestStochasticNorms:
 
 
 class TestStochasticDivergence:
-    """Bug 3.9. The route estimated three things and combined them: the trace
+    """A route that estimated three things and combined them: the trace
     of ``C_o^-1 C_s`` and two log-determinants, each with its own probes. Two
     of those are large and nearly equal whenever the measures are close, so the
     answer was a small difference of large noisy numbers -- ``KL(mu || mu)``
@@ -886,11 +896,11 @@ class TestConditioningAppliesTheCovarianceTwice:
 
 
 class TestTheAmbientBall:
-    """It formed the dense component matrix and took a non-symmetric
-    eigendecomposition, whatever the covariance was: cubic, and reached on
-    every Backus route with a Gaussian error. v1 had a randomized spectrum and
-    a sampling radius; both are back, and a diagonal covariance now costs
-    nothing at all."""
+    """A dense component matrix and a non-symmetric eigendecomposition,
+    whatever the covariance, would be cubic, and this is reached on every
+    Backus route with a Gaussian error. A randomized spectrum and a sampling
+    radius are the alternatives, and a diagonal covariance costs nothing at
+    all."""
 
     def test_a_diagonal_covariance_needs_no_decomposition(self, rng):
         """Exact, and the spectrum is already in hand. Measured at dimension
@@ -976,8 +986,8 @@ class TestTheAmbientBall:
 
 
 class TestDenseCovariance:
-    """v1's ``with_dense_covariance(parallel=, n_jobs=)``, which had no
-    successor. Every pyslfp plotting script calls it before drawing a variance
+    """``with_dense_covariance(n_jobs=)``. Every pyslfp plotting script calls
+    it before drawing a variance
     field: the covariance of a posterior is a graph of operators, and once it
     is going to be applied ``dim`` times it is cheaper assembled."""
 
@@ -1267,7 +1277,6 @@ class TestParallelLoops:
         )
         assert adaptive.samples >= 8
 
-    @pytest.mark.slow
     def test_the_process_backend_works_on_a_sphere(self, rng):
         """The only safe backend there: the pyshtools transforms crash the
         interpreter when called from two Python threads at once."""
@@ -1314,16 +1323,21 @@ class TestParallelLoops:
         finally:
             os.sched_setaffinity(0, original)
 
-    def test_workers_get_one_thread_each(self):
+    def test_workers_get_one_thread_each(self, monkeypatch):
         """joblib's own default hands each worker cores // n_jobs OpenMP and
         BLAS threads, which for this library's transforms is a measured loss;
         the loop caps them at one. An exported variable, or a
-        ``parallel_config`` context, wins over that."""
+        ``parallel_config`` context, wins over that -- so the variables are
+        cleared here first, or a runner that exports them tests its own
+        environment instead."""
         import os
 
         from joblib import parallel_config
 
         from pygeoinf2.parallel import parallel_map
+
+        monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+        monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
 
         def threads(_):
             return os.environ.get("OMP_NUM_THREADS"), os.environ.get(
@@ -1449,8 +1463,8 @@ class TestAMarginalsFactorMatchesItsCovariance:
 
 
 class TestSaddlepoint:
-    """The Lugannani-Rice approximation to the weighted chi-square, v1's
-    fourth method, restored beside Imhof."""
+    """The Lugannani-Rice approximation to the weighted chi-square, beside
+    Imhof."""
 
     def test_it_converges_to_the_exact_chi_square(self):
         """On equal weights the error falls like one over the number of

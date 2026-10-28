@@ -41,7 +41,7 @@ class TestAxioms:
 
 class TestIdentity:
     def test_spaces_are_hashable(self):
-        """v1 declares __eq__ without __hash__, so every space is unhashable."""
+        """A space declaring ``__eq__`` must declare ``__hash__`` too."""
         assert {EuclideanSpace(3): "value"}[EuclideanSpace(3)] == "value"
         assert len({EuclideanSpace(3), EuclideanSpace(3), EuclideanSpace(4)}) == 2
 
@@ -61,7 +61,7 @@ class TestIdentity:
 
 
 class TestIdentityFailureIsCaught:
-    """The check must catch the v1 mass-weighted-space equality defect."""
+    """The check must catch a space whose equality is keyed on identity."""
 
     def test_identity_keyed_space_is_rejected(self, rng):
         class IdentityKeyedSpace(WeightedSpace):
@@ -147,17 +147,17 @@ class TestWhiteNoise:
     def test_white_noise_has_identity_covariance(self, name, rng):
         check_white_noise(SPACES[name](), rng=rng, samples=40000, rtol=0.05)
 
-    def test_the_check_catches_the_v1_construction(self, rng):
+    def test_the_check_catches_the_component_construction(self, rng):
         """Drawing standard normal components gives covariance G, not I."""
 
-        class V1StyleSpace(WeightedSpace):
+        class ComponentNoiseSpace(WeightedSpace):
             def white_noise(self, *, rng=None):
                 rng = np.random.default_rng() if rng is None else rng
                 return self.from_components(rng.standard_normal(self.dim))
 
         with pytest.raises(AssertionError, match="white noise has identity covariance"):
             check_white_noise(
-                V1StyleSpace(np.array([1.0, 4.0, 9.0])),
+                ComponentNoiseSpace(np.array([1.0, 4.0, 9.0])),
                 rng=rng,
                 samples=20000,
                 rtol=0.05,
@@ -175,15 +175,17 @@ class TestWhiteNoise:
         check_white_noise(space, rng=rng, samples=20000, rtol=0.06)
 
     @pytest.mark.parametrize("size", [1.0e-4, 1.0e4])
-    def test_the_v1_construction_is_caught_at_any_size_of_metric(self, size, rng):
-        class V1StyleSpace(WeightedSpace):
+    def test_the_component_construction_is_caught_at_any_size_of_metric(
+        self, size, rng
+    ):
+        class ComponentNoiseSpace(WeightedSpace):
             def white_noise(self, *, rng=None):
                 rng = np.random.default_rng() if rng is None else rng
                 return self.from_components(rng.standard_normal(self.dim))
 
         with pytest.raises(AssertionError, match="white noise has identity covariance"):
             check_white_noise(
-                V1StyleSpace(size * np.array([1.0, 4.0, 9.0])),
+                ComponentNoiseSpace(size * np.array([1.0, 4.0, 9.0])),
                 rng=rng,
                 samples=20000,
                 rtol=0.06,
@@ -343,9 +345,8 @@ class TestMassWeightedSpace:
     def test_a_diagonal_mass_is_inverted_exactly_and_for_free(
         self, weighted, monkeypatch
     ):
-        """As the docstring always promised, and as v1 had by taking the
-        inverse from the caller; the default used to be a conjugate-gradient
-        solve on every application."""
+        """As the docstring promises: not a conjugate-gradient solve on every
+        application."""
         from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
         from pygeoinf2.numerics import solvers
 
@@ -391,9 +392,9 @@ class TestMassWeightedSpace:
         )
 
     def test_the_inverse_mass_is_derived(self, weighted, rng):
-        """v1 makes the caller supply it. Deriving it is one fewer thing to get
-        wrong, and it makes the construction usable when the inverse has no
-        closed form."""
+        """Deriving it rather than asking the caller for it is one fewer thing
+        to get wrong, and it makes the construction usable when the inverse
+        has no closed form."""
         base, mass, space = weighted
         probe = base.random(rng=rng)
         recovered = space.mass_inverse(mass(probe))
@@ -539,8 +540,7 @@ class TestMassWeightedCoordinates:
 
     def test_the_lift_from_the_base_is_the_mass_formula(self, dense, rng):
         """``A^{*V} == M^-1 A^{*U} M``, and the lifted operator acts on
-        components without leaving them, which is what keeps the lift cheap
-        (David: the automated lift is key)."""
+        components without leaving them, which is what keeps the lift cheap."""
         from pygeoinf2.testing import check_operator
 
         base, mass, space = dense
@@ -591,7 +591,7 @@ class TestMassWeightedCoordinates:
 
 
 class TestCoordinateSelection:
-    """v1's ``subspace_projection``, on any coordinate space."""
+    """Selecting coordinates, on any coordinate space."""
 
     def test_it_selects_and_its_adjoint_carries_the_metric(self, rng):
         from pygeoinf2.testing import check_operator

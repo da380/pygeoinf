@@ -124,7 +124,7 @@ class TestQuadratics:
 
     @pytest.mark.parametrize("method", FIRST_ORDER)
     def test_a_solved_quadratic_is_reported_as_solved(self, method, rng):
-        """Every first-order method used to report failure here.
+        """A first-order method must not report failure here.
 
         The gradient tolerance is unreachable for a line-search method in
         double precision, so on a well-conditioned quadratic L-BFGS stopped at
@@ -330,8 +330,7 @@ class TestLineSearches:
         """On a quadratic the interpolant is exact: a step that overshoots the
         minimizer along the line is followed by one evaluation at the
         minimizer itself, where the slope is zero and both conditions hold.
-        Bisection needed several halvings to get there. This is what v1 had
-        through SciPy's search, and what the port replaced with bisection."""
+        Bisection would need several halvings to get there."""
         space, phi, x, model, direction, slope = setup
         # Put the line minimizer at 0.3 of the unit step, so the unit step
         # overshoots and the search must zoom. The curvature along the line is
@@ -348,13 +347,13 @@ class TestLineSearches:
         )
         assert result.converged
         assert result.step == pytest.approx(0.3, rel=1e-6)
-        # Two: the overshoot and the minimizer. A third would be the wasted
-        # re-evaluation of the bracket's low end that the zoom used to make.
+        # Two: the overshoot and the minimizer. A third would be a wasted
+        # re-evaluation of the bracket's low end on entering the zoom.
         assert result.evaluations == 2
 
     def test_every_evaluation_is_counted_and_none_is_wasted(self, setup):
         """The count the search reports is the number of times it called the
-        functional, and entering the zoom no longer re-evaluates the end of
+        functional, and entering the zoom does not re-evaluate the end of
         the bracket the caller already knew."""
         space, phi, x, model, direction, slope = setup
         calls = []
@@ -638,9 +637,10 @@ class TestSteepestDescentUsesAWolfeSearch:
     def test_that_is_the_default(self):
         assert isinstance(SteepestDescent()._line_search, StrongWolfeLineSearch)
 
-    def test_it_costs_about_half_the_evaluations(self, rng):
-        """Measured on a quadratic of spread 1e3: 3376 evaluations against
-        6744, for the same iteration count."""
+    def test_it_costs_fewer_evaluations(self, rng):
+        """A Wolfe search accepts a step the Armijo backtracking would have
+        shrunk, so it spends fewer evaluations on the same quadratic;
+        measured once at about half, which is a trend and not a contract."""
         space = EuclideanSpace(20)
         basis, _ = np.linalg.qr(rng.standard_normal((20, 20)))
         matrix = basis @ np.diag(np.geomspace(1.0, 1e3, 20)) @ basis.T
@@ -662,13 +662,13 @@ class TestSteepestDescentUsesAWolfeSearch:
                 functional, space.zero()
             )
             counts[label] = result.evaluations
-        assert counts["wolfe"] < 0.75 * counts["armijo"]
+        assert counts["wolfe"] < counts["armijo"]
 
 
 class TestOptimisersOnADenseMetric:
-    """The review found these tested only on diagonal Gram matrices. A descent
-    direction is the Riesz representer of the derivative, so a non-diagonal
-    metric is the only thing that distinguishes it from the raw components."""
+    """A descent direction is the Riesz representer of the derivative, so a
+    non-diagonal metric is the only thing that distinguishes it from the raw
+    components."""
 
     @pytest.mark.parametrize("method", [LBFGS, NonlinearCG, SteepestDescent])
     def test_they_find_the_minimum(self, method, rng):
@@ -686,7 +686,7 @@ class TestArmijoReportsItsEvaluations:
     def test_a_stop_on_the_minimum_step_counts_what_was_spent(self, rng):
         """Along a direction of ascent no step passes, and the search stops
         when the step falls below ``min_step`` -- after far fewer than
-        ``max_backtracks`` evaluations, which is what it used to report."""
+        ``max_backtracks`` evaluations."""
         from pygeoinf2.algebra.spaces import EuclideanSpace
         from pygeoinf2.numerics.convex import SquaredDistance
         from pygeoinf2.numerics.line_search import ArmijoLineSearch
@@ -869,8 +869,8 @@ class TestTrustRegionReportsHowItStopped:
         )
 
     def test_the_value_tolerance_is_applied(self, rng):
-        """``ftol`` is documented for every optimizer; the trust region used to
-        ignore it. A step that buys less than ``ftol |f|`` ends the run."""
+        """``ftol`` is documented for every optimizer, the trust region
+        included. A step that buys less than ``ftol |f|`` ends the run."""
         space = EuclideanSpace(4)
         offset = rng.normal(size=4)
         base = quadratic(space, np.identity(4), offset)
@@ -931,7 +931,7 @@ class TestAugmentedLagrangian:
         objective = self.squared_distance(space, center)
         constraint = self.hyperplane(space, normal, 1.0)
         method = AugmentedLagrangian(
-            inner(gtol=1e-12), equalities=[constraint], tolerance=1e-8, gtol=1e-8
+            inner(gtol=1e-10), equalities=[constraint], tolerance=1e-8, gtol=1e-8
         )
         result = method.minimize(objective, space.zero())
 
@@ -965,7 +965,7 @@ class TestAugmentedLagrangian:
             gradient=lambda x: space.scale(2.0, x),
         )
         method = AugmentedLagrangian(
-            LBFGS(gtol=1e-12), inequalities=[ball], tolerance=1e-8, gtol=1e-8
+            LBFGS(gtol=1e-10), inequalities=[ball], tolerance=1e-8, gtol=1e-8
         )
         result = method.minimize(objective, space.zero())
 
@@ -1132,3 +1132,109 @@ class TestPreconditionedNewtonCG:
         assert space.norm(space.subtract(step, exact)) < 1e-8 * space.norm(exact)
         with pytest.raises(ValueError, match="trust region"):
             truncated_cg(hessian, rhs, radius=1.0, preconditioner=inverse)
+
+
+class TestThePrecisionFloor:
+    """A failed line search near the minimizer is convergence at the accuracy
+    the arithmetic allows, judged against the curvature there.
+
+    The decrease a step can make is about ``||g||^2 / (2 L)``, and the
+    search is comparing noise once that falls below the rounding in the
+    value, ``eps |f|``; so the floor on the gradient is
+    ``sqrt(eps (1 + |f|) L)``, with a margin. The same quadratic scaled by
+    ten thousand has a gradient floor a hundred times higher and must be
+    judged converged just the same, and a floor read off ``|f|`` alone
+    would call a gradient of one converged on an objective carrying a large
+    constant.
+    """
+
+    @staticmethod
+    def scaled_quadratic(space, rng, scale):
+        """``scale (0.5 c^T M c - b^T c)``, whose minimum value is not zero,
+        so that the rounding in the value is what stops a line search."""
+        root = rng.standard_normal((space.dim, space.dim))
+        matrix = root @ root.T + space.dim * np.identity(space.dim)
+        b = rng.standard_normal(space.dim)
+        offset = np.linalg.solve(matrix, b)
+
+        def value(x):
+            c = space.to_components(x)
+            return scale * (0.5 * float(c @ matrix @ c) - float(b @ c))
+
+        def gradient(x):
+            c = space.to_components(x)
+            return space.from_components(space.solve_gram(scale * (matrix @ c - b)))
+
+        def hessian(x):
+            return LinearOperator.self_adjoint(
+                space,
+                lambda v: space.from_components(
+                    space.solve_gram(scale * (matrix @ space.to_components(v)))
+                ),
+                traits=Traits.POSITIVE_DEFINITE,
+            )
+
+        functional = Functional.from_callables(
+            space, value, gradient=gradient, hessian=hessian
+        )
+        return functional, offset
+
+    @pytest.mark.parametrize("scale", [1.0, 1e4])
+    @pytest.mark.parametrize(
+        "method", [LBFGS, NonlinearCG, SteepestDescent], ids=lambda m: m.__name__
+    )
+    def test_a_line_search_method_asked_for_zero_stops_converged(
+        self, method, scale, rng
+    ):
+        space = make_dense_metric_space(6)
+        functional, offset = self.scaled_quadratic(space, rng, scale)
+        result = method(gtol=0.0, rtol=0.0, ftol=0.0, max_iterations=5000).minimize(
+            functional, space.zero()
+        )
+        assert result.converged, result
+        assert "double precision" in result.message
+        assert space.to_components(result.minimizer) == pytest.approx(
+            offset, rel=1e-6, abs=1e-6
+        )
+
+    def test_the_floor_follows_the_curvature_not_the_value(self):
+        optimizer = LBFGS()
+        # A gradient of 1e-3 on an objective near a million with unit
+        # curvature is nowhere near the floor, which is about 6e-5 ...
+        assert not optimizer._precision_limited(1e6, 1e-3, curvature=1.0)
+        assert optimizer._precision_limited(1e6, 1e-5, curvature=1.0)
+        # ... and a curvature of a million raises it a thousandfold.
+        assert optimizer._precision_limited(1e6, 1e-2, curvature=1e6)
+        # Without an estimate the curvature is taken as the value's scale.
+        assert optimizer._precision_limited(1e6, 1e-2)
+        assert not optimizer._precision_limited(1e6, 1e-1)
+
+    def test_the_curvature_is_read_off_the_hessian_or_the_last_step(self, rng):
+        space = make_dense_metric_space(5)
+        functional, _ = self.scaled_quadratic(space, rng, 1.0)
+        x = space.random(rng=rng)
+        model = functional.at(x)
+        gradient_norm = space.norm(model.gradient)
+        rayleigh = LBFGS._curvature(space, model, model.gradient, gradient_norm)
+        hessian = space.inner_product(model.gradient, model.hessian(model.gradient))
+        assert rayleigh == pytest.approx(hessian / gradient_norm**2)
+        # A functional without a Hessian falls back to the secant estimate,
+        # which on a quadratic is the curvature along the last step.
+        plain = Functional.from_callables(
+            space, functional, derivative=lambda v: functional.at(v).derivative
+        )
+        previous = space.random(rng=rng)
+        previous_model = plain.at(previous)
+        secant = LBFGS._curvature(
+            space,
+            plain.at(x),
+            plain.at(x).gradient,
+            gradient_norm,
+            previous_x=previous,
+            previous_gradient=previous_model.gradient,
+        )
+        step = space.subtract(x, previous)
+        along = space.inner_product(step, model.hessian(step)) / space.norm(step) ** 2
+        assert secant > 0.0
+        assert secant >= along * 0.99
+        assert LBFGS._curvature(space, plain.at(x), plain.at(x).gradient, 1.0) is None

@@ -711,7 +711,9 @@ class TestKnobs:
         qs = [prop.from_components(np.array([np.cos(a), np.sin(a)])) for a in angles]
         serial = feasible.support_values(qs)
         parallel = feasible.with_data(data).support_values(qs, n_jobs=3)
-        assert parallel == pytest.approx(serial, rel=1e-8)
+        # Each worker warm-starts its own root find, so the two agree to the
+        # algorithm's accuracy, not to rounding.
+        assert parallel == pytest.approx(serial, rel=1e-6)
         outer = feasible.polytope(qs)
         inner = feasible.inner_hull(qs)
         assert outer.contains(target(truth)) and not inner.is_outer
@@ -846,13 +848,16 @@ class TestTheSplitting:
         feasible = FeasiblePropertySet(
             forward, target, Ball(model, radius=3.0), data, noise=noise
         )
-        splitting = Splitting(tolerance=1e-9, max_iterations=50_000)
+        tolerance = 1e-7
+        splitting = Splitting(tolerance=tolerance, max_iterations=50_000)
         for q in directions(target.codomain)[:2]:
             primal = feasible.support_result(q)
             split = feasible.support_result(q, via=splitting)
             assert split.converged
             assert split.inner == pytest.approx(primal.value, rel=1e-5)
-            assert split.value >= split.inner - 1e-9
+            # The iterate is feasible only to the tolerance, so the inner
+            # value may sit above the outer bound by that order.
+            assert split.value >= split.inner - 10 * tolerance * (1 + abs(primal.value))
             assert split.value == pytest.approx(primal.value, rel=1e-4)
             assert noise.contains(
                 forward.codomain.subtract(data, forward(split.extremal_model)),

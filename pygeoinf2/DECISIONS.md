@@ -2459,6 +2459,60 @@ convergence and the answer to the optimizer's tolerance. Steepest
 descent's test tolerance on the no-array backend was 1e-11 on a quadratic,
 below what a function-value line search can resolve; it is 1e-7.
 
+**D-171. The test suite after its review: the precision floor follows
+the curvature, tolerances sit above the arithmetic, the slow set runs on
+a schedule, and threads are capped** (2026-10-28, David: look through and
+address the review's issues; the review is `TEST_REVIEW.md` until its
+remaining actions are taken). What the review found and what changed.
+(1) The optimizers judged a failed line search converged only if
+`||g|| <= sqrt(eps) (1 + |f|)`, a floor with no margin and the wrong
+shape: the decrease a step can make is `||g||^2 / 2L`, so the floor is
+`sqrt(eps (1 + |f|) L)`, and on the same quadratic the line-search methods
+stop between one and four times that, which is why a verdict flipped
+between platforms (macOS, 325 against 319 iterations; steepest descent at
+`5.0e-8` against a floor of `4.8e-8`). The floor now reads the curvature
+(the Hessian's Rayleigh quotient along the gradient where there is one,
+the secant estimate from the last step otherwise, `1 + |f|` on the first
+step without a Hessian) with a margin of four. Measured: asked for a
+gradient of zero, L-BFGS, nonlinear CG and steepest descent stop at
+`3e-10`, `3e-8` and `5e-8` on an objective of size two and at `4e-4`,
+`1e-3` and `6e-4` on the same objective scaled by ten thousand, and all
+six now report convergence; the Newton methods reach `1e-16`. (2) About
+forty test sites asked for tolerances below that floor or below what a
+Krylov recurrence can reach (`gtol` to `1e-14`, strict CG at `rtol`
+`1e-13` under the default cap, first-order convex solvers at `1e-9`) and
+asserted `converged`; they ask for `1e-8` to `1e-10` now, direct solvers
+where an exact identity is the point, and comparisons at `1e-6` to
+`1e-8`. Loosening the splitting route's tolerance exposed that its inner
+value is attained only to that tolerance (CURRENT_STATE §7). (3)
+Assertions about rounding-produced behaviour are gone: a MINRES
+non-convergence, exact iteration counts between two arithmetic paths, a
+speed contest of a private simplex routine (now one instance with a
+residual bound), a warning-versus-raising distinction on a divergent run,
+QP backends compared at their own solver tolerance. The C++ mini-app
+draws its normals by Box-Muller on the engine's raw words rather than
+`std::normal_distribution`, whose algorithm each standard library chooses.
+(4) CI ran only the fast suite: `addopts` excludes `slow`, so the forty
+parity and Monte Carlo checks had never run on macOS or Windows. A
+scheduled weekly job (and `workflow_dispatch`) runs the slow set on all
+three; the three whole-tutorial runs of a minute or more join the slow
+set, fifteen sub-second tests leave it, the ray parity grids are halved,
+the `gc.collect` loops are ten not two hundred, and the KDE and moment
+Monte Carlos are a third their size. (5) Threads (David: "clear guidance,
+and we apply it too"): the session caps the BLAS and OpenMP pools at
+`PYGEOINF2_TEST_THREADS` (two) through `threadpoolctl` in `conftest.py`,
+whose docstring states the rule, and the test of the worker pools clears
+the environment variables it then asserts on. (6) Two counting tests
+counted nothing (the component route calls no inner product or `axpy`);
+they count on the opaque space now and assert a positive count. A dead
+import shim, a tautology, a false self-adjointness claim and three draws
+rescaled by another draw's norm are fixed, and the narrative of earlier
+versions and reviews is gone from every test outside `test_compat.py`,
+whose subject it is. Not done, left in the review for a later pass: the
+metric-rule fixtures (§D3, dense Gram matrices and a non-Euclidean data
+space for the normal, convex, feasible and mixture tests), the coverage
+gaps (§D2), the helper consolidation and the split of `test_assorted.py`.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

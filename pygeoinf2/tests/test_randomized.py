@@ -192,7 +192,7 @@ class TestEstimators:
         assert abs(estimate.value - np.trace(matrix)) < 4.0 * estimate.standard_error
 
     def test_trace_is_right_on_a_weighted_space(self, rng):
-        """Where v1's probe distribution gives a different number entirely.
+        """Where probes drawn as raw components give a different number entirely.
 
         The trace of an operator is basis-independent, and equals the trace of
         its component matrix. Hutchinson recovers it only when the probes have
@@ -344,32 +344,35 @@ class TestAdaptiveRangeIsIncremental:
 
     def test_it_finds_the_range_with_far_less_work(self, rng):
         """Measured at dim 600 and rank 120: 33749 inner products against
-        82788, and the same rank at the same 8e-16 projection error."""
-        space = EuclideanSpace(600)
-        matrix, operator = self.low_rank(space, 120, rng)
+        82788, and the same rank at the same 8e-16 projection error. On a
+        space with coordinates the range finder works on components and
+        calls no inner product at all, so the count is taken on a space
+        without them, where every orthogonalization is paid for."""
+        from .doubles import Opaque, OpaqueSpace
 
-        counted = {"n": 0}
-        original = type(space).inner_product
-        type(space).inner_product = lambda self, a, b: (
-            counted.__setitem__("n", counted["n"] + 1),
-            original(self, a, b),
-        )[1]
-        try:
-            basis = random_range(
-                operator,
-                rtol=1e-8,
-                block_size=10,
-                max_rank=200,
-                rng=np.random.default_rng(1),
-            )
-        finally:
-            type(space).inner_product = original
+        space = OpaqueSpace(np.ones(600))
+        basis_matrix, _ = np.linalg.qr(rng.standard_normal((600, 120)))
+        eigenvalues = np.linspace(1.0, 2.0, 120)
+        matrix = basis_matrix @ np.diag(eigenvalues) @ basis_matrix.T
+        operator = LinearOperator.self_adjoint(
+            space, lambda x: Opaque(matrix @ x.data), traits=Traits.SELF_ADJOINT
+        )
+
+        space.calls.reset()
+        basis = random_range(
+            operator,
+            rtol=1e-8,
+            block_size=10,
+            max_rank=200,
+            rng=np.random.default_rng(1),
+        )
 
         assert len(basis) == 120
-        stacked = np.array(basis)
+        stacked = np.array([b.data for b in basis])
         residual = matrix - stacked.T @ (stacked @ matrix)
         assert np.linalg.norm(residual) < 1e-10 * np.linalg.norm(matrix)
-        assert counted["n"] < 60000  # the rebuilding route needed 82788
+        counted = space.calls["inner_product"]
+        assert 0 < counted < 60000  # the rebuilding route needed 82788
 
     def test_the_basis_is_still_orthonormal(self, rng):
         """Which is the thing the rebuilding was there to guarantee."""
@@ -387,8 +390,8 @@ class TestAdaptiveRangeIsIncremental:
 
 
 class TestRandomisedOnADenseMetric:
-    """The review found these tested only on diagonal Gram matrices, which
-    cannot tell a metric-correct implementation from a metric-naive one."""
+    """A diagonal Gram matrix cannot tell a metric-correct implementation from
+    a metric-naive one; these run on a dense one."""
 
     def test_random_diagonal_reads_the_galerkin_diagonal(self, rng):
         space = dense_metric(30, rng)

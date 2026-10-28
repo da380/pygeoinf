@@ -11,6 +11,8 @@ the pole the grid does not sample — carry a negative control.
 import numpy as np
 import pytest
 
+from .conftest import coastlines_are_cached
+
 from pygeoinf2.symmetric_space.base import SymmetricSpace
 from pygeoinf2.testing import check_operator
 
@@ -117,9 +119,13 @@ class TestTheLebesgueInnerProductIsTheQuadrature:
         for _ in range(3):
             x, y = X.random(rng=rng), X.random(rng=rng)
             components = DiagonalMetricSpace.inner_product(X, x, y)
-            assert X.inner_product(x, y) == pytest.approx(components, rel=1e-12)
+            # An inner product of random fields can cancel, so the slack is
+            # on the scale of the norms, not of the result.
+            assert X.inner_product(x, y) == pytest.approx(
+                components, rel=1e-10, abs=1e-12 * X.norm(x) * X.norm(y)
+            )
             assert X.squared_norm(x) == pytest.approx(
-                DiagonalMetricSpace.squared_norm(X, x), rel=1e-12
+                DiagonalMetricSpace.squared_norm(X, x), rel=1e-10
             )
 
     def test_it_costs_no_transform(self, rng, monkeypatch):
@@ -145,7 +151,9 @@ class TestTheLebesgueInnerProductIsTheQuadrature:
         x, y = X.random(rng=rng), X.random(rng=rng)
         product = X.multiply(f, x)
         assert X.inner_product(product, y) == pytest.approx(
-            DiagonalMetricSpace.inner_product(X, product, y), rel=1e-11
+            DiagonalMetricSpace.inner_product(X, product, y),
+            rel=1e-10,
+            abs=1e-12 * X.norm(product) * X.norm(y),
         )
 
     def test_a_sobolev_space_keeps_the_component_route(self, rng):
@@ -199,8 +207,8 @@ class TestDoubling:
     @pytest.mark.parametrize("lmax", [4, 8, 17, 32])
     @pytest.mark.parametrize("radius,sampling", [(1.0, 1), (1.7, 1), (1.0, 2)])
     def test_the_south_pole_comes_from_the_row_means(self, lmax, radius, sampling, rng):
-        """The pole value used to cost a full analysis -- 35% of
-        a forward evaluation at lmax 256 -- to read one number out. Only the
+        """A full analysis to read one number out would be 35% of a forward
+        evaluation at lmax 256. Only the
         zonal harmonics are non-zero at a pole and they do not depend on
         longitude, so it is a weighting of the row means."""
         X = Sobolev(lmax, 2.0, 0.2, radius=radius, sampling=sampling)
@@ -291,9 +299,9 @@ class TestBothRoutesAgree:
 
 
 class TestWalkingOverThePole:
-    """A walk longer than a quarter circumference used to run the
+    """A walk longer than a quarter circumference must not run the
     colatitude past ``pi`` and return a latitude below -90, which the two
-    evaluation routes then read as two different points."""
+    evaluation routes would then read as two different points."""
 
     def test_it_stays_on_the_sphere(self):
         X = Lebesgue(8)
@@ -451,12 +459,14 @@ class TestExtendedGrid:
 
 
 class TestRandomDomainPoints:
-    """v1's rejection sampler over land or ocean, sharing the coastlines
+    """The rejection sampler over land or ocean, sharing the coastlines
     with the mask."""
 
     def test_points_land_where_they_should(self):
         pytest.importorskip("cartopy")
         pytest.importorskip("shapely")
+        if not coastlines_are_cached():
+            pytest.skip("the Natural Earth coastlines are not cached")
         from pygeoinf2.symmetric_space.sphere import _land_test
 
         on_land = _land_test("110m")

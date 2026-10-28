@@ -245,7 +245,7 @@ class TestDistributions:
         hidden = gaussian.push_forward(
             Operator.from_callables(space, target, lambda x: forward(x))
         )
-        samples = 60000
+        samples = 20000
         mean, covariance, draws = plotting.moments(
             hidden, samples=samples, rng=np.random.default_rng(5)
         )
@@ -257,7 +257,6 @@ class TestDistributions:
         assert np.abs(mean - exact_mean).max() < tolerance * np.sqrt(scale)
         assert np.abs(covariance - exact_covariance).max() < tolerance * scale
 
-    @pytest.mark.slow
     def test_a_non_gaussian_measure_is_drawn_from_draws(self, measure):
         from pygeoinf2.algebra.operators import Operator
         from pygeoinf2.algebra.spaces import EuclideanSpace
@@ -407,7 +406,7 @@ class TestSampledDensity:
     """
 
     @staticmethod
-    def cloud(rng, count=20000):
+    def cloud(rng, count=6000):
         """Correlated and bent, so an axis-aligned smoothing would show."""
         root = np.array([[1.0, 0.0], [0.8, 0.6]])
         draws = (root @ rng.standard_normal((2, count))).T
@@ -437,10 +436,10 @@ class TestSampledDensity:
         draws = self.cloud(rng)
         mean, deviation = draws.mean(axis=0), draws.std(axis=0)
         horizontal = np.linspace(
-            mean[0] - 3.75 * deviation[0], mean[0] + 3.75 * deviation[0], 160
+            mean[0] - 3.75 * deviation[0], mean[0] + 3.75 * deviation[0], 100
         )
         vertical = np.linspace(
-            mean[1] - 3.75 * deviation[1], mean[1] + 3.75 * deviation[1], 160
+            mean[1] - 3.75 * deviation[1], mean[1] + 3.75 * deviation[1], 100
         )
         mesh_x, mesh_y = np.meshgrid(horizontal, vertical)
         exact = gaussian_kde(draws.T)(
@@ -511,8 +510,8 @@ class TestSampledDensity:
 
 
 class TestPyslfpNeeds:
-    """The keywords the review found every pyslfp call passing, and v2 not
-    accepting. A caller who cannot title a plot has to reach past the return
+    """The keywords every pyslfp call passes. A caller who cannot title a
+    plot has to reach past the return
     value to do it, and a corner plot with no legend has three unlabeled
     marks on it."""
 
@@ -535,7 +534,7 @@ class TestPyslfpNeeds:
 
         posterior, prior = measure
         axes = plot_corner(posterior, prior=prior, title="a corner plot")
-        assert axes[0, 0].get_figure()._suptitle.get_text() == "a corner plot"
+        assert axes[0, 0].get_figure().get_suptitle() == "a corner plot"
 
     def test_the_corner_plot_has_a_legend(self, measure):
         """In the empty upper triangle, which costs no space."""
@@ -577,7 +576,7 @@ class TestPyslfpNeeds:
 
 
 class TestSphereMapOptions:
-    """The field-plot keywords v1 had and v2 dropped."""
+    """The field-plot keywords a caller expects."""
 
     @pytest.fixture
     def field(self):
@@ -1054,8 +1053,8 @@ class TestPlotSetThreeDimensions:
     def test_a_slice_matches_the_pullback_ellipsoid(self, rng):
         """The slice ``x = x0 + V u`` of ``(x-c, P (x-c)) <= 1`` is the
         ellipsoid ``(u - u_c, M (u - u_c)) <= rho^2`` with ``M = V' P V``,
-        ``u_c = -M^-1 b`` and ``rho^2 = 1 - gamma + b' M^-1 b`` — v1's exact
-        quadratic path. The rastered extent along each picture axis must
+        ``u_c = -M^-1 b`` and ``rho^2 = 1 - gamma + b' M^-1 b``, exactly.
+        The rastered extent along each picture axis must
         land on that ellipsoid's, to within the cells that straddle it."""
         from pygeoinf2.algebra.spaces import EuclideanSpace
         from pygeoinf2.geometry.subspaces import AffineSubspace

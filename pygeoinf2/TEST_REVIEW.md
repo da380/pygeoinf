@@ -1,5 +1,13 @@
 # pygeoinf2 test-suite review
 
+> **Status, 2026-10-28 (D-171).** Acted on: all of §B (B1 to B15 and the
+> Low items that mattered), §C1, §C2, §C4, the vacuous and wrong
+> constructions of §E, §D4, the C++ draws, the thread cap, the scheduled
+> slow job. Still open: §C3 beyond the moment and KDE tests, §C5
+> duplicates, §D1 and §D2 coverage gaps, §D3 metric fixtures, the helper
+> consolidation, monkeypatching and the split of `test_assorted.py` in §E.
+> Line numbers below predate the changes.
+
 2026-10-28. Scope: `pygeoinf2/tests/` on branch `refactor`. Nothing outside this file was changed.
 
 **Line numbers** refer to commit 795b80a. During the review another session edited five test files in the working tree:

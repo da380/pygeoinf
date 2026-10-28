@@ -2513,6 +2513,12 @@ class Splitting(Algorithm):
     signs since either certifies. Without support functions the outer
     value is infinite, honestly: a projection cannot bound a set from
     outside.
+
+    The outer value is a bound whatever the iterate, by weak duality. The
+    inner value is not quite attained: the primal iterate lies in the set
+    only to the feasibility tolerance, so ``inner`` can exceed ``value`` by
+    that order, and a bracket read off this algorithm is certified to the
+    tolerance on its inner side. A loose tolerance is a loose inner value.
     """
 
     name = "splitting"

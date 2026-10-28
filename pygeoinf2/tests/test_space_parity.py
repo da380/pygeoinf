@@ -183,9 +183,8 @@ class TestChangingTheMetricKeepsTheSubclass:
 
 
 class TestAdoptingAnArray:
-    """``from_grid_values`` aliased the caller's
-    array, so a later in-place operation rewrote it. v1's ``from_array``
-    copies."""
+    """``from_grid_values`` copies the caller's array; aliasing it would let a
+    later in-place operation rewrite the field."""
 
     def test_the_caller_keeps_their_array(self, geometry, rng):
         _, space = geometry
@@ -214,8 +213,8 @@ class TestAdoptingAnArray:
 class TestPointsAreConvertedOnce:
     """The conversion from points to whatever the transform
     consumes depends only on the points, and an observation operator is built
-    once and applied thousands of times. It used to run per application: 91% of
-    one on a bounded box, whose conversion is a Python loop."""
+    once and applied thousands of times. Run per application it would be 91%
+    of one on a bounded box, whose conversion is a Python loop."""
 
     def test_an_operator_converts_them_once(self, geometry, rng, monkeypatch):
         from pygeoinf2.symmetric_space.base import PreparedPoints
@@ -388,8 +387,7 @@ class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 
     def test_the_pairs_are_the_pairs(self, geometry, rng):
-        """Against a brute-force sweep, which is what v1 does on the base and
-        what v2 did on the sphere -- correct, and 216 MB of differences at
+        """Against a brute-force sweep: correct, and 216 MB of differences at
         n = 3000."""
         _, space = geometry
         points = space.random_points(30, rng=rng)
@@ -555,8 +553,8 @@ class TestCoefficientAccess:
     def test_on_a_sobolev_space_the_round_trip_still_holds(self, geometry, rng):
         """``power_measure(p)`` means the L2 spectrum on
         every space, so the round trip through ``power_spectrum`` holds on a
-        Sobolev space exactly as on L2 -- where it used to come out divided
-        by the Sobolev symbol. The metric-native meaning remains reachable
+        Sobolev space exactly as on L2, not divided by the Sobolev symbol.
+        The metric-native meaning remains reachable
         through ``invariant_measure``, whose eigenvalues this measure's
         covariance carries multiplied by the gram diagonal."""
         _, space = geometry
@@ -578,8 +576,7 @@ class TestCoefficientAccess:
 
     def test_analysis_and_synthesis_invert_each_other(self, geometry, rng):
         """And are *not* each other's adjoint on anything but L2 -- which is
-        why there are two of them, rather than one and its adjoint. v1 wrote
-        the difference into the adjoint by hand as a power of the radius."""
+        why there are two of them, rather than one and its adjoint."""
         from pygeoinf2.testing import check_operator
 
         _, space = geometry
@@ -605,7 +602,7 @@ class TestCoefficientAccess:
         assert space.norm(space.subtract(theirs, mine)) > 1e-8 * space.norm(mine)
 
     def test_a_band_outside_the_space_is_padded(self, geometry, rng):
-        """v1 zero-padded past the truncation; an inverted band is still refused."""
+        """Zero-padded past the truncation; an inverted band is still refused."""
         _, space = geometry
         beyond = int(space.degrees.max()) + 1
         padded = space.coefficient_operator(lmax=beyond)
@@ -618,8 +615,8 @@ class TestCoefficientAccess:
 
 
 class TestPowerSpectrumAgainstPyshtools:
-    """v1 got a spectrum by drawing samples and calling SHCoeffs.spectrum.
-    This is the same number, on this library's scale."""
+    """The same number as ``SHCoeffs.spectrum`` on a draw, on this library's
+    scale."""
 
     def test_it_is_pyshtools_spectrum_up_to_the_orthonormal_scale(self, rng):
         pytest.importorskip("pyshtools")
@@ -731,7 +728,7 @@ class TestBothEvaluationRoutesAgree:
 
 
 class TestSharedTablesAndSmallFixes:
-    """A cluster of Should items from the review, each with its own reason."""
+    """Small shared tables and fixes, each with its own reason."""
 
     def test_a_truncation_degree_does_not_depend_on_tie_order(self, geometry):
         """The power in a degree is summed before the degrees are walked. On a
@@ -813,7 +810,7 @@ class TestSphereTables:
 
 
 class TestCorrelatedMeasureAccessors:
-    """Reading a joint measure back, which v1 could and v2 could not."""
+    """Reading a joint measure back."""
 
     @staticmethod
     def _measure(space):
@@ -879,7 +876,7 @@ class TestCorrelatedMeasureAccessors:
         assert space.spectral_correlations(measure)[live] == pytest.approx(wanted[live])
 
     def test_a_mode_with_no_variance_has_no_correlation(self, geometry):
-        """0/0, and v1's convention is zero -- there is nothing to report."""
+        """0/0, by convention zero -- there is nothing to report."""
         _, space = geometry
         variance = space.sobolev_symbol(-2.0, 0.2).copy()
         variance[:3] = 0.0
@@ -913,13 +910,14 @@ class TestCorrelatedMeasureAccessors:
 class TestTruncationDegreeFor:
     """Choosing lmax from the prior, before there is a space to ask."""
 
-    def test_it_gives_v1s_answer(self):
-        """The rule is v1's, so the number is v1's: order 2, length scale 0.2
-        and rtol 1e-8 gave 354 there."""
+    def test_the_degree_for_a_prior_of_order_two(self):
+        """Order 2, length scale 0.2 and rtol 1e-8 give about 354; the exact
+        integer turns on a power function's last digit, so one either way
+        is the same answer."""
         pytest.importorskip("pyshtools")
         from pygeoinf2.symmetric_space.sphere import Sphere
 
-        assert Sphere.truncation_degree_for(2.0, 0.2) == 354
+        assert Sphere.truncation_degree_for(2.0, 0.2) == pytest.approx(354, abs=1)
 
     def test_it_needs_no_space(self):
         """Static, because the answer is what you pass to the constructor."""

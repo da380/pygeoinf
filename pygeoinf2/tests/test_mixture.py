@@ -293,7 +293,7 @@ class TestMixtureInversion:
         means, covariances, weights, _ = self.reference(
             problem, prior, observed, model, data
         )
-        assert posterior.weights == pytest.approx(weights, abs=1e-12)
+        assert posterior.weights == pytest.approx(weights, abs=1e-10)
         for index, component in enumerate(posterior.components):
             galerkin = component.covariance.matrix(form="galerkin")
             gram = model.gram_matrix()

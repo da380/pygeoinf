@@ -259,6 +259,14 @@ Recorded rather than settled, so nobody has to rediscover them.
   reached by position meanwhile. To look into: whether the block operators
   should take `labels=`, or the estimator should prefer the prior's domain
   when the two are equal.
+- **The splitting route's inner value is attained only to its tolerance.**
+  Found 2026-10-28 when its test tolerance was loosened from 1e-9 to 1e-7:
+  `Splitting` reads `inner` off a primal iterate that lies in the sets
+  only to the feasibility residual, so `inner` exceeded `value` by 1.5e-8
+  and the bracket was not a certificate on that side. The outer value is
+  sound by weak duality. A certified inner value needs a feasible point,
+  which for two balls a final exact correction could supply; documented on
+  the class meanwhile.
 - **The Woodbury preconditioner reads a Tikhonov member two ways.** Along
   a family (D-170) the multiplier is the factor on the noise and the prior
   covariance is the preconditioner's own, `t`-independent. Asked to invert

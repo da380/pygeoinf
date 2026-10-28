@@ -15,6 +15,8 @@ matplotlib.use("Agg")
 
 import pytest
 
+from .conftest import coastlines_are_cached
+
 EXAMPLES = pathlib.Path(__file__).resolve().parent.parent / "examples"
 
 
@@ -59,25 +61,6 @@ NEEDS_COASTLINES = {
 }
 
 
-def _coastlines_are_cached() -> bool:
-    """True when cartopy already has the land shapefile on disk."""
-    try:
-        from cartopy.io import shapereader
-    except ImportError:
-        return False
-    import unittest.mock
-
-    with unittest.mock.patch("cartopy.io.Downloader.acquire_resource") as blocked:
-        blocked.side_effect = AssertionError("would download")
-        try:
-            shapereader.natural_earth(
-                resolution="110m", category="physical", name="land"
-            )
-        except Exception:
-            return False
-    return True
-
-
 # Examples whose *cost is the point*: an iteration count on a badly-scaled
 # problem, a posterior covariance formed block by block. Shrinking them would
 # make them demonstrate something else, so they are marked slow instead and run
@@ -112,7 +95,7 @@ def test_the_example_runs(script, capsys):
     needed = OPTIONAL.get(script.stem, ())
     for module in (needed,) if isinstance(needed, str) else needed:
         pytest.importorskip(module)
-    if script.stem in NEEDS_COASTLINES and not _coastlines_are_cached():
+    if script.stem in NEEDS_COASTLINES and not coastlines_are_cached():
         pytest.skip("the Natural Earth coastline data is not cached locally")
     runpy.run_path(str(script), run_name="__main__")
     assert capsys.readouterr().out.strip(), f"{script.name} printed nothing"

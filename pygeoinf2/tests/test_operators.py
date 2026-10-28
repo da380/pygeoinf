@@ -53,8 +53,10 @@ class TestAdjoint:
 
     def test_self_adjoint_operator_is_its_own_adjoint(self, rng):
         X = make_weighted_space()
+        # Symmetric in the Galerkin form is what self-adjoint means on a
+        # weighted space; the same matrix as a components form would not be.
         C = LinearOperator.from_matrix(
-            X, X, spd_matrix(rng, X.dim), traits=Traits.SELF_ADJOINT, form="components"
+            X, X, spd_matrix(rng, X.dim), traits=Traits.SELF_ADJOINT, form="galerkin"
         )
         # The claim is not verified at construction, so check it separately.
         A = LinearOperator.self_adjoint(X, lambda x: X.scale(2.0, x))
@@ -69,8 +71,8 @@ class TestAdjoint:
 
 
 class TestProbedAdjoint:
-    """v1 derived a missing adjoint by probing every basis vector on every
-    application, silently; v2 refuses. The opt-in assembles the matrix once
+    """A missing adjoint is refused rather than derived silently by probing
+    every basis vector on every application. The opt-in assembles the matrix once
     and derives the adjoint from it, and its cost is in its name."""
 
     @staticmethod
@@ -128,9 +130,9 @@ class TestProbedAdjoint:
         assert np.allclose(bare.with_probed_adjoint().matrix(), matrix)
 
     def test_a_space_without_coordinates_is_refused(self):
-        X = OpaqueSpace(4)
+        X = OpaqueSpace(np.ones(4))
         A = LinearOperator.from_callables(X, X, lambda x: x)
-        with pytest.raises(TypeError):
+        with pytest.raises(TypeError, match="coordinate"):
             A.with_probed_adjoint()
 
 
@@ -144,7 +146,7 @@ class TestTraitPropagation:
         check_traits(G, rng=rng)
 
     def test_congruence_is_recognized_after_the_fact(self, spaces, rng):
-        """A @ C @ A.adjoint, built in two steps. The M1 acceptance case.
+        """A @ C @ A.adjoint, built in two steps.
 
         This is what closures cannot do: the congruence is assembled as
         (A @ C) @ A.adjoint, so the pattern only exists once the composition is
@@ -304,7 +306,7 @@ class TestSpecialisationProtocol:
     """Structure must survive the algebra regardless of operand order."""
 
     def test_order_independence(self, rng):
-        """v1 loses structure for `generic + special` but not the reverse."""
+        """Structure survives `generic + special` as it does the reverse."""
         X = EuclideanSpace(4)
 
         class Diagonal(LinearOperator):
@@ -340,14 +342,14 @@ class TestSpecialisationProtocol:
 
         assert isinstance(a + b, Diagonal)
         # And the structure is not lost just because the special operand is on
-        # the right, which is the v1 failure mode.
+        # the right.
         assert isinstance(generic + a, _Sum)
         assert isinstance(a + generic, _Sum)
         assert type(generic + a) is type(a + generic)
 
 
 class TestScipyBridge:
-    """v1's matrix-free scipy operator, as ``as_scipy`` and its converse:
+    """The matrix-free scipy bridge, ``as_scipy`` and its converse:
     the metric factors of each form are put in and taken out correctly on a
     space whose Gram matrix is not diagonal."""
 
@@ -871,9 +873,9 @@ class TestFormalAdjointLift:
 
     def test_the_forward_action_costs_nothing_extra(self, rng):
         """Only the adjoint is reweighted, so on a shared grid the forward
-        action is the operator's own and nothing else. It used to round-trip
-        through components on both sides, four transforms per application doing
-        no work."""
+        action is the operator's own and nothing else: no round trip through
+        components on both sides, which would be four transforms per
+        application doing no work."""
         pyshtools = pytest.importorskip("pyshtools")
         from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev
 
@@ -1072,8 +1074,7 @@ class TestFunctionalConstructorSignature:
 
 
 class TestTheChecksReportWhatTheyMeasured:
-    """``check_*`` take ``rtol=`` again (v1's checks had ``check_rtol``; its
-    loss was a regression) and return a ``CheckReport``. The use is a backend
+    """``check_*`` take ``rtol=`` and return a ``CheckReport``. The use is a backend
     whose adjoint is consistent only to discretisation level: pass the
     ``rtol`` it can meet, read the defect back, record it falling under
     refinement."""
@@ -1274,7 +1275,7 @@ class TestAssembledStoresTheComponentsForm:
 
 
 class TestChecksTakeAMeasure:
-    """v1's ``measure=`` on every check: probes drawn from a measure on the
+    """``measure=`` on every check: probes drawn from a measure on the
     space rather than as white noise, which on a function space is rough in
     every mode and not what an operator will meet."""
 

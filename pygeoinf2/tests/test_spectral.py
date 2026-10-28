@@ -41,9 +41,8 @@ class TestDegrees:
 
 
 class TestSpectralLabels:
-    """The packing made public, vectorized: v1's ``indices``,
-    ``index_to_integer`` and ``integer_to_index`` as arrays of labels and
-    one method placing a label."""
+    """The packing made public, vectorized: arrays of labels and one method
+    placing a label."""
 
     def test_the_sphere_labels_every_component_once(self):
         X = Lebesgue(6)
@@ -56,7 +55,7 @@ class TestSpectralLabels:
         for i in range(X.dim):
             assert X.component_of(degrees[i], orders[i]) == i
         assert np.array_equal(X.component_of(degrees, orders), np.arange(X.dim))
-        # v1's convention: cosines first within a degree, then sines.
+        # The convention: cosines first within a degree, then sines.
         assert X.component_of(2, 0) == 4
         assert X.component_of(2, 2) == 6
         assert X.component_of(2, -1) == 7
@@ -327,7 +326,6 @@ class TestMeasureStatistics:
             first.kl_divergence(second, method="dense")
         )
 
-    @pytest.mark.slow
     def test_the_stochastic_route_agrees_with_the_dense_one(self, pair):
         """Nothing is formed on this route, so it is the one that survives a
         space too large to hold two covariance matrices. It is checked in
@@ -356,7 +354,6 @@ class TestMeasureStatistics:
                 == 0.0
             )
 
-    @pytest.mark.slow
     def test_auto_takes_the_spectral_route_when_it_can(self):
         X = Sobolev(6, 2.0, 0.2)
         first = X.sobolev_measure(2.0, 0.2)
@@ -436,8 +433,8 @@ class TestMeasureStatistics:
     def test_a_correlated_measures_norms_come_from_its_slices(self, monkeypatch):
         """One small matrix per mode: the trace is the sum of their traces and
         the Hilbert-Schmidt norm the root of the sum of their squared
-        Frobenius norms, in O(dim n^2), as v1 had. The port assembled the
-        dense (n dim)^2 block matrix for both."""
+        Frobenius norms, in O(dim n^2), never the dense (n dim)^2 block
+        matrix."""
         from pygeoinf2.algebra.operators import LinearOperator
 
         X = Sobolev(6, 2.0, 0.2)
@@ -589,9 +586,8 @@ class TestCovarianceFunction:
 
 
 class TestInvariantAlgebraDrawsInOneTransform:
-    """v1's invariant measure class carried a Karhunen-Loeve sampler and lost
-    it whenever the algebra rebuilt the measure; the one-transform draw now
-    lives on any diagonal factor, so scaled, summed and marginal measures
+    """The one-transform draw lives on any diagonal factor rather than on the
+    invariant measure class, so scaled, summed and marginal measures
     all draw in one synthesis, and a sum touching a zero variance keeps its
     factor."""
 
@@ -663,7 +659,7 @@ class TestInvariantAlgebraDrawsInOneTransform:
 
 
 class TestWeakenedEllipsoid:
-    """v1's fractional credible geometry, between the credible ellipsoid and
+    """The fractional credible geometry, between the credible ellipsoid and
     the ambient ball."""
 
     def test_the_ends_are_the_two_hardenings(self, rng):
@@ -721,7 +717,7 @@ class TestWeakenedEllipsoid:
 
 
 class TestSampledPointwiseVariance:
-    """v1's Monte Carlo pointwise variance on any module, against the exact
+    """The Monte Carlo pointwise variance on any module, against the exact
     invariant answer on a symmetric space."""
 
     def test_it_matches_the_exact_answer(self, rng):
@@ -808,7 +804,7 @@ class TestAdaptiveDiagonals:
 
 
 class TestPriorWeightedProbes:
-    """v1's ``measure=`` on the range finder: probes drawn from a prior find
+    """``measure=`` on the range finder: probes drawn from a prior find
     the range the prior lets the data see, which white noise finds badly.
     On function spaces it does far better, as measured here."""
 

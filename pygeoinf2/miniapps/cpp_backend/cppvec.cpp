@@ -66,10 +66,25 @@ class Vector {
     double dot_weighted(const Vector& other, const SparseMatrix& gram) const;
 
     // Independent standard normal entries from this vector's own generator.
+    // Box-Muller on the engine's raw 64-bit words rather than
+    // std::normal_distribution, whose algorithm the standard leaves to each
+    // implementation: the same seed then gives the same draw with libstdc++,
+    // libc++ and MSVC alike, which is what a seeded test relies on.
     void fill_random(std::uint64_t seed) {
         std::mt19937_64 engine(seed);
-        std::normal_distribution<double> normal(0.0, 1.0);
-        for (double& value : data_) value = normal(engine);
+        auto uniform = [&engine]() {
+            // 53 random bits, shifted into (0, 1]: never zero, so the
+            // logarithm below is finite.
+            return (static_cast<double>(engine() >> 11) + 1.0) * 0x1.0p-53;
+        };
+        constexpr double two_pi = 6.283185307179586;
+        std::size_t i = 0;
+        while (i < data_.size()) {
+            const double radius = std::sqrt(-2.0 * std::log(uniform()));
+            const double angle = two_pi * uniform();
+            data_[i++] = radius * std::cos(angle);
+            if (i < data_.size()) data_[i++] = radius * std::sin(angle);
+        }
     }
 
     // For the plotting boundary only.

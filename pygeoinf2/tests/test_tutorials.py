@@ -37,7 +37,10 @@ OPTIONAL: dict[str, str | tuple[str, ...]] = {
 }
 
 # Tutorials whose cost is part of the lesson, run with the slow marker.
-SLOW: set[str] = set()
+# Whole-notebook runs that take a minute or more at their own scale; they
+# belong to the slow set, which the scheduled CI job runs, and not to the
+# run every push waits for.
+SLOW: set[str] = {"07_properties", "13_ray_tomography", "14_one_problem_three_answers"}
 
 
 def _parametrized() -> list:

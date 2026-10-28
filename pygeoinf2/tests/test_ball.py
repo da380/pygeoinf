@@ -294,15 +294,18 @@ class TestPointEvaluation:
             unit = np.zeros(space.dim)
             unit[k] = 1.0
             on_grid = space.interior_values(space.from_components(unit))[where]
-            assert np.allclose(rows[:, k], on_grid, atol=1e-12)
+            assert np.allclose(
+                rows[:, k], on_grid, atol=1e-10 * max(1.0, np.abs(on_grid).max())
+            )
 
     @pytest.mark.parametrize("build", GEOMETRIES)
     def test_a_field_in_the_span_is_evaluated_exactly(self, build, rng):
         space = build(2.0)
         x = space.random(rng=rng)
         points, where = grid_points(space)
+        values = space.interior_values(x)[where]
         assert np.allclose(
-            space.evaluate(x, points), space.interior_values(x)[where], atol=1e-11
+            space.evaluate(x, points), values, atol=1e-10 * np.abs(values).max()
         )
         assert space.basis_at(points[4]) == pytest.approx(space.basis_matrix(points)[4])
 

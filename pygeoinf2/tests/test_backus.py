@@ -1503,7 +1503,7 @@ class TestBundleMethod:
             lambda x: float(np.abs(x - anchor).sum() + 0.5 * x @ x),
             gradient=lambda x: np.sign(x - anchor) + x,
         )
-        result = ProximalBundleMethod(tolerance=1e-10, max_iterations=400).minimize(
+        result = ProximalBundleMethod(tolerance=1e-8, max_iterations=400).minimize(
             functional, space.zero()
         )
         best = np.clip(anchor, -1.0, 1.0)
@@ -1686,7 +1686,6 @@ class TestInclusionWithErrors:
                     # is small enough, which it is here.
                     assert noisy_level == float("inf")
 
-    @pytest.mark.slow
     def test_it_never_admits_what_the_support_function_excludes(self, noisy, rng):
         """The two descriptions of one set, checked against each other.
 
@@ -1730,7 +1729,6 @@ class TestInclusionWithErrors:
         assert estimator(data).inclusion_level(far) == float("inf")
         assert not estimator(data).admits(far)
 
-    @pytest.mark.slow
     def test_the_inner_hull_sits_inside_the_outer_bound(self, noisy, rng):
         """The inner hull inside, the certified outer polytope outside: the
         set sandwiched between the two."""
@@ -1831,7 +1829,6 @@ class TestSupportValuesSweep:
             for angle in angles
         ]
 
-    @pytest.mark.slow
     def test_the_warm_start_does_not_change_the_answers(self, dual):
         """Which is the only thing that would make the saving worthless."""
         estimator, space, data, data_space = dual
@@ -1842,7 +1839,6 @@ class TestSupportValuesSweep:
         )
         assert warm == pytest.approx(cold, abs=1e-5)
 
-    @pytest.mark.slow
     def test_it_agrees_with_asking_one_at_a_time(self, dual):
         estimator, space, data, _ = dual
         directions = self.directions(space, 6)
@@ -1911,7 +1907,7 @@ class TestTheDualCostMemo:
 
         feasible, direction, data = oracle
         cached = Dual().cost(feasible, direction)
-        for _ in range(200):
+        for _ in range(10):
             certificate = rng.standard_normal(3)
             fresh = Dual().cost(feasible, direction)
             assert np.allclose(

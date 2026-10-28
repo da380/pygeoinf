@@ -21,7 +21,7 @@ from pygeoinf2.symmetric_space import sphere as sphere_module  # noqa: E402
 
 
 class TestBoundedDomains:
-    """v1 builds the line from the circle and the plane from the torus."""
+    """The line is built from the circle and the plane from the torus."""
 
     def test_the_padding_enlarges_the_periodic_domain(self):
         space = Interval(32, lower=0.0, upper=1.0, padding=0.25)
@@ -133,9 +133,9 @@ class TestBoundedDomains:
 
     def test_on_a_sobolev_space_it_lifts_rather_than_refusing(self, rng):
         """Multiplying by a discontinuous mask does not commute with the
-        metric, so it is not self-adjoint there and must not say it is. It
-        used to raise and tell the caller to lift it by hand; doing the lift
-        is the same operator without the extra step."""
+        metric, so it is not self-adjoint there and must not say it is. The
+        lift is done here rather than left to the caller; it is the same
+        operator without the extra step."""
         space = Interval(32, lower=0.0, upper=1.0, order=2.0, length_scale=0.1)
         projector = space.support_projection()
 
@@ -297,7 +297,7 @@ class TestSphere:
         assert sines.var() == pytest.approx(1.0 / 3.0, rel=0.1)
 
     def test_points_are_latitude_and_longitude_in_degrees(self, rng):
-        """The convention every catalogue, every v1 script and pyshtools
+        """The convention every catalogue and pyshtools
         itself already use -- and the one whose absence would misplace a
         station rather than raise."""
         space = sphere_module.Lebesgue(8)
@@ -368,7 +368,7 @@ class TestSphereVectorsAreGrids:
         )
 
     def test_the_default_is_the_square_grid(self):
-        """v1's default, and half the memory of the wide one."""
+        """The default, and half the memory of the wide one."""
         assert sphere_module.Lebesgue(8).sampling == 1
 
     def test_the_two_grids_are_different_spaces(self):

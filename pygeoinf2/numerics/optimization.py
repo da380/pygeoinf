@@ -86,6 +86,11 @@ class OptimizationResult:
         )
 
 
+_PRECISION_MARGIN = 4.0
+"""How far above the bare rounding floor a failed line search still counts
+as having converged; see :meth:`Optimizer._precision_limited`."""
+
+
 class Optimizer(ABC):
     """Minimizes a functional on a Hilbert space."""
 
@@ -201,22 +206,68 @@ class Optimizer(ABC):
     def _tolerance(self, initial_gradient_norm: float) -> float:
         return max(self._gtol, self._rtol * initial_gradient_norm)
 
-    def _precision_limited(self, value: float, gradient_norm: float) -> bool:
+    def _precision_limited(
+        self, value: float, gradient_norm: float, *, curvature: float | None = None
+    ) -> bool:
         """Whether the gradient is as small as double precision allows here.
 
         A line search fails when no step along a descent direction improves the
-        value. Near a minimizer that is not a defect: the decrease a step is
-        predicted to make, ``c1 * alpha * slope``, eventually falls below the
-        rounding error in the value itself, which is ``eps * |f|`` rather than
-        ``eps``. Past that point the search is comparing noise.
+        value. Near a minimizer that is not a defect: the decrease a step can
+        make, about ``||g||^2 / (2 L)`` for a curvature ``L`` along the
+        direction, eventually falls below the rounding error in the value
+        itself, which is ``eps * |f|`` rather than ``eps``. Past that point
+        the search is comparing noise, so a failure with the gradient already
+        at that scale is success at the accuracy the arithmetic allows, and
+        saying "line search failed" instead reports a wrong answer about a
+        right one.
 
-        So a failure with the gradient already at that scale is success at the
-        accuracy the arithmetic allows, and saying "line search failed" instead
-        reports a wrong answer about a right one. The test is
-        ``||g|| <= sqrt(eps) (1 + |f|)``.
+        The floor is therefore ``sqrt(eps (1 + |f|) L)``, times a margin of
+        four for the search's own inefficiency: on a quadratic the methods
+        here stop between one and four times the bare floor, and a verdict
+        that turned on which side of it the last failed step landed would
+        change with the platform's arithmetic. Without a curvature estimate
+        ``L`` is taken as ``1 + |f|``, which is right when the objective and
+        its curvature share one scale and loose when the objective carries a
+        large constant.
+
+        Args:
+            value: ``f`` at the point.
+            gradient_norm: ``||g||`` there, in the space's norm.
+            curvature: an estimate of ``L``; see :meth:`_curvature`.
         """
-        floor = float(np.sqrt(np.finfo(float).eps)) * (1.0 + abs(value))
+        if curvature is None or not np.isfinite(curvature) or curvature <= 0.0:
+            curvature = 1.0 + abs(value)
+        eps = float(np.finfo(float).eps)
+        floor = _PRECISION_MARGIN * float(np.sqrt(eps * (1.0 + abs(value)) * curvature))
         return gradient_norm <= floor
+
+    @staticmethod
+    def _curvature(
+        space: Any,
+        model: Any,
+        gradient: Any,
+        gradient_norm: float,
+        *,
+        previous_x: Any = None,
+        previous_gradient: Any = None,
+    ) -> float | None:
+        """An estimate of the curvature where a line search has just failed.
+
+        The Rayleigh quotient of the Hessian along the gradient when the
+        functional has one, since that is the curvature a steepest-descent
+        step meets; otherwise the secant estimate from the last accepted
+        step, ``||g - g_prev|| / ||x - x_prev||``; ``None`` on the first
+        iteration of a functional without a Hessian.
+        """
+        if gradient_norm > 0.0 and getattr(model, "has_hessian", False):
+            quotient = space.inner_product(gradient, model.hessian(gradient))
+            return float(quotient) / gradient_norm**2
+        if previous_x is None or previous_gradient is None:
+            return None
+        length = space.norm(space.subtract(model.point, previous_x))
+        if length == 0.0:
+            return None
+        return float(space.norm(space.subtract(gradient, previous_gradient)) / length)
 
     def _finish_search_failure(
         self,
@@ -226,9 +277,11 @@ class Optimizer(ABC):
         iteration: int,
         evaluations: int,
         history: list[float],
+        *,
+        curvature: float | None = None,
     ) -> OptimizationResult:
         """The outcome when no step improved the value."""
-        limited = self._precision_limited(value, gradient_norm)
+        limited = self._precision_limited(value, gradient_norm, curvature=curvature)
         return OptimizationResult(
             x,
             value,
@@ -294,6 +347,8 @@ class _DescentMethod(Optimizer):
         evaluations = 1
         state = self._initial_state(space)
         previous: tuple[float, float] | None = None
+        previous_x: Any = None
+        previous_gradient: Any = None
 
         for iteration in range(1, self._max_iterations + 1):
             if gradient_norm <= tolerance:
@@ -328,7 +383,20 @@ class _DescentMethod(Optimizer):
             evaluations += search.evaluations
             if not search.converged:
                 return self._finish_search_failure(
-                    x, model.value, gradient_norm, iteration, evaluations, history
+                    x,
+                    model.value,
+                    gradient_norm,
+                    iteration,
+                    evaluations,
+                    history,
+                    curvature=self._curvature(
+                        space,
+                        model,
+                        gradient,
+                        gradient_norm,
+                        previous_x=previous_x,
+                        previous_gradient=previous_gradient,
+                    ),
                 )
 
             previous = (search.step, slope)
@@ -362,6 +430,7 @@ class _DescentMethod(Optimizer):
                 space.subtract(new_gradient, gradient),
             )
             previous_value = model.value
+            previous_x, previous_gradient = x, gradient
             x, model, gradient = new_x, new_model, new_gradient
             gradient_norm = space.norm(gradient)
             history.append(model.value)
@@ -694,7 +763,15 @@ class NewtonCG(Optimizer):
             evaluations += search.evaluations
             if not search.converged:
                 return self._finish_search_failure(
-                    x, model.value, gradient_norm, iteration, evaluations, history
+                    x,
+                    model.value,
+                    gradient_norm,
+                    iteration,
+                    evaluations,
+                    history,
+                    curvature=self._curvature(
+                        space, model, model.gradient, gradient_norm
+                    ),
                 )
 
             previous_value = model.value
@@ -806,7 +883,9 @@ class TrustRegionNewton(Optimizer):
             # gradient is as small as the arithmetic allows, as a failed
             # line search is judged; otherwise an honest stop short.
             limited = gradient_norm <= tolerance or self._precision_limited(
-                model.value, gradient_norm
+                model.value,
+                gradient_norm,
+                curvature=self._curvature(space, model, model.gradient, gradient_norm),
             )
             return OptimizationResult(
                 x,

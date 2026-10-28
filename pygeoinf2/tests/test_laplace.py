@@ -109,7 +109,7 @@ class TestItIsExactWhenTheProblemIsLinear:
             LinearForwardProblem(forward, error=error), prior
         )
         estimator = MaximumAPosteriori(
-            ForwardProblem(forward, error=error), prior, optimizer=LBFGS(gtol=1e-12)
+            ForwardProblem(forward, error=error), prior, optimizer=LBFGS(gtol=1e-10)
         )
         assert estimator.has_derivative
 
@@ -203,7 +203,7 @@ class TestOnANonlinearProblem:
         forward, prior, error, truth, data = nonlinear_setting
         space, data_space = forward.domain, forward.codomain
         estimator = MaximumAPosteriori(
-            ForwardProblem(forward, error=error), prior, optimizer=LBFGS(gtol=1e-11)
+            ForwardProblem(forward, error=error), prior, optimizer=LBFGS(gtol=1e-10)
         )
         linearized = estimator.at(data)
         direction = data_space.scale(0.1, data_space.random(rng=rng))

@@ -372,7 +372,7 @@ class TestProductMeasures:
         check_measure(joint, rng=rng, samples=20000, rtol=0.1)
 
     def test_a_product_of_anything_else_is_still_samplable(self, rng):
-        """v1 has this only for Gaussians; a non-Gaussian prior needs it."""
+        """A product of non-Gaussian factors is sampled factor by factor."""
         X, Y = EuclideanSpace(2), EuclideanSpace(3)
         base = GaussianMeasure.from_standard_deviation(X, 1.0)
         nonlinear = Operator.from_callables(X, X, lambda x: np.abs(x))
@@ -399,7 +399,7 @@ class TestProductMeasures:
 class TestJointModel:
     """The construction direct sums exist for: the joint law of model and data."""
 
-    def test_the_linear_joint_law_matches_v1s_shape(self, rng):
+    def test_the_linear_joint_law_has_the_block_shape(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
         A = LinearOperator.from_matrix(
             X, Y, rng.normal(size=(3, X.dim)), form="components"
@@ -457,7 +457,7 @@ class TestJointModel:
 
 
 class TestBlocksDoNotAllocateForNothing:
-    """A block row used to start from ``codomain.zero()`` — a synthesis on a
+    """A block row must not start from ``codomain.zero()`` — a synthesis on a
     spectral space — and then ``axpy`` every block including the structurally
     zero ones, whose value is another fresh zero vector.
     ``[[I, 0], [I, I]]`` on two spheres cost three syntheses per application
@@ -473,7 +473,7 @@ class TestBlocksDoNotAllocateForNothing:
 
     @staticmethod
     def naive(codomain, images):
-        """The route these used to take, kept as the reference."""
+        """The plain route, kept as the reference."""
         total = codomain.zero()
         for image in images:
             total = codomain.axpy(1.0, image, total)

@@ -1,13 +1,12 @@
-"""Every loop the audit found running serially takes ``n_jobs`` again.
+"""Every independent loop takes ``n_jobs``.
 
-The audit  listed the loops v1 could run on
-several cores and v2 could not: the dense point and path operators, the
-column probes behind the sparse preconditioners, the per-block probes of
-the normal-diagonal preconditioner, the covariance assembly behind the
-scipy bridge, the log determinant's Hutchinson probes, and the support
-sweep on every route but the dual. Each now takes ``n_jobs`` and forwards
-it to :func:`pygeoinf2.parallel.parallel_map`, and each test here says the
-same thing: the answer does not depend on the worker count.
+The loops that can run on several cores: the dense point and path
+operators, the column probes behind the sparse preconditioners, the
+per-block probes of the normal-diagonal preconditioner, the covariance
+assembly behind the scipy bridge, the log determinant's Hutchinson probes,
+and the support sweep on every route but the dual. Each takes ``n_jobs``
+and forwards it to :func:`pygeoinf2.parallel.parallel_map`, and each test
+here says the same thing: the answer does not depend on the worker count.
 """
 
 from __future__ import annotations
@@ -209,7 +208,7 @@ class TestSupportSweeps:
         )(data)
         serial = result.support_values(directions)
         assert np.allclose(
-            result.support_values(directions, n_jobs=2), serial, rtol=1e-8
+            result.support_values(directions, n_jobs=2), serial, rtol=1e-6
         )
 
     @pytest.mark.parametrize("via", ["dual", "splitting"])

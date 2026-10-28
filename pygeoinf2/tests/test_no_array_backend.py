@@ -668,7 +668,7 @@ class TestNonlinearEstimators:
     def test_maximum_a_posteriori(self, setting):
         X, P = setting.X, setting.P
         estimator = MaximumAPosteriori(
-            setting.nonlinear_problem, setting.prior, optimizer=LBFGS(gtol=1e-12)
+            setting.nonlinear_problem, setting.prior, optimizer=LBFGS(gtol=1e-10)
         )
         mean, _ = setting.posterior()
         assert_close(X, estimator(setting.d), mean, rel=1e-6)
@@ -678,7 +678,7 @@ class TestNonlinearEstimators:
     def test_laplace_approximation(self, setting, rng):
         X, P = setting.X, setting.P
         laplace = LaplaceApproximation.from_problem(
-            setting.nonlinear_problem, setting.prior, optimizer=LBFGS(gtol=1e-12)
+            setting.nonlinear_problem, setting.prior, optimizer=LBFGS(gtol=1e-10)
         )
         measure = laplace(setting.d)
         mean, cov = setting.posterior()
@@ -699,7 +699,7 @@ class TestNonlinearEstimators:
             setting.nonlinear_problem,
             damping=0.7,
             reference=vec(setting.m0),
-            optimizer=LBFGS(gtol=1e-12),
+            optimizer=LBFGS(gtol=1e-10),
         )
         expected = setting.tikhonov(0.7, reference=setting.m0)
         assert_close(X, estimator(setting.d), expected, rel=1e-6)
@@ -714,7 +714,7 @@ class TestNonlinearEstimators:
             level=level,
             reference=vec(setting.m0),
             tolerance=1e-8,
-            optimizer=LBFGS(gtol=1e-12),
+            optimizer=LBFGS(gtol=1e-10),
         )
         u = estimator(setting.d)
         target = chi2.ppf(level, NY)
@@ -749,7 +749,7 @@ class TestNonlinearEstimators:
                 hessian=lambda m: H,
             )
 
-        estimator = Minimization(Y, X, objective, optimizer=NewtonCG(gtol=1e-12))
+        estimator = Minimization(Y, X, objective, optimizer=NewtonCG(gtol=1e-10))
         expected = setting.A_star @ setting.data
         assert_close(X, estimator(setting.d), expected, rel=1e-7)
         pushed = estimator.push_forward(setting.T)
@@ -782,15 +782,14 @@ class TestOptimizers:
     @pytest.mark.parametrize(
         "optimizer",
         [
-            LBFGS(gtol=1e-11, ftol=0.0),
-            NonlinearCG(gtol=1e-11, ftol=0.0),
-            # Steepest descent's line search is a bracketing on function
-            # values, which cannot resolve a gradient near the rounding floor
-            # of the objective; a tolerance at 1e-11 failed on one platform's
-            # BLAS with the gradient already at 5e-8.
-            SteepestDescent(gtol=1e-7, ftol=0.0, max_iterations=5000),
-            NewtonCG(gtol=1e-11, ftol=0.0),
-            TrustRegionNewton(gtol=1e-11, ftol=0.0),
+            # The line-search methods stop where rounding in the value stops
+            # them, which on this problem is a gradient between 1e-10 and
+            # 1e-7; the Newton methods reach the arithmetic's own floor.
+            LBFGS(gtol=1e-8, ftol=0.0),
+            NonlinearCG(gtol=1e-8, ftol=0.0),
+            SteepestDescent(gtol=1e-8, ftol=0.0, max_iterations=5000),
+            NewtonCG(gtol=1e-10, ftol=0.0),
+            TrustRegionNewton(gtol=1e-10, ftol=0.0),
         ],
         ids=lambda o: type(o).__name__,
     )
@@ -810,7 +809,7 @@ class TestOptimizers:
             hessian=lambda x: LinearOperator.zero(X),
         )
         method = AugmentedLagrangian(
-            NewtonCG(gtol=1e-12, ftol=0.0),
+            NewtonCG(gtol=1e-10, ftol=0.0),
             equalities=[constraint],
             tolerance=1e-10,
             gtol=1e-10,

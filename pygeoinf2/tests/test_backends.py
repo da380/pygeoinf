@@ -407,6 +407,7 @@ class TestObservationOperators:
 class TestWhiteNoise:
     """White noise through MFEM rather than through a factorization."""
 
+    @pytest.mark.slow
     def test_the_load_has_the_mass_matrix_as_its_covariance(self):
         """Which is the whole content of a finite element white noise: the
         right-hand side of ``(W, phi_i)`` has covariance ``(phi_i, phi_j)``,

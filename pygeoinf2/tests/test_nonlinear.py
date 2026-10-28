@@ -283,9 +283,9 @@ class TestSharedWork:
 class TestDerivativeAlone:
     """``derivative(x)`` never evaluates a value the caller did not ask for.
 
-    The audit's cost regression: routed through ``at()``, a derivative-only
-    query on a forward operator whose value is a PDE solve paid for that
-    solve too. The counts here are v1's.
+    Routed through ``at()``, a derivative-only query on a forward operator
+    whose value is a PDE solve would pay for that solve too; the counts here
+    are the minimal ones.
     """
 
     @staticmethod
@@ -352,7 +352,7 @@ class TestDerivativeAlone:
 
 
 class TestAffineCheck:
-    """v1's affine axiom checks, as ``testing.check_affine``: the translation
+    """The affine axiom checks, ``testing.check_affine``: the translation
     is recovered at zero, affine combinations are preserved, the derivative
     is the linear part, and the linear part passes its own checks."""
 
@@ -407,8 +407,8 @@ class TestAffineCheck:
             check_affine(A, rng=rng)
 
     def test_a_bad_adjoint_in_the_linear_part_is_caught(self, spaces, rng):
-        """The linear part is checked too, which v1 did not do; a wrong
-        adjoint on a non-orthonormal space is the classic mistake."""
+        """The linear part is checked too; a wrong adjoint on a non-orthonormal
+        space is the classic mistake."""
         from pygeoinf2.testing import check_affine
 
         X, Y = spaces
@@ -437,7 +437,7 @@ class TestAffineOperator:
         check_derivative(F, x, rng=rng)
 
     def test_affineness_survives_the_algebra(self, rng):
-        """v1 preserves this with a string type check; the protocol replaces it."""
+        """The protocol, not a type check, carries affineness through the algebra."""
         X, Y = EuclideanSpace(4), EuclideanSpace(3)
         A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         B = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
@@ -617,7 +617,7 @@ class TestTheFunctionalAlgebraIsClosed:
         assert analytic == pytest.approx(numerical, abs=1e-6)
 
     def test_an_optimizer_runs_on_a_composed_objective(self, rng):
-        """The payoff, and the thing that used to raise. A misfit plus a
+        """The payoff. A misfit plus a
         regularizer is a sum of a composition and a scaling."""
         from pygeoinf2.numerics.optimization import LBFGS, NewtonCG
 
@@ -685,8 +685,8 @@ class TestTheLinearFunctionalAlgebraIsClosed:
             )
 
     def test_it_can_be_built_from_a_mapping(self, space, rng):
-        """v1's ``LinearForm(domain, mapping=...)`` had no counterpart: this
-        name resolved by MRO to ``LinearOperator.from_callables``."""
+        """A functional from a mapping, by this class's own constructor and
+        not one resolved by MRO to ``LinearOperator.from_callables``."""
         vector = space.random(rng=rng)
         by_representer = LinearFunctional.from_callables(
             space,

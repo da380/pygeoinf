@@ -130,6 +130,11 @@ exclude = ["work"]
 #     pytest pygeoinf2                 the fast suite
 #     pytest pygeoinf2 -m slow         only the expensive ones
 #     pytest pygeoinf2 -m ""           everything
+#
+# CI runs the fast suite on every push and the slow set on a schedule. The
+# suite caps the BLAS and OpenMP pools at two threads (PYGEOINF2_TEST_THREADS
+# overrides; see pygeoinf2/tests/conftest.py), so a run never swamps the
+# machine and no test depends on the core count.
 addopts = "-m 'not slow'"
 markers = [
     "slow: takes tens of seconds or more; excluded from the default run",

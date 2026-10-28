@@ -59,7 +59,8 @@ class TestSetAlgebra:
 
     def test_intersection_and_union(self, X, rng):
         small, large = Ball(X, radius=0.5), Ball(X, radius=5.0)
-        point = X.scale(1.0 / max(X.norm(X.random(rng=rng)), 1e-30), X.random(rng=rng))
+        draw = X.random(rng=rng)
+        point = X.scale(1.0 / max(X.norm(draw), 1e-30), draw)
         both = small & large
         either = small | large
         assert either.contains(point)
@@ -104,8 +105,7 @@ class TestSetAlgebra:
 
 
 class TestLevelSets:
-    """A set from a functional and a level, v1's ``SublevelSet`` and
-    ``LevelSet``, which v2 had no way to build."""
+    """A set from a functional and a level: ``SublevelSet`` and ``LevelSet``."""
 
     @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
     def space(self, request):
@@ -217,8 +217,8 @@ class TestBoundaryOnTheBase:
 
 
 class TestConvexityCheck:
-    """v1's randomized ``ConvexSubset.check``, now on the functional in
-    ``testing``, where the other sampled axioms live."""
+    """The randomized convexity check, on the functional in ``testing``,
+    where the other sampled axioms live."""
 
     def test_a_convex_functional_passes(self, X, rng):
         from pygeoinf2.testing import check_convexity
@@ -442,7 +442,7 @@ class TestDeclaredCapabilities:
 
     def test_the_intersection_bound_reads_the_flags(self, space, rng):
         """A part without a support function contributes nothing; a part
-        whose support function *fails* is no longer silently skipped."""
+        whose support function *fails* is not silently skipped."""
         ball = Ball(space, radius=1.0)
         precision = LinearOperator.identity(space)
         bare = Ellipsoid(space, precision)  # no covariance: no support function
@@ -468,7 +468,7 @@ class TestConvexProjections:
             check_projection(subset, rng=rng)
 
     def test_a_feasible_point_is_left_alone(self, X, rng):
-        """The property v1's HalfSpace.project does not have."""
+        """A projection must not move a point that is already inside."""
         normal = X.random(rng=rng)
         half_space = HalfSpace(X, normal, offset=10.0)
         inside = X.zero()
@@ -551,7 +551,7 @@ class TestThreeViewsOfOneSet:
         """The payoff: a hard constraint needs no extra machinery."""
         center = X.random(rng=rng)
         constraint = Ball(X, radius=0.25)
-        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+        result = ProximalGradient(max_iterations=2000, gtol=1e-10).minimize(
             SquaredDistance(X, center=center),
             X.random(rng=rng),
             nonsmooth=constraint.indicator(),
@@ -588,7 +588,7 @@ class TestEllipsoid:
         assert X.inner_product(maximizer, y) == pytest.approx(support(y))
 
     def test_the_projection_lands_on_the_boundary(self, X, ellipsoid, rng):
-        """It used to raise. A set that cannot project cannot be used by
+        """A set that cannot project cannot be used by
         anything needing a proximal step -- the primal-dual route, a proximal
         method, an intersection by Dykstra -- so a few linear solves is a
         better answer than not being available.
@@ -638,10 +638,10 @@ class TestEllipsoid:
 
     def test_the_projection_is_matrix_free_by_default(self, rng, monkeypatch):
         """Conjugate gradients on ``I + lambda P``, nothing extracted. A
-        Cholesky factorization used to be the default, twice per Newton step:
-        3.5 s at dimension 1500, and 31 s with 54 000 applications when the
-        precision had to be probed for its matrix. A direct solver by name
-        gives the same point."""
+        Cholesky factorization twice per Newton step would cost 3.5 s at
+        dimension 1500, and 31 s with 54 000 applications when the precision
+        had to be probed for its matrix. A direct solver by name gives the
+        same point."""
         from pygeoinf2.numerics.solvers import CholeskySolver
 
         for space in (EuclideanSpace(40), make_dense_metric_space(40)):
@@ -694,9 +694,9 @@ class TestEllipsoid:
 
 
 class TestBoundaries:
-    """A solid set knows its surface. v1's ``Ball.boundary`` and
-    ``Ellipsoid.boundary`` were not restored with the rest of the set algebra,
-    and the surfaces they return are what an *equality* constraint is -- the
+    """A solid set knows its surface. ``Ball.boundary`` and
+    ``Ellipsoid.boundary`` return the surfaces, which are what an *equality*
+    constraint is -- the
     ball surface projects onto it and samples uniformly over it, which the
     solid ball does not."""
 
@@ -863,7 +863,7 @@ class TestSubspaces:
         X, Y, A = problem
         value = Y.random(rng=rng)
         subspace = AffineSubspace.from_linear_equation(A, value)
-        result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+        result = ProximalGradient(max_iterations=2000, gtol=1e-10).minimize(
             SquaredDistance(X, center=X.random(rng=rng)),
             X.random(rng=rng),
             nonsmooth=subspace.indicator(),
@@ -875,10 +875,11 @@ class TestOneNormalInverse:
     """``(A A*)^-1`` is built once and shared.
 
     Three constructions need it -- the kernel projector, the minimum-norm
-    translation and the pseudo-inverse -- and each used to build its own. With
-    an iterative solver that is a wasted object; with a direct one it is the
-    matrix of ``A A*`` extracted and factorized again each time, and a subspace
-    built from an equation did that twice in one constructor call.
+    translation and the pseudo-inverse -- and they share one rather than
+    each building its own. With an iterative solver a second would be a
+    wasted object; with a direct one it would be the matrix of ``A A*``
+    extracted and factorized again each time, twice in one constructor call
+    for a subspace built from an equation.
     """
 
     class Counting(LinearSolver):
@@ -1076,7 +1077,7 @@ class TestTheMetricEntersEveryProjection:
             space.inner_product(projector(space.basis_vector(i)), space.basis_vector(i))
             for i in range(space.dim)
         )
-        assert abs(galerkin - 3.0) > 0.1, "the fixture no longer distinguishes them"
+        assert abs(galerkin - 3.0) > 0.1, "the fixture does not distinguish them"
 
     def test_the_affine_subspace(self, space, rng):
         """The translation is the minimum-norm solution in the space's norm,
@@ -1171,9 +1172,9 @@ class TestPolytopeProjection:
 
 
 class TestHalfSpaceSupport:
-    """v1's ``HalfSpaceSupportFunction``: extended-real valued, finite only
+    """A half-space's support function: extended-real valued, finite only
     along the outward normal, with the boundary's least-norm point as the
-    maximizer. v2's ``HalfSpace`` inherited the base refusal."""
+    maximizer."""
 
     @pytest.fixture(params=[make_weighted_space, make_dense_metric_space])
     def space(self, request):
@@ -1269,8 +1270,8 @@ class TestHalfSpaceSupport:
         assert fat(space.random(rng=rng)) == float("inf")
 
     def test_two_half_spaces_bound_each_other_along_a_shared_normal(self, space, rng):
-        """An intersection of half-spaces alone used to have no bound at
-        all; now it has one wherever a part's support is finite."""
+        """An intersection of half-spaces has a bound wherever a part's
+        support is finite."""
         normal = space.random(rng=rng)
         slab = HalfSpace(space, normal, offset=0.4) & HalfSpace(
             space, space.scale(-1.0, normal), offset=0.1
@@ -1333,7 +1334,7 @@ class TestConvexIntersection:
     def test_the_support_function_is_refused_and_the_bound_is_not(self, X, parts):
         """``min_i h_i`` bounds the support from above and is not equal to it:
         the point of one set attaining its own support need not lie in the
-        others. v1 returned it as the support function."""
+        others."""
         ball, half = parts
         combined = ball & half
 

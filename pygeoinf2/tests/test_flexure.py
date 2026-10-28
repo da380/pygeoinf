@@ -49,7 +49,7 @@ class TestPointwiseAlgebra:
     def test_multiplication_is_not_self_adjoint_on_a_sobolev_space(self, rng):
         """The negative control for the lift: a Sobolev space weights its modes.
 
-        v1 gets this right by lifting the formal adjoint; the trap is claiming
+        Lifting the formal adjoint gets this right; the trap is claiming
         self-adjointness because it holds in L2 and the operator looks the same.
         """
         X = Sobolev(12, 2.0, 0.2)
@@ -76,8 +76,8 @@ class TestPointwiseAlgebra:
 
         The Driscoll-Healy grid is oversampled, so the exact product of two
         band-limited fields has no equal in the span of the basis. ``multiply``
-        used to pick the projection anyway, at two transforms a product;
-        it now returns the product itself, and :meth:`truncate` is there for a
+        returns the product itself rather than the projection (two transforms
+        a product), and :meth:`truncate` is there for a
         caller who wants the other one. The two have the same components,
         which is why nothing downstream of an analysis can tell them apart.
         """
@@ -119,7 +119,10 @@ class TestPointwiseAlgebra:
         for _ in range(3):
             u, v = X.random(rng=rng), X.random(rng=rng)
             assert np.isclose(
-                X.inner_product(A(u), v), X.inner_product(u, A(v)), rtol=1e-12
+                X.inner_product(A(u), v),
+                X.inner_product(u, A(v)),
+                rtol=1e-10,
+                atol=1e-12 * X.norm(u) * X.norm(v),
             )
 
     def test_truncation_is_free_on_a_box(self, rng):
@@ -150,10 +153,10 @@ class TestGradientDotProduct:
         assert np.allclose(got, exact, atol=1e-9)
 
     def test_the_sign_is_not_free(self):
-        """The negative control. v1 returns exactly minus this.
+        """The negative control: the sign a wrong-way lift returns.
 
-        Recorded because it is a real defect there, and because it is invisible
-        in every constant-coefficient test: the gradient terms only appear
+        Recorded because a sign error here is invisible in every
+        constant-coefficient test: the gradient terms only appear
         multiplied by the gradient of a coefficient.
         """
         X = BoxLebesgue((256,), lengths=(2.0 * np.pi,))
@@ -509,10 +512,10 @@ class TestFusedFlexure:
 
 
 class TestFlexureInverseOnASobolevSpace:
-    """the inverse used to claim the *lifted* operator positive
-    definite, which it is not in ``H^s`` -- CG raised on the sphere and
-    returned a 1e-4 residual as converged on the circle. It now inverts in
-    ``L2``, where the claim is true, and lifts the inverse."""
+    """The *lifted* operator is not positive definite in ``H^s``, and an
+    inverse that claimed it was would have CG raise on the sphere and return
+    a 1e-4 residual as converged on the circle. The inverse is taken in
+    ``L2``, where the claim is true, and lifted."""
 
     def test_a_varying_rigidity_inverts_on_the_sphere(self, rng):
         X = Sobolev(12, 2.0, 0.3)
@@ -521,7 +524,7 @@ class TestFlexureInverseOnASobolevSpace:
         # A tight solve, so that the inverse is linear and has its adjoint to
         # the accuracy check_operator asks for.
         inverse = X.inverse_flexural_operator(
-            rigidity, 0.25, 3.0, solver=CGSolver(rtol=1e-13)
+            rigidity, 0.25, 3.0, solver=CGSolver(rtol=1e-10)
         )
         w = X.random(rng=rng)
         residual = X.subtract(A(inverse(w)), w)
@@ -535,7 +538,7 @@ class TestFlexureInverseOnASobolevSpace:
         rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p))
         A = X.flexural_operator(rigidity, 0.25, 3.0)
         inverse = X.inverse_flexural_operator(
-            rigidity, 0.25, 3.0, solver=CGSolver(rtol=1e-13)
+            rigidity, 0.25, 3.0, solver=CGSolver(rtol=1e-10)
         )
         w = X.random(rng=rng)
         residual = X.subtract(A(inverse(w)), w)

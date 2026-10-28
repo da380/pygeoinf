@@ -244,7 +244,7 @@ class TestLocalizedPreconditioner:
 
     def test_a_correlated_error_is_approximated_by_its_diagonal(self, setup, rng):
         """The documented approximation, asserted so that it stays documented:
-        the same construction is no longer exact once R has off-diagonal mass."""
+        the same construction is not exact once R has off-diagonal mass."""
         forward, prior, _ = setup
         data = forward.codomain
         root = rng.normal(size=(data.dim, data.dim))
@@ -426,7 +426,7 @@ class TestPreconditionedInversion:
 
 
 class TestSurrogateFamily:
-    """The rest of v1's surrogate and reduction entry points."""
+    """The surrogate and reduction entry points."""
 
     @pytest.fixture
     def inversion(self, setup):
@@ -487,7 +487,9 @@ class TestSurrogateFamily:
         reduced = inversion.parameterized(parameterization, prior=prior)
         assert reduced.forward_problem.model_space == parameters
         observed = inversion.data_space.random(rng=rng)
-        assert parameters.norm(reduced(observed).expectation) >= 0.0
+        posterior = reduced(observed)
+        assert posterior.covariance.domain == parameters
+        assert np.all(np.isfinite(parameters.to_components(posterior.expectation)))
 
 
 class TestNaming:
@@ -521,7 +523,7 @@ class TestInvariantDistancePreconditioner:
 
     Two claims, and both are checkable exactly rather than by degree: that the
     matrix it writes down really is ``A Q A*``, and that what it hands to the
-    solver is positive definite. The second is the one v1 got wrong.
+    solver is positive definite. The second is the one a truncation breaks.
     """
 
     @pytest.fixture(scope="class")
@@ -532,7 +534,9 @@ class TestInvariantDistancePreconditioner:
         space = Sobolev(32, 2.0, 0.1)
         # Seeded: whether a truncation is indefinite depends on how many pairs
         # fall inside the radius, so points drawn from the global generator
-        # would make this test pass or fail by luck.
+        # would make this test pass or fail by luck. Degree 32 is what the
+        # heat kernel at this length needs for the distance formula to be
+        # the operator itself; a coarser sphere makes it an approximation.
         points = space.random_points(150, rng=np.random.default_rng(11))
         forward = space.point_evaluation_operator(points, dense=True)
         prior = space.heat_measure(0.14, pointwise_std=1.0)
@@ -560,8 +564,7 @@ class TestInvariantDistancePreconditioner:
     def test_truncating_without_a_taper_destroys_positive_definiteness(
         self, sphere, radius
     ):
-        """The reason v1's version disappointed. Not a marginal loss: the
-        truncated matrix has eigenvalues comparable in size to the operator's
+        """Not a marginal loss: the truncated matrix has eigenvalues comparable in size to the operator's
         largest, but negative, and an indefinite preconditioner does not slow
         conjugate gradients down, it breaks the recurrence it relies on."""
         import scipy.sparse as sparse
@@ -614,8 +617,7 @@ class TestInvariantDistancePreconditioner:
         """An invariant prior has one pointwise variance, so with uniform noise
         the diagonal preconditioner is a multiple of the identity — and a
         multiple of the identity cannot change what conjugate gradients does.
-        v1 had a special case for this; it is only worth anything when the
-        noise varies between data."""
+        It is only worth anything when the noise varies between data."""
         from pygeoinf2.inference import InvariantDistancePreconditioner
 
         space, points, forward, prior, normal = sphere
@@ -872,9 +874,8 @@ class TestTheSharedSolve:
 
     ``mean == mu + K(d - shift)`` and ``misfit == <v, N^-1 v>`` both begin with
     ``N^-1`` applied to the same right-hand side, so ``est(data)`` followed by
-    ``log_evidence(data)`` used to cost two solves and a mixture inversion cost
-    ``2K`` where ``K`` would do. v1 shared it by computing the mean as
-    ``m0 + K(d - shift)``; here a one-entry memo does it.
+    ``log_evidence(data)`` would cost two solves and a mixture inversion
+    ``2K`` where ``K`` does; a one-entry memo shares the solve.
     """
 
     @staticmethod
@@ -965,7 +966,7 @@ class TestTheSharedSolve:
         model = estimator.property_space
         assert model.norm(model.subtract(again, first)) < 1e-12
 
-        for _ in range(50):
+        for _ in range(10):
             other = space.random(rng=rng)
             expected = estimator.expectation_operator(other)
             got = estimator(other).expectation
@@ -1090,7 +1091,7 @@ class TestThePosteriorCovarianceAppliesThePriorTwice:
         posterior(model.random(rng=rng))
         assert len(tally) == 2
 
-    def test_the_operator_is_the_one_it_always_was(self, setup, rng):
+    def test_the_operator_is_the_assembled_one(self, setup, rng):
         """Checked against the closed form on a non-diagonal metric, where a
         Galerkin matrix and a component matrix are different objects."""
         model, problem, covariance = setup

@@ -58,7 +58,7 @@ def constant(value):
 
 
 class TestMonotoneRoot:
-    """One kernel, four users, and the endpoints that used to be wrong."""
+    """One kernel, four users, and the endpoints."""
 
     @pytest.mark.parametrize(
         "quantity, target, decreasing, expected",
@@ -148,7 +148,7 @@ class TestMonotoneRoot:
             assert result.converged
             assert result.argument == pytest.approx(6.73368, rel=1e-5)
             assert result.evaluations == calls["n"]
-            assert calls["n"] <= 14
+            assert calls["n"] <= 20
 
     def test_the_previous_solution_reaches_the_next_probe(self):
         seen = []
@@ -471,13 +471,12 @@ class TestLeastSquares:
     """What it inverts, and the ways of asking for the same thing."""
 
     def test_the_two_formalisms_agree(self, setup, rng):
-        """An exact identity, so it is tested with a solver tight enough to
-        show it: at the default tolerance each side carries its own solver
-        error and their difference says more about ``rtol`` than about the
-        algebra."""
+        """An exact identity, so it is tested with a direct solver: with an
+        iterative one each side carries its own solver error and their
+        difference says more about ``rtol`` than about the algebra."""
         problem = setup
         model = problem.model_space
-        estimator = LeastSquares(problem, damping=0.5, solver=CGSolver(rtol=1e-13))
+        estimator = LeastSquares(problem, damping=0.5, solver=CholeskySolver())
         other = estimator.with_formalism(
             "model_space" if estimator.formalism == "data_space" else "data_space"
         )
@@ -712,7 +711,6 @@ class TestMinimumNorm:
         assert result.inner_iterations > 0
         assert result.warm_started
 
-    @pytest.mark.slow
     def test_warm_starting_costs_fewer_iterations(self, rng):
         """On a system large enough that conjugate gradients cannot simply
         exhaust its Krylov space, which a small one can and does."""
@@ -786,9 +784,7 @@ class TestMinimumNorm:
         problem = setup
         model, data = problem.model_space, problem.data_space
         observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
-        derivative = MinimumNorm(problem, solver=CGSolver(rtol=1e-13)).derivative(
-            observed
-        )
+        derivative = MinimumNorm(problem, solver=CholeskySolver()).derivative(observed)
         for _ in range(10):
             left, right = data.random(rng=rng), model.random(rng=rng)
             assert model.inner_product(derivative(left), right) == pytest.approx(

@@ -416,10 +416,10 @@ class TestFormalAdjointLift:
 
 class TestTheNamedCircleAndTorus:
     """The classes named for the geometry default to the unit circle and the
-    unit torus, as the generic box and v1's radius of one already did.
-    They defaulted to a period of one, so a v1 script's cosine of the angle
-    sampled over [0, 1) and its distances came out wrong, silently, on the
-    first space a tutorial builds. Points are arc lengths, not angles: on
+    unit torus, as the generic box with a radius of one does. With a default
+    period of one instead, a cosine of the angle would be sampled over
+    [0, 1) and distances would come out wrong, silently, on the first space
+    a tutorial builds. Points are arc lengths, not angles: on
     the unit circle the two coincide."""
 
     def test_the_default_circle_is_the_unit_circle(self):
@@ -440,10 +440,10 @@ class TestTheNamedCircleAndTorus:
         with pytest.raises(ValueError, match="positive"):
             circle.Lebesgue(16, radius=-1.0)
 
-    def test_v1s_numbers_hold_on_the_unit_circle(self):
-        """The coordinate is the angle there, so v1's callback and v1's
-        distances give the same numbers; on radius two the arc length is
-        twice the angle."""
+    def test_angles_and_arc_lengths_coincide_on_the_unit_circle(self):
+        """The coordinate is the angle there, so a callback written in the
+        angle and distances in the angle give the same numbers; on radius
+        two the arc length is twice the angle."""
         from pygeoinf2.symmetric_space import circle
 
         unit = circle.Lebesgue(32)
@@ -495,7 +495,7 @@ class TestConstruction:
         assert space.spatial_dimension == 2
 
     def test_a_three_dimensional_box(self):
-        """The case v1 does not have at all."""
+        """Three dimensions, where nothing is special."""
         space = Sobolev((8, 8, 8), 2.0, 0.2, lengths=(1.0, 1.0, 1.0))
         assert space.spatial_dimension == 3
         assert space.dim == 512
