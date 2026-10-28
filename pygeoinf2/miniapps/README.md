@@ -12,3 +12,4 @@ hand and skips the rest with a reason.
 | directory | problem |
 |---|---|
 | `cpp_backend/` | a C++ vector type with its own inner product, bound with nanobind and exposed as a `HilbertSpace` with no array underneath; an inverse problem run on it end to end |
+| `oceans/` | a field on the sphere observed at tens of thousands of ocean points under a Sobolev prior: the solve at scale (plain, deflated and surrogate-preconditioned conjugate gradients), then the Bayesian, point and set answers on the same regional averages, and a non-stationary prior as an extension |

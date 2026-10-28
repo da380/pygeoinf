@@ -93,61 +93,110 @@ where inline output earns the format.
 > checks the notebooks are current. Examples and mini-apps get no
 > notebooks.
 
-## Tier 3: mini-apps (`pygeoinf2/miniapps/`, new)
+## Tier 3: mini-apps (`pygeoinf2/miniapps/`)
 
 MFEM-spirit: each a self-contained directory with a README stating the
-problem, real or realistic data, several features composed, minutes to run.
+problem, realistic data (real geometry where we have it, synthetic fields
+where we do not, said plainly in the first paragraph), shaped like a small
+Python project without packaging of its own: small reusable modules (the
+problem, the data, shared plotting) and one short executable script per
+part with a fixed seed and a saved figure, a run-all script, never one
+monolithic file (David, 2026-10-28); and a test in the suite that imports
+the modules and runs each part at a quick scale (slow where it takes
+minutes). The model is **one problem, many solutions**: each
+app applies the range of methods that fit its problem, point, set and
+measure, in parts that build up from the simplest.
 
-1. **Great-circle tomography** — sphere, the shipped station and
-   earthquake catalogues, path integrals, full Bayesian posterior with
-   resolution analysis and corner plots. The flagship.
-2. **A planet's density** — layered ball; mass, moment of inertia and
-   discontinuity data; continuity by conditioning; then the
-   Backus-Gilbert-Parker feasible set with route cross-checks — the
-   Al-Attar (2021) ellipsoid on the problem it was written for.
-3. **Flexure under load** — an MFEM space through `mfem_hilbert`, a
-   spatially varying coefficient, a preconditioned large solve.
-4. **An interface from gravity** — a genuinely nonlinear forward; MAP,
-   Laplace, and the low-rank posterior with an information-gain budget
-   once it exists.
-5. **Two fields, one chain** — the flexure–gravity problem of Mag et al.
-   (D-152): density anomaly and basal traction on the sphere seen only
-   through a shared smoothing chain; the Bayesian joint inversion with a
-   correlated prior (independent factors first, `from_product(correlation=)`
-   when it lands), then the feasible property set of the paired cap
-   averages — the `L²` amplitude ellipsoid, the slanted set, the polytope
-   and inner hull, the outer ellipsoid, convergence under refinement.
-6. **Sampling the posterior** (post-release, the student's) — pCN against
+Rewritten with David on 2026-10-28; the earlier list (great-circle
+tomography, a planet's density, flexure under load, an interface from
+gravity, two fields one chain, sampling, evidence against truncation,
+making a large solve finish) is in git before this commit. Flexure under
+load is dropped as contrived; the evidence and the large-solve ideas fold
+into 4 and 1.
+
+1. **Point data over the oceans** (first). A field on the sphere with a
+   Sobolev prior, observed only at ocean points (the Natural Earth land
+   polygons through cartopy and shapely, already in the sphere extra),
+   synthetic data from a truth drawn from the prior, at a scale where the
+   naive solve is painful: degree a few hundred, observations in the tens
+   of thousands. Parts: the solve (the data-space formalism,
+   unpreconditioned CG against spectral deflation and the Woodbury
+   surrogate, iteration and application counts in a table: the need for
+   preconditioning at real scale); the Bayesian answer (posterior mean,
+   the standard deviation returning to the prior's under the continents,
+   samples, properties pushed forward); the point answers (`LeastSquares`,
+   `MinimumNorm` with their resolution and propagated error, the bias
+   against the truth); the set answer (`BackusGilbertParker` on a few
+   regional averages, the brackets against the posterior intervals); a
+   correlated-in-space prior through a linear transformation as an
+   extension.
+2. **A planet's density.** Radial density with mass and moment of inertia
+   as the data, on a `Layered` radial space with the inner core, outer
+   core and mantle as layers. The reference is built in the app, not
+   taken from PREM's density: an Adams–Williamson model integrated
+   downward from PREM's velocities (the seismic parameter
+   `Φ = Vp² − 4Vs²/3`, `dρ/dr = −ρ g / Φ`, `g` from the density being
+   built, planetmodel for PREM and the radial gravity integral), with the
+   jumps at the CMB and ICB (and the 660 if wanted) put in by hand; not
+   contemporary research, and that is not the point (David, 2026-10-28).
+   The prior is then played with as the parts: effectively non-informative
+   (a huge variance about the reference, so the posterior shows only what
+   two numbers say, a two-dimensional constraint through a function space,
+   with the feasible set under a loose norm bound making the same point
+   from the other side); tight about Adams–Williamson, where the data
+   adjust the jumps and little else; a mixture over two references, with
+   and without a density jump at the 660, weighed by the evidence; each
+   reported on properties (the mean density of the core, of the lower
+   mantle) with the posterior, the point estimates and the feasible set
+   side by side. Then boundary positions as unknowns, a direct sum of the
+   field and a small Euclidean space, where the forward is nonlinear and
+   MAP, Laplace and Occam earn their place. A variant for fun (David,
+   2026-10-28): parameterise the density *through* the Adams–Williamson
+   integration, the unknowns being the few density jumps (and the surface
+   density) together with the velocity profile as a field with its own
+   Gaussian uncertainty about PREM, the density derived; the forward to
+   mass and moment of inertia is then nonlinear through the integration,
+   its derivative the tangent linear of that small ODE (a radial kernel
+   for the velocity, a scalar per jump), which gives a low-dimensional
+   nonlinear problem with a function-valued part, ready for the sampler
+   once it exists. Extension, optional and heavy: normal-mode
+   eigenfrequencies through specnm, with its radial sensitivity kernels as
+   the derivative.
+3. **Ray tomography in a spherical Earth** (later). PREM reference rays by
+   the radial integrals, in the mini-app's own module, deliberately not
+   library code: the demonstration of how a user brings a forward problem
+   and wraps it as a path-integral operator on the `ball` space through
+   point evaluation at the ray nodes, the adjoint the library's own. A toy
+   catalogue of a few hundred paths, a 3-D slowness perturbation, the
+   posterior and its resolution, then the point and set answers. Extension:
+   nonlinear tomography in the same geometry, rays bent in the perturbed
+   model, at a toy number of paths.
+4. **Realistic priors by evidence maximisation** (after 3; pyslfp-inspired,
+   independent of it). Priors for ice-sheet thickness learned from
+   synthetic climate-model fields: the Bayesian evidence
+   (`GaussianPosterior.log_normalizer`) as a function of a few
+   hyperparameters, maximised; non-stationarity through push-forwards of a
+   stationary measure on the sphere by multiplication operators (amplitude
+   following where ice is, a second transformation for the length scale);
+   the sphere with the library's own operators first, an ice-sheet mesh
+   through MFEM as the extension.
+5. **Sea-level problems with pyslfp** (post-release). Joint inversions and
+   composite data spaces from pyslfp, which depends on this library; built
+   once pyslfp has moved to 2.0, as an optional import that skips when
+   absent.
+6. **Sampling the posterior** (post-release, the student's): pCN against
    the Laplace Gaussian where the Gaussian is visibly wrong.
-7. **Choosing the truncation by evidence** — the Bayesian evidence
-   (`GaussianPosterior.log_normalizer`) as a function of the truncation
-   degree of a spectral space, with a surrogate for the large degrees; the
-   question every user of a spectral space has. Seeded by `work/evidence.py`.
-8. **Making a large solve finish** — one problem at scale, the
-   preconditioning strategies the library offers compared on it (none,
-   Jacobi, block, spectral deflation, Woodbury around a surrogate), with
-   iteration counts and application counts in a table; example 24 is the
-   one-idea version. Seeded by `work/preconditioning_examples.py` and
-   `work/dynamic_topography.py`.
-9. **A vector backend in C++** (added 2026-10-28, David; DONE the same day, D-169) — the proof that
-   the library defers every vector calculation to the backend: a small
-   C++ vector type with its own inner product and a sparse operator,
-   wrapped with nanobind, no numpy inside the vector at all, exposed as a
-   `HilbertSpace` and run through every `check_*` and every estimator on a
-   small inverse problem. Writing it is the backend review; its
-   regression form is a minimal non-numpy `HilbertSpace` in the test
-   suite that every estimator and check must pass over. Tutorial 12 is
-   the prose version of the same contract with MFEM as the worked case;
-   this is the one with no array underneath.
+9. **A vector backend in C++** (DONE 2026-10-28, D-169): `cpp_backend/`,
+   the vector type and sparse operators in C++ behind nanobind, a
+   finite-element mass matrix as the Gram, the check ladder and the inverse
+   problem end to end with a tally of every member the library called; its
+   regression form is `tests/test_no_array_backend.py`. Kept as 9 so the
+   decisions that name it stay right.
 
-Seeds in `work/` for the earlier entries: `sphere_dli_example.py` (real
-stations and earthquakes, cap averages, the feasible set) extends mini-app 1
-with the set-valued answer on the same data; `dynamic_topography.py` and
-`correlated.py` are the Bayesian half and the correlated-prior specification
-of mini-app 5. The timing harnesses (`point_evaluation.py`,
-`path_average.py`, `torus_point.py`) moved to `benchmarks/operator_timings.py`,
-cut with the rest of `benchmarks/` on 2026-10-28 (in git at `8c53839`)
-on 2026-10-27, ported to v2, so that `work/` can go at the release.
+Seeds in `work/` (deleted at the release): `sphere_dli_example.py` (real
+stations and earthquakes, cap averages, the feasible set) and `tomo.py` for
+3; `evidence.py` for 4; `preconditioning_examples.py` for 1's solve part;
+`correlated.py` for 1's extension.
 
 ## A nonlinear ray operator (David, 2026-10-27)
 
@@ -164,7 +213,7 @@ nonlinear half are to be written on it.
 
 ## Sequencing
 
-Tier 2 and mini-apps 1-3 and 9 are docs-phase work before the release;
-mini-apps 4-8 may trail it. Coverage: every module of the package map appears except
+Tier 2 and mini-apps 1, 2 and 9 are docs-phase work before the release;
+3 and 4 may trail it, 5 and 6 follow it. Coverage: every module of the package map appears except
 the deeper convex machinery (deliberately quiet pending the redesign);
 `datasets` is carried inside mini-app 1.
