@@ -11,6 +11,8 @@ from __future__ import annotations
 import pathlib
 import time
 
+from typing import Any
+
 import numpy as np
 
 from pygeoinf2 import LeastSquares, MinimumNorm
@@ -18,18 +20,28 @@ from pygeoinf2 import LeastSquares, MinimumNorm
 from common import draw_map, map_panels, output_directory, parse, part_rng, save
 from ocean_mask import geodesic_bump
 from problem import FULL, LEVEL, QUICK, REGIONS, Problem, Scale, build
-from solvers import spectral_solver
+from solvers import coarse_identity, woodbury_family_solver
 
 GUESSED_DAMPING = 10.0
 
 
-def minimum_norm_on_averages(problem: Problem, /, *, rng: np.random.Generator) -> dict:
+def family_solver(problem: Problem, /) -> Any:
+    """The Woodbury solver for the families ``A A* + t R`` of both estimators."""
+    identity = coarse_identity(problem)
+    error = problem.problem.error_measure
+    return woodbury_family_solver(
+        problem,
+        prior_covariance=identity,
+        prior_precision=identity,
+        noise_covariance=error.covariance,
+        noise_precision=error.precision,
+    )
+
+
+def minimum_norm_on_averages(problem: Problem, /) -> dict:
     """The minimum-norm estimator the data chose, pushed to the averages."""
     chosen = MinimumNorm(
-        problem.problem,
-        level=LEVEL,
-        solver=spectral_solver(problem, rng=rng),
-        rtol=1e-2,
+        problem.problem, level=LEVEL, solver=family_solver(problem), rtol=1e-2
     ).for_data(problem.data)
     pushed = chosen.push_forward(problem.averages)
     return {
@@ -51,7 +63,7 @@ def point_answers(
         problem.problem,
     )
     print(f"\n=== D. The point answers ({scale.name} scale) ===")
-    solver = spectral_solver(problem, rng=rng)
+    solver = family_solver(problem)
 
     counted.reset()
     t0 = time.perf_counter()

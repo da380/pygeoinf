@@ -2417,6 +2417,48 @@ The top-level `benchmarks/` of D-155 is cut the same day (David: come
 back to it later; in git at `8c53839`), so nothing of v2 sits outside
 `pygeoinf2/` until the release distributes it.
 
+**D-170. The Woodbury family reads the multiplier, not the member's
+scale; a diagonal factor scales a product; the point-data mini-app is
+Woodbury-only** (2026-10-28, from the first full-scale run of mini-app 1).
+Three things the run turned up. (1) `WoodburyPreconditioner.for_family`
+inverted every member to within a factor of the damping on a Tikhonov
+family (`t` in the data space, `1/t` in the model space) while being exact
+on a `DampedNormalOperator` family: the bound family computed the Woodbury
+form of `A C A* + t R` and then divided by the member's own `scale`, which
+is one for the damped operator and `t` for the Tikhonov one in the data
+space, the opposite in the model space. Conjugate gradients is blind to a
+constant factor, which is how it survived every CG test; a solver or a
+residual-reading outer method is not. The family now divides by the
+multiplier in the model form and by one in the data form, whatever the
+member says, with `C` the preconditioner's own prior covariance, so a
+Tikhonov family's preconditioner is built with the identity (its member
+at damping one). Along the family the data form's kernel `A* R⁻¹ A` is
+read once as a stored matrix (`data_kernel`) where the factors can write
+it down, and each multiplier's inner operator is a sum of stored
+matrices. The regression test holds both families, both formalisms, at
+three multipliers, to 1e-10. (2) A composition's known matrix multiplied
+dense matrices, and a diagonal operator's known matrix is a dense square:
+`A* R⁻¹ A` on 20 000 points with `R⁻¹` diagonal formed a 20 000-square
+array (3.2 GB) and multiplied by it, 8.7 s for a 2 401-square result that
+is a 1.1 s product. A `_known_scaling` hook (the diagonal operator, the
+identity, scalings and compositions of them) lets a composition scale
+rows or columns instead, and the size guard of D-33 counts a diagonal as
+its length. (3) The mini-app, renamed `point_data/` from `oceans/` (David:
+it is not about the oceans; the ocean mask is the geometry, point data the
+problem), uses the Woodbury surrogate for everything, the Bayesian
+operator and the damped families alike, and part B is reframed as the
+linear algebra behind every answer rather than a way of obtaining one;
+the spectral deflation is dropped from it (David: the Woodbury is good
+even at this scale, the deflation is not). The part's build column now
+holds the factorization, which the lazy direct solver of D-40 would
+otherwise charge to the first iteration. Also fixed, from CI: the two
+recorded-answer tests of `MaximumAPosteriori` asserted exact iteration
+counts and values to 1e-9, which another platform's BLAS does not
+reproduce (325 against 319 iterations on macOS); they now assert
+convergence and the answer to the optimizer's tolerance. Steepest
+descent's test tolerance on the no-array backend was 1e-11 on a quadratic,
+below what a function-value line search can resolve; it is 1e-7.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

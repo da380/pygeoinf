@@ -120,6 +120,10 @@ def family(rng):
         "(A @ B).adjoint": (A @ B).adjoint,
         "A + 0.5 I": A + 0.5 * I,
         "D @ A": D @ A,
+        "A @ D": A @ D,
+        "D @ I @ D": D @ I @ D,
+        "(2 D) @ A @ D": (2.0 * D) @ A @ D,
+        "R @ D": R @ D,
         "S + 0.5 I": S + 0.5 * I,
         "R (rectangular)": R,
         "R.adjoint": R.adjoint,
@@ -193,6 +197,26 @@ class TestKnownMatrix:
         serial = CholeskySolver()(wrapped).matrix()
         parallel = CholeskySolver(n_jobs=2)(wrapped).matrix()
         assert serial == pytest.approx(parallel)
+
+    def test_a_diagonal_factor_scales_the_product_without_its_matrix(
+        self, family, monkeypatch
+    ):
+        """``D @ A`` on a space of dimension n is read by scaling the rows of
+        ``A``'s matrix, never by forming ``D``'s n-by-n matrix and
+        multiplying: on a data space of twenty thousand points the latter
+        is gigabytes and most of a minute for a product that is a second."""
+        space, expressions = family
+
+        def refuse(self, form):
+            raise AssertionError("the diagonal's matrix was formed")
+
+        monkeypatch.setattr(DiagonalLinearOperator, "_known_matrix", refuse)
+        for name in ("D @ A", "A @ D", "(2 D) @ A @ D", "R @ D"):
+            operator = expressions[name]
+            for form in FORMS:
+                assert operator.matrix(form=form) == pytest.approx(
+                    probed(operator).matrix(form=form)
+                ), (name, form)
 
     def test_a_scaled_identity_keeps_its_traits_on_any_metric(self, family):
         """``sigma I`` is self-adjoint and definite in every metric; the

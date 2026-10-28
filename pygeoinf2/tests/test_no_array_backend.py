@@ -784,7 +784,11 @@ class TestOptimizers:
         [
             LBFGS(gtol=1e-11, ftol=0.0),
             NonlinearCG(gtol=1e-11, ftol=0.0),
-            SteepestDescent(gtol=1e-11, ftol=0.0, max_iterations=5000),
+            # Steepest descent's line search is a bracketing on function
+            # values, which cannot resolve a gradient near the rounding floor
+            # of the objective; a tolerance at 1e-11 failed on one platform's
+            # BLAS with the gradient already at 5e-8.
+            SteepestDescent(gtol=1e-7, ftol=0.0, max_iterations=5000),
             NewtonCG(gtol=1e-11, ftol=0.0),
             TrustRegionNewton(gtol=1e-11, ftol=0.0),
         ],

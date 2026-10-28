@@ -146,7 +146,9 @@ polytope's `inscribed_ellipsoid()` describes the polytope and a point set's
 Matrix-free is the default and the exceptions are deliberate. `matrix()` and
 `diagonals()` are O(1) reads on a `MatrixLinearOperator` and on diagonal
 operators, sums and scalings of them; elsewhere they cost one application per
-column, and a composition never expands a low-rank product (D-33).
+column, and a composition never expands a low-rank product (D-33). A
+diagonal factor in a composition scales the neighbouring matrix's rows or
+columns and is never written out as a square (D-170).
 
 - `log_determinant(method="auto")` takes the dense route below
   `dense_limit=4000` only when the matrix is known or probing costs no more
@@ -257,6 +259,23 @@ Recorded rather than settled, so nobody has to rediscover them.
   reached by position meanwhile. To look into: whether the block operators
   should take `labels=`, or the estimator should prefer the prior's domain
   when the two are equal.
+- **The Woodbury preconditioner reads a Tikhonov member two ways.** Along
+  a family (D-170) the multiplier is the factor on the noise and the prior
+  covariance is the preconditioner's own, `t`-independent. Asked to invert
+  one operator, `from_normal` reads `prior_covariance` off it, which for a
+  Tikhonov operator is `(1/t) I`, and `_invert` divides by the member's
+  `scale`: right for that one member, but a preconditioner built with
+  `C = I` and handed a Tikhonov member at damping 10 inverts the member at
+  damping 1 and divides by 10, a condition number of about 10 to pay (25
+  iterations against 12 in the point-data mini-app). One reading should
+  win: the multiplier read off the member, with `from_normal` stripping
+  the damping from a Tikhonov prior. Not done on 2026-10-28.
+- **Parallel randomised estimates oversubscribe.** Seen 2026-10-28 on the
+  point-data mini-app at degree 128: `random_eig(n_jobs=8)` through
+  `apply_block` sat at 580% CPU in the main process with the workers idle,
+  where the serial run took about two minutes; BLAS threads and the worker
+  pool contending, most likely (D-52's measurements point the same way).
+  The mini-app no longer uses it (D-170); not investigated further.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.

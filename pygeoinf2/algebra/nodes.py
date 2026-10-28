@@ -73,6 +73,11 @@ class _Identity[X](LinearOperator[X, X]):
             return np.identity(self.domain.dim)
         return self.domain.gram_matrix()
 
+    def _known_scaling(self) -> np.ndarray | None:
+        if not isinstance(self.domain, CoordinateSpace):
+            return None
+        return np.ones(self.domain.dim)
+
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:
@@ -352,6 +357,10 @@ class _Scaled[X, Y](LinearOperator[X, Y]):
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         known = self._base._known_matrix(form)
+        return None if known is None else self._alpha * known
+
+    def _known_scaling(self) -> np.ndarray | None:
+        known = self._base._known_scaling()
         return None if known is None else self._alpha * known
 
     def _known_diagonals(
@@ -688,14 +697,32 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         return chained
 
     def _known_factors(self) -> list[np.ndarray] | None:
-        """The factors' component matrices, when every one is known."""
+        """The factors' component matrices, when every one is known.
+
+        A factor that is a scaling of components is returned as its
+        diagonal, a one-dimensional array, rather than as the square matrix
+        it would write down: the product scales rows or columns by it.
+        """
         known = []
         for factor in self._factors:
+            scaling = factor._known_scaling()
+            if scaling is not None:
+                known.append(np.asarray(scaling, dtype=float))
+                continue
             matrix = factor._known_matrix("components")
             if matrix is None:
                 return None
             known.append(np.asarray(matrix))
         return known
+
+    def _known_scaling(self) -> np.ndarray | None:
+        scalings = [factor._known_scaling() for factor in self._factors]
+        if any(scaling is None for scaling in scalings):
+            return None
+        product = np.asarray(scalings[0], dtype=float)
+        for scaling in scalings[1:]:
+            product = product * scaling
+        return product
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         # Components matrices compose by multiplication; the Galerkin form of
@@ -705,16 +732,27 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # space of dimension n holds 2nk numbers, and its product n^2, which
         # would be materialized by any caller that so much as asked whether a
         # matrix was known. Such a product is declined, and the operator is
-        # probed like any other.
+        # probed like any other. A diagonal factor (a one-dimensional entry
+        # from ``_known_factors``) scales the rows or the columns of its
+        # neighbour and never enlarges anything.
         known = self._known_factors()
         if known is None:
             return None
-        largest = max(matrix.size for matrix in known)
+        largest = max((matrix.size for matrix in known if matrix.ndim == 2), default=0)
         product = known[0]
         for matrix in known[1:]:
-            if product.shape[0] * matrix.shape[1] > largest:
-                return None
-            product = product @ matrix
+            if product.ndim == 1 and matrix.ndim == 1:
+                product = product * matrix
+            elif product.ndim == 1:
+                product = product[:, None] * matrix
+            elif matrix.ndim == 1:
+                product = product * matrix[None, :]
+            else:
+                if product.shape[0] * matrix.shape[1] > largest:
+                    return None
+                product = product @ matrix
+        if product.ndim == 1:
+            product = np.diag(product)
         if form == "components":
             return product
         return self.codomain.apply_gram_to_columns(product)

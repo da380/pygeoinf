@@ -565,7 +565,10 @@ class TestAgainstTheRecordedAnswers:
     """The mode and the Gaussian on two problems, against the numbers the
     estimator produced before it was rebuilt on the generic minimization:
     the same objective, the same search and the same solve, so the answers
-    are the same to rounding."""
+    agree to the optimizer's tolerance. Not to rounding, and not in the
+    iteration count: a line search takes a different number of steps on
+    another platform's BLAS, and the recorded numbers are a regression
+    check on the answer, not on the path to it."""
 
     def test_tutorial_nine(self):
         space, problem, prior, data = tutorial_nine_problem()
@@ -574,13 +577,12 @@ class TestAgainstTheRecordedAnswers:
         estimator = MaximumAPosteriori(problem, prior)
         result = estimator.solve(data)
         assert result.converged
-        assert result.iterations == 319
-        assert result.value == pytest.approx(34.436593242648826, rel=1e-9)
+        assert result.value == pytest.approx(34.436593242648826, rel=1e-6)
         assert space.norm(result.minimizer) == pytest.approx(
-            3.167931340702631, rel=1e-9
+            3.167931340702631, rel=1e-5
         )
         assert problem.chi_squared(result.minimizer, data) == pytest.approx(
-            14.835937866136218, rel=1e-9
+            14.835937866136218, rel=1e-5
         )
         measure = LaplaceApproximation(estimator).at(result.minimizer, data)
         for probe, quadratic, mean in zip(
@@ -589,10 +591,10 @@ class TestAgainstTheRecordedAnswers:
             (-0.37306792523046706, 0.16064533753001276),
         ):
             assert space.inner_product(measure.covariance(probe), probe) == (
-                pytest.approx(quadratic, rel=1e-8)
+                pytest.approx(quadratic, rel=1e-6)
             )
             assert space.inner_product(result.minimizer, probe) == pytest.approx(
-                mean, rel=1e-8
+                mean, rel=1e-5
             )
 
     def test_the_ray_problem(self):
@@ -604,10 +606,9 @@ class TestAgainstTheRecordedAnswers:
         )
         result = estimator.solve(data)
         assert result.converged
-        assert result.iterations == 9
-        assert result.value == pytest.approx(1.362973893265137, rel=1e-9)
+        assert result.value == pytest.approx(1.362973893265137, rel=1e-6)
         assert space.norm(result.minimizer) == pytest.approx(
-            1.166574911014069, rel=1e-9
+            1.166574911014069, rel=1e-5
         )
         assert problem.chi_squared(result.minimizer, data) == pytest.approx(
             0.002076870257653671, rel=1e-6
@@ -619,8 +620,8 @@ class TestAgainstTheRecordedAnswers:
             (1.8940705107151008, 1.5910898274345833),
         ):
             assert space.inner_product(measure.covariance(probe), probe) == (
-                pytest.approx(quadratic, rel=1e-8)
+                pytest.approx(quadratic, rel=1e-6)
             )
             assert space.inner_product(result.minimizer, probe) == pytest.approx(
-                mean, rel=1e-8
+                mean, rel=1e-5
             )

@@ -1,7 +1,7 @@
 """
-The oceans mini-app keeps working.
+The point-data mini-app keeps working.
 
-``pygeoinf2/miniapps/oceans`` observes a field on the sphere at ocean points
+``pygeoinf2/miniapps/point_data`` observes a field on the sphere at ocean points
 only and answers the same questions three ways. The quick scale of every part
 is run once here, each part through its own script's entry point, and what
 must hold is asserted: the preconditioned solves
@@ -28,7 +28,7 @@ pytest.importorskip("pyshtools")
 pytest.importorskip("cartopy")
 pytest.importorskip("shapely")
 
-MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "oceans"
+MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "point_data"
 
 pytestmark = pytest.mark.slow
 
@@ -82,7 +82,7 @@ def app():
 @pytest.fixture(scope="module")
 def results(app, tmp_path_factory):
     """Every part at the quick scale, once, each through its own entry point."""
-    outdir = tmp_path_factory.mktemp("oceans")
+    outdir = tmp_path_factory.mktemp("point_data")
     scale, seed = app["problem"].QUICK, 2026
     problem = app["truth"].run(scale, seed=seed, outdir=outdir)
     results = {"a": problem}
@@ -113,14 +113,12 @@ def test_the_setup_is_over_the_sea(app, results):
     assert 0.2 < fraction < 0.4
 
 
-def test_the_three_solves_agree(results):
+def test_the_preconditioned_solve_agrees_with_the_plain_one(results):
     part = results[0]["b"]
-    for row in part["rows"]:
-        assert row["converged"], row["label"]
-    for label, drift in part["agreement"].items():
-        assert drift < 1e-5, label
-    iterations = [row["iterations"] for row in part["rows"]]
-    assert iterations[1] < iterations[0] and iterations[2] < iterations[0]
+    plain, woodbury = part["rows"]
+    assert plain["converged"] and woodbury["converged"]
+    assert part["agreement"] < 1e-5
+    assert woodbury["iterations"] < plain["iterations"]
 
 
 def test_the_posterior_std_returns_to_the_prior_under_the_continents(app, results):

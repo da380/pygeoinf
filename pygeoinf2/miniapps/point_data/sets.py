@@ -22,7 +22,7 @@ from bayesian import posterior_summary
 from common import output_directory, parse, part_rng, save
 from point import minimum_norm_on_averages
 from problem import FULL, LEVEL, ORDER, QUICK, REGIONS, Problem, Scale, build
-from solvers import spectral_solver
+from solvers import coarse_identity, woodbury_family_solver
 
 PRIMAL = Primal(tolerance=1e-3)
 
@@ -50,22 +50,30 @@ def set_answer(
             problem, problem.prior, rng=rng, label="stationary prior"
         )
     if point is None:
-        point = minimum_norm_on_averages(problem, rng=rng)
+        point = minimum_norm_on_averages(problem)
 
     ball = problem.prior.ambient_ball(level=LEVEL)
+    noise_ball = forward.error_measure.ambient_ball(level=LEVEL)
     print(
         f"the prior hardened to its {LEVEL:.0%} ball: radius {ball.radius:.2f} in "
         f"H^{ORDER:g}; the truth's norm is {space.norm(problem.truth):.2f}, inside: "
-        f"{ball.contains(problem.truth)}"
+        f"{ball.contains(problem.truth)}; the noise to its {LEVEL:.0%} ball of "
+        f"radius {noise_ball.radius:.2f}"
+    )
+    # The family swept is ``A C A* + t R`` with ``C = r² I`` and ``R = ρ² I``
+    # the two balls' shape operators; the surrogate uses the same on the
+    # coarse sphere.
+    solver = woodbury_family_solver(
+        problem,
+        prior_covariance=coarse_identity(problem, scale=ball.radius**2),
+        prior_precision=coarse_identity(problem, scale=ball.radius**-2),
+        noise_covariance=noise_ball.covariance,
+        noise_precision=noise_ball.precision,
     )
     counted.reset()
     t0 = time.perf_counter()
     feasible = BackusGilbertParker(
-        forward,
-        problem.averages,
-        ball,
-        level=LEVEL,
-        solver=spectral_solver(problem, rng=rng),
+        forward, problem.averages, ball, noise=noise_ball, solver=solver
     )(problem.data)
     print(f"{feasible}; support by {feasible.algorithms['support'][0]}")
     P = problem.averages.codomain
@@ -73,8 +81,8 @@ def set_answer(
     for index in range(len(REGIONS)):
         q = P.basis_vector(index)
         directions += [q, P.scale(-1.0, q)]
-    # The first direction serially, so the family and its deflation are built
-    # once here rather than once per worker process.
+    # The first direction serially, so the family and its factorizations are
+    # built once here rather than once per worker process.
     feasible.support_result(directions[0], via=PRIMAL)
     sweep = feasible.support_sweep(directions, via=PRIMAL, n_jobs=scale.n_jobs)
     brackets = np.zeros((len(REGIONS), 2))

@@ -931,10 +931,14 @@ class WoodburyPreconditioner(FamilySolver):
     **Along a damped family** ``A C A* + t R`` or ``t C⁻¹ + A* R⁻¹ A`` the
     multiplier only scales the noise covariance in the Gaussian reading, so
     handed the family through :meth:`for_family` the preconditioner keeps
-    ``Q⁻¹`` and ``R⁻¹`` resolved once and refactorizes the inner operator,
-    which lives on the surrogate's own space, at each multiplier it is
-    asked for. The surrogate pieces are its own; only the multiplier is
-    read off the member.
+    ``Q⁻¹``, ``R⁻¹`` and, in the data form, the kernel ``A* R⁻¹ A`` resolved
+    once and refactorizes the inner operator, which lives on the surrogate's
+    own space, at each multiplier it is asked for. The surrogate pieces are
+    its own; only the multiplier is read off the member. A Tikhonov family
+    ``A A* + t R`` reads the same way with ``C`` the identity, so the
+    preconditioner for one holds the identity as its prior covariance:
+    :meth:`from_normal` of the member at damping one, or the constructor
+    with ``prior_inverse`` the identity too.
 
     Note:
         With an inexact inner solve the result is no longer exactly symmetric,
@@ -1162,6 +1166,7 @@ class WoodburyPreconditioner(FamilySolver):
         multiplier: float = 1.0,
         prior_inverse: LinearOperator | None = None,
         noise_inverse: LinearOperator | None = None,
+        kernel: LinearOperator | None = None,
     ) -> LinearOperator:
         """``(tR)^-1 - (tR)^-1 A (Q^-1 + A* (tR)^-1 A)^-1 A* (tR)^-1``, an approximate ``N_d^-1``.
 
@@ -1176,19 +1181,57 @@ class WoodburyPreconditioner(FamilySolver):
             prior_inverse: ``Q^-1`` already resolved, from a previous call
                 along a family; resolved here if omitted.
             noise_inverse: ``R^-1`` likewise.
+            kernel: ``A* R^-1 A`` on the model space, likewise; see
+                :meth:`data_kernel`. Built from the factors if omitted.
         """
         forward = self._forward
         if prior_inverse is None:
             prior_inverse = self._resolved_prior_inverse()
         if noise_inverse is None:
             noise_inverse = self._resolved_noise_inverse()
+        if kernel is None:
+            kernel = forward.adjoint @ noise_inverse @ forward
         if multiplier != 1.0:
             noise_inverse = (1.0 / multiplier) * noise_inverse
-        inner = prior_inverse + forward.adjoint @ noise_inverse @ forward
+            kernel = (1.0 / multiplier) * kernel
+        inner = prior_inverse + kernel
         inverse = self._inner_solver()(inner.with_traits(Traits.POSITIVE_DEFINITE))
         cross = noise_inverse @ forward
         return (noise_inverse - cross @ inverse @ cross.adjoint).with_traits(
             Traits.SELF_ADJOINT
+        )
+
+    def data_kernel(
+        self, *, noise_inverse: LinearOperator | None = None
+    ) -> LinearOperator:
+        """``A* R^-1 A`` on the model space, as a stored matrix where it can be.
+
+        The part of the data form's inner operator that does not move with
+        the multiplier. Along a family it is wanted at every member, and a
+        direct inner solver would otherwise assemble it afresh each time; so
+        when the factors can write its matrix down it is read once here and
+        kept as a matrix-backed operator, and the inner operator at each
+        multiplier is then a sum of two stored matrices. Where the matrix is
+        not known the composition itself is returned, and the inner solver
+        probes or iterates as it would have.
+
+        Args:
+            noise_inverse: ``R^-1`` already resolved; resolved here if
+                omitted.
+
+        Returns:
+            The kernel, with its traits.
+        """
+        forward = self._forward
+        if noise_inverse is None:
+            noise_inverse = self._resolved_noise_inverse()
+        kernel = forward.adjoint @ noise_inverse @ forward
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        matrix = kernel.known_matrix(form="galerkin")
+        if matrix is None:
+            return kernel.with_traits(traits)
+        return LinearOperator.from_matrix(
+            forward.domain, forward.domain, matrix, form="galerkin", traits=traits
         )
 
     def _is_model_form(self, operator: LinearOperator) -> bool:
@@ -1199,16 +1242,22 @@ class WoodburyPreconditioner(FamilySolver):
         return dim == self.model_space.dim
 
     def _approximate_inverse(
-        self, operator: LinearOperator, approximate: LinearOperator
+        self,
+        operator: LinearOperator,
+        approximate: LinearOperator,
+        *,
+        scale: float | None = None,
     ) -> InverseOperator:
         # The forms invert the Gaussian reading of the factors; the operator
         # in hand may be a scalar multiple of that (a Tikhonov operator in
-        # the data space is ``t`` times it), and says so.
-        scale = (
-            float(operator.scale)
-            if isinstance(operator, FactoredNormalOperator)
-            else 1.0
-        )
+        # the data space is ``t`` times it), and says so. Along a family the
+        # caller knows the factor from the multiplier and passes it.
+        if scale is None:
+            scale = (
+                float(operator.scale)
+                if isinstance(operator, FactoredNormalOperator)
+                else 1.0
+            )
         if scale != 1.0:
             approximate = (1.0 / scale) * approximate
 
@@ -1226,8 +1275,12 @@ class WoodburyPreconditioner(FamilySolver):
         noise covariance carries the multiplier, ``A C A* + t R`` in the
         data space and ``t (C⁻¹ + A* (t R)⁻¹ A)`` in the model space, and
         each member's approximate inverse is the Woodbury form with ``t R``
-        in place of ``R``. The surrogate pieces are this preconditioner's;
-        the base and the shift only say which space the family lives on.
+        in place of ``R``, divided by ``t`` in the model space. The surrogate
+        pieces are this preconditioner's, with ``C`` the prior covariance it
+        holds; the base and the shift only say which space the family lives
+        on, and the member's own ``scale`` is not consulted, since the
+        reading above already accounts for it whether the member is a
+        damped normal operator or a Tikhonov one.
 
         Args:
             base: the undamped part.
@@ -1268,6 +1321,7 @@ class _WoodburyFamily(BoundFamily):
         self._preconditioner = preconditioner
         self._prior_inverse: LinearOperator | None = None
         self._noise_inverse: LinearOperator | None = None
+        self._kernel: LinearOperator | None = None
         self._forms: dict[tuple[bool, float], LinearOperator] = {}
 
     def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
@@ -1292,12 +1346,21 @@ class _WoodburyFamily(BoundFamily):
                 if self._prior_inverse is None:
                     self._prior_inverse = preconditioner._resolved_prior_inverse()
                     self._noise_inverse = preconditioner._resolved_noise_inverse()
+                    self._kernel = preconditioner.data_kernel(
+                        noise_inverse=self._noise_inverse
+                    )
                 self._forms[key] = preconditioner.data_form(
                     multiplier=multiplier,
                     prior_inverse=self._prior_inverse,
                     noise_inverse=self._noise_inverse,
+                    kernel=self._kernel,
                 )
-        return preconditioner._approximate_inverse(member, self._forms[key])
+        # The data form inverts ``A C A* + t R``, the member itself; the
+        # model form inverts ``C⁻¹ + A* (t R)⁻¹ A``, of which the member is
+        # ``t`` times.
+        return preconditioner._approximate_inverse(
+            member, self._forms[key], scale=multiplier if model else 1.0
+        )
 
 
 class ColumnThresholdedPreconditioner(LinearSolver):

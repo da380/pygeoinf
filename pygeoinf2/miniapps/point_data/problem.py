@@ -1,9 +1,14 @@
 """The problem: a field on the sphere observed at ocean points.
 
-A Sobolev prior on ``H^2`` of the unit sphere, a truth drawn from it, point
-observations wherever a uniform draw of points did not land on land, Gaussian
-noise, and three regional averages to ask about. Two scales behind one
-``build(scale=)``: the quick one runs in seconds, the full one is the point.
+The model space is the Sobolev space ``H^4`` of the unit sphere and the
+prior is the Gaussian measure whose covariance is the identity on it, scaled
+to a pointwise standard deviation of one: the space's own norm is the
+prior's, so that the one normal operator of the Bayesian answer is also the
+one the point and set answers sweep, and one preconditioner serves them all.
+A truth drawn from the prior, point observations wherever a uniform draw of
+points did not land on land, Gaussian noise, and three regional averages to
+ask about. Two scales behind one ``build(scale=)``: the quick one runs in
+seconds, the full one is the point.
 """
 
 from __future__ import annotations
@@ -22,7 +27,10 @@ from ocean_mask import area_weights, land_mask, land_polygons, ocean_points
 
 NOISE_STD = 0.1
 PRIOR_STD = 1.0
-ORDER = 2.0
+# The space's Sobolev order, and the measure's on top of it: zero, so that
+# the prior covariance is the identity on the space.
+ORDER = 4.0
+MEASURE_ORDER = 0.0
 LEVEL = 0.95
 
 # The regional averages: caps of one radius about named centers, two over
@@ -53,7 +61,6 @@ class Scale:
     n_data: int
     length_scale: float
     surrogate_degree: int
-    spectral_rank: int
     cg_cap: int
     std_samples: int
     n_jobs: int | None
@@ -66,7 +73,6 @@ QUICK = Scale(
     n_data=400,
     length_scale=0.15,
     surrogate_degree=16,
-    spectral_rank=60,
     cg_cap=400,
     std_samples=32,
     n_jobs=None,
@@ -78,7 +84,6 @@ FULL = Scale(
     n_data=20_000,
     length_scale=0.06,
     surrogate_degree=48,
-    spectral_rank=200,
     cg_cap=500,
     std_samples=64,
     n_jobs=8,
@@ -115,9 +120,20 @@ class Problem:
         return self._surrogate
 
     def relative_error(self, model: Any) -> float:
-        """``|m - truth| / |truth|`` in the space's norm."""
-        space = self.space
-        return space.norm(space.subtract(model, self.truth)) / space.norm(self.truth)
+        """``|m - truth| / |truth|`` in the ``L2`` norm, area-weighted on the grid.
+
+        Not the space's own ``H^4`` norm, which the unresolved high degrees
+        dominate: that would read close to one for a field that is visibly
+        right wherever there are data.
+        """
+        weights = area_weights(self.space)
+        difference = self.space.grid_values(model) - self.space.grid_values(self.truth)
+        return float(
+            np.sqrt(
+                np.sum(weights * difference**2)
+                / np.sum(weights * self.space.grid_values(self.truth) ** 2)
+            )
+        )
 
 
 def build(*, scale: Scale = FULL, seed: int = 2026, quiet: bool = False) -> Problem:
@@ -127,16 +143,20 @@ def build(*, scale: Scale = FULL, seed: int = 2026, quiet: bool = False) -> Prob
     say = (lambda *args: None) if quiet else print
     say(f"\n=== The setup ({scale.name} scale) ===")
     space = Sobolev(scale.lmax, ORDER, scale.length_scale)
-    prior = space.sobolev_measure(ORDER, scale.length_scale, pointwise_std=PRIOR_STD)
-    needed = Sobolev.truncation_degree_for(2.0 * ORDER, scale.length_scale, rtol=1e-6)
+    prior = space.sobolev_measure(
+        MEASURE_ORDER, scale.length_scale, pointwise_std=PRIOR_STD
+    )
+    needed = Sobolev.truncation_degree_for(
+        ORDER + MEASURE_ORDER, scale.length_scale, rtol=1e-6
+    )
     say(
         f"space: H^{ORDER:g} on the unit sphere, degree {space.lmax}, "
         f"{space.dim} coefficients, grid {space.grid_shape}"
     )
     say(
-        f"prior: Sobolev measure of order {ORDER:g} on top of the space's, length "
-        f"scale {scale.length_scale} ({scale.length_scale * 6371:.0f} km), pointwise "
-        f"std {PRIOR_STD}; a degree of {needed} holds its spectrum to one part in a "
+        f"prior: the identity covariance on H^{ORDER:g}, length scale "
+        f"{scale.length_scale} ({scale.length_scale * 6371:.0f} km), pointwise std "
+        f"{PRIOR_STD}; a degree of {needed} holds its spectrum to one part in a "
         f"million"
     )
 

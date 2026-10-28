@@ -114,15 +114,17 @@ making a large solve finish) is in git before this commit. Flexure under
 load is dropped as contrived; the evidence and the large-solve ideas fold
 into 4 and 1.
 
-1. **Point data over the oceans** (first). A field on the sphere with a
+1. **Point data on the sphere** (`point_data/`, first; was `oceans/` until 2026-10-28). A field on the sphere with a
    Sobolev prior, observed only at ocean points (the Natural Earth land
    polygons through cartopy and shapely, already in the sphere extra),
    synthetic data from a truth drawn from the prior, at a scale where the
    naive solve is painful: degree a few hundred, observations in the tens
-   of thousands. Parts: the solve (the data-space formalism,
-   unpreconditioned CG against spectral deflation and the Woodbury
-   surrogate, iteration and application counts in a table: the need for
-   preconditioning at real scale); the Bayesian answer (posterior mean,
+   of thousands. Parts: the linear algebra (the one solve behind
+   every answer, in the data-space formalism: capped unpreconditioned CG
+   against the Woodbury surrogate on a coarse sphere, iteration and
+   application counts in a table: the need for preconditioning at real
+   scale; the spectral deflation was dropped on 2026-10-28, David: the
+   Woodbury is good even at this scale, the deflation is not); the Bayesian answer (posterior mean,
    the standard deviation returning to the prior's under the continents,
    samples, properties pushed forward); the point answers (`LeastSquares`,
    `MinimumNorm` with their resolution and propagated error, the bias
@@ -186,6 +188,24 @@ into 4 and 1.
    absent.
 6. **Sampling the posterior** (post-release, the student's): pCN against
    the Laplace Gaussian where the Gaussian is visibly wrong.
+7. **MFEM as a mini-app, not a backend** (David, 2026-10-28, to be
+   decided). The MFEM backend now in the core (`backends/mfem`, D-96) would
+   become a mini-app in the spirit of 9: a mesh, a bilinear form and a
+   finite-element inverse problem, linking to the PyMFEM Python library
+   first, and possibly a second variant showing how to link to native MFEM
+   code through nanobind as 9 does for a bare vector type. Open: what the
+   core keeps (the `backends` contract of CURRENT_STATE §6 and the no-array
+   test of D-169 are what the library promises; the MFEM-specific code is
+   a user of it, not part of it), which tests move with it, and whether the
+   `mfem` extra stays in `pyproject.toml`.
+8. **A parallel (MPI) forward code** (David, 2026-10-28, new). A mini-app
+   whose forward operator runs under MPI, something the library has not
+   looked at: the library sees one operator, the vectors it holds are the
+   handles of distributed data (as 9 holds a C++ vector), and the inner
+   product and the applications reduce across ranks. Candidates to settle:
+   mpi4py with a toy distributed PDE solve, or PETSc through petsc4py
+   (deferred from 2.0 by D-112, which this would revisit as a mini-app
+   rather than a backend). To be planned after 1 to 3.
 9. **A vector backend in C++** (DONE 2026-10-28, D-169): `cpp_backend/`,
    the vector type and sparse operators in C++ behind nanobind, a
    finite-element mass matrix as the Gram, the check ladder and the inverse
@@ -214,6 +234,7 @@ nonlinear half are to be written on it.
 ## Sequencing
 
 Tier 2 and mini-apps 1, 2 and 9 are docs-phase work before the release;
-3 and 4 may trail it, 5 and 6 follow it. Coverage: every module of the package map appears except
+3 and 4 may trail it, 5 and 6 follow it; 7 and 8 are unsequenced (added
+2026-10-28). Coverage: every module of the package map appears except
 the deeper convex machinery (deliberately quiet pending the redesign);
 `datasets` is carried inside mini-app 1.

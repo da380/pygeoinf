@@ -972,6 +972,21 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """
         return None
 
+    def _known_scaling(self) -> np.ndarray | None:
+        """The diagonal of the components matrix, when the operator is a
+        scaling of components and can say so without applying itself; ``None``
+        otherwise.
+
+        The hook a composition reads before :meth:`_known_matrix`: a diagonal
+        operator on a space of dimension ``n`` holds ``n`` numbers, and a
+        product with it scales rows or columns, so a composition that asked for
+        its matrix instead would form ``n^2`` numbers and multiply by them. On
+        a data space of tens of thousands of points that is the difference
+        between a product read in a second and one that takes most of a
+        minute and gigabytes.
+        """
+        return None
+
     def known_matrix(
         self, /, *, form: Literal["components", "galerkin"]
     ) -> np.ndarray | None:

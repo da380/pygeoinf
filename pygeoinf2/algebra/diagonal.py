@@ -305,6 +305,9 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
             return matrix
         return self.domain.apply_gram_to_columns(matrix)
 
+    def _known_scaling(self) -> np.ndarray | None:
+        return self._eigenvalues
+
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:

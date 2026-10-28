@@ -21,6 +21,7 @@ from pygeoinf2.numerics.solvers import (
     CholeskySolver,
     FlexibleCGSolver,
     GMRESSolver,
+    LUSolver,
 )
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import check_operator
@@ -1441,6 +1442,106 @@ class TestWoodburyPreconditioner:
         approximate = wood.model_form()
         vector = forward.domain.random(rng=rng)
         assert np.isfinite(forward.domain.norm(approximate(vector)))
+
+    @pytest.mark.parametrize("formalism", ["data_space", "model_space"])
+    def test_the_family_is_exact_on_tikhonov_and_damped_members(
+        self, pieces, formalism, rng
+    ):
+        """Along a family the multiplier is read as the factor on the noise
+        covariance and the prior covariance is the preconditioner's own, so
+        with exact pieces the bound family inverts every member exactly,
+        whether the member is a damped normal operator or a Tikhonov one,
+        in either space. Not ``t`` times the inverse: conjugate gradients
+        is blind to a constant factor, a solver is not."""
+        from pygeoinf2.numerics.normal import DampedNormalOperator
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+        from pygeoinf2.numerics.tikhonov import TikhonovNormalOperator
+
+        forward, _, noise_covariance = pieces
+        model, data = forward.domain, forward.codomain
+        identity = LinearOperator.identity(model)
+        noise = GaussianMeasure(
+            data, covariance=noise_covariance, precision=LUSolver()(noise_covariance)
+        )
+        wood = WoodburyPreconditioner(
+            forward,
+            identity,
+            noise.covariance,
+            prior_inverse=identity,
+            noise_inverse=noise.precision,
+            solver=CholeskySolver(),
+        )
+        template = TikhonovNormalOperator(
+            forward, 0.0, error=noise, formalism=formalism
+        )
+        bound = wood.for_family(template.base, template.shift)
+        for multiplier in (0.1, 1.0, 7.0):
+            tikhonov = TikhonovNormalOperator(
+                forward, multiplier, error=noise, formalism=formalism
+            )
+            damped = DampedNormalOperator(
+                forward,
+                identity,
+                noise.covariance,
+                multiplier,
+                prior_precision=identity,
+                noise_precision=noise.precision,
+                formalism=formalism,
+            )
+            for member in (tikhonov, damped):
+                space = member.domain
+                vector = space.random(rng=rng)
+                back = bound.at(multiplier, member)(member(vector))
+                assert space.norm(space.subtract(back, vector)) <= 1e-10 * space.norm(
+                    vector
+                ), (type(member).__name__, formalism, multiplier)
+
+    def test_the_data_kernel_is_read_once_as_a_matrix_along_a_family(self, rng):
+        """``A* R^-1 A`` does not move with the multiplier, so the family
+        holds it as one stored matrix and each member's inner operator is a
+        sum of stored matrices rather than a product assembled afresh. The
+        kernel is read only where it is no larger than the factors, which
+        is the case it is for: more data than coarse model coefficients."""
+        from pygeoinf2.algebra.operators import MatrixLinearOperator
+        from pygeoinf2.numerics.normal import DampedNormalOperator
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        model, data = EuclideanSpace(3), make_weighted_space()
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
+        )
+        prior, noise_covariance = self.psd(model, rng), self.psd(data, rng, 0.3)
+        prior_inverse = LUSolver()(prior)
+        noise_inverse = LUSolver()(noise_covariance)
+        wood = WoodburyPreconditioner(
+            forward,
+            prior,
+            noise_covariance,
+            prior_inverse=prior_inverse,
+            noise_inverse=noise_inverse,
+            solver=CholeskySolver(),
+        )
+        kernel = wood.data_kernel()
+        assert isinstance(kernel, MatrixLinearOperator)
+        expected = forward.adjoint @ noise_inverse @ forward
+        vector = model.random(rng=rng)
+        assert model.norm(model.subtract(kernel(vector), expected(vector))) <= (
+            1e-10 * model.norm(expected(vector))
+        )
+        base = forward @ prior @ forward.adjoint
+        bound = wood.for_family(base, noise_covariance)
+        for multiplier in (0.5, 2.0):
+            member = DampedNormalOperator(
+                forward,
+                prior,
+                noise_covariance,
+                multiplier,
+                prior_precision=prior_inverse,
+                noise_precision=noise_inverse,
+            )
+            back = bound.at(multiplier, member)(member(data.random(rng=rng)))
+            assert np.all(np.isfinite(data.to_components(back)))
+        assert isinstance(bound._kernel, MatrixLinearOperator)
 
     def test_a_surrogate_prior_still_preconditions(self, rng):
         """The practical case: cheap stand-in pieces, exact outer problem.
