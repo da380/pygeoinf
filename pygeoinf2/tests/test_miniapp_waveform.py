@@ -29,7 +29,7 @@ import sys
 import numpy as np
 import pytest
 
-from pygeoinf2 import EvaluationError
+from pygeoinf2 import EvaluationError, MaximumAPosteriori, Occam
 from pygeoinf2.testing import check_traits
 
 MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "waveform"
@@ -164,7 +164,6 @@ class TestTheProofs:
 
     def test_the_gauss_newton_hessians_are_symmetric(self, app, proof):
         experiment, wave = proof
-        inversion = app["inversion"]
         from pygeoinf2 import GaussianMeasure
         from pygeoinf2.inference import ForwardProblem
 
@@ -172,10 +171,10 @@ class TestTheProofs:
         problem = ForwardProblem(wave.first_order, error=noise)
         data = problem.synthetic_data(experiment.truth, rng=np.random.default_rng(3))
         point = experiment.prior.sample(rng=np.random.default_rng(4))
-        estimator = inversion.GaussNewtonMAP(problem, experiment.prior)
+        estimator = MaximumAPosteriori(problem, experiment.prior, gauss_newton=True)
         hessian = estimator.objective(data).hessian(point)
         check_traits(hessian, rng=np.random.default_rng(5), measure=experiment.probes)
-        occam = inversion.GaussNewtonOccam(problem, reference=experiment.background)
+        occam = Occam(problem, reference=experiment.background, gauss_newton=True)
         constraint = occam.misfit_constraint(data).hessian(point)
         check_traits(
             constraint, rng=np.random.default_rng(6), measure=experiment.probes

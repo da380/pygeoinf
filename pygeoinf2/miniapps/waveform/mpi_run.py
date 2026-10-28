@@ -33,8 +33,10 @@ from typing import Any
 
 import numpy as np
 
+from pygeoinf2 import MaximumAPosteriori
+
 from common import output_directory, parse
-from inversion import GaussNewtonMAP, modes_path, newton
+from inversion import modes_path, newton
 from proofs import library_ladder
 from survey import FULL, PROOF, QUICK, Experiment, Scale, build
 from synthetic import Setup, setup
@@ -175,8 +177,8 @@ def on_the_scale(
     rows = timings(experiment)
     optimizer = newton(experiment, scale)
     t0 = time.perf_counter()
-    result = GaussNewtonMAP(
-        state.first_order, experiment.prior, optimizer=optimizer
+    result = MaximumAPosteriori(
+        state.first_order, experiment.prior, optimizer=optimizer, gauss_newton=True
     ).solve(state.data, start=experiment.background)
     seconds = time.perf_counter() - t0
     error = experiment.relative_error(result.minimizer)

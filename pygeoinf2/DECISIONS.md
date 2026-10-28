@@ -2812,6 +2812,38 @@ implemented; the snapshot stride is the hook. Findings in CURRENT_STATE
 iterate as a component array under a view, the missing Gauss-Newton
 Hessian, Newton-CG discarding the truncated CG's stop reason.
 
+**D-180. Three fixes from the mini-app builds** (2026-10-28, late; David:
+do the quick ones tonight, the rest in the morning). (1) A check that
+meets a NaN fails: `testing._record`, through which every defect passes,
+refuses a defect that is not a finite number, where before the maximum
+dropped the NaN and the comparison was false for it, so a NaN-valued
+operator passed `check_operator` with both defects reported as zero. (2)
+The primal's inner end no longer collapses on a direction the data
+cannot see. The attaining model is built along the ray `u₂ + x u₁`, and
+the ray was thrown away whenever `u₂` violated the misfit by more than
+1e-12, which it does by the search's own tolerance (3e-4 at the default
+on the three-dimensional reproduction); the fallback then walked from
+the fitting model toward the optimum and stopped at once, giving the
+fitting model's pairing, zero in the unseen direction. Now a violation
+within 1e-6, the accuracy of the root find that places the fitting model
+on the noise ball, counts as on the boundary, and when `u₂` is further
+out than that the optimum is pulled back into the set along the segment
+from the fitting model and the ray extended from there, which recovers
+the whole extent where the ray never changes the misfit; the better of
+that and the old pull-back is kept. The nine reproductions now agree
+with the closed form on both ends. (3) `gauss_newton=True` on
+`MaximumAPosteriori`, `NonlinearLeastSquares` and `Occam` makes the
+objective (Occam's misfit constraint) carry the Gauss-Newton Hessian
+whether or not the forward operator has a second derivative, the
+curvature term dropped by choice and said so, which is what the
+principle behind `gauss_newton_hessian` asked for: not a Hessian that
+quietly omits a term, but one asked for by name. The default is
+unchanged (exact when available, none otherwise), the estimators'
+`hessian` methods use the objective's whenever it carries one, and the
+derivative with respect to the data and the Laplace approximation follow
+it. The tomography and waveform apps drop the subclasses that attached
+it by hand.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

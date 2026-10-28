@@ -339,18 +339,10 @@ Recorded rather than settled, so nobody has to rediscover them.
   `estimator_at(...)`, which builds a fresh `LeastSquares` and reassembles
   the normal operator under a dense family solver: 54 applications on a
   repeat call where the search itself cost 54.
-- **Findings from the tomography mini-app's build** (2026-10-28). The
-  support search's inner end collapses for a direction the data cannot
-  see: `_largest_feasible` (`geometry/feasible.py`) cuts off at a misfit
-  of `1 + 1e-12`, but at the search's optimum the misfit equals one only
-  to the search tolerance, and when it lands just above, the inner end
-  drops to about zero while the outer end stays exact (on
-  `EuclideanSpace(3)` with the first two coordinates observed, the third
-  the property, prior ball radius 2, noise ball 0.1, data `s (1, 1)`: six
-  of nine values of `s` in `[0.8, 1.2]` give an inner end near zero
-  against the exact outer `sqrt(4 − (|d| − 0.1)²)`); the app builds the
-  attaining model by hand for that direction. A bug to fix. Also: the
-  `splitting` algorithm's inner end exceeded its outer on the same
+- **Findings from the tomography mini-app's build** (2026-10-28; the
+  collapse of the support search's inner end on a direction the data
+  cannot see was fixed the same night, D-180). The
+  `splitting` algorithm's inner end exceeded its outer on such a
   direction by 1e-4 and took 28 s; a singular data-space family's Cholesky
   at the floor raises a raw `LinAlgError` where the search catches only
   `ConvergenceError`. The layered prior from `Layered.sobolev_measure`
@@ -366,26 +358,14 @@ Recorded rather than settled, so nobody has to rediscover them.
   the one-dimensional handling `_known_matrix` has); and
   `point_evaluation_operator` always builds its dense matrix, 3.4 GB at
   83 000 points, so the app assembles ray by ray.
-- **MAP's objective carries no Hessian when the forward has only a
-  first derivative.** Met by both the tomography and the waveform
-  mini-apps (2026-10-28): `MaximumAPosteriori.objective` goes through
-  `_misfit_plus_quadratic` (`inference/minimization.py`), which sets the
-  Hessian to none unless the operator has a second derivative, so
-  `NewtonCG` refuses it, while `MaximumAPosteriori.hessian` already
-  returns the Gauss-Newton Hessian `P + J* R⁻¹ J` that would do. Both apps
-  attach it in a small subclass. Open: an option on the estimator to
-  equip the objective with the Gauss-Newton Hessian whenever the second
-  derivative is missing, or by choice.
-- **Findings from the waveform mini-app's build** (2026-10-28). A
-  NaN-valued operator passes `check_operator` with both defects reported
-  as zero: `_record` in `testing.py` takes a `max` that drops NaN and the
-  comparisons are false for it. A bug to fix (treat NaN as the worst
-  defect). The checks' comparison scale floors at one (also met by the
+- **Findings from the waveform mini-app's build** (2026-10-28; that a
+  NaN-valued operator passed the checks was fixed the same night, D-180).
+  The checks' comparison scale floors at one (also met by the
   MFEM app, above). `SolveStep.iterate` is a component array rather than
   a vector of the space when the solver runs viewed (`numerics/solvers.py`),
   which the docstring does not say. `NewtonCG` discards the truncated
   CG's stop reason, so an exit on negative curvature cannot be seen from
-  the record. The Gauss-Newton Hessian gap is the entry above.
+  the record.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.

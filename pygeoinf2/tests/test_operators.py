@@ -1722,3 +1722,16 @@ class TestSpectralBlockOperator:
         u = np.array([X.to_components(draw[0]) for draw in draws])
         v = np.array([X.to_components(draw[1]) for draw in draws])
         assert np.corrcoef(u[:, 5], v[:, 5])[0, 1] == pytest.approx(-0.8, abs=0.06)
+
+
+class TestNaNIsNotADefectOfZero:
+    def test_a_nan_valued_operator_is_refused(self, rng):
+        X = EuclideanSpace(3)
+        broken = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: np.full(3, np.nan),
+            adjoint=lambda y: np.full(3, np.nan),
+        )
+        with pytest.raises(AssertionError, match="not a finite number"):
+            check_operator(broken, rng=rng)

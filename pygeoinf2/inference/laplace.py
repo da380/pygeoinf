@@ -82,7 +82,8 @@ class MaximumAPosteriori(Minimization):
             be passed when the forward operator supplies its second
             derivative: the objective then carries the exact Hessian, the
             Gauss-Newton term plus the operator's curvature weighted by the
-            residual. Give such an optimizer the prior covariance as its
+            residual; or with ``gauss_newton``, which needs only the
+            derivative. Give such an optimizer the prior covariance as its
             preconditioner (``NewtonCG(preconditioner=prior.covariance)``):
             the Hessian is ``P + J* R^-1 J`` in the model space's own inner
             product, and without it the inner solve has to resolve the
@@ -93,6 +94,11 @@ class MaximumAPosteriori(Minimization):
             :class:`~pygeoinf2.numerics.solvers.LinearSolver`, or a callable
             receiving the Hessian and returning one. Conjugate gradients if
             omitted.
+        gauss_newton: carry the Gauss-Newton Hessian ``2 P + 2 J* R^-1 J``
+            in the objective whether or not the forward operator has a
+            second derivative, dropping the operator's curvature by choice.
+            It is then also the Hessian behind the derivative with respect
+            to the data and behind the Laplace approximation.
 
     Raises:
         ValueError: if the prior does not live on the model space, if the
@@ -111,7 +117,9 @@ class MaximumAPosteriori(Minimization):
         *,
         optimizer: Optimizer | None = None,
         solver: LinearSolver | None = None,
+        gauss_newton: bool = False,
     ) -> None:
+        self._gauss_newton = bool(gauss_newton)
         if prior.domain != problem.model_space:
             raise ValueError(
                 f"The prior lives on {prior.domain!r}, not on the model space "
@@ -167,7 +175,8 @@ class MaximumAPosteriori(Minimization):
         evaluation, serving the value and the gradient together. The exact
         Hessian, with the operator's curvature weighted by the residual, is
         carried whenever the forward operator can supply its second
-        derivative.
+        derivative, or the Gauss-Newton Hessian when the estimator was asked
+        for it.
 
         Args:
             data: the observations.
@@ -180,6 +189,7 @@ class MaximumAPosteriori(Minimization):
             data,
             center=self._prior.expectation,
             precision=self._prior.precision,
+            gauss_newton=self._gauss_newton,
         )
 
     def log_posterior(self, data: Any, /) -> Functional:
@@ -232,8 +242,9 @@ class MaximumAPosteriori(Minimization):
         Returns:
             A self-adjoint operator on the model space.
         """
-        if self._problem.forward_operator.has_second_derivative:
-            return self.objective(data).hessian(model)
+        objective = self.objective(data)
+        if objective.has_hessian:
+            return objective.hessian(model)
         return _gauss_newton(self._problem, model, precision=self._prior.precision)
 
 

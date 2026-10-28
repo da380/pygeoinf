@@ -18,6 +18,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
+from pygeoinf2 import Occam
 from pygeoinf2.numerics.optimization import NewtonCG
 
 from common import (
@@ -29,7 +30,7 @@ from common import (
     section,
     sponge_outline,
 )
-from inversion import GaussNewtonOccam, map_mode
+from inversion import map_mode
 from survey import BOXES, FULL, LEVEL, QUICK, Scale, box_average_operator
 from synthetic import Setup, setup
 
@@ -39,8 +40,9 @@ def occam_answer(state: Setup, mode: np.ndarray, /, *, outdir: pathlib.Path) -> 
     experiment, wave, problem = state.experiment, state.wave, state.problem
     scale = experiment.survey.scale
     space = experiment.space
-    estimator = GaussNewtonOccam(
+    estimator = Occam(
         state.first_order,
+        gauss_newton=True,
         level=LEVEL,
         reference=experiment.background,
         optimizer=NewtonCG(

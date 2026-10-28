@@ -1,13 +1,9 @@
-"""The estimators' companions: Gauss-Newton variants, a logging Newton-CG, the saved mode.
+"""The estimators' companions: a logging Newton-CG and the saved mode.
 
-``MaximumAPosteriori`` and ``Occam`` carry the exact Hessian of their
-objectives when the forward operator has a second derivative and no Hessian
-otherwise, so a Newton method on the Gauss-Newton Hessian needs the objective
-to carry that Hessian itself. :class:`GaussNewtonMAP` attaches the
-estimator's own :meth:`~pygeoinf2.inference.laplace.MaximumAPosteriori.hessian`,
-which for a forward operator without a second derivative is
-``2 (P + J* R^-1 J)``; :class:`GaussNewtonOccam` attaches ``2 J* R^-1 J``,
-scaled as Occam scales its misfit constraint.
+The Gauss-Newton runs ask ``MaximumAPosteriori`` and ``Occam`` for the
+Gauss-Newton Hessian (``gauss_newton=True``), ``2 (P + J* R^-1 J)`` on the
+objective and ``2 J* R^-1 J`` scaled as Occam scales its misfit constraint,
+since the forward operator is used without its second derivative there.
 
 :class:`LoggedNewtonCG` is the library's Newton-CG with a record of the value
 and the gradient norm at every point where it linearizes the objective, which
@@ -22,63 +18,10 @@ from typing import Any
 
 import numpy as np
 
-from pygeoinf2 import Functional, MaximumAPosteriori, Occam, QuadraticModel
-from pygeoinf2.numerics.optimization import NewtonCG, gauss_newton_hessian
+from pygeoinf2 import Functional, QuadraticModel
+from pygeoinf2.numerics.optimization import NewtonCG
 
 from survey import Experiment, Scale
-
-
-class GaussNewtonMAP(MaximumAPosteriori):
-    """The MAP estimator whose objective carries the Gauss-Newton Hessian.
-
-    Built on a forward problem whose operator has no second derivative, for
-    which :meth:`hessian` is ``2 (P + J* R^-1 J)``.
-    """
-
-    def objective(self, data: Any, /) -> Functional:
-        base = super().objective(data)
-
-        def linearize(model: Any) -> QuadraticModel:
-            local = base.at(model)
-            return QuadraticModel(
-                model, local.value, local.derivative, self.hessian(data, model)
-            )
-
-        return Functional.from_callables(
-            self.model_space,
-            base,
-            linearize=linearize,
-            hessian=lambda model: self.hessian(data, model),
-        )
-
-
-class GaussNewtonOccam(Occam):
-    """Occam's inversion whose misfit constraint carries the Gauss-Newton Hessian.
-
-    The constraint is ``chi^2 / chi^2_crit - 1``; its Gauss-Newton Hessian is
-    ``2 J* R^-1 J / chi^2_crit``. Built on a forward problem whose operator has
-    no second derivative.
-    """
-
-    def misfit_constraint(self, data: Any, /) -> Functional:
-        base = super().misfit_constraint(data)
-        problem = self.forward_problem
-        weight = 2.0 / self.target
-
-        def hessian(model: Any) -> Any:
-            return weight * gauss_newton_hessian(
-                problem.forward_operator,
-                model,
-                weighting=problem.error_measure.precision,
-            )
-
-        def linearize(model: Any) -> QuadraticModel:
-            local = base.at(model)
-            return QuadraticModel(model, local.value, local.derivative, hessian(model))
-
-        return Functional.from_callables(
-            self.model_space, base, linearize=linearize, hessian=hessian
-        )
 
 
 class LoggedNewtonCG(NewtonCG):

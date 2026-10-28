@@ -94,7 +94,7 @@ skips when no MPI compiler wrapper builds it (set `MPICXX` to choose one).
 | `CMakeLists.txt`, `build.py` | the build, as in the C++ backend mini-app, with the MPI option |
 | `survey.py` | the scales, the survey, the true and background models, the boxes, the model space and the prior |
 | `wave_operator.py` | `WaveformOperator`: the forward map as an `Operator` with both derivatives, its field cache and its threads; the unfused compositions the fused kernels are checked against |
-| `inversion.py` | `GaussNewtonMAP`, `GaussNewtonOccam`, a Newton-CG that logs its gradient norms, the saved mode |
+| `inversion.py` | a Newton-CG that logs its gradient norms, the saved mode |
 | `common.py` | the command line, the stopwatch, the section plots |
 | `proofs.py`, `synthetic.py`, `newton.py`, `laplace.py`, `occam.py` | parts A to D, each a script with a `main()` and a `run()` the others and the test call |
 | `run_all.py` | parts A to D in order |
@@ -361,11 +361,11 @@ The `--quick` run of part E on three ranks takes 9 s; the full one 62 s.
 - **Stability.** A model with a non-positive value, or fast enough anywhere
   to come within 2% of the stability limit `c Δt / h = √(3/8)`, raises
   `EvaluationError`, from which the library's line searches retreat.
-- **Gauss-Newton.** `MaximumAPosteriori` and `Occam` carry a Hessian only when
-  the forward operator has a second derivative, and then the exact one. The
-  Gauss-Newton runs use the same operator without its second derivative,
-  through `GaussNewtonMAP` and `GaussNewtonOccam`, which attach
-  `2 (P + J* R⁻¹ J)` and `2 J* R⁻¹ J / χ²_crit` to the objectives; the
+- **Gauss-Newton.** `MaximumAPosteriori` and `Occam` carry the exact Hessian
+  when the forward operator has a second derivative; asked for it
+  (`gauss_newton=True`) they carry the Gauss-Newton Hessian instead,
+  `2 (P + J* R⁻¹ J)` and `2 J* R⁻¹ J / χ²_crit`, which is what the
+  Gauss-Newton runs use on the operator without its second derivative; the
   symmetry of both is in the test.
 - **Ranks without `mpi4py`.** The MPI module initializes MPI itself and does
   its own communication, so a run needs nothing beyond the MPI the module was

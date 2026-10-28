@@ -77,8 +77,14 @@ class CheckReport:
 
 
 def _record(record: dict[str, float] | None, axiom: str, defect: float) -> None:
+    """Keep the worst defect seen for an axiom, and fail outright on a defect
+    that is not a finite number: a NaN would otherwise slip past both the
+    maximum and the comparison that follows it."""
+    defect = float(defect)
+    if not np.isfinite(defect):
+        _fail(axiom, f"the defect is {defect!r}, not a finite number")
     if record is not None:
-        record[axiom] = max(record.get(axiom, 0.0), float(defect))
+        record[axiom] = max(record.get(axiom, 0.0), defect)
 
 
 def _draw(

@@ -33,7 +33,7 @@ from common import (
     section,
     sponge_outline,
 )
-from inversion import GaussNewtonMAP, modes_path, newton
+from inversion import modes_path, newton
 from survey import FULL, QUICK, Scale
 from synthetic import Setup, setup
 
@@ -82,7 +82,9 @@ def map_answer(
     optimizer = newton(experiment, scale)
     runs["gauss-newton"] = _run(
         "Gauss-Newton Hessian from the background",
-        GaussNewtonMAP(state.first_order, prior, optimizer=optimizer),
+        MaximumAPosteriori(
+            state.first_order, prior, optimizer=optimizer, gauss_newton=True
+        ),
         optimizer,
         state,
         experiment.background,

@@ -650,6 +650,42 @@ class TestTheSearch:
         assert upper == pytest.approx(outer, rel=1e-4)
 
 
+class TestADirectionTheDataCannotSee:
+    def test_the_inner_end_reaches_the_prior_boundary(self):
+        """The data see two coordinates and the property is the third. The
+        exact extent is what the prior ball leaves after the nearest fitting
+        model, and the primal's attaining model must reach it even though its
+        optimum meets the misfit only to the search's tolerance."""
+        model, data_space, prop = (
+            EuclideanSpace(3),
+            EuclideanSpace(2),
+            EuclideanSpace(1),
+        )
+        forward = LinearOperator.from_matrix(
+            model,
+            data_space,
+            np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            form="components",
+        )
+        target = LinearOperator.from_matrix(
+            model, prop, np.array([[0.0, 0.0, 1.0]]), form="components"
+        )
+        e = prop.basis_vector(0)
+        for s in np.linspace(0.8, 1.2, 9):
+            data = data_space.from_components(s * np.array([1.0, 1.0]))
+            feasible = FeasiblePropertySet(
+                forward,
+                target,
+                Ball(model, radius=2.0),
+                data,
+                noise=Ball(data_space, radius=0.1),
+            )
+            inner, outer = feasible.support_bracket(e)
+            exact = np.sqrt(4.0 - (np.hypot(s, s) - 0.1) ** 2)
+            assert outer == pytest.approx(exact, rel=1e-6)
+            assert inner == pytest.approx(exact, rel=1e-4)
+
+
 class TestKnobs:
     def test_a_slack_prior_on_overdetermined_data_needs_the_model_space(self, rng):
         from pygeoinf2.geometry.feasible import Primal, Search

@@ -372,6 +372,7 @@ def _misfit_plus_quadratic(
     center: Any = None,
     precision: LinearOperator | None = None,
     weight: float = 1.0,
+    gauss_newton: bool = False,
 ) -> Functional:
     """``chi^2(m, d) + weight (m - c, P (m - c))``, with its derivatives.
 
@@ -382,7 +383,12 @@ def _misfit_plus_quadratic(
     less the error's expectation; one linearization of the forward operator
     serves the value and the gradient together. The exact Hessian,
     ``2 weight P + 2 J* R^-1 J - 2 F''(m)[., .]* (R^-1 r)``, is supplied
-    whenever the forward operator can give its second derivative.
+    whenever the forward operator can give its second derivative. With
+    ``gauss_newton`` the Hessian carried is ``2 weight P + 2 J* R^-1 J``
+    instead, the curvature term dropped by choice, whether or not the
+    operator has a second derivative: the Gauss-Newton approximation, which
+    a Newton-type optimizer can run on a forward operator that supplies
+    only its derivative.
 
     With ``center`` omitted there is no quadratic term; with ``precision``
     omitted ``P`` is the identity.
@@ -392,6 +398,7 @@ def _misfit_plus_quadratic(
     forward = problem.forward_operator
     error = problem.error_measure if problem.has_error else None
     quadratic = center is not None and weight != 0.0
+    carries_hessian = gauss_newton or forward.has_second_derivative
 
     def apply_precision(vector: Any) -> Any:
         return vector if error is None else error.precision(vector)
@@ -423,6 +430,8 @@ def _misfit_plus_quadratic(
             if quadratic:
                 image = direction if precision is None else precision(direction)
                 out = space.axpy(2.0 * weight, image, out)
+            if gauss_newton:
+                return out
             curvature = forward.second_derivative(model, direction).adjoint(weighted)
             return space.axpy(-2.0, curvature, out)
 
@@ -444,7 +453,7 @@ def _misfit_plus_quadratic(
             LinearFunctional.from_representer(space, gradient),
             hessian=(
                 hessian_at(model, linearization.derivative, weighted)
-                if forward.has_second_derivative
+                if carries_hessian
                 else None
             ),
         )
@@ -456,7 +465,7 @@ def _misfit_plus_quadratic(
         space,
         value,
         linearize=linearize,
-        hessian=hessian if forward.has_second_derivative else None,
+        hessian=hessian if carries_hessian else None,
     )
 
 
@@ -545,6 +554,7 @@ class NonlinearLeastSquares(Minimization):
         reference: Any = None,
         optimizer: Optimizer | None = None,
         solver: LinearSolver | None = None,
+        gauss_newton: bool = False,
     ) -> None:
         """
         Args:
@@ -555,9 +565,14 @@ class NonlinearLeastSquares(Minimization):
                 start of the search; the zero model if omitted.
             optimizer: how to find the minimizer. L-BFGS with 500 iterations
                 by default; a Newton method can be used when the forward
-                operator supplies its second derivative.
+                operator supplies its second derivative, or with
+                ``gauss_newton``.
             solver: how to invert the Hessian for the derivative with
                 respect to the data. Conjugate gradients if omitted.
+            gauss_newton: carry the Gauss-Newton Hessian,
+                ``2 t I + 2 J* R^-1 J``, in the objective whether or not the
+                forward operator has a second derivative, dropping the
+                operator's curvature by choice.
 
         Raises:
             ValueError: for a negative damping, or if the reference model
@@ -573,6 +588,7 @@ class NonlinearLeastSquares(Minimization):
         self._problem = problem
         self._damping = float(damping)
         self._reference = space.zero() if reference is None else reference
+        self._gauss_newton = bool(gauss_newton)
         super().__init__(
             problem.data_space,
             space,
@@ -602,7 +618,8 @@ class NonlinearLeastSquares(Minimization):
         """``chi^2(m, d) + t |m - m_ref|^2`` for this data.
 
         Carries the gradient, and the exact Hessian when the forward
-        operator supplies its second derivative.
+        operator supplies its second derivative, or the Gauss-Newton one
+        when the estimator was asked for it.
 
         Args:
             data: the observations.
@@ -615,6 +632,7 @@ class NonlinearLeastSquares(Minimization):
             data,
             center=self._reference if self._damping > 0.0 else None,
             weight=self._damping,
+            gauss_newton=self._gauss_newton,
         )
 
     def hessian(self, data: Any, model: Any, /) -> LinearOperator:
@@ -632,8 +650,9 @@ class NonlinearLeastSquares(Minimization):
         Returns:
             A self-adjoint operator on the model space.
         """
-        if self._problem.forward_operator.has_second_derivative:
-            return self.objective(data).hessian(model)
+        objective = self.objective(data)
+        if objective.has_hessian:
+            return objective.hessian(model)
         return _gauss_newton(self._problem, model, weight=self._damping)
 
 
@@ -815,6 +834,7 @@ class Occam(ConstrainedMinimization):
         tolerance: float = 1e-4,
         gtol: float = 1e-8,
         max_iterations: int = 30,
+        gauss_newton: bool = False,
     ) -> None:
         """
         Args:
@@ -840,6 +860,12 @@ class Occam(ConstrainedMinimization):
             gtol: the gradient tolerance of the augmented Lagrangian the
                 final inner solve must meet.
             max_iterations: the budget of outer iterations.
+            gauss_newton: carry the Gauss-Newton Hessian of the misfit,
+                ``2 J* R^-1 J``, in the constraint whether or not the
+                forward operator has a second derivative, dropping the
+                operator's curvature by choice; it lets a Newton-type inner
+                optimizer run on an operator that supplies only its
+                derivative.
 
         Raises:
             ValueError: if the problem has no error measure, there being
@@ -857,6 +883,7 @@ class Occam(ConstrainedMinimization):
         self._problem = problem
         self._level = level
         self._reference = space.zero() if reference is None else reference
+        self._gauss_newton = bool(gauss_newton)
         super().__init__(
             problem.data_space,
             space,
@@ -930,9 +957,12 @@ class Occam(ConstrainedMinimization):
 
         Returns:
             A functional on the model space with a gradient, and the exact
-            Hessian when the forward operator supplies its second derivative.
+            Hessian when the forward operator supplies its second derivative,
+            or the Gauss-Newton one when the estimator was asked for it.
         """
-        misfit = _misfit_plus_quadratic(self._problem, data)
+        misfit = _misfit_plus_quadratic(
+            self._problem, data, gauss_newton=self._gauss_newton
+        )
         target = self.target
         space = self.model_space
 

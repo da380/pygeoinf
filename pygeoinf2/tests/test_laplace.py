@@ -13,7 +13,7 @@ from pygeoinf2.inference.laplace import (
     LaplaceResult,
     MaximumAPosteriori,
 )
-from pygeoinf2.inference.minimization import Minimization
+from pygeoinf2.inference.minimization import Minimization, NonlinearLeastSquares
 from pygeoinf2.inference.problem import ForwardProblem, LinearForwardProblem
 from pygeoinf2.numerics.optimization import LBFGS, NewtonCG, OptimizationResult
 
@@ -447,6 +447,70 @@ class TestWithTheExactHessian:
             ForwardProblem(forward, error=error), prior
         ).objective(data)
         assert not objective.has_hessian
+
+
+class TestWithTheGaussNewtonHessian:
+    """Asking for the Gauss-Newton Hessian equips the objective with it on a
+    forward operator that supplies only its derivative."""
+
+    def test_newton_runs_on_a_derivative_only_operator(self, nonlinear_setting):
+        forward, prior, error, truth, data = nonlinear_setting
+        problem = ForwardProblem(forward, error=error)
+        estimator = MaximumAPosteriori(
+            problem, prior, optimizer=NewtonCG(max_iterations=50), gauss_newton=True
+        )
+        assert estimator.objective(data).has_hessian
+        by_newton = estimator.solve(data)
+        by_lbfgs = MaximumAPosteriori(
+            problem, prior, optimizer=LBFGS(max_iterations=500)
+        ).solve(data)
+        assert by_newton.converged
+        space = forward.domain
+        assert space.norm(
+            space.subtract(by_newton.minimizer, by_lbfgs.minimizer)
+        ) < 1e-4 * max(space.norm(by_lbfgs.minimizer), 1.0)
+
+    def test_it_is_the_prior_term_plus_the_normal_operator(
+        self, nonlinear_setting, rng
+    ):
+        forward, prior, error, truth, data = nonlinear_setting
+        estimator = MaximumAPosteriori(
+            ForwardProblem(forward, error=error), prior, gauss_newton=True
+        )
+        space = forward.domain
+        point, direction = space.random(rng=rng), space.random(rng=rng)
+        jacobian = forward.derivative(point)
+        expected = space.add(
+            space.scale(2.0, prior.precision(direction)),
+            space.scale(2.0, jacobian.adjoint(error.precision(jacobian(direction)))),
+        )
+        assert np.allclose(
+            estimator.objective(data).hessian(point)(direction), expected
+        )
+        assert np.allclose(estimator.hessian(data, point)(direction), expected)
+
+    def test_least_squares_takes_the_same_choice(self, nonlinear_setting):
+        forward, prior, error, truth, data = nonlinear_setting
+        problem = ForwardProblem(forward, error=error)
+        assert (
+            not NonlinearLeastSquares(problem, damping=1.0).objective(data).has_hessian
+        )
+        estimator = NonlinearLeastSquares(
+            problem,
+            damping=1.0,
+            optimizer=NewtonCG(max_iterations=50),
+            gauss_newton=True,
+        )
+        assert estimator.objective(data).has_hessian
+        assert estimator.solve(data).converged
+
+    def test_occam_takes_the_same_choice(self, nonlinear_setting):
+        from pygeoinf2.inference.minimization import Occam
+
+        forward, prior, error, truth, data = nonlinear_setting
+        problem = ForwardProblem(forward, error=error)
+        assert not Occam(problem).misfit_constraint(data).has_hessian
+        assert Occam(problem, gauss_newton=True).misfit_constraint(data).has_hessian
 
 
 class TestWhatItRefuses:

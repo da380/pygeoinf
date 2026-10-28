@@ -25,12 +25,12 @@ import numpy as np
 
 import joblib
 
-from pygeoinf2 import LaplaceApproximation
+from pygeoinf2 import LaplaceApproximation, MaximumAPosteriori
 from pygeoinf2.numerics.preconditioners import SpectralPreconditioner
 from pygeoinf2.numerics.solvers import CGSolver
 
 from common import Stopwatch, describe, output_directory, parse, part_rng, save
-from inversion import GaussNewtonMAP, map_mode
+from inversion import map_mode
 from survey import BOXES, FULL, QUICK, Scale, box_average_operator
 from synthetic import Setup, setup
 
@@ -84,7 +84,8 @@ def laplace_answer(
     # the operator, which holds the C++ solver, cannot be sent to a process.
     with joblib.parallel_config(backend="threading"):
         laplace = LaplaceApproximation(
-            GaussNewtonMAP(state.first_order, prior), solver=solver
+            MaximumAPosteriori(state.first_order, prior, gauss_newton=True),
+            solver=solver,
         ).at(mode, state.data)
     build_seconds, build_calls = watch.lap()
     shots = experiment.survey.n_shots

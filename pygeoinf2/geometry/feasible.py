@@ -983,7 +983,12 @@ def _dual_cost(
 
 
 def _largest_feasible(
-    structure: FeasibleStructure, shifted: Any, u1: Any, u2: Any
+    structure: FeasibleStructure,
+    shifted: Any,
+    u1: Any,
+    u2: Any,
+    *,
+    slack: float = 1e-6,
 ) -> Any | None:
     """``u₂ + x u₁`` at the largest ``x >= 0`` keeping both constraints, or None.
 
@@ -991,7 +996,13 @@ def _largest_feasible(
     are quadratics in ``x``, so the largest admissible ``x`` has closed-form
     roots, and the model there is exactly feasible with a pairing first
     order in the error of ``γ``. None when ``u₂`` itself violates a
-    constraint, where this ray never enters the set.
+    constraint by more than *slack* (relative), where this ray never enters
+    the set. A violation within the slack counts as sitting on the
+    boundary: a model that meets a constraint only to the accuracy of the
+    root find that placed it there (the fitting model is such a model) is
+    on the boundary for every purpose here, and treating a hair above as
+    outside would throw the ray away, with it the whole extent of the set
+    in a direction the data cannot see.
     """
     model_space, data_space = structure.model_space, structure.data_space
     Q, P, A = (
@@ -1002,8 +1013,9 @@ def _largest_feasible(
 
     def largest(f0: float, cross: float, f2: float) -> float | None:
         # f(x) == f0 + 2 x cross + x² f2 <= 1 on [0, x_max].
-        if f0 > 1.0 + 1e-12:
+        if f0 > 1.0 + slack:
             return None
+        f0 = min(f0, 1.0)
         if f2 <= 0.0:
             return float("inf") if cross <= 0.0 else (1.0 - f0) / (2.0 * cross)
         disc = cross * cross - f2 * (f0 - 1.0)
@@ -1928,8 +1940,23 @@ class Primal(Algorithm):
         outer = _dual_cost(structure, feasible.data, direction, certificate)
         inside = _largest_feasible(structure, shifted, u1, u2)
         if inside is None:
+            # The search met the constraints only to its tolerance, and u₂
+            # sits a hair outside. Two feasible candidates, the better kept:
+            # u₂ pulled back into the set along the segment from the fitting
+            # model, then extended along the ray as far as the constraints
+            # allow (which recovers the whole extent in a direction the data
+            # cannot see, where the ray never changes the misfit), and the
+            # optimum itself pulled back along that segment.
             anchor = model_space.subtract(feasible.fitting_model(), a)
-            inside = _scaled_inside(structure, shifted, anchor, relative)
+            pulled = _scaled_inside(structure, shifted, anchor, u2)
+            candidates = [
+                _largest_feasible(structure, shifted, u1, pulled),
+                _scaled_inside(structure, shifted, anchor, relative),
+            ]
+            inside = max(
+                (x for x in candidates if x is not None),
+                key=lambda x: float(model_space.inner_product(c, x)),
+            )
         inner = centre_term + float(model_space.inner_product(c, inside))
         if np.isfinite(prior_norm):
             outer = min(outer, centre_term + prior_norm)
