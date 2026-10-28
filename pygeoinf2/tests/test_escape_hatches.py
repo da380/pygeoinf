@@ -203,7 +203,7 @@ class TestCoefficientPadding:
             space.coefficient_operator(lmin=7, lmax=6)
 
 
-class TestSufficientDegree:
+class TestEstimateTruncationDegree:
     """The walk goes past the space, and counts what each degree would hold."""
 
     def test_the_sphere_walk_is_the_weighted_sum(self):
@@ -212,7 +212,7 @@ class TestSufficientDegree:
         def symbol(eigenvalues):
             return (1.0 + 0.2**2 * eigenvalues) ** -2.0
 
-        degree = space.sufficient_degree(symbol, rtol=1e-4)
+        degree = space.estimate_truncation_degree(symbol, rtol=1e-4)
         assert degree > 4
         # The same walk by hand.
         total, by_hand = 0.0, 0
@@ -231,13 +231,14 @@ class TestSufficientDegree:
         def symbol(eigenvalues):
             return (1.0 + 0.2**2 * eigenvalues) ** -2.0
 
-        free = space.sufficient_degree(symbol, rtol=1e-4)
+        free = space.estimate_truncation_degree(symbol, rtol=1e-4)
         assert (
-            space.sufficient_degree(symbol, rtol=1e-4, min_degree=free + 5) == free + 5
+            space.estimate_truncation_degree(symbol, rtol=1e-4, min_degree=free + 5)
+            == free + 5
         )
-        assert space.sufficient_degree(symbol, rtol=1e-4, max_degree=3) == 3
+        assert space.estimate_truncation_degree(symbol, rtol=1e-4, max_degree=3) == 3
         with pytest.raises(ValueError):
-            space.sufficient_degree(symbol, rtol=2.0)
+            space.estimate_truncation_degree(symbol, rtol=2.0)
 
     def test_the_box_shells_are_the_packings_own(self):
         """Each degree's enumerated modes are the ones a box holding that
@@ -251,6 +252,8 @@ class TestSufficientDegree:
 
     def test_the_box_walk_goes_past_the_space(self):
         box = PeriodicBox((8, 8))
-        degree = box.sufficient_degree(lambda lam: (1.0 + lam) ** -2.0, rtol=1e-3)
+        degree = box.estimate_truncation_degree(
+            lambda lam: (1.0 + lam) ** -2.0, rtol=1e-3
+        )
         assert degree > int(box.degrees.max())
         assert int(box.with_degree(degree).degrees.max()) >= degree

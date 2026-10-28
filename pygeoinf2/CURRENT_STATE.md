@@ -45,9 +45,9 @@ is what most of the rest follows from:
 | `geometry` | convex sets (balls, ellipsoids including semidefinite ones, half-spaces, polytopes, intersections, oracle sets), the conversions between a set's descriptions (D-135), level and sublevel sets, affine and linear subspaces, projectors, support functions; the feasible property set with its algorithms `ClosedForm`, `Primal`, `Search`, `Dual`, `Splitting`, `Distance`, `SProcedure` (D-142), and the ellipsoidal descriptions of D-141: the S-procedure outer ellipsoid, the bound on a Minkowski sum of ellipsoids, a polytope's inscribed ellipsoid, a point set's enclosing ellipsoid |
 | `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval; `evaluate_gradient` at scattered points (ducc0 on the sphere, the `ik`-scaled transform on the boxes) and the nonlinear `ray_travel_time_operator`, bending or shooting, on every geometry, with its linearization and its Hessian action (D-156) |
-| `sem1d` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies: `interval` on the line under `dx`, `radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, `layered` for piecewise-continuous fields over adjacent layers of any one of them (their direct sum, with points, jumps, integrals and layer-by-layer priors); Robin ends, a batched harmonic transform, a fit over the domain for sampled functions; wraps `planetmodel.randomfield`, an optional extra, and is imported explicitly (D-115 to D-124, D-126) |
+| `spectral_element`, `interval`, `ball` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies, reached by geometry (D-161): `interval` on the line under `dx` with `interval.radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, each with its `Layered` for piecewise-continuous fields over adjacent layers (their direct sum, with points, jumps, integrals and layer-by-layer priors, D-126); `spectral_element` is the shared core (`SpectralElementSpace`, `AxisSpace`, the mesh, Robin ends, the batched harmonic transform, the fit over the domain for sampled functions), wrapping `planetmodel.randomfield`, an optional extra; all three are imported on demand (D-115 to D-124) |
 | `inference` | forward problems with their likelihood `potential`, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, `GaussianPosterior` (D-132), the point estimators and the Tikhonov family, `BackusGilbert` with its `BackusGilbertSet` and `BackusGilbertParker` over the geometry layer's feasible set, the MAP and Laplace route; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
-| `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `sem1d` ball, lines on its interval and radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
+| `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `ball`, lines on an `interval` and its radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
 | `backends` | MFEM two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps a plain `HilbertSpace` and lets MFEM do every computation (D-96) |
 | `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
 | `datasets` | the shipped station and earthquake tables, the cache directory, and the explicit downloads that refresh them (D-103) |
@@ -56,7 +56,7 @@ is what most of the rest follows from:
 
 111 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
-`compat` and `sem1d` are imported explicitly. Thirty-five examples under `examples/`
+`compat`, `spectral_element`, `interval` and `ball` are imported explicitly. Thirty-five examples under `examples/`
 run as a slow test; their README says what each shows.
 
 ## 3. Conventions and units
@@ -324,9 +324,9 @@ planetmodel 1.3.2.
 - planetmodel maintenance, half done: the pin is `planetmodel>=1.3`, the
   stale `[harmonics]` extra is gone, the venv and lock are on 1.3.2 (whose
   grids carry a `kind` that the transform now checks by name), and
-  `test_sem1d_ball.py` no longer needs pyshtools. Still to do: the
+  `test_ball.py` no longer needs pyshtools. Still to do: the
   planetmodel 1.4 release, then the pin to `>=1.4` and the deletion of
-  `sem1d/_transform.py`. The migration itself is built and tested:
+  `spectral_element/_transform.py`. The migration itself is built and tested:
   `planetmodel.harmonics.ShellTransform` sits uncommitted in that repo (on
   its `main`; its rules want the commit on `develop`), same names, with the
   version bump left for the release branch as its convention requires.
@@ -336,7 +336,7 @@ planetmodel 1.3.2.
 - `GaussianMeasure.from_product(correlation=)`: a matrix on the latent
   white noise, unit diagonal, `None` the independent product of today;
   `correlated_measure` becomes a wrapper keeping its fused spectral path;
-  sem1d spaces gain correlated fields. The student builds it.
+  the spectral-element spaces gain correlated fields. The student builds it.
 - `formalism=` opens on the nonlinear route with `"data_space"` the default
   (D-74's rule everywhere), and `with_probed_derivative()` mirrors D-34:
   the derivative assembled from `dim(Y)` adjoint applications, exactly
@@ -383,6 +383,6 @@ v1's docs kept under a version selector.
 of work, starting with the marker-gated methods already done pre-release
 and `from_product(correlation=)`); the sl3dpp items (the data-space route
 and low-rank posterior above, then blocks with a size hint, process-safety
-declarations, the sem1d separable-basis export, optimizer checkpointing,
+declarations, the spectral-element separable-basis export, optimizer checkpointing,
 resource-owning linearizations, and the Kronecker space, which sl3dpp has
 offered to supply as a backend); and whatever the convex redesign defers.

@@ -11,7 +11,8 @@ space, a spherical-harmonic field or a finite element space. The subpackages:
 * ``geometry`` -- convex sets, subsets and subspaces;
 * ``probability`` -- measures, Gaussian and otherwise;
 * ``inference`` -- forward problems and the estimators built on them;
-* ``symmetric_space`` and ``sem1d`` -- concrete function spaces;
+* ``symmetric_space``, ``interval`` and ``ball`` -- concrete function spaces,
+  the last two on the ``spectral_element`` core;
 * ``plotting`` -- figures for fields, measures and sets.
 
 The names a typical workflow needs are also exported here, flat.
@@ -271,12 +272,12 @@ __all__ = [
     "Traits",
 ]
 
-# ``sem1d`` needs the optional ``planetmodel`` extra. It is loaded, when
-# installed, by the plotting registry above; it is listed among the
-# subpackages exactly when that succeeded.
+# The spectral-element spaces need the optional ``planetmodel`` extra. They
+# are loaded, when it is installed, by the plotting registry above; they are
+# listed among the subpackages exactly when that succeeded.
 try:
-    from . import sem1d  # noqa: F401
+    from . import ball, interval, spectral_element  # noqa: F401
 except ImportError:  # pragma: no cover - depends on the installed extras
     pass
 else:
-    __all__.append("sem1d")
+    __all__ += ["spectral_element", "interval", "ball"]

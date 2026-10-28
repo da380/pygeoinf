@@ -3,10 +3,10 @@
 
 The density of example 32 was one smooth profile, and no planet's is: it jumps
 at the boundary of the core and again at the inner core. A field like that is
-in none of the ``sem1d`` spaces, whose smoothness is what each is built on. It
+in no one spectral-element space, whose smoothness is what each is built on. It
 is in their *direct sum*: one space per layer, each on its own padded mesh with
 its own correlation length, and a vector a tuple of layer profiles.
-``sem1d.layered.Layered`` is that direct sum, with what a direct sum cannot
+``interval.radial.Layered`` is that direct sum, with what a direct sum cannot
 know added -- that the layers are adjacent. Which layer a radius is in, the
 two values at an interface, the jump across it, integrals over the whole, and
 a prior given layer by layer, under which the layers are independent: which is
@@ -28,7 +28,7 @@ import numpy as np
 from pygeoinf2 import EuclideanSpace, LinearOperator, plotting
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 from pygeoinf2.probability.gaussian import GaussianMeasure
-from pygeoinf2.sem1d.layered import Layered
+from pygeoinf2.interval.radial import Layered
 
 rng = np.random.default_rng(7)
 
@@ -37,7 +37,7 @@ rng = np.random.default_rng(7)
 # ---------------------------------------------------------------------------
 
 ICB, CMB = 0.19, 0.55
-X = Layered.radial(
+X = Layered(
     [0.0, ICB, CMB, 1.0],
     [10, 20, 30],  # a list is layer by layer; anything else is given to all
     order=1.0,

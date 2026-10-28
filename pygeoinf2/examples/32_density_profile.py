@@ -14,7 +14,7 @@ weigh a shell by its volume or more, so they tie the outer half of the profile
 down and say almost nothing about the centre, where a sphere of small radius
 holds no mass. Add a handful of densities at known depths and the rest comes.
 
-The space is ``sem1d.radial``: functions of radius under the volume
+The space is ``interval.radial``: functions of radius under the volume
 measure, the part of degree zero of a ball. It is not the interval of example
 30, whose measure is ``dx`` -- there the mass would be ``int rho dx``, and a
 shell at the surface would count for no more than one at the centre.
@@ -27,7 +27,7 @@ import numpy as np
 from pygeoinf2 import EuclideanSpace, LinearOperator, plotting
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 from pygeoinf2.probability.gaussian import GaussianMeasure
-from pygeoinf2.sem1d.radial import Sobolev
+from pygeoinf2.interval.radial import Sobolev
 
 rng = np.random.default_rng(1)
 

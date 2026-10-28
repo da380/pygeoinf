@@ -24,7 +24,8 @@ dependencies = [
 # is importable, so nothing in the code refers to it.
 sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0"]
 # Spaces on intervals, radial profiles, annuli and balls in the eigenbasis of
-# an elliptic operator on a spectral-element mesh (pygeoinf2.sem1d):
+# an elliptic operator on a spectral-element mesh (pygeoinf2.interval,
+# pygeoinf2.ball and the pygeoinf2.spectral_element core they share):
 # the numerics are planetmodel.randomfield's. From 1.3 planetmodel's
 # harmonics run on ducc0 as a core dependency, so there is no extra to name
 # and pyshtools no longer arrives through it; drawing a ball's shells as

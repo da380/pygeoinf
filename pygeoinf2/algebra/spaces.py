@@ -125,7 +125,7 @@ class HilbertSpace[V](ABC):
         """True when this space discretises a space of functions.
 
         The marker that separates a discretisation -- a symmetric space, a
-        ``sem1d`` space, a finite element space -- from a space that is
+        spectral-element space, a finite element space -- from a space that is
         intrinsically finite, such as a data or property space. On a
         discretisation, a probability density with respect to the space's own
         volume measure is an artefact: its value depends on the truncation

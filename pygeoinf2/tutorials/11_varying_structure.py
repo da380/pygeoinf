@@ -10,8 +10,8 @@
 # of radius, where a shell near the surface holds far more mass than one near
 # the centre.
 #
-# The spaces in `pygeoinf2.sem1d` are built for that. Each is the eigenbasis
-# of
+# The spaces in `pygeoinf2.interval` and `pygeoinf2.ball` are built for that.
+# Each is the eigenbasis of
 #
 # $$A = 1 - \nabla \cdot \big(L(x)^2\, \nabla\big)$$
 #
@@ -33,10 +33,10 @@ from pygeoinf2 import (
     LinearOperator,
     plotting,
 )
-from pygeoinf2.sem1d.ball import Sobolev as BallSobolev
-from pygeoinf2.sem1d.interval import Sobolev as IntervalSobolev
-from pygeoinf2.sem1d.layered import Layered
-from pygeoinf2.sem1d.radial import Sobolev as RadialSobolev
+from pygeoinf2.ball import Sobolev as BallSobolev
+from pygeoinf2.interval import Sobolev as IntervalSobolev
+from pygeoinf2.interval.radial import Layered
+from pygeoinf2.interval.radial import Sobolev as RadialSobolev
 
 rng = np.random.default_rng(11)
 
@@ -91,7 +91,7 @@ ax.set_title(
 # natural inner product of such functions is the one the ball's volume gives
 # them, $(f, g) = \int_0^1 f(r)\, g(r)\, 4\pi r^2\, dr$ — so a shell near the
 # surface counts for more than one near the centre, because it is bigger.
-# That is what `sem1d.radial` is: the same construction, under $r^2\,dr$.
+# That is what `interval.radial` is: the same construction, under $r^2\,dr$.
 #
 # Two data a planet always supplies are its mass and its moment of inertia,
 # both integrals of the density: $\int \rho\, dV$ and
@@ -250,7 +250,7 @@ axes[2].legend(fontsize=8)
 # boundary at 0.19 and the core-mantle boundary at 0.55.
 
 # %%
-planet = Layered.radial(
+planet = Layered(
     [0.0, 0.19, 0.55, 1.0],
     [10, 20, 30],
     order=1.0,

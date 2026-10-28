@@ -13,8 +13,8 @@ randomfield = pytest.importorskip("planetmodel.randomfield")
 if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
     pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
 
-from pygeoinf2.sem1d.ball import Ball  # noqa: E402
-from pygeoinf2.sem1d.radial import Lebesgue, Radial, Sobolev  # noqa: E402
+from pygeoinf2.ball import Ball  # noqa: E402
+from pygeoinf2.interval.radial import Lebesgue, Radial, Sobolev  # noqa: E402
 from pygeoinf2.testing import (  # noqa: E402
     check_coordinates,
     check_measure,
@@ -67,7 +67,7 @@ class TestTheSpace:
     def test_it_is_not_the_interval(self, rng):
         """Same nodes and the same field, and a different norm: ``r^2 dr`` is
         not ``dx``."""
-        from pygeoinf2.sem1d.interval import Interval
+        from pygeoinf2.interval import Interval
 
         radial = shell(0.0, padding=0.3)
         line = Interval(

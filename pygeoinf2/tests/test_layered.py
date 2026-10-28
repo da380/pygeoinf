@@ -12,11 +12,12 @@ randomfield = pytest.importorskip("planetmodel.randomfield")
 if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
     pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
 
+from pygeoinf2 import ball, interval, spectral_element  # noqa: E402
 from pygeoinf2.algebra.direct_sum import DirectSum  # noqa: E402
-from pygeoinf2.sem1d.ball import Ball  # noqa: E402
-from pygeoinf2.sem1d.interval import Interval  # noqa: E402
-from pygeoinf2.sem1d.layered import Layered  # noqa: E402
-from pygeoinf2.sem1d.radial import Radial  # noqa: E402
+from pygeoinf2.ball import Ball  # noqa: E402
+from pygeoinf2.interval import Interval, radial  # noqa: E402
+from pygeoinf2.interval.radial import Radial  # noqa: E402
+from pygeoinf2.spectral_element import Layered  # noqa: E402
 from pygeoinf2.testing import (  # noqa: E402
     check_coordinates,
     check_measure,
@@ -38,16 +39,16 @@ COEFFICIENTS = [(13.0, 1.5), (12.0, 8.0), (5.5, 2.0)]
 
 def profiles(order=1.0, /, **options):
     options = {"length_scale": [0.15, 0.1, 0.2], **options}
-    return Layered.radial(RADII, [12, 10, 20], order=order, **options)
+    return radial.Layered(RADII, [12, 10, 20], order=order, **options)
 
 
 def lines(order=1.0, /):
-    return Layered.interval([-1.0, 0.0, 0.5, 2.0], 16, order=order, length_scale=0.2)
+    return interval.Layered([-1.0, 0.0, 0.5, 2.0], 16, order=order, length_scale=0.2)
 
 
 def balls(order=2.0, /, **options):
     options = {"length_scale": 0.3, "radial_modes": 5, "element_length": 0.2, **options}
-    return Layered.ball([0.0, 0.5, 1.0], 3, order=order, **options)
+    return ball.Layered([0.0, 0.5, 1.0], 3, order=order, **options)
 
 
 GEOMETRIES = [profiles, lines, balls]
@@ -75,6 +76,15 @@ class TestTheSpace:
         assert space.inner_product(x, y) == pytest.approx(plain.inner_product(x, y))
         assert space != build(0.0)
 
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_each_geometry_has_its_own_class_on_the_shared_one(self, build):
+        space = build()
+        assert isinstance(space, spectral_element.Layered)
+        assert type(space.with_order(0.0)) is type(space)
+        assert type(space) is not spectral_element.Layered
+        handed = type(space).from_layers(space.layers, labels=space.labels)
+        assert type(handed) is type(space) and handed == space
+
     def test_the_structure(self):
         space = profiles()
         assert space.geometry is Radial and len(space) == 3
@@ -89,17 +99,17 @@ class TestTheSpace:
         space = profiles()
         assert [layer.dim for layer in space.layers] == [12, 10, 20]
         assert [layer.order for layer in space.layers] == [1.0, 1.0, 1.0]
-        mixed = Layered.radial(RADII, 8, order=[0.0, 1.0, 2.0], padding=(0.1, 0.2))
+        mixed = radial.Layered(RADII, 8, order=[0.0, 1.0, 2.0], padding=(0.1, 0.2))
         assert [layer.order for layer in mixed.layers] == [0.0, 1.0, 2.0]
         # A tuple is one value: the padding pair of every layer, the centre
         # taking none.
         assert mixed.layers[2].padding == pytest.approx((0.1, 0.2))
         assert mixed.layers[0].padding == pytest.approx((0.0, 0.2))
         with pytest.raises(ValueError, match="layer by layer"):
-            Layered.radial(RADII, [8, 8])
+            radial.Layered(RADII, [8, 8])
 
     def test_layers_are_named_and_reached_by_name(self, rng):
-        space = Layered.radial(RADII, 8, labels=["inner core", "outer core", "mantle"])
+        space = radial.Layered(RADII, 8, labels=["inner core", "outer core", "mantle"])
         x = space.random(rng=rng)
         assert space.component(x, "mantle") is x[2]
         assert space.columns("outer core") == slice(8, 16)
@@ -109,12 +119,17 @@ class TestTheSpace:
         core = Radial(12, radius=0.35, order=1.0, length_scale=0.15)
         space = Layered([core, mantle])
         assert space.interfaces == () and space.layer_bounds[1] == (0.55, 1.0)
+        assert space == radial.Layered.from_layers([core, mantle])
         with pytest.raises(ValueError, match="overlap"):
             Layered([mantle, core])
         with pytest.raises(ValueError, match="overlap"):
             Layered([Radial(8, radius=0.6), mantle])
         with pytest.raises(TypeError, match="all"):
             Layered([core, Interval(8)])
+        with pytest.raises(TypeError, match="all"):
+            radial.Layered.from_layers([core, Interval(8)])
+        with pytest.raises(ValueError, match="one layer"):
+            Layered([])
 
     def test_with_order(self):
         space = profiles()
@@ -206,7 +221,7 @@ class TestPoints:
 
     def test_each_layer_keeps_its_own_guard(self):
         """A rough layer refuses its points and lets the others' through."""
-        space = Layered.radial(RADII, 8, order=[1.0, 0.0, 1.0])
+        space = radial.Layered(RADII, 8, order=[1.0, 0.0, 1.0])
         space.dirac(0.2)
         space.dirac(0.9)
         with pytest.raises(ValueError, match="above 0.5"):

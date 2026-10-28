@@ -4,7 +4,7 @@ d/dx)``.
 **The measure is ``dx`` and the coordinate is a position on a line**, not a
 radius: zero is a point like any other, the domain may straddle it, and the
 mesh is padded at both ends. A function of radius in a ball or a shell, under
-``r^2 dr``, is :mod:`~pygeoinf2.sem1d.radial`.
+``r^2 dr``, is :mod:`~pygeoinf2.interval.radial`.
 
 The counterpart of :mod:`~pygeoinf2.symmetric_space.line` for a length scale
 ``L(x)`` that varies, and for a mesh that is not uniform. The line embeds its
@@ -39,13 +39,17 @@ degree zero, which is reachable as ``basis``.
 
 from __future__ import annotations
 
+from typing import Any, Sequence
+
 from numpy.random import Generator
 
 from ..algebra.spaces import resolve_rng
-from .axis import AxisSpace
-from .base import Boundary, LengthScale
+from ..spectral_element import layered as _layered
+from ..spectral_element.axis import AxisSpace
+from ..spectral_element.base import Boundary, LengthScale
+from . import radial
 
-__all__ = ["Interval", "Lebesgue", "Sobolev"]
+__all__ = ["Interval", "Layered", "Lebesgue", "Sobolev", "radial"]
 
 
 class Interval(AxisSpace):
@@ -220,4 +224,50 @@ class Sobolev(Interval):
             boundary=boundary,
             ngll=ngll,
             element_length=element_length,
+        )
+
+
+class Layered(_layered.Layered):
+    """Piecewise-continuous fields on the line: an :class:`Interval` between
+    each pair of consecutive breakpoints.
+
+    A direct sum of the layers, one summand per layer on its own padded mesh
+    with its own length scale and truncation, that knows its summands are
+    adjacent in space: which layer a point is in, the field's two values at
+    an interface and the jump between them, integrals over the whole, one
+    function sampled into every layer, and priors given layer by layer, under
+    which the layers are independent. It compares equal to the plain direct
+    sum of its layers, which is what a block operator or a product measure
+    lands on. Layers built by hand go in through :meth:`from_layers`.
+    """
+
+    def __init__(
+        self,
+        breakpoints: Sequence[float],
+        modes: int | list[int],
+        /,
+        *,
+        labels: Sequence[str] | None = None,
+        **options: Any,
+    ) -> None:
+        """
+        Args:
+            breakpoints: the ends of the layers, ascending.
+            modes: eigenfunctions kept in each layer, for all or as a list.
+            labels: names for the layers, so one can be reached by name.
+            **options: the keyword arguments of :class:`Interval` --
+                ``order``, ``length_scale``, ``padding``, ``boundary``, ``ngll``,
+                ``element_length`` -- each given once for all layers or, as a
+                list, layer by layer. A tuple, such as a padding pair, is
+                one value.
+
+        Raises:
+            ValueError: for fewer than two breakpoints, or a list of the
+                wrong length.
+        """
+        super().__init__(
+            _layered.layers_between(
+                Interval, breakpoints, modes, ("lower", "upper"), options
+            ),
+            labels=labels,
         )

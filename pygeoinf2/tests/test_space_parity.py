@@ -741,7 +741,7 @@ class TestSharedTablesAndSmallFixes:
         _, space = geometry
         symbol = lambda eigenvalues: (1.0 + 0.05 * eigenvalues) ** -4.0
 
-        degree = space.estimate_truncation_degree(symbol)
+        degree = space.power_degree(symbol)
         power = np.bincount(space.degrees, weights=symbol(space.laplacian_eigenvalues))
         held = power[: degree + 1].sum() / power.sum()
 

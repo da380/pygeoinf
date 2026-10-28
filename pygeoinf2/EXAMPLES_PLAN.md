@@ -60,7 +60,7 @@ v2 names from the start.
    posterior, the failure protocol.
 10. **Coupled problems** — direct sums, block operators, joint priors;
     `Layered` the worked case.
-11. **Spaces whose structure varies** — sem1d from interval to layered
+11. **Spaces whose structure varies** — the spectral-element spaces from interval to layered
     planet: varying length scales, `r² dr`, balls and sections.
 12. **Writing a backend** — the contract of CURRENT_STATE §6, the
     `check_*` ladder with `CheckReport`, MFEM the worked case, the

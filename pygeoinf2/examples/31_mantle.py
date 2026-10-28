@@ -27,7 +27,7 @@ import numpy as np
 from pygeoinf2 import plotting
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
 from pygeoinf2.probability.gaussian import GaussianMeasure
-from pygeoinf2.sem1d.ball import Sobolev
+from pygeoinf2.ball import Sobolev
 
 rng = np.random.default_rng(5)
 

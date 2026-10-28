@@ -241,11 +241,11 @@ class TestL2Products:
             Lebesgue(4).l2_products_operator([])
 
 
-class TestTruncationDegree:
+class TestPowerDegree:
     def test_a_steeper_spectrum_needs_fewer_degrees(self):
         X = Sobolev(24, 2.0, 0.2)
-        shallow = X.estimate_truncation_degree(lambda lam: (1.0 + 0.5**2 * lam) ** -1.5)
-        steep = X.estimate_truncation_degree(lambda lam: (1.0 + 0.5**2 * lam) ** -6.0)
+        shallow = X.power_degree(lambda lam: (1.0 + 0.5**2 * lam) ** -1.5)
+        steep = X.power_degree(lambda lam: (1.0 + 0.5**2 * lam) ** -6.0)
         assert steep < shallow
 
     def test_a_tighter_tolerance_needs_more_degrees(self):
@@ -254,13 +254,13 @@ class TestTruncationDegree:
         def symbol(eigenvalues):
             return (1.0 + 0.5**2 * eigenvalues) ** -3.0
 
-        loose = X.estimate_truncation_degree(symbol, tolerance=1e-1)
-        tight = X.estimate_truncation_degree(symbol, tolerance=1e-4)
+        loose = X.power_degree(symbol, tolerance=1e-1)
+        tight = X.power_degree(symbol, tolerance=1e-4)
         assert tight >= loose
 
     def test_a_tolerance_outside_the_unit_interval_is_refused(self):
         with pytest.raises(ValueError, match="tolerance"):
-            Lebesgue(4).estimate_truncation_degree(lambda lam: lam, tolerance=2.0)
+            Lebesgue(4).power_degree(lambda lam: lam, tolerance=2.0)
 
 
 class TestMeasureStatistics:

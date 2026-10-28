@@ -2162,6 +2162,99 @@ two-tuple returns are unpacked by callers; `mahalanobis_squared` and
 `estimate_truncation_degree` naming (v1's name means v2's
 `sufficient_degree`) is open for David.
 
+**D-161. `sem1d` splits by geometry: `interval`, `ball`, and the
+`spectral_element` core** (2026-10-28, David). What the package provides is
+further function spaces for use, alongside `symmetric_space` but for a
+different class of geometries: functions on an interval under `dx` or
+`r² dr` with a varying length scale, and functions in a ball or shell by
+the same 1-D elements with harmonics. Users reach them by geometry, as they
+reach `sphere` and `torus`, so the geometries are the packages:
+`interval` (its `Lebesgue`, `Sobolev` and `Layered`, with `interval.radial`
+carrying the `r² dr` line as its own classes, not a measure option) and
+`ball` (ball and annulus, with its own `Layered`). The shared machinery
+(`SpectralElementSpace`, `AxisSpace`, the mesh, the boundary and length-scale
+types, the shell transform) is the public `spectral_element` package, which
+a backend author may build on and a user never imports. The name
+`spectral_element` was kept free by D-115 for a future 3-D mesh; that will
+never be written in Python, since without a serious library behind it it
+would not be fast enough, and such spaces arrive as wrapped C++ through the
+backend interface instead, so the name is free to use. Plotting and tests
+split the same way. All three need the planetmodel extra and are imported
+on demand.
+
+**D-162. `estimate_truncation_degree` means what it meant in v1**
+(2026-10-28; David indifferent, the v1-name rule decides). v1's method walks
+degrees upward until the shell energy ratio falls below a tolerance, past
+any truncation; v2 had that as `sufficient_degree` and reused v1's name for
+a different question, the degree holding all but a tolerance of this
+space's own power, capped at its `lmax`, so a v1-style call ran silently
+with another meaning. Now `estimate_truncation_degree` is the walk and the
+capped question is `power_degree`; `sufficient_degree` is gone.
+
+**D-163. The inference pattern: data in, a point, a set or a measure out,
+and every class an estimator** (2026-10-28, David). An estimator maps data
+to an answer about a property of the model; the kind of answer follows the
+description of uncertainty. A prior measure and a noise measure give a
+measure (the posterior, the Laplace Gaussian) or a point; a prior set and a
+noise set give a set (the feasible property set) or a point. The decisions:
+- `PointEstimator` is the base of every point-valued class, including those
+  that are also operators: `LinearPointEstimator` (affine in the data) and
+  the nonlinear-in-data ones with exact derivatives, which stay `Operator`s
+  so a Bayesian inversion can be built on them by the chain rule.
+- One minimum-norm class, `MinimumNorm`: the smallest model fitting the
+  data, with the discrepancy principle as its method when errors are
+  present and the misfit level as its knob. The fixed-damping class of that
+  name goes (it is `LeastSquares` under another intent) and
+  `DiscrepancyPrinciple` is renamed. `ConstrainedMinimumNorm` stays. The
+  feasible set's `fitting_model` and this class share the misfit search and
+  must agree in tests.
+- A point estimator carries its error budget as two operators, `resolution`
+  (`B A`) and `propagated_covariance` (`B R B*`), and the bias they leave
+  out is made visible as `bias(m) = resolution(m) - m`. It never turns the
+  budget into a measure: `as_measure` is deleted, because a Gaussian built
+  from the propagated error alone looks like a posterior and is not one.
+  The estimator is an operator and the push-forward machinery is general,
+  so whoever wants that Gaussian pushes the error measure through it; the
+  library does not advertise it.
+  The error is `(B A - I) m + B e`, and bounding the first term takes a
+  statement about `m`, which is what makes the two legitimate answers, the
+  posterior under a prior measure and the certificate set under a prior
+  set. Propagated error as "the uncertainty" is a view the library does not
+  endorse.
+- `BackusGilbert` is the point estimator: `X d` with `X` chosen to make
+  `X A` close to `T` against a noise penalty, with its resolution kernel
+  and propagated error, no prior bound; the name is the literature's for
+  averaging-kernel estimates, and its docstring credits the original paper
+  with already reaching for norm bounds and sends the reader to the
+  feasible set as the completion of that thought. SOLA is this estimator
+  and is not a name the library uses. The linear certificate with prior
+  and noise sets (the Minkowski sum, valid for any `X` by weak duality) is
+  no longer a separate estimator: it is a route inside the feasible
+  property set's probes, a cheap outer bound asked for by `via=`, with the
+  certified algorithms still the automatic choice.
+- `MaximumAPosteriori` is a `PointEstimator` returning the mode;
+  `LaplaceApproximation` is a `MeasureEstimator` built on it returning the
+  Gaussian about the mode; the objective builder they share stays public
+  for the sampling work.
+- `Minimization` is the generic point estimator: an objective built from
+  the data, minimised from a start by an optimizer, with MAP its first
+  special case and nonlinear least squares (misfit potential plus Tikhonov
+  damping) the second; the derivative with respect to the data by the
+  implicit function theorem at the solution where the Hessian is available.
+- `ConstrainedMinimization` by an augmented Lagrangian over the existing
+  unconstrained optimizers, built now; Occam, the smallest model whose
+  misfit meets a level, is its first special case and keeps that name. It
+  is not a root search over the damping: once the forward is nonlinear the
+  misfit at the damped minimizer need not be monotone in the damping, so
+  the classic damping sweep is offered only as the heuristic it is.
+- Nonlinear set estimation is open (a nonlinear forward makes the feasible
+  set non-convex). What ships is the linearised feasible set: the feasible
+  property set built on the forward's linearization about an estimate with
+  the data shifted by the residual, documented as a local statement.
+- The proof of the pattern is one tutorial answering one problem as a
+  point, a set and a measure, showing the propagated error, the bias
+  against a known truth, and the two completions.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

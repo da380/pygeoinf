@@ -453,7 +453,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     def _degree_eigenvalues(self, degree: int, /) -> np.ndarray:
         """The Laplacian eigenvalue of every mode of one degree, present or not.
 
-        What :meth:`sufficient_degree` walks over. One entry per component
+        What :meth:`estimate_truncation_degree` walks over. One entry per component
         the degree would have on this geometry, whatever this space's own
         truncation.
         """
@@ -461,7 +461,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             f"{type(self).__name__} does not enumerate the modes of a degree."
         )
 
-    def sufficient_degree(
+    def estimate_truncation_degree(
         self,
         symbol: Callable[[np.ndarray], np.ndarray],
         /,
@@ -477,9 +477,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         -- and stops when the newest degree adds less than ``rtol`` of the
         running total. This is how to choose a truncation from a prior before
         there is a space at that truncation: build one with ``with_degree`` on
-        the answer. :meth:`estimate_truncation_degree` answers a different
-        question, how much of the power *this* space holds lies below a
-        degree, and cannot answer past its own truncation.
+        the answer. :meth:`power_degree` answers a different question, how
+        much of the power *this* space holds lies below a degree, and cannot
+        answer past its own truncation.
 
         Args:
             symbol: the spectral variances, as a callable on an array of
@@ -622,14 +622,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             self, EuclideanSpace(len(fields)), rows, form="galerkin"
         )
 
-    def estimate_truncation_degree(
+    def power_degree(
         self, symbol: Callable[[np.ndarray], np.ndarray], /, *, tolerance: float = 1e-3
     ) -> int:
         """The smallest degree holding all but ``tolerance`` of a spectrum's power.
 
-        For choosing a truncation from a prior rather than by habit: pass the
-        spectral variances and get the degree beyond which the field has
-        negligible energy.
+        Totals the symbol over the modes *this* space holds, degree by
+        degree, and returns the first degree below which all but
+        ``tolerance`` of that total lies. It is capped at this space's own
+        truncation, so it reads off how much of a prior's power a given
+        resolution captures; it cannot say whether a higher resolution is
+        needed. For that question, which walks past the truncation, use
+        :meth:`estimate_truncation_degree`.
 
         Args:
             symbol: the spectral variances, as a callable on the Laplacian

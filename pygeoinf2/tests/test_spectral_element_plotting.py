@@ -19,8 +19,8 @@ if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
 pytest.importorskip("pyshtools")
 
 from pygeoinf2 import plotting  # noqa: E402
-from pygeoinf2.sem1d import ball as ball_module  # noqa: E402
-from pygeoinf2.sem1d import interval as interval_module  # noqa: E402
+from pygeoinf2 import ball as ball_module  # noqa: E402
+from pygeoinf2 import interval as interval_module  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +64,7 @@ class TestInterval:
 
 class TestRadialProfile:
     def test_a_profile_is_a_line_against_radius(self, rng):
-        from pygeoinf2.sem1d import radial as radial_module
+        from pygeoinf2.interval import radial as radial_module
 
         space = radial_module.Sobolev(20, 2.0, 0.2, inner_radius=0.5)
         x = space.random(rng=rng)
@@ -119,7 +119,7 @@ class TestShell:
         space = request.getfixturevalue(which)
         x = space.random(rng=rng)
         node = space.interior_radii.size // 2
-        from pygeoinf2.plotting.sem1d import _on_a_shell
+        from pygeoinf2.plotting.ball import _on_a_shell
 
         shell = _on_a_shell(space, x, space.interior_radii[node])
         assert np.allclose(shell, space.interior_values(x)[node], atol=1e-11)
@@ -257,9 +257,9 @@ class TestProfile:
 class TestLayered:
     @pytest.fixture
     def profiles(self):
-        from pygeoinf2.sem1d.layered import Layered
+        from pygeoinf2.interval.radial import Layered
 
-        return Layered.radial(
+        return Layered(
             [0.0, 0.35, 0.55, 1.0],
             [10, 8, 14],
             order=1.0,
@@ -268,9 +268,9 @@ class TestLayered:
 
     @pytest.fixture
     def shells(self):
-        from pygeoinf2.sem1d.layered import Layered
+        from pygeoinf2.ball import Layered
 
-        return Layered.ball(
+        return Layered(
             [0.3, 0.6, 1.0],
             4,
             order=2.0,

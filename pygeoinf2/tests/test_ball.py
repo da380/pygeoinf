@@ -20,7 +20,7 @@ if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
     pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
 
 from pygeoinf2 import Traits  # noqa: E402
-from pygeoinf2.sem1d.ball import Ball, Lebesgue, Sobolev  # noqa: E402
+from pygeoinf2.ball import Ball, Lebesgue, Sobolev  # noqa: E402
 from pygeoinf2.testing import (  # noqa: E402
     check_coordinates,
     check_measure,
@@ -182,7 +182,7 @@ class TestTransform:
         from planetmodel import harmonics
         from planetmodel.sampling import gauss_legendre
 
-        from pygeoinf2.sem1d._transform import ShellTransform
+        from pygeoinf2.spectral_element import ShellTransform
 
         grid = gauss_legendre(lmax)
         transform = ShellTransform(grid)
@@ -207,7 +207,7 @@ class TestTransform:
     def test_a_grid_that_is_not_gauss_legendre_is_refused(self):
         from planetmodel.sampling import equiangular, gauss_legendre
 
-        from pygeoinf2.sem1d._transform import ShellTransform
+        from pygeoinf2.spectral_element import ShellTransform
 
         with pytest.raises(ValueError, match="Gauss-Legendre"):
             ShellTransform(equiangular(6, 11))
@@ -217,7 +217,7 @@ class TestTransform:
     def test_beyond_the_measured_degree_the_other_route_is_taken(
         self, monkeypatch, rng
     ):
-        from pygeoinf2.sem1d import ball as module
+        from pygeoinf2 import ball as module
 
         monkeypatch.setattr(module, "_BATCHED_LMAX", 3)
         slow, fast = ball(0.0, lmax=4), None

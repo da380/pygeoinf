@@ -14,7 +14,7 @@ if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
     pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
 
 from pygeoinf2 import Traits  # noqa: E402
-from pygeoinf2.sem1d.interval import Interval, Lebesgue, Sobolev  # noqa: E402
+from pygeoinf2.interval import Interval, Lebesgue, Sobolev  # noqa: E402
 from pygeoinf2.testing import (  # noqa: E402
     check_coordinates,
     check_measure,
@@ -478,7 +478,7 @@ class TestExtensions:
     def test_the_continuation_helper_leaves_fit_to_its_callers(self):
         """``"fit"`` is not a continuation across the padding, and the helper
         must not quietly hand back the constant one in its place."""
-        from pygeoinf2.sem1d.base import _sampled_with_extension
+        from pygeoinf2.spectral_element.base import _sampled_with_extension
 
         nodes = np.linspace(-0.5, 1.5, 9)
         with pytest.raises(ValueError, match="fit"):

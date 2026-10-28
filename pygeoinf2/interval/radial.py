@@ -3,10 +3,10 @@
 A radial profile -- a density, a wave speed, a viscosity as a one-dimensional
 reference model gives them -- is a field in three dimensions that happens not
 to depend on direction, and this is the space of such fields: the part of
-degree zero of :mod:`~pygeoinf2.sem1d.ball`, on its own and without
-an angular grid. It is *not* the :mod:`~pygeoinf2.sem1d.interval`,
-whose measure is ``dx``: there a prior's variance and every ``L2`` product
-weigh each radius alike, and here they weigh it by the area of its sphere.
+degree zero of :mod:`~pygeoinf2.ball`, on its own and without an angular
+grid. It is *not* the :mod:`~pygeoinf2.interval` of the line, whose measure
+is ``dx``: there a prior's variance and every ``L2`` product weigh each
+radius alike, and here they weigh it by the area of its sphere.
 
 The inner product is the volume integral, ``4 pi int u v r^2 dr``, so a
 profile has the norm it has as a field in the ball, and its components *are*
@@ -31,16 +31,17 @@ three halves.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from numpy.random import Generator
 
 from ..algebra.spaces import resolve_rng
-from .axis import AxisSpace
-from .base import Boundary, LengthScale
+from ..spectral_element import layered as _layered
+from ..spectral_element.axis import AxisSpace
+from ..spectral_element.base import Boundary, LengthScale
 
-__all__ = ["Radial", "Lebesgue", "Sobolev"]
+__all__ = ["Radial", "Layered", "Lebesgue", "Sobolev"]
 
 
 class Radial(AxisSpace):
@@ -257,4 +258,51 @@ class Sobolev(Radial):
             boundary=boundary,
             ngll=ngll,
             element_length=element_length,
+        )
+
+
+class Layered(_layered.Layered):
+    """Piecewise-continuous radial profiles: a :class:`Radial` space in each
+    of the concentric shells between consecutive radii.
+
+    A direct sum of the layers, one summand per layer on its own padded mesh
+    with its own length scale and truncation, that knows its summands are
+    adjacent in space: which layer a point is in, the field's two values at
+    an interface and the jump between them, integrals over the whole, one
+    function sampled into every layer, and priors given layer by layer, under
+    which the layers are independent. It compares equal to the plain direct
+    sum of its layers, which is what a block operator or a product measure
+    lands on. Layers built by hand go in through :meth:`from_layers`.
+    """
+
+    def __init__(
+        self,
+        boundaries: Sequence[float],
+        modes: int | list[int],
+        /,
+        *,
+        labels: Sequence[str] | None = None,
+        **options: Any,
+    ) -> None:
+        """
+        Args:
+            boundaries: the radii bounding the shells, ascending. A first
+                radius of zero makes the innermost layer a whole ball.
+            modes: eigenfunctions kept in each layer, for all or as a list.
+            labels: names for the layers, so one can be reached by name.
+            **options: the keyword arguments of :class:`Radial` --
+                ``order``, ``length_scale``, ``padding``, ``boundary``, ``ngll``,
+                ``element_length`` -- each given once for all layers or, as a
+                list, layer by layer. A tuple, such as a padding pair, is
+                one value.
+
+        Raises:
+            ValueError: for fewer than two boundaries, or a list of the
+                wrong length.
+        """
+        super().__init__(
+            _layered.layers_between(
+                Radial, boundaries, modes, ("inner_radius", "radius"), options
+            ),
+            labels=labels,
         )

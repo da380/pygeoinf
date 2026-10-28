@@ -1,22 +1,24 @@
-"""Fields on the spectral-element interval, ball and annulus.
+"""Fields in a ball or an annulus: shells, sections and profiles.
 
-An interval is a line, and so is a radial profile. A ball is three-dimensional
-and has to be cut to be seen, and there are three cuts: a **shell** at one
-radius, drawn as a map by
-the sphere's own renderer; a **section** by a plane through the centre, which
-meets the ball in a great circle and is named by that circle's pole, by two
-points it passes through, or -- the common case -- by a longitude; and a
-**profile** along one ray. ``plot`` on a ball is the shell at its surface.
+A ball is three-dimensional and has to be cut to be seen, and there are three
+cuts: a **shell** at one radius, drawn as a map by the sphere's own renderer;
+a **section** by a plane through the centre, which meets the ball in a great
+circle and is named by that circle's pole, by two points it passes through,
+or -- the common case -- by a longitude; and a **profile** along one ray.
+``plot`` on a ball is the shell at its surface.
 
 No rotation is involved in a section. The field is a sum of harmonics times
 radial coefficient functions, so its values on a plane are the harmonics
 evaluated round the great circle times those functions along the radius: one
 small matrix product, whatever the plane.
 
-**What is drawn in a ball is the field with the vector's components**, since
-off the grid that is the only field there is: a product left on the grid
-is drawn as its projection onto the kept modes. An interval draws the nodal
-values themselves, as a box does.
+**What is drawn is the field with the vector's components**, since off the
+grid that is the only field there is: a product left on the grid is drawn as
+its projection onto the kept modes.
+
+A layered space of balls is drawn as a ball is, by the shell at ``radius=``,
+and ``plot_section`` and ``plot_profile`` take one too, drawing each layer's
+part with a break at every jump.
 """
 
 from __future__ import annotations
@@ -25,9 +27,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..sem1d.axis import AxisSpace
-from ..sem1d.ball import Ball
-from ..sem1d.layered import Layered
+from ..ball import Ball
+from ..spectral_element import Layered
 from .base import color_limits, plot, plot_points, subplots
 
 __all__ = [
@@ -37,74 +38,6 @@ __all__ = [
     "plot_shell",
     "section_values",
 ]
-
-
-# --------------------------------------------------------------------- #
-#                               Interval                                #
-# --------------------------------------------------------------------- #
-
-
-@subplots.register
-def _(space: AxisSpace, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -> Any:
-    """Ordinary axes: a function of one coordinate needs no projection."""
-    import matplotlib.pyplot as pyplot
-
-    kwargs.setdefault("figsize", (5.0 * columns, 3.2 * rows))
-    kwargs.setdefault("layout", "constrained")
-    return pyplot.subplots(rows, columns, **kwargs)
-
-
-@plot.register
-def _(
-    space: AxisSpace,
-    field: np.ndarray,
-    /,
-    *,
-    ax: Any = None,
-    padding: bool = False,
-    **kwargs: Any,
-) -> Any:
-    """Draw a field on an interval, or a radial profile, as a line through
-    its nodal values.
-
-    Args:
-        space: the interval or the space of radial profiles.
-        field: a vector of the space.
-        ax: axes to draw on. A new figure is made if omitted.
-        padding: draw the padded mesh too, shaded, and not the domain alone:
-            worth seeing once, since it shows what the padding is for.
-        **kwargs: passed to ``Axes.plot``.
-
-    Returns:
-        The ``(axes, line)`` pair.
-
-    Raises:
-        ValueError: if the field has the wrong shape.
-    """
-    if ax is None:
-        _, ax = subplots(space)
-    values = np.asarray(field, dtype=float)
-    if values.shape != space.grid_shape:
-        raise ValueError(
-            f"A field of this space has shape {space.grid_shape}, got "
-            f"{values.shape}."
-        )
-    lower, upper = space.bounds
-    if padding:
-        (line,) = ax.plot(space.nodes, values, **kwargs)
-        for start, stop in ((space.nodes[0], lower), (upper, space.nodes[-1])):
-            if stop > start:
-                ax.axvspan(start, stop, color="0.5", alpha=0.15, linewidth=0.0)
-        ax.set_xlim(space.nodes[0], space.nodes[-1])
-    else:
-        (line,) = ax.plot(space.interior_nodes, space.interior_values(values), **kwargs)
-        ax.set_xlim(lower, upper)
-    return ax, line
-
-
-# --------------------------------------------------------------------- #
-#                                 Ball                                  #
-# --------------------------------------------------------------------- #
 
 
 def _coefficient_functions(space: Ball, field: np.ndarray, /, *, padding: bool) -> Any:
@@ -254,50 +187,10 @@ def _shells(space: Ball | Layered, field: Any, /) -> tuple[list[Ball], list[Any]
         TypeError: for a layered space whose layers are not balls.
     """
     if isinstance(space, Layered):
-        if space.geometry is not Ball:
+        if not issubclass(space.geometry, Ball):
             raise TypeError("Only layers that are balls have shells and sections.")
         return list(space.layers), list(field)
     return [space], [field]
-
-
-@subplots.register
-def _(space: Layered, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -> Any:
-    """The axes the layers want: a map for balls, ordinary ones otherwise."""
-    return subplots(space.layers[-1], rows=rows, columns=columns, **kwargs)
-
-
-@plot.register
-def _(space: Layered, field: Any, /, *, ax: Any = None, **kwargs: Any) -> Any:
-    """Draw a piecewise-continuous field.
-
-    Intervals and radial profiles are one line per layer in one color, which
-    leaves a break at every jump. Balls are drawn as the ball is, by the shell
-    at ``radius=``, the surface if omitted; ``plot_section`` and
-    ``plot_profile`` take a layered space too.
-
-    Args:
-        space: the layered space.
-        field: a vector of it, a tuple of layer fields.
-        ax: axes to draw on. A new figure is made if omitted.
-        **kwargs: those of the layers' own ``plot``.
-
-    Returns:
-        The ``(axes, mappable)`` pair, the mappable being the last layer's
-        line for intervals and profiles.
-    """
-    if space.geometry is Ball:
-        return plot_shell(space, field, ax=ax, **kwargs)
-    if ax is None:
-        _, ax = subplots(space)
-    line = None
-    for layer, part in zip(space.layers, field):
-        if line is not None:
-            kwargs = {**kwargs, "color": line.get_color(), "label": "_nolegend_"}
-        ax, line = plot(layer, part, ax=ax, **kwargs)
-    ends = space.layer_bounds
-    if not kwargs.get("padding", False):
-        ax.set_xlim(ends[0][0], ends[-1][1])
-    return ax, line
 
 
 @plot_points.register

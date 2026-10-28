@@ -178,9 +178,9 @@ print(
 # %%
 # The layered spaces are built on planetmodel's spectral elements, an optional
 # extra, so they are imported only where they are used.
-from pygeoinf2.sem1d.layered import Layered  # noqa: E402
+from pygeoinf2.interval import Layered  # noqa: E402
 
-L = Layered.interval(
+L = Layered(
     [0.0, 0.4, 1.0],
     [20, 30],  # spectral modes kept in each layer
     order=1.0,

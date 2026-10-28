@@ -29,11 +29,14 @@ layers need not touch: a field that lives in a mantle and an inner core, and
 not in the fluid between, is two layers with a gap, and a point in the gap is
 in no layer.
 
-The layers are all of one geometry: :mod:`~pygeoinf2.sem1d.interval`,
-:mod:`~pygeoinf2.sem1d.radial` or :mod:`~pygeoinf2.sem1d.ball`. Build them and
-hand them over, or let :meth:`Layered.interval`, :meth:`Layered.radial` or
-:meth:`Layered.ball` build them from the boundaries, with every other argument
-given once for all layers or, as a *list*, layer by layer.
+The layers are all of one geometry, and each geometry has its own
+``Layered``: :class:`pygeoinf2.interval.Layered`,
+:class:`pygeoinf2.interval.radial.Layered` and :class:`pygeoinf2.ball.Layered`
+are subclasses of this one whose constructors build the layers from the
+boundaries, with every other argument given once for all layers or, as a
+*list*, layer by layer. This class takes layers already built, of any one
+geometry, and is what the subclasses share; :meth:`Layered.from_layers` makes
+a geometry's own from layers built by hand.
 """
 
 from __future__ import annotations
@@ -47,9 +50,7 @@ from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import EuclideanSpace, HilbertModule
 from ..probability.gaussian import GaussianMeasure
 from .axis import AxisSpace
-from .ball import Ball
-from .interval import Interval
-from .radial import Radial
+from .base import SpectralElementSpace
 
 __all__ = ["Layered"]
 
@@ -76,19 +77,81 @@ def _per_layer(value: Any, count: int, name: str, /) -> list:
     return [value] * count
 
 
-def _bounds(layer: AxisSpace | Ball, /) -> tuple[float, float]:
-    """The ends of a layer's domain along the layered coordinate."""
-    if isinstance(layer, Ball):
-        return (layer.inner_radius, layer.radius)
-    return layer.bounds
+def _geometry_of(layer: SpectralElementSpace, /) -> type:
+    """The class that names a layer's geometry: the nearest ancestor that
+    declares a ``_geometry`` tag of its own, which is the interval, the radial
+    profile or the ball, and not the ``Lebesgue`` or ``Sobolev`` view of it."""
+    return next(cls for cls in type(layer).__mro__ if "_geometry" in vars(cls))
+
+
+def layers_between(
+    kind: type,
+    boundaries: Sequence[float],
+    first: Any,
+    names: tuple[str, str],
+    options: dict[str, Any],
+    /,
+) -> list:
+    """Layers of one geometry between consecutive boundaries.
+
+    What the constructors of the geometries' ``Layered`` spaces share: the
+    *first* positional argument of the layer class and every option are
+    given once for all layers or, as a list, layer by layer, and the two
+    boundaries of each layer go to the keyword arguments *names*.
+
+    Args:
+        kind: the layer class, called as ``kind(first, **options)``.
+        boundaries: the ends of the layers, ascending.
+        first: the layer class's leading positional argument, for all layers
+            or as a list.
+        names: the keyword arguments taking a layer's lower and upper
+            boundary.
+        options: the remaining keyword arguments, each for all layers or as a
+            list.
+
+    Returns:
+        The layers, in order, each as the ``Lebesgue`` or ``Sobolev`` space its
+        order names.
+
+    Raises:
+        ValueError: for fewer than two boundaries, or a list of the wrong
+            length.
+    """
+    boundaries = [float(b) for b in boundaries]
+    count = len(boundaries) - 1
+    if count < 1:
+        raise ValueError("At least two boundaries are needed, for one layer.")
+    leading = _per_layer(first, count, "The first argument")
+    spread = {name: _per_layer(value, count, name) for name, value in options.items()}
+    layers = [
+        kind(
+            leading[i],
+            **{names[0]: boundaries[i], names[1]: boundaries[i + 1]},
+            **{name: values[i] for name, values in spread.items()},
+        )
+        for i in range(count)
+    ]
+    # As the subclass its order names, Lebesgue or Sobolev, which is what
+    # `with_order` gives; the basis is shared, not recomputed.
+    return [layer.with_order(layer.order) for layer in layers]
 
 
 class Layered(CoordinateDirectSum, HilbertModule):
-    """Piecewise-continuous fields over layers that are adjacent in space."""
+    """Piecewise-continuous fields over layers that are adjacent in space.
+
+    The layers are spectral-element spaces of one geometry, built already;
+    the geometries' own ``Layered`` subclasses build them from boundaries.
+    """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "Layered":
+        # A plain direct sum picks its class from its summands; here the class
+        # is the one asked for, and the geometries' constructors take
+        # boundaries, not layers, so the arguments are left to __init__.
+        return object.__new__(cls)
 
     def __init__(
         self,
-        layers: Sequence[AxisSpace | Ball],
+        layers: Sequence[SpectralElementSpace],
         /,
         *,
         labels: Sequence[str] | None = None,
@@ -103,21 +166,23 @@ class Layered(CoordinateDirectSum, HilbertModule):
         Raises:
             TypeError: if the layers are not all intervals, all radial
                 profiles or all balls.
-            ValueError: if they are out of order or overlap.
+            ValueError: if there are none, or they are out of order or
+                overlap.
         """
         layers = tuple(layers)
-        for kind in (Interval, Radial, Ball):
-            if all(isinstance(layer, kind) for layer in layers):
-                self._kind = kind
-                break
-        else:
+        if not layers:
+            raise ValueError("At least one layer is needed.")
+        kind = _geometry_of(layers[0])
+        if not all(isinstance(layer, kind) for layer in layers):
             raise TypeError(
-                "The layers must all be sem1d intervals, all radial profiles or "
-                "all balls."
+                "The layers must all be intervals, all radial profiles or all " "balls."
             )
+        self._kind = kind
+        # On an axis an interface is a point; in a ball it is a sphere.
+        self._on_an_axis = issubclass(kind, AxisSpace)
         super().__init__(layers, labels=labels)
 
-        ends = [_bounds(layer) for layer in layers]
+        ends = [layer.bounds for layer in layers]
         extent = ends[-1][1] - ends[0][0]
         self._tolerance = _INTERFACE_RTOL * abs(extent)
         for (_, upper), (lower, _) in zip(ends[:-1], ends[1:]):
@@ -136,132 +201,36 @@ class Layered(CoordinateDirectSum, HilbertModule):
     # ----------------------------------------------------------------- #
 
     @classmethod
-    def _built(
+    def from_layers(
         cls,
-        kind: type,
-        boundaries: Sequence[float],
-        first: Any,
-        names: tuple[str, str],
-        labels: Sequence[str] | None,
-        options: dict[str, Any],
-    ) -> "Layered":
-        """Layers of one geometry between consecutive boundaries."""
-        boundaries = [float(b) for b in boundaries]
-        count = len(boundaries) - 1
-        if count < 1:
-            raise ValueError("At least two boundaries are needed, for one layer.")
-        leading = _per_layer(first, count, "The first argument")
-        spread = {
-            name: _per_layer(value, count, name) for name, value in options.items()
-        }
-        layers = [
-            kind(
-                leading[i],
-                **{names[0]: boundaries[i], names[1]: boundaries[i + 1]},
-                **{name: values[i] for name, values in spread.items()},
-            )
-            for i in range(count)
-        ]
-        # As the subclass its order names, Lebesgue or Sobolev, which is what
-        # `with_order` gives; the basis is shared, not recomputed.
-        return cls([layer.with_order(layer.order) for layer in layers], labels=labels)
-
-    @classmethod
-    def interval(
-        cls,
-        breakpoints: Sequence[float],
-        modes: int | list[int],
+        layers: Sequence[SpectralElementSpace],
         /,
         *,
         labels: Sequence[str] | None = None,
-        **options: Any,
     ) -> "Layered":
-        """Layers on the line, between consecutive breakpoints.
+        """A layered space of this class over layers built by hand.
+
+        The geometries' ``Layered`` subclasses build their layers from
+        boundaries; this is their route in for layers built one by one, with
+        a gap between two of them, say, or meshes that differ in more than a
+        list of options can say.
 
         Args:
-            breakpoints: the ends of the layers, ascending.
-            modes: eigenfunctions kept in each layer.
+            layers: the spaces of the layers, in order and all of this
+                class's geometry.
             labels: names for the layers.
-            **options: the keyword arguments of
-                :class:`~pygeoinf2.sem1d.interval.Interval` -- ``order``,
-                ``length_scale``, ``padding``, ``boundary``, ``ngll``,
-                ``element_length`` -- each given once for all layers or, as a
-                list, layer by layer.
 
         Returns:
-            The layered space.
+            The layered space, an instance of this class.
 
         Raises:
-            ValueError: for fewer than two breakpoints, or a list of the wrong
-                length.
+            TypeError: if the layers are not all of one geometry.
+            ValueError: if there are none, or they are out of order or
+                overlap.
         """
-        return cls._built(
-            Interval, breakpoints, modes, ("lower", "upper"), labels, options
-        )
-
-    @classmethod
-    def radial(
-        cls,
-        boundaries: Sequence[float],
-        modes: int | list[int],
-        /,
-        *,
-        labels: Sequence[str] | None = None,
-        **options: Any,
-    ) -> "Layered":
-        """Radial profiles in concentric shells, between consecutive radii.
-
-        Args:
-            boundaries: the radii bounding the shells, ascending. A first
-                radius of zero makes the innermost layer a whole ball.
-            modes: eigenfunctions kept in each layer.
-            labels: names for the layers.
-            **options: the keyword arguments of
-                :class:`~pygeoinf2.sem1d.radial.Radial`, each given once for
-                all layers or, as a list, layer by layer.
-
-        Returns:
-            The layered space.
-
-        Raises:
-            ValueError: for fewer than two boundaries, or a list of the wrong
-                length.
-        """
-        return cls._built(
-            Radial, boundaries, modes, ("inner_radius", "radius"), labels, options
-        )
-
-    @classmethod
-    def ball(
-        cls,
-        boundaries: Sequence[float],
-        lmax: int | list[int],
-        /,
-        *,
-        labels: Sequence[str] | None = None,
-        **options: Any,
-    ) -> "Layered":
-        """Fields of position in concentric shells, between consecutive radii.
-
-        Args:
-            boundaries: the radii bounding the shells, ascending. A first
-                radius of zero makes the innermost layer a whole ball.
-            lmax: the largest spherical-harmonic degree kept in each layer.
-            labels: names for the layers.
-            **options: the keyword arguments of
-                :class:`~pygeoinf2.sem1d.ball.Ball`, each given once for all
-                layers or, as a list, layer by layer.
-
-        Returns:
-            The layered space.
-
-        Raises:
-            ValueError: for fewer than two boundaries, or a list of the wrong
-                length.
-        """
-        return cls._built(
-            Ball, boundaries, lmax, ("inner_radius", "radius"), labels, options
-        )
+        space = cls.__new__(cls)
+        Layered.__init__(space, layers, labels=labels)
+        return space
 
     # ----------------------------------------------------------------- #
     #                              Identity                             #
@@ -289,13 +258,15 @@ class Layered(CoordinateDirectSum, HilbertModule):
     # ----------------------------------------------------------------- #
 
     @property
-    def layers(self) -> tuple[AxisSpace | Ball, ...]:
+    def layers(self) -> tuple[SpectralElementSpace, ...]:
         """The spaces of the layers, in order."""
         return self.subspaces
 
     @property
     def geometry(self) -> type:
-        """What the layers all are: ``Interval``, ``Radial`` or ``Ball``."""
+        """The class that names what the layers all are: the interval, the
+        radial profile or the ball, and not the ``Lebesgue`` or ``Sobolev``
+        view of it."""
         return self._kind
 
     @property
@@ -333,7 +304,7 @@ class Layered(CoordinateDirectSum, HilbertModule):
             The layered space of the layers, each with its new order.
         """
         orders = _per_layer(order, len(self), "order")
-        return Layered(
+        return type(self).from_layers(
             [layer.with_order(s) for layer, s in zip(self.layers, orders)],
             labels=self.labels,
         )
@@ -355,10 +326,10 @@ class Layered(CoordinateDirectSum, HilbertModule):
     # ----------------------------------------------------------------- #
 
     def _coordinate(self, point: Any, /) -> float:
-        """A point's position along the layered coordinate."""
-        if self._kind is Ball:
-            return float(np.asarray(point, dtype=float).reshape(-1)[0])
-        return float(point)
+        """A point's position along the layered coordinate: the point itself
+        on an axis, the radius of a ``(radius, latitude, longitude)`` triple
+        in a ball."""
+        return float(np.asarray(point, dtype=float).reshape(-1)[0])
 
     def layer_index(self, point: Any, /, *, side: str | None = None) -> int:
         """Which layer a point belongs to.
@@ -568,7 +539,7 @@ class Layered(CoordinateDirectSum, HilbertModule):
             IndexError: if there is no such interface.
         """
         position = self.interfaces[interface]
-        if self._kind is Ball:
+        if not self._on_an_axis:
             if directions is None:
                 raise ValueError("In balls the jump is taken at given directions.")
             points = [(position, float(lat), float(lon)) for lat, lon in directions]

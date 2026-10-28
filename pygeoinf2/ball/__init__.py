@@ -48,7 +48,7 @@ rounding and is used in its place up to degree 128.
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Callable, Hashable, Sequence
+from typing import Any, Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -64,8 +64,9 @@ from planetmodel.sampling import AngularGrid, gauss_legendre
 
 from ..algebra.operators import LinearFunctional
 from ..algebra.spaces import resolve_rng
-from ._transform import ShellTransform
-from .base import (
+from ..spectral_element import layered as _layered
+from ..spectral_element._transform import ShellTransform
+from ..spectral_element.base import (
     _EXTENSIONS,
     _NODES_PER_MODE,
     Boundary,
@@ -79,7 +80,7 @@ from .base import (
     _sampled_with_extension,
 )
 
-__all__ = ["Ball", "Lebesgue", "Sobolev"]
+__all__ = ["Ball", "Layered", "Lebesgue", "Sobolev"]
 
 #: The largest degree whose shells are transformed together; above it,
 #: ``planetmodel``'s shell-by-shell route is taken. The batched transform's
@@ -94,6 +95,9 @@ _BOUND_RTOL = 1e-10
 
 class Ball(SpectralElementSpace):
     """Fields on a ball, or on an annulus when ``inner_radius`` is positive."""
+
+    #: The tag of the geometry, which names the layers of a layered space.
+    _geometry: str = "ball"
 
     def __init__(
         self,
@@ -274,6 +278,12 @@ class Ball(SpectralElementSpace):
     def inner_radius(self) -> float:
         """The inner radius: zero for a ball."""
         return self._radii[0]
+
+    @property
+    def bounds(self) -> tuple[float, float]:
+        """The inner and outer radius: the two ends of the domain along the
+        radial mesh."""
+        return self._radii
 
     @property
     def padding(self) -> tuple[float, float]:
@@ -463,7 +473,7 @@ class Ball(SpectralElementSpace):
         domain's part of the grid and continue them along each radius across
         the padding, by the value at the nearer end or by ``2 f(end) -
         f(mirror)``; see
-        :meth:`~pygeoinf2.sem1d.axis.AxisSpace.project_function`. The constant
+        :meth:`~pygeoinf2.spectral_element.AxisSpace.project_function`. The constant
         keeps a positive function positive on the padding, which a standard
         deviation handed to ``pointwise_std=`` must be.
 
@@ -717,4 +727,53 @@ class Sobolev(Ball):
             boundary=boundary,
             ngll=ngll,
             element_length=element_length,
+        )
+
+
+class Layered(_layered.Layered):
+    """Piecewise-continuous fields of position: a :class:`Ball` in each of
+    the concentric shells between consecutive radii.
+
+    A direct sum of the layers, one summand per layer on its own padded mesh
+    with its own length scale and truncation, that knows its summands are
+    adjacent in space: which layer a point is in, the field's two values at
+    an interface and the jump between them, integrals over the whole, one
+    function sampled into every layer, and priors given layer by layer, under
+    which the layers are independent. It compares equal to the plain direct
+    sum of its layers, which is what a block operator or a product measure
+    lands on. Layers built by hand go in through :meth:`from_layers`.
+    The jump across an interface, a sphere, is taken at given directions.
+    """
+
+    def __init__(
+        self,
+        boundaries: Sequence[float],
+        lmax: int | list[int],
+        /,
+        *,
+        labels: Sequence[str] | None = None,
+        **options: Any,
+    ) -> None:
+        """
+        Args:
+            boundaries: the radii bounding the shells, ascending. A first
+                radius of zero makes the innermost layer a whole ball.
+            lmax: the largest spherical-harmonic degree kept in each layer,
+                for all or as a list.
+            labels: names for the layers, so one can be reached by name.
+            **options: the keyword arguments of :class:`Ball` --
+                ``order``, ``length_scale``, ``radial_modes``, ``max_eigenvalue``,
+                ``padding``, ``boundary``, ``ngll``, ``element_length`` -- each given once for all layers or, as a
+                list, layer by layer. A tuple, such as a padding pair, is
+                one value.
+
+        Raises:
+            ValueError: for fewer than two boundaries, or a list of the
+                wrong length.
+        """
+        super().__init__(
+            _layered.layers_between(
+                Ball, boundaries, lmax, ("inner_radius", "radius"), options
+            ),
+            labels=labels,
         )

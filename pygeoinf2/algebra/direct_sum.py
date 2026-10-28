@@ -905,6 +905,3 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
             for i, operator in enumerate(self._operators)
         ]
         return [tuple(part[k] for part in parts) for k in range(len(vectors))]
-
-
-# The former private spelling, kept while ``sem1d.layered`` still imports it.

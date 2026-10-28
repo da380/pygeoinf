@@ -263,8 +263,9 @@ class SpectralElementSpace(
     components are the coefficients of the kept eigenfunctions; the metric is
     ``eigenvalues ** order``. Subclasses supply :meth:`to_components`,
     :meth:`from_components`, :attr:`eigenvalues`, :attr:`grid_shape`,
-    :attr:`interior_mask`, :meth:`basis_matrix`, :meth:`_squared_modes`,
-    :attr:`spatial_dimension`, ``_coordinate_key`` and ``_class_for_order``.
+    :attr:`interior_mask`, :attr:`bounds`, :meth:`basis_matrix`,
+    :meth:`_squared_modes`, :attr:`spatial_dimension`, ``_coordinate_key`` and
+    ``_class_for_order``, and tag the geometry they name with ``_geometry``.
     """
 
     def __init__(self, eigenvalues: np.ndarray, order: float, /) -> None:
@@ -305,6 +306,13 @@ class SpectralElementSpace(
     @abstractmethod
     def interior_mask(self) -> np.ndarray:
         """A boolean grid array, true on the domain and false on the padding."""
+
+    @property
+    @abstractmethod
+    def bounds(self) -> tuple[float, float]:
+        """The two ends of the domain proper along the coordinate the mesh
+        runs along: the endpoints of an interval, the inner and outer radius
+        of a ball. Where layers of one geometry meet."""
 
     @abstractmethod
     def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
