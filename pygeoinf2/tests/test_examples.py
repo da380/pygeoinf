@@ -33,9 +33,6 @@ def test_the_examples_are_discovered():
 # Examples that need an optional dependency, and the module that provides it,
 # or the modules where there are several.
 OPTIONAL = {
-    "16_mfem_backend": "mfem",
-    "27_mfem_inverse": "mfem",
-    "29_mfem_hilbert": "mfem",
     "19_observation": "pyshtools",
     "20_flexure": "cartopy",
     "21_tomography": "cartopy",

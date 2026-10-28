@@ -1,5 +1,14 @@
 """
-MFEM finite element spaces.
+An MFEM finite element space as a coordinate space: the matrix form.
+
+The space is a :class:`~pygeoinf2.algebra.spaces.CoordinateSpace` whose
+components are MFEM's degree-of-freedom values and whose Gram matrix is the
+mass matrix MFEM assembles. The mass matrix is read out of MFEM into SciPy
+and factorized there once, and assembled forms are handed over as Galerkin
+matrices, so once a form is assembled the library does the linear algebra.
+That is the right arrangement for a serial problem of modest size; its
+companion ``hilbert_space`` keeps no coordinates and lets MFEM do every
+computation.
 
 In a finite element space the inner product is not the dot product of the
 degree-of-freedom vector: it is
@@ -25,8 +34,8 @@ Vectors are ``mfem.Vector`` objects, not NumPy arrays: arithmetic goes through
 the space rather than through the vector, so the vectors are MFEM's own and can
 be handed to MFEM directly.
 
-Requires PyMFEM, which is an optional dependency; install it with the ``mfem``
-extra.
+Requires PyMFEM, which is the ``mfem`` extra of the package
+(``poetry install --extras mfem``); its wheels are built for Linux only.
 """
 
 from __future__ import annotations
@@ -39,13 +48,13 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from numpy.random import Generator
 
-from ..algebra.operators import LinearFunctional, LinearOperator
-from ..algebra.spaces import CoordinateSpace, EuclideanSpace, resolve_rng
-from ..numerics.solvers import ConvergenceError
-from ..traits import Traits
+from pygeoinf2.algebra.operators import LinearFunctional, LinearOperator
+from pygeoinf2.algebra.spaces import CoordinateSpace, EuclideanSpace, resolve_rng
+from pygeoinf2.numerics.solvers import ConvergenceError
+from pygeoinf2.traits import Traits
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ..probability.gaussian import GaussianMeasure
+    from pygeoinf2.probability.gaussian import GaussianMeasure
 
 __all__ = [
     "MfemSpace",
@@ -503,7 +512,7 @@ def _default_mfem_solver(
 
     A reasonable default for a symmetric positive definite finite element
     system, and the point is that it is MFEM's: the mesh, the assembly and the
-    solve all stay on one side of the boundary, and this library only says what
+    solve all stay on one side of the boundary, and the library only says what
     the result *is*.
 
     Returns:
@@ -539,7 +548,7 @@ def solver_from_bilinear_form(
     """The *inverse* of the operator a bilinear form defines, solved by MFEM.
 
     Where :func:`operator_from_bilinear_form` hands over the assembled matrix
-    and lets this library invert it, this hands over nothing: MFEM's solver
+    and lets the library invert it, this hands over nothing: MFEM's solver
     solves MFEM's system, and what comes back is a :class:`LinearOperator` that
     happens to be a PDE solve. Assembly, preconditioning and the solve stay
     where they belong; the result still composes, still has an adjoint, and
@@ -833,7 +842,7 @@ def matern_measure(
             two-dimensional.
     """
     mfem = _require_mfem()
-    from ..probability.gaussian import GaussianMeasure
+    from pygeoinf2.probability.gaussian import GaussianMeasure
 
     dimension = space.finite_element_space.GetMesh().Dimension()
     theta, normalization, order = _matern_parameters(
@@ -875,7 +884,7 @@ def _matern_parameters(
     """Validate the Matern parameters and turn them into the SPDE's.
 
     Shared by :func:`matern_measure` and its counterpart in
-    :mod:`pygeoinf2.backends.mfem_hilbert`, which pose the same SPDE on the
+    ``hilbert_space``, which pose the same SPDE on the
     two kinds of space.
 
     Returns:

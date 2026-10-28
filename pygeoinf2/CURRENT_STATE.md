@@ -46,20 +46,23 @@ is what most of the rest follows from:
 | `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval; `evaluate_gradient` at scattered points (ducc0 on the sphere, the `ik`-scaled transform on the boxes) and the nonlinear `ray_travel_time_operator`, bending or shooting, on every geometry, with its linearization and its Hessian action (D-156) |
 | `spectral_element`, `interval`, `ball` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies, reached by geometry (D-161): `interval` on the line under `dx` with `interval.radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, each with its `Layered` for piecewise-continuous fields over adjacent layers (their direct sum, with points, jumps, integrals and layer-by-layer priors, D-126); `spectral_element` is the shared core (`SpectralElementSpace`, `AxisSpace`, the mesh, Robin ends, the batched harmonic transform, the fit over the domain for sampled functions), wrapping `planetmodel.randomfield`, an optional extra; all three are imported on demand (D-115 to D-124) |
+| `disk` | fields on a disk or an annulus in the plane, the two-dimensional `ball`: Fourier modes of the angle times radial eigenfunctions of `1 - div(L² grad)` under `r dr` on a padded spectral-element mesh, with `Lebesgue`, `Sobolev` and `Layered` (jumps taken at angles), points `(radius, angle)` in degrees anticlockwise from the `x` axis; the radial family is `planetmodel`'s with the measure changed (`spectral_element._cylindrical`: `CylindricalOperatorFamily`, the FFT `RingTransform`, `PolarBasis`); drawn whole in the plane by `plotting`, with points and polyline paths; imported on demand |
 | `inference` | forward problems with their likelihood `potential`; the estimator hierarchy, every class a `PointEstimator`, `SetEstimator` or `MeasureEstimator` (D-163): the linear point estimators `LeastSquares`, `MinimumNorm` (the discrepancy principle its method), their constrained forms and `BackusGilbert` (the averaging-kernel estimate, with its resolution, propagated covariance and bias), the generic `Minimization` with `NonlinearLeastSquares`, `MaximumAPosteriori` on it, `ConstrainedMinimization` with `Occam`; `LinearGaussianInversion`, the mixture inversion, `GaussianPosterior` (D-132) and `LaplaceApproximation` as the measure estimators; `BackusGilbertParker` over the geometry layer's feasible set, linearised about a model for a nonlinear forward; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
-| `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `ball`, lines on an `interval` and its radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
-| `backends` | MFEM two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps a plain `HilbertSpace` and lets MFEM do every computation (D-96) |
+| `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `ball`, a `disk` whole in the plane with its points and paths (D-175), lines on an `interval` and its radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
 | `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
 | `datasets` | the shipped station and earthquake tables, the cache directory, and the explicit downloads that refresh them (D-103) |
 | `parallel` | `parallel_map` and `resolve_jobs`, the one place joblib is called (D-52) |
 | `compat` | v1 class-name aliases and the v1-space adapter; goes with v1 (D-101) |
 
 111 names are re-exported at the top level and the subpackages are importable
-as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
-`compat`, `spectral_element`, `interval` and `ball` are imported explicitly. Thirty-five examples under `examples/`
+as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `testing`,
+`compat`, `spectral_element`, `interval`, `ball` and `disk` are imported explicitly. Thirty-two examples under `examples/`
 run as a slow test; their README says what each shows. Fourteen tutorials
 under `tutorials/` with generated notebooks, and the first mini-app under
 `pygeoinf2/miniapps/` (the C++ vector backend, D-169), run in the fast suite.
+MFEM is not in the package: `miniapps/mfem/` wraps it, as a finite element
+space and as a solve inside an operator on a box, and its test is slow and
+needs the `mfem` extra, which is there for it.
 
 ## 3. Conventions and units
 
@@ -166,8 +169,8 @@ columns and is never written out as a square (D-170).
   S-procedure's shape per weight, `sum_of_ellipsoids`, a polytope's
   inscribed ellipsoid (Newton on `dim P (dim P + 3) / 2` unknowns) and a
   point set's enclosing ellipsoid (D-141).
-- `backends.mfem.operator_from_bilinear_form` keeps MFEM's sparse matrix
-  (D-96); nothing in the MFEM backends densifies.
+- The MFEM mini-app's `matrix_space.operator_from_bilinear_form` keeps
+  MFEM's sparse matrix (D-96); nothing in its space modules densifies.
 - `with_probed_adjoint()` and `DirectSolver` assemble what they are asked to,
   once, on first use (D-34, D-40).
 - `SpectralFamilySolver` factors a damped family's two Galerkin matrices
@@ -181,8 +184,8 @@ A backend supplies a `CoordinateSpace`. The contract is: `dim`,
 whatever of the vector algebra (`add`, `subtract`, `scale`, `axpy`, `copy`,
 `zero`) the vectors do not get for free, and `random` and `white_noise`,
 which every check and every randomised method draws from. A coordinate-free
-backend supplies a `HilbertSpace` and a mass operator, as `mfem_hilbert`
-does (D-22, D-96); its vectors need no array behaviour at all, which
+backend supplies a `HilbertSpace` and a mass operator, as the MFEM
+mini-app's `hilbert_space` does (D-22, D-96); its vectors need no array behaviour at all, which
 `tests/test_no_array_backend.py` holds the library to over a space whose
 vectors are plain Python objects. What such a space cannot be asked for
 refuses by name (`assembled()`, the direct solvers, `random_diagonal`,
@@ -205,7 +208,14 @@ consistent only to discretisation level — a continuous adjoint — pass the
 `rtol` it can meet and record the reported defect falling under refinement;
 it is also the floor below which a solver tolerance asks for noise.
 
-The lessons MFEM taught, which apply to any backend over foreign memory:
+A foreign library can also sit inside an operator between the library's own
+spaces, with no space of its own: the MFEM mini-app's `box_operator` is a
+finite element solve on a periodic Sobolev box, its adjoint written from the
+transposes of the two transfers with the box's Gram factor and its inverse
+on either side, and the ladder above proves it to the solver's tolerance.
+
+The lessons MFEM taught, worked through in `miniapps/mfem/`, which apply to
+any backend over foreign memory:
 
 - **Who owns the buffer.** MFEM vectors can alias memory the library will
   free. Copy on the way in unless ownership is explicit.
@@ -222,7 +232,7 @@ The lessons MFEM taught, which apply to any backend over foreign memory:
   back to it. Operator, handle and form live and die together, or the next
   `Mult` segfaults.
 - **Partial assembly of a matrix coefficient is broken in PyMFEM 4.8.**
-  Scalar coefficients are fine; `mfem_hilbert.matern_measure` uses one when
+  Scalar coefficients are fine; the mini-app's `hilbert_space.matern_measure` uses one when
   the field is isotropic and refuses otherwise (D-97).
 
 ## 7. Open questions
@@ -284,6 +294,98 @@ Recorded rather than settled, so nobody has to rediscover them.
   where the serial run took about two minutes; BLAS threads and the worker
   pool contending, most likely (D-52's measurements point the same way).
   The mini-app no longer uses it (D-170); not investigated further.
+- **`project_function`'s fit leaks into the padding at high mode counts.**
+  Found 2026-10-28 building the planet-density mini-app: on a radial
+  space of 48 modes (`Radial(48, radius=6371, inner_radius=3480, order=2,
+  length_scale=200)`) the fit of a step function (`4.0` above 5711 km,
+  `4.24` below) keeps every direction at a condition number of 3e6
+  (`_FIT_RCOND = 1e-10`, `spectral_element/base.py`) and puts values of
+  3e4 in the padding against a domain maximum of 4.3, so the vector's norm
+  is 4e10. Smooth functions and a dozen modes are fine. The app reads the
+  domain only and measures changes from a reference, so it is unaffected;
+  a norm of such a projection is not. Open: the fit's cut-off, or a
+  penalty on the padding.
+- **A multiplication operator on a padded mesh multiplies the padding.**
+  Same day, same app: `integral_functional() @ multiplication_operator(f)`
+  integrates the product analysed over the whole padded mesh, so the
+  padding's values enter: `+7.6e-5` for a uniform field and `-62 %` for a
+  6 % step on a three-layer radial space, `0.9 %` of the mass for the
+  reference profile. The app integrates by quadrature against
+  `basis_matrix` instead. Open: whether `multiply`/`multiplication_operator`
+  should restrict to the domain, and whether the integral functional
+  should warn when its argument carries weight in the padding.
+- **Two design questions from the planet-density mini-app** (2026-10-28,
+  for David). The Adams-Williamson reference from PREM's velocities is 9 %
+  light in mass (it knows nothing of the transition-zone phase changes),
+  so under a tight prior every answer shows a prior-data conflict rather
+  than the data adjusting little; the app says so, and could instead
+  rescale the reference to the mass first. And Occam on the direct sum of
+  the density field and the two boundary radii moves the inner-core
+  boundary by 18 000 km: in the space's own norm a kilometre of boundary
+  costs nothing next to a density norm over 1e11 km³, which is the
+  weighting question the library leaves to the caller; kept as a
+  cautionary result, with the choice between a deliberate weight on the
+  radii summand and dropping Occam from that part left open.
+- **Three findings from the MFEM mini-app's build** (2026-10-28).
+  `testing.check_traits` forms the whole matrix of any operator claiming
+  `POSITIVE_DEFINITE` on a coordinate space, because the trait implies
+  `INVERTIBLE` (`traits.py`) and the invertibility check extracts the
+  matrix and computes a rank (`testing.py`): 320 applications at
+  dimension 300, and 9216 solves on the app's finite-element operator,
+  which checks symmetry only. `check_operator` floors its comparison
+  scale at one (`testing.py`), so a wrong adjoint on an operator whose
+  pairings are small passes: `x -> 1e-10 x` against `y -> -1e-10 y` has a
+  worst defect of 7e-10 and passes. `MinimumNorm.for_data` returns
+  `estimator_at(...)`, which builds a fresh `LeastSquares` and reassembles
+  the normal operator under a dense family solver: 54 applications on a
+  repeat call where the search itself cost 54.
+- **Findings from the tomography mini-app's build** (2026-10-28). The
+  support search's inner end collapses for a direction the data cannot
+  see: `_largest_feasible` (`geometry/feasible.py`) cuts off at a misfit
+  of `1 + 1e-12`, but at the search's optimum the misfit equals one only
+  to the search tolerance, and when it lands just above, the inner end
+  drops to about zero while the outer end stays exact (on
+  `EuclideanSpace(3)` with the first two coordinates observed, the third
+  the property, prior ball radius 2, noise ball 0.1, data `s (1, 1)`: six
+  of nine values of `s` in `[0.8, 1.2]` give an inner end near zero
+  against the exact outer `sqrt(4 − (|d| − 0.1)²)`); the app builds the
+  attaining model by hand for that direction. A bug to fix. Also: the
+  `splitting` algorithm's inner end exceeded its outer on the same
+  direction by 1e-4 and took 28 s; a singular data-space family's Cholesky
+  at the floor raises a raw `LinAlgError` where the search catches only
+  `ConvergenceError`. The layered prior from `Layered.sobolev_measure`
+  lives on a plain `CoordinateDirectSum` with no pointwise algebra, so
+  `sample_pointwise_std` fails with an `AttributeError` (the `sqrt` lookup
+  in `probability/gaussian.py` precedes the type check) and posteriors
+  land there too; `ambient_ball` reads only a bare
+  `DiagonalLinearOperator`, so a block-diagonal product prior falls back
+  to 10 000 draws (36 s at dimension 4688); a plain `DirectSum` does not
+  pickle (`__new__` requires `spaces`), which breaks process-parallel
+  `n_jobs` over a measure on one; `diagonals()` of a composition with a
+  diagonal factor raises (`_known_diagonals` in `algebra/nodes.py` lacks
+  the one-dimensional handling `_known_matrix` has); and
+  `point_evaluation_operator` always builds its dense matrix, 3.4 GB at
+  83 000 points, so the app assembles ray by ray.
+- **MAP's objective carries no Hessian when the forward has only a
+  first derivative.** Met by both the tomography and the waveform
+  mini-apps (2026-10-28): `MaximumAPosteriori.objective` goes through
+  `_misfit_plus_quadratic` (`inference/minimization.py`), which sets the
+  Hessian to none unless the operator has a second derivative, so
+  `NewtonCG` refuses it, while `MaximumAPosteriori.hessian` already
+  returns the Gauss-Newton Hessian `P + J* R⁻¹ J` that would do. Both apps
+  attach it in a small subclass. Open: an option on the estimator to
+  equip the objective with the Gauss-Newton Hessian whenever the second
+  derivative is missing, or by choice.
+- **Findings from the waveform mini-app's build** (2026-10-28). A
+  NaN-valued operator passes `check_operator` with both defects reported
+  as zero: `_record` in `testing.py` takes a `max` that drops NaN and the
+  comparisons are false for it. A bug to fix (treat NaN as the worst
+  defect). The checks' comparison scale floors at one (also met by the
+  MFEM app, above). `SolveStep.iterate` is a component array rather than
+  a vector of the space when the solver runs viewed (`numerics/solvers.py`),
+  which the docstring does not say. `NewtonCG` discards the truncated
+  CG's stop reason, so an exit on negative curvature cannot be seen from
+  the record. The Gauss-Newton Hessian gap is the entry above.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.
@@ -304,7 +406,7 @@ Recorded rather than settled, so nobody has to rediscover them.
 | D-79 | `BackusGilbertParker` is the one feasible-set estimator; the sets choose the route |
 | D-99 | v1's names where there was no strong reason to change: `forward_problem`, `property_operator`, `kalman_operator` |
 | D-100 | American spelling |
-| D-161 | the spectral-element spaces are `interval`, `interval.radial` and `ball` |
+| D-161 | the spectral-element spaces are `interval`, `interval.radial` and `ball` (and `disk`, D-175) |
 | D-163 | every inference class is an estimator; `MinimumNorm` is the discrepancy principle; `BackusGilbert` is the point estimator; MAP returns the mode and `LaplaceApproximation` the Gaussian; `as_measure` is gone |
 
 ## 9. Not in 2.0

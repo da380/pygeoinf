@@ -11,8 +11,8 @@
 #
 # The plan: build a small backend by hand, run the ladder of checks on it,
 # break it three ways and watch each break get caught, validate an adjoint
-# that is only right to discretisation level, and finish with MFEM. The last
-# section needs MFEM (`poetry install --extras mfem`).
+# that is only right to discretisation level, and finish with where the
+# finite element case is worked through in full.
 
 # %%
 import numpy as np
@@ -46,8 +46,8 @@ rng = np.random.default_rng(12)
 #
 # The inner product, the norm, white noise, matrices and everything above
 # them follow. A coordinate-free backend supplies a plain `HilbertSpace`
-# with an `inner_product` instead of the last two rows, as the MFEM backend
-# at the end does.
+# with an `inner_product` instead of the last two rows, as the finite
+# element space at the end does in one of its two forms.
 #
 # Our vectors will be instances of a class that stands for a foreign
 # library's: it holds nodal values of a piecewise-linear function on
@@ -271,35 +271,21 @@ for count in (11, 41, 161, 641):
 # solver asked for a tolerance below it is asking for noise: no iteration
 # can make an operator and its adjoint agree better than they do.
 #
-# ## MFEM, the worked case
+# ## Finite elements, the worked case
 #
-# The library's MFEM backend is exactly this construction for real finite
-# element spaces, in two forms. `backends.mfem.MfemSpace` reads MFEM's mass
-# matrix as the Gram matrix of a coordinate space, as above.
-# `backends.mfem_hilbert.MfemHilbertSpace` goes further and supplies no
+# A real finite element space is exactly this construction, and the MFEM
+# mini-app, `pygeoinf2/miniapps/mfem/`, works it through with MFEM's Python
+# bindings in two forms. `MfemSpace` reads MFEM's mass matrix as the Gram
+# matrix of a coordinate space, as above. `MfemHilbertSpace` supplies no
 # coordinates at all: every inner product, mass solve and form application
 # is MFEM's own, which is the arrangement a distributed space needs. The
-# ladder runs on both.
-
-# %%
-import mfem.ser as mfem  # noqa: E402
-
-from pygeoinf2.backends.mfem import MfemSpace  # noqa: E402
-from pygeoinf2.backends.mfem_hilbert import MfemHilbertSpace  # noqa: E402
-
-mesh = mfem.Mesh.MakeCartesian2D(8, 8, mfem.Element.QUADRILATERAL)
-elements = mfem.FiniteElementSpace(mesh, mfem.H1_FECollection(2, mesh.Dimension()))
-with_coordinates = MfemSpace(elements)
-without = MfemHilbertSpace(elements)
-print(with_coordinates, "| vectors are", type(with_coordinates.zero()).__name__)
-print(check_space(with_coordinates, rng=rng))
-print(check_coordinates(with_coordinates, rng=rng))
-print(check_space(without, rng=rng))
-print("the coordinate-free one has coordinates:", isinstance(without, CoordinateSpace))
-
-# %% [markdown]
-# Examples 16, 27 and 29 build inversions on both. What MFEM taught, which
-# applies to any backend over memory the library does not own:
+# ladder runs on both, and an inverse problem runs on each. The app also
+# wraps MFEM the other way round, as a solve inside an operator on the
+# library's own periodic box, with the adjoint written from the transposes
+# and the Gram factors, and the ladder proving it.
+#
+# What MFEM taught, which applies to any backend over memory the library
+# does not own:
 #
 # - **Who owns the buffer.** Foreign vectors can alias memory their library
 #   will free. Copy on the way in unless ownership is explicit.

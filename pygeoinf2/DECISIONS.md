@@ -2636,6 +2636,182 @@ and left: CG's curvature refusal is absolute (`(p, A p) <= 0`), which on
 a member singular to rounding reads as a false claim of definiteness;
 the floor keeps the routes away from such members.
 
+**D-175. A disk geometry for the spectral-element spaces** (2026-10-28,
+David: the tomography mini-app gets a two-dimensional test-bed in a disk
+with an Earth-like radial structure, cheaper than the ball and with
+figures that show something; built that night by an agent from a brief).
+`pygeoinf2.disk` mirrors `pygeoinf2.ball` member for member: a radial
+spectral-element basis per angular order times the circle's Fourier modes
+(orthonormal on the unit circle, cosine then sine, one function at `m =
+0`), in the leading eigenfunctions of `A = 1 − L² Δ` on a padded radial
+mesh, with `Lebesgue`, `Sobolev` and `Layered`, point evaluation at
+`(radius, angle in degrees anticlockwise from the x axis)`, projection,
+the area integral, and plotting in the plane. The radial operator per
+order, `u − L² (1/r)(r u')' + L² m² u / r²` against `r dr`, is not one
+planetmodel's family offers (it has `r² dr` and `dr`), so
+`spectral_element/_cylindrical.py` carries `CylindricalOperatorFamily`, a
+subclass of planetmodel's family whose assembly uses `r dr` and whose
+pencil uses `m²` for `l(l+1)`, everything else inherited, including the
+treatment of the centre: condensed out at `m = 0`, dropped for `m ≥ 1`,
+where a regular field goes like `r^|m|`. The cost is that the inherited
+methods read planetmodel 1.3.2's private attribute names, which the tests
+would catch changing. `RingTransform` does the angular analysis and
+synthesis by real FFTs on `2 mmax + 1` equally spaced angles, analysis
+the exact adjoint of synthesis. The Robin ends carry half the ball's
+curvature term, `0.7/L ± 1/(2r)`, from the Bessel asymptotics in two
+dimensions; measured on a padded disk the error is 2.3e-3 against 7.6e-3
+with the ball's term, and an annulus whose inner pad ends near the
+centre is the weak spot (0.02 at `r = 0.1`, `L = 0.2`), where the Bessel
+ratio `I₁ / (L I₀)` would give 6.6e-3 for either geometry: left as is to
+match the ball, noted as an improvement for both. Parity: eigenvalues
+against `1 + L² j'²_{m,k}` to 1e-13 on the first modes, modes against
+`J_m` to 1e-5, and against a 20 000-cell finite-volume solve on an
+annulus to the reference's own 1e-7; the exponent of the modes at the
+centre within 0.01 of `m`. Not done: a `heat_measure` on the
+spectral-element base class (the disk's tests use
+`spectral_measure(exp(-t (λ − 1)))`), and the mentions of the new
+geometry in `spectral_element/__init__.py`, `layered.py`'s messages and
+two rows of CURRENT_STATE; `Disk(0)` keeps only the constant, as the ball
+at `lmax = 0` does.
+
+**D-176. Mini-app 2, a planet's density, is built** (2026-10-28, by an
+agent from the brief that settled its design: three layers on the
+layered radial space, a reference by Adams-Williamson from PREM's
+velocities with the CMB and ICB jumps put in, two data, the priors
+played as the parts, and the boundary radii as unknowns through a
+bilinear forward, `M(ρ, δ) = ∫ ρ dV − Σ_k 4π r_k² [ρ]_k δ_k` and its
+moment analogue, with `δ` the outward displacement and `[ρ]` the jump
+above minus below, whose derivative and second derivative pass the
+checks to 5e-9). What it showed, recorded because it was not what the
+brief expected: the reference is 9 % light (−90 standard deviations in
+the mass), so the tight prior conflicts with the data and the feasible
+set under it is empty; the loose prior shows the two-number constraint
+as a slice through the space, the core and mantle means correlated at
+−0.9998 with their volume-weighted sum known to 0.006 g/cm³; the mixture
+rewards the reference with a 660 km jump for its added mass, not for
+the jump, and the README says so; and Occam on the field-plus-radii sum
+is dominated by the radii's cheapness in the norm. Two of these are open
+questions in CURRENT_STATE §7, with two library findings from the same
+build (the fit's leak into the padding, the multiplication operator on a
+padded mesh). Units km and g/cm³, order 2, length scale 200 km, 16/24/48
+modes, every part in seconds.
+
+**D-177. MFEM leaves the core and becomes mini-app 7, in two forms**
+(2026-10-28, David: the MFEM backend should be a mini-app, through PyMFEM,
+with a record of how an MFEM-based function space is implemented kept
+even though an operator between the library's own spaces is the better
+illustration; built that night by an agent from the brief). The two
+backend modules moved by `git mv` into `miniapps/mfem/` as
+`matrix_space.py` and `hilbert_space.py`, class and function names
+unchanged; examples 16, 27 and 29 became parts B, C and A; the two test
+files became the app's slow test (114 tests, skipped by name without the
+`mfem` extra, which stays in `pyproject.toml` as the app's dependency);
+`pygeoinf2/backends/` is gone and every reference to it fixed (tutorial
+12 points at the app, the examples index and the tutorials index
+likewise). What the library promises is unchanged: the backend contract
+of CURRENT_STATE §6 and its proof on a space with no array (D-169). The
+new form, `box_operator.ScreenedPoisson`, solves `(1 − s² Δ) u = f` with
+the library's periodic Sobolev box as domain and codomain: the field is
+loaded against MFEM's basis at its quadrature points, solved by MFEM's CG
+on a periodic mesh, and read back at the box's grid, each step its own
+operator with its adjoint written by hand (`G⁻¹ Bᵀ Qᵀ` for the load, the
+same solve for the solve, `Pᵀ (V/N) T⁻¹ G` for the evaluation); the
+ladder measures the whole operator's adjoint defect at 9e-12 and refuses
+the plain transpose with the Gram factors left out at 0.63. The finding
+worth the app: on a 64-element mesh aligned with the grid the discrete
+operator commutes with the grid's translations and is a Fourier
+multiplier, self-adjoint to rounding, so "the adjoint is the operator
+itself" would pass the check there and be wrong on any other mesh; the
+app's meshes are deliberately misaligned. An inverse problem on the box
+operator ends the app, the three answers on a region among the sensors
+and one in a gap. Three library findings are in CURRENT_STATE §7
+(`check_traits` extracting the matrix of a definite operator,
+`check_operator`'s absolute floor, `MinimumNorm.for_data` reassembling).
+
+**D-178. Mini-app 3, ray tomography, in the disk and then the ball**
+(2026-10-28, David: the two-dimensional test-bed in a disk with an
+Earth-like radial structure, the ball on the same code at a toy size;
+built that night by an agent from the brief, on the disk space of D-175).
+The ray tracer is user code, not library code: a radially layered planet
+with a linear velocity gradient in the mantle and a slow core, the ray
+parameter, turning radius, distance and travel time by integrals with
+the turning-point singularity removed, two-point rays by a root find on
+the monotone branch, checked against the closed-form circular arcs of
+the flattened gradient to 1e-11. The forward is the path integral of the
+slowness perturbation along the reference ray through point evaluation
+at the ray nodes, assembled ray by ray (the composition through the
+point-evaluation operator at every node would hold a 3.4 GB matrix), the
+adjoint the library's, defect 1e-13. Three hundred data against five
+thousand coefficients, so every solve is a Cholesky on the data space
+and there is no preconditioner story. The four parts show the classic
+tomographic picture: a bump recovered at 0.63 of its height under good
+coverage and 0.12 under poor, the core's posterior equal to its prior,
+the feasible brackets a factor of six wider under poor coverage, the
+truth inside every bracket; the whole app at full scale in 28 s, the
+ball in 7 s. Mantle rays reach 80°, not the brief's 150°, because the
+core shadow starts at 82°; reciprocal duplicate rays are dropped since
+they make the data-space normal operator singular. The prior is one
+diagonal operator over both layers' components rather than the layered
+space's product measure, because the product lands on a direct sum
+without the pointwise algebra: that and six other findings are in
+CURRENT_STATE §7, the collapse of the support search's inner end on an
+unseen direction a bug to fix. The third phase, bent rays in the disk
+only: the ray re-traced in the perturbed slowness by a shooting
+integrator (fourth-order Runge-Kutta in arc length, the two-point
+problem by a secant search on the take-off angles, matching the radial
+tracer at the reference to 1e-9), the derivative the path integral
+along the current bent ray by Fermat's principle so the linearized
+operator is the linear app's operator on the current rays, checked
+against finite differences with the error falling as the step squared to
+a floor of 1e-4 set by the integrator's stages sampling off the path;
+MAP by Newton-CG on the Gauss-Newton Hessian in 7 iterations. What the
+nonlinearity shows: the linear posterior mean fits its data to χ² 0.6 by
+its own reckoning and 21.8 along its own bent rays, the mode repairs
+that and differs by 6 % in the upper mantle where the rays bend most,
+and the error against the truth barely moves because it is dominated by
+what no ray resolves. Both this app and the waveform app had to attach
+the Gauss-Newton Hessian themselves, which is the first open question
+below.
+
+**D-179. Mini-app 8, acoustic waveform inversion in from-scratch C++,
+with MPI as its second phase** (2026-10-28, David: a 2-D finite-difference
+wave code written for the app, forward and first- and second-order
+adjoints, simple checkpointing, MPI optional with rank-0 ownership and
+distributed fields as a stretch; built that night by an agent from the
+brief). The model is the squared slowness on the library's periodic
+Sobolev box, the forward a leapfrog scheme, second order in time and
+fourth in space, with a two-level Cerjan sponge, `A(m) U = B f` affine in
+`m`; the derivative, its adjoint, the second derivative and its adjoint
+are discrete, derived from the scheme and bound with nanobind in one
+translation unit with fused kernels that store three time steps instead
+of whole adjoint fields. The brief's derivation was wrong twice and the
+measurements settled it: the second adjoint's term carries a plus sign
+(the brief's minus gave a pairing of +0.063 against −0.1128 for both
+sides to fifteen digits), and the adjoint field at step `n` pairs with
+the step that contains `u^{n+1}`; and the brief's single-level taper
+damps the field but not its rate and sends back 40 % of the data's rms
+where Cerjan's two-level form sends back 5 %, which no adjoint check
+could see and only a padded reference grid found. Every check passes to
+rounding: dot tests at 1e-15, the ladder's derivative checks at 1e-9
+with central differences falling a hundredfold per decade. MAP by
+Newton-CG on the Gauss-Newton Hessian in 7 iterations, then two exact
+Newton steps that show quadratic convergence at quick scale and an
+indefinite Hessian from the background; Laplace with the library's
+spectral preconditioner at rank 100 (the prior alone leaves the solves at
+the cap); Occam at 95 % in 5 outer iterations. Phase 2: the grid split in
+columns across MPI ranks with a two-column halo, rank 0 running the
+library and broadcasting commands, no mpi4py since the module does its
+own communication, the serial build the one-block case and bitwise
+identical to the serial module; the distributed operator matches the
+serial one bit for bit on up to six ranks and the MAP mode is reproduced
+to the last bit; no speedup at this size, the point being the ownership
+pattern. Built here against PETSc's MPICH since the system Open MPI has
+no headers; the test skips without `MPICXX`. Checkpointing is not
+implemented; the snapshot stride is the hook. Findings in CURRENT_STATE
+§7: NaN passes the checks, the checks' floor at one, the solve step's
+iterate as a component array under a view, the missing Gauss-Newton
+Hessian, Newton-CG discarding the truncated CG's stop reason.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

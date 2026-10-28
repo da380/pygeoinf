@@ -35,8 +35,9 @@ from .fourier import plot_error_bounds
 from .sets import plot_set
 from . import sphere as _sphere  # noqa: F401  (registers the sphere renderers)
 
-try:  # The interval and ball spaces need planetmodel, an optional extra.
+try:  # The interval, ball and disk spaces need planetmodel, an optional extra.
     from . import interval as _interval  # noqa: F401  (registers the interval renderers)
+    from . import disk as _disk  # noqa: F401  (registers the disk renderers)
     from .ball import (
         plot_profile,
         plot_section,

@@ -11,17 +11,16 @@ space, a spherical-harmonic field or a finite element space. The subpackages:
 * ``geometry`` -- convex sets, subsets and subspaces;
 * ``probability`` -- measures, Gaussian and otherwise;
 * ``inference`` -- forward problems and the estimators built on them;
-* ``symmetric_space``, ``interval`` and ``ball`` -- concrete function spaces,
-  the last two on the ``spectral_element`` core;
+* ``symmetric_space``, ``interval``, ``ball`` and ``disk`` -- concrete function
+  spaces, the last three on the ``spectral_element`` core;
 * ``plotting`` -- figures for fields, measures and sets.
 
 The names a typical workflow needs are also exported here, flat.
-``compat``, ``backends``, ``datasets`` and ``testing`` are imported
-separately.
+``compat``, ``datasets`` and ``testing`` are imported separately.
 """
 
 # The subpackages, so that ``gi.inference.X`` works without a separate import.
-# compat, backends, datasets and testing are deliberately not pulled in.
+# compat, datasets and testing are deliberately not pulled in.
 from . import (
     algebra,
     geometry,
@@ -288,8 +287,8 @@ __all__ = [
 # are loaded, when it is installed, by the plotting registry above; they are
 # listed among the subpackages exactly when that succeeded.
 try:
-    from . import ball, interval, spectral_element  # noqa: F401
+    from . import ball, disk, interval, spectral_element  # noqa: F401
 except ImportError:  # pragma: no cover - depends on the installed extras
     pass
 else:
-    __all__ += ["spectral_element", "interval", "ball"]
+    __all__ += ["spectral_element", "interval", "ball", "disk"]

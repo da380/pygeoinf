@@ -29,7 +29,6 @@ failing test rather than a surprise later.
 | 13 | `convex` | proximal operators as geometry |
 | 14 | `fields` | circles, tori, boxes, spheres |
 | 15 | `worked_example` | all of it, on a small inverse problem |
-| 16 | `mfem_backend` | a finite element space, where the mass matrix is the metric |
 | 17 | `sets` | a convex set, its indicator and its support function as one object |
 | 18 | `subspaces` | projectors, kernels, and linear constraints |
 | 19 | `observation` | where a function space meets an instrument |
@@ -40,9 +39,7 @@ failing test rather than a surprise later.
 | 24 | `preconditioning` | making a large solve finish, with a surrogate |
 | 25 | `distributions` | looking at the answer: marginals and corner plots |
 | 26 | `mixture` | a prior that cannot make up its mind, and a bimodal posterior |
-| 27 | `mfem_inverse` | an inverse problem on a finite element space, with boundary conditions |
 | 28 | `nonlinear_map` | when the forward map is not linear: the MAP estimator, and the Laplace approximation on it |
-| 29 | `mfem_hilbert` | the same finite element inverse problem with no coordinates: MFEM computes, this library conducts |
 | 30 | `varying_length_scale` | a correlation length that varies along an interval of the line, the padding that makes it possible, and a prior calibrated by a field |
 | 31 | `mantle` | a field in a mantle, cut three ways to be seen: a shell, a section by any plane, a profile; and what surface data do not reach |
 | 32 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
@@ -57,13 +54,11 @@ enforces, so it cannot drift from what actually runs.
 
 | needs | examples |
 |---|---|
-| `mfem` | 16, 27, 29 |
 | `pyshtools` | 19, 24, 25 |
 | `cartopy` | 20, 21, 22, 23, 31 |
 | `planetmodel` | 30, 31, 32, 33 |
 
 ```
-poetry install --extras mfem
 poetry install --extras sphere
 poetry install --extras planetmodel
 ```
@@ -71,19 +66,15 @@ poetry install --extras planetmodel
 Examples 20 to 23 draw coastlines, which makes cartopy fetch a Natural Earth
 shapefile the first time; after that it is cached.
 
-## Why the finite element examples are here
+## Finite elements
 
-Numbers 16 and 27 answer the question the rest of the suite cannot: whether the
-coordinate-free design really holds up when the vectors belong to somebody
-else. A finite element space is the case the design was built for -- the mass
+A finite element space is the case the design was built for -- the mass
 matrix *is* the Gram matrix, an assembled bilinear form *is* a Galerkin matrix,
-and an assembled linear form *is* a derivative rather than a gradient.
-
-Number 29 takes the claim to its end. There the space has no coordinates at
-all: the mass operator, every solve and the white noise are MFEM's, applied
-through its `Operator` interface, and this library never sees a matrix. It is
-the arrangement an MPI-distributed space would use, written so that nothing
-would change.
+and an assembled linear form *is* a derivative rather than a gradient. Through
+MFEM, it is a mini-app rather than an example: `pygeoinf2/miniapps/mfem/`
+wraps an MFEM function space as a Hilbert space, with and without
+coordinates, and wraps an MFEM solve as an operator on the library's own
+periodic box.
 
 ## If you read only one
 

@@ -62,6 +62,8 @@ def app():
     modules = {
         name: _module(name)
         for name in (
+            "common",
+            "solvers",
             "ocean_mask",
             "problem",
             "truth",

@@ -1,0 +1,212 @@
+"""Part B: synthetic data from the true model, with noise.
+
+The truth's receiver data for every shot, Gaussian noise of a fixed fraction
+of the data's root-mean-square added sample by sample, and the forward
+problem the later parts invert. How much the anomalies matter is read off
+the misfit of the known background against the data, and where they are
+seen from is the gradient of that misfit at the background: the classic
+first image of waveform inversion, here the model-space gradient, so smooth
+in the Sobolev metric.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import time
+from dataclasses import dataclass
+from typing import Any
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from pygeoinf2 import GaussianMeasure
+from pygeoinf2.inference import ForwardProblem
+
+from common import output_directory, parse, part_rng, save, section, sponge_outline
+from survey import (
+    BOXES,
+    DEPTH_CELLS,
+    FULL,
+    LEVEL,
+    NOISE_FRACTION,
+    QUICK,
+    Experiment,
+    Scale,
+    build,
+)
+from wave_operator import WaveformOperator
+
+
+@dataclass
+class Setup:
+    """The experiment, its operator, the data and the two forward problems."""
+
+    experiment: Experiment
+    wave: WaveformOperator
+    clean: np.ndarray
+    data: np.ndarray
+    noise_std: float
+    problem: ForwardProblem
+    first_order: ForwardProblem
+
+
+def setup(
+    scale: Scale, /, *, seed: int, quiet: bool = False, backend: Any = None
+) -> Setup:
+    """The data and the forward problems, the same for every part from one seed.
+
+    Args:
+        scale: the size of the problem.
+        seed: the seed of the noise.
+        quiet: say nothing.
+        backend: ``acoustic_mpi`` to split the grid across MPI ranks, the shots
+            then running one after another; the serial ``acoustic`` if omitted.
+    """
+    say = (lambda *args: None) if quiet else print
+    started = time.perf_counter()
+    experiment = build(scale, backend=backend)
+    survey = experiment.survey
+    serial = backend is None
+    wave = WaveformOperator(
+        survey,
+        experiment.space,
+        n_jobs=scale.n_jobs if serial else None,
+        curvature_jobs=scale.curvature_jobs if serial else None,
+    )
+    clean = wave.value(experiment.truth)
+    noise_std = NOISE_FRACTION * float(np.sqrt(np.mean(clean**2)))
+    noise = GaussianMeasure.from_standard_deviation(wave.data_space, noise_std)
+    data = clean + noise.sample(rng=part_rng(seed, "b"))
+    problem = ForwardProblem(wave.operator, error=noise)
+    first_order = ForwardProblem(wave.first_order, error=noise)
+    width, depth = survey.lengths
+    say(
+        f"section {width:.1f} km by {depth:.1f} km on {survey.shape[0]} x "
+        f"{survey.shape[1]} cells of {survey.scale.h * 1000:.0f} m; "
+        f"{survey.scale.steps} steps of {survey.scale.dt * 1000:.1f} ms; Ricker "
+        f"{survey.scale.peak_frequency:g} Hz"
+    )
+    say(
+        f"{survey.n_shots} shots, {survey.n_receivers} receivers each, "
+        f"{wave.data_space.dim} data; noise std {noise_std:.3g} "
+        f"({NOISE_FRACTION:.0%} of the data's rms); one stored field "
+        f"{survey.field_megabytes:.0f} MB, {survey.n_shots} cached"
+    )
+    say(f"setup took {time.perf_counter() - started:.1f} s")
+    return Setup(experiment, wave, clean, data, noise_std, problem, first_order)
+
+
+def data_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
+    """The misfits that say how much the anomalies matter, and the figure."""
+    experiment, wave, problem = state.experiment, state.wave, state.problem
+    survey = experiment.survey
+    t0 = time.perf_counter()
+    background_data = wave.value(experiment.background)
+    misfit = {
+        "truth": problem.chi_squared(experiment.truth, state.data),
+        "background": problem.chi_squared(experiment.background, state.data),
+    }
+    critical = problem.critical_chi_squared(level=LEVEL)
+    signal = float(
+        np.sqrt(np.mean((state.clean - background_data) ** 2))
+        / np.sqrt(np.mean(state.clean**2))
+    )
+    print(
+        f"chi-squared of the truth {misfit['truth']:.0f}, of the background "
+        f"{misfit['background']:.0f}, on {wave.data_space.dim} data (critical at "
+        f"{LEVEL:.0%}: {critical:.0f}); the anomalies are {signal:.1%} of the "
+        f"data's rms"
+    )
+    # The misfit's gradient at the background, which the prior term does not
+    # touch there: -2 F'(m0)* R^-1 (d - F(m0)).
+    residual = (state.data - background_data) / state.noise_std**2
+    gradient = experiment.space.scale(
+        -2.0, wave.derivative(experiment.background).adjoint(residual)
+    )
+    print(
+        f"the misfit's gradient at the background in {time.perf_counter() - t0:.1f} s"
+    )
+
+    shot = survey.n_shots // 2
+    shape = survey.data_shape
+    gathers = [
+        state.data.reshape(shape)[shot],
+        (state.clean - background_data).reshape(shape)[shot],
+    ]
+    velocity = 1.0 / np.sqrt(experiment.truth)
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5))
+    image = section(axes[0, 0], survey, velocity, cmap="viridis")
+    fig.colorbar(image, ax=axes[0, 0], label="km/s", shrink=0.8)
+    for name, (x0, x1, z0, z1) in BOXES:
+        axes[0, 0].add_patch(
+            plt.Rectangle((x0, z0), x1 - x0, z1 - z0, fill=False, color="w", lw=1)
+        )
+        axes[0, 0].text(x0, z0 - 0.01, name, color="w", fontsize=7, va="bottom")
+    axes[0, 0].plot(
+        survey.source_x * survey.scale.h,
+        np.full(survey.n_shots, DEPTH_CELLS * survey.scale.h),
+        "*",
+        color="k",
+        ms=9,
+    )
+    sponge_outline(axes[0, 0], survey, color="w")
+    axes[0, 0].set_title("the true velocity, the boxes asked about, the shots")
+    limit = float(np.abs(gradient).max())
+    image = section(
+        axes[0, 1], survey, gradient, cmap="RdBu_r", vmin=-limit, vmax=limit
+    )
+    fig.colorbar(image, ax=axes[0, 1], shrink=0.8)
+    sponge_outline(axes[0, 1], survey)
+    axes[0, 1].set_title("the misfit's gradient at the background")
+    extent = (
+        survey.receiver_x[0] * survey.scale.h,
+        survey.receiver_x[-1] * survey.scale.h,
+        survey.times[-1],
+        survey.times[0],
+    )
+    for ax, gather, title in zip(
+        axes[1],
+        gathers,
+        ("the data of the middle shot", "what the anomalies add to it"),
+    ):
+        clip = np.percentile(np.abs(gather), 98)
+        ax.imshow(
+            gather, aspect="auto", cmap="Greys", vmin=-clip, vmax=clip, extent=extent
+        )
+        ax.set_xlabel("receiver x (km)")
+        ax.set_ylabel("time (s)")
+        ax.set_title(f"{title} (clipped at {clip:.2g})", fontsize=10)
+    fig.tight_layout()
+    save(fig, outdir / "data.png")
+    return {
+        "misfit": misfit,
+        "critical": critical,
+        "signal": signal,
+        "gradient": gradient,
+    }
+
+
+def run(
+    scale: Scale, /, *, seed: int, outdir: pathlib.Path, state: Setup | None = None
+) -> dict:
+    started = time.perf_counter()
+    print(f"\n=== B. Synthetic data ({scale.name} scale) ===")
+    if state is None:
+        state = setup(scale, seed=seed)
+    result = data_answer(state, outdir=outdir)
+    result["setup"] = state
+    print(f"B took {time.perf_counter() - started:.1f} s")
+    return result
+
+
+def main() -> None:
+    args = parse(__doc__)
+    run(
+        QUICK if args.quick else FULL,
+        seed=args.seed,
+        outdir=output_directory(args.quick, args.outdir),
+    )
+
+
+if __name__ == "__main__":
+    main()

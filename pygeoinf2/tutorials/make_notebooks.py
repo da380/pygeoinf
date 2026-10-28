@@ -61,11 +61,7 @@ EXTRAS = {
 DEFAULT_EXTRAS = "sphere"
 
 # What a Colab install cannot provide, said in the cell.
-NOTES = {
-    "12_writing_a_backend": (
-        "; MFEM is not installed, so the finite element section is skipped"
-    ),
-}
+NOTES: dict[str, str] = {}
 
 METADATA = {
     "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},

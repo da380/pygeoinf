@@ -530,7 +530,8 @@ class Layered(CoordinateDirectSum, HilbertModule):
 
         Returns:
             The operator into a Euclidean space, of one dimension for profiles
-            and intervals and one per direction for balls.
+            and intervals, one per direction for balls and one per angle for
+            disks.
 
         Raises:
             ValueError: if directions are given where there are none to give,

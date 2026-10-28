@@ -21,6 +21,10 @@ at a distance and leave no mark on the fields where they matter.
     position and zero is nowhere special; and, as
     :mod:`pygeoinf2.interval.radial`, functions of *radius* alone in a ball
     or a shell, under ``r^2 dr``.
+:mod:`pygeoinf2.disk`
+    fields of position in a disk or an annulus of the plane, under ``r dr``
+    and the circle's Fourier modes, the two-dimensional counterpart of the
+    ball.
 :mod:`pygeoinf2.ball`
     fields of position in a ball or an annulus, under ``r^2 dr`` and the area
     of the sphere.

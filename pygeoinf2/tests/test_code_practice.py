@@ -280,13 +280,11 @@ class TestDocstringsCarryTheContract:
 class TestTheNamespaceHasNoHoles:
     """A name that exists but cannot be imported from the package is a hole.
 
-    The re-review found five: ``MassWeightedSpace``, ``HilbertModule`` and
-    ``require_module`` reachable only as ``pygeoinf2.algebra.spaces.X``,
-    ``resolve_solver`` only as ``pygeoinf2.numerics.solvers.resolve_solver``,
-    and the MFEM backend's ``matern_measure`` — which one of the examples
-    imports — missing from its ``__all__``. The top-level namespace is the
-    interface; a class documented as the reason
-    ``from_formal_adjoint`` exists has to be in it.
+    The re-review found four: ``MassWeightedSpace``, ``HilbertModule`` and
+    ``require_module`` reachable only as ``pygeoinf2.algebra.spaces.X``, and
+    ``resolve_solver`` only as ``pygeoinf2.numerics.solvers.resolve_solver``.
+    The top-level namespace is the interface; a class documented as the
+    reason ``from_formal_adjoint`` exists has to be in it.
     """
 
     @staticmethod
@@ -334,10 +332,6 @@ class TestTheNamespaceHasNoHoles:
             (
                 "pygeoinf2.numerics",
                 ["resolve_solver", "weighted_chi2_cdf", "weighted_chi2_quantile"],
-            ),
-            (
-                "pygeoinf2.backends.mfem",
-                ["white_noise_load", "matern_measure"],
             ),
         ],
     )

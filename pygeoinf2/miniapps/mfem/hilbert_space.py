@@ -1,10 +1,11 @@
 """
-MFEM as a plain Hilbert space: this library conducts, MFEM computes.
+An MFEM finite element space as a plain Hilbert space: the library conducts,
+MFEM computes.
 
-:mod:`pygeoinf2.backends.mfem` presents a finite element space as a
+Its companion ``matrix_space`` presents a finite element space as a
 :class:`~pygeoinf2.algebra.spaces.CoordinateSpace`. It reads the mass matrix
 out of MFEM into SciPy, factorizes it there, and hands assembled forms over as
-Galerkin matrices — so once a form is assembled, this library does the linear
+Galerkin matrices — so once a form is assembled, the library does the linear
 algebra. That is the right arrangement for a modest serial problem, where a
 sparse factorization of the mass matrix is cheap and a dense Gram matrix is
 available for checking things.
@@ -25,7 +26,7 @@ goes through MFEM's own ``Operator`` interface —
 Nothing in it asks whether a vector is local or distributed, and nothing in
 it forms a matrix. That is the point: the same code over a
 ``ParFiniteElementSpace`` with ``HypreParMatrix`` operators is the MPI version,
-with this library orchestrating solves it never sees. The two things a
+with the library orchestrating solves it never sees. The two things a
 parallel space must supply are named in :class:`MfemDofSpace` — a reduced
 dot product and a global dimension — and nothing else changes. That path is
 *untested*: the design admits it, but it has not been run.
@@ -33,16 +34,16 @@ dot product and a global dimension — and nothing else changes. That path is
 What this arrangement costs is honesty about adjoints. An operator's adjoint
 on a mass-weighted space is ``M^-1 A^T M``; without a factorization every
 ``M^-1`` is an iterative solve, well conditioned and short, but a solve. The
-coordinate backend pays that once at construction; this one pays it per
+matrix form pays that once at construction; this one pays it per
 adjoint. For a PDE-constrained problem the PDE solves dominate either way.
 
-The construction is the core's own :class:`MassWeightedSpace` — the vectors
+The construction is the library's own :class:`MassWeightedSpace` — the vectors
 belong to :class:`MfemDofSpace`, a bare Euclidean space over true-dof vectors,
 and the finite element inner product is that space reweighted by the mass
 operator.
 
-Requires PyMFEM, which is an optional dependency; install it with the ``mfem``
-extra.
+Requires PyMFEM, which is the ``mfem`` extra of the package
+(``poetry install --extras mfem``); its wheels are built for Linux only.
 """
 
 from __future__ import annotations
@@ -54,16 +55,17 @@ from typing import TYPE_CHECKING, Any, Hashable, Literal
 import numpy as np
 from numpy.random import Generator
 
-from ..algebra.operators import LinearFunctional, LinearOperator
-from ..algebra.spaces import (
+from pygeoinf2.algebra.operators import LinearFunctional, LinearOperator
+from pygeoinf2.algebra.spaces import (
     EuclideanSpace,
     HilbertSpace,
     MassWeightedSpace,
     resolve_rng,
 )
-from ..numerics.solvers import ConvergenceError
-from ..traits import Traits
-from .mfem import (
+from pygeoinf2.numerics.solvers import ConvergenceError
+from pygeoinf2.traits import Traits
+
+from matrix_space import (
     _as_indices,
     _matern_parameters,
     _require_mfem,
@@ -71,7 +73,7 @@ from .mfem import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ..probability.gaussian import GaussianMeasure
+    from pygeoinf2.probability.gaussian import GaussianMeasure
 
 __all__ = [
     "MfemDofSpace",
@@ -132,7 +134,7 @@ class MfemDofSpace(HilbertSpace):
             finite_element_space: an ``mfem.FiniteElementSpace``.
             essential_dofs: true degrees of freedom held at zero, as an
                 ``mfem.intArray`` or any sequence of indices. See
-                :func:`pygeoinf2.backends.mfem.essential_dofs_of`.
+                :func:`matrix_space.essential_dofs_of`.
             dot: the dot product of two vectors. MFEM's serial
                 ``InnerProduct`` if omitted; a parallel space passes the
                 reducing one.
@@ -207,7 +209,7 @@ class MfemDofSpace(HilbertSpace):
         return self._essential.size > 0
 
     def _key(self) -> Hashable:
-        # As in the coordinate backend: the same FiniteElementSpace object and
+        # As in the matrix form: the same FiniteElementSpace object and
         # the same constraint make the same space.
         return (id(self._fes), self._essential.tobytes())
 
@@ -395,7 +397,7 @@ class MfemHilbertSpace(MassWeightedSpace):
     """A finite element space with the mass operator as its metric, and no
     coordinates.
 
-    The core's :class:`MassWeightedSpace` over :class:`MfemDofSpace`: the
+    The library's :class:`MassWeightedSpace` over :class:`MfemDofSpace`: the
     inner product is ``(M x, y)`` with ``M`` the mass operator MFEM assembled
     — fully, or partially so that no matrix exists at all — and ``M^-1`` is
     MFEM's conjugate gradients on it. The library sees ``Mult`` and a solve,
@@ -532,7 +534,7 @@ class MfemHilbertSpace(MassWeightedSpace):
         # The parent keys on the mass operator, whose identity is not
         # structural. Here the mass is determined by the element space, the
         # constraint and the assembly, so two constructions over the same
-        # FiniteElementSpace are the same space -- as in the coordinate backend.
+        # FiniteElementSpace are the same space -- as in the matrix form.
         return (self._base._key(), self._assembly)
 
     def __repr__(self) -> str:
@@ -847,18 +849,18 @@ def matern_measure(
 ) -> "GaussianMeasure":
     """A Matern random field by the SPDE method, with every solve MFEM's.
 
-    The same construction as :func:`pygeoinf2.backends.mfem.matern_measure`
+    The same construction as :func:`matrix_space.matern_measure`
     — ``(I - div Theta grad)^a u == eta W`` — on a space with no coordinates:
     the operator is a form MFEM applies, its inverse is MFEM's solver on the
     same system, and the white noise is MFEM's integrator. The measure gets
     its covariance ``eta^2 A^-2a``, its factor ``eta S^a`` and its precision
     ``A^2a / eta^2`` as compositions of those, and nothing is assembled by
-    this library at all.
+    the library at all.
 
     Args:
         space: the finite element space, carrying any essential conditions.
         smoothness: the Matern ``nu``; ``(nu + d/2) / 2`` must be a positive
-            integer, as for the coordinate backend.
+            integer, as for the matrix form.
         correlation_length: one length, or one per dimension.
         rotation: the anisotropy's rotation angle, two dimensions only.
         amplitude: a scale on the field.
@@ -878,7 +880,7 @@ def matern_measure(
             space, which PyMFEM 4.8 computes wrongly.
     """
     mfem = _require_mfem()
-    from ..probability.gaussian import GaussianMeasure
+    from pygeoinf2.probability.gaussian import GaussianMeasure
 
     dimension = space.finite_element_space.GetMesh().Dimension()
     theta, normalization, order = _matern_parameters(

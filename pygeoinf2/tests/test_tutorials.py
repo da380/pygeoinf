@@ -33,7 +33,6 @@ def test_the_tutorials_are_discovered():
 OPTIONAL: dict[str, str | tuple[str, ...]] = {
     "10_coupled_problems": "planetmodel",
     "11_varying_structure": "planetmodel",
-    "12_writing_a_backend": "mfem",
 }
 
 # Tutorials whose cost is part of the lesson, run with the slow marker.

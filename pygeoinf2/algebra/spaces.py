@@ -64,9 +64,6 @@ def resolve_rng(rng: Generator | None) -> Generator:
     return default_rng() if rng is None else rng
 
 
-# The former private spelling, kept while the backends still import it.
-
-
 class HilbertSpace[V](ABC):
     """A real Hilbert space whose vectors are opaque objects of type ``V``.
 

@@ -39,10 +39,10 @@ interactive = ["plotly>=5.0.0"]
 # The plotly engine of pygeoinf2's plot_set: three-dimensional sets as figures
 # that can be turned by hand.
 plot3d = ["plotly>=5.18,<7"]
-# Foreign vector and matrix backends, adapted in pygeoinf2.backends. Used only
-# by the examples and their tests, which skip when they are absent. mfem ships
-# Linux-only wheels and its sdist refuses to build on Windows, so the extra is
-# marked for Linux; elsewhere `--all-extras` installs nothing and the tests skip.
+# PyMFEM, for the MFEM mini-app (pygeoinf2/miniapps/mfem) and its test, which
+# skips without it; the library itself does not use it. mfem ships Linux-only
+# wheels and its sdist refuses to build on Windows, so the extra is marked for
+# Linux; elsewhere `--all-extras` installs nothing and the test skips.
 mfem = ["mfem>=4.8.0; sys_platform == 'linux'"]
 
 [tool.poetry]
