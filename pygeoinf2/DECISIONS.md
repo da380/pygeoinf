@@ -2599,6 +2599,43 @@ measurable; and a cross-file import of one ray problem builder is left
 where it is. One real overlap, a stochastic re-check inside the test of
 the spectral route, is trimmed.
 
+**D-174. No route refuses or reroutes by dimension; a rank-deficient
+family is walked to a floor** (2026-10-28, David: "the primal rejects
+data-space formalism when data outnumber the model -- we definitely want
+to remove this internal default"; found by tracing part E of the
+point-data mini-app before running it). Two places keyed on the data
+outnumbering the model: `Primal.support` refused the data-space
+formalism outright, and `Search.feasibility` and `Search.inclusion` sent
+the case to the general-tier fit, a Newton-CG minimization with
+unpreconditioned inner solves on the full forward operator, which is
+what ran for minutes at the mini-app's middle scale while the primal's
+refusal never came into view. Both are gone. What the dimension stood
+for is kept where it is true: on a family with more data than model
+coefficients (or than the model less the property, restricted to a
+value) the member `A C A* + t R` is singular at `t == 0`, and a walk
+there, which a slack prior or an unfittable data set asks for, solves
+singular members and returns either a breakdown or a bracket that holds
+but says nothing (measured: an outer value of 6.9 against a limit of
+-1.67). So the misfit search carries `floor=` (`1e-6` of the family's
+scale `(A C A* d, d) / (R d, d)`) as the root find's `minimum`, applied
+only to a rank-deficient family, and a walk that reaches it without a
+fit is reported as no fit, exact to the order of the floor; a family of
+full rank stays well conditioned as the multiplier vanishes and is
+walked without one, which the vanishing-noise parity tests need. The
+primal's existing `floor` (now `1e-6`, from `1e-4`) is the lower limit
+of its walk on such a family too: the inner value is attained exactly
+there and the outer value sits above the limit by a few hundred times
+the floor, and the model-space formalism gives the limit where that
+matters; the test that pinned the refusal now pins this. The sweep's
+workers are threads (D-151), so the dense coarse surrogate is shared,
+not pickled. Measured on the middle scale with 5000 points against 4225
+coefficients, where the old route did not finish in five minutes: the
+emptiness test in 0.5 s and a primal direction in 3.2 s, about ten
+iterations per solve with the Woodbury family preconditioner. Also seen
+and left: CG's curvature refusal is absolute (`(p, A p) <= 0`), which on
+a member singular to rounding reads as a false claim of definiteness;
+the floor keeps the routes away from such members.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

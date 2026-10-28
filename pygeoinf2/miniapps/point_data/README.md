@@ -50,8 +50,8 @@ build up from the simplest:
 Two scales. `--quick` is degree 32, 400 points and a length scale of 0.15,
 and runs every part in about 20 seconds; it is what the test suite runs. The
 full scale is degree 128 (16 641 coefficients on a 258 by 258 grid), 20 000
-points and the length scale above, and runs every part in RUNTIME. Both
-are seeded.
+points and the length scale above, and runs every part in about seven
+minutes. Both are seeded.
 
 ## How to run
 
@@ -90,10 +90,10 @@ pyshtools 4.14, finufft for the point evaluations.
 
 | solver | iterations | converged | build `A`/`A*` | solve `A`/`A*` | build s | solve s |
 |---|---|---|---|---|---|---|
-| plain CG, capped at 500 | 500 | no, residual 0.14 | 0/0 | 500/501 | 0.0 | 28.7 |
-| Woodbury surrogate, degree 48 | 16 | yes | 0/0 | 16/17 | 2.3 | 1.5 |
+| plain CG, capped at 500 | 500 | no | 0/0 | 500/501 | 0.0 | 14.6 |
+| Woodbury surrogate, degree 48 | 16 | yes | 0/0 | 16/17 | 1.1 | 0.9 |
 
-The capped plain solve is 1.3e-3 away from the preconditioned answer in
+The capped plain solve is 1.8e-3 away from the preconditioned answer in
 relative norm, and it was not going to arrive: the data resolve the field to
 about degree 55 (the prior's spectrum against noise of 0.1 at 20 000
 points), some three thousand modes, and that is the number of distinct
@@ -115,4 +115,64 @@ scale) the resolved modes numbered about twelve thousand, a degree-32
 surrogate still left 131 iterations, and a posterior sample cost 26 s; that
 is why the full scale is degree 128.
 
-RESULTS
+## The answers at the full scale
+
+The same three averages, by the three kinds of answer; the truth is what
+the field was drawn with.
+
+| region | truth | C: posterior mean, 95% interval | D: minimum norm, 2 propagated sd | E: certified bracket |
+|---|---|---|---|---|
+| North Pacific | -0.562 | -0.563, [-0.571, -0.555] | -0.562 ± 0.008 | [-0.956, -0.168] |
+| South Atlantic | +0.845 | +0.844, [+0.836, +0.852] | +0.842 ± 0.008 | [+0.446, +1.242] |
+| Africa | +0.593 | -0.038, [-0.742, +0.667] | +0.035 ± 0.070 | [-46.4, +46.5] |
+
+- **C** (36 s): the posterior mean fits the data to a chi-squared of 16 666
+  on 20 000; the pointwise standard deviation is 0.04 under the oceans and
+  0.87 to 0.99 under the continents, where it returns to the prior's 1.0;
+  the two ocean averages are pinned to ±0.004 and Africa's is as wide as
+  the prior's.
+- **D** (65 s): least squares at a guessed damping of 10 is three times
+  better fitted than the data warrant; the discrepancy principle chooses a
+  damping of 48.8 in 7 misfit evaluations and 87 CG iterations in all.
+  Its propagated error on Africa's average, 0.035, says nothing about the
+  bias there, -0.52, which only the truth reveals: the estimate sees a
+  unit bump under the Pacific at 0.99 of its height and one under Africa
+  at 0.17.
+- **E** (189 s): with the prior hardened to its 95% ball, radius 47.9 in
+  `H^4`, and the noise to its 95% ball, the certified brackets hold the
+  truth in every region and the polytope of the six half-spaces contains
+  the true averages. A norm bound admits far more than the Gaussian prior:
+  Africa's bracket is ±46, the whole range the ball allows. The six
+  directions took 2662 forward and 2818 adjoint applications in eight
+  threads, 189 s against about 25 s for one direction alone: the threads
+  bought nothing here, because a solve is a chain of short calls that
+  hold the interpreter lock between them.
+- **F** (128 s): under a prior 1.5 times larger in the south and 0.5
+  times in the north, the ocean averages do not move, Africa's interval
+  shrinks with its prior, and the standard deviation under central Asia
+  halves with the prior's amplitude there; the Woodbury surrogate still
+  uses the stationary prior and the solves take 52 applications instead
+  of 18.
+
+## What the app shows
+
+- One operator, every method: the data-space normal operator of B is what
+  C inverts once and once per sample, and its damped relatives are what D
+  and E sweep. The same surrogate on a sphere of degree 48 serves them all
+  through the Woodbury identity: 16 iterations for the Bayesian solve, ten
+  or so per member of a damped family.
+- At this scale nothing finishes without that preconditioner, and no
+  spectral deflation of a workable rank would do: the data resolve some
+  three thousand modes.
+- The three answers agree where the data speak and say different things
+  where they do not. Over Africa the posterior interval is the prior's,
+  the point estimate's error budget is small and wrong, and the set
+  answer is the norm bound's full width.
+- The model space is `H^4` with the identity as the prior covariance, so
+  that the point and set methods damp towards the same norm the Bayesian
+  prior uses; under an `H^2` norm their families resolve far beyond the
+  surrogate and the sweeps crawl.
+- The data outnumber the model coefficients, which makes the damped
+  family singular at a multiplier of zero; the library's searches and the
+  primal walk the multiplier only down to a floor on such a family, and
+  that is what makes E a three-minute part rather than a stalled one.

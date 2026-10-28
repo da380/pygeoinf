@@ -1088,7 +1088,10 @@ class Search(Algorithm):
     downdate ``C − C T*(T C T*)⁻¹ T C``, applied matrix-free, and the data
     are shifted by ``A ũ_p``. That search is assembled in the data space,
     where the restriction is the downdate; the formalism applies to the
-    feasibility search.
+    feasibility search. Either formalism serves whatever the two
+    dimensions: the family is positive definite at every positive
+    multiplier, the search probes no other, and a range walked to its end
+    without a fit is reported as no fit.
     """
 
     name = "search"
@@ -1102,6 +1105,7 @@ class Search(Algorithm):
         max_iterations: int = 60,
         rtol: float = 1e-6,
         solver: LinearSolver | None = None,
+        floor: float = 1e-6,
     ) -> None:
         """
         Args:
@@ -1109,20 +1113,40 @@ class Search(Algorithm):
             max_iterations: the root find's budget.
             rtol: the root find's bracket tolerance.
             solver: how the family is inverted; the set's solver if omitted.
+            floor: the smallest multiplier the search probes when the
+                data-space family is rank-deficient (more data than the
+                model, or than the model less the property when restricted
+                to a value), as a fraction of the family's scale
+                ``(A C A* d, d) / (R d, d)`` on the data it fits. The misfit
+                falls as the multiplier does and tends to its infimum at
+                zero, where such a family is singular; a walk that reaches
+                the floor without a fit reports that none exists, which is
+                exact to the order of the floor. A family of full rank
+                stays well conditioned as the multiplier vanishes and is
+                walked without a floor.
         """
         if formalism not in ("model_space", "data_space"):
             raise ValueError(
                 f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
             )
+        if floor < 0.0:
+            raise ValueError(f"The floor must be non-negative, got {floor}.")
         self._formalism = formalism
         self._max_iterations = max_iterations
         self._rtol = rtol
         self._solver = solver
+        self._floor = floor
 
     @property
     def settings(self) -> tuple[Any, ...]:
-        """The formalism, the budget, the tolerance and the solver."""
-        return (self._formalism, self._max_iterations, self._rtol, id(self._solver))
+        """The formalism, the budget, the tolerance, the solver and the floor."""
+        return (
+            self._formalism,
+            self._max_iterations,
+            self._rtol,
+            id(self._solver),
+            self._floor,
+        )
 
     def accepts(self, structure: FeasibleStructure) -> bool:
         """Two quadratic sets, or two smooth level functions; the noise not a point."""
@@ -1169,7 +1193,12 @@ class Search(Algorithm):
         )
 
     def _search(
-        self, structure: FeasibleStructure, family: _QuadraticFamily, shifted: Any
+        self,
+        structure: FeasibleStructure,
+        family: _QuadraticFamily,
+        shifted: Any,
+        *,
+        restricted: bool = False,
     ) -> tuple[RootResult | None, Any, float]:
         """The misfit search on shifted data: ``(root, model, misfit)``, the root None when nothing need be solved."""
         data_space = structure.data_space
@@ -1195,14 +1224,40 @@ class Search(Algorithm):
                 iterations=result.iterations,
             )
 
+        minimum = 0.0
+        rank = structure.model_space.dim - (
+            structure.property_space.dim if restricted else 0
+        )
+        if (
+            self._floor > 0.0
+            and family.formalism == "data_space"
+            and data_space.dim > rank
+        ):
+            # A rank-deficient family is singular at a multiplier of zero.
+            # The family's scale on the data it fits; the walk stops at this
+            # fraction of it rather than probing a singular member.
+            weight = float(
+                data_space.inner_product(family.noise_covariance(shifted), shifted)
+            )
+            if weight > 0.0:
+                image = family.forward(
+                    family.covariance(family.forward.adjoint(shifted))
+                )
+                minimum = (
+                    self._floor
+                    * float(data_space.inner_product(image, shifted))
+                    / weight
+                )
         try:
             root = monotone_root(
                 evaluate,
                 1.0,
                 decreasing=False,
+                initial=max(1.0, 10.0 * minimum),
                 max_iterations=self._max_iterations,
                 rtol=self._rtol,
                 atol=0.0,
+                minimum=minimum,
             )
         except ConvergenceError as error:
             raise ValueError(
@@ -1434,30 +1489,10 @@ class Search(Algorithm):
         weights = pieces["inverse"] @ space.to_components(value)
         return T.adjoint(space.from_components(weights)), pieces["projector"]
 
-    def _singular_by_dimension(
-        self, structure: FeasibleStructure, *, restricted: bool
-    ) -> bool:
-        """Whether the data-space family has no full rank at ``γ == 0``.
-
-        ``A C A*`` on the data space has rank at most the model's dimension,
-        and restricted to the kernel of ``T`` at most that less the
-        property's; data beyond that make the family singular as the
-        multiplier vanishes, and the search runs the model-space fit
-        instead.
-        """
-        if self._formalism != "data_space":
-            return False
-        rank = structure.model_space.dim
-        if restricted:
-            rank -= structure.property_space.dim
-        return structure.data_space.dim > rank
-
     def feasibility(self, feasible: "FeasiblePropertySet", /) -> InclusionResult:
         """The smallest prior level over the models fitting the data."""
         structure = feasible.structure
-        if not structure.quadratic or self._singular_by_dimension(
-            structure, restricted=False
-        ):
+        if not structure.quadratic:
             return self._general_fit(feasible, structure.model_space.zero(), None)
         shifted = structure.shifted_data(feasible.data)
         _check_floor(structure, shifted)
@@ -1477,9 +1512,7 @@ class Search(Algorithm):
     ) -> InclusionResult:
         """The smallest prior level over the models with this value fitting the data."""
         structure = feasible.structure
-        if not structure.quadratic or self._singular_by_dimension(
-            structure, restricted=True
-        ):
+        if not structure.quadratic:
             anchor, projector = self._general_anchor(structure, value)
             return self._general_fit(feasible, anchor, projector)
         data_space, space = structure.data_space, structure.property_space
@@ -1498,7 +1531,9 @@ class Search(Algorithm):
             structure.shifted_data(feasible.data), structure.forward(lifted)
         )
         family = self._family(structure, restricted=True)
-        root, kernel_model, misfit = self._search(structure, family, shifted)
+        root, kernel_model, misfit = self._search(
+            structure, family, shifted, restricted=True
+        )
         return self._result(
             structure,
             root,
@@ -1627,7 +1662,7 @@ class Primal(Algorithm):
         tolerance: float = 1e-4,
         max_iterations: int = 100,
         solver: LinearSolver | None = None,
-        floor: float = 1e-4,
+        floor: float = 1e-6,
     ) -> None:
         """
         Args:
@@ -1643,6 +1678,11 @@ class Primal(Algorithm):
                 for the undamped member, which a direct or spectral solver
                 inverts exactly and conjugate gradients may not; the
                 result does not depend on it beyond the solver's accuracy.
+                On a family with more data than model coefficients it is
+                also where the walk of the multiplier stops, since the
+                member is singular at zero; a slack prior then gives an
+                outer value above the limit by a few hundred times the
+                floor, and the model-space formalism gives the limit.
         """
         if formalism not in ("model_space", "data_space"):
             raise ValueError(
@@ -1681,9 +1721,17 @@ class Primal(Algorithm):
     ) -> SupportResult:
         """The support in a direction, by minimizing ``φ(γ)``.
 
+        Either formalism serves whatever the two dimensions: in the data
+        space the kernel part of a direction is taken at the floor
+        multiplier rather than at zero, where the family is singular when
+        the data outnumber the model, and on such a family the walk of the
+        multiplier stops at the floor too, so a slack prior gives a bound
+        within the order of the floor of the limit rather than a solve of a
+        singular member. The model-space formalism reaches the limit
+        exactly where that matters.
+
         Raises:
-            ValueError: if the set is empty, or the data-space family is
-                singular and the model-space formalism is needed.
+            ValueError: if the set is empty.
         """
         structure = feasible.structure
         model_space, data_space, space = (
@@ -1735,12 +1783,6 @@ class Primal(Algorithm):
                 message="the data constraint is slack",
             )
 
-        if self._formalism == "data_space" and data_space.dim > model_space.dim:
-            raise ValueError(
-                "The data outnumber the model, so the data-space family is "
-                "singular at γ = 0 and the data-only bound is out of reach; "
-                "use Primal(formalism='model_space')."
-            )
         family = self._family(structure)
         rhs_data = family.right_hand_side(shifted)
         data_term = float(data_space.inner_product(P(shifted), shifted))
@@ -1842,11 +1884,25 @@ class Primal(Algorithm):
 
         # The warm start is per worker: a sweep hands each thread a
         # contiguous run of directions, whose roots are neighbours.
+        # On a rank-deficient family (more data than model coefficients) the
+        # member is singular at a multiplier of zero, and a walk there, which
+        # a slack prior asks for, returns a bracket that holds but says
+        # nothing. The walk stops at the floor instead, where the kernel
+        # part was taken: the outer value there is a bound, within the order
+        # of the floor of the limit.
+        lower = (
+            float(np.log(gamma_floor))
+            if self._formalism == "data_space"
+            and gamma_floor > 0.0
+            and data_space.dim > model_space.dim
+            else None
+        )
         log_gamma, value, converged = _minimize_unimodal(
             phi,
             feasible.cached(("primal", "start", threading.get_ident()), lambda: [0.0]),
             tolerance=self._tolerance,
             max_iterations=self._max_iterations,
+            lower=lower,
         )
         gamma = float(np.exp(log_gamma))
         if log_gamma <= -_LIMIT + 2.0 and self._formalism == "model_space":
@@ -2118,17 +2174,19 @@ def _minimize_unimodal(
     tolerance: float,
     max_iterations: int,
     limit: float = _LIMIT,
+    lower: float | None = None,
 ) -> tuple[float, float, bool]:
     """Minimize a unimodal function of one variable from a start, by bracketing then Brent.
 
     *start* is a one-element list carrying the previous minimizer, updated
     on return so that the next direction starts there. The bracket is found
-    by walking downhill with a growing step; a walk that reaches ``±limit``
-    reports that end as the minimizer.
+    by walking downhill with a growing step; a walk that reaches ``±limit``,
+    or *lower* when one is given, reports that end as the minimizer.
     """
     from scipy.optimize import minimize_scalar
 
-    x = start[0]
+    floor = -limit if lower is None else max(lower, -limit)
+    x = max(start[0], floor)
     step = 0.5
     calls = [0]
 
@@ -2137,19 +2195,19 @@ def _minimize_unimodal(
         return f(value)
 
     fx = g(x)
-    lo, hi = x - step, x + step
+    lo, hi = max(x - step, floor), x + step
     flo, fhi = g(lo), g(hi)
     while not (fx <= flo and fx <= fhi):
         if flo < fx:
             hi, fhi, x, fx = x, fx, lo, flo
-            lo = x - step
+            lo = max(x - step, floor)
             flo = g(lo)
         else:
             lo, flo, x, fx = x, fx, hi, fhi
             hi = x + step
             fhi = g(hi)
         step *= 1.6
-        if abs(x) >= limit:
+        if x >= limit or x <= floor:
             # The function keeps decreasing to the end of the range: that
             # end is the minimizer, as far as this search can tell.
             start[0] = x

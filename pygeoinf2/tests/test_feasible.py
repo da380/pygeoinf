@@ -651,9 +651,7 @@ class TestTheSearch:
 
 
 class TestKnobs:
-    def test_the_formalisms_agree_and_overdetermined_data_need_the_model_space(
-        self, rng
-    ):
+    def test_a_slack_prior_on_overdetermined_data_needs_the_model_space(self, rng):
         from pygeoinf2.geometry.feasible import Primal, Search
 
         model, data_space, prop = (
@@ -679,12 +677,19 @@ class TestKnobs:
             noise=Ball(data_space, radius=0.5),
         )
         q = prop.basis_vector(0)
-        with pytest.raises(ValueError, match="model_space"):
-            feasible.support(q)
         by_model = feasible.support_result(q, via=Primal(formalism="model_space"))
         assert by_model.converged
         # The prior is slack: the data alone bound the property, at γ == 0.
         assert by_model.multipliers[0] <= 1e-6 * by_model.multipliers[1]
+        # The data-space family (ten data, six coefficients) is singular
+        # there, so its walk stops at the floor and returns a bracket that
+        # holds the limit to the order of the floor; nothing refuses by
+        # dimension.
+        by_data = feasible.support_result(q, via=Primal(formalism="data_space"))
+        assert by_data.converged
+        assert by_data.inner <= by_model.value + 1e-9 <= by_data.value + 1e-9
+        assert by_data.inner == pytest.approx(by_model.value, rel=1e-5)
+        assert by_data.value == pytest.approx(by_model.value, rel=1e-2)
         # The truth fits the data, so its property is admitted; a value the
         # data pin down away from it is excluded, with a finite certificate.
         admitted = feasible.inclusion_result(
@@ -1127,3 +1132,71 @@ class TestTheLinearCertificateOperator:
         d = data.random(rng=rng)
         got = target.codomain.to_components(X(d))
         assert got == pytest.approx(expected @ data.to_components(d), rel=1e-7)
+
+
+class TestMoreDataThanModel:
+    """With more data than model coefficients the data-space family is
+    singular at a multiplier of zero and positive definite at every other,
+    and the routes probe no other: the feasibility search, the inclusion
+    search and the primal all run on the family in the data space, agree
+    with the model-space formalism, and report an unfittable data set as
+    empty rather than refusing by dimension."""
+
+    @pytest.fixture
+    def tall(self, rng):
+        model = make_dense_metric_space(3)
+        data = WeightedSpace(rng.uniform(0.5, 2.0, 7))
+        property_space = EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(7, 3)), form="galerkin"
+        )
+        target = LinearOperator.from_matrix(
+            model, property_space, rng.normal(size=(2, 3)), form="galerkin"
+        )
+        raw = model.random(rng=rng)
+        truth = model.scale(1.5 / model.norm(raw), raw)
+        noise = Ball(data, radius=0.2)
+        small = data.scale(0.05 / data.norm(raw := data.random(rng=rng)), raw)
+        return model, forward, target, truth, data.add(forward(truth), small), noise
+
+    def test_the_two_formalisms_agree(self, tall):
+        from pygeoinf2.geometry.feasible import Primal, Search
+
+        model, forward, target, truth, data, noise = tall
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        assert not feasible.is_empty(via=Search(formalism="data_space"))
+        assert not feasible.is_empty(via=Search(formalism="model_space"))
+        in_data = feasible.feasibility_result(via=Search(formalism="data_space"))
+        in_model = feasible.feasibility_result(via=Search(formalism="model_space"))
+        assert in_data.level == pytest.approx(in_model.level, rel=1e-5)
+        for q in directions(target.codomain):
+            data_side = feasible.support_result(q, via=Primal(formalism="data_space"))
+            model_side = feasible.support_result(q, via=Primal(formalism="model_space"))
+            # The inner value is attained either way; the outer one sits
+            # above the limit by the order of the primal's floor where the
+            # prior is slack.
+            assert data_side.inner == pytest.approx(model_side.value, rel=1e-5)
+            assert data_side.value == pytest.approx(model_side.value, rel=1e-2)
+            assert data_side.inner <= model_side.value + 1e-9 <= data_side.value + 1e-9
+        p = target(truth)
+        assert feasible.admits(p)
+        assert feasible.inclusion_level(p, via=Search(formalism="data_space")) == (
+            pytest.approx(
+                feasible.inclusion_level(p, via=Search(formalism="model_space")),
+                rel=1e-5,
+            )
+        )
+
+    def test_an_unfittable_data_set_is_empty_in_the_data_space(self, tall, rng):
+        from pygeoinf2.geometry.feasible import Search
+
+        model, forward, target, truth, data, noise = tall
+        space = forward.codomain
+        far = space.add(data, space.scale(50.0 / space.norm(data), data))
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=0.1), far, noise=noise
+        )
+        assert feasible.is_empty(via=Search(formalism="data_space"))
+        assert feasible.is_empty(via=Search(formalism="model_space"))

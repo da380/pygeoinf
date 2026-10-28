@@ -158,17 +158,30 @@ into 4 and 1.
    elsewhere in the plan are the more interesting ones. Extension, optional and heavy: normal-mode
    eigenfrequencies through specnm, with its radial sensitivity kernels as
    the derivative.
-3. **Ray tomography in a spherical Earth** (later). PREM reference rays by
-   the radial integrals, in the mini-app's own module, deliberately not
+3. **Ray tomography in a spherical Earth** (after 2). PREM reference rays
+   by the radial integrals, in the mini-app's own module, deliberately not
    library code: the demonstration of how a user brings a forward problem
-   and wraps it as a path-integral operator on the `ball` space through
-   point evaluation at the ray nodes, the adjoint the library's own. A toy
-   catalogue of a few hundred paths, a 3-D slowness perturbation, the
-   posterior and its resolution, then the point and set answers. Extension:
-   nonlinear tomography in the same geometry, rays bent in the perturbed
-   model, at a toy number of paths.
-4. **Realistic priors by evidence maximisation** (after 3; pyslfp-inspired,
-   independent of it). Priors for ice-sheet thickness learned from
+   and wraps it as a path-integral operator through point evaluation at
+   the ray nodes, the adjoint the library's own. A toy catalogue of a few
+   hundred paths, the posterior and its resolution, then the point and set
+   answers. Extension: nonlinear tomography in the same geometry, rays bent
+   in the perturbed model, at a toy number of paths. **The test-bed is the
+   2-D disk** (David, 2026-10-28): the same problem in a disk with an
+   Earth-like radial structure, cheaper, and its figures show what sparse
+   rays through a 3-D ball would not; the 3-D ball version follows on the
+   same code. That needs a disk space in `spectral_element`, the ball's
+   construction with the circle's Fourier modes in place of the spherical
+   harmonics (regular at the centre: the degree-`m` part goes like
+   `r^|m|`), which does not exist yet and is a small, worthwhile extension
+   to build first. Both the disk and the ball have more model coefficients
+   than a toy catalogue has rays, so the data-space formalism and the
+   floor of D-174 are the ones in play.
+4. **Realistic priors by evidence maximisation** (post-release, and to be
+   planned; David, 2026-10-28: it may be dropped or folded into pyslfp,
+   where it is in context; a simpler evidence-maximisation problem, say a
+   time series with a stationary covariance and a few hyperparameters
+   learned from one record, may be the better mini-app). As first
+   sketched, pyslfp-inspired and independent of it: Priors for ice-sheet thickness learned from
    synthetic climate-model fields: the Bayesian evidence
    (`GaussianPosterior.log_normalizer`) as a function of a few
    hyperparameters, maximised; non-stationarity through push-forwards of a
@@ -184,10 +197,16 @@ into 4 and 1.
    the Laplace Gaussian where the Gaussian is visibly wrong.
 7. **MFEM as a mini-app, not a backend** (David, 2026-10-28, to be
    decided). The MFEM backend now in the core (`backends/mfem`, D-96) would
-   become a mini-app in the spirit of 9: a mesh, a bilinear form and a
-   finite-element inverse problem, linking to the PyMFEM Python library.
-   A native C++ binding of MFEM itself is overkill (David, later the same
-   day): PyMFEM only. Open: what the core keeps (the `backends` contract
+   become a mini-app in the spirit of 9, linking to the PyMFEM Python
+   library; a native C++ binding of MFEM itself is overkill (David, later
+   the same day). **The form of the wrapping** (David, 2026-10-28 evening):
+   not a space that wraps an MFEM function space, but an *operator*
+   between the library's own spaces, a periodic box from
+   `symmetric_space` say, whose action maps the field into MFEM, solves a
+   system there and maps the result back; the adjoint is the adjoint of
+   the mapping (its transpose with the two Gram factors) composed with the
+   transposed or, for a symmetric system, the same solve, and the check
+   ladder proves it. Another way of wrapping than 9's, worth showing. Open: what the core keeps (the `backends` contract
    of CURRENT_STATE §6 and the no-array test of D-169 are what the library
    promises; the MFEM-specific code is a user of it, not part of it),
    which tests move with it, and whether the `mfem` extra stays in
@@ -203,9 +222,19 @@ into 4 and 1.
    Newton-CG run on a real nonlinear forward. Hits the MPI goal and the
    nonlinear-at-scale goal at once; the model is slowness squared on the
    grid under a Sobolev-type prior from the library's box space, the data
-   receiver traces. The library sees one process: under MPI the vectors
-   live on rank 0 and the operator's application scatters and gathers.
-   To be planned after 1 to 3; the largest build on this list.
+   receiver traces. The second-order adjoint needs the forward wavefield:
+   simple checkpointing, since the simulations are not large (David,
+   2026-10-28; without absorbing boundaries the field could instead be
+   played back in time, or the boundary fields recorded and added in, but
+   checkpointing is the plain route). The library sees one process: under
+   MPI the vectors live on rank 0 and the operator's application scatters
+   and gathers. A stretch goal, raised by David: a genuinely distributed
+   vector space, each rank holding its part, the inner product an
+   all-reduce, every rank running the same inference script in lockstep;
+   the contract of CURRENT_STATE §6 and the no-array test of D-169 are
+   what make that possible, and a space without coordinates (as the opaque
+   test double) is what it would be. To be planned after 1 to 3; the
+   largest build on this list.
 9. **A vector backend in C++** (DONE 2026-10-28, D-169): `cpp_backend/`,
    the vector type and sparse operators in C++ behind nanobind, a
    finite-element mass matrix as the Gram, the check ladder and the inverse
