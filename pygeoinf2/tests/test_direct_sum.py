@@ -532,14 +532,12 @@ class TestBlocksDoNotAllocateForNothing:
             applications.append(1)
             return original(self, x)
 
-        _Zero._value = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(_Zero, "_value", counting)
             x = (space.random(rng=rng), space.random(rng=rng))
             BlockLinearOperator([[identity, zero], [zero, identity]])(x)
             RowLinearOperator([identity, zero])(x)
             ColumnLinearOperator([identity, zero]).adjoint(x)
-        finally:
-            _Zero._value = original
         assert applications == []
 
     def test_the_result_does_not_alias_the_argument(self, rng):
@@ -591,3 +589,19 @@ class TestCoordinateDirectSumIsPublic:
         assert tagged == plain and plain == tagged
         assert hash(tagged) == hash(plain)
         assert len({plain, tagged}) == 1
+
+
+class TestTheBlockGrid:
+    def test_blocks_is_the_row_major_grid(self, rng):
+        X, Y = make_weighted_space(), EuclideanSpace(3)
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
+        operator = BlockOperator(
+            [[LinearOperator.identity(X), A.adjoint], [A, LinearOperator.identity(Y)]]
+        )
+        grid = operator.blocks
+        assert len(grid) == 2 and all(len(row) == 2 for row in grid)
+        for i in range(2):
+            for j in range(2):
+                assert grid[i][j] is operator.block(i, j)

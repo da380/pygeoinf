@@ -709,3 +709,38 @@ class TestPointConvention:
         distance = np.radians(half_angle) * RADIUS
         by_distance = lebesgue.geodesic_ball_average_operator([center], distance)
         assert by_distance(one)[0] == pytest.approx(1.0, rel=1e-6)
+
+
+class TestAcquisitionHelpers:
+    def test_clusters_partition_the_points(self, rng):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8)
+        points = X.stations(count=40, rng=rng)
+        clusters = X.cluster_points(points, radius=0.6)
+        covered = sorted(index for cluster in clusters for index in cluster)
+        assert covered == list(range(40))
+
+    def test_a_cluster_is_no_wider_than_its_radius_from_its_seed(self, rng):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8)
+        points = X.stations(count=30, rng=rng)
+        for cluster in X.cluster_points(points, radius=0.5):
+            seed = points[cluster[0]]
+            for index in cluster:
+                assert X.geodesic_distance(seed, points[index]) <= 0.5 + 1e-12
+
+    def test_paths_respect_a_minimum_separation(self, rng):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8)
+        paths = X.source_receiver_paths(
+            sources=5, receivers=4, minimum_separation=0.4, rng=rng
+        )
+        assert paths
+        assert all(X.geodesic_distance(a, b) > 0.4 for a, b in paths)
+        assert len(paths) < 20  # some pairs were dropped

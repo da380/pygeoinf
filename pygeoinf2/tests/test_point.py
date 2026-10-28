@@ -257,8 +257,8 @@ class TestDampedSolves:
             built.append(operator)
             return original(self, operator)
 
-        JacobiPreconditioner._invert = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(JacobiPreconditioner, "_invert", counting)
             vector = space.random(rng=rng)
             for damping in (1.0, 1.5, 2.0, 3.0):
                 solves.solve(damping, vector)
@@ -266,8 +266,6 @@ class TestDampedSolves:
             # Far enough away, and it must be rebuilt.
             solves.solve(1.0e6, vector)
             beyond = len(built)
-        finally:
-            JacobiPreconditioner._invert = original
         assert within == 1
         assert beyond == 2
 
@@ -1145,8 +1143,8 @@ class TestFamilyAwarePreconditioners:
             probed.append(normal)
             return original(self, normal)
 
-        NormalDiagonalPreconditioner._base_diagonal = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(NormalDiagonalPreconditioner, "_base_diagonal", counting)
             for damping in self.dampings():
                 solution = family.solve(damping, y).solution
                 assert data.norm(data.subtract(solution, exact[damping])) <= (
@@ -1157,8 +1155,6 @@ class TestFamilyAwarePreconditioners:
                 assert data.norm(data.subtract(swept, fresh[damping])) <= (
                     1e-12 * data.norm(y)
                 )
-        finally:
-            NormalDiagonalPreconditioner._base_diagonal = original
         assert len(probed) == 1
 
     def test_a_deflation_moves_with_the_damping(self, rng):
@@ -1212,8 +1208,8 @@ class TestFamilyAwarePreconditioners:
             deflations.append(operator)
             return original(self, operator)
 
-        SpectralPreconditioner._deflate = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(SpectralPreconditioner, "_deflate", counting)
             solves = DampedSolves(
                 base,
                 LinearOperator.identity(space),
@@ -1227,8 +1223,6 @@ class TestFamilyAwarePreconditioners:
                 solution = solves.solve(damping, y).solution
                 expected = np.linalg.solve(root @ root.T + damping * np.identity(40), y)
                 assert solution == pytest.approx(expected, rel=1e-7)
-        finally:
-            SpectralPreconditioner._deflate = original
         assert len(deflations) == 1
         assert solves._prepared is None  # the refresh rule never ran
 

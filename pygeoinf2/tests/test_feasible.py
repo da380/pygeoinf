@@ -22,7 +22,12 @@ from pygeoinf2.geometry import (
 from pygeoinf2.inference import BackusGilbertParker, LinearForwardProblem
 from pygeoinf2.traits import Traits
 
-from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
+from .conftest import (
+    WeightedSpace,
+    make_dense_metric_space,
+    make_weighted_space,
+    spd_matrix,
+)
 
 
 def directions(space):
@@ -35,8 +40,7 @@ def directions(space):
 
 def spd_operator(space, rng, *, scale=1.0):
     """A random positive definite operator and its inverse, metric and all."""
-    root = rng.normal(size=(space.dim, space.dim))
-    galerkin = scale * (root @ root.T + space.dim * np.identity(space.dim))
+    galerkin = scale * spd_matrix(rng, space.dim)
     traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
     precision = LinearOperator.from_matrix(
         space, space, galerkin, form="galerkin", traits=traits
@@ -318,8 +322,8 @@ class TestSharingAndCaching:
             builds.append(structure)
             return original(self, structure)
 
-        ClosedForm._build = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(ClosedForm, "_build", counting)
             feasible = FeasiblePropertySet(
                 forward, target, Ball(model, radius=3.0), data
             )
@@ -329,8 +333,6 @@ class TestSharingAndCaching:
                 sibling.support(q)
             feasible.contains(target(truth))
             sibling.is_empty()
-        finally:
-            ClosedForm._build = original
         assert len(builds) == 1
         assert feasible.structure is sibling.structure
 
@@ -1099,3 +1101,29 @@ class TestABudgetedRunStillCertifies:
             assert budgeted.inner <= reference.value + slack, route
             assert budgeted.value >= reference.value - reference.gap - slack, route
             assert budgeted.value >= budgeted.inner - slack, route
+
+
+class TestTheLinearCertificateOperator:
+    def test_it_is_the_regularized_resolution_of_the_property(self, setting, rng):
+        """``X == T C A* (A C A* + α R)^-1``, matrix-free, against the same
+        expression assembled in components on a dense model metric."""
+        from pygeoinf2.geometry.feasible import linear_certificate_operator
+
+        model, forward, target, _, _ = setting
+        data = forward.codomain
+        _, covariance = spd_operator(model, rng)
+        _, noise = spd_operator(data, rng, scale=0.1)
+        alpha = 0.7
+        X = linear_certificate_operator(
+            forward, target, covariance=covariance, error_covariance=noise, alpha=alpha
+        )
+        assert X.domain == data and X.codomain == target.codomain
+        A, T = forward.matrix(form="components"), target.matrix(form="components")
+        C, R = covariance.matrix(form="components"), noise.matrix(form="components")
+        gram_model, gram_data = model.gram_matrix(), data.gram_matrix()
+        # Hilbert adjoints in components: A* == G_m^-1 A^T G_d.
+        A_star = np.linalg.solve(gram_model, A.T @ gram_data)
+        expected = T @ C @ A_star @ np.linalg.inv(A @ C @ A_star + alpha * R)
+        d = data.random(rng=rng)
+        got = target.codomain.to_components(X(d))
+        assert got == pytest.approx(expected @ data.to_components(d), rel=1e-7)

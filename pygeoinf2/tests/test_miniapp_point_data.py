@@ -76,7 +76,11 @@ def app():
         modules["ocean_mask"].land_polygons()
     except Exception as error:  # noqa: BLE001 - whatever cartopy raises offline
         pytest.skip(f"The Natural Earth land polygons are not available: {error}")
-    return modules
+    yield modules
+    # The scripts import each other by their plain names, which were
+    # registered for the duration; nothing after this module may see them.
+    for name in modules:
+        sys.modules.pop(name, None)
 
 
 @pytest.fixture(scope="module")

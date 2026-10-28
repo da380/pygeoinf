@@ -305,11 +305,9 @@ class TestADiagonalMetricKnowsItsGramMatrix:
     def test_the_dense_log_determinant_never_builds_the_gram_matrix(
         self, rng, monkeypatch
     ):
-        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
         from pygeoinf2.numerics.functional_calculus import log_determinant
 
         space = make_weighted_space()
-        values = rng.uniform(1.0, 3.0, space.dim)
         # A non-diagonal operator on a diagonal-metric space, so the dense
         # route is the one taken and the metric correction is needed.
         root = rng.normal(size=(space.dim, space.dim))
@@ -327,7 +325,6 @@ class TestADiagonalMetricKnowsItsGramMatrix:
         assert log_determinant(operator, method="dense").value == pytest.approx(
             expected
         )
-        del values, DiagonalLinearOperator
 
 
 class TestMassWeightedSpace:
@@ -613,3 +610,33 @@ class TestCoordinateSelection:
             space.coordinate_selection([1, 1])
         with pytest.raises(ValueError, match="lie in"):
             space.coordinate_selection([4])
+
+
+class TestOrthogonalizationOnADenseMetric:
+    """The pieces a range finder extends a basis with, in the space's own
+    inner product: a residual orthogonal to the basis, and columns made
+    orthonormal against the Gram matrix rather than the dot product."""
+
+    def test_orthogonalize_against_leaves_a_residual_orthogonal_to_the_basis(self, rng):
+        space = make_dense_metric_space(5)
+        basis = space.orthonormal_basis([space.random(rng=rng) for _ in range(2)])
+        vector = space.random(rng=rng)
+        residual, after, before = space.orthogonalize_against(vector, basis)
+        for b in basis:
+            assert abs(space.inner_product(residual, b)) < 1e-12 * before
+        assert before == pytest.approx(space.norm(vector))
+        assert after == pytest.approx(space.norm(residual))
+        assert after <= before
+
+    def test_orthonormalize_columns_is_orthonormal_in_the_metric(self, rng):
+        space = make_dense_metric_space(5)
+        columns = rng.normal(size=(5, 3))
+        q, kept = space.orthonormalize_columns(columns, rtol=1e-10)
+        assert kept == [0, 1, 2]
+        gram = space.gram_matrix()
+        assert np.allclose(q.T @ gram @ q, np.identity(3), atol=1e-12)
+        # A dependent column is dropped and named.
+        dependent = np.column_stack([columns, columns[:, 0] + columns[:, 1]])
+        q, kept = space.orthonormalize_columns(dependent, rtol=1e-10)
+        assert kept == [0, 1, 2]
+        assert q.shape == (5, 3)

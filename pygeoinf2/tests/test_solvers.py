@@ -29,6 +29,8 @@ from .conftest import (
     make_weighted_space,
 )
 from .doubles import NoCoordinatesError, StrictSpace
+from .conftest import nonsymmetric
+from .conftest import positive_definite
 
 N = 12
 
@@ -1606,3 +1608,141 @@ class TestEverySolverRefusesWhatItHasNotBeenPromised:
         unclaimed = LinearOperator.from_matrix(X, X, spd(rng), form="components")
         with pytest.raises(ValueError, match=trait):
             solver(unclaimed)
+
+
+class TestGMRES:
+    def test_it_solves_a_nonsymmetric_system_exactly(self, rng):
+        X = EuclideanSpace(12)
+        operator, matrix = nonsymmetric(X, rng)
+        b = X.random(rng=rng)
+        result = GMRESSolver(rtol=1e-12, restart=X.dim)(operator).solve(b)
+        assert result.converged
+        assert result.iterations <= X.dim
+        assert np.allclose(result.solution, np.linalg.solve(matrix, b))
+
+    def test_it_works_on_a_weighted_space(self, rng):
+        """Coordinate-free: the Krylov basis is orthonormal in *this* metric."""
+        X = make_weighted_space()
+        operator, matrix = nonsymmetric(X, rng)
+        b = X.random(rng=rng)
+        result = GMRESSolver(rtol=1e-12, restart=X.dim)(operator).solve(b)
+        assert np.allclose(
+            X.to_components(result.solution),
+            np.linalg.solve(matrix, X.to_components(b)),
+        )
+
+    def test_restarting_still_converges(self, rng):
+        X = EuclideanSpace(12)
+        operator, matrix = nonsymmetric(X, rng)
+        b = X.random(rng=rng)
+        result = GMRESSolver(rtol=1e-12, restart=3, max_iterations=400)(operator).solve(
+            b
+        )
+        assert result.converged
+        assert result.iterations > X.dim  # restarting costs iterations
+        assert np.allclose(result.solution, np.linalg.solve(matrix, b))
+
+    def test_it_asks_nothing_of_its_operator(self):
+        assert GMRESSolver.requires == Traits.NONE
+
+    def test_a_nonsense_restart_is_refused(self):
+        with pytest.raises(ValueError, match="restart length"):
+            GMRESSolver(restart=0)
+
+
+class TestFlexibleCG:
+    def test_it_agrees_with_cg_on_a_fixed_preconditioner(self, rng):
+        """Polak-Ribiere and Fletcher-Reeves coincide exactly there.
+
+        Which is the point: the extra term measures the failure of an
+        assumption that a fixed preconditioner does not break.
+        """
+        X = make_weighted_space()
+        operator = positive_definite(X, rng)
+        b = X.random(rng=rng)
+        strict = CGSolver(rtol=1e-12)(operator).solve(b)
+        flexible = FlexibleCGSolver(rtol=1e-12)(operator).solve(b)
+        assert np.allclose(
+            X.to_components(strict.solution), X.to_components(flexible.solution)
+        )
+        assert abs(strict.iterations - flexible.iterations) <= 1
+
+    def test_it_converges_with_a_changing_preconditioner(self, rng):
+        X = make_weighted_space()
+        operator = positive_definite(X, rng)
+        inner = CGSolver(rtol=0.3, max_iterations=1, strict=False)(operator)
+        preconditioner = LinearOperator.from_callables(X, X, inner, adjoint=inner)
+        b = X.random(rng=rng)
+        with pytest.warns(RuntimeWarning, match="did not converge in 1 iteration"):
+            result = FlexibleCGSolver(
+                rtol=1e-10, preconditioner=preconditioner, strict=False
+            )(operator).solve(b)
+        assert X.norm(X.subtract(operator(result.solution), b)) < 1e-8 * X.norm(b)
+
+
+class TestSolverDiagnostics:
+    def test_the_callback_sees_every_step(self, rng):
+        X = make_weighted_space()
+        operator = positive_definite(X, rng)
+        seen = []
+        result = CGSolver(
+            rtol=1e-12, callback=lambda step: seen.append(step.iteration)
+        )(operator).solve(X.random(rng=rng))
+        assert seen == list(range(result.iterations + 1))
+
+    def test_the_history_records_the_residuals(self, rng):
+        X = make_weighted_space()
+        operator = positive_definite(X, rng)
+        result = CGSolver(rtol=1e-12)(operator).solve(X.random(rng=rng))
+        assert len(result.history) == result.iterations + 1
+        assert result.history[-1] == pytest.approx(result.residual_norm)
+
+    def test_a_stalled_solve_says_where_it_stalled(self, rng):
+        """Which the final residual alone cannot."""
+        X = make_weighted_space()
+        operator = positive_definite(X, rng)
+        with pytest.warns(RuntimeWarning, match="did not converge in 2 iter"):
+            result = CGSolver(rtol=1e-16, max_iterations=2, strict=False)(
+                operator
+            ).solve(X.random(rng=rng))
+        assert not result.converged
+        assert len(result.history) >= 2
+
+
+class TestARootFindSaysWhyItStopped:
+    """A saturated sweep and a failed inner solve both stop the widening and
+    mean different things. ConvergenceError was read as saturation, so a sweep
+    whose solver merely ran out of iterations reported 'no root in this range'."""
+
+    def test_a_convergence_failure_is_recorded_not_disguised(self):
+        from pygeoinf2.numerics.root_find import monotone_root
+        from pygeoinf2.numerics.solvers import ConvergenceError
+
+        def evaluate(multiplier, guess):
+            from pygeoinf2.numerics.root_find import Evaluation
+
+            if multiplier > 4.0:
+                raise ConvergenceError("ran out of iterations")
+            return Evaluation(
+                value=10.0 / multiplier, solution=multiplier, iterations=1
+            )
+
+        result = monotone_root(evaluate, 0.5, initial=1.0)
+        assert result.breakdown is not None
+        assert isinstance(result.breakdown, ConvergenceError)
+
+    def test_a_genuine_saturation_is_not(self):
+        """A singular operator is an answer about the range, and reports no
+        breakdown."""
+        from pygeoinf2.numerics.root_find import Evaluation, monotone_root
+
+        def evaluate(multiplier, guess):
+            if multiplier > 4.0:
+                raise np.linalg.LinAlgError("singular")
+            return Evaluation(
+                value=10.0 / multiplier, solution=multiplier, iterations=1
+            )
+
+        result = monotone_root(evaluate, 0.5, initial=1.0)
+        assert result.breakdown is None
+        assert result.exhausted is not None

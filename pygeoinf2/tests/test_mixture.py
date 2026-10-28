@@ -361,3 +361,27 @@ class TestMixtureInversion:
         problem, prior, _, _ = setup
         with pytest.raises(TypeError, match="must be a GaussianMixture"):
             LinearGaussianMixtureInversion(problem, prior.components[0])
+
+
+class TestReweighting:
+    def test_with_weights_keeps_the_components_and_renormalizes(self, rng):
+        space = make_weighted_space()
+        components = [
+            GaussianMeasure.from_standard_deviation(
+                space, 1.0, expectation=space.random(rng=rng)
+            ),
+            GaussianMeasure.from_standard_deviation(
+                space, 2.0, expectation=space.random(rng=rng)
+            ),
+        ]
+        mixture = GaussianMixture(components)
+        reweighted = mixture.with_weights([3.0, 1.0])
+        assert reweighted.weights == pytest.approx([0.75, 0.25])
+        assert all(a is b for a, b in zip(reweighted.components, mixture.components))
+        expected = space.add(
+            space.scale(0.75, components[0].expectation),
+            space.scale(0.25, components[1].expectation),
+        )
+        assert space.norm(space.subtract(reweighted.expectation, expected)) < 1e-12
+        with pytest.raises(ValueError, match="non-negative"):
+            mixture.with_weights([1.0, -1.0])

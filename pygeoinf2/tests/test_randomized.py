@@ -21,7 +21,7 @@ from pygeoinf2.numerics.randomized import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import DenseMetricSpace, make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
 from .doubles import NoCoordinatesError, Opaque, OpaqueSpace, StrictSpace
 
 N, RANK = 40, 6
@@ -322,8 +322,7 @@ def dense_metric(n, rng):
     metric is *not diagonal*, and a Gram condition number in the hundred
     thousands would only test floating point.
     """
-    root = np.eye(n) + 0.15 * np.tril(rng.standard_normal((n, n)), -1)
-    return DenseMetricSpace(root @ root.T)
+    return make_dense_metric_space(n)
 
 
 class TestAdaptiveRangeIsIncremental:

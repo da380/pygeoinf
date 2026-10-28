@@ -16,13 +16,8 @@ from pygeoinf2.testing import (
 )
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space, spd_matrix
 from .doubles import Opaque, OpaqueSpace
-
-
-def spd_matrix(rng, n):
-    root = rng.normal(size=(n, n))
-    return root @ root.T + n * np.identity(n)
 
 
 @pytest.fixture
@@ -772,9 +767,6 @@ class TestMatrixLinearOperator:
         matrix = rng.normal(size=(40, 40))
         applications = 0
 
-        class Counting(EuclideanSpace):
-            pass
-
         operator = LinearOperator.from_matrix(space, space, matrix, form="components")
         original = type(operator)._value
 
@@ -783,13 +775,11 @@ class TestMatrixLinearOperator:
             applications += 1
             return original(self, x)
 
-        type(operator)._value = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(type(operator), "_value", counting)
             operator.matrix(form="components")
             operator.diagonals(offsets=(0,), form="components")
             assembled = operator.assembled()
-        finally:
-            type(operator)._value = original
 
         assert applications == 0
         assert assembled is operator
@@ -1252,11 +1242,9 @@ class TestAssembledStoresTheComponentsForm:
             solves += 1
             return original(self, c)
 
-        type(space).solve_gram = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(type(space), "solve_gram", counting)
             assembled(space.random(rng=rng))
-        finally:
-            type(space).solve_gram = original
         assert solves == 0
 
     def test_a_direct_solver_still_gets_the_symmetric_matrix(self, rng):
@@ -1453,3 +1441,284 @@ class TestCheckAffineForwardsItsKnobs:
         )
         # Three draws per affine trial, and check_operator's own on top.
         assert drawn["n"] > 6
+
+
+class TestRankOneAndTheAdjointMemo:
+    def test_the_tensor_product_is_the_rank_one_operator(self, rng):
+        """``x -> (v, x) u`` in the spaces' own inner products, with the
+        adjoint ``y -> (u, y) v``, and positive semidefinite when ``u`` is
+        ``v`` on one space."""
+        X, Y = make_weighted_space(), make_dense_metric_space(3)
+        u, v = Y.random(rng=rng), X.random(rng=rng)
+        operator = LinearOperator.from_tensor_product(u, v, domain=X, codomain=Y)
+        x, y = X.random(rng=rng), Y.random(rng=rng)
+        assert Y.norm(
+            Y.subtract(operator(x), Y.scale(X.inner_product(v, x), u))
+        ) < 1e-12 * Y.norm(u)
+        assert X.norm(
+            X.subtract(operator.adjoint(y), X.scale(Y.inner_product(u, y), v))
+        ) < 1e-12 * X.norm(v)
+        same = LinearOperator.from_tensor_product(v, v, domain=X, codomain=X)
+        assert Traits.POSITIVE_SEMIDEFINITE & same.traits
+        assert not (Traits.POSITIVE_SEMIDEFINITE & operator.traits)
+
+    def test_adjoints_are_linked_reads_the_memo_and_never_fills_it(self, rng):
+        X = make_weighted_space()
+        A = LinearOperator.from_matrix(
+            X, X, rng.normal(size=(X.dim, X.dim)), form="components"
+        )
+        B = LinearOperator.from_matrix(
+            X, X, rng.normal(size=(X.dim, X.dim)), form="components"
+        )
+        assert not LinearOperator.adjoints_are_linked(A, B)
+        assert not LinearOperator.adjoints_are_linked(A, A)
+        adjoint = A.adjoint
+        assert LinearOperator.adjoints_are_linked(A, adjoint)
+        assert LinearOperator.adjoints_are_linked(adjoint, A)
+        assert not LinearOperator.adjoints_are_linked(A, B)
+
+
+class TestCoordinateOperators:
+    def test_they_invert_one_another(self, rng):
+        X = make_weighted_space()
+        projection, inclusion = X.coordinate_projection(), X.coordinate_inclusion()
+        check_operator(projection, rng=rng)
+        check_operator(inclusion, rng=rng)
+        x = X.random(rng=rng)
+        assert np.allclose(inclusion(projection(x)), x)
+
+    def test_the_adjoint_of_inclusion_is_not_the_projection(self, rng):
+        """The adjoint of an inclusion, in its smallest possible setting.
+
+        The adjoint gives *derivative* components, ``G c_x``; the projection
+        gives the components themselves. They coincide only when the metric is
+        the identity.
+        """
+        X = make_weighted_space()
+        x = X.random(rng=rng)
+        assert not np.allclose(
+            X.coordinate_inclusion().adjoint(x), X.coordinate_projection()(x)
+        )
+        assert np.allclose(
+            X.coordinate_inclusion().adjoint(x),
+            X.apply_gram(X.to_components(x)),
+        )
+
+
+class TestDiagonals:
+    @pytest.fixture
+    def banded(self, rng):
+        X = make_weighted_space()
+        full = rng.normal(size=(X.dim, X.dim))
+        matrix = np.triu(np.tril(full, 1), -1)
+        return X, matrix, LinearOperator.from_matrix(X, X, matrix, form="components")
+
+    def test_the_exact_route_reads_the_matrix(self, banded):
+        X, matrix, operator = banded
+        got = operator.diagonals(offsets=[-1, 0, 1], form="components")
+        for index, offset in enumerate([-1, 0, 1]):
+            diagonal = np.diag(matrix, offset)
+            if offset >= 0:
+                assert np.allclose(
+                    got[index, offset : offset + diagonal.size], diagonal
+                )
+            else:
+                assert np.allclose(got[index, : diagonal.size], diagonal)
+
+    def test_the_banded_probe_agrees_on_a_banded_operator(self, banded):
+        X, matrix, operator = banded
+        # An operator holding its matrix reads the band and ignores the
+        # probe; the probe is exercised on one that must be applied.
+        probed = LinearOperator.from_callables(X, X, operator, adjoint=operator.adjoint)
+        assert np.allclose(
+            operator.diagonals(offsets=[-1, 0, 1], form="components"),
+            probed.diagonals(offsets=[-1, 0, 1], form="components", probe="banded"),
+        )
+
+    def test_the_banded_probe_is_wrong_on_a_full_one(self, rng):
+        """The negative control. It sums in the out-of-band entries, and says so.
+
+        Built from callables rather than from a matrix: an operator that holds
+        its matrix reads the diagonals off it and is exact whatever ``probe``
+        asks for, so there is no approximation left to catch.
+        """
+        X = make_weighted_space()
+        matrix = rng.normal(size=(X.dim, X.dim))
+        operator = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: X.from_components(matrix @ X.to_components(x)),
+            adjoint=lambda y: X.from_components(
+                X.solve_gram(matrix.T @ X.apply_gram(X.to_components(y)))
+            ),
+        )
+        assert not np.allclose(
+            operator.diagonals(offsets=[-1, 0, 1], form="components"),
+            operator.diagonals(offsets=[-1, 0, 1], form="components", probe="banded"),
+        )
+
+    def test_no_offsets_is_refused(self, banded):
+        _, _, operator = banded
+        with pytest.raises(ValueError, match="At least one offset"):
+            operator.diagonals(offsets=[])
+
+
+class TestDerivativeOperator:
+    def test_it_differentiates(self):
+        from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
+
+        X = BoxLebesgue((256,), lengths=(2.0 * np.pi,))
+        axis = X.grid_axes[0]
+        assert np.allclose(
+            X.derivative_operator()(X.project_function(np.sin)),
+            np.cos(axis),
+            atol=1e-9,
+        )
+
+    def test_it_is_anti_self_adjoint_in_l2(self, rng):
+        """``int f' g == -int f g'``, which is what its adjoint must reflect."""
+        from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
+
+        X = BoxLebesgue((64,), lengths=(1.0,))
+        derivative = X.derivative_operator()
+        check_operator(derivative, rng=rng)
+        u, v = X.random(rng=rng), X.random(rng=rng)
+        assert X.inner_product(derivative(u), v) == pytest.approx(
+            -X.inner_product(u, derivative(v))
+        )
+
+    def test_it_picks_the_right_axis(self):
+        from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
+
+        X = BoxLebesgue((32, 32), lengths=(2.0 * np.pi, 2.0 * np.pi))
+        first, second = np.meshgrid(*X.grid_axes, indexing="ij")
+        field = X.project_function(lambda p: np.sin(p[0]) * np.cos(3.0 * p[1]))
+        assert np.allclose(
+            X.derivative_operator(axis=1)(field),
+            -3.0 * np.sin(first) * np.sin(3.0 * second),
+            atol=1e-9,
+        )
+
+    def test_the_sobolev_version_has_a_working_adjoint(self, rng):
+        from pygeoinf2.symmetric_space import Sobolev as BoxSobolev
+
+        X = BoxSobolev((64,), 2.0, 0.1, lengths=(1.0,))
+        check_operator(X.derivative_operator(), rng=rng)
+
+    def test_a_missing_axis_is_refused(self):
+        from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
+
+        with pytest.raises(ValueError, match="axes"):
+            BoxLebesgue((16,), lengths=(1.0,)).derivative_operator(axis=2)
+
+
+class TestSpectralBlockOperator:
+    """a correlated measure's operators act on all their
+    fields at once -- one analysis and one synthesis per field -- and its
+    draws are synthesized straight from white-noise components."""
+
+    @staticmethod
+    def space():
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        return Sobolev(10, 2.0, 0.2)
+
+    @staticmethod
+    def counting(X):
+        counts = {"analyses": 0, "syntheses": 0}
+        to_components, from_components = X.to_components, X.from_components
+
+        def counting_to(x):
+            counts["analyses"] += 1
+            return to_components(x)
+
+        def counting_from(c):
+            counts["syntheses"] += 1
+            return from_components(c)
+
+        X.to_components, X.from_components = counting_to, counting_from
+        return counts
+
+    def test_it_agrees_with_the_grid_of_diagonal_blocks(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.direct_sum import BlockLinearOperator, DirectSum
+        from pygeoinf2.symmetric_space.base import SpectralBlockLinearOperator
+        from pygeoinf2.testing import check_operator
+
+        X = self.space()
+        slices = rng.normal(size=(X.dim, 3, 3))
+        space = DirectSum([X, X, X])
+        fast = SpectralBlockLinearOperator(space, slices)
+        grid = BlockLinearOperator(
+            [
+                [DiagonalLinearOperator(X, slices[:, i, j].copy()) for j in range(3)]
+                for i in range(3)
+            ]
+        )
+        x = space.random(rng=rng)
+        for a, b in zip(fast(x), grid(x)):
+            assert np.allclose(X.to_components(a), X.to_components(b))
+        for a, b in zip(fast.adjoint(x), grid.adjoint(x)):
+            assert np.allclose(X.to_components(a), X.to_components(b))
+        assert fast.matrix(form="galerkin") == pytest.approx(
+            grid.matrix(form="galerkin")
+        )
+        assert fast.diagonals(offsets=(0,), form="galerkin") == pytest.approx(
+            grid.diagonals(offsets=(0,), form="galerkin")
+        )
+        action = fast._components_action()
+        assert np.allclose(action(space.to_components(x)), space.to_components(fast(x)))
+        check_operator(fast, rng=rng)
+
+    def test_an_application_analyzes_each_field_once(self, rng):
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.14), X.sobolev_symbol(-2.0, 0.2)],
+            np.array([[1.0, 0.6], [0.6, 1.0]]),
+        )
+        x = measure.domain.random(rng=rng)
+        counts = self.counting(X)
+        try:
+            measure.covariance(x)
+            assert counts == {"analyses": 2, "syntheses": 2}
+            counts["analyses"] = counts["syntheses"] = 0
+            measure.sample(rng=rng)
+            assert counts == {"analyses": 0, "syntheses": 2}
+        finally:
+            del X.to_components, X.from_components
+
+    def test_the_precision_is_carried_and_inverts_the_covariance(self, rng):
+        from pygeoinf2.traits import Traits
+
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.14), X.sobolev_symbol(-2.0, 0.2)],
+            np.array([[1.0, 0.6], [0.6, 1.0]]),
+        )
+        assert measure.precision is not None
+        assert Traits.POSITIVE_DEFINITE & measure.precision.traits
+        x = measure.domain.random(rng=rng)
+        back = measure.precision(measure.covariance(x))
+        for a, b in zip(back, x):
+            assert np.allclose(X.to_components(a), X.to_components(b))
+
+    def test_marginals_and_cross_covariances_are_still_read_off_blocks(self, rng):
+        X = self.space()
+        first = X.heat_symbol(0.14)
+        measure = X.correlated_measure_from_correlations(
+            [first, X.sobolev_symbol(-2.0, 0.2)], np.array([[1.0, 0.3], [0.3, 1.0]])
+        )
+        assert np.allclose(measure.marginal(0).covariance.eigenvalues, first)
+        assert np.allclose(X.spectral_correlations(measure)[X.degrees > 0], 0.3)
+
+    def test_the_draws_have_the_requested_correlation(self, rng):
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.14), X.heat_symbol(0.14)],
+            np.array([[1.0, -0.8], [-0.8, 1.0]]),
+        )
+        draws = measure.samples(3000, rng=rng)
+        u = np.array([X.to_components(draw[0]) for draw in draws])
+        v = np.array([X.to_components(draw[1]) for draw in draws])
+        assert np.corrcoef(u[:, 5], v[:, 5])[0, 1] == pytest.approx(-0.8, abs=0.06)

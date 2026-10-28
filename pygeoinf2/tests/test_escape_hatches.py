@@ -25,12 +25,11 @@ from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import check_operator
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space
+from .conftest import make_dense_metric_space, spd_matrix
 
 
 def spd(space, rng, *, banded=False):
-    root = rng.normal(size=(space.dim, space.dim))
-    matrix = root @ root.T + space.dim * np.identity(space.dim)
+    matrix = spd_matrix(rng, space.dim)
     if banded:
         matrix = np.diag(np.diag(matrix)) + np.diag(np.diag(matrix, 1), 1)
         matrix = matrix + np.diag(np.diag(matrix, 1), -1)

@@ -359,16 +359,6 @@ class TestMeasureStatistics:
         first = X.sobolev_measure(2.0, 0.2)
         second = X.heat_measure(0.14)
         assert first.kl_divergence_estimate(second).standard_error == 0.0
-        forced = first.kl_divergence_estimate(
-            second,
-            method="stochastic",
-            samples=4000,
-            rng=np.random.default_rng(9),
-            max_iterations=60,
-            rtol=1e-10,
-        )
-        exact = first.kl_divergence(second)
-        assert abs(forced.value - exact) < 4.0 * forced.standard_error
 
     def test_auto_refuses_rather_than_going_stochastic_unasked(self, pair):
         """The stochastic route has to be named.
@@ -602,12 +592,10 @@ class TestInvariantAlgebraDrawsInOneTransform:
             count["n"] += 1
             return original(self, c)
 
-        cls.from_components = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(cls, "from_components", counting)
             for _ in range(draws):
                 measure.sample(rng=rng)
-        finally:
-            cls.from_components = original
         return count["n"] / draws
 
     def test_the_algebra_keeps_the_one_transform_draw(self, rng):

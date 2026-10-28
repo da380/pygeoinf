@@ -1554,3 +1554,143 @@ class TestEllipsoidsOfSetsAndPoints:
         flat = [metric.scale(t, points[0]) for t in np.linspace(-1.0, 1.0, 8)]
         with pytest.raises(ValueError, match="hyperplane"):
             enclosing_ellipsoid(metric, flat)
+
+
+class TestIntersectByName:
+    def test_intersect_is_the_ampersand(self, rng):
+        space = make_dense_metric_space(3)
+        ball = Ball(space, radius=1.0)
+        half = HalfSpace(space, space.random(rng=rng), offset=0.2)
+        named = ball.intersect(half)
+        for _ in range(20):
+            x = space.scale(1.5, space.random(rng=rng))
+            assert named.contains(x) == (ball.contains(x) and half.contains(x))
+            assert named.contains(x) == (ball & half).contains(x)
+
+
+class TestSubspaceConstructions:
+    @pytest.fixture
+    def constrained(self, rng):
+        X = make_weighted_space()
+        operator = LinearOperator.from_matrix(
+            X, EuclideanSpace(2), rng.normal(size=(2, X.dim)), form="galerkin"
+        )
+        value = np.array([1.0, -0.5])
+        return X, operator, value, AffineSubspace.from_linear_equation(operator, value)
+
+    def test_it_remembers_the_equation_it_was_built_from(self, constrained):
+        space, operator, value, subspace = constrained
+        assert subspace.has_explicit_equation
+        assert subspace.constraint_operator is operator
+        assert np.allclose(subspace.constraint_value, value)
+
+    def test_a_subspace_from_a_basis_has_no_equation(self, rng):
+        X = make_weighted_space()
+        subspace = AffineSubspace.from_tangent_basis(X, [X.random(rng=rng)])
+        assert not subspace.has_explicit_equation
+        with pytest.raises(ValueError, match="explicit equation"):
+            subspace.constraint_operator
+
+    def test_the_pseudo_inverse_gives_the_translation(self, constrained):
+        space, _, value, subspace = constrained
+        assert np.allclose(
+            space.to_components(subspace.pseudo_inverse()(value)),
+            space.to_components(subspace.translation),
+        )
+
+    def test_a_different_constraint_value_moves_only_the_translation(
+        self, constrained, rng
+    ):
+        space, operator, _, subspace = constrained
+        moved = subspace.with_constraint_value(np.array([2.0, 3.0]))
+        assert np.allclose(operator(moved.translation), [2.0, 3.0])
+        x = space.random(rng=rng)
+        assert np.allclose(
+            space.to_components(subspace.projector(x)),
+            space.to_components(moved.projector(x)),
+        )
+
+    def test_the_projection_operator_lands_on_the_subspace(self, constrained, rng):
+        space, operator, value, subspace = constrained
+        projection = subspace.projection_operator()
+        assert np.allclose(operator(projection(space.random(rng=rng))), value)
+
+    def test_hyperplanes_round_trip(self, constrained, rng):
+        space, _, _, subspace = constrained
+        planes = subspace.to_hyperplanes()
+        assert len(planes) == 2
+        rebuilt = AffineSubspace.from_hyperplanes(planes)
+        x = space.random(rng=rng)
+        assert np.allclose(
+            space.to_components(rebuilt.project(x)),
+            space.to_components(subspace.project(x)),
+        )
+
+    def test_a_point_of_the_subspace_is_on_every_hyperplane(self, constrained, rng):
+        space, _, _, subspace = constrained
+        point = subspace.project(space.random(rng=rng))
+        assert all(plane.contains(point) for plane in subspace.to_hyperplanes())
+
+    def test_tangent_and_complement_partition_the_space(self, rng):
+        X = make_weighted_space()
+        vectors = [X.random(rng=rng) for _ in range(2)]
+        tangent = AffineSubspace.from_tangent_basis(X, vectors)
+        complement = AffineSubspace.from_complement_basis(X, vectors)
+        assert tangent.dimension() + complement.dimension() == X.dim
+
+    def test_a_projector_reports_a_basis_of_its_range(self, rng):
+        X = make_weighted_space()
+        vectors = [X.random(rng=rng) for _ in range(2)]
+        projector = OrthogonalProjector.from_basis(X, vectors)
+        basis = projector.basis()
+        assert len(basis) == 2
+        for vector in basis:
+            assert np.allclose(projector(vector), vector)
+
+    def test_an_affine_subspace_is_its_own_boundary(self, constrained):
+        _, _, _, subspace = constrained
+        assert subspace.boundary is subspace
+
+    def test_no_hyperplanes_is_refused(self):
+        with pytest.raises(ValueError, match="At least one hyperplane"):
+            AffineSubspace.from_hyperplanes([])
+
+
+class TestSurfaces:
+    def test_a_projection_lands_on_the_surface(self, rng):
+        from pygeoinf2.geometry.convex import BallSurface
+
+        X = make_weighted_space()
+        surface = BallSurface(X, radius=2.0)
+        point = surface.project(X.random(rng=rng))
+        assert surface.contains(point)
+        assert X.norm(point) == pytest.approx(2.0)
+
+    def test_the_center_has_no_nearest_point(self):
+        from pygeoinf2.geometry.convex import BallSurface
+
+        X = make_weighted_space()
+        with pytest.raises(ValueError, match="equidistant"):
+            BallSurface(X).project(X.zero())
+
+    def test_samples_are_on_the_surface_and_isotropic(self, rng):
+        from pygeoinf2.geometry.convex import BallSurface
+
+        X = make_weighted_space()
+        surface = BallSurface(X, radius=2.0)
+        draws = [surface.sample(rng=rng) for _ in range(300)]
+        assert all(surface.contains(draw) for draw in draws)
+        # white noise, not `random`: only the former is isotropic in a metric
+        assert X.norm(X.mean(draws)) < 0.3 * surface.radius
+
+    def test_an_ellipsoid_surface_recognizes_its_own_points(self, rng):
+        from pygeoinf2.geometry.convex import EllipsoidSurface
+
+        X = make_weighted_space()
+        precision = LinearOperator.self_adjoint(
+            X, lambda v: v, traits=Traits.POSITIVE_DEFINITE
+        )
+        surface = EllipsoidSurface(X, precision)
+        x = X.random(rng=rng)
+        assert surface.contains(X.scale(1.0 / X.norm(x), x))
+        assert not surface.contains(X.scale(2.0 / X.norm(x), x))

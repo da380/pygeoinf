@@ -23,12 +23,6 @@ from pygeoinf2 import ball as ball_module  # noqa: E402
 from pygeoinf2 import interval as interval_module  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def _close_figures():
-    yield
-    pyplot.close("all")
-
-
 @pytest.fixture
 def ball():
     return ball_module.Sobolev(5, 2.0, 0.3, radial_modes=6, element_length=0.2)

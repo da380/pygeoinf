@@ -26,7 +26,7 @@ from pygeoinf2.numerics.optimization import (
 )
 from pygeoinf2.traits import Traits
 
-from .conftest import DenseMetricSpace, make_dense_metric_space, make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space, spd_matrix
 from .doubles import OpaqueSpace
 
 
@@ -94,8 +94,7 @@ SECOND_ORDER = [NewtonCG, TrustRegionNewton]
 @pytest.fixture
 def spd_problem(rng):
     space = EuclideanSpace(20)
-    root = rng.normal(size=(20, 20))
-    matrix = root @ root.T + 20.0 * np.identity(20)
+    matrix = spd_matrix(rng, 20)
     offset = rng.normal(size=20)
     return space, quadratic(space, matrix, offset), offset
 
@@ -548,8 +547,7 @@ class TestCoordinateFreedom:
 def dense_metric_space(n, rng):
     """Non-diagonal Gram, well conditioned: the metric is what is under test,
     not floating point."""
-    root = np.eye(n) + 0.15 * np.tril(rng.standard_normal((n, n)), -1)
-    return DenseMetricSpace(root @ root.T)
+    return make_dense_metric_space(n)
 
 
 def quadratic_on(space, rng):

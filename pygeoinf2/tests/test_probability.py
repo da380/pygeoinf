@@ -14,15 +14,14 @@ from pygeoinf2.probability import (
 from pygeoinf2.testing import check_measure, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space, spd_matrix
 from .doubles import OpaqueSpace, StrictSpace
 
 SAMPLES = 30000
 
 
 def spd(rng, n):
-    root = rng.normal(size=(n, n))
-    return root @ root.T + n * np.identity(n)
+    return spd_matrix(rng, n)
 
 
 class TestConstruction:
@@ -1730,3 +1729,18 @@ class TestHardeningsAreGatedOnFunctionSpaces:
         space, mu = self.measure()
         ball = mu.ambient_ball(level=0.9)
         assert ball.contains(space.zero())
+
+
+class TestZeroExpectation:
+    def test_it_says_whether_a_mean_was_supplied(self, rng):
+        space = make_weighted_space()
+        centred = GaussianMeasure.from_standard_deviation(space, 1.0)
+        assert centred.has_zero_expectation
+        shift = space.random(rng=rng)
+        moved = centred.translate(shift)
+        assert not moved.has_zero_expectation
+        assert space.norm(space.subtract(moved.expectation, shift)) < 1e-14
+        explicit = GaussianMeasure.from_standard_deviation(
+            space, 1.0, expectation=space.zero()
+        )
+        assert not explicit.has_zero_expectation

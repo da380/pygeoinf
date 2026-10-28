@@ -570,3 +570,19 @@ class TestGaussLegendreGrid:
             Lebesgue(6, grid="GLQ", sampling=2)
         with pytest.raises(ValueError, match="grid"):
             Lebesgue(6, grid="Gauss")
+
+
+class TestDomainMask:
+    def test_land_and_ocean_masks_are_complementary(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("shapely")
+        if not coastlines_are_cached():
+            pytest.skip("the Natural Earth coastlines are not cached")
+        space = Lebesgue(12)
+        land = space.grid_values(space.domain_mask())
+        ocean = space.grid_values(space.domain_mask(ocean=True))
+        assert set(np.unique(land)) <= {0.0, 1.0}
+        assert np.array_equal(land + ocean, np.ones_like(land))
+        # Roughly three tenths of the area is land.
+        fraction = float(np.mean(land))
+        assert 0.15 < fraction < 0.45

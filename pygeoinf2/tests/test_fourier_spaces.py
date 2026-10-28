@@ -518,3 +518,16 @@ class TestConstruction:
         space = Lebesgue((16,))
         x, y = rng.normal(size=16), rng.normal(size=16)
         assert np.allclose(space.pointwise_multiply(x, y), x * y)
+
+
+class TestWithShape:
+    def test_the_domain_stays_and_the_grid_changes(self):
+        from pygeoinf2.symmetric_space.fourier import PeriodicBox
+
+        box = PeriodicBox((8, 12), lengths=(2.0, 3.0))
+        finer = box.with_shape((16, 24))
+        assert tuple(finer.shape) == (16, 24)
+        assert tuple(finer.lengths) == tuple(box.lengths)
+        assert finer.spatial_dimension == box.spatial_dimension
+        with pytest.raises(ValueError, match="axes"):
+            box.with_shape((16, 24, 4))

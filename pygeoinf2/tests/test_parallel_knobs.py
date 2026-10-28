@@ -35,18 +35,11 @@ from pygeoinf2.numerics.solvers import CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space, spd_operator
 
 
 def spd(space, rng):
-    root = rng.normal(size=(space.dim, space.dim))
-    return LinearOperator.from_matrix(
-        space,
-        space,
-        root @ root.T + space.dim * np.identity(space.dim),
-        form="galerkin",
-        traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
-    )
+    return spd_operator(space, rng)
 
 
 def same(space, x, y):

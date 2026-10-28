@@ -32,6 +32,52 @@ from pygeoinf2.algebra.spaces import (
 SEED = 20260826
 
 
+def spd_matrix(rng, n: int, *, shift: float | None = None) -> np.ndarray:
+    """A random symmetric positive definite matrix, ``R R^T + n I`` by
+    default: well conditioned, so that a test of the metric handling is not
+    a test of floating point."""
+    root = rng.normal(size=(n, n))
+    return root @ root.T + (n if shift is None else shift) * np.identity(n)
+
+
+def spd_operator(space, rng, *, scale: float = 1.0):
+    """A random self-adjoint positive definite operator with a stored
+    Galerkin matrix, ``scale`` times :func:`spd_matrix`."""
+    from pygeoinf2.algebra.operators import LinearOperator
+    from pygeoinf2.traits import Traits
+
+    return LinearOperator.from_matrix(
+        space,
+        space,
+        scale * spd_matrix(rng, space.dim),
+        traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        form="galerkin",
+    )
+
+
+def nonsymmetric(space, rng):
+    """A well-conditioned operator with no symmetry to exploit, and its matrix."""
+    from pygeoinf2.algebra.operators import LinearOperator
+
+    size = space.dim
+    matrix = rng.normal(size=(size, size)) + 4.0 * np.identity(size)
+    return LinearOperator.from_matrix(space, space, matrix, form="components"), matrix
+
+
+def positive_definite(space, rng):
+    """A random positive definite operator, matrix-free on purpose: nothing
+    can read a stored matrix off it."""
+    from pygeoinf2.algebra.operators import LinearOperator
+    from pygeoinf2.traits import Traits
+
+    matrix = spd_matrix(rng, space.dim)
+    return LinearOperator.self_adjoint(
+        space,
+        lambda x: space.solve_gram(matrix @ space.to_components(x)),
+        traits=Traits.POSITIVE_DEFINITE,
+    )
+
+
 @pytest.fixture
 def rng():
     return default_rng(SEED)

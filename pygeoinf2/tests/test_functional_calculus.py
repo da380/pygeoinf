@@ -28,6 +28,7 @@ from .conftest import (
     DenseMetricSpace,
     make_dense_metric_space,
     make_weighted_space,
+    spd_matrix,
 )
 from .doubles import NoCoordinatesError, OpaqueSpace, StrictSpace
 
@@ -35,8 +36,7 @@ N = 16
 
 
 def spd(rng, n=N, shift=None):
-    root = rng.normal(size=(n, n))
-    return root @ root.T + (n if shift is None else shift) * np.identity(n)
+    return spd_matrix(rng, n, shift=shift)
 
 
 @pytest.fixture
@@ -702,13 +702,11 @@ class TestDiagonalLogDeterminant:
             applications += 1
             return original(self, x)
 
-        DiagonalLinearOperator._value = counting
-        try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(DiagonalLinearOperator, "_value", counting)
             estimate = log_determinant(
                 operator.with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
             )
-        finally:
-            DiagonalLinearOperator._value = original
 
         assert applications == 0
         assert estimate.standard_error == 0.0
@@ -1037,3 +1035,50 @@ class TestWeightedChi2RefusesAnUnknownMethod:
 
         with pytest.raises(ValueError, match="imhoff"):
             weighted_chi2_quantile(np.array(weights), 0.9, method="imhoff")
+
+
+class TestFunctionCalculusNeedsSelfAdjointness:
+    """The Lanczos route always required it and the diagonal route did not, so
+    the same request was refused for a general operator and accepted for a
+    diagonal one. On a non-diagonal metric a component-diagonal operator is not
+    self-adjoint, and what the exact route computes there is a component-wise
+    calculus, not a spectral one."""
+
+    def test_a_diagonal_operator_on_a_dense_metric_is_refused(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics.functional_calculus import operator_function
+
+        space = make_dense_metric_space(6)
+        operator = DiagonalLinearOperator(space, rng.uniform(1.0, 4.0, 6))
+
+        assert not (Traits.SELF_ADJOINT & operator.traits)
+        with pytest.raises(ValueError, match="self-adjoint"):
+            operator_function(operator, np.sqrt)
+
+    def test_but_the_component_wise_route_is_still_reachable(self, rng):
+        """It is a perfectly good calculus in the basis; it is just not the
+        one ``operator_function`` names."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = make_dense_metric_space(6)
+        values = rng.uniform(1.0, 4.0, 6)
+        operator = DiagonalLinearOperator(space, values)
+
+        assert operator.apply_function(np.sqrt).eigenvalues == pytest.approx(
+            np.sqrt(values)
+        )
+
+    def test_a_diagonal_metric_still_works(self, rng):
+        """Where a diagonal operator commutes with the metric it is
+        self-adjoint, the trait is deduced, and nothing changes -- which is
+        every symmetric space here."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics.functional_calculus import operator_function
+
+        space = EuclideanSpace(6)
+        values = rng.uniform(1.0, 4.0, 6)
+        operator = DiagonalLinearOperator(space, values)
+
+        assert operator_function(operator, np.sqrt).eigenvalues == pytest.approx(
+            np.sqrt(values)
+        )

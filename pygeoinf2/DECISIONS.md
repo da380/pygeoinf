@@ -2563,6 +2563,42 @@ through `check_operator` and its two refusals (the method is read when
 the rays are traced, on first application), and `misfit_search` called
 directly, reaching its target and reporting a floored range exhausted.
 
+**D-173. The review's housekeeping, and what of it was declined**
+(2026-10-28, closing `TEST_REVIEW.md`, which is deleted with this entry;
+the review itself is in git at bc15bc0 and after). Done: the eleven
+random positive-definite builders are two in `conftest.py` (`spd_matrix`,
+`spd_operator`), with the matrix-free `positive_definite` and
+`nonsymmetric` beside them, and the inline dense metrics are
+`make_dense_metric_space`; the nine hand-rolled patches of a class
+attribute with a `try`/`finally` are `pytest.MonkeyPatch.context()`; the
+shadowed figure-closing fixture, a dead `if False` branch, an unused
+counting class and two unused names are gone; the point-data mini-app's
+test unregisters the plain module names it had to register, since the
+scripts import each other by them. Fourteen public names the suite never
+mentioned have a direct test each (`from_tensor_product`,
+`adjoints_are_linked`, `orthogonalize_against`, `orthonormalize_columns`,
+`BlockOperator.blocks`, `PeriodicBox.with_shape`, `Sphere.domain_mask`,
+`has_zero_expectation`, `GaussianMixture.with_weights`,
+`ConvexSet.intersect`, `linear_certificate_operator`, the hardenings'
+gates), the two names the review read as public (`excesses`, `slacks`)
+being local functions, and the MFEM names left to the MFEM backend's
+own Linux-only file. `test_assorted.py` is split by topic: the
+preconditioners and the sparse approximation in `test_preconditioners.py`,
+the measure operations (adjustments, quadratic forms, hardening,
+conditioning, Imhof, quantile sampling, correlated measures) in
+`test_measures.py`, and the rest into `test_solvers`, `test_operators`,
+`test_geometry`, `test_observation` and `test_functional_calculus`.
+Declined, with the reason: the feasible-set parity tests repeated across
+`test_feasible` and `test_backus` test the algorithms and the estimator
+layer on the same claims, which is what two layers are for, and a warm
+start against a cold one is not a sweep against single probes; the
+Monte Carlo sizes the review called larger than their tolerance needs
+cost a few seconds each in a slow set of four minutes; the
+geometry-independent tests parametrised over six geometries cost nothing
+measurable; and a cross-file import of one ray problem builder is left
+where it is. One real overlap, a stochastic re-check inside the test of
+the spectral route, is trimmed.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

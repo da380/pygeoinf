@@ -37,7 +37,12 @@ from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
+from .conftest import (
+    WeightedSpace,
+    make_dense_metric_space,
+    make_weighted_space,
+    spd_operator,
+)
 
 
 def dense(space, matrix):
@@ -51,8 +56,7 @@ def dense(space, matrix):
 
 
 def positive(space, rng, scale=1.0):
-    root = rng.normal(size=(space.dim, space.dim))
-    return dense(space, scale * (root @ root.T + space.dim * np.identity(space.dim)))
+    return spd_operator(space, rng, scale=scale)
 
 
 @pytest.fixture(params=["euclidean", "weighted", "dense-model", "dense-data"])
