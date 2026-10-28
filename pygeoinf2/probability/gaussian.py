@@ -805,12 +805,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         known = covariance.known_matrix(form="components")
         if known is not None:
             return float(np.sqrt(np.sum(known * known.T)))
+        space = self._domain
+        if not isinstance(space, CoordinateSpace):
+            if method == "auto":
+                return self.hilbert_schmidt_norm(
+                    method="stochastic", samples=samples, rng=rng, n_jobs=n_jobs
+                )
+            require_coordinates(space)
         # The diagonal of C C, one basis vector at a time: (C C)_ii is the
         # i-th component of C(C(e_i)). Two applications per column and one
         # vector of memory.
         from ..parallel import parallel_map
-
-        space = self._domain
 
         def entry(index: int) -> float:
             basis = space.basis_vector(index)
@@ -1686,10 +1691,21 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             elif rank is not None:
                 method = "spectral"
             else:
+                why = (
+                    "this space provides no coordinate map, so there is no "
+                    "dense route"
+                    if not isinstance(self._domain, CoordinateSpace)
+                    else f"the dimension {self._domain.dim} is above dense_limit"
+                )
                 raise ValueError(
-                    f"No affordable route to the spectrum on a space of dimension "
-                    f"{self._domain.dim}: pass rank= for a randomized spectrum, "
-                    "or raise dense_limit."
+                    f"No affordable route to the spectrum: {why}. Pass rank= "
+                    "for a randomized spectrum"
+                    + (
+                        ""
+                        if not isinstance(self._domain, CoordinateSpace)
+                        else ", or raise dense_limit"
+                    )
+                    + "."
                 )
         covariance = self._require_covariance("The spectrum")
         if method == "spectral":

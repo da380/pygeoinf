@@ -11,7 +11,8 @@ arguments by design. The examples are excluded because they are teaching
 material: annotating a three-line helper written to illustrate one idea makes
 the illustration worse, and the examples have their own test, which is that
 they run. The tutorials are excluded for the same reason, and have the same
-test.
+test, and so are the mini-apps, which are teaching code like the examples,
+built and run by their own tests.
 """
 
 import ast
@@ -20,7 +21,7 @@ import pathlib
 import pytest
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent
-SKIP_DIRS = {"tests", "examples", "tutorials", "__pycache__"}
+SKIP_DIRS = {"tests", "examples", "tutorials", "miniapps", "__pycache__"}
 
 
 def source_files() -> list[pathlib.Path]:

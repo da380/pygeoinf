@@ -57,7 +57,9 @@ is what most of the rest follows from:
 111 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `backends`, `testing`,
 `compat`, `spectral_element`, `interval` and `ball` are imported explicitly. Thirty-five examples under `examples/`
-run as a slow test; their README says what each shows.
+run as a slow test; their README says what each shows. Fourteen tutorials
+under `tutorials/` with generated notebooks, and the first mini-app under
+`pygeoinf2/miniapps/` (the C++ vector backend, D-169), run in the fast suite.
 
 ## 3. Conventions and units
 
@@ -175,8 +177,15 @@ column, and a composition never expands a low-rank product (D-33).
 A backend supplies a `CoordinateSpace`. The contract is: `dim`,
 `to_components`, `from_components`, `apply_gram`, `solve_gram`, `_key`, plus
 whatever of the vector algebra (`add`, `subtract`, `scale`, `axpy`, `copy`,
-`zero`) the vectors do not get for free. A coordinate-free backend supplies a
-`HilbertSpace` and a mass operator, as `mfem_hilbert` does (D-22, D-96).
+`zero`) the vectors do not get for free, and `random` and `white_noise`,
+which every check and every randomised method draws from. A coordinate-free
+backend supplies a `HilbertSpace` and a mass operator, as `mfem_hilbert`
+does (D-22, D-96); its vectors need no array behaviour at all, which
+`tests/test_no_array_backend.py` holds the library to over a space whose
+vectors are plain Python objects. What such a space cannot be asked for
+refuses by name (`assembled()`, the direct solvers, `random_diagonal`,
+`matrix()`, the dense routes); the feasible set's membership side is the
+one place the refusal is per probe, the support side being free.
 
 Then check it, in this order, and stop at the first failure:
 
@@ -198,9 +207,10 @@ The lessons MFEM taught, which apply to any backend over foreign memory:
 
 - **Who owns the buffer.** MFEM vectors can alias memory the library will
   free. Copy on the way in unless ownership is explicit.
-- **Keep the solver alive.** `solver._pygeoinf_keepalive` is load-bearing:
-  the wrapped object holds no reference of its own and the C++ side will free
-  it.
+- **Keep the solver alive.** The wrapped object holds no reference of its
+  own and the C++ side will free what it points to; the references live on
+  the pygeoinf object that owns the solver (the operator's closure, or the
+  space), never as attributes on the foreign object (D-160).
 - **The mass matrix is the Gram matrix.** That is the whole reason a finite
   element space fits without adaptation, and the case the design was built
   for.
@@ -225,8 +235,9 @@ Recorded rather than settled, so nobody has to rediscover them.
   feasible set and its algorithms move to `geometry` and the damped-family
   machinery to `numerics`, matrix-free throughout with the dense spectrum
   as an opt-in solver. Built 2026-10-27 (D-153); the paper-scale
-  benchmarks are deferred and the scripts in `benchmarks/` wait for a fresh
-  return (D-155). Left open from the build: `Cylinder` (D-138), a quadratic
+  benchmarks are deferred (D-155); their scripts were cut from the tree on
+  2026-10-28 (David: come back to them later) and are in git at `8c53839`
+  under `benchmarks/`. Left open from the build: `Cylinder` (D-138), a quadratic
   set with an explicit kernel basis for the true-kernel case, droppable;
   the affine constraint on the dual's certificate for degenerate priors;
   and the dual does not converge on the flexure–gravity problem (610 data

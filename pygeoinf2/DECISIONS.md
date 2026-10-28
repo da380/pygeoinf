@@ -2381,6 +2381,42 @@ bilinear form, because the Newton step and the Laplace covariance both
 need the operator; the form is what a finite difference of the gradient
 checks.
 
+**D-169. The backend claim is held to by a space with no array underneath,
+in the suite and in C++** (2026-10-28, David). The claim of §1 and §6, that
+nothing above a space works in components unless the space says it can, is
+now tested rather than asserted. `tests/test_no_array_backend.py` runs the
+checks, the operator algebra, the Krylov solvers, Gaussian measures, every
+estimator, every optimizer, the randomised estimates and the convex sets
+over a `HilbertSpace` whose vectors are plain Python objects with no array
+behaviour at all, against numpy on the extracted lists; what a
+coordinate-free space cannot be asked for must refuse by name. Mini-app 9,
+`pygeoinf2/miniapps/cpp_backend/`, is the same proof with the vector type
+and the sparse operators in C++ behind nanobind (a dev dependency; David
+chose it over pybind11 as the successor by the same author, with lower
+per-call overhead, faster compiles and the stable ABI, which is what a user
+shipping a backend wants), everything of v2 staying under `pygeoinf2/`
+until the release distributes it, a
+finite-element mass matrix as the Gram, and the inverse problem end to end
+with a tally of every member the library called; nothing in the library
+needed changing for it. The review found four reaches, fixed: the feasible
+set keyed its result cache by the property's components for no reason (the
+key is the value where the space has coordinates and the vector's identity
+otherwise); its membership side, which forms matrices of the property's
+dimension by design (§5), failed deep in an algorithm instead of refusing
+by name (now `_require_property_coordinates` at each such probe, and both
+docstrings say the support side is free and the membership side is not);
+`hilbert_schmidt_norm(method="auto")` probed a diagonal with basis vectors
+without checking for them (it takes the stochastic route on a space without
+coordinates); and two scale probes built a ones-vector from components
+where any nonzero vector does (`random` with a fixed seed). Contract
+additions to §6: `random` and `white_noise` are part of what a backend
+supplies. Mini-app build products and figures are ignored by git; the
+mini-app's test compiles the extension into a temporary directory and skips
+with the compiler's output where it cannot.
+The top-level `benchmarks/` of D-155 is cut the same day (David: come
+back to it later; in git at `8c53839`), so nothing of v2 sits outside
+`pygeoinf2/` until the release distributes it.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

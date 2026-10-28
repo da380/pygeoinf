@@ -242,6 +242,10 @@ class BackusGilbertParker(SetEstimator):
     given: its own set if it has one, the credible ball at ``level`` if its
     error is a measure, and exact data if it has no error at all.
 
+    The support side of the answer is coordinate-free on every space; the
+    membership side forms matrices of the property's dimension and needs a
+    coordinate map on the property space, refusing by name without one.
+
     Nothing is computed here. :meth:`__call__` returns a
     :class:`~pygeoinf2.geometry.feasible.FeasiblePropertySet`, which
     answers each question when asked -- a support value with its bracket,

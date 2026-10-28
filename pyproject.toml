@@ -86,6 +86,7 @@ pre-commit = "^4.6.2"
 # Strips outputs and normalises cell ids in the tutorial notebooks. Driven by
 # pre-commit; listed here so it can also be run by hand on a single notebook.
 nbstripout = "^0.9.1"
+nanobind = ">=2.4"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

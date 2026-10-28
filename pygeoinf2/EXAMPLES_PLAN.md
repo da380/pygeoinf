@@ -93,7 +93,7 @@ where inline output earns the format.
 > checks the notebooks are current. Examples and mini-apps get no
 > notebooks.
 
-## Tier 3: mini-apps (`miniapps/`, new)
+## Tier 3: mini-apps (`pygeoinf2/miniapps/`, new)
 
 MFEM-spirit: each a self-contained directory with a README stating the
 problem, real or realistic data, several features composed, minutes to run.
@@ -129,10 +129,10 @@ problem, real or realistic data, several features composed, minutes to run.
    iteration counts and application counts in a table; example 24 is the
    one-idea version. Seeded by `work/preconditioning_examples.py` and
    `work/dynamic_topography.py`.
-9. **A vector backend in C++** (added 2026-10-28, David) — the proof that
+9. **A vector backend in C++** (added 2026-10-28, David; DONE the same day, D-169) — the proof that
    the library defers every vector calculation to the backend: a small
    C++ vector type with its own inner product and a sparse operator,
-   wrapped with pybind11, no numpy inside the vector at all, exposed as a
+   wrapped with nanobind, no numpy inside the vector at all, exposed as a
    `HilbertSpace` and run through every `check_*` and every estimator on a
    small inverse problem. Writing it is the backend review; its
    regression form is a minimal non-numpy `HilbertSpace` in the test
@@ -145,7 +145,8 @@ stations and earthquakes, cap averages, the feasible set) extends mini-app 1
 with the set-valued answer on the same data; `dynamic_topography.py` and
 `correlated.py` are the Bayesian half and the correlated-prior specification
 of mini-app 5. The timing harnesses (`point_evaluation.py`,
-`path_average.py`, `torus_point.py`) moved to `benchmarks/operator_timings.py`
+`path_average.py`, `torus_point.py`) moved to `benchmarks/operator_timings.py`,
+cut with the rest of `benchmarks/` on 2026-10-28 (in git at `8c53839`)
 on 2026-10-27, ported to v2, so that `work/` can go at the release.
 
 ## A nonlinear ray operator (David, 2026-10-27)

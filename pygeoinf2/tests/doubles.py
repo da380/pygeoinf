@@ -20,8 +20,9 @@ A real backend (MFEM) tests one implementation; these test the contract.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
-from typing import Hashable
+from typing import Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator, default_rng
@@ -187,3 +188,148 @@ class StrictSpace(CoordinateSpace):
             "from_components was called on a StrictSpace: this code path is "
             "supposed to be coordinate-free."
         )
+
+
+# --------------------------------------------------------------------- #
+#                  A space whose vectors are not arrays                 #
+# --------------------------------------------------------------------- #
+
+
+class ListVector:
+    """A vector that is a plain list of floats and nothing more.
+
+    :class:`Opaque` refuses arithmetic but still *holds* an ndarray, so code
+    that unwraps it with ``np.asarray`` or ``.data`` works by accident. This
+    one holds a Python list and exposes no ``__array__``, ``__len__``,
+    ``__iter__``, ``__getitem__``, ``__float__`` or arithmetic operator at
+    all: ``np.asarray(v)`` gives a useless zero-dimensional object array,
+    ``np.asarray(v, dtype=float)`` raises, and ``a + b``, ``2.0 * v``,
+    ``-v``, ``len(v)`` and ``v[0]`` all raise ``TypeError``. The only way to
+    compute with one is through the :class:`ListSpace` that owns it.
+    """
+
+    __slots__ = ("_values",)
+
+    def __init__(self, values: Sequence[float]) -> None:
+        self._values = [float(v) for v in values]
+
+    @property
+    def values(self) -> list[float]:
+        """The entries, as the list itself. For the space and for assertions."""
+        return self._values
+
+    def __repr__(self) -> str:
+        return f"ListVector({self._values!r})"
+
+
+def _cholesky(matrix: list[list[float]]) -> list[list[float]]:
+    """The lower Cholesky factor of a symmetric positive definite nested list.
+
+    Written out in plain Python so that nothing here depends on NumPy's
+    linear algebra: this double exists to prove the library needs none of it.
+
+    Raises:
+        ValueError: if the matrix is not positive definite.
+    """
+    n = len(matrix)
+    lower = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1):
+            s = matrix[i][j] - sum(lower[i][k] * lower[j][k] for k in range(j))
+            if i == j:
+                if s <= 0.0:
+                    raise ValueError("The Gram matrix is not positive definite.")
+                lower[i][j] = math.sqrt(s)
+            else:
+                lower[i][j] = s / lower[j][j]
+    return lower
+
+
+class ListSpace(HilbertSpace[ListVector]):
+    """A coordinate-free Hilbert space over :class:`ListVector` vectors.
+
+    The Gram matrix is a fixed symmetric positive definite matrix held as
+    nested lists and deliberately *not* diagonal, so the adjoint differs
+    from the transpose and white noise differs from standard normal
+    components. Every operation is an explicit Python loop over the lists;
+    no NumPy array ever stands in for a vector.
+    """
+
+    def __init__(self, gram: Sequence[Sequence[float]]) -> None:
+        self._gram = [[float(g) for g in row] for row in gram]
+        n = len(self._gram)
+        if any(len(row) != n for row in self._gram):
+            raise ValueError("The Gram matrix must be square.")
+        for i in range(n):
+            for j in range(i):
+                if abs(self._gram[i][j] - self._gram[j][i]) > 1e-12:
+                    raise ValueError("The Gram matrix must be symmetric.")
+        self._cholesky = _cholesky(self._gram)
+        self.calls = CallCounter()
+
+    @property
+    def gram(self) -> list[list[float]]:
+        """The Gram matrix, as nested lists."""
+        return self._gram
+
+    @property
+    def dim(self) -> int:
+        return len(self._gram)
+
+    def _key(self) -> Hashable:
+        return tuple(tuple(row) for row in self._gram)
+
+    def from_list(self, values: Sequence[float]) -> ListVector:
+        """A vector with these entries, for building test data."""
+        if len(values) != self.dim:
+            raise ValueError(f"Expected {self.dim} entries, got {len(values)}.")
+        return ListVector(values)
+
+    def zero(self) -> ListVector:
+        self.calls.record("zero")
+        return ListVector([0.0] * self.dim)
+
+    def copy(self, x: ListVector) -> ListVector:
+        self.calls.record("copy")
+        return ListVector(x.values)
+
+    def inner_product(self, x: ListVector, y: ListVector) -> float:
+        self.calls.record("inner_product")
+        total = 0.0
+        for i, row in enumerate(self._gram):
+            xi = x.values[i]
+            for j, g in enumerate(row):
+                total += xi * g * y.values[j]
+        return total
+
+    def axpy(self, a: float, x: ListVector, y: ListVector) -> ListVector:
+        self.calls.record("axpy")
+        ys = y.values
+        for i, xi in enumerate(x.values):
+            ys[i] = ys[i] + a * xi
+        return y
+
+    def scale_inplace(self, a: float, x: ListVector) -> ListVector:
+        self.calls.record("scale_inplace")
+        xs = x.values
+        for i in range(len(xs)):
+            xs[i] = a * xs[i]
+        return x
+
+    def random(self, *, rng: Generator | None = None) -> ListVector:
+        self.calls.record("random")
+        rng = default_rng() if rng is None else rng
+        return ListVector([float(rng.standard_normal()) for _ in range(self.dim)])
+
+    def white_noise(self, *, rng: Generator | None = None) -> ListVector:
+        """``c = L^-T xi`` with ``G = L L^T``, by back substitution on lists."""
+        self.calls.record("white_noise")
+        rng = default_rng() if rng is None else rng
+        n = self.dim
+        xi = [float(rng.standard_normal()) for _ in range(n)]
+        lower = self._cholesky
+        c = [0.0] * n
+        for i in range(n - 1, -1, -1):
+            s = xi[i] - sum(lower[k][i] * c[k] for k in range(i + 1, n))
+            c[i] = s / lower[i][i]
+        return ListVector(c)

@@ -31,7 +31,7 @@ from typing import Any, Callable, Literal, Sequence
 import numpy as np
 
 from ..algebra.operators import Functional, LinearOperator
-from ..algebra.spaces import HilbertSpace
+from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..numerics.convex import SupportFunction
 from ..numerics.normal import DampedNormalOperator
 from ..numerics.root_find import DampedSolves, Evaluation, RootResult, monotone_root
@@ -409,6 +409,41 @@ def _precision_of(subset: Any, space: HilbertSpace, name: str) -> LinearOperator
 # --------------------------------------------------------------------- #
 
 
+class _ByIdentity:
+    """A cache key that holds a vector and hashes on its identity."""
+
+    __slots__ = ("vector",)
+
+    def __init__(self, vector: Any) -> None:
+        self.vector = vector
+
+    def __hash__(self) -> int:
+        return id(self.vector)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ByIdentity) and other.vector is self.vector
+
+
+def _require_property_coordinates(space: HilbertSpace, what: str) -> None:
+    """Refuse a membership-side probe on a property space without coordinates.
+
+    The support side of the feasible set is coordinate-free on every space.
+    The membership side forms matrices of the property's dimension (the
+    closed form's shape, the inclusion search's kernel Gram, the outer
+    ellipsoids), and so needs a coordinate map on the property space.
+
+    Raises:
+        TypeError: naming the probe and the space.
+    """
+    if not isinstance(space, CoordinateSpace):
+        raise TypeError(
+            f"{what} forms matrices of the property's dimension and needs a "
+            f"coordinate map on the property space; {type(space).__name__} "
+            "provides none. The support side of the set (support values, "
+            "brackets, polytopes, extremal models) is coordinate-free."
+        )
+
+
 class Algorithm:
     """A way of probing a feasible property set, holding tuning only.
 
@@ -523,6 +558,7 @@ class ClosedForm(Algorithm):
         return structure.shared(("closed_form",), lambda: self._build(structure))
 
     def _build(self, structure: FeasibleStructure) -> dict[str, Any]:
+        _require_property_coordinates(structure.property_space, "the closed form")
         forward, T = structure.forward, structure.property_operator
         covariance = structure.prior_covariance()
         normal = (forward @ covariance @ forward.adjoint).with_traits(
@@ -629,6 +665,7 @@ class ClosedForm(Algorithm):
         """What the prior alone says: ``{ p : ((T C T*)⁻¹ (p − T a), p − T a) <= 1 }``."""
         T = structure.property_operator
         space = structure.property_space
+        _require_property_coordinates(space, "the prior's ellipsoid")
         covariance = structure.prior_covariance()
         matrix = np.column_stack(
             [
@@ -1378,6 +1415,7 @@ class Search(Algorithm):
 
         T = structure.property_operator
         space = structure.property_space
+        _require_property_coordinates(space, "the inclusion search")
         solver = structure.solver_for(structure.data_space)
 
         def build() -> dict[str, Any]:
@@ -1476,6 +1514,7 @@ def _kernel_pieces(structure: FeasibleStructure) -> dict[str, Any]:
 
     def build() -> dict[str, Any]:
         space = structure.property_space
+        _require_property_coordinates(space, "the inclusion search")
         T = structure.property_operator
         covariance = structure.prior_covariance()
         gram = np.column_stack(
@@ -1933,6 +1972,9 @@ class SProcedure(Algorithm):
         Raises:
             ValueError: if the set is empty, or the criterion is unknown.
         """
+        _require_property_coordinates(
+            feasible.structure.property_space, "the outer ellipsoid"
+        )
         _check_criterion(criterion)
         structure = feasible.structure
         if feasible.is_empty():
@@ -1963,7 +2005,7 @@ class SProcedure(Algorithm):
         probe = (
             shifted
             if data_space.norm(shifted) > 0.0
-            else data_space.from_components(np.ones(data_space.dim))
+            else data_space.random(rng=np.random.default_rng(0))
         )
         scale = float(
             data_space.inner_product(A(C(A.adjoint(probe))), probe)
@@ -2301,7 +2343,7 @@ class Dual(Algorithm):
                 # certificate; its scale is normalized away, so that a tiny
                 # or a huge noise set does not reach the bundle as a tiny or
                 # a huge proximal weight.
-                probe = data_space.from_components(np.ones(data_space.dim))
+                probe = data_space.random(rng=np.random.default_rng(0))
                 scale = data_space.squared_norm(probe) / float(
                     data_space.inner_product(covariance(probe), probe)
                 )
@@ -2965,6 +3007,13 @@ class _FeasibleSupport(SupportFunction):
 class FeasiblePropertySet(ConvexSet):
     """``T(prior ∩ A⁻¹(d − noise))``: the property values the data cannot rule out.
 
+    The support side (support values and brackets, extremal models,
+    polytopes, the linear certificate) is coordinate-free on every space.
+    The membership side (``contains``, ``inclusion_level``, ``extent``,
+    ``inner_hull``, the outer ellipsoids, and the closed form throughout)
+    forms matrices of the property's dimension, and needs a coordinate map
+    on the property space; without one it refuses by name.
+
     Built from the forward operator ``A``, the property operator ``T``, a
     convex constraint set on the model space, the data, and a convex noise
     set on the data space (``None`` for exact data). Nothing is computed at
@@ -3157,11 +3206,20 @@ class FeasiblePropertySet(ConvexSet):
                 self._cache[key] = build()
             return self._cache[key]
 
-    def _key(self, vector: Any) -> bytes:
-        """A value-based key for a property vector."""
-        return np.ascontiguousarray(
-            self.domain.to_components(vector), dtype=float
-        ).tobytes()
+    def _key(self, vector: Any) -> Any:
+        """A key for a property vector: its value where the space has
+        coordinates, its identity otherwise.
+
+        The support side of the set is coordinate-free, so a property space
+        without a coordinate map must not be asked for one here; the price
+        is that two equal vectors held as different objects are two cache
+        entries.
+        """
+        if isinstance(self.domain, CoordinateSpace):
+            return np.ascontiguousarray(
+                self.domain.to_components(vector), dtype=float
+            ).tobytes()
+        return _ByIdentity(vector)
 
     # -- the support side ---------------------------------------------------
 
