@@ -480,11 +480,13 @@ class TestTheFunctionalAlgebraIsClosed:
     regularizer is a sum.
     """
 
-    @pytest.fixture(params=["euclidean", "weighted"])
+    @pytest.fixture(params=["euclidean", "weighted", "dense"])
     def space(self, request):
-        return (
-            EuclideanSpace(3) if request.param == "euclidean" else make_weighted_space()
-        )
+        return {
+            "euclidean": lambda: EuclideanSpace(3),
+            "weighted": make_weighted_space,
+            "dense": lambda: make_dense_metric_space(3),
+        }[request.param]()
 
     def quadratic(self, space, matrix):
         return Functional.from_callables(

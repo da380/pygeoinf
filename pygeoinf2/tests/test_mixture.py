@@ -27,7 +27,7 @@ from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.probability.mixture import GaussianMixture
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
 
 
 def isotropic(space, mean, deviation):
@@ -194,30 +194,28 @@ class TestGaussianMixture:
 class TestMixtureInversion:
     """The posterior of a mixture prior, against an independent reference."""
 
-    @pytest.fixture(params=["euclidean", "weighted"])
+    @pytest.fixture(params=["euclidean", "weighted", "dense", "metric-data"])
     def setup(self, request, rng):
-        model = (
-            EuclideanSpace(3) if request.param == "euclidean" else make_weighted_space()
+        model = {
+            "euclidean": lambda: EuclideanSpace(3),
+            "weighted": make_weighted_space,
+            "dense": lambda: make_dense_metric_space(3),
+            "metric-data": make_weighted_space,
+        }[request.param]()
+        data = (
+            WeightedSpace(np.array([0.5, 2.0]))
+            if request.param == "metric-data"
+            else EuclideanSpace(2)
         )
-        data = EuclideanSpace(2)
         matrix = rng.normal(size=(2, model.dim))
         forward = LinearOperator.from_matrix(model, data, matrix, form="galerkin")
+        # The measure derives its own factor and precision: on a weighted
+        # space the Galerkin matrix of the square roots is not a factor of
+        # the Galerkin matrix of the variances.
         variances = np.array([0.04, 0.09])
         chol = CholeskySolver()
-        covariance = LinearOperator.from_matrix(
-            data,
-            data,
-            np.diag(variances),
-            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
-            form="galerkin",
-        )
-        noise = GaussianMeasure(
-            data,
-            covariance=covariance,
-            precision=chol(covariance),
-            covariance_factor=LinearOperator.from_matrix(
-                data, data, np.diag(np.sqrt(variances)), form="galerkin"
-            ),
+        noise = GaussianMeasure.from_covariance_matrix(
+            data, np.diag(variances), form="galerkin"
         )
         problem = LinearForwardProblem(forward, error=noise)
 
@@ -255,7 +253,13 @@ class TestMixtureInversion:
         """
         forward = problem.forward_operator.matrix(form="components")
         gram = model.gram_matrix()
-        noise_cov = problem.error_measure.covariance.matrix(form="components")
+        # The covariance of the *components* of a draw is G^-1 C_gal G^-1
+        # on the data space as on the model space.
+        data_gram = data.gram_matrix()
+        noise_galerkin = problem.error_measure.covariance.matrix(form="galerkin")
+        noise_cov = np.linalg.solve(
+            data_gram, np.linalg.solve(data_gram, noise_galerkin).T
+        )
         observed = data.to_components(data_vector)
         noise_inverse = np.linalg.inv(noise_cov)
 

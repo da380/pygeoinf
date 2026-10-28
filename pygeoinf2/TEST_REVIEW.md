@@ -3,9 +3,12 @@
 > **Status, 2026-10-28 (D-171).** Acted on: all of §B (B1 to B15 and the
 > Low items that mattered), §C1, §C2, §C4, the vacuous and wrong
 > constructions of §E, §D4, the C++ draws, the thread cap, the scheduled
-> slow job. Still open: §C3 beyond the moment and KDE tests, §C5
-> duplicates, §D1 and §D2 coverage gaps, §D3 metric fixtures, the helper
-> consolidation, monkeypatching and the split of `test_assorted.py` in §E.
+> slow job; §D3 metric fixtures (D-172, 2026-10-28 pm: eighteen failures,
+> all in the tests); §D2 behaviours (the two guarantees, the solver
+> reporting and refusals, the gates, the ray derivative, `misfit_search`).
+> Still open: §C3 beyond the moment and KDE tests, §C5 duplicates, §D1's
+> untested names, the helper consolidation, monkeypatching and the split
+> of `test_assorted.py` in §E.
 > Line numbers below predate the changes.
 
 2026-10-28. Scope: `pygeoinf2/tests/` on branch `refactor`. Nothing outside this file was changed.

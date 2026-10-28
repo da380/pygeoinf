@@ -272,3 +272,37 @@ def test_a_non_finite_model_is_an_evaluation_failure():
     bad = space.from_components(np.full(space.dim, np.nan))
     with pytest.raises(EvaluationError, match="non-finite"):
         operator(bad)
+
+
+@pytest.mark.parametrize("make", [plane, sphere], ids=["plane", "sphere"])
+class TestTheDerivativeIsAnOperator:
+    """The derivative at a model is a linear operator with the library's own
+    adjoint, which is what Gauss-Newton and the MAP estimator apply; the
+    check ladder holds it to the adjoint identity on random pairs."""
+
+    def test_its_adjoint_passes_the_check(self, make, rng):
+        from pygeoinf2.testing import check_operator
+
+        space = make()
+        paths = paths_on(space, rng, count=3)
+        operator = space.ray_travel_time_operator(paths, C0, count=12)
+        model = mild_field(space, rng, size=0.2)
+        report = check_operator(operator.derivative(model), rng=rng)
+        assert report.worst < 1e-8
+
+
+class TestRefusals:
+    def test_an_unknown_method_is_refused_by_name(self, rng):
+        """The rays are traced when the operator is first applied, so that is
+        where the method is read and an unknown one refused."""
+        space = sphere()
+        operator = space.ray_travel_time_operator(
+            paths_on(space, rng), C0, method="newton"
+        )
+        with pytest.raises(ValueError, match="'bending' or 'shooting'"):
+            operator(space.zero())
+
+    def test_no_paths_is_refused(self):
+        space = sphere()
+        with pytest.raises(ValueError, match="At least one path"):
+            space.ray_travel_time_operator([], C0)

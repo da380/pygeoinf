@@ -511,14 +511,33 @@ class TestReproducibility:
 class TestPrecisionSurvivesTheAlgebra:
     """No operation drops the precision, translation included."""
 
-    @pytest.fixture(params=["euclidean", "weighted"])
+    @pytest.fixture(params=["euclidean", "weighted", "dense"])
     def measure(self, request):
         from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
 
+        values = np.linspace(1.0, 3.0, 4)
+        if request.param == "dense":
+            # A diagonal of components is not self-adjoint on a dense metric;
+            # a diagonal Galerkin matrix is, and its inverse is G D^-1 G.
+            space = make_dense_metric_space(4)
+            gram = space.gram_matrix()
+            traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            return space, GaussianMeasure(
+                space,
+                covariance=LinearOperator.from_matrix(
+                    space, space, np.diag(values), form="galerkin", traits=traits
+                ),
+                precision=LinearOperator.from_matrix(
+                    space,
+                    space,
+                    gram @ np.diag(1.0 / values) @ gram,
+                    form="galerkin",
+                    traits=traits,
+                ),
+            )
         space = (
             EuclideanSpace(4) if request.param == "euclidean" else make_weighted_space()
         )
-        values = np.linspace(1.0, 3.0, space.dim)
         return space, GaussianMeasure(
             space,
             covariance=DiagonalLinearOperator(space, values),
@@ -541,8 +560,18 @@ class TestPrecisionSurvivesTheAlgebra:
         """Not merely present: the right operator. ``C -> alpha^2 C`` means
         ``P -> P / alpha^2``, and getting the power wrong would be invisible to
         a test that only asked whether a precision existed."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
         space, mu = measure
         for name, derived in self.operations(space, mu, rng):
+            if name == "summed" and not isinstance(
+                mu.covariance, DiagonalLinearOperator
+            ):
+                # Two diagonal covariances add to a diagonal one whose
+                # inverse is closed-form; a sum of general operators has no
+                # precision without a solve, and claims none.
+                assert derived.precision is None
+                continue
             assert derived.precision is not None, name
             probe = space.random(rng=rng)
             residual = space.subtract(
@@ -565,8 +594,13 @@ class TestPrecisionSurvivesTheAlgebra:
 
     def test_a_sum_of_diagonal_measures_keeps_one_draw(self, measure, rng):
         """``sqrt(a + b)`` is a diagonal factor, so the sum needs one white
-        noise draw rather than one per summand."""
+        noise draw rather than one per summand. A fact about diagonal
+        covariances: a sum of general ones draws once per summand."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
         space, mu = measure
+        if not isinstance(mu.covariance, DiagonalLinearOperator):
+            pytest.skip("the one-draw sum is a diagonal fast path")
         total = mu + mu
         assert total.covariance_factor is not None
         check_measure(total, rng=rng, samples=SAMPLES)
@@ -1165,11 +1199,13 @@ class TestStandardDeviations:
 class TestConditioning:
     """The conditioned measure must be samplable: pyslfp conditions every prior."""
 
-    @pytest.fixture(params=["euclidean", "weighted"])
+    @pytest.fixture(params=["euclidean", "weighted", "dense"])
     def setting(self, request, rng):
-        space = (
-            EuclideanSpace(5) if request.param == "euclidean" else make_weighted_space()
-        )
+        space = {
+            "euclidean": lambda: EuclideanSpace(5),
+            "weighted": make_weighted_space,
+            "dense": lambda: make_dense_metric_space(5),
+        }[request.param]()
         constraint = EuclideanSpace(2)
         operator = LinearOperator.from_matrix(
             space, constraint, rng.normal(size=(2, space.dim)), form="components"
@@ -1654,3 +1690,43 @@ def test_an_identity_covariance_samples_without_a_factor(rng):
     assert measure.can_sample
     draw = measure.sample(rng=rng)
     assert space.to_components(draw).shape == (space.dim,)
+
+
+class TestHardeningsAreGatedOnFunctionSpaces:
+    """The credible ellipsoid is a Mahalanobis set, so on a space that
+    discretises functions it is refused by name without ``unsafe=True``, as
+    the density family is; the ambient ball, a norm bound, is not gated,
+    and the weakened ellipsoid is gated only where it is the credible
+    set."""
+
+    @staticmethod
+    def measure():
+        from pygeoinf2.symmetric_space.circle import Sobolev
+
+        space = Sobolev(16, 2.0, 0.2)
+        assert space.is_function_space
+        return space, GaussianMeasure.from_standard_deviation(space, 1.0)
+
+    def test_the_credible_set_is_refused_without_unsafe(self):
+        space, mu = self.measure()
+        with pytest.raises(ValueError, match="refused on"):
+            mu.credible_set(level=0.9)
+        ellipsoid = mu.credible_set(level=0.9, unsafe=True)
+        assert ellipsoid.contains(space.zero())
+
+    def test_the_weakened_ellipsoid_is_gated_only_at_power_one(self):
+        """At ``power == 1`` it is the credible set and refused like it; at
+        a power below one the radius is a quantile that survives
+        refinement, and no flag is needed."""
+        space, mu = self.measure()
+        with pytest.raises(ValueError, match="refused on"):
+            mu.weakened_ellipsoid(power=1.0, level=0.9)
+        assert mu.weakened_ellipsoid(power=1.0, level=0.9, unsafe=True).contains(
+            space.zero()
+        )
+        assert mu.weakened_ellipsoid(power=0.5, level=0.9).contains(space.zero())
+
+    def test_the_ambient_ball_needs_no_unsafe(self):
+        space, mu = self.measure()
+        ball = mu.ambient_ball(level=0.9)
+        assert ball.contains(space.zero())

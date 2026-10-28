@@ -49,7 +49,7 @@ from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
 
 
 def constant(value):
@@ -285,31 +285,32 @@ class TestDampedSolves:
         assert solves.solve(1.0, space.random(rng=rng)).iterations == 0
 
 
-@pytest.fixture(params=["euclidean", "weighted"])
+@pytest.fixture(params=["euclidean", "weighted", "dense-model", "metric-data"])
 def setup(request, rng):
-    """A forward problem, over- or under-determined, with a metric or without."""
-    model = (
-        EuclideanSpace(12) if request.param == "euclidean" else make_weighted_space()
+    """A forward problem, over- or under-determined, with a metric or without:
+    diagonal or dense on the model space, and in one case diagonal on the
+    data space, where the noise covariance and the adjoint must both carry
+    it."""
+    model = {
+        "euclidean": lambda: EuclideanSpace(12),
+        "weighted": make_weighted_space,
+        "dense-model": lambda: make_dense_metric_space(12),
+        "metric-data": make_weighted_space,
+    }[request.param]()
+    data = (
+        WeightedSpace(rng.uniform(0.5, 2.0, 8))
+        if request.param == "metric-data"
+        else EuclideanSpace(8)
     )
-    data = EuclideanSpace(8)
     forward = LinearOperator.from_matrix(
         model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
+    # The measure derives its own factor: on a weighted space the Galerkin
+    # matrix of the square roots is not a factor of the Galerkin matrix of
+    # the variances, and a hand-built one draws noise of the wrong size.
     variances = rng.uniform(0.01, 0.04, data.dim)
-    covariance = LinearOperator.from_matrix(
-        data,
-        data,
-        np.diag(variances),
-        traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
-        form="galerkin",
-    )
-    error = GaussianMeasure(
-        data,
-        covariance=covariance,
-        covariance_factor=LinearOperator.from_matrix(
-            data, data, np.diag(np.sqrt(variances)), form="galerkin"
-        ),
-        precision=CholeskySolver()(covariance),
+    error = GaussianMeasure.from_covariance_matrix(
+        data, np.diag(variances), form="galerkin"
     )
     return LinearForwardProblem(forward, error=error)
 
@@ -513,7 +514,7 @@ class TestLeastSquares:
             CGSolver(rtol=1e-12).with_preconditioner(JacobiPreconditioner())
         )(observed)
         assert model.norm(model.subtract(solved, reference)) == pytest.approx(
-            0.0, abs=1e-8 * model.norm(reference)
+            0.0, abs=1e-7 * model.norm(reference)
         )
 
     def test_a_damping_sweep_costs_no_reassembly(self, setup, rng):
@@ -1230,3 +1231,45 @@ class TestFamilyAwarePreconditioners:
             SpectralPreconditioner._deflate = original
         assert len(deflations) == 1
         assert solves._prepared is None  # the refresh rule never ran
+
+
+class TestMisfitSearchDirectly:
+    """The search under the discrepancy principle, called as the function it
+    is: handed a family, a right-hand side, a misfit and a target, it
+    returns the damping at which the misfit of the damped model meets the
+    target, and says when the range it may search is exhausted."""
+
+    def test_it_reaches_the_target(self, setup, rng):
+        from pygeoinf2.numerics.tikhonov import misfit_search
+
+        problem = setup
+        family = TikhonovFamily(problem.forward_operator, error=problem.error_measure)
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        target = problem.critical_chi_squared(level=0.95)
+        result = misfit_search(
+            family,
+            family.right_hand_side(data),
+            lambda model: problem.chi_squared(model, data),
+            target,
+            rtol=1e-8,
+        )
+        assert result.converged
+        model, _ = family.model(result.argument, data)
+        assert problem.chi_squared(model, data) == pytest.approx(target, rel=1e-6)
+
+    def test_a_floor_on_the_damping_reports_the_range_exhausted(self, setup, rng):
+        from pygeoinf2.numerics.tikhonov import misfit_search
+
+        problem = setup
+        family = TikhonovFamily(problem.forward_operator, error=problem.error_measure)
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        rhs = family.right_hand_side(data)
+        misfit = lambda model: problem.chi_squared(model, data)  # noqa: E731
+        floor = 0.5  # below the search's starting damping of one
+        reachable = misfit(family.model(floor, data)[0])
+        # A target below what the floor allows cannot be met above it.
+        result = misfit_search(
+            family, rhs, misfit, 0.5 * reachable, minimum_damping=floor
+        )
+        assert not result.converged
+        assert result.argument >= floor

@@ -711,10 +711,10 @@ class TestPosteriorSampling:
     """
 
     @pytest.fixture
-    def setup(self, rng):
+    def setup(self, rng, model_space):
         from pygeoinf2.numerics.functional_calculus import operator_sqrt
 
-        model, data = make_weighted_space(), EuclideanSpace(6)
+        model, data = model_space, EuclideanSpace(6)
         forward = LinearOperator.from_matrix(
             model, data, rng.normal(size=(6, model.dim)), form="galerkin"
         )
@@ -1235,3 +1235,42 @@ class TestFeasibilityIsAskable:
             estimator(data).ellipsoid
         with pytest.raises(ValueError, match="empty"):
             estimator(data).support(target.codomain.basis_vector(0))
+
+
+class TestAStrictSolverIsSurfaced:
+    """A strict solver that cannot meet its tolerance raises, and the
+    estimator built on it lets that out rather than returning the iterate
+    it stopped at as if it were the answer. Two iterations at a tolerance
+    near the arithmetic's floor cannot converge on these systems."""
+
+    @staticmethod
+    def hopeless():
+        from pygeoinf2.numerics.solvers import CGSolver
+
+        return CGSolver(rtol=1e-14, max_iterations=2)
+
+    def test_the_gaussian_inversion_raises(self, problem, prior, rng):
+        from pygeoinf2.numerics.solvers import ConvergenceError
+
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        inversion = LinearGaussianInversion(problem, prior, solver=self.hopeless())
+        with pytest.raises(ConvergenceError, match="did not converge"):
+            inversion(data).expectation
+
+    def test_least_squares_raises(self, problem, rng):
+        from pygeoinf2.inference import LeastSquares
+        from pygeoinf2.numerics.solvers import ConvergenceError
+
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        with pytest.raises(ConvergenceError, match="did not converge"):
+            LeastSquares(problem, damping=0.5, solver=self.hopeless())(data)
+
+    def test_the_minimum_norm_search_names_the_failure(self, problem, rng):
+        """The damping search wraps the first failed solve in its own
+        message, which names the solver's failure and what to change."""
+        from pygeoinf2.inference import MinimumNorm
+        from pygeoinf2.numerics.solvers import ConvergenceError
+
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        with pytest.raises((ConvergenceError, ValueError), match="did not converge"):
+            MinimumNorm(problem, solver=self.hopeless())(data)

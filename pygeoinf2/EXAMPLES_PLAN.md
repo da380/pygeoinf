@@ -152,16 +152,10 @@ into 4 and 1.
    mantle) with the posterior, the point estimates and the feasible set
    side by side. Then boundary positions as unknowns, a direct sum of the
    field and a small Euclidean space, where the forward is nonlinear and
-   MAP, Laplace and Occam earn their place. A variant for fun (David,
-   2026-10-28): parameterise the density *through* the Adams–Williamson
-   integration, the unknowns being the few density jumps (and the surface
-   density) together with the velocity profile as a field with its own
-   Gaussian uncertainty about PREM, the density derived; the forward to
-   mass and moment of inertia is then nonlinear through the integration,
-   its derivative the tangent linear of that small ODE (a radial kernel
-   for the velocity, a scalar per jump), which gives a low-dimensional
-   nonlinear problem with a function-valued part, ready for the sampler
-   once it exists. Extension, optional and heavy: normal-mode
+   MAP, Laplace and Occam earn their place. Dropped (David, 2026-10-28 pm): a
+   variant that parameterised the density through the Adams-Williamson
+   integration by its jumps and a velocity field; the nonlinear models
+   elsewhere in the plan are the more interesting ones. Extension, optional and heavy: normal-mode
    eigenfrequencies through specnm, with its radial sensitivity kernels as
    the derivative.
 3. **Ray tomography in a spherical Earth** (later). PREM reference rays by

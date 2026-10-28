@@ -2513,6 +2513,56 @@ metric-rule fixtures (§D3, dense Gram matrices and a non-Euclidean data
 space for the normal, convex, feasible and mixture tests), the coverage
 gaps (§D2), the helper consolidation and the split of `test_assorted.py`.
 
+**D-172. The metric rule applied to the fixtures that lacked it; what
+it found was in the tests** (2026-10-28, David: proceed with the review's
+open items in the order metric fixtures, guarantee tests, coverage). The
+`setting`, `setup`, `pieces`, `measure` and `space` fixtures of the normal
+operator, feasible set, estimator, point-estimator, mixture, convex,
+probability, nonlinear, direct-sum, posterior-sampling and
+column-thresholded tests now carry a dense Gram matrix on the model space
+and, where there is one, a diagonal metric on the data space; twenty-five
+convex tests take a parametrised space in place of a weighted one written
+inline. Eighteen failures came out, all in the tests. Two fixtures built
+an error measure from a Galerkin matrix of standard deviations as the
+factor of a Galerkin matrix of variances, which is a factor only on a
+Euclidean space (on a weighted one the noise came out the wrong size and
+the minimum-norm estimator rightly could not reach its misfit); they let
+`from_covariance_matrix` derive the factor. The mixture reference
+inverted a covariance's components matrix as if it were the covariance of
+the components. A test ellipsoid built as `G diag(s)` in the Galerkin
+form was declared self-adjoint, which it is only on a diagonal metric;
+the dual disagreed with the primal by 7e-3 on it, and a brute-force SLSQP
+on the same problem sided with both once the ellipsoid was symmetric. A
+prior calibrated to contain the truth on a weighted space did not on a
+dense one, so the membership side rejected the truth's property
+correctly; the helper now rescales the random shape through the point.
+Three components-level claims (a localized preconditioner equal to the
+diagonal one on an uncovered index, a diagonal sum's closed-form precision
+and one-draw factor) are asserted on diagonal metrics only, where they
+are claims. The primal's bracket on a dense metric is a few times wider
+at the same tolerance, and the bound on it was calibrated for the
+weighted case. Nothing in the library changed. Left on diagonal metrics
+by construction: the symmetric-space and spectral-element fixtures, the
+geometry file's Sobolev space, and the compatibility tests.
+The coverage gaps the review listed are filled the same afternoon, two
+of them guarantees the library made in words only: a primal, dual or
+splitting run stopped at its budget still returns a bracket that holds
+the converged answer (the primal's bracketing alone meets the default
+tolerance on two balls, so the budget bites only against a tolerance
+below the floor; and a `max_iterations` of one still spends the
+bracketing's dozen evaluations, which is what the docstring says), and
+an estimator built on a strict solver lets its `ConvergenceError` out,
+the minimum-norm search wrapping it in a message that names it. Also
+added: strict and downgraded reporting on MINRES, GMRES, BiCGStab and
+flexible CG, trait refusals by name on Cholesky, eigen, MINRES and
+flexible CG, the `unsafe` gate pinned on `credible_set` and on
+`weakened_ellipsoid` at power one (the ambient ball and the weakened
+ellipsoid below power one are quantiles that survive refinement and
+carry no gate, which the test states), the ray operator's derivative
+through `check_operator` and its two refusals (the method is read when
+the rays are traced, on first application), and `misfit_search` called
+directly, reaching its target and reporting a floored range exhausted.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

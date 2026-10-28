@@ -22,7 +22,7 @@ from pygeoinf2.geometry import (
 from pygeoinf2.inference import BackusGilbertParker, LinearForwardProblem
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
 
 
 def directions(space):
@@ -48,11 +48,18 @@ def spd_operator(space, rng, *, scale=1.0):
     return precision, covariance
 
 
-@pytest.fixture
-def setting(rng):
+@pytest.fixture(params=["weighted", "dense"])
+def setting(request, rng):
     """A weighted model space, an under-determined map, a property, a feasible truth."""
-    model = make_weighted_space()
-    data = EuclideanSpace(2)
+    # A dense Gram matrix on the model space and a diagonal one on the data
+    # space, so that every adjoint, precision and dual gradient meets a
+    # metric; the weighted case keeps the data space Euclidean.
+    if request.param == "dense":
+        model = make_dense_metric_space(4)
+        data = WeightedSpace(np.array([0.5, 2.0]))
+    else:
+        model = make_weighted_space()
+        data = EuclideanSpace(2)
     property_space = EuclideanSpace(2)
     forward = LinearOperator.from_matrix(
         model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
@@ -467,8 +474,15 @@ class TestTheConversions:
 # --------------------------------------------------------------------- #
 
 
-def ellipsoid_on(space, rng, *, center=None, scale=1.0):
+def ellipsoid_on(space, rng, *, center=None, scale=1.0, through=None):
+    """A random ellipsoid; with ``through`` rescaled so that point lies inside,
+    at level 0.6, whatever the metric made of the random shape."""
     precision, covariance = spd_operator(space, rng, scale=scale)
+    if through is not None:
+        offset = through if center is None else space.subtract(through, center)
+        level = space.inner_product(offset, precision(offset))
+        precision = (precision * (0.6 / level)).with_traits(Traits.POSITIVE_DEFINITE)
+        covariance = (covariance * (level / 0.6)).with_traits(Traits.POSITIVE_DEFINITE)
     return Ellipsoid(space, precision, center=center, covariance=covariance)
 
 
@@ -507,7 +521,9 @@ class TestThePrimalAgreesWithTheDual:
                     old.support(q, via="dual"), rel=1e-6
                 )
                 assert result.inner <= result.value + 1e-12
-                assert result.gap <= 1e-4 * max(abs(result.value), 1.0)
+                # The bracket's width follows the primal's tolerance on the
+                # multiplier; on a dense model metric it is a few times wider.
+                assert result.gap <= 1e-3 * max(abs(result.value), 1.0)
             p = target(truth)
             assert new.inclusion_level(p) == pytest.approx(
                 old.inclusion_level(p), rel=1e-7
@@ -518,7 +534,7 @@ class TestThePrimalAgreesWithTheDual:
     def test_ellipsoids_on_both_sides_off_centre(self, noisy, rng):
         model, forward, target, truth, data, _ = noisy
         prior = ellipsoid_on(
-            model, rng, center=model.scale(0.3, truth), scale=1.0 / 9.0
+            model, rng, center=model.scale(0.3, truth), scale=1.0 / 9.0, through=truth
         )
         noise = ellipsoid_on(
             forward.codomain, rng, center=forward.codomain.random(rng=rng), scale=100.0
@@ -976,7 +992,7 @@ class TestTheOuterEllipsoid:
             model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         prior = ellipsoid_on(
-            model, rng, center=model.scale(0.3, truth), scale=1.0 / 9.0
+            model, rng, center=model.scale(0.3, truth), scale=1.0 / 9.0, through=truth
         )
         noise = ellipsoid_on(
             forward.codomain, rng, center=forward.codomain.random(rng=rng), scale=100.0
@@ -1036,3 +1052,50 @@ class TestTheOuterEllipsoid:
                 data,
                 noise=Ball(forward.codomain, radius=0.1),
             ).outer_ellipsoid(via="closed_form")
+
+
+class TestABudgetedRunStillCertifies:
+    """A run that stops at its budget is still a bracket.
+
+    The outer value is a bound whatever the iterate (weak duality for the
+    dual and the splitting, the dual cost at the primal's multiplier for the
+    primal), and the inner value is attained by a point of the set; so the
+    converged answer lies in ``[inner, value]`` of the unconverged one. That
+    is the certificate, and it is what a caller who cannot afford to
+    converge is relying on.
+    """
+
+    @pytest.fixture
+    def balls(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0), data, noise=noise
+        )
+        return feasible, directions(target.codomain)[:3]
+
+    @pytest.mark.parametrize("route", ["primal", "dual", "splitting"])
+    def test_the_converged_answer_lies_in_the_budgeted_bracket(self, balls, route):
+        from pygeoinf2.geometry.feasible import Dual, Primal, Splitting
+
+        feasible, qs = balls
+        algorithm = {
+            # The bracketing alone meets the default tolerance here, so the
+            # budget bites only against a tolerance below the floor.
+            "primal": lambda: Primal(tolerance=1e-14, max_iterations=2),
+            "dual": lambda: Dual(max_iterations=2),
+            "splitting": lambda: Splitting(tolerance=1e-6, max_iterations=3),
+        }[route]()
+        for q in qs:
+            reference = feasible.support_result(q)
+            assert reference.converged
+            budgeted = feasible.support_result(q, via=algorithm)
+            assert not budgeted.converged, route
+            # The attained value is below the truth, which is below the bound;
+            # the splitting's point is feasible only to its tolerance.
+            slack = 1e-9 * max(1.0, abs(reference.value))
+            if route == "splitting":
+                slack += 10 * 1e-6 * max(1.0, abs(reference.value))
+            assert budgeted.inner <= reference.value + slack, route
+            assert budgeted.value >= reference.value - reference.gap - slack, route
+            assert budgeted.value >= budgeted.inner - slack, route

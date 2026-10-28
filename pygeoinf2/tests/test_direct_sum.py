@@ -63,6 +63,18 @@ def S(summand):
     return build_sum(("model", "data"), first=summand())
 
 
+@pytest.fixture(params=["weighted", "dense"])
+def model_space(request):
+    """A diagonal metric and a dense one on the first summand: a block
+    operator's adjoint carries each summand's metric, and only a dense one
+    tells that from the raw components."""
+    return (
+        make_weighted_space()
+        if request.param == "weighted"
+        else make_dense_metric_space(4)
+    )
+
+
 class TestDirectSumSpace:
     def test_axioms(self, S, summand, rng):
         # The rebuild has to use the same summand, or the check is comparing
@@ -171,8 +183,8 @@ class TestProjections:
 
 class TestBlockOperators:
     @pytest.fixture
-    def pieces(self, rng):
-        X, Y = make_weighted_space(), EuclideanSpace(3)
+    def pieces(self, rng, model_space):
+        X, Y = model_space, EuclideanSpace(3)
         A = LinearOperator.from_matrix(
             X, Y, rng.normal(size=(3, X.dim)), form="components"
         )
@@ -234,8 +246,8 @@ class TestBlockOperators:
 
 class TestColumnRowAndDiagonal:
     @pytest.fixture
-    def pieces(self, rng):
-        X, Y, Z = make_weighted_space(), EuclideanSpace(3), EuclideanSpace(2)
+    def pieces(self, rng, model_space):
+        X, Y, Z = model_space, EuclideanSpace(3), EuclideanSpace(2)
         A = LinearOperator.from_matrix(
             X, Y, rng.normal(size=(3, X.dim)), form="components"
         )
@@ -293,8 +305,8 @@ class TestNonlinearBlocks:
     """The reason block operators are nonlinear by default."""
 
     @pytest.fixture
-    def pieces(self, rng):
-        X, Y = make_weighted_space(), EuclideanSpace(3)
+    def pieces(self, rng, model_space):
+        X, Y = model_space, EuclideanSpace(3)
 
         def value(m):
             c = X.to_components(m)

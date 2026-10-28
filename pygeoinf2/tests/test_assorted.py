@@ -1292,19 +1292,29 @@ class TestWoodburyPreconditioner:
             form="galerkin",
         )
 
-    @pytest.fixture(params=["euclidean", "weighted-model", "weighted-data"])
+    @pytest.fixture(
+        params=[
+            "euclidean",
+            "weighted-model",
+            "weighted-data",
+            "dense-model",
+            "dense-data",
+        ]
+    )
     def pieces(self, request, rng):
         """A forward problem, on spaces whose metric is not the identity.
 
         The whole construction is written in Hilbert adjoints, so a
-        non-trivial metric is where a components-for-Galerkin slip would show.
+        non-trivial metric is where a components-for-Galerkin slip would
+        show, and only a dense Gram matrix shows every kind of slip.
         """
-        if request.param == "euclidean":
-            model, data = EuclideanSpace(5), EuclideanSpace(3)
-        elif request.param == "weighted-model":
-            model, data = make_weighted_space(), EuclideanSpace(3)
-        else:
-            model, data = EuclideanSpace(5), make_weighted_space()
+        model, data = {
+            "euclidean": lambda: (EuclideanSpace(5), EuclideanSpace(3)),
+            "weighted-model": lambda: (make_weighted_space(), EuclideanSpace(3)),
+            "weighted-data": lambda: (EuclideanSpace(5), make_weighted_space()),
+            "dense-model": lambda: (make_dense_metric_space(5), EuclideanSpace(3)),
+            "dense-data": lambda: (EuclideanSpace(5), make_dense_metric_space(3)),
+        }[request.param]()
         forward = LinearOperator.from_matrix(
             model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
         )
@@ -1648,13 +1658,13 @@ class TestColumnThresholdedPreconditioner:
             form="galerkin",
         )
 
-    @pytest.fixture(params=["euclidean", "weighted"])
+    @pytest.fixture(params=["euclidean", "weighted", "dense"])
     def operator(self, request, rng):
-        space = (
-            EuclideanSpace(40)
-            if request.param == "euclidean"
-            else make_weighted_space()
-        )
+        space = {
+            "euclidean": lambda: EuclideanSpace(40),
+            "weighted": make_weighted_space,
+            "dense": lambda: make_dense_metric_space(12),
+        }[request.param]()
         return self.scattered(space, rng)
 
     def test_a_zero_threshold_keeps_everything_and_is_exact(self, operator, rng):

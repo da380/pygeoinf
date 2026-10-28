@@ -1560,3 +1560,49 @@ class TestSpectralFamilySolver:
         other = make_dense_metric_space(5)
         with pytest.raises(ValueError, match="prepared on"):
             bound.at(1.0, LinearOperator.identity(other))
+
+
+class TestEveryIterativeSolverReportsConvergence:
+    """``strict`` means the same thing on every Krylov method: a solve that
+    cannot meet its tolerance within the cap raises, and ``strict=False``
+    turns the exception into a warning and an unconverged result. One
+    iteration at a tolerance below the arithmetic's floor cannot converge."""
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda **k: MinResSolver(**k),
+            lambda **k: GMRESSolver(**k),
+            lambda **k: BiCGStabSolver(**k),
+            lambda **k: FlexibleCGSolver(**k),
+        ],
+        ids=["minres", "gmres", "bicgstab", "fcg"],
+    )
+    def test_it_raises_then_warns(self, spd_problem, make):
+        A, b, _ = spd_problem
+        with pytest.raises(ConvergenceError, match="did not converge"):
+            make(rtol=1e-16, max_iterations=1)(A).solve(b)
+        with pytest.warns(RuntimeWarning, match="did not converge"):
+            result = make(rtol=1e-16, max_iterations=1, strict=False)(A).solve(b)
+        assert not result.converged
+
+
+class TestEverySolverRefusesWhatItHasNotBeenPromised:
+    """A solver that needs a trait refuses an operator that does not claim
+    it, by name, rather than running on the assumption and failing later."""
+
+    @pytest.mark.parametrize(
+        "solver, trait",
+        [
+            (CholeskySolver(), "POSITIVE_DEFINITE"),
+            (EigenSolver(), "SELF_ADJOINT"),
+            (MinResSolver(), "SELF_ADJOINT"),
+            (FlexibleCGSolver(), "POSITIVE_DEFINITE"),
+        ],
+        ids=["cholesky", "eigen", "minres", "fcg"],
+    )
+    def test_the_refusal_names_the_trait(self, solver, trait, rng):
+        X = EuclideanSpace(N)
+        unclaimed = LinearOperator.from_matrix(X, X, spd(rng), form="components")
+        with pytest.raises(ValueError, match=trait):
+            solver(unclaimed)

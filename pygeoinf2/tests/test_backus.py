@@ -35,14 +35,21 @@ from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.symmetric_space.plane import Sobolev as PlaneSobolev
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
 
 
-@pytest.fixture
-def setting(rng):
+@pytest.fixture(params=["weighted", "dense"])
+def setting(request, rng):
     """A model space, an under-determined map, a property, and a feasible truth."""
-    model = make_weighted_space()
-    data = EuclideanSpace(2)
+    # A dense Gram matrix on the model space and a diagonal one on the data
+    # space, so that every adjoint, precision and dual gradient meets a
+    # metric; the weighted case keeps the data space Euclidean.
+    if request.param == "dense":
+        model = make_dense_metric_space(4)
+        data = WeightedSpace(np.array([0.5, 2.0]))
+    else:
+        model = make_weighted_space()
+        data = EuclideanSpace(2)
     property_space = EuclideanSpace(2)
     forward = LinearOperator.from_matrix(
         model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
@@ -79,19 +86,26 @@ def quartic_ball(space, radius):
 
 
 def anisotropic_ellipsoid(model, scales, *, center=None):
+    """An ellipsoid whose precision has the given Galerkin diagonal.
+
+    Self-adjoint on any metric: a Galerkin matrix is symmetric or the
+    operator is not self-adjoint, and ``G diag(s)`` is symmetric only on a
+    diagonal ``G``. The covariance is the exact inverse, ``G diag(1/s) G``
+    in the Galerkin form.
+    """
     gram = model.gram_matrix()
     scale = np.diag(np.asarray(scales)[: model.dim])
-    covariance = LinearOperator.from_matrix(
-        model,
-        model,
-        gram @ scale,
-        traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
-        form="galerkin",
-    )
     precision = LinearOperator.from_matrix(
         model,
         model,
-        gram @ np.linalg.inv(scale),
+        np.linalg.inv(scale),
+        traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        form="galerkin",
+    )
+    covariance = LinearOperator.from_matrix(
+        model,
+        model,
+        gram @ scale @ gram,
         traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
         form="galerkin",
     )

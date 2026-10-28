@@ -19,8 +19,23 @@ from pygeoinf2.numerics.convex import (
     SupportFunction,
 )
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
+
+
 from .doubles import OpaqueSpace
+
+
+@pytest.fixture(params=["weighted", "dense"])
+def space(request):
+    """A diagonal metric and a dense one: a gradient is the Riesz
+    representer of the derivative, a prox map is a projection in the
+    space's own norm, and only a non-diagonal Gram matrix tells either from
+    its raw components."""
+    return (
+        make_weighted_space()
+        if request.param == "weighted"
+        else make_dense_metric_space(4)
+    )
 
 
 def least_squares(space, matrix, data):
@@ -40,8 +55,7 @@ def least_squares(space, matrix, data):
 
 
 class TestSquaredDistance:
-    def test_value_and_gradient(self, rng):
-        space = make_weighted_space()
+    def test_value_and_gradient(self, space, rng):
         center = space.random(rng=rng)
         f = SquaredDistance(space, center=center)
         x = space.random(rng=rng)
@@ -53,15 +67,13 @@ class TestSquaredDistance:
             space.norm(space.subtract(f.gradient(x), space.subtract(x, center))) < 1e-12
         )
 
-    def test_its_hessian_is_the_identity(self, rng):
+    def test_its_hessian_is_the_identity(self, space, rng):
         """Whatever the metric: the Hessian is taken in the space's inner product."""
-        space = make_weighted_space()
         f = SquaredDistance(space, center=space.random(rng=rng))
         x, v = space.random(rng=rng), space.random(rng=rng)
         assert space.norm(space.subtract(f.hessian(x)(v), v)) < 1e-12
 
-    def test_the_prox_is_a_contraction_towards_the_center(self, rng):
-        space = make_weighted_space()
+    def test_the_prox_is_a_contraction_towards_the_center(self, space, rng):
         center = space.random(rng=rng)
         f = SquaredDistance(space, center=center)
         x = space.random(rng=rng)
@@ -74,9 +86,8 @@ class TestSquaredDistance:
 
 
 class TestNormFunctional:
-    def test_the_prox_shrinks_along_the_vector(self, rng):
+    def test_the_prox_shrinks_along_the_vector(self, space, rng):
         """Coordinate-free: a norm and a scaling, no basis anywhere."""
-        space = make_weighted_space()
         f = NormFunctional(space, weight=0.5)
         x = space.random(rng=rng)
         step = 0.3
@@ -85,8 +96,7 @@ class TestNormFunctional:
         shrinkage = max(0.0, 1.0 - step * 0.5 / space.norm(x))
         assert space.norm(space.subtract(proximal, space.scale(shrinkage, x))) < 1e-12
 
-    def test_the_prox_reaches_zero_for_a_large_step(self, rng):
-        space = make_weighted_space()
+    def test_the_prox_reaches_zero_for_a_large_step(self, space, rng):
         f = NormFunctional(space, weight=1.0)
         x = space.random(rng=rng)
         assert space.norm(f.prox(x, 10.0 * space.norm(x))) == pytest.approx(0.0)
@@ -107,13 +117,11 @@ class TestNormFunctional:
             perturbed = space.axpy(1e-3, space.random(rng=rng), space.copy(proximal))
             assert objective(perturbed) >= best - 1e-9
 
-    def test_the_subgradient_at_the_origin_is_admissible(self, rng):
-        space = make_weighted_space()
+    def test_the_subgradient_at_the_origin_is_admissible(self, space, rng):
         f = NormFunctional(space, weight=1.0)
         assert space.norm(f.subgradient(space.zero())) == pytest.approx(0.0)
 
-    def test_the_subgradient_has_the_right_norm(self, rng):
-        space = make_weighted_space()
+    def test_the_subgradient_has_the_right_norm(self, space, rng):
         f = NormFunctional(space, weight=2.5)
         assert space.norm(f.subgradient(space.random(rng=rng))) == pytest.approx(2.5)
 
@@ -123,29 +131,25 @@ class TestNormFunctional:
 
 
 class TestBallIndicator:
-    def test_the_prox_projects(self, rng):
-        space = make_weighted_space()
+    def test_the_prox_projects(self, space, rng):
         indicator = BallIndicator(space, radius=0.7)
         draw = space.random(rng=rng)
         outside = space.scale(5.0 / space.norm(draw), draw)
         projected = indicator.prox(outside, 1.0)
         assert space.norm(projected) == pytest.approx(0.7)
 
-    def test_a_point_inside_is_left_alone(self, rng):
-        space = make_weighted_space()
+    def test_a_point_inside_is_left_alone(self, space, rng):
         indicator = BallIndicator(space, radius=10.0)
         x = space.random(rng=rng)
         assert space.norm(space.subtract(indicator.prox(x, 1.0), x)) < 1e-12
 
-    def test_the_value_is_infinite_outside(self, rng):
-        space = make_weighted_space()
+    def test_the_value_is_infinite_outside(self, space, rng):
         indicator = BallIndicator(space, radius=0.5)
         x = space.random(rng=rng)
         far = space.scale(100.0 / space.norm(x), x)
         assert indicator(far) == float("inf")
 
-    def test_the_conjugate_is_the_support_function(self, rng):
-        space = make_weighted_space()
+    def test_the_conjugate_is_the_support_function(self, space, rng):
         indicator = BallIndicator(space, radius=2.0)
         conjugate = indicator.conjugate()
         y = space.random(rng=rng)
@@ -153,32 +157,28 @@ class TestBallIndicator:
 
 
 class TestSupportFunctions:
-    def test_a_ball(self, rng):
-        space = make_weighted_space()
+    def test_a_ball(self, space, rng):
         h = SupportFunction.of_ball(space, radius=3.0)
         y = space.random(rng=rng)
         assert h(y) == pytest.approx(3.0 * space.norm(y))
 
-    def test_the_subgradient_attains_the_supremum(self, rng):
-        space = make_weighted_space()
+    def test_the_subgradient_attains_the_supremum(self, space, rng):
         h = SupportFunction.of_ball(space, radius=3.0)
         y = space.random(rng=rng)
         maximizer = h.subgradient(y)
         assert space.norm(maximizer) == pytest.approx(3.0)
         assert space.inner_product(maximizer, y) == pytest.approx(h(y))
 
-    def test_a_point(self, rng):
-        space = make_weighted_space()
+    def test_a_point(self, space, rng):
         point = space.random(rng=rng)
         h = SupportFunction.of_point(space, point)
         y = space.random(rng=rng)
         assert h(y) == pytest.approx(space.inner_product(point, y))
 
-    def test_an_oracle_with_its_maximizer(self, rng):
+    def test_an_oracle_with_its_maximizer(self, space, rng):
         """A support function from callables: one for the value and,
         when known, one for the point attaining it, which is the subgradient
         a bundle method asks for."""
-        space = make_weighted_space()
         ball = SupportFunction.of_ball(space, radius=2.0)
         h = SupportFunction.of_oracle(
             space, lambda q: 2.0 * space.norm(q), maximizer=ball.subgradient
@@ -194,9 +194,8 @@ class TestSupportFunctions:
         with pytest.raises(NotImplementedError, match="maximizer"):
             values_only.subgradient(y)
 
-    def test_a_minkowski_sum(self, rng):
+    def test_a_minkowski_sum(self, space, rng):
         """The algebra is closed, which is why the class exists."""
-        space = make_weighted_space()
         center = space.random(rng=rng)
         total = SupportFunction.of_ball(space, radius=2.0) + SupportFunction.of_point(
             space, center
@@ -207,8 +206,7 @@ class TestSupportFunctions:
             2.0 * space.norm(y) + space.inner_product(center, y)
         )
 
-    def test_a_positive_scaling(self, rng):
-        space = make_weighted_space()
+    def test_a_positive_scaling(self, space, rng):
         h = 3.0 * SupportFunction.of_ball(space, radius=2.0)
         assert isinstance(h, SupportFunction)
         y = space.random(rng=rng)
@@ -233,9 +231,8 @@ class TestSupportFunctions:
 
 
 class TestProximalGradient:
-    def test_it_solves_a_problem_with_a_known_answer(self, rng):
+    def test_it_solves_a_problem_with_a_known_answer(self, space, rng):
         """min 0.5||x-c||^2 + w||x|| has the shrinkage of c as its minimizer."""
-        space = make_weighted_space()
         center = space.random(rng=rng)
         smooth = SquaredDistance(space, center=center)
         penalty = NormFunctional(space, weight=0.3)
@@ -275,8 +272,7 @@ class TestProximalGradient:
         )
         assert fast.value < plain.value
 
-    def test_a_ball_constraint_is_respected(self, rng):
-        space = make_weighted_space()
+    def test_a_ball_constraint_is_respected(self, space, rng):
         smooth = SquaredDistance(space, center=space.random(rng=rng))
         constraint = BallIndicator(space, radius=0.2)
         result = ProximalGradient(max_iterations=2000, gtol=1e-10).minimize(
@@ -284,8 +280,7 @@ class TestProximalGradient:
         )
         assert space.norm(result.minimizer) <= 0.2 * (1.0 + 1e-8)
 
-    def test_it_works_with_no_nonsmooth_part(self, rng):
-        space = make_weighted_space()
+    def test_it_works_with_no_nonsmooth_part(self, space, rng):
         center = space.random(rng=rng)
         smooth = SquaredDistance(space, center=center)
         result = ProximalGradient(max_iterations=500, gtol=1e-10).minimize(
@@ -302,16 +297,14 @@ class TestProximalGradient:
 
 
 class TestSubgradientDescent:
-    def test_it_minimizes_a_norm(self, rng):
-        space = make_weighted_space()
+    def test_it_minimizes_a_norm(self, space, rng):
         f = NormFunctional(space, weight=1.0)
         result = SubgradientDescent(
             step_size=0.5, rule="sqrt", max_iterations=3000
         ).minimize(f, space.random(rng=rng))
         assert result.value < 1e-2
 
-    def test_the_polyak_rule_is_faster_when_the_optimum_is_known(self, rng):
-        space = make_weighted_space()
+    def test_the_polyak_rule_is_faster_when_the_optimum_is_known(self, space, rng):
         f = NormFunctional(space, weight=1.0)
         start = space.random(rng=rng)
         classical = SubgradientDescent(
@@ -336,8 +329,7 @@ class TestSubgradientDescent:
         with pytest.raises(ValueError, match="subgradient"):
             SubgradientDescent(step_size=0.1).minimize(f, space.zero())
 
-    def test_a_smooth_functional_supplies_its_own_subgradient(self, rng):
-        space = make_weighted_space()
+    def test_a_smooth_functional_supplies_its_own_subgradient(self, space, rng):
         f = SquaredDistance(space, center=space.random(rng=rng))
         assert f.has_subgradient
         assert (
@@ -349,8 +341,7 @@ class TestSubgradientDescent:
 
 
 class TestProximalPoint:
-    def test_it_converges_on_a_squared_distance(self, rng):
-        space = make_weighted_space()
+    def test_it_converges_on_a_squared_distance(self, space, rng):
         center = space.random(rng=rng)
         f = SquaredDistance(space, center=center)
         result = ProximalPoint(step=1.0, max_iterations=500, gtol=1e-10).minimize(
@@ -358,8 +349,7 @@ class TestProximalPoint:
         )
         assert space.norm(space.subtract(result.minimizer, center)) < 1e-8
 
-    def test_a_larger_step_converges_in_fewer_iterations(self, rng):
-        space = make_weighted_space()
+    def test_a_larger_step_converges_in_fewer_iterations(self, space, rng):
         f = SquaredDistance(space, center=space.random(rng=rng))
         start = space.random(rng=rng)
         slow = ProximalPoint(step=0.1, max_iterations=2000, gtol=1e-10).minimize(

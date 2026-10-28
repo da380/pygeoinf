@@ -37,7 +37,7 @@ from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import WeightedSpace, make_weighted_space
+from .conftest import WeightedSpace, make_dense_metric_space, make_weighted_space
 
 
 def dense(space, matrix):
@@ -55,11 +55,23 @@ def positive(space, rng, scale=1.0):
     return dense(space, scale * (root @ root.T + space.dim * np.identity(space.dim)))
 
 
-@pytest.fixture(params=["euclidean", "weighted"])
+@pytest.fixture(params=["euclidean", "weighted", "dense-model", "dense-data"])
 def setup(request, rng):
-    """A linear Gaussian problem whose data space may carry a metric."""
-    model = EuclideanSpace(6)
-    data = EuclideanSpace(8) if request.param == "euclidean" else make_weighted_space()
+    """A linear Gaussian problem whose spaces may carry a metric: a diagonal
+    one on the data space, a dense one on either side. A dense Gram matrix
+    is what tells a metric-correct construction from one that happens to be
+    right in components."""
+    model = (
+        make_dense_metric_space(6)
+        if request.param == "dense-model"
+        else EuclideanSpace(6)
+    )
+    data = {
+        "euclidean": lambda: EuclideanSpace(8),
+        "weighted": make_weighted_space,
+        "dense-model": make_weighted_space,
+        "dense-data": lambda: make_dense_metric_space(8),
+    }[request.param]()
     forward = LinearOperator.from_matrix(
         model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
@@ -305,12 +317,16 @@ class TestLocalizedPreconditioner:
         image = localized(vector)
         assert np.all(np.isfinite(data.to_components(image)))
         # Block-diagonal where the blocks are, diagonal elsewhere: on a basis
-        # vector of an uncovered index it is the diagonal preconditioner.
-        unit = data.from_components(np.eye(data.dim)[-1])
-        expected = NormalDiagonalPreconditioner()(exact)(unit)
-        assert data.norm(data.subtract(localized(unit), expected)) == pytest.approx(
-            0.0, abs=1e-10 * data.norm(expected)
-        )
+        # vector of an uncovered index it is the diagonal preconditioner. A
+        # statement about components, so it holds where the metric is
+        # diagonal; on a dense Gram matrix the two differ by the off-diagonal
+        # metric and neither is wrong.
+        if data.has_diagonal_metric:
+            unit = data.from_components(np.eye(data.dim)[-1])
+            expected = NormalDiagonalPreconditioner()(exact)(unit)
+            assert data.norm(data.subtract(localized(unit), expected)) == pytest.approx(
+                0.0, abs=1e-10 * data.norm(expected)
+            )
 
 
 class TestPreconditionedInversion:
