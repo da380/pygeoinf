@@ -32,14 +32,12 @@ from pygeoinf2 import (
     CholeskySolver,
     EuclideanSpace,
     ForwardProblem,
-    Functional,
     GaussianMeasure,
     LinearForwardProblem,
     LinearGaussianInversion,
     Linearization,
     MaximumAPosteriori,
     Operator,
-    QuadraticModel,
 )
 from pygeoinf2.algebra.operators import EvaluationError
 from pygeoinf2.numerics.optimization import NewtonCG
@@ -262,32 +260,6 @@ class BentForward:
         return Linearization(model, values, derivative)
 
 
-class GaussNewtonMAP(MaximumAPosteriori):
-    """The MAP estimator whose objective carries the Gauss-Newton Hessian.
-
-    For a forward operator without a second derivative the estimator's
-    :meth:`hessian` is ``2 (P + J* R^-1 J)``, the curvature of the
-    linearized problem; attaching it to the objective is what lets a Newton
-    method use it.
-    """
-
-    def objective(self, data: Any, /) -> Functional:
-        base = super().objective(data)
-
-        def linearize(model: Any) -> QuadraticModel:
-            local = base.at(model)
-            return QuadraticModel(
-                model, local.value, local.derivative, self.hessian(data, model)
-            )
-
-        return Functional.from_callables(
-            self.model_space,
-            base,
-            linearize=linearize,
-            hessian=lambda model: self.hessian(data, model),
-        )
-
-
 @dataclass
 class BentProblem:
     """Everything the part builds."""
@@ -488,7 +460,9 @@ def bent_answer(
         ftol=1e-10,
         max_iterations=30,
     )
-    estimator = GaussNewtonMAP(problem.problem, problem.prior, optimizer=optimizer)
+    estimator = MaximumAPosteriori(
+        problem.problem, problem.prior, optimizer=optimizer, gauss_newton=True
+    )
     result = estimator.solve(problem.data)
     mode = result.minimizer
     _, mode_rays = forward.trace(mode)
