@@ -13,7 +13,6 @@
 import numpy as np
 
 from pygeoinf2 import (
-    DiscrepancyPrinciple,
     GaussianMeasure,
     LeastSquares,
     LinearForwardProblem,
@@ -104,12 +103,15 @@ for damping in (1.0, 10.0, 100.0, 1000.0, 10000.0):
 # misfit is still that small — the smallest model the data cannot reject.
 # The misfit grows monotonically with the damping, so finding it is a
 # one-dimensional root search, one warm-started solve per probe.
+#
+# `MinimumNorm(problem)` is that estimator: data in, the smallest model
+# that fits them out, with the confidence level as its one knob.
 
 # %%
-chosen = MinimumNorm(problem).for_data(data)
-model = chosen(data)
-search = MinimumNorm(problem).discrepancy_search(data)
-print(f"damping chosen: {chosen.damping:.0f}")
+estimator = MinimumNorm(problem)
+model = estimator(data)
+search = estimator.discrepancy_search(data)
+print(f"damping chosen: {search.argument:.0f}")
 print(f"its misfit: {problem.chi_squared(model, data):.1f}")
 print(f"its error:  {X.norm(model - truth) / X.norm(truth):.3f}")
 print(
@@ -122,15 +124,17 @@ print(
 # cost is a dozen or so solves, and they get cheaper as the search closes
 # in, because each starts from the last.
 #
-# `DiscrepancyPrinciple` is the same choice as an operator from data to
-# model. It is *not* linear — two data vectors may need different dampings —
-# but it is differentiable, and it supplies its derivative, so it can sit
-# inside a larger computation that needs one.
+# `MinimumNorm` is an operator from data to model, but *not* a linear one:
+# two data vectors may need different dampings. It is differentiable, and
+# it supplies its derivative, so it can sit inside a larger computation
+# that needs one. For the affine estimator the data chose, ask
+# `for_data`: it is the `LeastSquares` at the damping found, and applied
+# to the same data it gives the same model.
 
 # %%
-principle = DiscrepancyPrinciple(problem)
-same = X.norm(principle(data) - model) / X.norm(model)
-print(f"DiscrepancyPrinciple agrees with MinimumNorm.for_data to {same:.1e}")
+chosen = estimator.for_data(data)
+same = X.norm(chosen(data) - model) / X.norm(model)
+print(f"LeastSquares at damping {chosen.damping:.0f} agrees to {same:.1e}")
 
 # %% [markdown]
 # ## The norm is the regulariser
@@ -145,7 +149,7 @@ print(f"DiscrepancyPrinciple agrees with MinimumNorm.for_data to {same:.1e}")
 answers = {"L2": model}
 for name, space in (("H1", Sobolev(256, 1.0, 0.2)), ("H2", Sobolev(256, 2.0, 0.2))):
     posed = forward_problem(space)
-    answers[name] = MinimumNorm(posed).for_data(data)(data)
+    answers[name] = MinimumNorm(posed)(data)
 for name, answer in answers.items():
     print(f"{name}: error in L2 {X.norm(answer - truth) / X.norm(truth):.3f}")
 

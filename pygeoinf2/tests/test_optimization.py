@@ -26,7 +26,7 @@ from pygeoinf2.numerics.optimization import (
 )
 from pygeoinf2.traits import Traits
 
-from .conftest import DenseMetricSpace, make_weighted_space
+from .conftest import DenseMetricSpace, make_dense_metric_space, make_weighted_space
 from .doubles import OpaqueSpace
 
 
@@ -887,3 +887,248 @@ class TestTrustRegionReportsHowItStopped:
         strict = TrustRegionNewton(ftol=0.0).minimize(lifted, start)
         assert strict.converged
         assert strict.message == "gradient tolerance reached"
+
+
+class TestAugmentedLagrangian:
+    """The method of multipliers on a dense metric: a quadratic with a linear
+    equality against the closed form, and a ball-constrained quadratic
+    against the metric projection."""
+
+    @staticmethod
+    def squared_distance(space, center):
+        """``|x - a|^2`` in the space's norm, with gradient and Hessian."""
+        return Functional.from_callables(
+            space,
+            lambda x: space.squared_norm(space.subtract(x, center)),
+            gradient=lambda x: space.scale(2.0, space.subtract(x, center)),
+            hessian=lambda x: LinearOperator.self_adjoint(
+                space, lambda v: space.scale(2.0, v), traits=Traits.POSITIVE_DEFINITE
+            ),
+        )
+
+    @staticmethod
+    def hyperplane(space, normal, level):
+        """``(w, x) - level``, with gradient and a zero Hessian."""
+        return Functional.from_callables(
+            space,
+            lambda x: space.inner_product(normal, x) - level,
+            gradient=lambda x: normal,
+            hessian=lambda x: LinearOperator.zero(space),
+        )
+
+    @pytest.mark.parametrize("inner", [LBFGS, NewtonCG])
+    def test_a_quadratic_with_a_linear_equality(self, inner, rng):
+        from pygeoinf2.numerics.optimization import (
+            AugmentedLagrangian,
+            AugmentedLagrangianResult,
+        )
+
+        from .conftest import make_dense_metric_space
+
+        space = make_dense_metric_space(6)
+        center = space.random(rng=rng)
+        normal = space.random(rng=rng)
+        objective = self.squared_distance(space, center)
+        constraint = self.hyperplane(space, normal, 1.0)
+        method = AugmentedLagrangian(
+            inner(gtol=1e-12), equalities=[constraint], tolerance=1e-8, gtol=1e-8
+        )
+        result = method.minimize(objective, space.zero())
+
+        # The metric projection of the center onto the plane, and the
+        # multiplier from the stationarity condition 2 (x - a) + lam w == 0.
+        excess = (space.inner_product(normal, center) - 1.0) / space.squared_norm(
+            normal
+        )
+        expected = space.axpy(-excess, normal, space.copy(center))
+        assert isinstance(result, AugmentedLagrangianResult)
+        assert result.converged, result.message
+        assert result.minimizer == pytest.approx(expected, abs=1e-6)
+        assert result.multipliers[0] == pytest.approx(2.0 * excess, abs=1e-6)
+        assert result.violation <= 1e-8
+        assert result.inequality_multipliers.size == 0
+        assert result.value == pytest.approx(objective(expected), abs=1e-9)
+        assert result.outer_iterations >= 1
+
+    def test_a_ball_constrained_quadratic_is_the_projection(self, rng):
+        from pygeoinf2.numerics.optimization import AugmentedLagrangian
+
+        from .conftest import make_dense_metric_space
+
+        space = make_dense_metric_space(6)
+        center = space.random(rng=rng)
+        radius = 0.5 * space.norm(center)
+        objective = self.squared_distance(space, center)
+        ball = Functional.from_callables(
+            space,
+            lambda x: space.squared_norm(x) - radius**2,
+            gradient=lambda x: space.scale(2.0, x),
+        )
+        method = AugmentedLagrangian(
+            LBFGS(gtol=1e-12), inequalities=[ball], tolerance=1e-8, gtol=1e-8
+        )
+        result = method.minimize(objective, space.zero())
+
+        expected = space.scale(radius / space.norm(center), center)
+        assert result.converged, result.message
+        assert result.minimizer == pytest.approx(expected, abs=1e-6)
+        # 2 (x - a) + 2 mu x == 0 with x == r a / |a| gives mu == |a| / r - 1.
+        assert result.inequality_multipliers[0] == pytest.approx(
+            space.norm(center) / radius - 1.0, abs=1e-5
+        )
+        assert result.violation <= 1e-8
+
+    def test_an_inactive_inequality_changes_nothing(self, rng):
+        from pygeoinf2.numerics.optimization import AugmentedLagrangian
+
+        from .conftest import make_dense_metric_space
+
+        space = make_dense_metric_space(4)
+        center = space.random(rng=rng)
+        radius = 2.0 * space.norm(center)
+        objective = self.squared_distance(space, center)
+        ball = Functional.from_callables(
+            space,
+            lambda x: space.squared_norm(x) - radius**2,
+            gradient=lambda x: space.scale(2.0, x),
+        )
+        result = AugmentedLagrangian(LBFGS(), inequalities=[ball]).minimize(
+            objective, space.zero()
+        )
+        assert result.converged
+        assert result.minimizer == pytest.approx(center, abs=1e-6)
+        assert result.inequality_multipliers[0] == 0.0
+        assert result.violation == 0.0
+
+    def test_the_augmented_lagrangian_itself(self, rng):
+        """Its value, gradient and Hessian at given multipliers."""
+        from pygeoinf2.numerics.optimization import AugmentedLagrangian
+        from pygeoinf2.testing import check_gradient
+
+        from .conftest import make_dense_metric_space
+
+        space = make_dense_metric_space(4)
+        center = space.random(rng=rng)
+        normal = space.random(rng=rng)
+        objective = self.squared_distance(space, center)
+        plane = self.hyperplane(space, normal, 0.3)
+        ball = Functional.from_callables(
+            space,
+            lambda x: space.squared_norm(x) - 0.1,
+            gradient=lambda x: space.scale(2.0, x),
+            hessian=lambda x: LinearOperator.self_adjoint(
+                space, lambda v: space.scale(2.0, v)
+            ),
+        )
+        method = AugmentedLagrangian(LBFGS(), equalities=[plane], inequalities=[ball])
+        augmented = method.augmented(
+            objective, multipliers=[0.7], inequality_multipliers=[0.2], penalty=3.0
+        )
+        assert augmented.has_hessian
+        x = space.random(rng=rng)
+        c = plane(x)
+        g = ball(x)
+        expected = (
+            objective(x)
+            + 0.7 * c
+            + 1.5 * c * c
+            + (max(0.0, 0.2 + 3.0 * g) ** 2 - 0.04) / 6.0
+        )
+        assert augmented(x) == pytest.approx(expected)
+        assert augmented.at(x).value == pytest.approx(expected)
+        check_gradient(augmented, x, rng=rng)
+        # The Hessian against a difference of gradients.
+        direction = space.random(rng=rng)
+        step = 1e-6
+        differences = space.scale(
+            1.0 / (2.0 * step),
+            space.subtract(
+                augmented.gradient(space.axpy(step, direction, space.copy(x))),
+                augmented.gradient(space.axpy(-step, direction, space.copy(x))),
+            ),
+        )
+        assert augmented.hessian(x)(direction) == pytest.approx(
+            differences, rel=1e-5, abs=1e-6
+        )
+
+    def test_what_it_refuses(self, rng):
+        from pygeoinf2.numerics.optimization import AugmentedLagrangian
+
+        space = EuclideanSpace(3)
+        other = EuclideanSpace(2)
+        objective = self.squared_distance(space, space.zero())
+        bare = Functional.from_callables(space, lambda x: 0.0)
+        with pytest.raises(ValueError, match="derivative"):
+            AugmentedLagrangian(LBFGS(), equalities=[bare])
+        elsewhere = self.hyperplane(other, other.zero(), 0.0)
+        with pytest.raises(ValueError, match="lives on"):
+            AugmentedLagrangian(LBFGS(), equalities=[elsewhere]).minimize(
+                objective, space.zero()
+            )
+        with pytest.raises(ValueError, match="penalty"):
+            AugmentedLagrangian(LBFGS(), penalty=0.0)
+        with pytest.raises(ValueError, match="growth"):
+            AugmentedLagrangian(LBFGS(), penalty_growth=1.0)
+        with pytest.raises(ValueError, match="reduction"):
+            AugmentedLagrangian(LBFGS(), reduction=1.0)
+
+    def test_with_tolerance_copies_the_method(self, spd_problem):
+        space, functional, offset = spd_problem
+        tight = LBFGS(gtol=1e-7, rtol=0.0, ftol=0.0)
+        loose = tight.with_tolerance(gtol=1e-2)
+        assert loose is not tight
+        assert isinstance(loose, LBFGS)
+        by_loose = loose.minimize(functional, space.zero())
+        by_tight = tight.minimize(functional, space.zero())
+        assert by_loose.gradient_norm <= 1e-2
+        assert by_loose.iterations < by_tight.iterations
+        assert by_tight.gradient_norm <= 1e-7
+
+
+def _inverse_hessian(space, matrix):
+    """The exact inverse of ``quadratic``'s Hessian, as a self-adjoint operator."""
+    symmetric = 0.5 * (matrix + matrix.T)
+    gram = space.gram_matrix()
+    return LinearOperator.self_adjoint(
+        space,
+        lambda v: space.from_components(
+            np.linalg.solve(symmetric, gram @ space.to_components(v))
+        ),
+        traits=Traits.POSITIVE_DEFINITE,
+    )
+
+
+class TestPreconditionedNewtonCG:
+    """A preconditioner changes the inner solve's path, not its answer."""
+
+    def test_the_minimizer_is_unchanged_on_a_quadratic(self, rng):
+        space = make_dense_metric_space(6)
+        matrix = rng.normal(size=(6, 6))
+        matrix = matrix @ matrix.T + 6 * np.eye(6)
+        offset = rng.normal(size=6)
+        functional = quadratic(space, matrix, offset)
+        start = space.random(rng=rng)
+        plain = NewtonCG(max_iterations=20).minimize(functional, start)
+        preconditioned = NewtonCG(
+            max_iterations=20, preconditioner=_inverse_hessian(space, matrix)
+        ).minimize(functional, start)
+        assert plain.converged and preconditioned.converged
+        assert (
+            space.norm(space.subtract(plain.minimizer, preconditioned.minimizer)) < 1e-6
+        )
+
+    def test_the_exact_inverse_solves_in_one_step(self, rng):
+        space = make_dense_metric_space(8)
+        matrix = rng.normal(size=(8, 8))
+        matrix = matrix @ matrix.T + 8 * np.eye(8)
+        hessian = quadratic(space, matrix, np.zeros(8)).hessian(space.zero())
+        inverse = _inverse_hessian(space, matrix)
+        rhs = space.random(rng=rng)
+        exact = inverse(rhs)
+        step, reason = truncated_cg(
+            hessian, rhs, rtol=1e-10, max_iterations=2, preconditioner=inverse
+        )
+        assert reason == "converged"
+        assert space.norm(space.subtract(step, exact)) < 1e-8 * space.norm(exact)
+        with pytest.raises(ValueError, match="trust region"):
+            truncated_cg(hessian, rhs, radius=1.0, preconditioner=inverse)

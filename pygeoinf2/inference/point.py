@@ -1,12 +1,11 @@
 """
 Point estimators: a data vector in, one model out.
 
-Least squares and minimum norm at a damping chosen by the caller
-(:class:`LeastSquares`, :class:`MinimumNorm`); the discrepancy principle, which
-is minimum norm with its damping found from the data
-(:class:`DiscrepancyPrinciple`); and their counterparts confined to an
-affine subspace, :class:`ConstrainedLeastSquares` for least squares and
-:class:`ConstrainedMinimumNorm` for the discrepancy principle.
+Least squares at a damping chosen by the caller (:class:`LeastSquares`); the
+smallest model that fits the data, with the damping found from the data by
+the discrepancy principle (:class:`MinimumNorm`); and their counterparts
+confined to an affine subspace, :class:`ConstrainedLeastSquares` and
+:class:`ConstrainedMinimumNorm`.
 
 The fixed-damping estimators are built on
 :class:`~pygeoinf2.numerics.tikhonov.TikhonovNormalOperator`, so they expose
@@ -18,7 +17,7 @@ a damping *found*. With the damping fixed, the estimate is affine in the data
 and the estimator is an operator, which is what
 :class:`LinearPointEstimator` is for. With the damping found from the data by
 the discrepancy principle, it is not: the map is genuinely non-linear, and
-:class:`DiscrepancyPrinciple` supplies its derivative rather than pretending
+:class:`MinimumNorm` supplies its derivative rather than pretending
 otherwise.
 """
 
@@ -26,7 +25,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..algebra.operators import LinearOperator, Operator
+from ..algebra.operators import Linearization, LinearOperator, Operator
+from ..algebra.spaces import HilbertSpace
 from ..geometry.sets import Subset
 from ..geometry.subspaces import AffineSubspace
 from ..numerics.normal import Formalism
@@ -36,13 +36,12 @@ from ..numerics.solvers import LinearSolver, SolveStep, resolve_solver
 from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
-from .estimators import LinearPointEstimator
+from .estimators import ComposedPointEstimator, LinearPointEstimator, PointEstimator
 from .problem import LinearForwardProblem
 
 __all__ = [
     "ConstrainedLeastSquares",
     "ConstrainedMinimumNorm",
-    "DiscrepancyPrinciple",
     "LeastSquares",
     "MinimumNorm",
     "choose_formalism",
@@ -77,7 +76,7 @@ class LeastSquares(LinearPointEstimator):
 
     The estimator *is* the mapping from data to the fitted model, so it is an
     affine operator and joins the algebra. The damping is fixed here; to let
-    the data choose it, see :class:`DiscrepancyPrinciple`.
+    the data choose it, see :class:`MinimumNorm`.
     """
 
     def __init__(
@@ -336,117 +335,6 @@ class LeastSquares(LinearPointEstimator):
         return callback
 
 
-class MinimumNorm(LeastSquares):
-    """The smallest model fitting the data, at a damping chosen in advance.
-
-    Identical to :class:`LeastSquares` in construction — the two differ in
-    intent rather than in algebra, since minimizing ``|A u - d|^2_R + t |u|^2``
-    is trading misfit against norm either way. It is a separate name because
-    the question it answers is "how small can the model be", and because
-    :meth:`for_data` is what makes that question well posed.
-    """
-
-    def for_data(
-        self,
-        data: Any,
-        /,
-        *,
-        level: float = 0.95,
-        max_iterations: int = 60,
-        rtol: float = 1e-6,
-        atol: float = 0.0,
-        minimum_damping: float = 0.0,
-    ) -> "MinimumNorm":
-        """The same method with the damping set by the discrepancy principle.
-
-        Damps as hard as the data allow: the largest damping whose misfit still
-        reaches the chi-squared threshold at *level*. The misfit increases with
-        the damping, which is what makes the bisection reliable.
-
-        Two saturated cases are handled explicitly, both read off
-        :func:`~pygeoinf2.numerics.root_find.monotone_root` reporting which
-        end of the range it ran out at:
-
-        * the misfit stays below the threshold however large the damping, so
-          every damping fits and the answer is the **largest** reached -- the
-          data support no structure and the model should say so;
-        * the misfit stays above the threshold however small the damping, so
-          no model fits and there is no answer to give. That is refused, on
-          the same terms as :class:`DiscrepancyPrinciple`, the two sharing one
-          search.
-
-        Args:
-            data: the data vector.
-            level: the confidence level setting the misfit target.
-            max_iterations: the search's budget.
-            rtol: the search's bracket tolerance.
-            atol: its absolute half, for a root near zero damping.
-            minimum_damping: a floor on the damping; see :func:`misfit_search`.
-
-        Returns:
-            A :class:`MinimumNorm` with its damping fixed at the value found.
-
-        Raises:
-            ValueError: when no model fits the data to the threshold.
-        """
-        found = _searched_damping(
-            self.family(),
-            self._problem,
-            data,
-            level=level,
-            max_iterations=max_iterations,
-            rtol=rtol,
-            atol=atol,
-            minimum_damping=minimum_damping,
-        )
-        return MinimumNorm(
-            self._problem,
-            damping=found.argument,
-            solver=self._solver,
-            formalism=self._normal.formalism,
-        )
-
-    def discrepancy_search(
-        self,
-        data: Any,
-        /,
-        *,
-        level: float = 0.95,
-        max_iterations: int = 60,
-        rtol: float = 1e-6,
-        atol: float = 0.0,
-        minimum_damping: float = 0.0,
-    ) -> RootResult:
-        """The search itself, with its diagnostics.
-
-        Returned rather than hidden so that the cost is visible: without the
-        iteration count there is no way to tell a warm start that is working
-        from one that silently is not.
-
-        Args:
-            data: the observations.
-            level: the confidence level setting the misfit target.
-            max_iterations: bisection steps once the root is bracketed.
-            rtol: how tightly to close the bracket.
-            atol: its absolute half, for a root near zero damping.
-            minimum_damping: a floor on the damping; see :func:`misfit_search`.
-
-        Returns:
-            The root result, with its bracket, evaluation count and inner
-            iteration total.
-        """
-        return _discrepancy_search(
-            self.family(),
-            self._problem,
-            data,
-            level=level,
-            max_iterations=max_iterations,
-            rtol=rtol,
-            atol=atol,
-            minimum_damping=minimum_damping,
-        )
-
-
 def _discrepancy_search(
     family: TikhonovFamily,
     problem: LinearForwardProblem,
@@ -486,9 +374,6 @@ def _searched_damping(
 ) -> RootResult:
     """The discrepancy search, refusing data that no model fits.
 
-    Shared by :class:`DiscrepancyPrinciple` and :meth:`MinimumNorm.for_data`
-    so the two cannot disagree about the saturated cases.
-
     Raises:
         ValueError: when the misfit does not reach its target at any damping.
     """
@@ -519,17 +404,39 @@ def _searched_damping(
     return found
 
 
-class DiscrepancyPrinciple(Operator):
-    """Data to the smallest model that fits them, damping and all.
+class MinimumNorm(PointEstimator, Operator):
+    """The smallest model that fits the data.
 
-    The damping is found from the data, so this map is **not** affine and not
-    an operator in the linear sense: two data vectors that need different
-    dampings are not related by any fixed matrix. What makes it usable anyway
-    is that its derivative can be written down exactly.
+    When the problem carries an error measure, "fits" is the discrepancy
+    principle: the chi-squared misfit is allowed up to its critical value at
+    the confidence *level*, and the estimate is the smallest model whose
+    misfit is no larger. That model is the Tikhonov minimizer of
+    ``|A u - d|^2_R + t |u|^2`` at the largest damping ``t`` whose misfit
+    still reaches the threshold, found by a one-dimensional root search since
+    the misfit increases with the damping. The level is the one knob: it
+    says how much of the data to attribute to noise.
 
+    Without an error measure the data are exact, there is no threshold, and
+    the estimate is the fit at zero damping: the minimum-norm solution of
+    ``A u == d``.
+
+    Two saturated cases of the search are handled explicitly, both read off
+    :func:`~pygeoinf2.numerics.root_find.monotone_root` reporting which end
+    of the range it ran out at:
+
+    * the misfit stays below the threshold however large the damping, so
+      every damping fits and the answer is the **largest** reached: the data
+      support no structure and the model should say so;
+    * the misfit stays above the threshold however small the damping, so no
+      model fits and there is no answer to give. That is refused.
+
+    The damping is found from the data, so this map is **not** affine and
+    not an operator in the linear sense: two data vectors that need
+    different dampings are not related by any fixed matrix. What makes it
+    usable anyway is that its derivative can be written down exactly.
     Differentiating ``H(t) u == A* R^-1 d`` and the constraint
-    ``chi^2(u, d) == target`` together, and using ``A* R^-1 r == -t u`` from the
-    normal equations themselves:
+    ``chi^2(u, d) == target`` together, and using ``A* R^-1 r == -t u`` from
+    the normal equations themselves:
 
     .. code-block:: text
 
@@ -541,9 +448,12 @@ class DiscrepancyPrinciple(Operator):
     term is what the answer would do if the damping were frozen; the second is
     the correction for the damping moving, and it is a rank-one update, which
     is why the derivative costs one extra solve rather than a new problem.
+    Both directions are supplied, and the adjoint is the one an inversion
+    built on top of this would actually call.
 
-    Both directions are supplied, and the adjoint is the one an inversion built
-    on top of this would actually call.
+    :meth:`for_data` returns the :class:`LeastSquares` at the damping the
+    data chose, which is an affine operator with the error budget of one;
+    :meth:`discrepancy_search` returns the search itself with its cost.
     """
 
     def __init__(
@@ -561,12 +471,14 @@ class DiscrepancyPrinciple(Operator):
     ) -> None:
         """
         Args:
-            problem: the forward problem. It must carry an error measure —
-                without one there is no misfit threshold and no principle.
-            level: the confidence level setting the misfit target.
-            solver: how to invert each ``N(t)``.
-            formalism: which space to solve in.
-            max_iterations, rtol: the discrepancy search's budget and tolerance.
+            problem: the forward problem, with an error measure or without.
+            level: the confidence level setting the misfit target. Unused
+                when the problem has no error.
+            solver: how to invert each ``N(t)``. Conjugate gradients by
+                default; see :class:`LeastSquares`.
+            formalism: which space to solve in; see :func:`choose_formalism`.
+            max_iterations: the discrepancy search's budget.
+            rtol: the search's bracket tolerance.
             atol: the absolute half of that tolerance, for a damping near
                 zero, where a relative test never closes.
             minimum_damping: a floor on the damping. Data that no model fits
@@ -574,12 +486,6 @@ class DiscrepancyPrinciple(Operator):
                 probing ever smaller dampings on a numerically singular
                 system. Zero is no floor.
         """
-        if not problem.has_error:
-            raise ValueError(
-                "The discrepancy principle needs a data error measure: the "
-                "threshold it damps towards is a statement about the noise. "
-                "Without one, use LeastSquares with a chosen damping."
-            )
         super().__init__(problem.data_space, problem.model_space)
         self._problem = problem
         self._level = level
@@ -591,10 +497,15 @@ class DiscrepancyPrinciple(Operator):
         self._minimum_damping = minimum_damping
         self._family = TikhonovFamily(
             problem.forward_operator,
-            error=problem.error_measure,
+            error=_error_measure(problem),
             solver=self._solver,
             formalism=formalism,
         )
+        self._exact_fit: LeastSquares | None = None
+
+    # ----------------------------------------------------------------- #
+    #                            Structure                              #
+    # ----------------------------------------------------------------- #
 
     @property
     def forward_problem(self) -> LinearForwardProblem:
@@ -606,18 +517,260 @@ class DiscrepancyPrinciple(Operator):
         """The confidence level the misfit is damped towards."""
         return self._level
 
-    def search(self, data: Any, /) -> RootResult:
-        """The damping search for this data, with its diagnostics."""
-        return _discrepancy_search(
-            self._family,
-            self._problem,
-            data,
+    @property
+    def solver(self) -> LinearSolver | None:
+        """How each damped normal operator is inverted; None for the default."""
+        return self._solver
+
+    @property
+    def formalism(self) -> str:
+        """Which space the normal equations are assembled in."""
+        return self._family.formalism
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The problem's data space."""
+        return self._problem.data_space
+
+    @property
+    def property_space(self) -> HilbertSpace:
+        """The problem's model space: the estimate is of the model itself."""
+        return self._problem.model_space
+
+    def family(self) -> TikhonovFamily:
+        """The one-parameter family the search walks along."""
+        return self._family
+
+    def __call__(self, data: Any) -> Any:
+        """The smallest model fitting the data."""
+        return self._value(data)
+
+    # ----------------------------------------------------------------- #
+    #                          The same, but                            #
+    # ----------------------------------------------------------------- #
+
+    def _rebuild(
+        self, *, problem: LinearForwardProblem | None = None, **changes: Any
+    ) -> "MinimumNorm":
+        """A copy with the given settings replaced."""
+        settings: dict[str, Any] = dict(
             level=self._level,
+            solver=self._solver,
+            formalism=self._formalism,
             max_iterations=self._max_iterations,
             rtol=self._rtol,
             atol=self._atol,
             minimum_damping=self._minimum_damping,
         )
+        settings.update(changes)
+        return type(self)(self._problem if problem is None else problem, **settings)
+
+    def with_solver(self, solver: Any, /) -> "MinimumNorm":
+        """The same estimator, solved a different way."""
+        return self._rebuild(solver=solver)
+
+    def with_formalism(self, formalism: Formalism, /) -> "MinimumNorm":
+        """The same estimator, assembled in the other space."""
+        return self._rebuild(formalism=formalism)
+
+    def with_level(self, level: float, /) -> "MinimumNorm":
+        """The same estimator at another confidence level."""
+        return self._rebuild(level=level)
+
+    def parameterized(self, parameterization: LinearOperator, /) -> "MinimumNorm":
+        """The same estimator restricted to a parameter space.
+
+        Args:
+            parameterization: maps the parameter space into the model space.
+
+        Returns:
+            The estimator on the parameterized problem.
+        """
+        return self._rebuild(problem=self._problem.parameterized(parameterization))
+
+    def data_reduced(
+        self,
+        reduction: LinearOperator,
+        /,
+        *,
+        error: ProbabilityMeasure | Subset | None = None,
+    ) -> "MinimumNorm":
+        """The same estimator with the data compressed by *reduction*.
+
+        Args:
+            reduction: maps the data space to the reduced one.
+            error: the reduced error. Defaults to pushing the current one
+                forward, as on the problem itself.
+
+        Returns:
+            The estimator on the reduced problem.
+        """
+        return self._rebuild(problem=self._problem.data_reduced(reduction, error=error))
+
+    # ----------------------------------------------------------------- #
+    #                            The search                             #
+    # ----------------------------------------------------------------- #
+
+    def _settings(
+        self,
+        level: float | None,
+        max_iterations: int | None,
+        rtol: float | None,
+        atol: float | None,
+        minimum_damping: float | None,
+    ) -> dict[str, Any]:
+        """The search's settings, the estimator's own where none is given."""
+        return dict(
+            level=self._level if level is None else level,
+            max_iterations=(
+                self._max_iterations if max_iterations is None else max_iterations
+            ),
+            rtol=self._rtol if rtol is None else rtol,
+            atol=self._atol if atol is None else atol,
+            minimum_damping=(
+                self._minimum_damping if minimum_damping is None else minimum_damping
+            ),
+        )
+
+    def _require_error(self, what: str) -> None:
+        if not self._problem.has_error:
+            raise ValueError(
+                f"The problem has no error measure, so there is no misfit "
+                f"threshold and no {what}: the data are exact and the estimate "
+                f"is the fit at zero damping, estimator_at(0.0)."
+            )
+
+    def discrepancy_search(
+        self,
+        data: Any,
+        /,
+        *,
+        level: float | None = None,
+        max_iterations: int | None = None,
+        rtol: float | None = None,
+        atol: float | None = None,
+        minimum_damping: float | None = None,
+    ) -> RootResult:
+        """The damping search for this data, with its diagnostics.
+
+        Returned rather than hidden so that the cost is visible: without the
+        iteration count there is no way to tell a warm start that is working
+        from one that silently is not. Saturation is reported, not raised;
+        :meth:`for_data` is the route that refuses unfittable data.
+
+        Args:
+            data: the observations.
+            level: the confidence level setting the misfit target. The
+                estimator's own if omitted, as for every setting below.
+            max_iterations: bisection steps once the root is bracketed.
+            rtol: how tightly to close the bracket.
+            atol: its absolute half, for a root near zero damping.
+            minimum_damping: a floor on the damping; see
+                :func:`~pygeoinf2.numerics.tikhonov.misfit_search`.
+
+        Returns:
+            The root result, with its bracket, evaluation count and inner
+            iteration total.
+
+        Raises:
+            ValueError: if the problem has no error measure.
+        """
+        self._require_error("search")
+        return _discrepancy_search(
+            self._family,
+            self._problem,
+            data,
+            **self._settings(level, max_iterations, rtol, atol, minimum_damping),
+        )
+
+    def search(self, data: Any, /) -> RootResult:
+        """The damping search for this data with the estimator's own settings.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The root result; see :meth:`discrepancy_search`.
+
+        Raises:
+            ValueError: if the problem has no error measure.
+        """
+        return self.discrepancy_search(data)
+
+    def for_data(
+        self,
+        data: Any,
+        /,
+        *,
+        level: float | None = None,
+        max_iterations: int | None = None,
+        rtol: float | None = None,
+        atol: float | None = None,
+        minimum_damping: float | None = None,
+    ) -> LeastSquares:
+        """The fixed-damping estimator at the damping these data choose.
+
+        Damps as hard as the data allow: the largest damping whose misfit still
+        reaches the chi-squared threshold at *level*. Data that anything fits
+        give the largest damping reached and a model close to zero; data that
+        nothing fits are refused. With exact data the fit is at zero damping.
+
+        The result is affine in the data, so it is an operator and carries
+        the error budget of one; applying it to the same data gives this
+        estimator's answer.
+
+        Args:
+            data: the data vector.
+            level: the confidence level setting the misfit target. The
+                estimator's own if omitted, as for every setting below.
+            max_iterations: the search's budget.
+            rtol: the search's bracket tolerance.
+            atol: its absolute half, for a root near zero damping.
+            minimum_damping: a floor on the damping; see
+                :func:`~pygeoinf2.numerics.tikhonov.misfit_search`.
+
+        Returns:
+            A :class:`LeastSquares` with its damping fixed at the value found.
+
+        Raises:
+            ValueError: when no model fits the data to the threshold.
+        """
+        if not self._problem.has_error:
+            return self.estimator_at(0.0)
+        found = _searched_damping(
+            self._family,
+            self._problem,
+            data,
+            **self._settings(level, max_iterations, rtol, atol, minimum_damping),
+        )
+        return self.estimator_at(found.argument)
+
+    def estimator_at(self, damping: float, /) -> LeastSquares:
+        """The fixed-damping estimator this collapses to at one damping.
+
+        Args:
+            damping: the Tikhonov parameter.
+
+        Returns:
+            The :class:`LeastSquares` with this estimator's solver and
+            formalism.
+        """
+        return LeastSquares(
+            self._problem,
+            damping=damping,
+            solver=self._solver,
+            formalism=self._formalism,
+        )
+
+    # ----------------------------------------------------------------- #
+    #                       Value and derivative                        #
+    # ----------------------------------------------------------------- #
+
+    def _exact(self) -> LeastSquares:
+        """The zero-damping fit, built on first use."""
+        if self._exact_fit is None:
+            self._exact_fit = self.estimator_at(0.0)
+        return self._exact_fit
 
     def _resolve(self, data: Any) -> tuple[Any, float, bool]:
         """The model, the damping, and whether the damping *moves* with the data.
@@ -648,10 +801,12 @@ class DiscrepancyPrinciple(Operator):
         )
 
     def _value(self, data: Any) -> Any:
+        if not self._problem.has_error:
+            return self._exact()(data)
         model, _, _ = self._resolve(data)
         return model
 
-    def _linearize(self, data: Any) -> Any:
+    def _linearize(self, data: Any) -> Linearization:
         """The model and its derivative from a *single* damping search.
 
         Without this, ``at(data)`` would call :meth:`_value` and
@@ -659,21 +814,14 @@ class DiscrepancyPrinciple(Operator):
         root find over the damping -- the whole cost of this operator -- would
         run twice for one linearization.
         """
-        from ..algebra.operators import Linearization
-
+        if not self._problem.has_error:
+            return self._exact().at(data)
         resolved = self._resolve(data)
         return Linearization(data, resolved[0], self._derivative_from(data, *resolved))
 
-    def estimator_at(self, damping: float, /) -> LeastSquares:
-        """The fixed-damping estimator this collapses to at one damping."""
-        return LeastSquares(
-            self._problem,
-            damping=damping,
-            solver=self._solver,
-            formalism=self._formalism,
-        )
-
     def _derivative(self, data: Any) -> LinearOperator:
+        if not self._problem.has_error:
+            return self._exact().operator
         return self._derivative_from(data, *self._resolve(data))
 
     def _derivative_from(
@@ -735,6 +883,23 @@ class DiscrepancyPrinciple(Operator):
         return LinearOperator.from_callables(
             data_space, model_space, value, adjoint=adjoint
         )
+
+    def push_forward(self, operator: LinearOperator, /) -> ComposedPointEstimator:
+        """The estimator of ``T m``: this one followed by ``T``, derivative and all.
+
+        The composition carries no error budget, since the damping moves with
+        the data. For a budget, take :meth:`for_data` at the data in hand and
+        push that affine estimator forward: its resolution and propagated
+        covariance are those of the fixed damping it chose, and leave out the
+        damping's own dependence on the data.
+
+        Args:
+            operator: ``T``, acting on the model space.
+
+        Returns:
+            The composed estimator.
+        """
+        return ComposedPointEstimator(self, operator)
 
 
 class ConstrainedLeastSquares(LinearPointEstimator):
@@ -958,13 +1123,15 @@ def _reduced_problem(
     )
 
 
-class ConstrainedMinimumNorm(Operator):
+class ConstrainedMinimumNorm(PointEstimator, Operator):
     """The smallest model inside an affine subspace that fits the data.
 
-    The constrained counterpart of :class:`DiscrepancyPrinciple`, and built the
-    same way :class:`ConstrainedLeastSquares` is: substitute ``u == c + P w``,
+    The constrained counterpart of :class:`MinimumNorm`, and built the same
+    way :class:`ConstrainedLeastSquares` is: substitute ``u == c + P w``,
     solve the unconstrained problem for ``w`` against the shifted data
-    ``d - A c``, and add ``c`` back.
+    ``d - A c``, and add ``c`` back. "Fits" is the discrepancy principle
+    when the problem carries an error measure and exact agreement when it
+    does not, as for the unconstrained class.
 
     The derivative follows from the unconstrained one by the chain rule, and
     since both substitutions are affine with constant parts, it is simply the
@@ -985,12 +1152,16 @@ class ConstrainedMinimumNorm(Operator):
     ) -> None:
         """
         Args:
-            problem: the forward problem, which must carry an error measure.
+            problem: the forward problem, with an error measure or without.
             subspace: an ``AffineSubspace`` of the model space.
             level: the confidence level setting the misfit target.
             solver: how to invert each reduced ``N(t)``.
             formalism: which space to solve in.
-            max_iterations, rtol: the discrepancy search's budget and tolerance.
+            max_iterations: the discrepancy search's budget.
+            rtol: the search's bracket tolerance.
+
+        Raises:
+            ValueError: if the subspace is not in the model space.
         """
         if subspace.domain != problem.model_space:
             raise ValueError("The subspace must live in the model space.")
@@ -999,7 +1170,7 @@ class ConstrainedMinimumNorm(Operator):
         self._subspace = subspace
         self._projector = subspace.projector
         self._translation = subspace.translation
-        self._inner = DiscrepancyPrinciple(
+        self._inner = MinimumNorm(
             _reduced_problem(problem, subspace),
             level=level,
             solver=solver,
@@ -1015,12 +1186,42 @@ class ConstrainedMinimumNorm(Operator):
         self._formalism = formalism
 
     @property
+    def forward_problem(self) -> LinearForwardProblem:
+        """The forward problem."""
+        return self._problem
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The problem's data space."""
+        return self._problem.data_space
+
+    @property
+    def property_space(self) -> HilbertSpace:
+        """The problem's model space: the estimate is of the model itself."""
+        return self._problem.model_space
+
+    def __call__(self, data: Any) -> Any:
+        """The smallest model in the subspace fitting the data."""
+        return self._value(data)
+
+    def push_forward(self, operator: LinearOperator, /) -> ComposedPointEstimator:
+        """The estimator of ``T m``: this one followed by ``T``, derivative and all.
+
+        Args:
+            operator: ``T``, acting on the model space.
+
+        Returns:
+            The composed estimator.
+        """
+        return ComposedPointEstimator(self, operator)
+
+    @property
     def subspace(self) -> AffineSubspace:
         """The affine subspace the answer is confined to."""
         return self._subspace
 
     @property
-    def reduced(self) -> DiscrepancyPrinciple:
+    def reduced(self) -> MinimumNorm:
         """The unconstrained method on the reduced problem."""
         return self._inner
 

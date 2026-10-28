@@ -11,7 +11,7 @@ wrong is the one way to write a plausible reference that disagrees.
 import numpy as np
 import pytest
 
-from pygeoinf2.algebra.operators import LinearOperator
+from pygeoinf2.algebra.operators import AffineOperator, LinearOperator, Operator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.geometry.convex import Ball
 from pygeoinf2.inference import (
@@ -375,8 +375,11 @@ class TestPointEstimators:
         estimator = LeastSquares(problem, damping=1e-2)
         assert isinstance(estimator, PointEstimator)
         assert isinstance(estimator, LinearPointEstimator)
+        assert isinstance(estimator, Operator)
+        assert isinstance(estimator, AffineOperator)
         assert estimator.data_space == problem.data_space
         assert estimator.property_space == problem.model_space
+        assert estimator.property_operator.is_endomorphism
 
     def test_the_resolution_operator_is_available(self, problem):
         estimator = LeastSquares(problem, damping=1e-2)
@@ -412,11 +415,67 @@ class TestPointEstimators:
         ]
         assert norms[0] > norms[1] > norms[2]
 
-    def test_a_point_estimator_induces_a_measure(self, problem, rng):
+    def test_the_bias_is_the_resolution_less_the_model(self, problem, rng):
+        """``(B A - I) m``: what the estimate gets wrong on exact data from
+        ``m``, which the propagated covariance says nothing about."""
         estimator = LeastSquares(problem, damping=1e-2)
-        induced = estimator.as_measure()
+        model = problem.model_space
+        truth = model.random(rng=rng)
+        exact = problem.forward_operator(truth)
+        expected = model.subtract(estimator.operator(exact), truth)
+        assert np.allclose(
+            model.to_components(estimator.bias(truth)), model.to_components(expected)
+        )
+        assert np.allclose(
+            model.to_components(estimator.bias(truth)),
+            model.to_components(model.subtract(estimator.resolution(truth), truth)),
+        )
+        assert not hasattr(estimator, "as_measure")
+
+    def test_the_budget_follows_a_push_forward(self, problem, rng):
+        """Of ``T m`` the bias is ``(T B A - T) m`` and the covariance
+        ``T B R B* T*``."""
+        estimator = LeastSquares(problem, damping=1e-2)
+        model = problem.model_space
+        property_space = EuclideanSpace(2)
+        T = LinearOperator.from_matrix(
+            model, property_space, rng.normal(size=(2, model.dim)), form="galerkin"
+        )
+        pushed = estimator.push_forward(T)
+        assert isinstance(pushed, LinearPointEstimator)
+        assert pushed.property_space == property_space
+        truth = model.random(rng=rng)
+        assert np.allclose(pushed.bias(truth), T(estimator.bias(truth)))
+        assert np.allclose(
+            pushed.propagated_covariance().matrix(form="galerkin"),
+            (T @ estimator.propagated_covariance() @ T.adjoint).matrix(form="galerkin"),
+        )
         data = problem.data_space.random(rng=rng)
-        assert np.allclose(induced(data).expectation, estimator(data))
+        assert np.allclose(pushed(data), T(estimator(data)))
+
+    def test_a_property_estimator_needs_its_property_operator(self, problem):
+        """``B`` landing somewhere other than the model space has no identity
+        to take as ``T``."""
+        property_space = EuclideanSpace(2)
+        B = LinearOperator.from_matrix(
+            problem.data_space,
+            property_space,
+            np.ones((2, problem.data_space.dim)),
+            form="galerkin",
+        )
+        with pytest.raises(ValueError, match="property_operator"):
+            LinearPointEstimator(B, forward_operator=problem.forward_operator)
+        T = LinearOperator.from_matrix(
+            problem.model_space,
+            property_space,
+            np.ones((2, problem.model_space.dim)),
+            form="galerkin",
+        )
+        estimator = LinearPointEstimator(
+            B, forward_operator=problem.forward_operator, property_operator=T
+        )
+        assert estimator.resolution.codomain == property_space
+        assert estimator.bias(problem.model_space.zero()) == pytest.approx(0.0)
 
 
 class TestEvidence:

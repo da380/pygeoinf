@@ -496,3 +496,54 @@ class TestMeasuresOnAdaptedSpaces:
         total = (A @ mu) + noise
         assert Traits.POSITIVE_DEFINITE & total.covariance.traits
         assert total.can_sample
+
+
+class TestV1Names:
+    """The v1 inference class names are the v2 classes, with v1's meaning."""
+
+    def test_the_aliases_are_the_v2_classes(self):
+        from pygeoinf2 import compat, inference
+
+        assert compat.LinearBayesianInversion is inference.LinearGaussianInversion
+        assert compat.LinearLeastSquaresInversion is inference.LeastSquares
+        assert compat.LinearMinimumNormInversion is inference.MinimumNorm
+        assert (
+            compat.ConstrainedLinearLeastSquaresInversion
+            is inference.ConstrainedLeastSquares
+        )
+        assert (
+            compat.ConstrainedLinearMinimumNormInversion
+            is inference.ConstrainedMinimumNorm
+        )
+
+    def test_minimum_norm_means_the_discrepancy_principle_as_in_v1(self, X, rng):
+        """v1's minimum-norm inversion found the damping from the data by
+        the discrepancy principle when an error was set; so does the class
+        its name now points at, to the search's tolerance."""
+        from pygeoinf2.compat import LinearMinimumNormInversion
+        from pygeoinf2.inference import LinearForwardProblem
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        base = X.v1_space
+        v1_A = base.point_evaluation_operator(POINTS)
+        v1_error = pygeoinf.GaussianMeasure.from_standard_deviation(v1_A.codomain, 0.1)
+        v1_problem = pygeoinf.LinearForwardProblem(v1_A, data_error_measure=v1_error)
+        v1_operator = pygeoinf.LinearMinimumNormInversion(
+            v1_problem
+        ).minimum_norm_operator(
+            pygeoinf.CholeskySolver(), significance_level=0.95, rtol=1e-10
+        )
+
+        A = adapt_operator(v1_A, domain=X)
+        problem = LinearForwardProblem(
+            A, error=GaussianMeasure.from_standard_deviation(A.codomain, 0.1)
+        )
+        estimator = LinearMinimumNormInversion(problem, level=0.95, rtol=1e-10)
+
+        truth = X.random(rng=rng)
+        observed = problem.synthetic_data(truth, rng=rng)
+        ours = estimator(observed)
+        theirs = v1_operator(observed)
+        assert X.norm(X.subtract(ours, theirs)) == pytest.approx(
+            0.0, abs=1e-6 * X.norm(ours)
+        )

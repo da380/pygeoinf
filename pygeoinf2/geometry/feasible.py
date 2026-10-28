@@ -45,6 +45,7 @@ from .convex import (
     Polytope,
     _LevelSupport,
     _project_by_support,
+    sum_of_ellipsoids,
 )
 from .sets import SublevelSet, Subset
 
@@ -56,11 +57,13 @@ __all__ = [
     "FeasiblePropertySet",
     "FeasibleStructure",
     "InclusionResult",
+    "LinearCertificate",
     "Primal",
     "Search",
     "Splitting",
     "SupportResult",
     "SweepResult",
+    "linear_certificate_operator",
 ]
 
 _UNBOUNDED = 1.0e6
@@ -270,8 +273,7 @@ class FeasibleStructure:
         if self._solver is not None:
             return self._solver
         return self.shared(
-            ("default_solver", space.dim),
-            lambda: CGSolver(rtol=1e-10, max_iterations=max(2 * space.dim, 200)),
+            ("default_solver", space.dim), lambda: _default_solver(space)
         )
 
     @property
@@ -415,11 +417,15 @@ class Algorithm:
     ``feasibility`` of the whole set. Instances carry tolerances and
     budgets and nothing else, so two instances with the same settings are
     interchangeable and the set may share work between them. A probe takes
-    one by name (its ``name``) or as an instance through ``via=``.
+    one by name (its ``name``) or as an instance through ``via=``. An
+    algorithm with ``automatic`` false is never chosen for the caller and
+    answers only when asked for by name or instance: the place for a bound
+    that is cheap but not sharp.
     """
 
     name: str = ""
     probes: frozenset[str] = frozenset()
+    automatic: bool = True
 
     @property
     def settings(self) -> tuple[Any, ...]:
@@ -2613,13 +2619,330 @@ class Distance(Algorithm):
         )
 
 
+def linear_certificate_operator(
+    forward: LinearOperator,
+    property_operator: LinearOperator,
+    /,
+    *,
+    covariance: LinearOperator,
+    error_covariance: LinearOperator | None = None,
+    alpha: float = 1.0,
+    solver: LinearSolver | None = None,
+) -> LinearOperator:
+    """``X == T C A* (A C A* + α R)⁻¹``: the weighting of the data that resolves ``T`` against the noise.
+
+    The minimizer of the quadratic surrogate ``‖(T − X A) C^½‖² + α ‖X R^½‖²``
+    for the width of a linear certificate's set: ``C`` weights how much of
+    the model the certificate has to resolve, ``R`` how much noise it lets
+    through, and ``α`` trades the two. Without ``R`` the second term is
+    dropped and ``X`` reproduces ``T`` wherever the data allow. Two balls
+    about the origin, of radii ``M`` on the model and ``D`` on the data,
+    give the classical ``T A* (A A* + (D/M)² I)⁻¹``. Nothing is assembled:
+    each application of ``X`` is one solve on the data space through the
+    solver.
+
+    Args:
+        forward: ``A``, from the model space to the data space.
+        property_operator: ``T``, from the model space to the property
+            space.
+        covariance: ``C``, positive definite on the model space.
+        error_covariance: ``R``, positive semidefinite on the data space;
+            ``None`` for exact data.
+        alpha: ``α``, positive. One minimizes the sum of the two terms.
+        solver: how ``A C A* + α R`` is inverted. Conjugate gradients at
+            ``rtol=1e-10`` by default.
+
+    Raises:
+        ValueError: if ``alpha`` is not positive, or an operator is on the
+            wrong space.
+    """
+    if alpha <= 0.0:
+        raise ValueError(f"alpha must be positive, got {alpha}.")
+    if property_operator.domain != forward.domain:
+        raise ValueError("The property operator must act on the model space.")
+    if covariance.domain != forward.domain:
+        raise ValueError("The covariance must act on the model space.")
+    data_space = forward.codomain
+    if error_covariance is not None and error_covariance.domain != data_space:
+        raise ValueError("The error covariance must act on the data space.")
+    normal = forward @ covariance @ forward.adjoint
+    if error_covariance is not None:
+        normal = normal + alpha * error_covariance
+    if solver is None:
+        solver = _default_solver(data_space)
+    inverse = solver(normal.with_traits(Traits.POSITIVE_DEFINITE))
+    return property_operator @ covariance @ forward.adjoint @ inverse
+
+
+def _default_solver(space: HilbertSpace) -> LinearSolver:
+    """Conjugate gradients at ``rtol=1e-10`` with a cap of at least 200 iterations."""
+    return CGSolver(rtol=1e-10, max_iterations=max(2 * space.dim, 200))
+
+
+def _has_support(subset: Any) -> bool:
+    """Whether a set's support value can be had: cheaply, or by conversion from a smooth level function."""
+    if subset is None:
+        return True  # exact data: the point {0}
+    if isinstance(subset, ConvexSet):
+        return subset.computes_support_function
+    return _smooth_level(subset) is not None
+
+
+class LinearCertificate(Algorithm):
+    """An outer bound from a fixed weighting of the data, on any sets; never chosen unasked.
+
+    A linear certificate is an operator ``X`` from the data space to the
+    property space. Whatever ``X`` is, a feasible model ``m`` with data
+    error ``e`` has ``T m == X d + (T − X A) m − X e``, so its property lies
+    in the Minkowski sum
+
+    .. code-block:: text
+
+        X d + (T − X A) S_prior + (−X) S_noise
+
+    whose support in a direction ``q`` is ``(q, X d) + h_prior((T − X A)* q)
+    + h_noise(−X* q)``: the dual cost at the certificate ``λ == X* q``, an
+    outer bound by weak duality. It is sharp only where ``X* q`` happens to
+    be the best certificate for ``q``, so this route reports no inner
+    value, and the certified algorithms are what it is loose against. Its
+    price is one application of ``X*`` and two support values per
+    direction, nothing solved on the model space, which is what makes it
+    worth asking for when every certified value is a search.
+
+    ``X`` is the caller's ``operator=``, evaluated against any sets with
+    support functions, or, on a ball or an ellipsoid on each side, the
+    minimizer of the quadratic surrogate for the width of the sum,
+    :func:`linear_certificate_operator` with the sets' covariances and
+    ``alpha=`` as the trade-off. On quadratic sets the two parts of the sum
+    are ellipsoids and :meth:`outer_ellipsoid` bounds their sum by one.
+    :meth:`terms` gives the three parts of a support value separately,
+    the estimate, the unresolved reach of the prior set and the noise's,
+    which is the split that says whether coverage or data quality is the
+    limit.
+    """
+
+    name = "linear_certificate"
+    probes = frozenset({"support", "outer_ellipsoid"})
+    automatic = False
+
+    def __init__(
+        self,
+        /,
+        *,
+        operator: LinearOperator | None = None,
+        alpha: float = 1.0,
+        solver: LinearSolver | None = None,
+    ) -> None:
+        """
+        Args:
+            operator: ``X``, from the data space to the property space. Built
+                from the sets' covariances if omitted, which needs a ball or
+                an ellipsoid on each side.
+            alpha: the trade-off of the built ``X`` between resolving ``T``
+                and passing noise; ignored when ``operator`` is given.
+            solver: how the built ``X`` inverts its data-space operator;
+                the set's solver if omitted.
+
+        Raises:
+            ValueError: if ``alpha`` is not positive.
+        """
+        if alpha <= 0.0:
+            raise ValueError(f"alpha must be positive, got {alpha}.")
+        self._operator = operator
+        self._alpha = alpha
+        self._solver = solver
+
+    @property
+    def settings(self) -> tuple[Any, ...]:
+        """The operator's identity, the trade-off and the solver."""
+        return (
+            None if self._operator is None else id(self._operator),
+            self._alpha,
+            id(self._solver),
+        )
+
+    def accepts(self, structure: FeasibleStructure) -> bool:
+        """Quadratic sets when ``X`` is to be built; any sets with support values for a given ``X``."""
+        if self._operator is None:
+            return structure.quadratic
+        operator = self._operator
+        return (
+            operator.domain == structure.data_space
+            and operator.codomain == structure.property_space
+            and _has_support(structure.prior)
+            and _has_support(structure.noise)
+        )
+
+    def operator(self, feasible: "FeasiblePropertySet", /) -> LinearOperator:
+        """``X``: as given, or built once from the sets' covariances and shared across data."""
+        if self._operator is not None:
+            return self._operator
+        structure = feasible.structure
+
+        def build() -> LinearOperator:
+            return linear_certificate_operator(
+                structure.forward,
+                structure.property_operator,
+                covariance=structure.prior_covariance(),
+                error_covariance=(
+                    None if structure.exact else structure.noise_covariance()
+                ),
+                alpha=self._alpha,
+                solver=(
+                    structure.solver_for(structure.data_space)
+                    if self._solver is None
+                    else self._solver
+                ),
+            )
+
+        return structure.shared(
+            ("linear_certificate", self._alpha, id(self._solver)), build
+        )
+
+    def _parts(
+        self, feasible: "FeasiblePropertySet", direction: Any
+    ) -> tuple[float, float, float, Any]:
+        """The estimate, the prior's and the noise's reach, and the certificate ``X* q``."""
+        structure = feasible.structure
+        model_space, data_space = structure.model_space, structure.data_space
+        operator = self.operator(feasible)
+        certificate = operator.adjoint(direction)
+        residual = model_space.subtract(
+            structure.property_operator.adjoint(direction),
+            structure.forward.adjoint(certificate),
+        )
+        estimate = float(data_space.inner_product(certificate, feasible.data))
+        if structure.quadratic:
+            estimate += float(
+                model_space.inner_product(residual, structure.prior_center())
+            )
+            covariance = structure.prior_covariance()
+            resolution = float(
+                np.sqrt(
+                    max(model_space.inner_product(residual, covariance(residual)), 0.0)
+                )
+            )
+            noise = 0.0
+            if not structure.exact:
+                estimate -= float(
+                    data_space.inner_product(certificate, structure.noise_center())
+                )
+                noise = float(
+                    np.sqrt(
+                        max(
+                            data_space.inner_product(
+                                certificate, structure.noise_covariance()(certificate)
+                            ),
+                            0.0,
+                        )
+                    )
+                )
+            return estimate, resolution, noise, certificate
+        resolution = float(_support_of(structure.prior)(residual))
+        noise = (
+            0.0
+            if structure.exact
+            else float(_support_of(structure.noise)(data_space.negative(certificate)))
+        )
+        return estimate, resolution, noise, certificate
+
+    def terms(
+        self, feasible: "FeasiblePropertySet", direction: Any, /
+    ) -> tuple[float, float, float]:
+        """The three parts of the support value in a direction.
+
+        ``(estimate, resolution, noise)``: the pairing of the direction with
+        ``X d`` moved by the sets' centres, the reach of ``(T − X A)`` over
+        the prior set about its centre, and the reach of ``−X`` over the
+        noise set about its centre. Their sum is the support value. More
+        data narrow the second, better data the third, and a single
+        half-width cannot say which is wanted. A set without a centre
+        contributes its whole support value to its term.
+
+        Args:
+            feasible: the set.
+            direction: the direction in the property space.
+        """
+        estimate, resolution, noise, _ = self._parts(feasible, direction)
+        return estimate, resolution, noise
+
+    def support(
+        self, feasible: "FeasiblePropertySet", direction: Any, /
+    ) -> SupportResult:
+        """The outer value ``(q, X d) + h_prior((T − X A)* q) + h_noise(−X* q)``, with no inner value."""
+        estimate, resolution, noise, certificate = self._parts(feasible, direction)
+        return SupportResult(
+            value=estimate + resolution + noise,
+            inner=-np.inf,
+            converged=True,
+            algorithm=self.name,
+            evaluations=1,
+            certificate=certificate,
+            message="linear certificate: an outer value with no inner value",
+        )
+
+    def outer_ellipsoid(
+        self, feasible: "FeasiblePropertySet", criterion: str, /
+    ) -> EllipsoidResult:
+        """One ellipsoid containing the sum of the two parts, on quadratic sets.
+
+        The prior's part is the ellipsoid of covariance ``(T − X A) C (T − X
+        A)*`` and the noise's that of ``X R X*``, both about the estimate;
+        their sum is bounded by :func:`~pygeoinf2.geometry.sum_of_ellipsoids`
+        at the given criterion.
+
+        Raises:
+            NotImplementedError: unless the prior and the noise are each a
+                ball or an ellipsoid.
+            ValueError: if the criterion is unknown.
+        """
+        _check_criterion(criterion)
+        structure = feasible.structure
+        if not structure.quadratic:
+            raise NotImplementedError(
+                "The linear certificate's ellipsoid needs a ball or an ellipsoid "
+                "on each side."
+            )
+        space = structure.property_space
+        operator = self.operator(feasible)
+        unresolved = structure.property_operator - operator @ structure.forward
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        covariances = [
+            (
+                unresolved @ structure.prior_covariance() @ unresolved.adjoint
+            ).with_traits(traits)
+        ]
+        center = space.add(
+            operator(feasible.data), unresolved(structure.prior_center())
+        )
+        if not structure.exact:
+            covariances.append(
+                (
+                    operator @ structure.noise_covariance() @ operator.adjoint
+                ).with_traits(traits)
+            )
+            center = space.subtract(center, operator(structure.noise_center()))
+        ellipsoid = sum_of_ellipsoids(
+            space, covariances, center=center, criterion=criterion
+        )
+        return EllipsoidResult(
+            ellipsoid=ellipsoid,
+            criterion=criterion,
+            converged=True,
+            algorithm=self.name,
+            evaluations=1,
+            message="one ellipsoid about the estimate containing the Minkowski sum",
+        )
+
+
 _DEFAULTS: dict[str, tuple[Algorithm, ...]] = {
-    "support": (ClosedForm(), Primal(), Dual(), Splitting()),
+    "support": (ClosedForm(), Primal(), Dual(), Splitting(), LinearCertificate()),
     "inclusion": (ClosedForm(), Search(), Distance()),
     "feasibility": (ClosedForm(), Search(), Dual()),
-    "outer_ellipsoid": (ClosedForm(), SProcedure()),
+    "outer_ellipsoid": (ClosedForm(), SProcedure(), LinearCertificate()),
 }
-"""The algorithms for each probe, in the order ``auto`` tries them."""
+"""The algorithms for each probe, in the order ``auto`` tries them; the
+linear certificate answers by request only."""
 
 
 # --------------------------------------------------------------------- #
@@ -2658,7 +2981,9 @@ class FeasiblePropertySet(ConvexSet):
     and :meth:`level_function`, with :meth:`extent` and :meth:`inner_hull`
     bounding the set from inside. Which algorithm answers each probe is
     :attr:`algorithms`; ``via=`` on a probe names one for a cross-check, or
-    passes an instance carrying tuning.
+    passes an instance carrying tuning. ``via="linear_certificate"`` asks
+    for the cheap outer bound a fixed weighting of the data gives, which
+    no probe chooses on its own.
     """
 
     def __init__(
@@ -2758,9 +3083,15 @@ class FeasiblePropertySet(ConvexSet):
 
     @property
     def algorithms(self) -> dict[str, tuple[str, ...]]:
-        """The algorithms that accept these sets, per probe, in the order ``auto`` tries them."""
+        """The algorithms that accept these sets, per probe, in the order ``auto`` tries them.
+
+        An algorithm that answers only on request, such as the linear
+        certificate, is left out; it is still reachable through ``via=``.
+        """
         return {
-            probe: tuple(a.name for a in entries if a.accepts(self._structure))
+            probe: tuple(
+                a.name for a in entries if a.automatic and a.accepts(self._structure)
+            )
             for probe, entries in _DEFAULTS.items()
         }
 
@@ -2774,13 +3105,14 @@ class FeasiblePropertySet(ConvexSet):
         entries = _DEFAULTS[probe]
         applicable = [a for a in entries if a.accepts(self._structure)]
         if via is None:
-            if not applicable:
+            automatic = [a for a in applicable if a.automatic]
+            if not automatic:
                 raise NotImplementedError(
                     f"No algorithm answers {probe!r} for sets of form "
                     f"{self.form!r}: the prior is a {type(self.prior).__name__} "
                     f"and the noise a {type(self.noise).__name__}."
                 )
-            return applicable[0]
+            return automatic[0]
         names = [a.name for a in applicable]
         if isinstance(via, str):
             for algorithm in entries:

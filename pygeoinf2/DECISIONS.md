@@ -2255,6 +2255,132 @@ noise set give a set (the feasible property set) or a point. The decisions:
   point, a set and a measure, showing the propagated error, the bias
   against a known truth, and the two completions.
 
+**D-164. What the point-estimator base carries** (2026-10-28, implementing
+D-163). `LinearPointEstimator` takes a `property_operator=` (`T`, the
+identity by default) so that `bias(m) = resolution(m) - T m` is well typed
+after a `push_forward`, which composes `T` along with `B`; a `B` landing
+outside the model space without a `T` is refused. `ComposedPointEstimator`
+is what `push_forward` returns for an estimator that is not affine in the
+data: the inner estimator followed by `T`, a `PointEstimator` and an
+`Operator` with the chain-rule derivative, flattened on a second push. The
+renamed `MinimumNorm` keeps `search`, `estimator_at`, `for_data` and
+`discrepancy_search` (the last two take per-call overrides of the search
+settings, the estimator's own when omitted), gains `with_solver`,
+`with_formalism`, `with_level`, `parameterized` and `data_reduced` like
+`LeastSquares`, and accepts a problem without an error, where it is the fit
+at zero damping and the search methods raise. `ConstrainedMinimumNorm`
+follows it. A subclass that is both a `PointEstimator` and an `Operator`
+lists the estimator base first and defines `__call__` itself, because the
+abstract `__call__` otherwise shadows the operator's.
+
+**D-165. The linear certificate as a route, the point estimator's signature,
+and the linearized set in absolute coordinates** (2026-10-28, implementing
+D-163). `LinearCertificate` in `geometry/feasible.py` is an `Algorithm`
+named `linear_certificate` answering `support` (an outer value with no
+inner, the dual cost at `λ = X* q`, so `support_bracket` is `(−∞, value)`)
+and `outer_ellipsoid` (the sum of the two parts' ellipsoids bounded by
+`sum_of_ellipsoids`, quadratic sets only); `terms(feasible, direction)`
+gives the estimate, resolution and noise parts separately. `X` is the
+caller's `operator=` against any sets with support values, or on quadratic
+sets `linear_certificate_operator(A, T, covariance=, error_covariance=,
+alpha=, solver=)`, built once per structure. `Algorithm.automatic` (true by
+default) is false for it: `_resolve` skips it when no `via=` is given and
+`algorithms` leaves it out, so it is reachable only by name or instance.
+`BackusGilbertSet` is folded into that route and gone. `BackusGilbert` is
+`BackusGilbert(problem, T, /, *, covariance=None, error_covariance=None,
+alpha=1.0, solver=None)`, a `LinearPointEstimator` with `X = T C A* (A C A*
++ α R)⁻¹`, `C` the identity by default, `R` the problem's error covariance
+(a measure's, a ball's or an ellipsoid's; dropped for exact data) and
+`unresolved = T − X A`; `push_forward` composes `X`. The linearized set:
+`BackusGilbertParker(problem, T, prior, *, model=None, linearization=None)`
+takes a nonlinear `ForwardProblem` with one of the two (a linear problem
+may take them too, with no effect on the set). Because the linearized
+forward `F(m*) + F'(m*)(m − m*)` is affine in the model itself, the set is
+built on `F'(m*)` with the data shifted once to `d − F(m*) + F'(m*) m*`,
+and the constraint set and the property stay in their own coordinates; no
+translation of the set is needed, so `ConvexSet.translate` (form-preserving
+on balls and ellipsoids, a wrapper carrying the level function with its
+gradient and Hessian otherwise) is unchanged and `SublevelSet` gets none.
+The result is a `LinearizedFeasiblePropertySet` exposing `linearization`,
+`linearization_point` (`m*`), `linearization_property` (`T m*`),
+`observed_data`, and `data` as the shifted data; `with_data` and
+`push_forward` keep the class and the point.
+
+**D-166. Nonlinear estimators: the shape of `Minimization`, the
+augmented Lagrangian's interface, and what the Laplace record keeps**
+(2026-10-28, implementing the inference pattern). `Minimization` is
+`Minimization(data_space, model_space, objective, *, optimizer, start,
+mixed_derivative, solver)`, spaces first as every operator factory takes
+them; it is both a `PointEstimator` and an `Operator`, with `__call__`
+returning the model and `solve` the optimizer's record. Its derivative with
+respect to the data is the implicit-function one, `-H^-1 M`, available when
+a `mixed_derivative` is supplied and the objective carries a Hessian, and
+`derivative_at(data, model)` gives it at a solution already in hand. For
+`MaximumAPosteriori` and `NonlinearLeastSquares` the Hessian behind that
+derivative is the exact one when the forward operator supplies its second
+derivative and the Gauss-Newton one otherwise, which is what makes the MAP
+derivative the linearized Kalman gain in the common case. `MaximumAPosteriori`
+returns the mode; `LaplaceApproximation(estimator, *, solver)` with
+`from_problem(problem, prior, *, optimizer, solver)` returns the Gaussian,
+`at(model, data)` places it without searching, and `LaplaceResult` survives
+as what `LaplaceApproximation.solve` returns (mode, Gaussian, optimizer
+record), so the three stay one call away.
+`AugmentedLagrangian(optimizer, *, equalities, inequalities, penalty,
+penalty_growth, reduction, tolerance, initial_gtol, gtol_reduction, gtol,
+max_iterations)` takes its constraints in the constructor so that
+`minimize(functional, x0)` is kept exactly: a constrained problem whose
+constraints follow the data builds one per data vector, as
+`ConstrainedMinimization.method(data)` does. Its defaults are a penalty of
+10 growing tenfold when the violation fails to fall by a quarter, an inner
+gradient tolerance starting at 1e-2 and shrinking tenfold after each
+adequate outer iteration down to `gtol` 1e-8, with the inner solves warm
+started and run at an absolute tolerance (`Optimizer.with_tolerance`, added
+for this, copies a method with new tolerances); it stops when the violation
+is within `tolerance` (1e-6) and the final inner solve has met `gtol`. The
+result reports the multipliers of both kinds, the final violation and the
+penalty. `ConstrainedMinimization` and `Occam` expose the tunable half of
+those knobs (`penalty`, `penalty_growth`, `reduction`, `tolerance`, `gtol`,
+`max_iterations`). `Occam` offers no damping sweep: the heuristic was not
+cheap to make trustworthy and the constrained solve is the method.
+
+**D-167. What tutorial 14 found** (2026-10-28, from writing the proof of
+D-163). Four small things, fixed the same day. `Occam`'s constraint is
+`chi² / chi²_crit − 1 ≤ 0`, so its `tolerance` is relative to the critical
+value (default `1e-4`): an absolute tolerance in misfit units was
+unreachable for a forward operator evaluated iteratively, whose misfit is
+noisy at its own solver's tolerance, and the penalty grew without bound. A
+model with non-finite values raises `EvaluationError` at the ray tracer's
+entry (D-129's protocol), where it previously reached the tracer and
+crashed the process. A Gaussian whose covariance is the identity takes it
+as its own factor, so a white measure samples without `covariance_factor=`
+being repeated. Every optimizer's result at the iteration cap says
+"gradient tolerance reached" when its `converged` flag is true, where the
+flag and the message disagreed. Recorded as observations, not changed:
+L-BFGS does not converge on the un-whitened ray problem (the line search
+fails at a gradient norm of 200) where Newton-CG does in fifteen
+iterations; `MinimumNorm.push_forward` carries no budget, the budget being
+that of `for_data` at the damping chosen, which its docstring now says.
+
+**D-168. Newton-CG takes a preconditioner; the Hessian is the operator, not
+the form** (2026-10-28, David, from tutorial 14's coda). The coda had
+whitened the ray problem as tutorial 13 does, which is exact for MAP and
+Laplace (a preconditioner by another name) but changes Occam's question and
+the ball prior from the Sobolev norm to the prior's Mahalanobis norm. That
+is a fudge and goes: the tutorial works in the model space, and what it
+needed was the inner solve preconditioned. `truncated_cg` and `NewtonCG`
+take `preconditioner=`, an approximation to the inverse Hessian applied to
+the residual, the prior covariance being the natural one for a posterior's
+Hessian `P + J* R^-1 J` (un-preconditioned, Newton-CG stalled at a gradient
+norm of 4 in budget on the rays where whitened it reached 6e-8; the prior
+precision's spectrum on a Sobolev space spans many decades). Not combined
+with a trust region, since the region would then have to be measured in the
+preconditioner's norm; `TrustRegionNewton` stays unpreconditioned until
+that recurrence is written. Convention stated on `Functional.hessian`: it
+is the self-adjoint operator, the Riesz lift of the second derivative's
+bilinear form, because the Newton step and the Laplace covariance both
+need the operator; the form is what a finite difference of the gradient
+checks.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

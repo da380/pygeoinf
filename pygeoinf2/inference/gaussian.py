@@ -67,7 +67,7 @@ class GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure):
     it (``Phi`` being the likelihood potential, half the chi-squared misfit),
     and the evidence as its normalizer. For a *linear* problem the two
     readings describe the same measure exactly. For a Laplace approximation
-    (:meth:`~pygeoinf2.inference.laplace.MaximumAPosteriori.at`) the Gaussian
+    (:meth:`~pygeoinf2.inference.laplace.LaplaceApproximation.at`) the Gaussian
     moments are the approximation at the mode while the relative density is
     the exact posterior's, which is the pair a sampler wants to start from.
 

@@ -16,6 +16,7 @@ from pygeoinf2.geometry import (
     Ellipsoid,
     FeasiblePropertySet,
     InclusionResult,
+    LinearCertificate,
     SupportResult,
 )
 from pygeoinf2.inference import BackusGilbertParker, LinearForwardProblem
@@ -244,6 +245,49 @@ class TestDispatch:
         assert quadratic.algorithms["support"][0] == "primal"
         with pytest.raises(ValueError, match="does not apply"):
             quadratic.support(target.codomain.basis_vector(0), via="closed_form")
+
+    def test_an_algorithm_answering_on_request_is_reached_by_name_only(self, rng):
+        """The linear certificate is listed nowhere as automatic, is refused
+        where it cannot build its operator, and answers on quadratic sets
+        when named, with an outer value and no inner one."""
+        model = make_dense_metric_space(4)
+        data_space, property_space = EuclideanSpace(2), EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(2, 4)), form="galerkin"
+        )
+        target = LinearOperator.from_matrix(
+            model, property_space, rng.normal(size=(2, 4)), form="galerkin"
+        )
+        truth = model.random(rng=rng)
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=2.0 * model.norm(truth)),
+            forward(truth),
+            noise=Ball(data_space, radius=0.1),
+        )
+        assert feasible.form == "quadratic"
+        for probe in ("support", "outer_ellipsoid"):
+            assert "linear_certificate" not in feasible.algorithms[probe]
+        q = property_space.basis_vector(0)
+        assert feasible.support_result(q).algorithm == "primal"
+        named = feasible.support_result(q, via="linear_certificate")
+        assert named.algorithm == "linear_certificate"
+        assert named.inner == -np.inf and named.value >= feasible.support(q) - 1e-9
+        instance = LinearCertificate(alpha=2.0)
+        assert feasible.support(q, via=instance) >= feasible.support(q) - 1e-9
+        assert feasible.outer_ellipsoid(via="linear_certificate").contains(
+            target(truth)
+        )
+        # A general prior: the operator cannot be built, but a given one is taken.
+        fat = Ball(model, radius=1.0) + Ball(model, radius=1.0 * model.norm(truth))
+        general = FeasiblePropertySet(
+            forward, target, fat, forward(truth), noise=Ball(data_space, radius=0.1)
+        )
+        with pytest.raises(ValueError, match="does not apply"):
+            general.support(q, via="linear_certificate")
+        given = LinearCertificate(operator=LinearCertificate().operator(feasible))
+        assert general.support(q, via=given) >= general.support(q) - 1e-9
 
     def test_a_zero_radius_noise_ball_is_exact_data(self, setting):
         model, forward, target, truth, data = setting

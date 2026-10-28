@@ -2200,7 +2200,14 @@ class Functional[X](Operator[X, float]):
         return self.at(x).gradient
 
     def hessian(self, x: X) -> LinearOperator[X, X]:
-        """The Hessian at ``x``, a self-adjoint operator on the domain."""
+        """The Hessian at ``x``, a self-adjoint operator on the domain.
+
+        It is the Riesz lift of the second derivative's bilinear form: the
+        operator ``H`` with ``(H u, v) == f''(x)[u, v]`` in the domain's inner
+        product, which is what a Newton step ``H s == -grad`` and a Laplace
+        covariance ``H^-1`` both need. The form itself is what a finite
+        difference of the gradient checks against.
+        """
         return self._hessian(x)
 
     def _hessian(self, x: X) -> LinearOperator[X, X]:

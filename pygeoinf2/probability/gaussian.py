@@ -188,6 +188,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """
         super().__init__(domain)
 
+        if (
+            covariance_factor is None
+            and covariance is not None
+            and covariance.is_identity
+        ):
+            # The identity is its own factor, so a white measure samples.
+            covariance_factor = covariance
         if covariance is None and covariance_factor is not None:
             # L L* -- self-adjoint and positive semidefinite by the palindrome
             # rule, and positive definite when L is invertible. Nothing needs

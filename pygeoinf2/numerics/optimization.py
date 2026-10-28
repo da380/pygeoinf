@@ -22,14 +22,22 @@ Two further consequences of working in the space rather than in components:
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 import numpy as np
 
-from ..algebra.operators import EvaluationError, Functional, LinearOperator, Operator
+from ..algebra.linearization import QuadraticModel
+from ..algebra.operators import (
+    EvaluationError,
+    Functional,
+    LinearFunctional,
+    LinearOperator,
+    Operator,
+)
 from ..traits import Traits
 from .line_search import (
     ArmijoLineSearch,
@@ -46,6 +54,8 @@ __all__ = [
     "LBFGS",
     "NewtonCG",
     "TrustRegionNewton",
+    "AugmentedLagrangian",
+    "AugmentedLagrangianResult",
     "gauss_newton_hessian",
 ]
 
@@ -149,6 +159,38 @@ class Optimizer(ABC):
                 f"Supply one to Functional.from_callables."
             )
         return self._minimize(functional, x0)
+
+    def with_tolerance(
+        self,
+        /,
+        *,
+        gtol: float | None = None,
+        rtol: float | None = None,
+        ftol: float | None = None,
+    ) -> "Optimizer":
+        """The same method with some of its stopping tolerances changed.
+
+        What an outer loop wants when it drives this method as an inner
+        solve whose accuracy tightens as the outer iteration proceeds: the
+        method, its memory and its line search are kept, and only the
+        tolerances named here move.
+
+        Args:
+            gtol: the absolute gradient tolerance, if it is to change.
+            rtol: the relative one, if it is to change.
+            ftol: the value tolerance, if it is to change.
+
+        Returns:
+            A copy of this optimizer with the new tolerances.
+        """
+        clone = copy.copy(self)
+        if gtol is not None:
+            clone._gtol = gtol
+        if rtol is not None:
+            clone._rtol = rtol
+        if ftol is not None:
+            clone._ftol = ftol
+        return clone
 
     @abstractmethod
     def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
@@ -346,7 +388,9 @@ class _DescentMethod(Optimizer):
             self._max_iterations,
             evaluations,
             gradient_norm <= tolerance,
-            "iteration limit reached",
+            "gradient tolerance reached"
+            if gradient_norm <= tolerance
+            else "iteration limit reached",
             history,
         )
 
@@ -561,6 +605,7 @@ class NewtonCG(Optimizer):
         *,
         forcing: float = 0.1,
         max_cg_iterations: int | None = None,
+        preconditioner: LinearOperator | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -571,10 +616,16 @@ class NewtonCG(Optimizer):
                 later ones accurate.
             max_cg_iterations: cap on the inner iteration. ``None`` means the
                 larger of the dimension and ten.
+            preconditioner: an approximation to the inverse Hessian for the
+                inner solve, self-adjoint and positive on the domain. For a
+                posterior's Hessian the prior covariance is the natural
+                choice: it leaves the inner solve with the data's spectrum
+                only, where the Sobolev precision alone spans many decades.
             **kwargs: passed to :class:`Optimizer`.
         """
         self._forcing = forcing
         self._max_cg_iterations = max_cg_iterations
+        self._preconditioner = preconditioner
         super().__init__(**kwargs)
 
     def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
@@ -625,6 +676,7 @@ class NewtonCG(Optimizer):
                 space.negative(model.gradient),
                 rtol=min(self._forcing, np.sqrt(gradient_norm)),
                 max_iterations=self._max_cg_iterations,
+                preconditioner=self._preconditioner,
             )
             slope = space.inner_product(model.gradient, direction)
             if slope >= 0.0:
@@ -684,7 +736,9 @@ class NewtonCG(Optimizer):
             self._max_iterations,
             evaluations,
             gradient_norm <= tolerance,
-            "iteration limit reached",
+            "gradient tolerance reached"
+            if gradient_norm <= tolerance
+            else "iteration limit reached",
             history,
         )
 
@@ -867,7 +921,9 @@ class TrustRegionNewton(Optimizer):
             self._max_iterations,
             evaluations,
             gradient_norm <= tolerance,
-            "iteration limit reached",
+            "gradient tolerance reached"
+            if gradient_norm <= tolerance
+            else "iteration limit reached",
             history,
         )
 
@@ -880,6 +936,7 @@ def truncated_cg(
     rtol: float = 0.1,
     max_iterations: int | None = None,
     radius: float | None = None,
+    preconditioner: LinearOperator | None = None,
 ) -> tuple[Any, str]:
     """Steihaug's truncated conjugate gradients.
 
@@ -905,21 +962,40 @@ def truncated_cg(
             omitted.
         radius: the trust-region radius. Unbounded if omitted, which makes
             this ordinary CG with an early stop.
+        preconditioner: an approximation to ``H^-1``, self-adjoint and
+            positive, applied to the residual at every iteration; the
+            prior covariance is the natural one for a posterior's Hessian.
+            Not combined with a trust region, since the region would then
+            have to be measured in the preconditioner's norm.
 
     Returns:
         The step and a word saying which condition stopped it.
+
+    Raises:
+        ValueError: if both a radius and a preconditioner are given.
     """
+    if radius is not None and preconditioner is not None:
+        raise ValueError(
+            "A trust region and a preconditioner are not combined here: the "
+            "region would have to be measured in the preconditioner's norm."
+        )
     space = hessian.domain
     limit = max_iterations if max_iterations is not None else max(space.dim, 10)
 
+    def preconditioned(r: Any) -> Any:
+        return r if preconditioner is None else preconditioner(r)
+
     step = space.zero()
     residual = space.copy(rhs)
-    direction = space.copy(residual)
     residual_norm = space.norm(residual)
     target = rtol * residual_norm
 
     if residual_norm == 0.0:
         return step, "converged"
+
+    z = preconditioned(residual)
+    direction = space.copy(z)
+    rz = space.inner_product(residual, z)
 
     for _ in range(limit):
         curvature_vector = hessian(direction)
@@ -931,21 +1007,23 @@ def truncated_cg(
                 return (rhs if space.norm(step) == 0.0 else step), "negative curvature"
             return _to_boundary(space, step, direction, radius), "negative curvature"
 
-        alpha = space.squared_norm(residual) / curvature
+        alpha = rz / curvature
         trial = space.axpy(alpha, direction, space.copy(step))
 
         if radius is not None and space.norm(trial) >= radius:
             return _to_boundary(space, step, direction, radius), "boundary"
 
-        squared = space.squared_norm(residual)
         step = trial
         residual = space.axpy(-alpha, curvature_vector, residual)
         residual_norm = space.norm(residual)
         if residual_norm <= target:
             return step, "converged"
 
-        beta = space.squared_norm(residual) / squared
-        direction = space.axpy(1.0, residual, space.scale_inplace(beta, direction))
+        z = preconditioned(residual)
+        rz_new = space.inner_product(residual, z)
+        beta = rz_new / rz
+        rz = rz_new
+        direction = space.axpy(1.0, z, space.scale_inplace(beta, direction))
 
     return step, "iteration limit"
 
@@ -1012,3 +1090,393 @@ def gauss_newton_hessian(
             f"The weighting must be self-adjoint; it claims {weighting.traits!s}."
         )
     return jacobian.adjoint @ weighting @ jacobian
+
+
+@dataclass(frozen=True)
+class AugmentedLagrangianResult(OptimizationResult):
+    """Where a constrained minimization stopped, with its multipliers.
+
+    Beyond the fields of :class:`OptimizationResult`, whose ``iterations``
+    and ``evaluations`` are summed over the inner solves and whose
+    ``gradient_norm`` is that of the augmented Lagrangian at the last
+    iterate, the first-order measure of how far the point is from satisfying
+    the optimality conditions:
+
+    ``multipliers``
+        the Lagrange multiplier of each equality constraint, in order.
+    ``inequality_multipliers``
+        the multiplier of each inequality constraint, in order: zero where
+        the constraint is inactive and positive where it binds.
+    ``violation``
+        the largest constraint violation at the minimizer, ``max |c_i|`` over
+        the equalities and ``max(g_j, 0)`` over the inequalities.
+    ``penalty``
+        the penalty parameter in force when the method stopped.
+    ``outer_iterations``
+        how many multiplier updates were made.
+    """
+
+    multipliers: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    inequality_multipliers: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    violation: float = 0.0
+    penalty: float = 0.0
+    outer_iterations: int = 0
+
+    def __repr__(self) -> str:
+        return (
+            f"AugmentedLagrangianResult(value={self.value:.6g}, "
+            f"violation={self.violation:.3g}, |grad L|={self.gradient_norm:.3g}, "
+            f"outer_iterations={self.outer_iterations}, "
+            f"iterations={self.iterations}, converged={self.converged}: "
+            f"{self.message})"
+        )
+
+
+class AugmentedLagrangian(Optimizer):
+    """Minimize ``f(x)`` subject to ``c_i(x) == 0`` and ``g_j(x) <= 0``.
+
+    The method of multipliers. Each outer iteration minimizes the augmented
+    Lagrangian
+
+    .. code-block:: text
+
+        L(x) = f(x) + sum_i [ lambda_i c_i(x) + (rho / 2) c_i(x)^2 ]
+                    + sum_j [ max(0, mu_j + rho g_j(x))^2 - mu_j^2 ] / (2 rho)
+
+    without constraints, by whatever :class:`Optimizer` was handed in, warm
+    started from the previous iterate; then updates the multipliers,
+    ``lambda_i <- lambda_i + rho c_i(x)`` and
+    ``mu_j <- max(0, mu_j + rho g_j(x))``, and grows the penalty ``rho`` only
+    when the constraint violation did not fall by the factor asked of it.
+    The inner solve's gradient tolerance starts loose and tightens as the
+    multipliers settle, so early outer iterations, whose minimizers will be
+    discarded, are not solved to an accuracy nobody will use.
+
+    The constraints belong to the method rather than to :meth:`minimize`, so
+    that the contract every optimizer shares, ``minimize(functional, x0)``,
+    is kept exactly: an augmented Lagrangian built for a set of constraints
+    can be handed anywhere an optimizer is wanted, as a preconditioned solver
+    built for one operator can be handed anywhere a solver is. A constrained
+    problem whose constraints change with the data builds one per data
+    vector, which costs nothing.
+
+    Everything is coordinate-free: the multipliers are scalars, the penalty
+    terms are squares of scalars, and the only vectors are the gradients of
+    ``f`` and of the constraints in the space's own metric.
+    """
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        /,
+        *,
+        equalities: Sequence[Functional] = (),
+        inequalities: Sequence[Functional] = (),
+        penalty: float = 10.0,
+        penalty_growth: float = 10.0,
+        reduction: float = 0.25,
+        tolerance: float = 1e-6,
+        initial_gtol: float = 1e-2,
+        gtol_reduction: float = 0.1,
+        gtol: float = 1e-8,
+        max_iterations: int = 30,
+    ) -> None:
+        """
+        Args:
+            optimizer: the unconstrained method for the inner solves. Its own
+                iteration budget bounds each inner solve; its gradient
+                tolerance is overridden by the schedule described below. It
+                needs whatever the augmented Lagrangian can supply: a Newton
+                method is usable when the objective and every constraint
+                carry a Hessian.
+            equalities: the functionals ``c_i``, each with a derivative,
+                constrained to vanish.
+            inequalities: the functionals ``g_j``, each with a derivative,
+                constrained to be at most zero.
+            penalty: the initial penalty ``rho``. Too small and the early
+                inner problems are barely constrained; too large and they are
+                ill-conditioned. The default suits constraints scaled so that
+                a unit violation is a large one; rescale a constraint rather
+                than tune this.
+            penalty_growth: the factor ``rho`` grows by when an outer
+                iteration fails to reduce the violation enough.
+            reduction: the factor the violation must fall by, outer iteration
+                to outer iteration, for the penalty to stay put.
+            tolerance: the constraint violation at which the method may stop:
+                ``max |c_i|`` and ``max(g_j, 0)`` are both at most this.
+            initial_gtol: the gradient tolerance of the first inner solve.
+            gtol_reduction: the factor the inner gradient tolerance shrinks
+                by after an outer iteration that reduced the violation
+                enough, down to *gtol*.
+            gtol: the gradient tolerance of the augmented Lagrangian the
+                final inner solve must meet. With the multipliers converged
+                this is the norm of the Lagrangian's gradient, the
+                first-order optimality residual.
+            max_iterations: the budget of outer iterations.
+
+        Raises:
+            ValueError: if a constraint carries no derivative, if the
+                constraints do not all share one domain, or if a parameter
+                is outside its range.
+        """
+        super().__init__(gtol=gtol, max_iterations=max_iterations)
+        constraints = tuple(equalities) + tuple(inequalities)
+        for constraint in constraints:
+            if not isinstance(constraint, Functional) or not constraint.has_derivative:
+                raise ValueError(
+                    "Every constraint must be a Functional with a derivative."
+                )
+        domains = {constraint.domain for constraint in constraints}
+        if len(domains) > 1:
+            raise ValueError("The constraints must all live on one space.")
+        if penalty <= 0.0:
+            raise ValueError(f"The penalty is positive, got {penalty}.")
+        if penalty_growth <= 1.0:
+            raise ValueError(f"The penalty growth exceeds one, got {penalty_growth}.")
+        if not 0.0 < reduction < 1.0:
+            raise ValueError(f"The reduction factor lies in (0, 1), got {reduction}.")
+        if not 0.0 < gtol_reduction < 1.0:
+            raise ValueError(
+                f"The gradient tolerance reduction lies in (0, 1), got "
+                f"{gtol_reduction}."
+            )
+        self._optimizer = optimizer
+        self._equalities = tuple(equalities)
+        self._inequalities = tuple(inequalities)
+        self._penalty = float(penalty)
+        self._penalty_growth = float(penalty_growth)
+        self._reduction = float(reduction)
+        self._tolerance = float(tolerance)
+        self._initial_gtol = float(initial_gtol)
+        self._gtol_reduction = float(gtol_reduction)
+
+    @property
+    def optimizer(self) -> Optimizer:
+        """The unconstrained method used for the inner solves."""
+        return self._optimizer
+
+    @property
+    def equalities(self) -> tuple[Functional, ...]:
+        """The equality constraints, each constrained to vanish."""
+        return self._equalities
+
+    @property
+    def inequalities(self) -> tuple[Functional, ...]:
+        """The inequality constraints, each constrained to be at most zero."""
+        return self._inequalities
+
+    def augmented(
+        self,
+        functional: Functional,
+        /,
+        *,
+        multipliers: Sequence[float],
+        inequality_multipliers: Sequence[float],
+        penalty: float,
+    ) -> Functional:
+        """The augmented Lagrangian at given multipliers and penalty.
+
+        What each inner solve minimizes. It carries a gradient, and a Hessian
+        when the objective and every constraint do, the latter being the
+        constraints' Hessians weighted by their multipliers plus the rank-one
+        terms ``rho grad c (x) grad c`` the penalty adds; an inactive
+        inequality contributes nothing to either.
+
+        Args:
+            functional: the objective ``f``.
+            multipliers: ``lambda``, one per equality constraint.
+            inequality_multipliers: ``mu``, one per inequality constraint.
+            penalty: ``rho``.
+
+        Returns:
+            The augmented Lagrangian, a functional on the objective's domain.
+        """
+        space = functional.domain
+        equalities = self._equalities
+        inequalities = self._inequalities
+        lam = np.asarray(multipliers, dtype=float)
+        mu = np.asarray(inequality_multipliers, dtype=float)
+        rho = float(penalty)
+        with_hessian = functional.has_hessian and all(
+            constraint.has_hessian for constraint in equalities + inequalities
+        )
+
+        def value(x: Any) -> float:
+            total = functional(x)
+            for weight, constraint in zip(lam, equalities):
+                c = constraint(x)
+                total += weight * c + 0.5 * rho * c * c
+            for weight, constraint in zip(mu, inequalities):
+                shifted = max(0.0, weight + rho * constraint(x))
+                total += (shifted * shifted - weight * weight) / (2.0 * rho)
+            return float(total)
+
+        def linearize(x: Any) -> QuadraticModel:
+            base = functional.at(x)
+            total = base.value
+            gradient = space.copy(base.gradient)
+            # (weight, model, constraint) for every term that is live at x.
+            active: list[tuple[float, QuadraticModel, Functional]] = []
+            for weight, constraint in zip(lam, equalities):
+                model = constraint.at(x)
+                c = model.value
+                total += weight * c + 0.5 * rho * c * c
+                active.append((weight + rho * c, model, constraint))
+            for weight, constraint in zip(mu, inequalities):
+                model = constraint.at(x)
+                shifted = weight + rho * model.value
+                if shifted > 0.0:
+                    total += (shifted * shifted - weight * weight) / (2.0 * rho)
+                    active.append((shifted, model, constraint))
+                else:
+                    total -= weight * weight / (2.0 * rho)
+            for weight, model, _ in active:
+                gradient = space.axpy(weight, model.gradient, gradient)
+
+            hessian = None
+            if with_hessian:
+                base_hessian = (
+                    base.hessian if base.has_hessian else functional.hessian(x)
+                )
+                terms = [
+                    (
+                        weight,
+                        model.gradient,
+                        model.hessian if model.has_hessian else constraint.hessian(x),
+                    )
+                    for weight, model, constraint in active
+                ]
+
+                def apply(v: Any) -> Any:
+                    out = space.copy(base_hessian(v))
+                    for weight, grad, curvature in terms:
+                        out = space.axpy(weight, curvature(v), out)
+                        out = space.axpy(rho * space.inner_product(grad, v), grad, out)
+                    return out
+
+                hessian = LinearOperator.self_adjoint(space, apply)
+
+            return QuadraticModel(
+                x,
+                float(total),
+                LinearFunctional.from_representer(space, gradient),
+                hessian,
+            )
+
+        def hessian(x: Any) -> LinearOperator:
+            return linearize(x).hessian
+
+        return Functional.from_callables(
+            space,
+            value,
+            linearize=linearize,
+            hessian=hessian if with_hessian else None,
+        )
+
+    def minimize(self, functional: Functional, x0: Any, /) -> AugmentedLagrangianResult:
+        """Minimize ``functional`` subject to the constraints, from ``x0``.
+
+        Args:
+            functional: the objective, which must carry a derivative and
+                live on the constraints' space.
+            x0: where to start; it need not be feasible.
+
+        Returns:
+            The result, with the multipliers and the final violation. It is
+            converged when the violation is within tolerance and the last
+            inner solve met the final gradient tolerance.
+
+        Raises:
+            ValueError: if the objective carries no derivative, or lives on a
+                different space from the constraints.
+        """
+        for constraint in self._equalities + self._inequalities:
+            if constraint.domain != functional.domain:
+                raise ValueError(
+                    f"The objective lives on {functional.domain!r} but a "
+                    f"constraint on {constraint.domain!r}."
+                )
+        return super().minimize(functional, x0)
+
+    def _minimize(self, functional: Functional, x0: Any) -> AugmentedLagrangianResult:
+        space = functional.domain
+        x = space.copy(x0)
+        lam = np.zeros(len(self._equalities))
+        mu = np.zeros(len(self._inequalities))
+        rho = self._penalty
+        omega = max(self._initial_gtol, self._gtol)
+        previous_violation = np.inf
+        iterations = 0
+        evaluations = 0
+        history: list[float] = []
+        inner = None
+        violation = np.inf
+
+        def finish(
+            converged: bool, message: str, outer: int
+        ) -> AugmentedLagrangianResult:
+            return AugmentedLagrangianResult(
+                x,
+                float(functional(x)),
+                inner.gradient_norm if inner is not None else np.nan,
+                iterations,
+                evaluations + 1,
+                converged,
+                message,
+                history,
+                failure=inner.failure if inner is not None else None,
+                multipliers=lam.copy(),
+                inequality_multipliers=mu.copy(),
+                violation=float(violation),
+                penalty=rho,
+                outer_iterations=outer,
+            )
+
+        for outer in range(1, self._max_iterations + 1):
+            augmented = self.augmented(
+                functional, multipliers=lam, inequality_multipliers=mu, penalty=rho
+            )
+            inner = self._optimizer.with_tolerance(gtol=omega, rtol=0.0).minimize(
+                augmented, x
+            )
+            x = inner.minimizer
+            iterations += inner.iterations
+            evaluations += inner.evaluations
+            history.extend(inner.history)
+            if inner.failure is not None:
+                violation = self._violation(x)
+                return finish(
+                    False, "an inner solve could not evaluate the functional", outer
+                )
+
+            equality_values = np.array([c(x) for c in self._equalities])
+            inequality_values = np.array([g(x) for g in self._inequalities])
+            evaluations += len(equality_values) + len(inequality_values)
+            violation = max(
+                [0.0]
+                + [abs(v) for v in equality_values]
+                + [max(v, 0.0) for v in inequality_values]
+            )
+            lam = lam + rho * equality_values
+            mu = np.maximum(0.0, mu + rho * inequality_values)
+
+            if violation <= self._tolerance and omega <= self._gtol and inner.converged:
+                return finish(
+                    True, "constraints satisfied and gradient tolerance reached", outer
+                )
+
+            if violation <= max(self._tolerance, self._reduction * previous_violation):
+                omega = max(self._gtol, omega * self._gtol_reduction)
+            else:
+                rho *= self._penalty_growth
+            previous_violation = violation
+
+        return finish(False, "iteration limit reached", self._max_iterations)
+
+    def _violation(self, x: Any) -> float:
+        """The largest constraint violation at a point."""
+        return max(
+            [0.0]
+            + [abs(c(x)) for c in self._equalities]
+            + [max(g(x), 0.0) for g in self._inequalities]
+        )

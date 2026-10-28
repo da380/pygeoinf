@@ -19,6 +19,7 @@ from .feasible import (
     EllipsoidResult,
     FeasiblePropertySet,
     InclusionResult,
+    LinearCertificate,
     SupportResult,
     SweepResult,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "EllipsoidResult",
     "FeasiblePropertySet",
     "InclusionResult",
+    "LinearCertificate",
     "SupportResult",
     "SweepResult",
     "Ball",

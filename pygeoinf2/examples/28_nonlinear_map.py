@@ -29,6 +29,7 @@ from pygeoinf2 import plotting
 import pygeoinf2 as gi
 from pygeoinf2.algebra.operators import LinearOperator, Operator
 from pygeoinf2.algebra.spaces import EuclideanSpace
+from pygeoinf2.inference import LaplaceApproximation
 from pygeoinf2.inference.problem import ForwardProblem
 
 rng = np.random.default_rng(11)
@@ -71,27 +72,30 @@ problem = ForwardProblem(forward, error=error)
 # ------------------------------------------------------------------ #
 # The mode, and the Gaussian about it                                #
 # ------------------------------------------------------------------ #
+#
+# Two estimators. The MAP estimator is a point estimator: data in, the mode
+# out, with the optimizer's record one call away. The Laplace approximation
+# is a measure estimator built on it: the Gaussian about the mode.
 
 estimator = gi.MaximumAPosteriori(problem, prior)
-result = estimator(data)
+result = estimator.solve(data)
+mode = result.minimizer
 
 print(f"the search converged: {result.converged}")
-print(
-    f"  in {result.optimization.iterations} iterations, "
-    f"{result.optimization.evaluations} evaluations"
-)
+print(f"  in {result.iterations} iterations, {result.evaluations} evaluations")
 print(f"  truth     {np.round(X.to_components(truth), 4)}")
-print(f"  recovered {np.round(X.to_components(result.model), 4)}")
+print(f"  recovered {np.round(X.to_components(mode), 4)}")
 print()
 
 # The mode is a stationary point of the objective, which is the thing that
 # makes it the mode. Worth checking rather than taking on trust.
-gradient = estimator.objective(data).gradient(result.model)
+gradient = estimator.objective(data).gradient(mode)
 print(f"gradient at the mode: {X.norm(gradient):.2e}")
 
 # The covariance is the inverse of the linearized normal operator -- the same
 # construction the linear estimator makes, evaluated here rather than assumed.
-covariance = result.measure.covariance.matrix(form="components")
+laplace = LaplaceApproximation(estimator).at(mode, data)
+covariance = laplace.covariance.matrix(form="components")
 deviations = np.sqrt(np.diag(covariance))
 correlation = covariance[0, 1] / (deviations[0] * deviations[1])
 print(f"posterior standard deviations: {np.round(deviations, 4)}")
@@ -109,13 +113,13 @@ print()
 
 span = 4.0
 axis_x = np.linspace(
-    X.to_components(result.model)[0] - span * deviations[0],
-    X.to_components(result.model)[0] + span * deviations[0],
+    X.to_components(mode)[0] - span * deviations[0],
+    X.to_components(mode)[0] + span * deviations[0],
     160,
 )
 axis_y = np.linspace(
-    X.to_components(result.model)[1] - span * deviations[1],
-    X.to_components(result.model)[1] + span * deviations[1],
+    X.to_components(mode)[1] - span * deviations[1],
+    X.to_components(mode)[1] + span * deviations[1],
     160,
 )
 mesh_x, mesh_y = np.meshgrid(axis_x, axis_y)
@@ -129,10 +133,7 @@ exact -= exact.max()
 # The Gaussian's own log density, up to the same constant.
 precision = np.linalg.inv(covariance)
 offset = np.stack(
-    [
-        mesh_x - X.to_components(result.model)[0],
-        mesh_y - X.to_components(result.model)[1],
-    ],
+    [mesh_x - X.to_components(mode)[0], mesh_y - X.to_components(mode)[1]],
     axis=-1,
 )
 approximate = -0.5 * np.einsum("...i,ij,...j->...", offset, precision, offset)
@@ -150,7 +151,7 @@ axes.contour(
     linewidths=1.4,
     linestyles="--",
 )
-axes.plot(*X.to_components(result.model), "o", color="C0", label="MAP model")
+axes.plot(*X.to_components(mode), "o", color="C0", label="MAP model")
 axes.plot(*X.to_components(truth), "*", color="black", ms=14, label="truth")
 axes.set_xlabel("component 0")
 axes.set_ylabel("component 1")

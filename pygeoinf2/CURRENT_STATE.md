@@ -46,7 +46,7 @@ is what most of the rest follows from:
 | `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval; `evaluate_gradient` at scattered points (ducc0 on the sphere, the `ik`-scaled transform on the boxes) and the nonlinear `ray_travel_time_operator`, bending or shooting, on every geometry, with its linearization and its Hessian action (D-156) |
 | `spectral_element`, `interval`, `ball` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies, reached by geometry (D-161): `interval` on the line under `dx` with `interval.radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, each with its `Layered` for piecewise-continuous fields over adjacent layers (their direct sum, with points, jumps, integrals and layer-by-layer priors, D-126); `spectral_element` is the shared core (`SpectralElementSpace`, `AxisSpace`, the mesh, Robin ends, the batched harmonic transform, the fit over the domain for sampled functions), wrapping `planetmodel.randomfield`, an optional extra; all three are imported on demand (D-115 to D-124) |
-| `inference` | forward problems with their likelihood `potential`, the estimator hierarchy, `LinearGaussianInversion` and the mixture inversion, `GaussianPosterior` (D-132), the point estimators and the Tikhonov family, `BackusGilbert` with its `BackusGilbertSet` and `BackusGilbertParker` over the geometry layer's feasible set, the MAP and Laplace route; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
+| `inference` | forward problems with their likelihood `potential`; the estimator hierarchy, every class a `PointEstimator`, `SetEstimator` or `MeasureEstimator` (D-163): the linear point estimators `LeastSquares`, `MinimumNorm` (the discrepancy principle its method), their constrained forms and `BackusGilbert` (the averaging-kernel estimate, with its resolution, propagated covariance and bias), the generic `Minimization` with `NonlinearLeastSquares`, `MaximumAPosteriori` on it, `ConstrainedMinimization` with `Occam`; `LinearGaussianInversion`, the mixture inversion, `GaussianPosterior` (D-132) and `LaplaceApproximation` as the measure estimators; `BackusGilbertParker` over the geometry layer's feasible set, linearised about a model for a nonlinear forward; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
 | `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `ball`, lines on an `interval` and its radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
 | `backends` | MFEM two ways: `mfem` reads its matrices into a `CoordinateSpace`; `mfem_hilbert` keeps a plain `HilbertSpace` and lets MFEM do every computation (D-96) |
 | `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
@@ -128,9 +128,13 @@ the level side decides points and gives inner bounds. Algorithms that both
 apply must agree, and the parity tests are the point of the layer: the
 primal and the dual agree to `1e-6` on balls, the dual with the quadratic
 tier to `1e-4` on a quartic prior, the splitting with the dual to `1e-5`.
-`BackusGilbert` returns a `BackusGilbertSet`, the Minkowski sum a linear
-certificate allows, valid for any `X` by weak duality (D-140); on quadratic
-sets its `outer_ellipsoid()` is one ellipsoid about the estimate. The
+The linear certificate, the Minkowski sum a fixed `X` allows, valid for
+any `X` by weak duality (D-140), is the `linear_certificate` route of the
+same set, never the automatic choice, with `X` from the quadratic surrogate
+or supplied; `BackusGilbert` is the point estimator with that `X` and no
+prior bound (D-163). A nonlinear forward enters through `model=`: the set
+is built on the linearisation with one data shift, exact for the linearised
+problem and local for the real one, in absolute property values. The
 S-procedure ellipsoid is certified and checked against support values; a
 polytope's `inscribed_ellipsoid()` describes the polytope and a point set's
 `enclosing_ellipsoid()` the points, neither the set (D-141).
@@ -262,6 +266,8 @@ Recorded rather than settled, so nobody has to rediscover them.
 | D-79 | `BackusGilbertParker` is the one feasible-set estimator; the sets choose the route |
 | D-99 | v1's names where there was no strong reason to change: `forward_problem`, `property_operator`, `kalman_operator` |
 | D-100 | American spelling |
+| D-161 | the spectral-element spaces are `interval`, `interval.radial` and `ball` |
+| D-163 | every inference class is an estimator; `MinimumNorm` is the discrepancy principle; `BackusGilbert` is the point estimator; MAP returns the mode and `LaplaceApproximation` the Gaussian; `as_measure` is gone |
 
 ## 9. Not in 2.0
 
@@ -299,7 +305,7 @@ planetmodel 1.3.2.
 - DONE (D-132; the density member is `relative_log_density`, `log_density` staying the gated volume one, and `ForwardProblem.potential` came with it). `AbsolutelyContinuousMeasure` on `ProbabilityMeasure`: a `reference`, a
   `log_density` (a `Functional`), a lazy `log_normalizer`, `relative_to`;
   built from a reference and a density, never from two arbitrary measures.
-  The linear Gaussian posterior and `LaplaceResult.measure` return a
+  The linear Gaussian posterior and `LaplaceApproximation` return a
   subclass of it and `GaussianMeasure` (reference the prior, normalizer the
   evidence, cheap in the data-space formalism). A push-forward degrades to
   the plain Gaussian — the answer to D-73's worry, not an override of it.

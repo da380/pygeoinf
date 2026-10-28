@@ -29,6 +29,7 @@ from pygeoinf2 import (
     plotting,
 )
 from pygeoinf2.algebra.operators import LinearOperator
+from pygeoinf2.inference import LaplaceApproximation
 from pygeoinf2.numerics.optimization import LBFGS, NewtonCG
 from pygeoinf2.symmetric_space.plane import Sobolev
 
@@ -272,17 +273,19 @@ linear = LinearGaussianInversion(
 )
 linear_model = linear(F.codomain.subtract(data, F(X.zero()))).expectation
 
-# 2. Gradients, in the whitened variable.
+# 2. Gradients, in the whitened variable. The estimator returns the mode;
+#    `solve` returns the optimizer's record, which is what is compared here.
 whitened = ForwardProblem(G, error=noise)
-by_lbfgs = MaximumAPosteriori(whitened, white, optimizer=LBFGS(max_iterations=100))(
-    data
-)
+by_lbfgs = MaximumAPosteriori(
+    whitened, white, optimizer=LBFGS(max_iterations=100)
+).solve(data)
 
 # 3. Newton, likewise.
-by_newton = MaximumAPosteriori(
+newton = MaximumAPosteriori(
     whitened, white, optimizer=NewtonCG(max_iterations=15, max_cg_iterations=40)
-)(data)
-lbfgs_model, newton_model = L(by_lbfgs.model), L(by_newton.model)
+)
+by_newton = newton.solve(data)
+lbfgs_model, newton_model = L(by_lbfgs.minimizer), L(by_newton.minimizer)
 
 
 def error_of(model):
@@ -292,12 +295,10 @@ def error_of(model):
 print(f"{'':28s} {'relative error':>14s} {'iterations':>10s}")
 print(f"{'straight rays, linear':28s} {error_of(linear_model):14.3f} {1:10d}")
 print(
-    f"{'MAP, L-BFGS':28s} {error_of(lbfgs_model):14.3f} "
-    f"{by_lbfgs.optimization.iterations:10d}"
+    f"{'MAP, L-BFGS':28s} {error_of(lbfgs_model):14.3f} " f"{by_lbfgs.iterations:10d}"
 )
 print(
-    f"{'MAP, Newton':28s} {error_of(newton_model):14.3f} "
-    f"{by_newton.optimization.iterations:10d}"
+    f"{'MAP, Newton':28s} {error_of(newton_model):14.3f} " f"{by_newton.iterations:10d}"
 )
 print(
     "the two MAP fields agree to "
@@ -328,8 +329,10 @@ for ax, field, title in (
 # ## How sure
 #
 # The Laplace approximation of tutorial 9 is a Gaussian about the mode
-# whose covariance is the inverse of the linearised normal operator there.
-# It was found in $w$; pushed through $L$ it is a Gaussian on the field,
+# whose covariance is the inverse of the linearised normal operator there;
+# `LaplaceApproximation` wraps the MAP estimator and places it on the mode
+# already found. It was found in $w$; pushed through $L$ it is a Gaussian on
+# the field,
 # and its pointwise standard deviation — one covariance application per
 # point, each a solve with the linearised normal operator — says what the
 # survey can and cannot see: the uncertainty is lowest where rays cross
@@ -339,7 +342,7 @@ for ax, field, title in (
 grid = [
     np.array([x, y]) for x in np.linspace(0.3, 1.7, 6) for y in np.linspace(0.3, 1.7, 6)
 ]
-laplace = L @ by_newton.measure
+laplace = L @ LaplaceApproximation(newton).at(by_newton.minimizer, data)
 spread = np.sqrt(X.pointwise_variance_at(laplace, grid))
 prior_spread = np.sqrt(X.pointwise_variance_at(prior, grid[:1]))[0]
 print(

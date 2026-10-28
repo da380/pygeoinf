@@ -1625,3 +1625,18 @@ class TestTheFunctionSpaceMarkerGatesDensities:
             mixture.marginal_probabilities(x)
         probabilities = mixture.marginal_probabilities(x, unsafe=True)
         assert probabilities.sum() == pytest.approx(1.0)
+
+
+def test_an_identity_covariance_samples_without_a_factor(rng):
+    """The identity is its own factor, so a white measure can be drawn from."""
+    from pygeoinf2.algebra.operators import LinearOperator
+    from pygeoinf2.probability.gaussian import GaussianMeasure
+
+    from .conftest import make_dense_metric_space
+
+    space = make_dense_metric_space(4)
+    identity = LinearOperator.identity(space)
+    measure = GaussianMeasure(space, covariance=identity, precision=identity)
+    assert measure.can_sample
+    draw = measure.sample(rng=rng)
+    assert space.to_components(draw).shape == (space.dim,)

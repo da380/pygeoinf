@@ -72,6 +72,14 @@ v2 names from the start.
     by the prior's factor and solved by L-BFGS and by Newton-CG against
     straight-ray tomography, the Laplace spread. Runs on the plane in
     under a minute.
+14. **One problem, three answers** (added 2026-10-28, D-163) — one linear
+    problem answered as a point, a set and a measure: the linear estimate
+    with its propagated standard deviation; its bias against a known
+    truth, larger than that; the feasible set under a prior set and the
+    posterior under a prior measure as the two legitimate completions; the
+    same three pushed to a property. Then the nonlinear coda on the ray
+    problem: MAP, the Laplace approximation, Occam, the linearised feasible
+    set. The proof that the inference pattern holds.
 
 Kept as notebooks, exactly two: a Colab quickstart (tutorial 1 in notebook
 form, with the bootstrap cell) and a visual tour of the plotting layer,
@@ -121,6 +129,16 @@ problem, real or realistic data, several features composed, minutes to run.
    iteration counts and application counts in a table; example 24 is the
    one-idea version. Seeded by `work/preconditioning_examples.py` and
    `work/dynamic_topography.py`.
+9. **A vector backend in C++** (added 2026-10-28, David) — the proof that
+   the library defers every vector calculation to the backend: a small
+   C++ vector type with its own inner product and a sparse operator,
+   wrapped with pybind11, no numpy inside the vector at all, exposed as a
+   `HilbertSpace` and run through every `check_*` and every estimator on a
+   small inverse problem. Writing it is the backend review; its
+   regression form is a minimal non-numpy `HilbertSpace` in the test
+   suite that every estimator and check must pass over. Tutorial 12 is
+   the prose version of the same contract with MFEM as the worked case;
+   this is the one with no array underneath.
 
 Seeds in `work/` for the earlier entries: `sphere_dli_example.py` (real
 stations and earthquakes, cap averages, the feasible set) extends mini-app 1
@@ -145,7 +163,7 @@ nonlinear half are to be written on it.
 
 ## Sequencing
 
-Tier 2 and mini-apps 1-3 are docs-phase work before the release; mini-apps
-4-8 may trail it. Coverage: every module of the package map appears except
+Tier 2 and mini-apps 1-3 and 9 are docs-phase work before the release;
+mini-apps 4-8 may trail it. Coverage: every module of the package map appears except
 the deeper convex machinery (deliberately quiet pending the redesign);
 `datasets` is carried inside mini-app 1.

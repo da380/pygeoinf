@@ -7,7 +7,7 @@ import pygeoinf2 as gi
 from pygeoinf2.algebra.operators import Functional, LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.inference.gaussian import GaussianPosterior, LinearGaussianInversion
-from pygeoinf2.inference.laplace import MaximumAPosteriori
+from pygeoinf2.inference.laplace import LaplaceApproximation
 from pygeoinf2.inference.problem import ForwardProblem, LinearForwardProblem
 from pygeoinf2.probability import AbsolutelyContinuousMeasure
 from pygeoinf2.testing import check_gradient
@@ -231,9 +231,8 @@ class TestTheLaplacePosterior:
         error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.1)
         problem = ForwardProblem(forward, error=error)
         data = data_space.add(forward(prior.sample(rng=rng)), error.sample(rng=rng))
-        result = MaximumAPosteriori(problem, prior)(data)
+        measure = LaplaceApproximation.from_problem(problem, prior)(data)
 
-        measure = result.measure
         assert isinstance(measure, GaussianPosterior)
         assert measure.reference is prior
         assert measure.log_normalizer is None

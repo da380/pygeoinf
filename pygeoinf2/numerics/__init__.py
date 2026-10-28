@@ -42,6 +42,8 @@ from .normal import (
 )
 from .optimization import (
     LBFGS,
+    AugmentedLagrangian,
+    AugmentedLagrangianResult,
     NewtonCG,
     NonlinearCG,
     OptimizationResult,
@@ -151,6 +153,8 @@ __all__ = [
     "SubgradientDescent",
     "SupportFunction",
     "BiCGStabSolver",
+    "AugmentedLagrangian",
+    "AugmentedLagrangianResult",
     "LBFGS",
     "LineSearch",
     "LineSearchResult",

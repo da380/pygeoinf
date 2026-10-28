@@ -28,10 +28,11 @@ from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator
 from .backus import (
     BackusGilbert,
     BackusGilbertParker,
-    BackusGilbertSet,
+    LinearizedFeasiblePropertySet,
     FeasiblePropertySet,
 )
 from .estimators import (
+    ComposedPointEstimator,
     Estimator,
     GaussianEstimator,
     LinearPointEstimator,
@@ -40,24 +41,35 @@ from .estimators import (
     SetEstimator,
 )
 from .gaussian import GaussianPosterior, LinearGaussianInversion
-from .laplace import LaplaceResult, MaximumAPosteriori
+from .laplace import LaplaceApproximation, LaplaceResult, MaximumAPosteriori
+from .minimization import (
+    ConstrainedMinimization,
+    Minimization,
+    NonlinearLeastSquares,
+    Occam,
+)
 from .mixture import LinearGaussianMixtureInversion
 from .point import (
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
-    DiscrepancyPrinciple,
     LeastSquares,
     MinimumNorm,
     choose_formalism,
 )
 from .problem import ForwardProblem, LinearForwardProblem
 
+
 __all__ = [
+    "LaplaceApproximation",
     "LaplaceResult",
     "MaximumAPosteriori",
+    "Minimization",
+    "NonlinearLeastSquares",
+    "ConstrainedMinimization",
+    "Occam",
     "BackusGilbert",
     "BackusGilbertParker",
-    "BackusGilbertSet",
+    "LinearizedFeasiblePropertySet",
     "FeasiblePropertySet",
     "GaussianPosterior",
     "LinearGaussianInversion",
@@ -71,9 +83,9 @@ __all__ = [
     "gaspari_cohn",
     "ConstrainedLeastSquares",
     "ConstrainedMinimumNorm",
-    "DiscrepancyPrinciple",
     "TikhonovFamily",
     "TikhonovNormalOperator",
+    "ComposedPointEstimator",
     "Estimator",
     "ForwardProblem",
     "GaussianEstimator",

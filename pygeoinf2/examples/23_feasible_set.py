@@ -19,7 +19,7 @@ import numpy as np
 from pygeoinf2 import plotting
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
-from pygeoinf2.geometry.convex import Ball
+from pygeoinf2.geometry import Ball, LinearCertificate
 from pygeoinf2.inference import BackusGilbert, BackusGilbertParker, LinearForwardProblem
 from pygeoinf2.numerics.solvers import CholeskySolver, SpectralFamilySolver
 from pygeoinf2.symmetric_space.sphere import Sobolev
@@ -111,19 +111,33 @@ print()
 # A linear certificate, which bounds the exact interval from outside.
 # ---------------------------------------------------------------------------
 
-# A direct solve, not CG: with a noise ball this tight the data-space
-# operator is nearly singular. The data space is small, so it can simply be
-# factored. SOLA is this estimator with the trade-off chosen by hand and no
-# prior ball named, which is why SOLA cannot certify its resolution error.
-certificate = BackusGilbert(problem, target, prior, solver=CholeskySolver())
-estimate, resolution, noise = certificate(data).error_bars()
+# The Backus-Gilbert estimate is a fixed weighting X of the data, chosen so
+# that the resolution X A comes as close to the cap averages as the noise
+# allows. On its own it states no bound: its error (T - X A) m - X e depends
+# on the model, and saying how large that can be takes the prior ball. The
+# feasible set's linear-certificate route supplies exactly that: the same X,
+# evaluated against the prior and noise balls, gives a set that is valid for
+# any X by weak duality, and loose against the exact one. A direct solve,
+# not CG: with a noise ball this tight the data-space operator is nearly
+# singular, and the data space is small enough to be factored.
+estimator = BackusGilbert(
+    problem, target, covariance=prior.covariance, solver=CholeskySolver()
+)
+estimate = estimator(data)
+route = LinearCertificate(operator=estimator.operator)
 print("the same, from a linear certificate -- valid always, sharp never:")
+print(f"   (its centre is the Backus-Gilbert estimate {np.round(estimate, 5)})")
+resolution, noise = [], []
 for index in range(P.dim):
-    width = resolution[index] + noise[index]
+    center, resolution_part, noise_part = route.terms(answer, P.basis_vector(index))
+    resolution.append(resolution_part)
+    noise.append(noise_part)
+    width = resolution_part + noise_part
     print(
-        f"   cap {index}: [{estimate[index]-width:+.5f}, {estimate[index]+width:+.5f}]"
-        f"   resolution {resolution[index]:.5f}  noise {noise[index]:.5f}"
+        f"   cap {index}: [{center-width:+.5f}, {center+width:+.5f}]"
+        f"   resolution {resolution_part:.5f}  noise {noise_part:.5f}"
     )
+resolution, noise = np.array(resolution), np.array(noise)
 print(
     f"   it is wider by a factor of "
     f"{np.mean(2*(resolution+noise)/(upper-lower)):.2f} on average"

@@ -18,21 +18,24 @@ import pytest
 
 from pygeoinf2.algebra.operators import Functional, LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
-from pygeoinf2.geometry import SublevelSet
+from pygeoinf2.geometry import LinearCertificate, SublevelSet
 from pygeoinf2.geometry.convex import Ball, ConvexSet, Ellipsoid, HalfSpace, Polytope
 from pygeoinf2.geometry.feasible import Dual
 from pygeoinf2.inference import (
     BackusGilbert,
     BackusGilbertParker,
-    BackusGilbertSet,
     FeasiblePropertySet,
+    ForwardProblem,
     LinearForwardProblem,
+    LinearizedFeasiblePropertySet,
+    LinearPointEstimator,
 )
 from pygeoinf2.inference.backus import harden_error
 from pygeoinf2.probability.gaussian import GaussianMeasure
+from pygeoinf2.symmetric_space.plane import Sobolev as PlaneSobolev
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
 
 
 @pytest.fixture
@@ -283,91 +286,149 @@ class TestPrimal:
         )
 
 
+def dense_setting(rng, *, dim=5):
+    """The same shape of problem on a space whose Gram matrix is dense."""
+    model = make_dense_metric_space(dim)
+    data = EuclideanSpace(3)
+    property_space = EuclideanSpace(2)
+    forward = LinearOperator.from_matrix(
+        model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
+    )
+    target = LinearOperator.from_matrix(
+        model,
+        property_space,
+        rng.normal(size=(property_space.dim, model.dim)),
+        form="galerkin",
+    )
+    raw = model.random(rng=rng)
+    truth = model.scale(2.0 / model.norm(raw), raw)
+    return model, forward, target, truth, forward(truth)
+
+
 class TestLinearCertificate:
-    def test_it_bounds_the_exact_set(self, setting):
+    """The feasible set's ``linear_certificate`` route: an outer bound from a
+    fixed weighting of the data, valid for any sets, never chosen unasked."""
+
+    def test_it_bounds_the_exact_set_and_is_asked_for_by_name(self, setting):
         """Validity is free; only sharpness is lost. That is weak duality, and
         it is the property that makes the linear certificate safe to use."""
         model, forward, target, truth, data = setting
         noise = Ball(forward.codomain, radius=0.2)
         problem = LinearForwardProblem(forward, error=noise)
-        prior = Ball(model, radius=3.0)
-        exact = BackusGilbertParker(problem, target, prior)(data).support_function()
-        certified = BackusGilbert(problem, target, prior)(data)
-        assert isinstance(certified, BackusGilbertSet)
-        certificate = certified.support_function()
+        feasible = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        assert "linear_certificate" not in feasible.algorithms["support"]
+        assert "linear_certificate" not in feasible.algorithms["outer_ellipsoid"]
+        operator = LinearCertificate().operator(feasible)
         for direction in directions(target.codomain):
-            assert certificate(direction) >= exact(direction) - 1e-6
-        assert certified.contains(target(truth)) and certified.contains(
-            certified.estimate
+            exact = feasible.support_result(direction)
+            assert exact.algorithm != "linear_certificate"
+            result = feasible.support_result(direction, via="linear_certificate")
+            assert result.algorithm == "linear_certificate"
+            assert result.value >= exact.value - 1e-6
+            assert result.inner == -np.inf and result.converged
+            assert np.allclose(
+                forward.codomain.to_components(result.certificate),
+                forward.codomain.to_components(operator.adjoint(direction)),
+            )
+            assert feasible.support_bracket(direction, via="linear_certificate") == (
+                -np.inf,
+                result.value,
+            )
+        box = feasible.polytope(directions(target.codomain), via="linear_certificate")
+        assert box.contains(target(truth))
+
+    def test_the_bound_holds_on_a_dense_metric(self, rng):
+        model, forward, target, truth, data = dense_setting(rng)
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.2)
         )
+        feasible = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        route = LinearCertificate()
+        for direction in directions(target.codomain):
+            value = feasible.support(direction, via=route)
+            assert value >= feasible.support(direction) - 1e-6
+            assert value == pytest.approx(sum(route.terms(feasible, direction)))
+        assert feasible.outer_ellipsoid(via=route).contains(target(truth))
 
     def test_on_quadratic_sets_the_sum_has_one_ellipsoid(self, setting):
         model, forward, target, truth, data = setting
         noise = Ball(forward.codomain, radius=0.2)
         problem = LinearForwardProblem(forward, error=noise)
         prior = Ball(model, radius=3.0)
-        certified = BackusGilbert(problem, target, prior)(data)
+        feasible = BackusGilbertParker(problem, target, prior)(data)
         space = target.codomain
+        route = LinearCertificate()
         for criterion in ("trace", "volume"):
-            ellipsoid = certified.outer_ellipsoid(criterion=criterion)
+            result = feasible.outer_ellipsoid_result(criterion=criterion, via=route)
+            assert result.algorithm == "linear_certificate" and result.converged
+            ellipsoid = result.ellipsoid
+            # The ellipsoid sits about the estimate: the first term of the
+            # support value along each axis.
             assert np.allclose(
                 space.to_components(ellipsoid.center),
-                space.to_components(certified.estimate),
+                [
+                    route.terms(feasible, space.basis_vector(i))[0]
+                    for i in range(space.dim)
+                ],
             )
             assert ellipsoid.contains(target(truth))
             for direction in directions(space):
                 assert ellipsoid.support_function()(direction) >= (
-                    certified.support(direction) - 1e-9
+                    feasible.support(direction, via=route) - 1e-9
                 )
         # A certificate evaluated against a general set has no ellipsoid.
-        general = BackusGilbert.from_operator(
-            problem,
-            target,
-            BackusGilbert(problem, target, prior).operator,
-            Ball(model, radius=2.0) + Ball(model, radius=1.0),
+        general = BackusGilbertParker(
+            problem, target, Ball(model, radius=2.0) + Ball(model, radius=1.0)
         )(data)
-        with pytest.raises(TypeError, match="ball or an ellipsoid"):
-            general.outer_ellipsoid()
+        given = LinearCertificate(operator=route.operator(feasible))
+        with pytest.raises(NotImplementedError, match="ball or an ellipsoid"):
+            general.outer_ellipsoid(via=given)
 
-    def test_the_error_bars_split_into_two_causes(self, setting):
+    def test_the_terms_split_the_width_into_two_causes(self, setting):
         model, forward, target, truth, data = setting
         problem = LinearForwardProblem(
             forward, error=Ball(forward.codomain, radius=0.05)
         )
-        estimator = BackusGilbert(problem, target, Ball(model, radius=3.0))
-        estimate, resolution, noise = estimator(data).error_bars()
-        assert np.allclose(estimate, estimator.estimate(data))
-        assert np.all(resolution > 0.0)
-        assert np.all(noise > 0.0)
-        assert np.all(np.abs(target(truth) - estimate) <= resolution + noise + 1e-8)
-        # The half-widths are the set's reach along the axes.
-        certified = estimator(data)
-        for index in range(target.codomain.dim):
-            q = target.codomain.basis_vector(index)
-            assert certified.support(q) == pytest.approx(
-                estimate[index] + resolution[index] + noise[index]
+        feasible = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        route = LinearCertificate()
+        space = target.codomain
+        for index in range(space.dim):
+            q = space.basis_vector(index)
+            estimate, resolution, noise = route.terms(feasible, q)
+            assert resolution > 0.0 and noise > 0.0
+            assert feasible.support(q, via=route) == pytest.approx(
+                estimate + resolution + noise
             )
+            assert abs(target(truth)[index] - estimate) <= resolution + noise + 1e-8
 
     def test_less_noise_narrows_only_the_noise_term(self, setting):
+        """With the weighting held fixed, the resolution term is a statement
+        about the prior set alone."""
         model, forward, target, truth, data = setting
         prior = Ball(model, radius=3.0)
-        wide = BackusGilbert(
+        wide = BackusGilbertParker(
             LinearForwardProblem(forward),
             target,
             prior,
             noise=Ball(forward.codomain, radius=0.5),
-        )(data).error_bars()
-        narrow = BackusGilbert(
+        )(data)
+        narrow = BackusGilbertParker(
             LinearForwardProblem(forward),
             target,
             prior,
             noise=Ball(forward.codomain, radius=0.05),
-        )(data).error_bars()
-        assert np.all(narrow[2] < wide[2])
+        )(data)
+        route = LinearCertificate(operator=LinearCertificate().operator(wide))
+        for q in directions(target.codomain):
+            _, resolution_wide, noise_wide = route.terms(wide, q)
+            _, resolution_narrow, noise_narrow = route.terms(narrow, q)
+            assert resolution_narrow == pytest.approx(resolution_wide)
+            assert noise_narrow < noise_wide
 
     def test_the_classical_formula_on_two_balls(self, rng):
         """``T A* (A A* + (D/M)² I)⁻¹``, on Euclidean spaces where the
-        components are the operator."""
+        components are the operator; the route builds the same ``X`` the
+        point estimator does."""
         model, data_space, prop = (
             EuclideanSpace(6),
             EuclideanSpace(3),
@@ -378,16 +439,19 @@ class TestLinearCertificate:
         forward = LinearOperator.from_matrix(model, data_space, a, form="components")
         target = LinearOperator.from_matrix(model, prop, t, form="components")
         radius, noise = 2.0, 0.3
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=noise))
         estimator = BackusGilbert(
-            LinearForwardProblem(forward),
-            target,
-            Ball(model, radius=radius),
-            noise=Ball(data_space, radius=noise),
+            problem, target, covariance=Ball(model, radius=radius).covariance
         )
         classical = t @ a.T @ np.linalg.inv(a @ a.T + (noise / radius) ** 2 * np.eye(3))
         assert np.allclose(estimator.operator.matrix(form="components"), classical)
         data = data_space.random(rng=rng)
-        assert np.allclose(estimator.estimate(data), classical @ data)
+        assert np.allclose(estimator(data), classical @ data)
+        feasible = BackusGilbertParker(problem, target, Ball(model, radius=radius))(
+            data
+        )
+        built = LinearCertificate().operator(feasible)
+        assert np.allclose(built.matrix(form="components"), classical)
 
     def test_centres_are_carried_through(self, setting):
         """An off-centre prior: the estimate moves by ``(T − X A) a`` and the
@@ -396,61 +460,56 @@ class TestLinearCertificate:
         noise = Ball(forward.codomain, radius=0.1)
         problem = LinearForwardProblem(forward, error=noise)
         center = model.scale(0.3, truth)
-        centred = BackusGilbert(problem, target, Ball(model, radius=3.0))
-        shifted = BackusGilbert(problem, target, Ball(model, radius=3.0, center=center))
-        space = target.codomain
+        centred = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        shifted = BackusGilbertParker(
+            problem, target, Ball(model, radius=3.0, center=center)
+        )(data)
+        route = LinearCertificate()
+        operator = route.operator(centred)
         assert np.allclose(
-            shifted.estimate(data),
-            space.add(centred.estimate(data), shifted.unresolved(center)),
+            operator.matrix(form="components"),
+            route.operator(shifted).matrix(form="components"),
         )
+        unresolved = target - operator @ forward
+        space = target.codomain
         for q in directions(space):
-            assert shifted(data).support(q) == pytest.approx(
-                space.inner_product(q, shifted.estimate(data))
-                + 3.0 * model.norm(shifted.unresolved.adjoint(q))
-                + 0.1 * forward.codomain.norm(shifted.operator.adjoint(q))
+            estimate, resolution, noise_term = route.terms(shifted, q)
+            assert estimate == pytest.approx(
+                route.terms(centred, q)[0] + space.inner_product(q, unresolved(center))
+            )
+            assert resolution == pytest.approx(3.0 * model.norm(unresolved.adjoint(q)))
+            assert noise_term == pytest.approx(
+                0.1 * forward.codomain.norm(operator.adjoint(q))
             )
 
-    def test_the_unresolved_operator_complements_the_resolution(self, setting):
-        model, forward, target, truth, data = setting
-        estimator = BackusGilbert(
-            LinearForwardProblem(forward),
-            target,
-            Ball(model, radius=3.0),
-            noise=Ball(forward.codomain, radius=0.1),
-        )
-        x = model.random(rng=np.random.default_rng(0))
-        assert np.allclose(
-            estimator.unresolved(x),
-            target.codomain.subtract(target(x), estimator.resolution(x)),
-        )
-        assert np.allclose(estimator.point_estimator(data), estimator.estimate(data))
-
-    def test_a_general_prior_is_evaluated_through_from_operator(self, setting):
-        """The automatic certificate needs quadratic sets; any convex set
-        with a support function can be evaluated against a certificate
-        chosen by the caller, and the set it certifies is valid."""
+    def test_a_general_prior_takes_a_given_operator(self, setting):
+        """Building ``X`` needs quadratic sets; any convex set with a support
+        function can be evaluated against an operator the caller gives, and
+        the set it certifies is valid."""
         model, forward, target, truth, data = setting
         noise = Ball(forward.codomain, radius=0.1)
         problem = LinearForwardProblem(forward, error=noise)
         fat = Ball(model, radius=2.0) + Ball(model, radius=1.0)
-        with pytest.raises(TypeError, match="from_operator"):
-            BackusGilbert(problem, target, fat)
-        with pytest.raises(TypeError, match="from_operator"):
-            BackusGilbert(problem, target, box_prior(model))
-        automatic = BackusGilbert(problem, target, Ball(model, radius=3.0))
-        evaluated = BackusGilbert.from_operator(
-            problem, target, automatic.operator, fat
-        )
-        exact = BackusGilbertParker(problem, target, fat)(data)
+        ball = BackusGilbertParker(problem, target, Ball(model, radius=3.0))(data)
+        general = BackusGilbertParker(problem, target, fat)(data)
+        with pytest.raises(ValueError, match="does not apply"):
+            general.support(target.codomain.basis_vector(0), via="linear_certificate")
+        with pytest.raises(ValueError, match="does not apply"):
+            BackusGilbertParker(problem, target, box_prior(model))(data).support(
+                target.codomain.basis_vector(0), via=LinearCertificate()
+            )
+        given = LinearCertificate(operator=LinearCertificate().operator(ball))
         for q in directions(target.codomain):
             # The sum of two balls is the ball of the summed radii, so the
-            # evaluated set is the automatic one's.
-            assert evaluated(data).support(q) == pytest.approx(
-                automatic(data).support(q)
+            # evaluated bound is the ball's.
+            assert general.support(q, via=given) == pytest.approx(
+                ball.support(q, via="linear_certificate")
             )
-            assert evaluated(data).support(q) >= exact.support(q) - 1e-6
-        with pytest.raises(ValueError, match="act on the data space"):
-            BackusGilbert.from_operator(problem, target, target, fat)
+            assert general.support(q, via=given) >= general.support(q) - 1e-6
+        with pytest.raises(ValueError, match="does not apply"):
+            general.support(
+                target.codomain.basis_vector(0), via=LinearCertificate(operator=target)
+            )
 
     def test_an_ellipsoidal_prior_is_taken(self, setting):
         model, forward, target, truth, data = setting
@@ -459,18 +518,116 @@ class TestLinearCertificate:
         problem = LinearForwardProblem(
             forward, error=Ball(forward.codomain, radius=0.1)
         )
-        certified = BackusGilbert(problem, target, prior)(data)
-        exact = BackusGilbertParker(problem, target, prior)(data)
+        feasible = BackusGilbertParker(problem, target, prior)(data)
         for q in directions(target.codomain):
-            assert certified.support(q) >= exact.support(q) - 1e-6
-        assert certified.contains(target(truth))
+            assert feasible.support(q, via="linear_certificate") >= (
+                feasible.support(q) - 1e-6
+            )
+        assert feasible.outer_ellipsoid(via="linear_certificate").contains(
+            target(truth)
+        )
 
-    def test_push_forward_composes_the_certificate(self, setting):
+    def test_a_nonsense_trade_off_is_refused(self, setting):
+        model, forward, target, truth, data = setting
+        with pytest.raises(ValueError, match="alpha"):
+            LinearCertificate(alpha=0.0)
+        with pytest.raises(ValueError, match="alpha"):
+            BackusGilbert(LinearForwardProblem(forward), target, alpha=0.0)
+
+
+class TestBackusGilbert:
+    """The averaging-kernel estimate: a point estimator with its budget."""
+
+    def test_it_is_a_point_estimator_and_an_operator(self, rng):
+        model, forward, target, truth, data = dense_setting(rng)
+        error = GaussianMeasure.from_standard_deviation(forward.codomain, 0.1)
+        problem = LinearForwardProblem(forward, error=error)
+        estimator = BackusGilbert(problem, target, alpha=0.5)
+        assert isinstance(estimator, LinearPointEstimator)
+        assert estimator.alpha == 0.5
+        assert estimator.property_operator is target
+        space = target.codomain
+        assert np.allclose(estimator(data), estimator.operator(data))
+        x = model.random(rng=rng)
+        assert np.allclose(
+            estimator.unresolved(x),
+            space.subtract(target(x), estimator.resolution(x)),
+        )
+        # The budget from the base: the propagated covariance is X R X*.
+        propagated = estimator.propagated_covariance()
+        q = space.basis_vector(0)
+        assert space.inner_product(propagated(q), q) == pytest.approx(
+            0.01 * forward.codomain.squared_norm(estimator.operator.adjoint(q))
+        )
+        # The identity is the default weighting.
+        assert np.allclose(
+            model.to_components(estimator.covariance(x)), model.to_components(x)
+        )
+        assert np.allclose(
+            estimator.bias(truth), estimator.unresolved(model.scale(-1.0, truth))
+        )
+
+    def test_the_same_kernels_certify_a_set_through_the_route(self, setting):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.1)
+        problem = LinearForwardProblem(forward, error=noise)
+        prior = Ball(model, radius=3.0)
+        estimator = BackusGilbert(problem, target, covariance=prior.covariance)
+        feasible = BackusGilbertParker(problem, target, prior)(data)
+        route = LinearCertificate(operator=estimator.operator)
+        space = target.codomain
+        for q in directions(space):
+            certified = feasible.support(q, via=route)
+            assert certified == pytest.approx(
+                space.inner_product(q, estimator(data))
+                + 3.0 * model.norm(estimator.unresolved.adjoint(q))
+                + 0.1 * forward.codomain.norm(estimator.operator.adjoint(q))
+            )
+            assert certified == pytest.approx(
+                feasible.support(q, via="linear_certificate")
+            )
+            assert certified >= feasible.support(q) - 1e-6
+
+    def test_the_error_covariance_is_read_from_the_problem(self, setting, rng):
+        model, forward, target, truth, data = setting
+        data_space = forward.codomain
+        gaussian = GaussianMeasure.from_standard_deviation(data_space, 0.3)
+        from_measure = BackusGilbert(
+            LinearForwardProblem(forward, error=gaussian), target
+        )
+        from_ball = BackusGilbert(
+            LinearForwardProblem(forward, error=Ball(data_space, radius=0.3)), target
+        )
+        assert np.allclose(
+            from_measure.operator.matrix(form="components"),
+            from_ball.operator.matrix(form="components"),
+        )
+        exact = BackusGilbert(LinearForwardProblem(forward), target)
+        assert exact.error_covariance is None
+        # Without a noise penalty the kernels reproduce T on the range of A*.
+        pulled = forward.adjoint(data_space.random(rng=rng))
+        assert np.allclose(exact.resolution(pulled), target(pulled), atol=1e-8)
+        with pytest.raises(ValueError, match="data error measure"):
+            from_ball.propagated_covariance()
+        fat = Ball(data_space, radius=0.2) + Ball(data_space, radius=0.1)
+        with pytest.raises(TypeError, match="error_covariance"):
+            BackusGilbert(LinearForwardProblem(forward, error=fat), target)
+        given = BackusGilbert(
+            LinearForwardProblem(forward, error=fat),
+            target,
+            error_covariance=Ball(data_space, radius=0.3).covariance,
+        )
+        assert np.allclose(
+            given.operator.matrix(form="components"),
+            from_ball.operator.matrix(form="components"),
+        )
+
+    def test_push_forward_composes_the_kernels(self, setting):
         model, forward, target, truth, data = setting
         problem = LinearForwardProblem(
             forward, error=Ball(forward.codomain, radius=0.1)
         )
-        estimator = BackusGilbert(problem, target, Ball(model, radius=3.0))
+        estimator = BackusGilbert(problem, target)
         summary = LinearOperator.from_matrix(
             target.codomain,
             EuclideanSpace(1),
@@ -478,20 +635,113 @@ class TestLinearCertificate:
             form="components",
         )
         pushed = estimator.push_forward(summary)
+        assert isinstance(pushed, BackusGilbert)
+        assert np.allclose(pushed(data), summary(estimator(data)))
         q = EuclideanSpace(1).basis_vector(0)
-        assert pushed(data).support(q) == pytest.approx(
-            estimator(data).support(summary.adjoint(q))
+        assert np.allclose(
+            pushed.unresolved.adjoint(q),
+            estimator.unresolved.adjoint(summary.adjoint(q)),
         )
 
-    def test_a_nonsense_trade_off_is_refused(self, setting):
-        model, forward, target, truth, data = setting
-        with pytest.raises(ValueError, match="alpha"):
-            BackusGilbert(
-                LinearForwardProblem(forward),
-                target,
-                Ball(model, radius=3.0),
-                alpha=0.0,
+
+class TestTheLinearizedSet:
+    """A nonlinear forward problem linearized about a model: exact for the
+    linearized problem, a local statement about the real one."""
+
+    def test_a_linear_problem_linearized_anywhere_gives_the_linear_set(self, rng):
+        model, forward, target, truth, data = dense_setting(rng)
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.2)
+        )
+        prior = Ball(model, radius=3.0, center=model.scale(0.3, truth))
+        plain = BackusGilbertParker(problem, target, prior)(data)
+        anywhere = model.random(rng=rng)
+        estimator = BackusGilbertParker(problem, target, prior, model=anywhere)
+        linearized = estimator(data)
+        assert isinstance(linearized, LinearizedFeasiblePropertySet)
+        assert not isinstance(plain, LinearizedFeasiblePropertySet)
+        assert linearized.form == plain.form == "quadratic"
+        assert linearized.linearization_point is anywhere
+        assert np.allclose(linearized.linearization_property, target(anywhere))
+        assert linearized.observed_data is data
+        assert np.allclose(linearized.data, data)
+        for q in directions(target.codomain):
+            assert linearized.support_bracket(q) == pytest.approx(
+                plain.support_bracket(q)
             )
+            assert linearized.support(q, via="linear_certificate") == pytest.approx(
+                plain.support(q, via="linear_certificate")
+            )
+        assert linearized.contains(target(truth))
+        assert (
+            model.norm(
+                model.subtract(linearized.fitting_model(), plain.fitting_model())
+            )
+            < 1e-8
+        )
+        # The same through a linearization in hand, and through the pushes.
+        in_hand = BackusGilbertParker(
+            problem, target, prior, linearization=forward.at(anywhere)
+        )(data)
+        q = target.codomain.basis_vector(0)
+        assert in_hand.support(q) == pytest.approx(plain.support(q))
+        summary = LinearOperator.from_matrix(
+            target.codomain, EuclideanSpace(1), np.ones((1, 2)), form="components"
+        )
+        for pushed in (
+            linearized.push_forward(summary),
+            estimator.push_forward(summary)(data),
+            linearized.with_data(data).push_forward(summary),
+        ):
+            assert isinstance(pushed, LinearizedFeasiblePropertySet)
+            assert pushed.support(EuclideanSpace(1).basis_vector(0)) == pytest.approx(
+                plain.support(summary.adjoint(EuclideanSpace(1).basis_vector(0)))
+            )
+        with pytest.raises(ValueError, match="not both"):
+            BackusGilbertParker(
+                problem,
+                target,
+                prior,
+                model=anywhere,
+                linearization=forward.at(anywhere),
+            )
+
+    def test_the_ray_problem_contains_the_linearization_points_own_property(self, rng):
+        space = PlaneSobolev((24, 24), 2.0, 0.15, bounds=[(0.0, 2.0), (0.0, 2.0)])
+        paths = [
+            (
+                np.array([0.3 + 0.5 * rng.uniform(), 0.3 + 0.5 * rng.uniform()]),
+                np.array([1.2 + 0.5 * rng.uniform(), 1.2 + 0.5 * rng.uniform()]),
+            )
+            for _ in range(5)
+        ]
+        operator = space.ray_travel_time_operator(paths, 2.0, count=10)
+        raw = space.heat_measure(0.3 * space.length_scale).sample(rng=rng)
+        point = space.scale(0.2 / np.max(np.abs(space.grid_values(raw))), raw)
+        data = operator(point)
+        target = space.geodesic_ball_average_operator(
+            [np.array([1.0, 1.0]), np.array([0.6, 1.3])], 0.3
+        )
+        problem = ForwardProblem(
+            operator,
+            error=Ball(operator.codomain, radius=1e-3 * np.linalg.norm(data)),
+        )
+        prior = Ball(space, radius=2.0 * space.norm(point))
+        with pytest.raises(TypeError, match="nonlinear"):
+            BackusGilbertParker(problem, target, prior)
+        feasible = BackusGilbertParker(problem, target, prior, model=point)(data)
+        assert isinstance(feasible, LinearizedFeasiblePropertySet)
+        own = feasible.linearization_property
+        assert np.allclose(own, target(point))
+        assert feasible.contains(own)
+        P = target.codomain
+        for index in range(P.dim):
+            q = P.basis_vector(index)
+            lower, upper = -feasible.support(P.scale(-1.0, q)), feasible.support(q)
+            assert lower - 1e-8 <= own[index] <= upper + 1e-8
+            assert feasible.support(q, via="linear_certificate") >= upper - 1e-8
+        # The linearized data are the derivative at the point applied to it.
+        assert np.allclose(feasible.data, feasible.linearization.derivative(point))
 
 
 class TestOuterApproximation:

@@ -17,19 +17,24 @@ it are the three that are exact rather than matters of degree:
 import numpy as np
 import pytest
 
-from pygeoinf2.algebra.operators import LinearOperator
+from pygeoinf2.algebra.operators import AffineOperator, LinearOperator, Operator
 from pygeoinf2.algebra.spaces import EuclideanSpace
+from pygeoinf2.geometry.convex import Ball
 from pygeoinf2.geometry.subspaces import AffineSubspace
 from pygeoinf2.inference import (
+    BackusGilbertParker,
+    ComposedPointEstimator,
     ConstrainedLeastSquares,
     ConstrainedMinimumNorm,
-    DiscrepancyPrinciple,
     LeastSquares,
     LinearForwardProblem,
     LinearGaussianInversion,
+    LinearPointEstimator,
     MinimumNorm,
+    PointEstimator,
     TikhonovFamily,
     TikhonovNormalOperator,
+    choose_formalism,
 )
 from pygeoinf2.numerics.preconditioners import (
     JacobiPreconditioner,
@@ -550,18 +555,46 @@ class TestLeastSquares:
         assert len(seen) > 1
 
 
-class TestDiscrepancyPrinciple:
+class TestMinimumNorm:
     """A damping found rather than chosen, and the derivative that follows."""
+
+    def test_it_is_a_point_estimator_and_an_operator(self, setup):
+        estimator = MinimumNorm(setup)
+        assert isinstance(estimator, PointEstimator)
+        assert isinstance(estimator, Operator)
+        assert not isinstance(estimator, AffineOperator)
+        assert estimator.has_derivative
+        assert estimator.data_space == setup.data_space
+        assert estimator.property_space == setup.model_space
 
     def test_it_hits_the_misfit_target(self, setup, rng):
         problem = setup
         truth = problem.model_space.random(rng=rng)
         observed = problem.synthetic_data(truth, rng=rng)
-        found = MinimumNorm(problem).for_data(observed, level=0.95)
         target = problem.critical_chi_squared(level=0.95)
+        model = MinimumNorm(problem, level=0.95)(observed)
+        assert problem.chi_squared(model, observed) == pytest.approx(target, rel=1e-3)
+        found = MinimumNorm(problem).for_data(observed, level=0.95)
+        assert isinstance(found, LeastSquares)
+        assert isinstance(found, LinearPointEstimator)
         assert problem.chi_squared(found(observed), observed) == pytest.approx(
             target, rel=1e-3
         )
+
+    def test_for_data_and_the_call_agree(self, setup, rng):
+        """The fixed-damping estimator the data chose, applied to the same
+        data, is the estimate; and it carries the budget the nonlinear map
+        cannot."""
+        problem = setup
+        model = problem.model_space
+        observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
+        estimator = MinimumNorm(problem)
+        found = estimator.for_data(observed)
+        assert model.norm(
+            model.subtract(found(observed), estimator(observed))
+        ) == pytest.approx(0.0, abs=1e-6 * model.norm(estimator(observed)))
+        assert found.resolution.domain == model
+        assert found.propagated_covariance().domain == model
 
     def test_data_that_anything_fits_give_the_smallest_model(self, setup, rng):
         """The saturated case, and the one that was wrong: when the data are
@@ -573,8 +606,10 @@ class TestDiscrepancyPrinciple:
         negligible = problem.data_space.scale(1e-8, observed)
         found = MinimumNorm(problem).for_data(negligible)
         assert model.norm(found(negligible)) < 1e-8 * model.norm(
-            MinimumNorm(problem, damping=1e-6)(negligible)
+            LeastSquares(problem, damping=1e-6)(negligible)
         )
+        # The estimator itself sees that the zero model already fits.
+        assert model.norm(MinimumNorm(problem)(negligible)) == 0.0
 
     @pytest.mark.parametrize(
         "build_data", [lambda: EuclideanSpace(3), make_dense_metric_space]
@@ -583,10 +618,8 @@ class TestDiscrepancyPrinciple:
         """The failure case, which is not saturation.
 
         The forward operator reaches only the first coordinate, so data with
-        weight elsewhere cannot be fitted at any damping. ``for_data`` used to
-        answer anyway — damping 1e-200, chi-squared 5e7 against a target of
-        9.5 — while ``DiscrepancyPrinciple`` raised on the same input. They now
-        share one search and so cannot disagree.
+        weight elsewhere cannot be fitted at any damping. The call and
+        ``for_data`` share one search and so cannot disagree.
         """
         data_space = build_data()
         model_space = EuclideanSpace(1)
@@ -600,14 +633,14 @@ class TestDiscrepancyPrinciple:
         unfittable = data_space.from_components(np.array([0.0, 4.0, 4.0]))
 
         with pytest.raises(ValueError, match="cannot be fitted"):
-            MinimumNorm(problem, damping=1.0).for_data(unfittable)
+            MinimumNorm(problem).for_data(unfittable)
         with pytest.raises(ValueError, match="cannot be fitted"):
-            DiscrepancyPrinciple(problem)(unfittable)
+            MinimumNorm(problem)(unfittable)
 
     def test_the_floor_stops_the_search_on_unfittable_data(self):
-        """v1's ``minimum_damping``: the refusal comes after a handful of
-        probes at the floor rather than two hundred decades below it, and
-        the search reports the range exhausted at the floor."""
+        """The refusal comes after a handful of probes at the floor rather
+        than two hundred decades below it, and the search reports the range
+        exhausted at the floor."""
         data_space, model_space = EuclideanSpace(3), EuclideanSpace(1)
         forward = LinearOperator.from_matrix(
             model_space, data_space, np.array([[1.0], [0.0], [0.0]]), form="components"
@@ -626,7 +659,7 @@ class TestDiscrepancyPrinciple:
         assert floored.argument >= 1e-6
         assert floored.evaluations < unfloored.evaluations
         with pytest.raises(ValueError, match="cannot be fitted"):
-            DiscrepancyPrinciple(problem, minimum_damping=1e-6)(unfittable)
+            MinimumNorm(problem, minimum_damping=1e-6)(unfittable)
         with pytest.raises(ValueError, match="cannot be fitted"):
             MinimumNorm(problem).for_data(unfittable, minimum_damping=1e-6)
 
@@ -639,18 +672,14 @@ class TestDiscrepancyPrinciple:
         absolute = MinimumNorm(problem).discrepancy_search(observed, atol=1e-12)
         assert absolute.converged
         assert absolute.argument == pytest.approx(plain.argument, rel=1e-4)
-        principle = DiscrepancyPrinciple(problem, atol=1e-12, rtol=1e-8)
+        principle = MinimumNorm(problem, atol=1e-12, rtol=1e-8)
         assert principle.search(observed).converged
 
     def test_a_structure_aware_preconditioner_works_inside_the_sweep(self, setup, rng):
-        """The claim that every structure-aware
-        preconditioner applies to the point estimators held everywhere except
-        where the sweep was the point.
-
-        ``DampedSolves`` built ``base + t * shift``, a plain sum, and a sum has
-        no factors for a preconditioner to read: the same solver that worked at
-        a fixed damping raised ``TypeError`` inside the search. It now asks the
-        family for its member, which arrives as a ``TikhonovNormalOperator``.
+        """Every structure-aware preconditioner applies to the point
+        estimators, including inside the sweep: ``DampedSolves`` asks the
+        family for its member, which arrives as a ``TikhonovNormalOperator``
+        with its factors for a preconditioner to read.
         """
         problem = setup
         solver = CGSolver(rtol=1e-10).with_preconditioner(JacobiPreconditioner())
@@ -667,9 +696,8 @@ class TestDiscrepancyPrinciple:
         assert isinstance(family.at(1.0), TikhonovNormalOperator)
         assert family.solve(1.0, family.right_hand_side(observed)).converged
 
-        # And end to end, which is the test the review asked for.
-        found = DiscrepancyPrinciple(problem, solver=structure_aware)(observed)
-        plain = DiscrepancyPrinciple(problem, solver=solver)(observed)
+        found = MinimumNorm(problem, solver=structure_aware)(observed)
+        plain = MinimumNorm(problem, solver=solver)(observed)
         assert problem.model_space.norm(
             problem.model_space.subtract(found, plain)
         ) < 1e-6 * problem.model_space.norm(plain)
@@ -734,7 +762,7 @@ class TestDiscrepancyPrinciple:
         # Two tolerances bound this, not one: the damping search's, and the
         # inner solve's. A direct solver removes the second so the test is
         # about the derivative rather than about conjugate gradients.
-        method = DiscrepancyPrinciple(
+        method = MinimumNorm(
             problem, rtol=1e-14, max_iterations=200, solver=CholeskySolver()
         )
         derivative = method.derivative(observed)
@@ -758,9 +786,9 @@ class TestDiscrepancyPrinciple:
         problem = setup
         model, data = problem.model_space, problem.data_space
         observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
-        derivative = DiscrepancyPrinciple(
-            problem, solver=CGSolver(rtol=1e-13)
-        ).derivative(observed)
+        derivative = MinimumNorm(problem, solver=CGSolver(rtol=1e-13)).derivative(
+            observed
+        )
         for _ in range(10):
             left, right = data.random(rng=rng), model.random(rng=rng)
             assert model.inner_product(derivative(left), right) == pytest.approx(
@@ -768,10 +796,147 @@ class TestDiscrepancyPrinciple:
                 abs=1e-9 * data.norm(left) * model.norm(right),
             )
 
-    def test_it_needs_an_error_measure(self, setup):
+    def test_one_linearization_runs_one_search(self, setup, rng):
+        """``at`` shares the search between the value and the derivative."""
+        problem = setup
+        model, data = problem.model_space, problem.data_space
+        observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
+        method = MinimumNorm(problem, solver=CholeskySolver())
+        linearization = method.at(observed)
+        assert np.allclose(
+            model.to_components(linearization.value),
+            model.to_components(method(observed)),
+        )
+        direction = data.random(rng=rng)
+        assert np.allclose(
+            model.to_components(linearization.derivative(direction)),
+            model.to_components(method.derivative(observed)(direction)),
+        )
+
+    def test_pushing_forward_composes_the_property_operator(self, setup, rng):
+        """The estimator of ``T m`` is still a point estimator and still an
+        operator, and its derivative is ``T`` after the inner derivative."""
+        problem = setup
+        model, data = problem.model_space, problem.data_space
+        observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
+        property_space = EuclideanSpace(3)
+        T = LinearOperator.from_matrix(
+            model, property_space, rng.normal(size=(3, model.dim)), form="galerkin"
+        )
+        estimator = MinimumNorm(problem, solver=CholeskySolver())
+        pushed = estimator.push_forward(T)
+        assert isinstance(pushed, ComposedPointEstimator)
+        assert isinstance(pushed, PointEstimator)
+        assert isinstance(pushed, Operator)
+        assert pushed.has_derivative
+        assert pushed.data_space == data
+        assert pushed.property_space == property_space
+        assert np.allclose(pushed(observed), T(estimator(observed)))
+        direction = data.random(rng=rng)
+        assert np.allclose(
+            pushed.derivative(observed)(direction),
+            T(estimator.derivative(observed)(direction)),
+        )
+        linearization = pushed.at(observed)
+        assert np.allclose(linearization.value, pushed(observed))
+        assert np.allclose(
+            linearization.derivative(direction), pushed.derivative(observed)(direction)
+        )
+        # A second push is one composition, not a chain.
+        again = pushed.push_forward(LinearOperator.identity(property_space))
+        assert again.estimator is estimator
+
+    def test_exact_data_give_the_fit_at_zero_damping(self, setup, rng):
+        """Without an error measure there is no threshold: the estimate is
+        the minimum-norm solution of ``A u == d``, affine in the data, and
+        the search has nothing to find."""
         problem = LinearForwardProblem(setup.forward_operator)
-        with pytest.raises(ValueError, match="data error measure"):
-            DiscrepancyPrinciple(problem)
+        model, data = problem.model_space, problem.data_space
+        observed = data.random(rng=rng)
+        # The undamped normal operator is invertible in the smaller space
+        # only: the data space when the problem is underdetermined, the model
+        # space when it is not.
+        formalism = choose_formalism(problem, formalism="auto")
+        estimator = MinimumNorm(problem, solver=CholeskySolver(), formalism=formalism)
+        reference = LeastSquares(
+            problem, damping=0.0, solver=CholeskySolver(), formalism=formalism
+        )
+        assert np.allclose(
+            model.to_components(estimator(observed)),
+            model.to_components(reference(observed)),
+        )
+        if model.dim >= data.dim:
+            assert np.allclose(
+                data.to_components(problem.forward_operator(estimator(observed))),
+                data.to_components(observed),
+            )
+        direction = data.random(rng=rng)
+        assert np.allclose(
+            model.to_components(estimator.derivative(observed)(direction)),
+            model.to_components(reference.operator(direction)),
+        )
+        assert estimator.for_data(observed).damping == 0.0
+        with pytest.raises(ValueError, match="no error measure"):
+            estimator.search(observed)
+        with pytest.raises(ValueError, match="no error measure"):
+            estimator.discrepancy_search(observed)
+
+    def test_the_same_but(self, setup, rng):
+        """The rebuilt copies keep the settings they were not asked to change."""
+        problem = setup
+        model = problem.model_space
+        observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
+        estimator = MinimumNorm(problem, level=0.9, rtol=1e-10)
+        other = estimator.with_formalism("model_space")
+        assert other.formalism == "model_space"
+        assert other.level == 0.9
+        assert model.norm(
+            model.subtract(other(observed), estimator(observed))
+        ) == pytest.approx(0.0, abs=1e-5 * model.norm(estimator(observed)))
+        assert estimator.with_level(0.5).level == 0.5
+        assert estimator.with_solver(CholeskySolver()).solver is not None
+        reduced = estimator.data_reduced(LinearOperator.identity(problem.data_space))
+        assert reduced.level == 0.9
+        parameters = EuclideanSpace(model.dim)
+        parameterized = estimator.parameterized(
+            LinearOperator.from_matrix(
+                parameters, model, np.eye(model.dim), form="components"
+            )
+        )
+        assert parameterized.property_space == parameters
+
+    def test_it_agrees_with_the_feasible_sets_fitting_model(self, rng):
+        """The smallest model meeting the misfit threshold is also the
+        smallest model in the feasible set built on a prior ball too large to
+        bind and the error's credible ellipsoid at the same level: the two
+        share one misfit search and must agree, on a non-diagonal metric."""
+        model = make_dense_metric_space(6)
+        data = make_dense_metric_space(4)
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
+        )
+        root = rng.normal(size=(data.dim, data.dim))
+        error = GaussianMeasure.from_covariance_matrix(
+            data, 0.01 * (root @ root.T + data.dim * np.eye(data.dim)), form="galerkin"
+        )
+        problem = LinearForwardProblem(forward, error=error)
+        truth = model.random(rng=rng)
+        observed = problem.synthetic_data(truth, rng=rng)
+
+        estimate = MinimumNorm(problem, level=0.9, rtol=1e-12)(observed)
+        feasible = BackusGilbertParker(
+            problem,
+            LinearOperator.identity(model),
+            Ball(model, radius=1e3 * model.norm(truth)),
+            noise=error.credible_set(level=0.9),
+        )(observed)
+        fitting = feasible.fitting_model()
+        assert model.norm(model.subtract(fitting, estimate)) == pytest.approx(
+            0.0, abs=1e-5 * model.norm(estimate)
+        )
+        assert problem.chi_squared(fitting, observed) == pytest.approx(
+            problem.critical_chi_squared(level=0.9), rel=1e-4
+        )
 
 
 class TestConstrained:
@@ -802,8 +967,28 @@ class TestConstrained:
 
     def test_minimum_norm_respects_the_constraint(self, setup, constraint, rng):
         observed = self.fittable(setup, constraint, rng)
-        estimate = ConstrainedMinimumNorm(setup, constraint)(observed)
+        method = ConstrainedMinimumNorm(setup, constraint)
+        assert isinstance(method, PointEstimator)
+        assert isinstance(method, Operator)
+        assert method.data_space == setup.data_space
+        assert method.property_space == setup.model_space
+        assert isinstance(method.reduced, MinimumNorm)
+        estimate = method(observed)
         assert constraint.contains(estimate)
+
+    def test_the_constrained_estimator_pushes_forward(self, setup, constraint, rng):
+        observed = self.fittable(setup, constraint, rng)
+        method = ConstrainedMinimumNorm(setup, constraint, solver=CholeskySolver())
+        T = constraint.constraint_operator
+        pushed = method.push_forward(T)
+        assert isinstance(pushed, PointEstimator)
+        assert pushed.property_space == T.codomain
+        assert np.allclose(pushed(observed), constraint.constraint_value)
+        direction = setup.data_space.random(rng=rng)
+        assert np.allclose(
+            pushed.derivative(observed)(direction),
+            T(method.derivative(observed)(direction)),
+        )
 
     def test_the_constrained_derivative_matches_differences(
         self, setup, constraint, rng

@@ -1,5 +1,5 @@
 """
-Set-valued inference: a constraint set in, a convex set out.
+Set-valued inference, and the averaging-kernel estimate it completes.
 
 Given a convex constraint set ``S_M^0`` on the model space and a convex
 confidence set ``S_eta`` on the data space, the feasible model set is
@@ -8,43 +8,49 @@ fit the data to within the confidence set -- and the answer is its image
 ``T(S_M)`` under the property operator ``T``, a convex subset of the property
 space. :class:`BackusGilbertParker` returns it as a
 :class:`~pygeoinf2.geometry.feasible.FeasiblePropertySet`, which chooses
-from the two sets how to answer each question put to it.
+from the two sets how to answer each question put to it. A nonlinear
+forward problem is linearized about a model of the caller's choosing, and
+the set that comes back is exact for the linearized problem and a local
+statement about the real one.
 
-:class:`BackusGilbert` is the linear certificate: a fixed operator ``X``
-applied to the data, with the set of property values the bound allows as a
-Minkowski sum of the resolution and noise parts. Any ``X`` gives a valid set
-by weak duality, so it is never wrong, only loose; the feasible set is what
-it is loose against.
+:class:`BackusGilbert` is the point estimator of the literature: a fixed
+operator ``X`` applied to the data, chosen so that the resolution ``X A``
+comes close to ``T`` against a penalty on the noise it passes. It carries
+its resolution and its propagated error and states no bound; the feasible
+set under a prior set is where a bound comes from, and the same ``X`` with
+prior and noise sets gives a certified set through the feasible set's
+``linear_certificate`` route.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
-import numpy as np
-
+from ..algebra.linearization import Linearization
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
-from ..geometry.convex import Ball, ConvexSet, Ellipsoid, sum_of_ellipsoids
-from ..geometry.feasible import FeasiblePropertySet, FeasibleStructure
+from ..geometry.convex import Ball, ConvexSet, Ellipsoid
+from ..geometry.feasible import (
+    FeasiblePropertySet,
+    FeasibleStructure,
+    linear_certificate_operator,
+)
 from ..geometry.sets import SublevelSet
-from ..numerics.convex import SupportFunction
 from ..numerics.solvers import LinearSolver
 from ..probability.base import ProbabilityMeasure
-from ..traits import Traits
 from .estimators import LinearPointEstimator, SetEstimator
-from .problem import LinearForwardProblem
+from .problem import ForwardProblem, LinearForwardProblem
 
 __all__ = [
     "BackusGilbert",
     "BackusGilbertParker",
-    "BackusGilbertSet",
     "FeasiblePropertySet",
+    "LinearizedFeasiblePropertySet",
     "harden_error",
 ]
 
 
-def harden_error(problem: LinearForwardProblem, /, *, level: float) -> Ball:
+def harden_error(problem: ForwardProblem, /, *, level: float) -> Ball:
     """The problem's error as a ball, hardening a measure if need be.
 
     The bridge from a probabilistic error to a set-theoretic one: the
@@ -79,7 +85,7 @@ def harden_error(problem: LinearForwardProblem, /, *, level: float) -> Ball:
 
 
 def _confidence_set(
-    problem: LinearForwardProblem, noise: Any, level: float
+    problem: ForwardProblem, noise: Any, level: float
 ) -> ConvexSet | SublevelSet | None:
     """The set the data error lies in: as given, from the problem, or None for exact data."""
     if noise is not None:
@@ -102,23 +108,127 @@ def _confidence_set(
     )
 
 
-def _covariance_if_quadratic(subset: ConvexSet | None) -> LinearOperator | None:
-    """The covariance of a ball or an ellipsoid carrying one; None for any other set."""
-    if isinstance(subset, (Ball, Ellipsoid)):
-        return subset.covariance
-    return None
-
-
-def _center_of(subset: Any, space: HilbertSpace) -> Any:
-    """A ball's or ellipsoid's centre, or the origin for any other set."""
-    if isinstance(subset, (Ball, Ellipsoid)):
-        return subset.center
-    return space.zero()
-
-
 # --------------------------------------------------------------------- #
 #                         The feasible property set                     #
 # --------------------------------------------------------------------- #
+
+
+class LinearizedFeasiblePropertySet(FeasiblePropertySet):
+    """The feasible property set of a forward problem linearized about a model.
+
+    With ``F`` the forward operator and ``m*`` the linearization point, the
+    linearized problem predicts ``F(m*) + F'(m*)(m − m*)``, an affine map of
+    the model itself. Its feasible property set is therefore built on the
+    derivative ``A == F'(m*)`` with the data shifted to ``d − F(m*) + A m*``,
+    and nothing else moves: the constraint set is the one given on the
+    model, and the values are the property's own, so every probe reads as
+    it does on a linear problem. The set is exact for the linearized problem
+    and a local statement about the real one, good to the extent that the
+    linearization holds across the constraint set. The linearization point
+    need not lie in the constraint set; if it does not, the forward operator
+    is linearized outside the region the set makes a claim about, and the
+    local statement is weaker.
+
+    :attr:`linearization_point` is ``m*`` and :attr:`linearization_property`
+    its property ``T m*``; :attr:`observed_data` the data as observed, and
+    :attr:`data` the shifted data the set is built on.
+    """
+
+    def _attach_linearization(
+        self, linearization: Linearization, observed_data: Any
+    ) -> None:
+        self._linearization = linearization
+        self._observed_data = observed_data
+
+    @classmethod
+    def from_linearization(
+        cls,
+        structure: FeasibleStructure,
+        linearization: Linearization,
+        data: Any,
+        /,
+    ) -> "LinearizedFeasiblePropertySet":
+        """The set for these data on a structure built on the linearization's derivative.
+
+        Args:
+            structure: the operators, sets and solver, with the derivative
+                ``F'(m*)`` as the forward operator.
+            linearization: ``F`` at ``m*``: the point, the value and the
+                derivative.
+            data: the observations, as observed.
+
+        Raises:
+            ValueError: if the structure's forward operator is not the
+                linearization's derivative.
+        """
+        if structure.forward is not linearization.derivative:
+            raise ValueError(
+                "The structure must be built on the linearization's derivative."
+            )
+        data_space = structure.data_space
+        shifted = data_space.add(
+            data_space.subtract(data, linearization.value),
+            linearization.derivative(linearization.point),
+        )
+        feasible = cls.__new__(cls)
+        feasible._attach(structure, shifted)
+        feasible._attach_linearization(linearization, data)
+        return feasible
+
+    @property
+    def linearization(self) -> Linearization:
+        """The forward operator's value and derivative at the linearization point."""
+        return self._linearization
+
+    @property
+    def linearization_point(self) -> Any:
+        """``m*``, the model the forward operator was linearized about."""
+        return self._linearization.point
+
+    @property
+    def linearization_property(self) -> Any:
+        """``T m*``, the property of the linearization point."""
+        return self.property_operator(self._linearization.point)
+
+    @property
+    def observed_data(self) -> Any:
+        """The data as observed, before the shift to the linearized problem."""
+        return self._observed_data
+
+    @property
+    def data(self) -> Any:
+        """``d − F(m*) + F'(m*) m*``: the data of the linearized problem, which the set is built on."""
+        return self._data
+
+    def with_data(self, data: Any, /) -> "LinearizedFeasiblePropertySet":
+        """The set for other observed data, about the same linearization point.
+
+        Args:
+            data: the observations, as observed.
+        """
+        return LinearizedFeasiblePropertySet.from_linearization(
+            self._structure, self._linearization, data
+        )
+
+    def push_forward(
+        self, operator: LinearOperator, /
+    ) -> "LinearizedFeasiblePropertySet":
+        """The same set for a further property ``operator @ T``."""
+        structure = FeasibleStructure(
+            self._structure.forward,
+            operator @ self._structure.property_operator,
+            self._structure.prior,
+            noise=self._structure.noise,
+            solver=self._structure.solver,
+        )
+        return LinearizedFeasiblePropertySet.from_linearization(
+            structure, self._linearization, self._observed_data
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"LinearizedFeasiblePropertySet(form={self.form!r}, dim={self.domain.dim})"
+        )
 
 
 class BackusGilbertParker(SetEstimator):
@@ -150,11 +260,22 @@ class BackusGilbertParker(SetEstimator):
         feasible.contains(value)             # the level-function side
         feasible.polytope(directions)        # an outer bound
         feasible.inner_hull(directions)      # an inner bound
+
+    **A nonlinear forward problem** is linearized about a model, given as
+    ``model=`` or as a ``linearization=`` already in hand, and the set
+    returned is a :class:`LinearizedFeasiblePropertySet`: the feasible
+    property set of the linearized problem, in the model's own coordinates
+    and the property's own values, exact for the linearized problem and a
+    local statement about the real one. The constraint set is the one given
+    on the model; the linearization point need not lie in it, but if it does
+    not, the forward operator is linearized outside the region the set makes
+    a claim about and the local statement is weaker. A linear problem may be
+    linearized anywhere and gives the same set.
     """
 
     def __init__(
         self,
-        problem: LinearForwardProblem,
+        problem: ForwardProblem,
         property_operator: LinearOperator,
         prior: ConvexSet | SublevelSet,
         /,
@@ -162,10 +283,13 @@ class BackusGilbertParker(SetEstimator):
         noise: ConvexSet | SublevelSet | None = None,
         level: float = 0.95,
         solver: LinearSolver | None = None,
+        model: Any = None,
+        linearization: Linearization | None = None,
     ) -> None:
         """
         Args:
-            problem: the forward problem.
+            problem: the forward problem. A nonlinear one needs ``model=``
+                or ``linearization=``.
             property_operator: ``T``, the property operator, acting on the
                 model space.
             prior: the constraint set on the model space: a convex set, or a
@@ -178,17 +302,40 @@ class BackusGilbertParker(SetEstimator):
             solver: how the algorithms invert the operators they build.
                 Conjugate gradients by default; a preconditioner rides on
                 it.
+            model: the model to linearize the forward operator about.
+            linearization: the forward operator's value and derivative at
+                the linearization point, when they are already in hand. Not
+                with ``model``.
 
         Raises:
-            ValueError: if an operator or set is on the wrong space.
+            ValueError: if an operator or set is on the wrong space, or both
+                ``model`` and ``linearization`` are given.
             TypeError: if the prior or the confidence set is neither a
-                ``ConvexSet`` nor a ``SublevelSet``, or the problem's error
-                is neither a measure nor a convex set.
+                ``ConvexSet`` nor a ``SublevelSet``, the problem's error is
+                neither a measure nor a convex set, or the forward operator
+                is nonlinear and no linearization point is given.
         """
+        if model is not None and linearization is not None:
+            raise ValueError("Give model= or linearization=, not both.")
+        forward = problem.forward_operator
+        if model is not None:
+            linearization = forward.at(model)
+        if linearization is not None:
+            if linearization.derivative.domain != problem.model_space:
+                raise ValueError("The linearization must act on the model space.")
+            if linearization.derivative.codomain != problem.data_space:
+                raise ValueError("The linearization must map into the data space.")
+            forward = linearization.derivative
+        elif not isinstance(forward, LinearOperator):
+            raise TypeError(
+                "The forward operator is nonlinear; pass model= to linearize "
+                "about a model, or linearization= with a linearization in hand."
+            )
         self._problem = problem
         self._level = level
+        self._linearization = linearization
         self._structure = FeasibleStructure(
-            problem.forward_operator,
+            forward,
             property_operator,
             prior,
             noise=_confidence_set(problem, noise, level),
@@ -196,9 +343,14 @@ class BackusGilbertParker(SetEstimator):
         )
 
     @property
-    def forward_problem(self) -> LinearForwardProblem:
+    def forward_problem(self) -> ForwardProblem:
         """The forward problem."""
         return self._problem
+
+    @property
+    def linearization(self) -> Linearization | None:
+        """The linearization the set is built on, or ``None`` for a linear problem taken as it is."""
+        return self._linearization
 
     @property
     def property_operator(self) -> LinearOperator:
@@ -237,6 +389,10 @@ class BackusGilbertParker(SetEstimator):
 
     def __call__(self, data: Any) -> FeasiblePropertySet:
         """The feasible property set for these data, as an object to probe."""
+        if self._linearization is not None:
+            return LinearizedFeasiblePropertySet.from_linearization(
+                self._structure, self._linearization, data
+            )
         return FeasiblePropertySet.from_structure(self._structure, data)
 
     def push_forward(self, operator: LinearOperator, /) -> "BackusGilbertParker":
@@ -248,6 +404,7 @@ class BackusGilbertParker(SetEstimator):
             noise=self._structure.noise,
             level=self._level,
             solver=self._structure.solver,
+            linearization=self._linearization,
         )
 
     def __repr__(self) -> str:
@@ -258,287 +415,128 @@ class BackusGilbertParker(SetEstimator):
 
 
 # --------------------------------------------------------------------- #
-#                          The linear certificate                       #
+#                      The averaging-kernel estimate                    #
 # --------------------------------------------------------------------- #
 
 
-class BackusGilbertSet(ConvexSet):
-    """The property values a linear certificate allows: a Minkowski sum.
-
-    ``X d + (T − X A) S_prior + (−X) S_noise``: the estimate, plus what the
-    estimate cannot see of the prior set, plus the noise set as the
-    certificate weights it. Its support function is the sum of the parts'
-    and is exact for any convex sets; membership and the projection are
-    computed from it. :attr:`estimate` is the point the sum is built about
-    and :meth:`error_bars` splits the half-widths into the two causes.
-    """
-
-    def __init__(
-        self,
-        estimate: Any,
-        resolution: SupportFunction,
-        noise: SupportFunction | None,
-        /,
-        *,
-        resolution_covariance: LinearOperator | None = None,
-        noise_covariance: LinearOperator | None = None,
-    ) -> None:
-        """
-        Args:
-            estimate: ``X d`` moved by the sets' centres, in the property
-                space.
-            resolution: the support function of ``(T − X A)(S_prior − a)``,
-                on the property space.
-            noise: that of ``(−X)(S_noise − b)``, or None for exact data.
-            resolution_covariance: ``(T − X A) C (T − X A)*`` when the prior
-                is a ball or an ellipsoid of covariance ``C``, which makes
-                :meth:`outer_ellipsoid` available.
-            noise_covariance: ``X R X*`` likewise, for a quadratic noise set.
-        """
-        space = resolution.domain
-        super().__init__(space)
-        self._estimate = estimate
-        self._resolution = resolution
-        self._noise = noise
-        self._resolution_covariance = resolution_covariance
-        self._noise_covariance = noise_covariance
-        total = SupportFunction.of_point(space, estimate) + resolution
-        if noise is not None:
-            total = total + noise
-        self._support = total
-        self._oracle = ConvexSet.from_support_function(
-            space, total, maximizer=total.subgradient
-        )
-
-    @property
-    def estimate(self) -> Any:
-        """``X d``, with the sets' centres carried through: the point the set is built about."""
-        return self._estimate
-
-    @property
-    def parts(self) -> tuple[SupportFunction, SupportFunction | None]:
-        """The support functions of the resolution part and the noise part, about the origin."""
-        return self._resolution, self._noise
-
-    def error_bars(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Componentwise half-widths, and the two contributions separately.
-
-        Returns ``(estimate, resolution_half_width, noise_half_width)`` as
-        component arrays. The split is the useful part: more data narrow
-        the second and better coverage narrows the first, and a single
-        number cannot say which is needed. Each half-width is the larger
-        of the part's reach on the two sides of the estimate, which is
-        the reach itself for a set symmetric about its centre, as every
-        ball and ellipsoid is.
-        """
-        space = self.domain
-        resolution, noise = [], []
-        for index in range(space.dim):
-            direction = space.basis_vector(index)
-            opposite = space.negative(direction)
-            resolution.append(
-                max(self._resolution(direction), self._resolution(opposite))
-            )
-            noise.append(
-                0.0
-                if self._noise is None
-                else max(self._noise(direction), self._noise(opposite))
-            )
-        return (
-            np.asarray(space.to_components(self._estimate), dtype=float),
-            np.array(resolution),
-            np.array(noise),
-        )
-
-    @property
-    def has_membership(self) -> bool:
-        """False: membership is computed from the support function."""
-        return False
-
-    @property
-    def has_projection(self) -> bool:
-        """False: the projection is computed from the support function."""
-        return False
-
-    @property
-    def has_support_function(self) -> bool:
-        """True."""
-        return True
-
-    @property
-    def has_maximizer(self) -> bool:
-        """True: the sum of the parts' maximizers."""
-        return True
-
-    def support_function(self) -> SupportFunction:
-        """``(q, X d) + h_prior((T − X A)* q) + h_noise(−X* q)``."""
-        return self._support
-
-    def support(self, direction: Any, /) -> float:
-        """The support value in a direction: how far the set reaches along it.
-
-        Args:
-            direction: a vector of the property space.
-        """
-        return float(self._support(direction))
-
-    def support_maximizer(self, direction: Any, /) -> Any:
-        """The point attaining the support: the sum of the parts' maximizers."""
-        return self._support.subgradient(direction)
-
-    def outer_ellipsoid(
-        self, *, criterion: Literal["trace", "volume"] = "trace"
-    ) -> Ellipsoid:
-        """One ellipsoid about the estimate containing the sum, on quadratic sets.
-
-        The resolution part is the ellipsoid of covariance
-        ``(T − X A) C (T − X A)*`` and the noise part that of ``X R X*``;
-        their sum is not an ellipsoid, and this is the smallest of the
-        family ``C₁/α + C₂/(1 − α)`` that contains it
-        (:func:`~pygeoinf2.geometry.sum_of_ellipsoids`).
-
-        Args:
-            criterion: what the ellipsoid is smallest in -- the sum of its
-                squared semi-axes, or its volume.
-
-        Raises:
-            TypeError: if either set was not a ball or an ellipsoid.
-        """
-        if self._resolution_covariance is None or (
-            self._noise is not None and self._noise_covariance is None
-        ):
+def _error_covariance(
+    problem: LinearForwardProblem, given: LinearOperator | None
+) -> LinearOperator | None:
+    """``R``: as given, the error measure's, a ball's or an ellipsoid's, or None for exact data."""
+    if given is not None:
+        if given.domain != problem.data_space:
+            raise ValueError("The error covariance must act on the data space.")
+        return given
+    if not problem.has_error:
+        return None
+    error = problem.error
+    if isinstance(error, ProbabilityMeasure):
+        return error.covariance
+    if isinstance(error, (Ball, Ellipsoid)):
+        covariance = error.covariance
+        if covariance is None:
             raise TypeError(
-                "An outer ellipsoid needs a ball or an ellipsoid on each side."
+                "The problem's error is an ellipsoid without a covariance; pass "
+                "error_covariance=."
             )
-        covariances = [self._resolution_covariance]
-        if self._noise_covariance is not None:
-            covariances.append(self._noise_covariance)
-        return sum_of_ellipsoids(
-            self.domain, covariances, center=self._estimate, criterion=criterion
-        )
-
-    def project(self, x: Any, /) -> Any:
-        """The nearest point, by the dual of the nearest-point problem."""
-        return self._oracle.project(x)
-
-    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Membership, by the distance from the projection.
-
-        Args:
-            x: a vector of the property space.
-            rtol: how far outside still counts as inside, relative to the
-                point's size.
-        """
-        return self._oracle.contains(x, rtol=rtol)
-
-    def __repr__(self) -> str:
-        return f"BackusGilbertSet(dim={self.domain.dim})"
+        return covariance
+    raise TypeError(
+        "The problem's error is neither a measure nor a ball or an ellipsoid; "
+        "pass error_covariance= to say what the noise penalty weights."
+    )
 
 
-class BackusGilbert(SetEstimator):
-    """The optimally-averaged estimate of a property, with the set it certifies.
+class BackusGilbert(LinearPointEstimator):
+    """The averaging-kernel estimate: ``X d`` with ``X A`` as close to ``T`` as the noise allows.
 
-    A *linear certificate*: a fixed operator ``X`` applied to the data,
-    whose error has two parts. ``X A`` is not ``T``, so the estimate sees
-    the model through the **resolution** ``X A`` rather than the property
-    asked for, and the difference ``(T − X A) m`` is bounded by the prior
-    set; and ``X`` applied to the noise is bounded by the noise set. The
-    set of property values consistent with both is the Minkowski sum
-
-    .. code-block:: text
-
-        X d + (T − X A) S_prior + (−X) S_noise
-
-    whose support function is the sum of the parts'. **Any** ``X`` gives a
-    valid set -- that is weak duality -- so this estimator can never be
-    wrong, only loose, and the feasible set of :class:`BackusGilbertParker`
-    is what it is loose against.
-
-    The automatic choice, for a ball or an ellipsoid on each side with
-    covariances ``C`` and ``R`` in the sets' normalized units, minimizes
-    the quadratic surrogate ``||(T − X A) C^½||² + α ||X R^½||²`` for the
-    width of the sum:
+    A fixed operator ``X`` applied to the data, so the estimate sees the
+    model through its **resolution** ``X A`` rather than the property ``T``
+    asked for, and passes the data error through ``X``. The two are traded
+    against each other by the choice
 
     .. code-block:: text
 
         X = T C A* (A C A* + α R)⁻¹
 
-    one data-space solve per property through the caller's solver. Two
-    origin-centred balls of radii ``M`` and ``D`` give the classical
-    ``T A* (A A* + (D/M)² I)⁻¹``. SOLA is this estimator with ``α`` chosen
-    by hand and no prior set named, which is why it reports a resolution
-    kernel but cannot certify a resolution error; :meth:`from_operator`
-    evaluates such a kernel, or any other certificate, against named sets.
+    which minimizes ``‖(T − X A) C^½‖² + α ‖X R^½‖²``: ``C`` weights the
+    models the kernels have to resolve (the identity by default, so the
+    model space's own norm), ``R`` is the data error's covariance, and
+    ``α`` is the knob. A small ``α`` buys resolution with noise; a large
+    one the reverse. The estimate is affine in the data, with
+    :attr:`resolution` and :meth:`propagated_covariance` from the base class
+    as its error budget and :attr:`unresolved`, ``T − X A``, as what it
+    cannot see.
+
+    What it does not state is a bound on the unresolved part, because no
+    bound on the model has been named. Backus and Gilbert's original
+    treatment already reached for one, a norm bound on the model, and the
+    feasible property set of :class:`BackusGilbertParker` is the
+    completion of that thought: under a prior set and a noise set it is the
+    exact set of property values the data cannot rule out. The same ``X``
+    with those sets gives a certified set through the feasible set's
+    ``linear_certificate`` route, which is valid for any ``X`` and loose
+    against the exact one:
+
+    .. code-block:: python
+
+        estimator = BackusGilbert(problem, T, alpha=alpha)
+        estimate = estimator(data)
+        feasible = BackusGilbertParker(problem, T, prior)(data)
+        bound = feasible.support(
+            direction, via=LinearCertificate(operator=estimator.operator)
+        )
     """
 
     def __init__(
         self,
         problem: LinearForwardProblem,
         property_operator: LinearOperator,
-        prior: ConvexSet,
         /,
         *,
-        noise: ConvexSet | None = None,
-        level: float = 0.95,
-        solver: LinearSolver | None = None,
+        covariance: LinearOperator | None = None,
+        error_covariance: LinearOperator | None = None,
         alpha: float = 1.0,
+        solver: LinearSolver | None = None,
     ) -> None:
         """
         Args:
             problem: the forward problem.
             property_operator: ``T``, the property operator.
-            prior: a ball or an ellipsoid on the model space, centred
-                anywhere.
-            noise: a ball or an ellipsoid on the data space. Taken from the
-                problem's error if omitted, hardening a Gaussian one at
-                ``level``; exact data when the problem has no error.
-            level: the confidence level used if a Gaussian error is hardened.
-            solver: how to invert the data-space operator ``A C A* + α R``.
-                Conjugate gradients by default.
-            alpha: the trade-off between the two parts of the width. One
-                minimizes their sum of squares.
+            covariance: ``C``, positive definite on the model space,
+                weighting which models the kernels are to resolve. The
+                identity if omitted.
+            error_covariance: ``R``, on the data space. Taken from the
+                problem if omitted: the error measure's covariance, or a
+                ball's or an ellipsoid's; with no error at all the noise
+                penalty is dropped.
+            alpha: the trade-off between resolution and noise, positive.
+            solver: how ``A C A* + α R`` is inverted, one solve per
+                application of ``X``. Conjugate gradients by default.
 
         Raises:
-            ValueError: if an operator or a set is on the wrong space, or
-                ``alpha`` is not positive.
-            TypeError: if the prior or the noise is neither a ball nor an
-                ellipsoid, or the problem's error is neither a measure nor
-                a convex set.
+            ValueError: if an operator is on the wrong space, or ``alpha``
+                is not positive.
+            TypeError: if the problem's error is a set that is neither a
+                ball nor an ellipsoid and no error covariance is given.
         """
-        if alpha <= 0.0:
-            raise ValueError(f"alpha must be positive, got {alpha}.")
-        noise = _confidence_set(problem, noise, level)
-        structure = FeasibleStructure(
+        if property_operator.domain != problem.model_space:
+            raise ValueError("The property operator must act on the model space.")
+        model_space = problem.model_space
+        if covariance is None:
+            covariance = LinearOperator.identity(model_space)
+        elif covariance.domain != model_space:
+            raise ValueError("The covariance must act on the model space.")
+        error_covariance = _error_covariance(problem, error_covariance)
+        operator = linear_certificate_operator(
             problem.forward_operator,
             property_operator,
-            prior,
-            noise=noise,
+            covariance=covariance,
+            error_covariance=error_covariance,
+            alpha=alpha,
             solver=solver,
         )
-        if not structure.quadratic:
-            raise TypeError(
-                "The automatic certificate needs a ball or an ellipsoid on each "
-                "side; evaluate a certificate of your own against general sets "
-                "with from_operator()."
-            )
-        forward, data_space = structure.forward, structure.data_space
-        covariance = structure.prior_covariance()
-        normal = forward @ covariance @ forward.adjoint
-        if noise is not None:
-            normal = normal + alpha * structure.noise_covariance()
-        inverse = structure.solver_for(data_space)(
-            normal.with_traits(Traits.POSITIVE_DEFINITE)
-        )
-        operator = property_operator @ covariance @ forward.adjoint @ inverse
         self._attach(
-            problem,
-            property_operator,
-            operator,
-            prior,
-            noise,
-            level,
-            prior_covariance=covariance,
-            noise_covariance=(None if noise is None else structure.noise_covariance()),
+            problem, property_operator, operator, covariance, error_covariance, alpha
         )
 
     def _attach(
@@ -546,130 +544,24 @@ class BackusGilbert(SetEstimator):
         problem: LinearForwardProblem,
         property_operator: LinearOperator,
         operator: LinearOperator,
-        prior: ConvexSet,
-        noise: ConvexSet | None,
-        level: float,
-        *,
-        prior_covariance: LinearOperator | None,
-        noise_covariance: LinearOperator | None,
+        covariance: LinearOperator,
+        error_covariance: LinearOperator | None,
+        alpha: float,
     ) -> None:
-        self._problem = problem
-        self._property_operator = property_operator
-        self._prior = prior
-        self._noise = noise
-        self._level = level
-        model_space, data_space = problem.model_space, problem.data_space
-        space = property_operator.codomain
-        prior_center = _center_of(prior, model_space)
-        noise_center = (
-            data_space.zero() if noise is None else _center_of(noise, data_space)
-        )
-        unresolved = property_operator - operator @ problem.forward_operator
-        # The estimate carries the centres: X d + (T − X A) a − X b.
-        translation = space.subtract(unresolved(prior_center), operator(noise_center))
-        self._point = LinearPointEstimator(
+        super().__init__(
             operator,
-            translation=translation,
             forward_operator=problem.forward_operator,
             error=(
                 problem.error
                 if problem.has_error and isinstance(problem.error, ProbabilityMeasure)
                 else None
             ),
+            property_operator=property_operator,
         )
-        self._resolution_support = (
-            prior.support_function()
-            + SupportFunction.of_point(model_space, model_space.negative(prior_center))
-        ).compose_with(unresolved)
-        self._noise_support = (
-            None
-            if noise is None
-            else (
-                noise.support_function()
-                + SupportFunction.of_point(
-                    data_space, data_space.negative(noise_center)
-                )
-            ).compose_with(-operator)
-        )
-        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
-        self._resolution_covariance = (
-            None
-            if prior_covariance is None
-            else (unresolved @ prior_covariance @ unresolved.adjoint).with_traits(
-                traits
-            )
-        )
-        self._noise_covariance = (
-            None
-            if noise_covariance is None
-            else (operator @ noise_covariance @ operator.adjoint).with_traits(traits)
-        )
-
-    @classmethod
-    def from_operator(
-        cls,
-        problem: LinearForwardProblem,
-        property_operator: LinearOperator,
-        operator: LinearOperator,
-        prior: ConvexSet,
-        /,
-        *,
-        noise: ConvexSet | None = None,
-        level: float = 0.95,
-    ) -> "BackusGilbert":
-        """A certificate chosen by the caller, evaluated against any sets with support functions.
-
-        Where a SOLA kernel, a Zaroli kernel or any other fixed weighting of
-        the data is assessed against a named prior: the set it certifies is
-        valid whatever ``X`` is, and this says how wide.
-
-        Args:
-            problem: the forward problem.
-            property_operator: ``T``.
-            operator: ``X``, from the data space to the property space.
-            prior: the constraint set on the model space, any convex set
-                with a support function.
-            noise: the confidence set on the data space, likewise. Taken
-                from the problem when omitted.
-            level: the confidence level used if a Gaussian error is hardened.
-
-        Raises:
-            ValueError: if an operator or a set is on the wrong space.
-            TypeError: if a set is not a ``ConvexSet``.
-        """
-        if property_operator.domain != problem.model_space:
-            raise ValueError("The property operator must act on the model space.")
-        if operator.domain != problem.data_space:
-            raise ValueError("The certificate must act on the data space.")
-        if operator.codomain != property_operator.codomain:
-            raise ValueError("The certificate must map into the property space.")
-        noise = _confidence_set(problem, noise, level)
-        for subset, name, space in (
-            (prior, "prior", problem.model_space),
-            (noise, "noise", problem.data_space),
-        ):
-            if subset is None:
-                continue
-            if not isinstance(subset, ConvexSet):
-                raise TypeError(
-                    f"The {name} must be a ConvexSet with a support function."
-                )
-            if subset.domain != space:
-                raise ValueError(f"The {name} set lies on the wrong space.")
-        estimator = cls.__new__(cls)
-        estimator._attach(
-            problem,
-            property_operator,
-            operator,
-            prior,
-            noise,
-            level,
-            prior_covariance=_covariance_if_quadratic(prior),
-            noise_covariance=_covariance_if_quadratic(noise),
-        )
-        return estimator
-
-    # -- what it holds -----------------------------------------------------
+        self._problem = problem
+        self._covariance = covariance
+        self._error_covariance = error_covariance
+        self._alpha = alpha
 
     @property
     def forward_problem(self) -> LinearForwardProblem:
@@ -677,81 +569,42 @@ class BackusGilbert(SetEstimator):
         return self._problem
 
     @property
-    def property_operator(self) -> LinearOperator:
-        """The property operator ``T``."""
-        return self._property_operator
+    def covariance(self) -> LinearOperator:
+        """``C``, the weighting of the models the kernels resolve."""
+        return self._covariance
 
     @property
-    def prior(self) -> ConvexSet:
-        """The constraint set on the model space."""
-        return self._prior
+    def error_covariance(self) -> LinearOperator | None:
+        """``R``, the weighting of the noise, or ``None`` when the penalty is dropped."""
+        return self._error_covariance
 
     @property
-    def noise(self) -> ConvexSet | None:
-        """The confidence set on the data space as resolved, or None for exact data."""
-        return self._noise
-
-    @property
-    def operator(self) -> LinearOperator:
-        """``X``, the certificate: the weighting of the data."""
-        return self._point.operator
-
-    @property
-    def point_estimator(self) -> LinearPointEstimator:
-        """The estimate as an affine operator on the data, with the propagated covariance."""
-        return self._point
-
-    @property
-    def resolution(self) -> LinearOperator:
-        """``X A``: what the estimate reports when the truth is ``m``."""
-        return self._point.resolution
+    def alpha(self) -> float:
+        """The trade-off between resolution and noise."""
+        return self._alpha
 
     @property
     def unresolved(self) -> LinearOperator:
         """``T − X A``: what the estimate cannot see.
 
         The complement of the resolution, and the operator whose reach over
-        the prior set is the first part of the width. An estimate is only
-        as good as this is small.
+        a constraint set is the first part of a certified width. An
+        estimate is only as good as this is small.
         """
-        return self._property_operator - self.resolution
-
-    @property
-    def data_space(self) -> HilbertSpace:
-        """The problem's data space."""
-        return self._problem.data_space
-
-    @property
-    def property_space(self) -> HilbertSpace:
-        """The property space."""
-        return self._property_operator.codomain
-
-    # ----------------------------------------------------------------- #
-
-    def estimate(self, data: Any, /) -> Any:
-        """``X d``, with the sets' centres carried through."""
-        return self._point(data)
-
-    def __call__(self, data: Any) -> BackusGilbertSet:
-        """The set of property values the certificate allows for these data."""
-        return BackusGilbertSet(
-            self.estimate(data),
-            self._resolution_support,
-            self._noise_support,
-            resolution_covariance=self._resolution_covariance,
-            noise_covariance=self._noise_covariance,
-        )
+        return self.property_operator - self.resolution
 
     def push_forward(self, operator: LinearOperator, /) -> "BackusGilbert":
-        """The same certificate for a further property ``operator @ T``: ``operator @ X``."""
-        return BackusGilbert.from_operator(
+        """The same kernels for a further property ``operator @ T``: ``operator @ X``."""
+        pushed = BackusGilbert.__new__(BackusGilbert)
+        pushed._attach(
             self._problem,
-            operator @ self._property_operator,
+            operator @ self.property_operator,
             operator @ self.operator,
-            self._prior,
-            noise=self._noise,
-            level=self._level,
+            self._covariance,
+            self._error_covariance,
+            self._alpha,
         )
+        return pushed
 
     def __repr__(self) -> str:
-        return f"BackusGilbert(prior={self._prior!r}, noise={self._noise!r})"
+        return f"BackusGilbert(alpha={self._alpha!r})"

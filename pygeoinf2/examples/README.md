@@ -41,7 +41,7 @@ failing test rather than a surprise later.
 | 25 | `distributions` | looking at the answer: marginals and corner plots |
 | 26 | `mixture` | a prior that cannot make up its mind, and a bimodal posterior |
 | 27 | `mfem_inverse` | an inverse problem on a finite element space, with boundary conditions |
-| 28 | `nonlinear_map` | when the forward map is not linear: the mode, and a Gaussian on it |
+| 28 | `nonlinear_map` | when the forward map is not linear: the MAP estimator, and the Laplace approximation on it |
 | 29 | `mfem_hilbert` | the same finite element inverse problem with no coordinates: MFEM computes, this library conducts |
 | 30 | `varying_length_scale` | a correlation length that varies along an interval of the line, the padding that makes it possible, and a prior calibrated by a field |
 | 31 | `mantle` | a field in a mantle, cut three ways to be seen: a shell, a section by any plane, a profile; and what surface data do not reach |

@@ -1144,6 +1144,11 @@ def ray_travel_time_operator(
     data_space = EuclideanSpace(len(paths))
 
     def traced(model: Any) -> _Rays:
+        if not np.all(np.isfinite(space.to_components(model))):
+            raise EvaluationError(
+                "The model has non-finite values; the rays cannot be traced "
+                "through it."
+            )
         return _trace_all(
             chart,
             _Slowness(chart, model, reference_velocity, **kwargs),

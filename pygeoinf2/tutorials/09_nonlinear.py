@@ -25,6 +25,7 @@ from pygeoinf2 import (
     Operator,
     plotting,
 )
+from pygeoinf2.inference import LaplaceApproximation
 from pygeoinf2.symmetric_space.circle import Sobolev
 from pygeoinf2.testing import check_derivative
 
@@ -124,21 +125,24 @@ print(
 # The posterior is still prior times likelihood, so its negative logarithm
 # is still the misfit plus the prior's quadratic form. `MaximumAPosteriori`
 # minimises it — L-BFGS by default, in the model space's inner product —
-# starting from the prior mean.
+# starting from the prior mean. It is a point estimator: called on the data
+# it returns the mode, and `solve` returns the optimiser's own record of
+# the search, which is worth reading before the mode is trusted.
 
 # %%
 for key in calls:
     calls[key] = 0
 estimator = MaximumAPosteriori(problem, prior)
-result = estimator(data)
-print(result.optimization)
+result = estimator.solve(data)
+mode = result.minimizer
+print(result)
 print(
     f"forward runs: {calls['linearize'] + calls['value']},"
     f" of which {calls['failed']} could not be evaluated"
 )
 # Measured in L2, as in tutorial 8: the H2 norm weights the finest scales,
 # which no data can see, and would report mostly what was never observable.
-rms_error = np.sqrt(np.mean((result.model - truth) ** 2))
+rms_error = np.sqrt(np.mean((mode - truth) ** 2))
 print(f"rms error of the MAP log-concentration: {rms_error:.2f} (prior: 0.8)")
 
 # %% [markdown]
@@ -147,12 +151,12 @@ print(f"rms error of the MAP log-concentration: {rms_error:.2f} (prior: 0.8)")
 # a step too far — the line search backed off and tried a shorter one — and
 # the search carried on. Had the failure come where there was nowhere to
 # retreat to, the optimiser would have returned its last good state with
-# the failure recorded in `result.optimization.failure`, rather than losing
-# the run to an exception. Any *other* exception still propagates: a bug is
+# the failure recorded in `result.failure`, rather than losing the run to
+# an exception. Any *other* exception still propagates: a bug is
 # not something to step around. (Example 35 shows both cases.)
 
 # %%
-print("recorded failure:", result.optimization.failure)
+print("recorded failure:", result.failure)
 
 # %% [markdown]
 # The prior chosen above makes the search *mesh-independent*: refine the
@@ -176,8 +180,8 @@ for n in (128, 256, 512):
         linearize=linearize_on,
     )
     white = S.invariant_measure(np.ones(S.dim), pointwise_std=0.8)
-    refined = MaximumAPosteriori(ForwardProblem(G, error=noise), white)(data)
-    print(f"{n:5d} {refined.optimization.iterations:11d}")
+    refined = MaximumAPosteriori(ForwardProblem(G, error=noise), white).solve(data)
+    print(f"{n:5d} {refined.iterations:11d}")
 
 # %% [markdown]
 # ## The Laplace approximation
@@ -186,17 +190,19 @@ for n in (128, 256, 512):
 # Gaussian: centred on the MAP model, with covariance the inverse of the
 # normal operator of the problem *linearised at the mode*,
 # $(P + J^* R^{-1} J)^{-1}$. It is the linear machinery of tutorial 6,
-# evaluated at one point instead of assumed everywhere. `result.measure` is
-# that Gaussian.
+# evaluated at one point instead of assumed everywhere. `LaplaceApproximation`
+# is a *measure* estimator built on the point estimator: called on the data
+# it finds the mode and returns that Gaussian, and `at` places the Gaussian
+# on a mode already found, which saves searching twice.
 #
 # Its covariance is applied by an iterative solve, so its variance at a point
 # costs one solve. Here it is at 32 points around the ring.
 
 # %%
-laplace = result.measure
+laplace = LaplaceApproximation(estimator).at(mode, data)
 where = np.linspace(0.0, 2.0 * np.pi, 32, endpoint=False)
 spread = np.sqrt(X.pointwise_variance_at(laplace, where))
-at_mode = X.point_evaluation_operator(where)(result.model)
+at_mode = X.point_evaluation_operator(where)(mode)
 at_truth = X.point_evaluation_operator(where)(truth)
 inside = np.abs(at_truth - at_mode) <= 2.0 * spread
 print(
@@ -206,7 +212,7 @@ print(
 # %%
 _, ax = plotting.subplots(X, figsize=(8.0, 3.5))
 plotting.plot(X, np.exp(truth), ax=ax, color="black", ls="--", lw=1.0, label="truth")
-plotting.plot(X, np.exp(result.model), ax=ax, color="C0", label="MAP model")
+plotting.plot(X, np.exp(mode), ax=ax, color="C0", label="MAP model")
 low, high = np.exp(at_mode - 2.0 * spread), np.exp(at_mode + 2.0 * spread)
 ax.errorbar(
     where,
@@ -250,6 +256,6 @@ ax.set_title("The concentration, its most probable value, and the Laplace spread
 
 # %%
 print("its reference is the prior:", laplace.reference is prior)
-exact = laplace.relative_log_density(result.model)
+exact = laplace.relative_log_density(mode)
 print(f"exact log density at the mode, relative to the prior: {exact:.2f}")
 plotting.show()

@@ -254,3 +254,20 @@ class TestTheShootingHessian:
         # the tangent linear system's accuracy rather than to rounding.
         other = operator.second_derivative(model, second)(first)
         assert np.allclose(action, other, rtol=5e-3, atol=1e-9)
+
+
+def test_a_non_finite_model_is_an_evaluation_failure():
+    """NaN in the model must raise, not reach the tracer."""
+    import numpy as np
+    import pytest
+
+    from pygeoinf2.algebra.operators import EvaluationError
+    from pygeoinf2.symmetric_space import plane
+
+    space = plane.Sobolev((8, 8), 2.0, 0.3, bounds=((0.0, 1.0), (0.0, 1.0)))
+    operator = space.ray_travel_time_operator(
+        [((0.1, 0.1), (0.9, 0.9))], 1.0, nodes_per_segment=4
+    )
+    bad = space.from_components(np.full(space.dim, np.nan))
+    with pytest.raises(EvaluationError, match="non-finite"):
+        operator(bad)
