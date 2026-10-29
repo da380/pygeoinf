@@ -258,3 +258,40 @@ class TestAlgebraAndMeasures:
     def test_the_moments_match_the_samples(self, build, rng):
         space = build(2.0)
         check_measure(space.sobolev_measure(1.0, pointwise_std=0.3), rng=rng)
+
+
+class TestTheIntegralReadsThroughTheComponents:
+    @pytest.mark.parametrize("build", [whole, shell])
+    def test_a_composition_with_a_multiplication_is_self_consistent(self, build, rng):
+        """A pointwise product is not in the span of the modes; the integral
+        reads it through its components, like every operator on the space,
+        which is what keeps the adjoint of a composition honest."""
+        space = build(2.0)
+        integral = space.integral_functional()
+        u, x = space.random(rng=rng), space.random(rng=rng)
+        product = space.multiply(u, x)
+        assert integral(product) == pytest.approx(
+            integral.derivative_components @ space.to_components(product), rel=1e-10
+        )
+        check_operator(
+            integral @ space.multiplication_operator(u),
+            rng=rng,
+            measure=space.sobolev_measure(1.0),
+        )
+
+
+class TestTheFitWarnsWhenItLeaks:
+    def test_a_step_warns_and_a_smooth_function_does_not(self):
+        import warnings
+
+        space = Radial(
+            48, radius=6371.0, inner_radius=3480.0, order=2.0, length_scale=200.0
+        )
+        with pytest.warns(RuntimeWarning, match="leaked into the padding"):
+            space.project_function(lambda r: 4.0 if r > 5711.0 else 4.24)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            space.project_function(lambda r: 4.0 + 0.3 * np.sin(r / 1000.0) ** 2)
+            space.project_function(
+                lambda r: 4.0 if r > 5711.0 else 4.24, extension="constant"
+            )

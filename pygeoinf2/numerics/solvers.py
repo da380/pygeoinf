@@ -116,7 +116,9 @@ class SolveStep[X]:
     would give a history in which every entry is the final answer.
 
     Take it during the callback. The step is a view onto the solver's state
-    at that moment, and the state moves on when the callback returns.
+    at that moment, and the state moves on when the callback returns. A
+    solve that runs on the component views of its spaces still hands out
+    the iterate as a vector of the operator's domain, not as its components.
     """
 
     __slots__ = ("iteration", "residual", "_form")
@@ -1219,6 +1221,27 @@ class IterativeSolver(LinearSolver):
     def _finish(self, result: SolveResult) -> SolveResult:
         return _finish_solve(type(self).__name__, result, self._strict, "residual")
 
+    def _lifting(self, domain: HilbertSpace) -> "IterativeSolver":
+        """This solver, with its callback handed iterates of *domain* rather
+        than their components: a shallow copy, so that a solver shared
+        between threads is not altered, for a solve run on the views."""
+        if self._callback is None:
+            return self
+        callback = self._callback
+
+        def lifted(step: SolveStep) -> None:
+            callback(
+                SolveStep(
+                    step.iteration,
+                    step.residual,
+                    lambda: domain.from_components(step.iterate),
+                )
+            )
+
+        solver = copy.copy(self)
+        solver._callback = lifted
+        return solver
+
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         preconditioner = self._resolve_preconditioner(operator)
         solve_fn = self._solve_fn(operator, preconditioner)
@@ -1260,7 +1283,7 @@ class IterativeSolver(LinearSolver):
             # so the residual history is the one the space's norm gives.
             viewed_operator, viewed_preconditioner = viewed
             domain, codomain = operator.domain, operator.codomain
-            result = self._solve(
+            result = self._lifting(domain)._solve(
                 viewed_operator,
                 viewed_preconditioner,
                 codomain.to_components(y),

@@ -10,8 +10,6 @@ from pygeoinf2 import plotting
 
 from common import (
     draw,
-    draw_rays,
-    is_ball,
     outline_boxes,
     output_directory,
     panels,
@@ -40,18 +38,16 @@ def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
     fig, axes = panels(space, 1, 2)
     left, right = axes[0]
     draw(space, velocity, left, title="", cmap="viridis_r", label="velocity")
-    paths = {"color": "white", "linewidth": 0.5, "alpha": 0.5}
-    if is_ball(space):
-        draw_rays(left, problem.rays, colors="white", linewidths=0.5, alpha=0.5)
-    else:
-        plotting.plot_paths(
-            space, [ray.nodes for ray in problem.rays], ax=left, **paths
-        )
-    stations(left, scale.sources, scale.receivers, radius=space.layers[-1].radius)
-    plane = "\nin the ball's equatorial plane" if is_ball(space) else ""
-    left.set_title(
-        f"{len(problem.rays)} rays over the reference velocity{plane}", fontsize=10
+    plotting.plot_paths(
+        space,
+        [ray.nodes for ray in problem.rays],
+        ax=left,
+        color="white",
+        linewidth=0.5,
+        alpha=0.5,
     )
+    stations(left, scale.sources, scale.receivers, radius=space.layers[-1].radius)
+    left.set_title(f"{len(problem.rays)} rays over the reference velocity", fontsize=10)
 
     limit = float(np.abs(space.layers[-1].interior_values(problem.truth[-1])).max())
     draw(
@@ -63,17 +59,16 @@ def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
         label="slowness perturbation (%)",
     )
     nodes = problem.nodes[:: max(1, len(problem.nodes) // 6000)]
-    if is_ball(space):
-        t = np.radians(nodes[:, 1])
-        right.scatter(
-            nodes[:, 0] * np.cos(t), nodes[:, 0] * np.sin(t), s=0.15, color="black"
-        )
-    else:
-        plotting.plot_points(space, nodes, ax=right, size=0.15, color="black")
+    plotting.plot_points(space, nodes, ax=right, size=0.15, color="black")
     outline_boxes(right, BOXES, color="black", linewidth=1.2)
     right.set_title("The truth, the ray nodes and the two boxes", fontsize=10)
-    path = outdir / f"{problem.tag}setup.png"
-    save(fig, path)
+    path = outdir / "setup.png"
+    save(
+        fig,
+        path,
+        title="Tomography, part A: the rays over the reference velocity, and the "
+        "truth with the ray nodes and the two boxes",
+    )
     return path
 
 

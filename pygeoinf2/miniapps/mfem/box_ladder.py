@@ -241,7 +241,11 @@ def box_ladder(
         "Refined, the discretization error falls; the adjoint always holds", fontsize=10
     )
     right.legend(fontsize=8, frameon=False)
-    save(fig, outdir / "box_ladder.png")
+    save(
+        fig,
+        outdir / "box_ladder.png",
+        title="MFEM, part D: the box operator and its check ladder",
+    )
     print(f"D took {time.perf_counter() - started:.1f} s")
     return {
         "dofs": box.size,

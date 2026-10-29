@@ -2,15 +2,16 @@
 
 The feasible property set of the three regional averages, with the prior
 hardened to its 95% ball and the noise to its credible ball: support
-brackets, whether the truth lies in the polytope they bound, and the
-brackets against the posterior intervals of C and the point bars of D on
-one plot.
+brackets, whether the truth lies in the polytope they bound, and each
+bracket against the bound the prior's ball admits on its own, before any
+datum.
 """
 
 from __future__ import annotations
 
 import pathlib
 import time
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,13 +19,26 @@ import numpy as np
 from pygeoinf2 import BackusGilbertParker
 from pygeoinf2.geometry.feasible import Primal
 
-from bayesian import posterior_summary
-from common import output_directory, parse, part_rng, save
-from point import minimum_norm_on_averages
+from common import bound_panels, output_directory, parse, part_rng, save
 from problem import FULL, LEVEL, ORDER, QUICK, REGIONS, Problem, Scale, build
 from solvers import coarse_identity, woodbury_family_solver
 
 PRIMAL = Primal(tolerance=1e-3)
+
+
+def ball_alone(ball: Any, properties: Any, /) -> np.ndarray:
+    """The bound on each property that the ball admits with no data: its
+    support function either way along the property's representer."""
+    support = ball.support_function()
+    P = properties.codomain
+    bounds = np.zeros((P.dim, 2))
+    for index in range(P.dim):
+        q = P.basis_vector(index)
+        bounds[index] = (
+            -support(properties.adjoint(P.scale(-1.0, q))),
+            support(properties.adjoint(q)),
+        )
+    return bounds
 
 
 def set_answer(
@@ -33,10 +47,8 @@ def set_answer(
     *,
     rng: np.random.Generator,
     outdir: pathlib.Path,
-    bayesian: dict | None = None,
-    point: dict | None = None,
 ) -> dict:
-    """The feasible brackets, and the comparison with the other two answers."""
+    """The feasible brackets, against the bounds of the prior's ball alone."""
     started = time.perf_counter()
     scale, space, counted, forward = (
         problem.scale,
@@ -45,12 +57,6 @@ def set_answer(
         problem.problem,
     )
     print(f"\n=== E. The set answer ({scale.name} scale) ===")
-    if bayesian is None:
-        bayesian = posterior_summary(
-            problem, problem.prior, rng=rng, label="stationary prior"
-        )
-    if point is None:
-        point = minimum_norm_on_averages(problem)
 
     ball = problem.prior.ambient_ball(level=LEVEL)
     noise_ball = forward.error_measure.ambient_ball(level=LEVEL)
@@ -94,19 +100,19 @@ def set_answer(
         f"support in {len(directions)} directions in {time.perf_counter() - t0:.1f} s "
         f"({cost}):"
     )
+    alone = ball_alone(ball, problem.averages)
     print(
         f"  {'region':<16s} {'from':>8s} {'to':>8s} {'gap':>8s} {'truth':>8s} "
-        f"{'posterior 95%':>22s}"
+        f"{'the ball alone':>22s}"
     )
     for index, (name, _) in enumerate(REGIONS):
         high, low = sweep.results[2 * index], sweep.results[2 * index + 1]
         brackets[index] = (-low.value, high.value)
         gaps[index] = max(high.value - high.inner, low.value - low.inner)
-        m, s = bayesian["center"][index], bayesian["deviation"][index]
         print(
             f"  {name:<16s} {brackets[index, 0]:+8.3f} {brackets[index, 1]:+8.3f} "
             f"{gaps[index]:8.1e} {problem.true_averages[index]:+8.3f} "
-            f"[{m - 1.96 * s:+8.3f}, {m + 1.96 * s:+8.3f}]"
+            f"[{alone[index, 0]:+8.3f}, {alone[index, 1]:+8.3f}]"
         )
     polytope = feasible.polytope(directions, via=PRIMAL)
     inside = polytope.contains(problem.true_averages)
@@ -115,50 +121,30 @@ def set_answer(
         f"half-spaces: {inside}"
     )
 
-    fig, axes = plt.subplots(1, len(REGIONS), figsize=(10.0, 3.6), layout="constrained")
-    for index, (ax, (name, _)) in enumerate(zip(axes, REGIONS)):
-        ax.errorbar(
-            0,
-            point["estimate"][index],
-            yerr=2.0 * point["propagated"][index],
-            fmt="o",
-            color="C1",
-            capsize=4,
-            label="point, 2 propagated sd",
-        )
-        ax.plot(
-            [1, 1], brackets[index], color="C0", lw=6, alpha=0.6, solid_capstyle="butt"
-        )
-        ax.plot(
-            1,
-            brackets[index].mean(),
-            "_",
-            color="C0",
-            ms=14,
-            label="set, certified bracket",
-        )
-        m, s = bayesian["center"][index], bayesian["deviation"][index]
-        ax.errorbar(
-            2,
-            m,
-            yerr=1.96 * s,
-            fmt="s",
-            color="C2",
-            capsize=4,
-            label="measure, 95% interval",
-        )
-        ax.axhline(
-            problem.true_averages[index], color="black", ls="--", lw=1.0, label="truth"
-        )
-        ax.set_xticks([0, 1, 2], ["point", "set", "measure"])
-        ax.set_xlim(-0.6, 2.6)
-        ax.set_title(name, fontsize=10)
-    axes[0].set_ylabel("cap average")
-    axes[0].legend(fontsize=7, loc="lower left")
-    fig.suptitle("The same three averages, answered three ways")
-    save(fig, outdir / "answers.png")
+    fig, axes = plt.subplots(1, len(REGIONS), figsize=(10.0, 3.8), layout="constrained")
+    bound_panels(
+        axes,
+        [f"average over {name}" for name, _ in REGIONS],
+        alone,
+        brackets,
+        problem.true_averages,
+        ylabel="cap average",
+    )
+    save(
+        fig,
+        outdir / "brackets.png",
+        title="Point data, part E: the set answer. For each average, the bound the "
+        f"prior's {LEVEL:.0%} ball admits alone\nand the certified bracket the data "
+        "leave, which they narrow least under Africa",
+    )
     print(f"E took {time.perf_counter() - started:.1f} s")
-    return {"radius": ball.radius, "brackets": brackets, "gaps": gaps, "inside": inside}
+    return {
+        "radius": ball.radius,
+        "alone": alone,
+        "brackets": brackets,
+        "gaps": gaps,
+        "inside": inside,
+    }
 
 
 def run(
@@ -168,14 +154,10 @@ def run(
     seed: int,
     outdir: pathlib.Path,
     problem: Problem | None = None,
-    bayesian: dict | None = None,
-    point: dict | None = None,
 ) -> dict:
     if problem is None:
         problem = build(scale=scale, seed=seed)
-    return set_answer(
-        problem, rng=part_rng(seed, "e"), outdir=outdir, bayesian=bayesian, point=point
-    )
+    return set_answer(problem, rng=part_rng(seed, "e"), outdir=outdir)
 
 
 def main() -> None:

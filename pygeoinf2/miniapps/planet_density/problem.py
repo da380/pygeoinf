@@ -1,26 +1,37 @@
 """The problem: the Earth's radial density from its mass and moment of inertia.
 
-The model space is three layers -- inner core, outer core, mantle -- of
-radial profiles under the volume measure, each the Sobolev space ``H^2`` with
-a length scale of 200 km: densities in g/cm^3, radii in km. The layers are
-independent, so the density may jump at the inner-core boundary and the
-core-mantle boundary, and nowhere else.
+The model space is PREM's own layering -- inner core, outer core, eight
+layers of mantle and a crust -- of radial profiles under the volume measure,
+each the Sobolev space ``H^2`` with a length scale of 200 km, the crust's
+excepted: densities in g/cm^3, radii in km. The layers are independent, so the density may jump
+wherever PREM's layering has a boundary, and nowhere else.
 
-The data are two numbers, the mass and the moment of inertia,
+The reference is PREM in the space. Within every layer but the crust PREM's
+density is smooth, and there it is fitted over the layer's domain by the
+layer's basis functions, the leading eigenfunctions of its Sobolev
+operator, which hold it to the truncation's accuracy. The crust holds two
+of PREM's jumps, which a fit would chase into the padding, so there PREM is
+sampled at the nodes, the padding given the value at the nearer end, and
+settled into the span; the crust's length scale is a quarter of its
+thickness, so that the padding the sample is continued into is no wider
+than the crust, and the span is not mostly the padding's. The truth is the reference
+plus a seeded draw from the tight prior about it, so that PREM is wrong by a
+known amount and the tight prior is honest about how much. The data are two
+numbers, the mass and the moment of inertia of the truth,
 
     M = int rho dV,        I = (2/3) int rho r^2 dV,
 
 in units of 10^24 kg and 10^37 kg m^2 so that both are of order one, with
-Gaussian errors of 0.1% of each. Both are linear in the density, so the
-forward operator is a two-row matrix on the space's components, assembled by
-Gauss-Legendre quadrature against the basis between every pair of adjacent
-mesh nodes, where each basis function is a polynomial.
+Gaussian errors of 0.1% of each drawn from the error measure. Both are
+linear in the density, so the forward operator is a two-row matrix on the
+space's components, assembled by Gauss-Legendre quadrature against the basis
+between every pair of adjacent mesh nodes, where each basis function is a
+polynomial.
 
 The question asked of every answer is three numbers, also linear: the mean
 density of the core (both core layers together), the mean density of the
-mantle, and the jump in density at the core-mantle boundary, core less
-mantle. Two scales behind one ``build(scale=)``; the full one is small, since
-the data are two numbers.
+mantle (everything above the core-mantle boundary, crust included), and the
+jump in density at the core-mantle boundary, core less mantle. Two scales behind one ``build(scale=)``.
 """
 
 from __future__ import annotations
@@ -39,47 +50,54 @@ from pygeoinf2 import (
 )
 from pygeoinf2.interval.radial import Layered
 
-import reference
-from reference import BOUNDARIES, LAYERS, R_CMB, R_SURFACE, Profile
+from reference import (
+    R_CMB,
+    R_ICB,
+    R_SURFACE,
+    layering,
+    prem_layer_functions,
+    prem_summary,
+)
 
 ORDER = 2.0
 LENGTH_SCALE = 200.0
 MEASURE_ORDER = 2.0
 LEVEL = 0.95
 
-# The two priors' pointwise standard deviations, in g/cm^3: effectively
-# non-informative, and tight about the reference.
-LOOSE_STD = 3.0
+# The two priors' pointwise standard deviations, in g/cm^3.
 TIGHT_STD = 0.1
+WIDE_STD = 3.0
 
-# The data, and their units: a volume integral in km^3 of a density in
-# g/cm^3 is 10^12 kg, and a further km^2 is 10^6 m^2.
-MASS = 5.972e24
-MOMENT = 8.034e37
+# The data's units: a volume integral in km^3 of a density in g/cm^3 is
+# 10^12 kg, and a further km^2 is 10^6 m^2.
 RELATIVE_ERROR = 1e-3
 MASS_UNIT = 1e24
 MOMENT_UNIT = 1e37
 TO_MASS = 1e12 / MASS_UNIT
 TO_MOMENT = 1e12 * 1e6 / MOMENT_UNIT
 
-DATA_NAMES = ("mass", "moment of inertia")
-PROPERTY_NAMES = ("core mean density", "mantle mean density", "CMB jump")
-PROPERTY_SHORT = ("core mean", "mantle mean", "CMB jump")
+PROPERTY_NAMES = ("core mean", "mantle mean", "CMB jump")
 
 CORE_VOLUME = 4.0 * np.pi / 3.0 * R_CMB**3
 MANTLE_VOLUME = 4.0 * np.pi / 3.0 * (R_SURFACE**3 - R_CMB**3)
 
 
+CORE_LAYERS = ("inner_core", "outer_core")
+
+
 @dataclass(frozen=True)
 class Scale:
-    """One size of the problem: the modes kept in each layer."""
+    """One size of the problem: the basis functions kept in each layer, in
+    the order of :func:`reference.layering`, inner core first."""
 
     name: str
-    modes: tuple[int, int, int]
+    basis_functions: tuple[int, ...]
 
 
-QUICK = Scale(name="quick", modes=(12, 12, 12))
-FULL = Scale(name="full", modes=(16, 24, 48))
+# Inner core, outer core, lowermost mantle, lower mantle, the layer above it,
+# the transition zone's three, the low-velocity zone, the lid, the crust.
+QUICK = Scale(name="quick", basis_functions=(12, 12, 3, 12, 3, 3, 3, 3, 3, 3, 3))
+FULL = Scale(name="full", basis_functions=(16, 24, 4, 32, 4, 4, 5, 5, 4, 3, 3))
 
 
 @dataclass
@@ -88,43 +106,39 @@ class Problem:
 
     scale: Scale
     space: Layered
-    reference: Profile
-    reference_660: Profile
-    reference_model: tuple
-    reference_660_model: tuple
-    prem_model: tuple
+    reference: tuple
+    truth: tuple
     forward: LinearOperator
     problem: LinearForwardProblem
     data: np.ndarray
     properties: LinearOperator
-    prem_properties: np.ndarray
+    true_properties: np.ndarray
     jumps: np.ndarray
 
-    def prior(
-        self, std: float, /, *, expectation: tuple | None = None
-    ) -> GaussianMeasure:
-        """The Sobolev prior about a reference, by its pointwise standard
-        deviation, the same in every layer and independent between them.
-
-        Assembled as a dense matrix once, which on a space of this size is
-        cheap and gives it a precision.
+    def prior(self, std: float, /) -> GaussianMeasure:
+        """The Sobolev measure about the reference; see :func:`sobolev_prior`.
 
         Args:
             std: the pointwise standard deviation, in g/cm^3.
-            expectation: the mean; the Adams-Williamson reference if omitted.
         """
-        mean = self.reference_model if expectation is None else expectation
-        return self.space.sobolev_measure(
-            MEASURE_ORDER, expectation=mean, pointwise_std=std
-        ).with_dense_covariance()
+        return sobolev_prior(self.space, self.reference, std)
 
-    def predicted(self, model: tuple, /) -> np.ndarray:
-        """The mass and the moment of inertia of a model, in data units."""
-        return self.forward(model)
 
-    def misfit(self, model: tuple, /) -> np.ndarray:
-        """Each datum's residual in standard deviations, model less data."""
-        return (self.forward(model) - self.data) / (RELATIVE_ERROR * self.data)
+def sobolev_prior(space: Layered, reference: tuple, std: float, /) -> GaussianMeasure:
+    """The Sobolev measure about a reference, by its pointwise standard
+    deviation, the same in every layer and independent between them.
+
+    Assembled as a dense matrix once, which on a space of this size is cheap
+    and gives it a precision.
+
+    Args:
+        space: the layered space.
+        reference: the expectation.
+        std: the pointwise standard deviation, in g/cm^3.
+    """
+    return space.sobolev_measure(
+        MEASURE_ORDER, expectation=reference, pointwise_std=std
+    ).with_dense_covariance()
 
 
 def volume_integral(
@@ -147,31 +161,43 @@ def volume_integral(
     return (4.0 * np.pi * r**2 * weight(r) * w) @ space.basis_matrix(list(r))
 
 
-def build(*, scale: Scale = FULL, quiet: bool = False) -> Problem:
-    """The space, the references, the data, the forward problem and the
-    property operator."""
+def build(*, scale: Scale = FULL, seed: int = 2027, quiet: bool = False) -> Problem:
+    """The space, the reference, the truth, the forward problem, the data and
+    the property operator.
+
+    One generator seeded with *seed* draws the truth's departure from the
+    reference and then the data's errors.
+    """
     started = time.perf_counter()
     say = (lambda *args: None) if quiet else print
-    say(f"\n=== The setup ({scale.name} scale) ===")
+    say(f"\n=== A. The setup ({scale.name} scale) ===")
+    names, boundaries = layering()
+    crust = 0.25 * (boundaries[-1] - boundaries[-2])
     space = Layered(
-        list(BOUNDARIES),
-        list(scale.modes),
+        list(boundaries),
+        list(scale.basis_functions),
         order=ORDER,
-        length_scale=LENGTH_SCALE,
-        labels=LAYERS,
+        length_scale=[crust if name == "crust" else LENGTH_SCALE for name in names],
+        labels=names,
     )
     say(
-        f"space: three layers of radial profiles, H^{ORDER:g} with a length scale "
-        f"of {LENGTH_SCALE:g} km, {'/'.join(map(str, scale.modes))} modes "
-        f"({space.dim} in all), boundaries at {BOUNDARIES[1]:g} and "
-        f"{BOUNDARIES[2]:g} km"
+        f"space: PREM's {len(names)} layers of radial profiles, H^{ORDER:g}, "
+        f"{'/'.join(map(str, scale.basis_functions))} basis functions "
+        f"({space.dim} in all), boundaries at "
+        f"{', '.join(f'{b:g}' for b in boundaries[1:-1])} km"
     )
-
-    profile = reference.adams_williamson()
-    profile_660 = reference.adams_williamson(jump_660=reference.JUMP_660)
-    reference_model = space.project_function(profile.layer_functions())
-    reference_660_model = space.project_function(profile_660.layer_functions())
-    prem_model = space.project_function(reference.prem_layer_functions())
+    reference = space.truncate(
+        tuple(
+            layer.project_function(
+                function, extension="constant" if name == "crust" else "fit"
+            )
+            for name, layer, function in zip(
+                names, space.layers, prem_layer_functions()
+            )
+        )
+    )
+    rng = np.random.default_rng(seed)
+    truth = sobolev_prior(space, reference, TIGHT_STD).sample(rng=rng)
 
     mass_row = TO_MASS * volume_integral(space, np.ones_like)
     moment_row = TO_MOMENT * volume_integral(space, lambda r: 2.0 * r**2 / 3.0)
@@ -179,63 +205,72 @@ def build(*, scale: Scale = FULL, quiet: bool = False) -> Problem:
     forward = LinearOperator.from_matrix(
         space, data_space, np.vstack([mass_row, moment_row]), form="components"
     )
-    data = np.array([MASS / MASS_UNIT, MOMENT / MOMENT_UNIT])
-    noise = GaussianMeasure.from_standard_deviations(data_space, RELATIVE_ERROR * data)
-    problem = LinearForwardProblem(forward, error=noise)
+    clean = forward(truth)
+    error = GaussianMeasure.from_standard_deviations(data_space, RELATIVE_ERROR * clean)
+    data = data_space.add(clean, error.sample(rng=rng))
+    problem = LinearForwardProblem(forward, error=error)
 
-    # The rows of the jumps, value above less value below, one per interface.
+    # The rows of the jumps at the inner-core and the core-mantle boundaries,
+    # value above less value below.
     jumps = np.vstack(
-        [space.jump_operator(k).matrix(form="components")[0] for k in range(2)]
+        [
+            space.jump_operator(
+                int(np.argmin(np.abs(np.asarray(space.interfaces) - radius)))
+            ).matrix(form="components")[0]
+            for radius in (R_ICB, R_CMB)
+        ]
     )
     volume = volume_integral(space, np.ones_like)
     core, mantle = np.zeros(space.dim), np.zeros(space.dim)
-    for key in ("inner_core", "outer_core"):
-        core[space.columns(key)] = volume[space.columns(key)]
-    mantle[space.columns("mantle")] = volume[space.columns("mantle")]
+    for name in names:
+        part = core if name in CORE_LAYERS else mantle
+        part[space.columns(name)] = volume[space.columns(name)]
     properties = LinearOperator.from_matrix(
         space,
         EuclideanSpace(3),
         np.vstack([core / CORE_VOLUME, mantle / MANTLE_VOLUME, -jumps[1]]),
         form="components",
     )
-    summary = reference.prem_summary()
-    prem_properties = np.array([summary["core"], summary["mantle"], summary["jump"]])
-
     result = Problem(
         scale,
         space,
-        profile,
-        profile_660,
-        reference_model,
-        reference_660_model,
-        prem_model,
+        reference,
+        truth,
         forward,
         problem,
         data,
         properties,
-        prem_properties,
+        properties(truth),
         jumps,
     )
+
+    own = prem_summary()
+    predicted = forward(reference)
     say(
-        f"data: mass {MASS:.4g} kg and moment of inertia {MOMENT:.4g} kg m^2, each "
-        f"to {RELATIVE_ERROR:.1%}; in units of {MASS_UNIT:.0e} kg and "
-        f"{MOMENT_UNIT:.0e} kg m^2, {data[0]:.3f} and {data[1]:.3f}"
+        f"PREM in the space, the reference: mass "
+        f"{predicted[0] * MASS_UNIT:.5g} kg and moment of inertia "
+        f"{predicted[1] * MOMENT_UNIT:.5g} kg m^2, against PREM's own "
+        f"{own['mass']:.5g} and {own['moment']:.5g}"
     )
-    for name, model, profile_ in (
-        ("Adams-Williamson reference", reference_model, profile),
-        ("the same with a 6% jump at 660 km", reference_660_model, profile_660),
-        ("PREM, projected", prem_model, None),
+    say(
+        f"the truth, the reference plus a draw from the prior of pointwise std "
+        f"{TIGHT_STD:g} g/cm^3: mass {clean[0] * MASS_UNIT:.5g} kg and moment "
+        f"{clean[1] * MOMENT_UNIT:.5g} kg m^2"
+    )
+    say(
+        f"data: those two with errors of {RELATIVE_ERROR:.1%} of each drawn from "
+        f"the error measure, in units of {MASS_UNIT:.0e} kg and {MOMENT_UNIT:.0e} "
+        f"kg m^2: {data[0]:.4f} and {data[1]:.4f}; chi-squared "
+        f"{problem.chi_squared(truth, data):.2f} at the truth and "
+        f"{problem.chi_squared(reference, data):.1f} at the reference"
+    )
+    say("the three properties (g/cm^3), of the truth, the reference and PREM itself:")
+    for name, true, ours, theirs in zip(
+        PROPERTY_NAMES,
+        result.true_properties,
+        properties(reference),
+        (own["core"], own["mantle"], own["jump"]),
     ):
-        predicted = result.predicted(model)
-        sigmas = result.misfit(model)
-        extra = (
-            ""
-            if profile_ is None
-            else f" (the profile itself {profile_.mass:.4g} kg, {profile_.moment:.4g} kg m^2)"
-        )
-        say(
-            f"  {name}: M {predicted[0]:.4f} ({sigmas[0]:+.1f} sd), I "
-            f"{predicted[1]:.4f} ({sigmas[1]:+.1f} sd){extra}"
-        )
+        say(f"  {name:<12s} {true:7.3f} {ours:7.3f} {theirs:7.3f}")
     say(f"setup took {time.perf_counter() - started:.1f} s")
     return result

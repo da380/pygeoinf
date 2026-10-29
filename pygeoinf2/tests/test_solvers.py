@@ -397,6 +397,32 @@ class TestConvergenceReporting:
         assert len(seen) == len(result.history)
 
 
+class TestTheCallbackSeesVectorsOfTheSpace:
+    def test_an_iterate_under_a_view_is_lifted(self, rng):
+        """A direct sum has components but its vectors are tuples: a solve on
+        the component views must still hand the callback tuples."""
+        from pygeoinf2.algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
+
+        from .conftest import spd_matrix
+
+        parts = [EuclideanSpace(2), EuclideanSpace(3)]
+        blocks = [
+            LinearOperator.from_matrix(
+                part, part, spd_matrix(rng, part.dim), form="components"
+            ).with_traits(Traits.POSITIVE_DEFINITE)
+            for part in parts
+        ]
+        operator = BlockDiagonalLinearOperator(blocks)
+        space = operator.domain
+        assert isinstance(space, DirectSum)
+        seen = []
+        solver = CGSolver(callback=lambda step: seen.append(step.iterate))
+        b = space.random(rng=rng)
+        x = solver(operator).solve(b).solution
+        assert seen and all(isinstance(iterate, tuple) for iterate in seen)
+        assert np.allclose(space.to_components(seen[-1]), space.to_components(x))
+
+
 class TestLSQRWarmStart:
     """``x0`` was accepted and silently dropped."""
 

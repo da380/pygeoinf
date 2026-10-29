@@ -771,16 +771,34 @@ class _Composition[X, Y](LinearOperator[X, Y]):
             isinstance(self.codomain, CoordinateSpace) and self.codomain.is_orthonormal
         ):
             return None
+        # A diagonal factor (one-dimensional) scales rows or columns, as in
+        # ``_known_matrix``.
         known = self._known_factors()
         if known is None or len(known) < 2:
             return None
-        largest = max(matrix.size for matrix in known)
+        largest = max((matrix.size for matrix in known if matrix.ndim == 2), default=0)
         inner = known[-1]
         for matrix in reversed(known[1:-1]):
-            if matrix.shape[0] * inner.shape[1] > largest:
-                return None
-            inner = matrix @ inner
-        return np.einsum("ij,ji->i", known[0], inner)[None, :]
+            if matrix.ndim == 1 and inner.ndim == 1:
+                inner = matrix * inner
+            elif matrix.ndim == 1:
+                inner = matrix[:, None] * inner
+            elif inner.ndim == 1:
+                inner = matrix * inner[None, :]
+            else:
+                if matrix.shape[0] * inner.shape[1] > largest:
+                    return None
+                inner = matrix @ inner
+        first = known[0]
+        if first.ndim == 1 and inner.ndim == 1:
+            diagonal = first * inner
+        elif first.ndim == 1:
+            diagonal = first * np.diagonal(inner)
+        elif inner.ndim == 1:
+            diagonal = np.diagonal(first) * inner
+        else:
+            diagonal = np.einsum("ij,ji->i", first, inner)
+        return np.asarray(diagonal, dtype=float)[None, :]
 
     def apply_block(
         self, vectors: Sequence[Any], /, *, n_jobs: int | None = None

@@ -41,7 +41,7 @@ a geometry's own from layers built by hand.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Literal, Sequence
 
 import numpy as np
 
@@ -49,8 +49,9 @@ from ..algebra.direct_sum import BlockDiagonalLinearOperator, CoordinateDirectSu
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import EuclideanSpace, HilbertModule
 from ..probability.gaussian import GaussianMeasure
+from ._points import LocalEvaluation
 from .axis import AxisSpace
-from .base import SpectralElementSpace
+from .base import SpectralElementSpace, _evaluation_form, _local_operator
 
 __all__ = ["Layered"]
 
@@ -134,6 +135,43 @@ def layers_between(
     # As the subclass its order names, Lebesgue or Sobolev, which is what
     # `with_order` gives; the basis is shared, not recomputed.
     return [layer.with_order(layer.order) for layer in layers]
+
+
+class _LayeredEvaluation:
+    """The layers' matrix-free evaluations, each at the points in its layer,
+    as one evaluation on the components of the whole."""
+
+    def __init__(
+        self, pieces: list[tuple[slice, np.ndarray, LocalEvaluation]], dim: int, /
+    ) -> None:
+        """
+        Args:
+            pieces: for each layer holding points, its columns among the
+                components, which of the points it holds, and its evaluation
+                at them.
+            dim: the dimension of the whole.
+        """
+        self._pieces = pieces
+        self._size = int(sum(where.size for _, where, _ in pieces))
+        self._dim = dim
+
+    def values(self, components: np.ndarray, /) -> np.ndarray:
+        """The field with these components at every point, in the order the
+        points were given."""
+        components = np.asarray(components, dtype=float)
+        out = np.empty(self._size)
+        for columns, where, evaluation in self._pieces:
+            out[where] = evaluation.values(components[columns])
+        return out
+
+    def derivative_components(self, data: np.ndarray, /) -> np.ndarray:
+        """The components of ``x -> sum_i data_i x(p_i)``: each layer's from
+        the data at its own points, zero in a layer with none."""
+        data = np.asarray(data, dtype=float)
+        out = np.zeros(self._dim)
+        for columns, where, evaluation in self._pieces:
+            out[columns] = evaluation.derivative_components(data[where])
+        return out
 
 
 class Layered(CoordinateDirectSum, HilbertModule):
@@ -476,35 +514,53 @@ class Layered(CoordinateDirectSum, HilbertModule):
         *,
         side: str | None = None,
         unsafe: bool = False,
+        form: Literal["auto", "dense", "local"] = "auto",
     ) -> LinearOperator:
         """Evaluation at points anywhere in the medium, as an operator into a
         Euclidean space.
+
+        In the layers' two forms, which agree to rounding and differ in
+        memory. ``"dense"`` assembles :meth:`basis_matrix`, eight bytes per
+        point per component of the whole, zero outside each point's layer.
+        ``"local"`` is each layer's matrix-free evaluation at the points in
+        it, holding ``ngll`` weights per point and, in balls and disks, the
+        angular functions at the points; an application costs about what the
+        dense one does. See
+        :meth:`~pygeoinf2.spectral_element.SpectralElementSpace.point_evaluation_operator`.
+        ``"auto"`` is the dense form while its matrix fits 256 MB, and the
+        local one beyond.
 
         Args:
             points: where to evaluate.
             side: which value is meant at the points on an interface.
             unsafe: build it even in layers too rough to admit it.
+            form: ``"auto"``, ``"dense"`` or ``"local"``.
 
         Returns:
-            The operator, assembled from :meth:`basis_matrix`.
+            The operator.
 
         Raises:
             ValueError: if no points are given, one is in no layer or on an
-                interface with no side named, or a layer's order is too low
-                and *unsafe* is not set.
+                interface with no side named, the form is none of the three,
+                or a layer's order is too low and *unsafe* is not set.
         """
         points = list(points)
         if not points:
             raise ValueError("At least one point is needed.")
+        form = _evaluation_form(form, len(points), self.dim)
         self._require_point_evaluation(
             "A point evaluation operator", points=points, side=side, unsafe=unsafe
         )
-        return LinearOperator.from_matrix(
-            self,
-            EuclideanSpace(len(points)),
-            self.basis_matrix(points, side=side),
-            form="galerkin",
-        )
+        codomain = EuclideanSpace(len(points))
+        if form == "dense":
+            return LinearOperator.from_matrix(
+                self, codomain, self.basis_matrix(points, side=side), form="galerkin"
+            )
+        pieces = [
+            (self.columns(i), where, self.layers[i]._local_evaluation(inside))
+            for i, where, inside in self._grouped(points, side)
+        ]
+        return _local_operator(self, codomain, _LayeredEvaluation(pieces, self.dim))
 
     def jump_operator(
         self,
@@ -687,5 +743,5 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 )
                 for i, layer in enumerate(self.layers)
             ],
-            labels=self.labels,
+            domain=self,
         )

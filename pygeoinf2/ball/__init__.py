@@ -65,6 +65,7 @@ from planetmodel.sampling import AngularGrid, gauss_legendre
 from ..algebra.operators import LinearFunctional
 from ..algebra.spaces import resolve_rng
 from ..spectral_element import layered as _layered
+from ..spectral_element._points import LocalEvaluation, harmonic_table
 from ..spectral_element._transform import ShellTransform
 from ..spectral_element.base import (
     _EXTENSIONS,
@@ -73,6 +74,7 @@ from ..spectral_element.base import (
     LengthScale,
     SpectralElementSpace,
     _clamped_length_scale,
+    _checked_fit,
     _fitted_over_the_domain,
     _length_scale_key,
     _resolved_boundary,
@@ -531,7 +533,7 @@ class Ball(SpectralElementSpace):
             fitted = _fitted_over_the_domain(interior, radial.weights(), packed.T)
             start = self._basis.block(0, degree, 0).start
             components[start : start + fitted.size] = fitted.T.reshape(-1)
-        return self.from_components(components)
+        return _checked_fit(self.from_components(components), self.interior_mask)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point of the domain, drawn uniformly over its volume."""
@@ -555,7 +557,12 @@ class Ball(SpectralElementSpace):
         Only the degree-zero harmonic has one, ``sqrt(4 pi)`` times the radial
         integral of its coefficient function against ``r^2``, taken by the
         quadrature of the domain's own elements so that the padding
-        contributes nothing.
+        contributes nothing. Applied to a grid array that is not in the span of the kept modes, such
+        as the pointwise product of two fields, it reads the array through
+        its components, that is the projection onto the modes, as every
+        operator on the space does so that adjoints hold under composition;
+        the exact integral of such an array is a quadrature the caller
+        takes.
         """
         radial = self._basis[0]
         interior = radial.modes()[radial.restriction.nodes]
@@ -596,6 +603,70 @@ class Ball(SpectralElementSpace):
                 points.shape[0], -1
             )
         return matrix
+
+    def _local_evaluation(
+        self, points: Sequence[tuple[float, float, float]], /
+    ) -> LocalEvaluation:
+        """Evaluation at the points through the nodes of their radial
+        elements and the harmonics at their angles.
+
+        The field of components ``c`` has the coefficient function ``f_lm =
+        Phi_l c_lm`` for each harmonic, ``Phi_l`` the radial modes of degree
+        ``l`` at every node of the mesh, and its value at a point is ``sum_lm
+        Y_lm(angles) (L f_lm)``, ``L`` the Lagrange weights of the point's
+        radius on the nodes of its element. The transpose spreads ``y_i
+        Y_lm(p_i)`` onto those nodes, giving ``H_lm = L^T (Y_lm y)``, and the
+        derivative components are ``Phi_l^T H_lm``, harmonic by harmonic: the
+        radial synthesis transposed, read at every node, the center included.
+
+        Raises:
+            ValueError: if a radius lies outside the domain, or a latitude
+                outside ``[-90, 90]``.
+        """
+        points = np.asarray(points, dtype=float).reshape(-1, 3)
+        colatitudes = np.radians(90.0 - points[:, 1])
+        if np.any(colatitudes < 0.0) or np.any(colatitudes > np.pi):
+            raise ValueError("Latitudes must lie in [-90, 90] degrees.")
+        longitudes = np.radians(points[:, 2])
+        lmax = self._lmax
+
+        def angular(which: np.ndarray) -> np.ndarray:
+            return harmonic_table(lmax, colatitudes[which], longitudes[which])
+
+        return LocalEvaluation(
+            self._basis.family.mesh,
+            points[:, 0],
+            self._basis.restriction.interval,
+            self._nodal_functions,
+            self._nodal_projection,
+            angular=angular,
+            count=(lmax + 1) ** 2,
+        )
+
+    def _nodal_functions(self, c: np.ndarray, /) -> np.ndarray:
+        """The coefficient function of every harmonic at every node of the
+        radial mesh, from components: shape ``((lmax + 1)^2, nodes)``, the
+        harmonics in the order of the components within a degree."""
+        c = np.asarray(c, dtype=float)
+        out = np.empty(((self._lmax + 1) ** 2, self.grid_shape[0]))
+        for degree, radial in enumerate(self._basis):
+            start = self._basis.block(0, degree, 0).start
+            count = 2 * degree + 1
+            block = c[start : start + count * radial.nmodes]
+            out[degree**2 : (degree + 1) ** 2] = (
+                block.reshape(count, radial.nmodes) @ radial.modes().T
+            )
+        return out
+
+    def _nodal_projection(self, functions: np.ndarray, /) -> np.ndarray:
+        """The transpose of :meth:`_nodal_functions`: each harmonic's function
+        against the radial modes of its degree, summed over every node."""
+        out = np.empty(self.dim)
+        for degree, radial in enumerate(self._basis):
+            start = self._basis.block(0, degree, 0).start
+            rows = functions[degree**2 : (degree + 1) ** 2] @ radial.modes()
+            out[start : start + rows.size] = rows.reshape(-1)
+        return out
 
     def _squared_modes(self, weights: np.ndarray, /) -> np.ndarray:
         """``sum_k weights_k phi_k(p)^2`` on the grid.

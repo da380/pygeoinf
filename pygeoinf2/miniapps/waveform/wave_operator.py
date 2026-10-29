@@ -287,31 +287,44 @@ class WaveformOperator:
     # The four kernels the derivation names -- forward, born, adjoint and
     # correlate, with adjoint_born for the second adjoint -- composed as the
     # derivation composes them, storing every field. The operator above uses
-    # the fused kernels; these are what they are checked against.
+    # the fused kernels; these are what they are checked against. They run
+    # one shot at a time from a forward field of their own, the cache
+    # released first, so that at most four fields are stored at once.
+
+    def _shot_fields(self, m: np.ndarray) -> Any:
+        """``(shot, forward field)`` for each shot in turn, each released after."""
+        self.clear()
+        wavelet = np.ascontiguousarray(self.survey.wavelet[:, None])
+        for s in range(self.survey.n_shots):
+            field, _ = self._kernels.forward(
+                m, [int(self.survey.source_x[s])], [DEPTH_CELLS], wavelet
+            )
+            try:
+                yield s, field
+            finally:
+                self._kernels.release(field)
 
     def unfused_gradient(self, m: Any, r: Any) -> np.ndarray:
         """``-(dA[.] U)^T L`` per shot, ``A^T L = S^T r``: the grid gradient."""
         point = self.admissible(m)
-        fields = self.fields(point)[0]
         traces = self._shot_traces(r)
         kernels = self._kernels
         total = np.zeros(self.survey.shape)
-        for s in range(self.survey.n_shots):
+        for s, field in self._shot_fields(point):
             lam = kernels.adjoint(point, traces[s])
-            total += kernels.correlate(fields[s], lam)
+            total += kernels.correlate(field, lam)
             kernels.release(lam)
         return total
 
     def unfused_second_born(self, m: Any, dm: Any, dm2: Any) -> np.ndarray:
         """``-S A^-1 (dA[dm] dU2 + dA[dm2] dU)`` per shot, from stored fields."""
         point = self.admissible(m)
-        fields = self.fields(point)[0]
         dm, dm2 = _grid(dm), _grid(dm2)
         kernels = self._kernels
         data = []
-        for s in range(self.survey.n_shots):
-            du = kernels.born(point, fields[s], dm)[0]
-            du2 = kernels.born(point, fields[s], dm2)[0]
+        for _, field in self._shot_fields(point):
+            du = kernels.born(point, field, dm)[0]
+            du2 = kernels.born(point, field, dm2)[0]
             data.append(
                 kernels.born(point, du2, dm, keep=False)[1]
                 + kernels.born(point, du, dm2, keep=False)[1]
@@ -326,16 +339,15 @@ class WaveformOperator:
         ``A^T L_w = S^T w`` and ``A^T M_w = dA[dm]^T L_w``.
         """
         point = self.admissible(m)
-        fields = self.fields(point)[0]
         dm = _grid(dm)
         traces = self._shot_traces(w)
         kernels = self._kernels
         total = np.zeros(self.survey.shape)
-        for s in range(self.survey.n_shots):
-            du = kernels.born(point, fields[s], dm)[0]
+        for s, field in self._shot_fields(point):
+            du = kernels.born(point, field, dm)[0]
             lam = kernels.adjoint(point, traces[s])
             second = kernels.adjoint_born(point, lam, dm)
-            total += kernels.correlate(du, lam) - kernels.correlate(fields[s], second)
+            total += kernels.correlate(du, lam) - kernels.correlate(field, second)
             for handle in (du, lam, second):
                 kernels.release(handle)
         return total

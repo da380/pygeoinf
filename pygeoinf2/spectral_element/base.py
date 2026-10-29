@@ -18,8 +18,9 @@ variance *field*; see :meth:`SpectralElementSpace.pointwise_variance` and
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Callable, Hashable, Sequence
+from typing import Any, Callable, Hashable, Literal, Sequence
 
+import warnings
 import numpy as np
 
 from ..algebra.diagonal import DiagonalLinearOperator
@@ -33,6 +34,7 @@ from ..algebra.spaces import (
 )
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
+from ._points import LocalEvaluation
 
 __all__ = ["Boundary", "LengthScale", "SpectralElementSpace"]
 
@@ -185,6 +187,38 @@ _FIT_RCOND = 1e-10
 #: The ways a sampled function is continued past the domain.
 _EXTENSIONS = ("odd", "constant", "fit")
 
+#: A fit whose values on the padding exceed this multiple of its largest value
+#: on the domain has leaked: see ``_checked_fit``.
+_FIT_LEAK = 10.0
+
+
+def _checked_fit(field: np.ndarray, interior: np.ndarray, /) -> np.ndarray:
+    """*field*, after a warning if the fit has leaked into the padding.
+
+    The fit over the domain is ill-posed: the kept modes restricted to the
+    domain are nearly dependent, and the smallest solution that matches the
+    values there can carry values on the padding thousands of times larger
+    than any on the domain, which only the function's smoothness keeps in
+    check. A function in the span is recovered exactly and a smooth one
+    nearly so; a function with a jump or a kink is matched on the domain to
+    the truncation's own error while the padding runs away. Nothing that
+    reads the domain is affected; the norm of such a vector is. The remedy
+    is to sample the function instead, continued past the domain by
+    ``extension="constant"`` or ``"odd"``.
+    """
+    inside = np.abs(field[interior]).max(initial=0.0)
+    outside = np.abs(field[~interior]).max(initial=0.0)
+    if outside > _FIT_LEAK * max(inside, np.finfo(float).tiny):
+        warnings.warn(
+            f"The fit over the domain has leaked into the padding: values up "
+            f"to {outside:.3g} there against {inside:.3g} on the domain. The "
+            "function is not smooth enough for the fit; sample it with "
+            "extension='constant' or 'odd' instead.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return field
+
 
 def _fitted_over_the_domain(
     modes: np.ndarray, weights: np.ndarray, values: np.ndarray, /
@@ -254,6 +288,63 @@ def _length_scale_key(
     return float(length_scale)
 
 
+#: The memory a dense point evaluation may take, in bytes: under ``form="auto"``
+#: an evaluation whose matrix, eight bytes per point per component, would be
+#: larger is matrix-free instead. A memory budget and not a speed threshold:
+#: the matrix-free form does per point about the work of a row of the matrix,
+#: so an application costs about the same either way, and only the dense form
+#: holds the rows. On a ball of 4223 components at 83 000 points, the dense
+#: matrix 2.8 GB, an application took 0.07 s dense and 0.045 s or 0.15 s
+#: matrix-free, with the harmonics at the points kept or recomputed.
+_DENSE_EVALUATION_LIMIT = 256 * 2**20
+
+#: The forms a point evaluation can take.
+_EVALUATION_FORMS = ("auto", "dense", "local")
+
+
+def _evaluation_form(form: str, points: int, dim: int, /) -> str:
+    """``"dense"`` or ``"local"``: the form asked for, or under ``"auto"`` the
+    dense one while its matrix fits :data:`_DENSE_EVALUATION_LIMIT`.
+
+    Raises:
+        ValueError: for a form that is none of ``"auto"``, ``"dense"`` and
+            ``"local"``.
+    """
+    if form not in _EVALUATION_FORMS:
+        raise ValueError(f"form must be 'auto', 'dense' or 'local', got {form!r}.")
+    if form == "auto":
+        return "local" if 8 * points * dim > _DENSE_EVALUATION_LIMIT else "dense"
+    return form
+
+
+def _local_operator(
+    space: HilbertSpace, codomain: EuclideanSpace, evaluation: Any, /
+) -> LinearOperator:
+    """Evaluation at points as an operator, from a matrix-free evaluation.
+
+    *space* has coordinates, a spectral-element space or a layered sum of
+    them; *evaluation* has the methods of :class:`LocalEvaluation`, ``values``
+    from components and ``derivative_components`` from data. The action reads
+    a vector through its components; the adjoint takes the derivative
+    components the evaluation spreads the data onto, applies the inverse
+    metric, which is diagonal, and synthesizes. Both are also given on
+    components, so that a composition with a covariance in the eigenbasis
+    stays there.
+    """
+
+    def components_adjoint(data: np.ndarray) -> np.ndarray:
+        return space.solve_gram(evaluation.derivative_components(data))
+
+    return LinearOperator.from_callables(
+        space,
+        codomain,
+        lambda x: evaluation.values(space.to_components(x)),
+        adjoint=lambda data: space.from_components(components_adjoint(data)),
+        components_action=evaluation.values,
+        components_adjoint_action=components_adjoint,
+    )
+
+
 class SpectralElementSpace(
     ArrayVectorMixin, HilbertModule[np.ndarray], DiagonalMetricSpace[np.ndarray]
 ):
@@ -264,8 +355,9 @@ class SpectralElementSpace(
     ``eigenvalues ** order``. Subclasses supply :meth:`to_components`,
     :meth:`from_components`, :attr:`eigenvalues`, :attr:`grid_shape`,
     :attr:`interior_mask`, :attr:`bounds`, :meth:`basis_matrix`,
-    :meth:`_squared_modes`, :attr:`spatial_dimension`, ``_coordinate_key`` and
-    ``_class_for_order``, and tag the geometry they name with ``_geometry``.
+    ``_local_evaluation``, :meth:`_squared_modes`, :attr:`spatial_dimension`,
+    ``_coordinate_key`` and ``_class_for_order``, and tag the geometry they
+    name with ``_geometry``.
     """
 
     def __init__(self, eigenvalues: np.ndarray, order: float, /) -> None:
@@ -318,6 +410,15 @@ class SpectralElementSpace(
     def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
         """The basis at many points of the domain, as a ``(len(points), dim)``
         array: the rows of an observation operator's derivative matrix."""
+
+    @abstractmethod
+    def _local_evaluation(self, points: Sequence[Any], /) -> LocalEvaluation:
+        """Evaluation at the points from the components, and its transpose,
+        through the elements the points lie in and without the basis matrix.
+
+        Raises:
+            ValueError: if a point lies outside the domain.
+        """
 
     @abstractmethod
     def _squared_modes(self, weights: np.ndarray, /) -> np.ndarray:
@@ -545,8 +646,23 @@ class SpectralElementSpace(
 
     def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
         """The values at several points of the field with the components of
-        ``x``, which off the grid is the only field there is to evaluate."""
-        return self.basis_matrix(points) @ self.to_components(x)
+        ``x``, which off the grid is the only field there is to evaluate.
+
+        Matrix-free, as :meth:`point_evaluation_operator` is under
+        ``form="local"``, and the same to rounding as the rows of
+        :meth:`basis_matrix` applied to the components.
+
+        Args:
+            x: a vector of this space.
+            points: where to evaluate.
+
+        Returns:
+            One value per point.
+
+        Raises:
+            ValueError: if a point lies outside the domain.
+        """
+        return self._local_evaluation(list(points)).values(self.to_components(x))
 
     def dirac(self, point: Any, /, *, unsafe: bool = False) -> LinearFunctional:
         """The evaluation functional at a point of the domain.
@@ -570,38 +686,75 @@ class SpectralElementSpace(
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
     def point_evaluation_operator(
-        self, points: Sequence[Any], /, *, unsafe: bool = False
+        self,
+        points: Sequence[Any],
+        /,
+        *,
+        unsafe: bool = False,
+        form: Literal["auto", "dense", "local"] = "auto",
     ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
-        Assembled: the rows are :meth:`basis_matrix`, known in closed form.
-        The adjoint is derived from them and returns a weighted sum of Dirac
-        representers.
+        Two forms, which agree to rounding and differ in memory. ``"dense"``
+        assembles the rows, :meth:`basis_matrix`, known in closed form: it
+        holds eight bytes per point per component, and an application is a
+        product with that matrix. ``"local"`` holds no matrix. Along the mesh
+        a field is the polynomial through its nodal values on each element,
+        so a point's value needs only the nodes of its element and, in a ball
+        or a disk, the harmonics at its angles: the form holds the ``ngll``
+        Lagrange weights of each point and, in a ball or a disk, the angular
+        functions at the points, all of them while those fit 256 MB and
+        otherwise one chunk of points at a time, recomputed in every
+        application. An application synthesizes the coefficient functions at
+        the nodes, which is cheap next to the rest, and does per point about
+        the work of a row of the matrix: measured on a ball, a little less
+        than the dense product with the angular functions kept, and about
+        twice it when they are recomputed. ``"auto"``, the default, is the
+        dense form while its matrix fits 256 MB, which keeps the matrix at
+        hand for whatever reads it, and the local form beyond.
+
+        Both read a vector through its components, the field the space
+        holds, so they agree on any grid array, a pointwise product left off
+        the span included, and the adjoint is exact on all of them.
+
+        The adjoint returns a weighted sum of Dirac representers: the data
+        give derivative components through the transposed rows, the inverse
+        of the diagonal metric is applied, and the vector is synthesized.
+        Under ``"local"`` the transposed rows are the same contractions run
+        back -- each datum times the angular functions at its point spread
+        onto the nodes of its element, and the coefficient functions so
+        accumulated projected onto the kept modes -- so there is no system to
+        solve. The operator's action on components, and its adjoint's, go
+        through no transform, and a composition with a covariance in the
+        eigenbasis stays on them.
 
         Args:
             points: where to evaluate.
             unsafe: build it even on a space too rough to admit it.
+            form: ``"auto"``, ``"dense"`` or ``"local"``.
 
         Returns:
             The operator.
 
         Raises:
             ValueError: if no points are given, one lies outside the domain,
-                or the order is at or below half the spatial dimension and
-                *unsafe* is not set.
+                the form is none of the three, or the order is at or below
+                the order :meth:`point_evaluation_order` gives and *unsafe*
+                is not set.
         """
         points = list(points)
         if not points:
             raise ValueError("At least one point is needed.")
+        form = _evaluation_form(form, len(points), self.dim)
         self._require_point_evaluation(
             "A point evaluation operator", points=points, unsafe=unsafe
         )
-        return LinearOperator.from_matrix(
-            self,
-            EuclideanSpace(len(points)),
-            self.basis_matrix(points),
-            form="galerkin",
-        )
+        codomain = EuclideanSpace(len(points))
+        if form == "dense":
+            return LinearOperator.from_matrix(
+                self, codomain, self.basis_matrix(points), form="galerkin"
+            )
+        return _local_operator(self, codomain, self._local_evaluation(points))
 
     # ----------------------------------------------------------------- #
     #                              Measures                             #

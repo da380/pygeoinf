@@ -135,6 +135,17 @@ class TestDirectSumSpace:
             DirectSum([])
 
 
+class TestASumPickles:
+    def test_a_round_trip_keeps_the_summands_and_the_dispatch(self):
+        import pickle
+
+        space = DirectSum([EuclideanSpace(2), make_weighted_space()], labels=("a", "b"))
+        copy = pickle.loads(pickle.dumps(space))
+        assert isinstance(copy, CoordinateSpace)
+        assert copy.dim == space.dim and copy.labels == ("a", "b")
+        assert [s.dim for s in copy.subspaces] == [s.dim for s in space.subspaces]
+
+
 class TestCoordinateDispatch:
     def test_all_coordinate_summands_give_a_coordinate_sum(self):
         assert isinstance(build_sum(), CoordinateSpace)
@@ -406,6 +417,30 @@ class TestProductMeasures:
             labels=("model", "noise"),
         )
         assert joint.factor("noise").domain == Y
+
+
+class TestAProductOnAGivenDomain:
+    def test_the_measure_lives_on_the_domain_given(self, rng):
+        spaces = [EuclideanSpace(2), EuclideanSpace(3)]
+        measures = [GaussianMeasure.from_standard_deviation(s, 1.0) for s in spaces]
+        domain = DirectSum(spaces, labels=("a", "b"))
+        measure = GaussianMeasure.from_product(measures, domain=domain)
+        assert measure.domain is domain
+        check_measure(measure, rng=rng, samples=2000, rtol=0.3)
+
+    def test_a_domain_with_other_summands_is_refused(self):
+        spaces = [EuclideanSpace(2), EuclideanSpace(3)]
+        measures = [GaussianMeasure.from_standard_deviation(s, 1.0) for s in spaces]
+        with pytest.raises(ValueError, match="Summand 1"):
+            GaussianMeasure.from_product(
+                measures, domain=DirectSum([EuclideanSpace(2), EuclideanSpace(4)])
+            )
+        with pytest.raises(ValueError, match="summands"):
+            GaussianMeasure.from_product(measures, domain=DirectSum(spaces[:1]))
+        with pytest.raises(ValueError, match="labels or a domain"):
+            GaussianMeasure.from_product(
+                measures, domain=DirectSum(spaces), labels=("a", "b")
+            )
 
 
 class TestJointModel:

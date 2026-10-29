@@ -1,5 +1,5 @@
-"""What the part scripts share: the command line, profiles and their bands,
-and the property panels."""
+"""What the part scripts share: the command line, the generators, profiles
+and their bands, and the figure titles."""
 
 from __future__ import annotations
 
@@ -19,12 +19,13 @@ import numpy as np  # noqa: E402
 
 from pygeoinf2 import plotting  # noqa: E402
 
-from reference import BOUNDARIES, R_CMB, R_ICB, prem  # noqa: E402
+from reference import R_CMB, R_ICB, R_SURFACE, prem  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
-SEED = 2026
+SEED = 2027
+APP = "Planet density"
 
-# How many radii per layer a profile and its band are drawn at.
+# How many radii per layer a profile's band is drawn at.
 _DRAWN = 120
 
 
@@ -50,6 +51,11 @@ def output_directory(quick: bool, outdir: pathlib.Path | None) -> pathlib.Path:
 def part_rng(seed: int, part: str) -> np.random.Generator:
     """One generator per part, so a part gives the same answer run alone or in order."""
     return np.random.default_rng([seed, ord(part)])
+
+
+def title(part: str, what: str, /) -> str:
+    """A figure's title: the app, the part and what the figure shows."""
+    return f"{APP}, {part}: {what}"
 
 
 def save(fig: Any, path: pathlib.Path) -> None:
@@ -107,52 +113,16 @@ def draw_prem(ax: Any, /, **kwargs: Any) -> None:
         r = np.linspace(lower, upper, 60)
         ax.plot(r / 1e3, layer.fields["rho"](r) / 1e3, **kwargs)
         kwargs = {**kwargs, "label": None}
-    ax.set_xlim(BOUNDARIES[0], BOUNDARIES[-1])
+    ax.set_xlim(0.0, R_SURFACE)
 
 
-def finish_profile_axes(ax: Any, /, *, title: str) -> None:
+def finish_profile_axes(ax: Any, /, *, subtitle: str = "", legend: bool = True) -> None:
     """Labels, the two boundaries marked, a legend."""
     for radius in (R_ICB, R_CMB):
         ax.axvline(radius, color="0.6", lw=0.6, ls=":")
     ax.set_xlabel("radius (km)")
     ax.set_ylabel("density (g/cm³)")
-    ax.set_title(title, fontsize=10)
-    ax.legend(fontsize=7, frameon=False)
-
-
-def interval_bar(
-    ax: Any,
-    position: float,
-    center: float,
-    half_width: float,
-    /,
-    *,
-    marker: str,
-    color: str,
-    label: str,
-) -> None:
-    """A point with a symmetric bar."""
-    ax.errorbar(
-        position,
-        center,
-        yerr=half_width,
-        fmt=marker,
-        color=color,
-        capsize=4,
-        label=label,
-    )
-
-
-def bracket_bar(
-    ax: Any, position: float, bracket: Sequence[float], /, *, color: str, label: str
-) -> None:
-    """A certified bracket, as a thick bar."""
-    ax.plot(
-        [position, position],
-        bracket,
-        color=color,
-        lw=6,
-        alpha=0.6,
-        solid_capstyle="butt",
-        label=label,
-    )
+    if subtitle:
+        ax.set_title(subtitle, fontsize=10)
+    if legend:
+        ax.legend(fontsize=7, frameon=False)

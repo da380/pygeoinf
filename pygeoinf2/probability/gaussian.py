@@ -401,6 +401,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         /,
         *,
         labels: Sequence[str] | None = None,
+        domain: DirectSum | None = None,
     ) -> GaussianMeasure:
         """The independent product of Gaussians, on the direct sum of domains.
 
@@ -417,20 +418,44 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Args:
             measures: the independent factors.
             labels: names for the summands of the direct sum.
+            domain: the direct sum to put the measure on, when the caller has
+                one already, such as a space that is a direct sum with more
+                structure than the bare sum of the factors' domains (a
+                layered space, with its pointwise product); its summands must
+                be the factors' domains, in order. Built from them if
+                omitted.
 
         Returns:
             The product measure, on the direct sum of the domains.
 
         Raises:
-            ValueError: if no factors are given, or if some factor has neither
-                a covariance nor a covariance factor.
+            ValueError: if no factors are given, if some factor has neither
+                a covariance nor a covariance factor, or if a given domain's
+                summands are not the factors' domains.
         """
         from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
 
         measures = tuple(measures)
         if not measures:
             raise ValueError("A product measure needs at least one factor.")
-        domain = DirectSum([m.domain for m in measures], labels=labels)
+        if domain is None:
+            domain = DirectSum([m.domain for m in measures], labels=labels)
+        else:
+            if labels is not None:
+                raise ValueError("Give labels or a domain, which has its own.")
+            if not isinstance(domain, DirectSum) or len(domain.subspaces) != len(
+                measures
+            ):
+                raise ValueError(
+                    f"The domain must be a direct sum of {len(measures)} summands, "
+                    f"got {domain!r}."
+                )
+            for index, (summand, measure) in enumerate(zip(domain.subspaces, measures)):
+                if summand != measure.domain:
+                    raise ValueError(
+                        f"Summand {index} of the domain is {summand!r}, and the "
+                        f"factor there lives on {measure.domain!r}."
+                    )
 
         covariance = None
         factor = None
@@ -689,13 +714,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return self._domain.subtract(x, self._expectation)
 
     def _diagonal_eigenvalues(self) -> np.ndarray | None:
-        """The covariance's spectrum, when it is diagonal in the space's basis."""
-        from ..algebra.diagonal import DiagonalLinearOperator
+        """The covariance's spectrum, when it is diagonal in the space's basis.
 
+        Read off the operator's known scaling of components, which a diagonal
+        operator, a scaled identity, their compositions and a block diagonal
+        of them on a direct sum all report; such an operator lives only on a
+        space whose basis is orthogonal, so its scaling is its spectrum.
+        """
         covariance = self._covariance
-        if isinstance(covariance, DiagonalLinearOperator):
-            return covariance.eigenvalues
-        return None
+        if covariance is None:
+            return None
+        scaling = covariance._known_scaling()
+        if scaling is None:
+            return None
+        return np.asarray(scaling, dtype=float)
 
     def _stochastic_trace(
         self,
@@ -1786,9 +1818,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Returns:
             A field of the domain.
         """
-        return self._domain.sqrt(
-            self.sample_pointwise_variance(samples, rng=rng, n_jobs=n_jobs)
-        )
+        variance = self.sample_pointwise_variance(samples, rng=rng, n_jobs=n_jobs)
+        return self._domain.sqrt(variance)
 
     def ambient_ball(
         self,

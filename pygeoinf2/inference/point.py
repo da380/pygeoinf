@@ -347,7 +347,11 @@ def _discrepancy_search(
     atol: float = 0.0,
     minimum_damping: float = 0.0,
 ) -> RootResult:
-    """Find the damping at which the chi-squared misfit reaches its threshold."""
+    """Find the damping at which the chi-squared misfit reaches its threshold.
+
+    The zero model's misfit, one forward application, is the limit at
+    infinite damping: data it already fits saturate the search at once.
+    """
     return misfit_search(
         family,
         family.right_hand_side(data),
@@ -357,6 +361,7 @@ def _discrepancy_search(
         rtol=rtol,
         atol=atol,
         minimum_damping=minimum_damping,
+        limit=problem.chi_squared(problem.model_space.zero(), data),
     )
 
 
@@ -755,10 +760,12 @@ class MinimumNorm(PointEstimator, Operator):
             The :class:`LeastSquares` with this estimator's solver and
             formalism.
         """
+        # The family's own member, so that a solver which assembled or
+        # factored the family once is not asked to do it again.
         return LeastSquares(
             self._problem,
             damping=damping,
-            solver=self._solver,
+            solver=self._family.member_solver(damping),
             formalism=self._formalism,
         )
 

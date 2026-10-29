@@ -49,6 +49,7 @@ from common import (
     Scale,
     dof_coordinates,
     draw_field,
+    marginal_panels,
     output_directory,
     parse,
     part_rng,
@@ -207,7 +208,9 @@ def hilbert_form(
 
     coordinates = dof_coordinates(elements)
     limit = float(np.abs(values(truth)).max())
-    fig, axes = plt.subplots(1, 3, figsize=(13.0, 3.8), layout="constrained")
+    fig = plt.figure(figsize=(17.0, 4.0), layout="constrained")
+    left, right = fig.subfigures(1, 2, width_ratios=[3.0, 1.1])
+    axes = left.subplots(1, 3)
     draw_field(
         axes[0], coordinates, values(truth), title="the true source", limit=limit
     )
@@ -228,7 +231,20 @@ def hilbert_form(
     sensor_x, sensor_y = np.array(SENSOR_POSITIONS).T
     for ax in axes[:2]:
         ax.plot(sensor_x, sensor_y, "k+", ms=6)
-    save(fig, outdir / "hilbert_form.png")
+    marginal_panels(
+        [right.subplots()],
+        ["the total source over the central square"],
+        answer,
+        prior.affine_map(property_operator),
+        [actual],
+        xlabel="total source",
+    )
+    save(
+        fig,
+        outdir / "hilbert_form.png",
+        title="MFEM, part A: the Hilbert-space form. The posterior mean against the "
+        "truth and the matrix form's, and the property before and after",
+    )
     print(f"A took {time.perf_counter() - started:.1f} s")
     return {
         "dim": V.dim,

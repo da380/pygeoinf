@@ -744,14 +744,17 @@ def check_traits(
                 "a claimed INVERTIBLE operator is square",
                 f"{domain.dim} != {codomain.dim}",
             )
-        if isinstance(domain, CoordinateSpace) and isinstance(
-            codomain, CoordinateSpace
-        ):
-            matrix = operator.matrix(form="components")
-            if np.linalg.matrix_rank(matrix) < domain.dim:
+        # Full rank is verified only where the matrix is already stored.
+        # Extracting it from an operator that is applied, not stored, would
+        # cost as many applications as the dimension, and a positive
+        # definite claim implies this one, so every covariance would pay.
+        matrix = operator._known_matrix("components")
+        if matrix is not None:
+            rank = np.linalg.matrix_rank(matrix)
+            if rank < domain.dim:
                 _fail(
                     "the claimed INVERTIBLE operator has full rank",
-                    f"rank {np.linalg.matrix_rank(matrix)} of {domain.dim}",
+                    f"rank {rank} of {domain.dim}",
                 )
     return CheckReport("check_traits", defects)
 

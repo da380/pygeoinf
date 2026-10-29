@@ -1,18 +1,25 @@
 """The experiment: a grid, a survey, a true model, a prior and the data.
 
-A two-dimensional section 2 km wide and 1 km deep, its top a free surface;
+A two-dimensional section 2 km wide and 0.8 km deep, its top a free surface;
 shots fired a couple of cells below the surface and recorded by a line of
-receivers at the same depth, every step of a one-second record. The unknown
-is ``m = 1 / c^2``, the slowness squared, in s²/km²: a velocity increasing
-linearly with depth and three Gaussian anomalies, two fast and one slow. The
-background is known and is the prior's expectation; the anomalies are what
-the data are asked for.
+receivers at the same depth across the section, every step of a one-second
+record. The unknown is ``m = 1 / c^2``, the slowness squared, in s²/km²: a
+velocity increasing linearly with depth and three Gaussian anomalies, two
+fast and one slow. The background is known and is the prior's expectation;
+the anomalies are what the data are asked for.
+
+The grid is bigger than the section: a sponge lies beyond it on the left,
+the right and below, where the waves that leave the section are damped
+before the grid's edge can send them back. The model space is the whole
+grid. Below the section the velocity stops increasing, leveling off within
+a fifth of a kilometer, so that the rock under the sponge is no faster than
+the time step allows for the prior's draws.
 
 Three sizes. ``PROOF`` is the small grid the adjoints are proved on, a
-sliver of the section. ``QUICK`` is the whole section at a 20 m spacing and
-a 2.5 Hz wavelet, ``FULL`` at a 10 m spacing and a 5 Hz wavelet: in both,
-the shortest wavelength that matters (at two and a half times the peak
-frequency, in the slowest rock) spans fifteen cells or more.
+sliver of section inside its sponge. ``QUICK`` is the section at a 20 m
+spacing and a 2.5 Hz wavelet, ``FULL`` at a 10 m spacing and a 5 Hz wavelet:
+in both, the shortest wavelength that matters (at two and a half times the
+peak frequency, in the slowest rock) spans fifteen cells or more.
 """
 
 from __future__ import annotations
@@ -41,14 +48,23 @@ except ImportError:  # the built module sits next to this file
 # The stability limit of the scheme, c dt / h, for the fourth-order Laplacian
 # in two dimensions: dt^2 c^2 (32 / 3) / h^2 <= 4.
 CFL_LIMIT = float(np.sqrt(3.0 / 8.0))
-SPONGE = 20
-SPONGE_RATE = 0.015
+# The sponge: its width in cells and the rate of its Cerjan taper,
+# exp(-(rate (width - d))^2) at d cells from the grid's edge, 0.964 at the
+# edge. Measured against a grid too big to reflect, it sends back about half
+# a percent of the data's rms at both scales; it is as wide as the full
+# scale's memory allows.
+SPONGE = 24
+SPONGE_RATE = 0.008
 DEPTH_CELLS = 2
 
-# The background velocity, km/s, and the anomalies: (x, z, radius, dc), km
-# and km/s, Gaussian in the velocity.
+# The background velocity, km/s, increasing linearly with depth to the
+# section's bottom and leveling off below it over a length, km; and the
+# anomalies: (x, z, radius, dc), km and km/s, Gaussian in the velocity, x
+# from the section's left edge.
 SURFACE_VELOCITY = 1.8
 VELOCITY_GRADIENT = 0.6
+SECTION_DEPTH = 0.8
+LEVELING_LENGTH = 0.2
 ANOMALIES = (
     (0.70, 0.25, 0.08, +0.25),
     (1.25, 0.32, 0.10, -0.20),
@@ -75,7 +91,11 @@ LEVEL = 0.95
 
 @dataclass(frozen=True)
 class Scale:
-    """One size of the problem, and how hard its solvers may work."""
+    """One size of the problem, and how hard its solvers may work.
+
+    ``nx`` and ``nz`` count the cells of the section; the grid adds
+    ``sponge`` cells on the left, the right and below.
+    """
 
     name: str
     nx: int
@@ -86,6 +106,8 @@ class Scale:
     peak_frequency: float
     shots: tuple[float, ...]
     receiver_spacing: int
+    sponge: int = SPONGE
+    sponge_rate: float = SPONGE_RATE
     newton_iterations: int = 10
     exact_iterations: int = 10
     polish_iterations: int = 2
@@ -102,19 +124,22 @@ class Scale:
 
 PROOF = Scale(
     name="proof",
-    nx=64,
-    nz=32,
+    nx=24,
+    nz=12,
     h=0.01,
     dt=0.0018,
     steps=300,
     peak_frequency=5.0,
-    shots=(0.26, 0.38),
+    shots=(0.06, 0.18),
     receiver_spacing=2,
+    # A narrower sponge than the others: the identities hold for any taper.
+    sponge=20,
+    sponge_rate=0.015,
 )
 QUICK = Scale(
     name="quick",
     nx=100,
-    nz=50,
+    nz=40,
     h=0.02,
     dt=0.0036,
     steps=400,
@@ -141,7 +166,9 @@ FULL = Scale(
     laplace_rank=100,
     occam_cg_iterations=25,
     n_jobs=3,
-    curvature_jobs=3,
+    # One linearized field at a time beside the three forward fields: four
+    # stored fields of 124 MB.
+    curvature_jobs=1,
 )
 
 
@@ -155,6 +182,12 @@ def ricker(times: np.ndarray, peak_frequency: float) -> np.ndarray:
 class Survey:
     """A grid, its sponge, the shots, the receivers and the wavelet.
 
+    The grid holds the section and, beyond it on the left, the right and
+    below, ``pad`` cells of the same medium and then the sponge; ``pad`` is
+    zero but for a reference run on a grid too big to reflect within the
+    record. Positions ``x`` run from the section's left edge, ``z`` down from
+    the surface, both in km.
+
     ``model`` is the C++ solver, from ``backend``: the module ``acoustic`` by
     default, or ``acoustic_mpi``, whose model splits the grid across the ranks
     of an MPI run.
@@ -162,39 +195,60 @@ class Survey:
 
     scale: Scale
     backend: Any = None
+    pad: int = 0
     model: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         s = self.scale
         backend = acoustic if self.backend is None else self.backend
         self.model = backend.Model(
-            s.nx,
-            s.nz,
+            *self.shape,
             s.h,
             s.dt,
             s.steps,
-            SPONGE,
-            SPONGE_RATE,
+            s.sponge,
+            s.sponge_rate,
             self.receiver_x.tolist(),
             [DEPTH_CELLS] * self.receiver_x.size,
         )
 
     @property
+    def margin(self) -> int:
+        """The cells beyond the section on each absorbing side."""
+        return self.pad + self.scale.sponge
+
+    @property
     def shape(self) -> tuple[int, int]:
-        return (self.scale.nx, self.scale.nz)
+        """The grid's cells, ``(nx, nz)``."""
+        return (self.scale.nx + 2 * self.margin, self.scale.nz + self.margin)
 
     @property
     def lengths(self) -> tuple[float, float]:
+        """The grid's width and depth, km."""
+        return (self.shape[0] * self.scale.h, self.shape[1] * self.scale.h)
+
+    @property
+    def section_lengths(self) -> tuple[float, float]:
         """The section's width and depth, km."""
         return (self.scale.nx * self.scale.h, self.scale.nz * self.scale.h)
 
+    @property
+    def window(self) -> tuple[slice, slice]:
+        """The section's cells within the grid."""
+        return (
+            slice(self.margin, self.margin + self.scale.nx),
+            slice(0, self.scale.nz),
+        )
+
     @cached_property
     def x(self) -> np.ndarray:
-        return np.arange(self.scale.nx) * self.scale.h
+        """The grid's columns, km from the section's left edge."""
+        return (np.arange(self.shape[0]) - self.margin) * self.scale.h
 
     @cached_property
     def z(self) -> np.ndarray:
-        return np.arange(self.scale.nz) * self.scale.h
+        """The grid's rows, km below the surface."""
+        return np.arange(self.shape[1]) * self.scale.h
 
     @cached_property
     def times(self) -> np.ndarray:
@@ -203,13 +257,14 @@ class Survey:
 
     @cached_property
     def receiver_x(self) -> np.ndarray:
-        """Receiver columns: every few cells across the interior."""
-        return np.arange(SPONGE, self.scale.nx - SPONGE, self.scale.receiver_spacing)
+        """Receiver columns: every few cells across the section."""
+        return self.margin + np.arange(0, self.scale.nx, self.scale.receiver_spacing)
 
     @cached_property
     def source_x(self) -> np.ndarray:
         """Source columns, the nearest to the asked positions."""
-        return np.rint(np.asarray(self.scale.shots) / self.scale.h).astype(int)
+        shots = np.rint(np.asarray(self.scale.shots) / self.scale.h).astype(int)
+        return self.margin + shots
 
     @property
     def n_shots(self) -> int:
@@ -237,18 +292,21 @@ class Survey:
     @property
     def field_megabytes(self) -> float:
         """The size of one stored field, all steps of the grid."""
-        return self.scale.steps * self.scale.nx * self.scale.nz * 8 / 1e6
+        return self.scale.steps * self.shape[0] * self.shape[1] * 8 / 1e6
 
     def interior(self) -> np.ndarray:
-        """The cells outside the sponge and below the surface row."""
+        """The cells of the section below the surface row."""
         mask = np.zeros(self.shape, dtype=bool)
-        mask[SPONGE : self.scale.nx - SPONGE, 1 : self.scale.nz - SPONGE] = True
+        mask[self.window] = True
+        mask[:, 0] = False
         return mask
 
     def boxes_inside(self) -> bool:
         """Whether every box of :data:`BOXES` lies inside the section."""
-        width, depth = self.lengths
-        return all(x1 <= width and z1 <= depth for _, (_, x1, _, z1) in BOXES)
+        width, depth = self.section_lengths
+        return all(
+            0.0 <= x0 and x1 <= width and z1 <= depth for _, (x0, x1, _, z1) in BOXES
+        )
 
     def cfl(self, m: np.ndarray) -> float:
         """``c_max dt / h`` for a model."""
@@ -256,9 +314,18 @@ class Survey:
 
 
 def background_velocity(survey: Survey) -> np.ndarray:
-    """The known background: a velocity increasing linearly with depth."""
+    """The known background: a velocity increasing linearly with depth.
+
+    Below the section it levels off, smoothly: the depth it sees there is
+    ``SECTION_DEPTH + L tanh((z - SECTION_DEPTH) / L)``, which meets the line
+    with its slope and its curvature.
+    """
     _, z = np.meshgrid(survey.x, survey.z, indexing="ij")
-    return SURFACE_VELOCITY + VELOCITY_GRADIENT * z
+    below = np.maximum(z - SECTION_DEPTH, 0.0)
+    seen = np.minimum(z, SECTION_DEPTH) + LEVELING_LENGTH * np.tanh(
+        below / LEVELING_LENGTH
+    )
+    return SURFACE_VELOCITY + VELOCITY_GRADIENT * seen
 
 
 def true_velocity(survey: Survey) -> np.ndarray:
@@ -313,7 +380,7 @@ class Experiment:
     probes: GaussianMeasure
 
     def relative_error(self, model: np.ndarray) -> float:
-        """``|m - truth| / |m0 - truth|`` over the interior: one at the background."""
+        """``|m - truth| / |m0 - truth|`` over the section: one at the background."""
         inside = self.survey.interior()
         miss = np.asarray(model)[inside] - self.truth[inside]
         anomaly = self.background[inside] - self.truth[inside]
@@ -321,7 +388,7 @@ class Experiment:
 
 
 def model_space(survey: Survey) -> Sobolev:
-    """The Sobolev box over the grid: vectors are (nx, nz) arrays of m."""
+    """The Sobolev box over the whole grid: vectors are (nx, nz) arrays of m."""
     return Sobolev(survey.shape, ORDER, LENGTH_SCALE, lengths=survey.lengths)
 
 

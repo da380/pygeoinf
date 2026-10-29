@@ -1,11 +1,10 @@
-"""Part A: the setup, the reference against PREM, and the velocities it came from.
+"""Part A: the setup, with PREM, the reference, the truth and the layers.
 
-The Adams-Williamson reference is integrated from PREM's velocities with
-PREM's jumps at the two core boundaries put in by hand. Above the
-transition zone the two agree to a few percent; across it, whose phase
-changes the integration cannot know, they part, and the core hangs from a
-mantle that is too light. The data are then far from the
-reference, which is what every later part has to deal with.
+The reference is PREM in the space of PREM's own layers; the truth is the
+reference plus a seeded draw from the tight prior about it, and the data are
+the truth's mass and moment of inertia with errors drawn from the error
+measure. The figure shows how closely the space holds PREM, layer by layer,
+and how far the truth departs from it.
 """
 
 from __future__ import annotations
@@ -19,112 +18,88 @@ from common import (
     draw_prem,
     draw_profile,
     finish_profile_axes,
+    layer_radii,
     output_directory,
     parse,
     save,
+    title,
 )
-from problem import FULL, PROPERTY_SHORT, QUICK, Problem, Scale, build
-from reference import R_660, R_CMB, R_ICB, R_SURFACE, prem, prem_field
+from problem import FULL, QUICK, Problem, Scale, build
+from reference import R_SURFACE, layering, prem_layer_functions
 
-
-def compare(problem: Problem, /) -> dict:
-    """The reference's density against PREM's at the radii that matter."""
-    profile = problem.reference
-    print(
-        f"Adams-Williamson reference: self-consistent after {profile.iterations} "
-        f"integrations; mass {profile.mass:.4g} kg ({profile.mass / 5.972e24 - 1:+.1%} "
-        f"against the datum), moment {profile.moment:.4g} kg m^2 "
-        f"({profile.moment / 8.034e37 - 1:+.1%})"
-    )
-    print(
-        f"  {'where':<24s} {'radius':>7s} {'reference':>10s} {'PREM':>7s} {'diff':>7s}"
-    )
-    rows = (
-        ("top of the mantle", R_SURFACE, "below", 6346.6),
-        ("above 660 km", R_660 + 1e-6, "above", None),
-        ("mantle at the CMB", R_CMB, "above", None),
-        ("outer core at the CMB", R_CMB, "below", None),
-        ("outer core at the ICB", R_ICB, "above", None),
-        ("inner core at the ICB", R_ICB, "below", None),
-        ("center", 0.0, "below", None),
-    )
-    differences = {}
-    for name, radius, side, prem_radius in rows:
-        ours = problem.reference(radius, side=side)
-        theirs = float(
-            prem_field("rho", np.array([prem_radius or radius]), side=side)[0]
-        )
-        differences[name] = ours / theirs - 1.0
-        print(
-            f"  {name:<24s} {radius:7.1f} {ours:10.3f} {theirs:7.3f} "
-            f"{differences[name]:+7.1%}"
-        )
-    print("  the three properties (g/cm^3), reference and PREM:")
-    values = problem.properties(problem.reference_model)
-    for name, ours, theirs in zip(PROPERTY_SHORT, values, problem.prem_properties):
-        print(f"    {name:<12s} {ours:7.3f} {theirs:7.3f}")
-    return {"differences": differences, "reference_properties": values}
+# The upper mantle and the crust, drawn again on their own.
+ZOOM = (5400.0, R_SURFACE)
 
 
 def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
-    """The reference, PREM's density, and PREM's velocities."""
+    """PREM, the reference, the truth, the layers, and the differences, over
+    the whole radius and over the upper mantle and the crust."""
     space = problem.space
-    fig, (left, right) = plt.subplots(1, 2, figsize=(11.0, 4.0), layout="constrained")
-    draw_prem(left, color="black", lw=1.0, label="PREM")
-    draw_profile(
-        space,
-        problem.reference_model,
-        left,
-        color="C0",
-        lw=1.6,
-        label="Adams-Williamson reference",
+    _, boundaries = layering()
+    functions = prem_layer_functions()
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=(12.0, 6.5),
+        sharex="col",
+        layout="constrained",
+        width_ratios=[1.6, 1.0],
+        height_ratios=[2.0, 1.0],
     )
-    draw_profile(
-        space,
-        problem.reference_660_model,
-        left,
-        color="C1",
-        lw=1.2,
-        ls="--",
-        label="the same with a 6% jump at 660 km",
-    )
-    finish_profile_axes(
-        left, title="Densities: the reference is light below the transition zone"
-    )
-
-    for layer in prem().layers:
-        lower, upper = layer.interval
-        r = np.linspace(lower, upper, 60)
-        first = layer.interval[0] == 0.0
-        right.plot(
-            r / 1e3,
-            layer.fields["vpv"](r) / 1e3,
-            color="C3",
-            label="Vp" if first else None,
+    for column in range(2):
+        top, bottom = axes[:, column]
+        for index, (lower, upper) in enumerate(zip(boundaries[:-1], boundaries[1:])):
+            for ax in (top, bottom):
+                ax.axvspan(
+                    lower, upper, color="0.5", alpha=0.1 * (index % 2), linewidth=0.0
+                )
+        draw_prem(top, color="black", lw=1.0, label="PREM")
+        draw_profile(
+            space, problem.reference, top, color="C3", lw=1.4, label="reference"
         )
-        right.plot(
-            r / 1e3,
-            layer.fields["vsv"](r) / 1e3,
-            color="C2",
-            label="Vs" if first else None,
-        )
-    for radius in (R_ICB, R_CMB):
-        right.axvline(radius, color="0.6", lw=0.6, ls=":")
-    right.set_xlim(0.0, R_SURFACE)
-    right.set_xlabel("radius (km)")
-    right.set_ylabel("velocity (km/s)")
-    right.set_title(
-        "PREM's velocities, which the reference is integrated from", fontsize=10
+        draw_profile(space, problem.truth, top, color="C0", lw=1.0, label="truth")
+        finish_profile_axes(top, legend=False)
+        top.set_xlabel("")
+        for index, radii in enumerate(layer_radii(space)):
+            layer = space.layers[index]
+            reference = layer.evaluate(problem.reference[index], radii)
+            truth = layer.evaluate(problem.truth[index], radii)
+            prem = np.array([functions[index](r) for r in radii])
+            first = index == 0
+            bottom.plot(
+                radii,
+                reference - prem,
+                color="C3",
+                lw=1.0,
+                label="reference less PREM" if first else None,
+            )
+            bottom.plot(
+                radii,
+                truth - reference,
+                color="C0",
+                lw=1.0,
+                label="truth less the reference" if first else None,
+            )
+        bottom.axhline(0.0, color="black", lw=0.6)
+        finish_profile_axes(bottom, legend=False)
+        bottom.set_ylabel("difference (g/cm³)")
+    axes[0, 0].set_ylim(0.0, 14.5)
+    axes[0, 0].legend(fontsize=8, frameon=False, loc="lower left")
+    axes[1, 0].legend(fontsize=7, frameon=False, loc="lower left")
+    axes[0, 0].set_title(
+        "the whole radius; PREM's layers shaded alternately", fontsize=10
     )
-    right.legend(fontsize=8, frameon=False)
+    axes[0, 1].set_xlim(*ZOOM)
+    axes[0, 1].set_ylim(0.8, 4.8)
+    axes[0, 1].set_title("the upper mantle and the crust", fontsize=10)
+    fig.suptitle(title("A", "PREM, the reference in the space, and the truth"))
     path = outdir / "setup.png"
     save(fig, path)
     return path
 
 
 def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> Problem:
-    problem = build(scale=scale)
-    compare(problem)
+    problem = build(scale=scale, seed=seed)
     setup_figure(problem, outdir=outdir)
     return problem
 

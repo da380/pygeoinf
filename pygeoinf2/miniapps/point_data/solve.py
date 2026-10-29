@@ -127,11 +127,14 @@ def the_solve(
     ax.axhline(1e-8, color="gray", lw=0.8, ls=":")
     ax.set_xlabel("iteration")
     ax.set_ylabel("relative residual")
-    ax.set_title(
-        f"The same solve, plain and preconditioned: {len(problem.points)} data, degree {space.lmax}"
-    )
+    ax.set_title(f"{len(problem.points)} data, degree {space.lmax}", fontsize=10)
     ax.legend(frameon=False, fontsize=9)
-    save(fig, outdir / "solve.png")
+    save(
+        fig,
+        outdir / "solve.png",
+        title="Point data, part B: the one solve behind every answer, plain and "
+        "preconditioned",
+    )
     print(f"B took {time.perf_counter() - started:.1f} s")
     return {"rows": rows, "agreement": agreement}
 

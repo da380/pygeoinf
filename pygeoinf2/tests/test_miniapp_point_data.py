@@ -4,11 +4,11 @@ The point-data mini-app keeps working.
 ``pygeoinf2/miniapps/point_data`` observes a field on the sphere at ocean points
 only and answers the same questions three ways. The quick scale of every part
 is run once here, each part through its own script's entry point, and what
-must hold is asserted: the preconditioned solves
-agree, the posterior standard deviation returns towards the prior's under the
-continents and falls well below it under the oceans, the truth lies in the
-feasible brackets and in most of the posterior intervals, and the point
-estimate meets the discrepancy principle.
+must hold is asserted: the preconditioned solves agree, the point estimate
+meets the discrepancy principle, the posterior standard deviation returns
+towards the prior's under the continents and falls well below it under the
+oceans, and the truth lies in most of the posterior intervals and in the
+feasible brackets.
 
 Needs cartopy, shapely and pyshtools, and the Natural Earth land polygons,
 which cartopy downloads into its cache on first use; without any of those
@@ -68,8 +68,8 @@ def app():
             "problem",
             "truth",
             "solve",
-            "bayesian",
             "point",
+            "bayesian",
             "sets",
             "nonstationary",
         )
@@ -93,18 +93,11 @@ def results(app, tmp_path_factory):
     problem = app["truth"].run(scale, seed=seed, outdir=outdir)
     results = {"a": problem}
     results["b"] = app["solve"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["c"] = app["bayesian"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["d"] = app["point"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["e"] = app["sets"].run(
-        scale,
-        seed=seed,
-        outdir=outdir,
-        problem=problem,
-        bayesian=results["c"],
-        point=results["d"],
-    )
+    results["c"] = app["point"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["d"] = app["bayesian"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["e"] = app["sets"].run(scale, seed=seed, outdir=outdir, problem=problem)
     results["f"] = app["nonstationary"].run(
-        scale, seed=seed, outdir=outdir, problem=problem, bayesian=results["c"]
+        scale, seed=seed, outdir=outdir, problem=problem, bayesian=results["d"]
     )
     return results, outdir
 
@@ -127,25 +120,8 @@ def test_the_preconditioned_solve_agrees_with_the_plain_one(results):
     assert woodbury["iterations"] < plain["iterations"]
 
 
-def test_the_posterior_std_returns_to_the_prior_under_the_continents(app, results):
-    part = results[0]["c"]
-    exact = part["exact_std"]
-    prior_std = app["problem"].PRIOR_STD
-    assert exact["central Asia"] > 0.6 * prior_std
-    assert exact["North Pacific"] < 0.3 * prior_std
-    assert exact["South Atlantic"] < 0.3 * prior_std
-    assert part["std_land"] > part["std_sea"]
-    assert np.all(part["std_values"] <= 1.2 * prior_std)
-
-
-def test_the_truth_lies_in_most_posterior_intervals(results):
-    setup, part = results[0]["a"], results[0]["c"]
-    inside = np.abs(part["center"] - setup.true_averages) <= 1.96 * part["deviation"]
-    assert inside.sum() >= 2
-
-
 def test_the_point_answers(app, results):
-    setup, part = results[0]["a"], results[0]["d"]
+    setup, part = results[0]["a"], results[0]["c"]
     problem = setup.problem
     assert problem.chi_squared(part["smallest"], setup.data) == pytest.approx(
         problem.critical_chi_squared(level=app["problem"].LEVEL), rel=1e-2
@@ -156,8 +132,25 @@ def test_the_point_answers(app, results):
     assert part["peaks"]["North Pacific"] > 0.5
 
 
+def test_the_posterior_std_returns_to_the_prior_under_the_continents(app, results):
+    part = results[0]["d"]
+    exact = part["exact_std"]
+    prior_std = app["problem"].PRIOR_STD
+    assert exact["central Asia"] > 0.6 * prior_std
+    assert exact["North Pacific"] < 0.3 * prior_std
+    assert exact["South Atlantic"] < 0.3 * prior_std
+    assert part["std_land"] > part["std_sea"]
+    assert np.all(part["std_values"] <= 1.2 * prior_std)
+
+
+def test_the_truth_lies_in_most_posterior_intervals(results):
+    setup, part = results[0]["a"], results[0]["d"]
+    inside = np.abs(part["center"] - setup.true_averages) <= 1.96 * part["deviation"]
+    assert inside.sum() >= 2
+
+
 def test_the_feasible_brackets_hold_the_truth(results):
-    setup, bayesian, part = results[0]["a"], results[0]["c"], results[0]["e"]
+    setup, bayesian, part = results[0]["a"], results[0]["d"], results[0]["e"]
     low, high = part["brackets"][:, 0], part["brackets"][:, 1]
     assert np.all(low - 1e-6 <= setup.true_averages)
     assert np.all(setup.true_averages <= high + 1e-6)
@@ -165,15 +158,21 @@ def test_the_feasible_brackets_hold_the_truth(results):
     assert np.all(part["gaps"] < 1e-2)
     # A norm bound admits more than the Gaussian prior does.
     assert np.all(high - low > 2 * 1.96 * bayesian["deviation"])
+    # The data narrow the bound of the ball alone, least where they are
+    # fewest: under Africa the bracket is nearly the ball's whole range.
+    alone = part["alone"]
+    assert np.all(alone[:, 0] <= low + 1e-9) and np.all(high <= alone[:, 1] + 1e-9)
+    narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
+    assert narrowed[2] > max(narrowed[0], narrowed[1])
 
 
 def test_the_non_stationary_prior_moves_the_std_with_its_amplitude(results):
-    before, after = results[0]["c"]["exact_std"], results[0]["f"]["exact_std"]
+    before, after = results[0]["d"]["exact_std"], results[0]["f"]["exact_std"]
     assert after["South Atlantic"] > before["South Atlantic"]
     assert after["North Pacific"] < before["North Pacific"]
 
 
 def test_the_figures_were_written(results):
     outdir = results[1]
-    for name in ("truth", "solve", "posterior", "point", "answers", "nonstationary"):
+    for name in ("truth", "solve", "point", "posterior", "brackets", "nonstationary"):
         assert (outdir / f"{name}.png").exists(), name

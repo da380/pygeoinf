@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.layout_engine import ConstrainedLayoutEngine  # noqa: E402
 import numpy as np  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -81,13 +82,20 @@ def describe(calls: Counter) -> str:
     return ", ".join(f"{name} {calls[name]}" for name in order if calls[name])
 
 
-def section(ax: Any, survey: Any, values: np.ndarray, /, **options: Any) -> Any:
-    """A field on the section, depth down, x and z in km."""
-    width, depth = survey.lengths
+def section(
+    ax: Any, survey: Any, values: np.ndarray, /, *, whole: bool = False, **options: Any
+) -> Any:
+    """A field on the section, depth down, x and z in km; on the whole grid,
+    sponge and all, with ``whole``."""
+    values = np.asarray(values)
+    x, z = survey.x, survey.z
+    if not whole:
+        values = values[survey.window]
+        x, z = x[survey.window[0]], z[survey.window[1]]
     h = survey.scale.h
     image = ax.imshow(
-        np.asarray(values).T,
-        extent=(-h / 2, width - h / 2, depth - h / 2, -h / 2),
+        values.T,
+        extent=(x[0] - h / 2, x[-1] + h / 2, z[-1] + h / 2, z[0] - h / 2),
         aspect="equal",
         interpolation="nearest",
         **options,
@@ -97,23 +105,53 @@ def section(ax: Any, survey: Any, values: np.ndarray, /, **options: Any) -> Any:
     return image
 
 
-def sponge_outline(ax: Any, survey: Any, /, *, color: str = "0.4") -> None:
-    """A dashed line where the sponge begins."""
-    from survey import SPONGE
+def sponge_outline(ax: Any, survey: Any, /, *, color: str = "0.45") -> None:
+    """On the whole grid: the section outlined, and the sponge beyond it hatched."""
+    from matplotlib.patches import Rectangle
 
-    width, depth = survey.lengths
-    inner = SPONGE * survey.scale.h
-    ax.plot(
-        [inner, inner, width - inner, width - inner],
-        [0.0, depth - inner, depth - inner, 0.0],
-        color=color,
-        lw=0.8,
-        ls="--",
+    h = survey.scale.h
+    width, depth = survey.section_lengths
+    left, right = survey.x[0] - h / 2, survey.x[-1] + h / 2
+    bottom = survey.z[-1] + h / 2
+    for x0, x1, z0 in ((left, -h / 2, -h / 2), (width - h / 2, right, -h / 2)):
+        ax.add_patch(
+            Rectangle(
+                (x0, z0),
+                x1 - x0,
+                bottom - z0,
+                fill=False,
+                hatch="//",
+                lw=0,
+                color=color,
+            )
+        )
+    ax.add_patch(
+        Rectangle(
+            (-h / 2, depth - h / 2),
+            width,
+            bottom - depth + h / 2,
+            fill=False,
+            hatch="//",
+            lw=0,
+            color=color,
+        )
     )
+    ax.plot(
+        [-h / 2, -h / 2, width - h / 2, width - h / 2],
+        [-h / 2, depth - h / 2, depth - h / 2, -h / 2],
+        color=color,
+        lw=1.0,
+    )
+    ax.set_xlim(left, right)
+    ax.set_ylim(bottom, -h / 2)
 
 
-def save(fig: Any, path: pathlib.Path) -> None:
-    """Write the figure and close it; nothing is shown on screen."""
+def save(fig: Any, path: pathlib.Path, /, *, title: str) -> None:
+    """Title the figure, lay it out, write it and close it; nothing is shown
+    on screen."""
+    fig.suptitle(title)
+    if not isinstance(fig.get_layout_engine(), ConstrainedLayoutEngine):
+        fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
     print(f"figure written to {path}")

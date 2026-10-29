@@ -1,4 +1,4 @@
-"""Part D, continued: Occam's inversion at the 95% level.
+"""Part D: Occam's inversion at the 95% level.
 
 The model closest to the background, in the model space's own Sobolev norm,
 whose chi-squared does not exceed its critical value at 95%: the library's
@@ -28,7 +28,6 @@ from common import (
     parse,
     save,
     section,
-    sponge_outline,
 )
 from inversion import map_mode
 from survey import BOXES, FULL, LEVEL, QUICK, Scale, box_average_operator
@@ -110,7 +109,6 @@ def occam_answer(state: Setup, mode: np.ndarray, /, *, outdir: pathlib.Path) -> 
             vmin=-limit,
             vmax=limit,
         )
-        sponge_outline(ax, survey)
         for _, (x0, x1, z0, z1) in BOXES:
             ax.add_patch(
                 plt.Rectangle(
@@ -121,7 +119,12 @@ def occam_answer(state: Setup, mode: np.ndarray, /, *, outdir: pathlib.Path) -> 
             f"{name}: chi-squared {problem.chi_squared(m, state.data):.0f}", fontsize=10
         )
     fig.colorbar(image, ax=axes, label="velocity less background (km/s)", shrink=0.9)
-    save(fig, outdir / "occam.png")
+    save(
+        fig,
+        outdir / "occam.png",
+        title="Waveform, part D: Occam's model at the 95% level, against the MAP "
+        "mode and the truth",
+    )
     return {
         "model": model,
         "result": result,
@@ -144,13 +147,13 @@ def run(
     mode: np.ndarray | None = None,
 ) -> dict:
     started = time.perf_counter()
-    print(f"\n=== D, continued. Occam's inversion ({scale.name} scale) ===")
+    print(f"\n=== D. Occam's inversion ({scale.name} scale) ===")
     if state is None:
         state = setup(scale, seed=seed)
     if mode is None:
         mode = map_mode(state, outdir=outdir, seed=seed)
     result = occam_answer(state, mode, outdir=outdir)
-    print(f"D, continued, took {time.perf_counter() - started:.1f} s")
+    print(f"D took {time.perf_counter() - started:.1f} s")
     return result
 
 

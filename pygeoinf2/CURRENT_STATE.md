@@ -294,78 +294,33 @@ Recorded rather than settled, so nobody has to rediscover them.
   where the serial run took about two minutes; BLAS threads and the worker
   pool contending, most likely (D-52's measurements point the same way).
   The mini-app no longer uses it (D-170); not investigated further.
-- **`project_function`'s fit leaks into the padding at high mode counts.**
-  Found 2026-10-28 building the planet-density mini-app: on a radial
-  space of 48 modes (`Radial(48, radius=6371, inner_radius=3480, order=2,
-  length_scale=200)`) the fit of a step function (`4.0` above 5711 km,
-  `4.24` below) keeps every direction at a condition number of 3e6
-  (`_FIT_RCOND = 1e-10`, `spectral_element/base.py`) and puts values of
-  3e4 in the padding against a domain maximum of 4.3, so the vector's norm
-  is 4e10. Smooth functions and a dozen modes are fine. The app reads the
-  domain only and measures changes from a reference, so it is unaffected;
-  a norm of such a projection is not. Open: the fit's cut-off, or a
-  penalty on the padding.
-- **A multiplication operator on a padded mesh multiplies the padding.**
-  Same day, same app: `integral_functional() @ multiplication_operator(f)`
-  integrates the product analysed over the whole padded mesh, so the
-  padding's values enter: `+7.6e-5` for a uniform field and `-62 %` for a
-  6 % step on a three-layer radial space, `0.9 %` of the mass for the
-  reference profile. The app integrates by quadrature against
-  `basis_matrix` instead. Open: whether `multiply`/`multiplication_operator`
-  should restrict to the domain, and whether the integral functional
-  should warn when its argument carries weight in the padding.
-- **Two design questions from the planet-density mini-app** (2026-10-28,
-  for David). The Adams-Williamson reference from PREM's velocities is 9 %
-  light in mass (it knows nothing of the transition-zone phase changes),
-  so under a tight prior every answer shows a prior-data conflict rather
-  than the data adjusting little; the app says so, and could instead
-  rescale the reference to the mass first. And Occam on the direct sum of
-  the density field and the two boundary radii moves the inner-core
-  boundary by 18 000 km: in the space's own norm a kilometre of boundary
-  costs nothing next to a density norm over 1e11 km³, which is the
-  weighting question the library leaves to the caller; kept as a
-  cautionary result, with the choice between a deliberate weight on the
-  radii summand and dropping Occam from that part left open.
-- **Three findings from the MFEM mini-app's build** (2026-10-28).
-  `testing.check_traits` forms the whole matrix of any operator claiming
-  `POSITIVE_DEFINITE` on a coordinate space, because the trait implies
-  `INVERTIBLE` (`traits.py`) and the invertibility check extracts the
-  matrix and computes a rank (`testing.py`): 320 applications at
-  dimension 300, and 9216 solves on the app's finite-element operator,
-  which checks symmetry only. `check_operator` floors its comparison
-  scale at one (`testing.py`), so a wrong adjoint on an operator whose
-  pairings are small passes: `x -> 1e-10 x` against `y -> -1e-10 y` has a
-  worst defect of 7e-10 and passes. `MinimumNorm.for_data` returns
-  `estimator_at(...)`, which builds a fresh `LeastSquares` and reassembles
-  the normal operator under a dense family solver: 54 applications on a
-  repeat call where the search itself cost 54.
-- **Findings from the tomography mini-app's build** (2026-10-28; the
-  collapse of the support search's inner end on a direction the data
-  cannot see was fixed the same night, D-180). The
-  `splitting` algorithm's inner end exceeded its outer on such a
-  direction by 1e-4 and took 28 s; a singular data-space family's Cholesky
-  at the floor raises a raw `LinAlgError` where the search catches only
-  `ConvergenceError`. The layered prior from `Layered.sobolev_measure`
-  lives on a plain `CoordinateDirectSum` with no pointwise algebra, so
-  `sample_pointwise_std` fails with an `AttributeError` (the `sqrt` lookup
-  in `probability/gaussian.py` precedes the type check) and posteriors
-  land there too; `ambient_ball` reads only a bare
-  `DiagonalLinearOperator`, so a block-diagonal product prior falls back
-  to 10 000 draws (36 s at dimension 4688); a plain `DirectSum` does not
-  pickle (`__new__` requires `spaces`), which breaks process-parallel
-  `n_jobs` over a measure on one; `diagonals()` of a composition with a
-  diagonal factor raises (`_known_diagonals` in `algebra/nodes.py` lacks
-  the one-dimensional handling `_known_matrix` has); and
-  `point_evaluation_operator` always builds its dense matrix, 3.4 GB at
-  83 000 points, so the app assembles ray by ray.
-- **Findings from the waveform mini-app's build** (2026-10-28; that a
-  NaN-valued operator passed the checks was fixed the same night, D-180).
-  The checks' comparison scale floors at one (also met by the
-  MFEM app, above). `SolveStep.iterate` is a component array rather than
-  a vector of the space when the solver runs viewed (`numerics/solvers.py`),
-  which the docstring does not say. `NewtonCG` discards the truncated
-  CG's stop reason, so an exit on negative curvature cannot be seen from
-  the record.
+- **Findings from the tomography mini-app's build still open** (2026-10-28;
+  the rest were fixed on 2026-10-29, D-181). The `splitting` algorithm's
+  inner end exceeded its outer on a direction the data cannot see by 1e-4
+  and took 28 s. `point_evaluation_operator` always builds its dense
+  matrix, 3.4 GB at 83 000 points, so the app assembles ray by ray; a
+  matrix-free form above some cost is the question.
+- **The checks' comparison scale floors at one** (met by the MFEM and the
+  waveform mini-apps, 2026-10-28). `_assert_close` and the derivative
+  checks in `testing.py` divide by `max(|a|, |b|, 1)`, so on an operator
+  whose pairings are small a "relative" defect is absolute and a wrong
+  adjoint passes: `x -> 1e-10 x` against `y -> -1e-10 y` has a worst
+  defect of 7e-10. Making the scale relative with an absolute floor at
+  `atol` would catch it and may fail small-valued operators with tiny
+  absolute defects that pass today; a decision for David.
+- **Three findings from the revision of the mini-apps' figures** (2026-10-29).
+  `plotting.plot_shell` draws on the ball's own angular grid, which at
+  degree 14 is a 15 × 29 mosaic, and cannot be smoothed: passing
+  `shading=` raises a duplicate-keyword `TypeError` because the sphere
+  renderer sets it itself (`plotting/sphere.py`); the app used
+  `contour=True`. There is no public way to draw a path on a section of a
+  ball: the section frame is private and `plot_section_points` places
+  markers only; the app mirrored the convention. A sampled pointwise
+  standard deviation evaluated at a point off the grid is the projection
+  of a grid product (the rule of D-183), which smooths it: at the
+  tomography quick scale 2000 samples give 0.314 against an exact 0.380,
+  while sampling at the point directly gives 0.379; worth a sentence in
+  `sample_pointwise_std`'s docstring and perhaps a `points=` argument.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.

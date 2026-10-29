@@ -11,7 +11,7 @@ conjugate gradients stop at the first direction of negative curvature it
 shows, so a short run of the exact Newton from the background is the third
 run, to show what that costs. The recovered models against the truth, and
 what each run cost in kernel runs and seconds. The modes are saved for
-part D.
+parts D and E.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from common import (
     parse,
     save,
     section,
-    sponge_outline,
 )
 from inversion import modes_path, newton
 from survey import FULL, QUICK, Scale
@@ -144,7 +143,6 @@ def draw(state: Setup, runs: dict, /, *, outdir: pathlib.Path) -> None:
     for k, (title, values) in enumerate(panels):
         ax = fig.add_subplot(grid[k // 2, k % 2])
         image = section(ax, survey, values, cmap="RdBu", vmin=-limit, vmax=limit)
-        sponge_outline(ax, survey)
         ax.set_title(title, fontsize=10)
         fig.colorbar(image, ax=ax, label="km/s", shrink=0.8)
     ax = fig.add_subplot(grid[2, :])
@@ -166,9 +164,12 @@ def draw(state: Setup, runs: dict, /, *, outdir: pathlib.Path) -> None:
     ax.set_xlabel("Newton iteration")
     ax.set_ylabel("gradient norm")
     ax.legend(frameon=False)
-    fig.suptitle("The velocity less the background, and how the three runs converged")
-    fig.tight_layout()
-    save(fig, outdir / "map.png")
+    save(
+        fig,
+        outdir / "map.png",
+        title="Waveform, part C: the MAP model by Newton-CG. The velocity less the "
+        "background, and how the three runs converged",
+    )
 
 
 def run(

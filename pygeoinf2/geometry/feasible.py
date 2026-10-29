@@ -1816,7 +1816,7 @@ class Primal(Algorithm):
             )
             try:
                 g_inv_v = family.solve(gamma_floor, v).solution
-            except ConvergenceError as error:
+            except (ConvergenceError, np.linalg.LinAlgError) as error:
                 raise ValueError(
                     "The data-space family could not be solved at "
                     f"γ = {gamma_floor:.3g}, where a direction's kernel part is "

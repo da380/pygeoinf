@@ -2844,6 +2844,224 @@ derivative with respect to the data and the Laplace approximation follow
 it. The tomography and waveform apps drop the subclasses that attached
 it by hand.
 
+**D-181. The mechanical findings from the mini-app builds, fixed**
+(2026-10-29, David: address the remaining issues, the mechanical ones
+first). `check_traits` verifies full rank only where the matrix is
+already stored (`_known_matrix`), since extracting it from an operator
+that is applied costs as many applications as the dimension and every
+covariance claiming definiteness paid it. `MinimumNorm.estimator_at`,
+and so `for_data`, hands `LeastSquares` the family's own member through
+`TikhonovFamily.member_solver(damping)`, a solver that answers with the
+family's solve, so a solver that assembled or factored the family once is
+not asked to do it again; the test counts applications. `diagonals()` of
+a composition with a diagonal factor scales rows or columns as
+`_known_matrix` already did. `DirectSum.__new__` takes no arguments when
+unpickling creates the instance bare, so a plain sum pickles and
+process-parallel draws over a measure on one work. `ambient_ball`'s
+exact route reads the covariance's known scaling of components (a
+diagonal, a scaled identity, their compositions, a block diagonal of them
+on a direct sum, where `BlockDiagonalLinearOperator` now reports the
+concatenation) rather than the bare diagonal class alone; a measure
+rescaled point by point is honestly not diagonal and still samples.
+`GaussianMeasure.from_product(..., domain=)` puts the product on a given
+direct sum whose summands are the factors' domains, and
+`Layered.sobolev_measure` passes the layered space itself, so the prior,
+and every posterior built from it, keeps the pointwise algebra;
+`sample_pointwise_std` takes the variance before looking up the square
+root, so a domain without one gets the variance's own `TypeError`. The
+support search catches `LinAlgError` from a factorization at the floor
+beside `ConvergenceError`. `NewtonCG` and `TrustRegionNewton` record why
+each inner solve stopped in `OptimizationResult.inner_stops`, one entry
+per iteration, so a run steered by negative-curvature exits can be seen
+from its result. An iterative solve run on the component views hands its
+callback the iterate as a vector of the operator's domain, through a
+shallow copy of the solver with a lifting callback, so that a solver
+shared between threads is not altered. The tomography app's hand-built
+inner end for the core's direction is gone, D-180 having made it
+unnecessary. Every item has a test.
+
+**D-182. The padding of a spectral-element mesh: the integral reads the
+domain, the fit warns when it leaks** (2026-10-29, from the planet-density
+mini-app's two findings; measured before deciding). The integral
+functional of every spectral-element geometry (`interval`, `interval.radial`,
+`ball`, `disk`, and `Layered` as their sum) evaluates a grid vector by the
+domain's own quadrature of its values (the radial weights times the scale
+squared on an axis, times the Gauss-Legendre shell quadrature in a ball,
+times the ring weight in a disk), and reads as before through the
+derivative components on a vector in the span, where the two agree to
+roundoff. A field not in the span, a pointwise product above all, was
+integrated through its projection onto the modes over the padded mesh,
+which read the padding: `+8e-5` for a uniform field and `-62 %` for a
+6 % step on a three-layer radial space; now exact, so
+`integral_functional() @ multiplication_operator(f)` is the integral of
+`f x` over the domain. The fit over the domain (`project_function`'s
+default `extension="fit"`) stays as it was, and warns: the fit is
+ill-posed by construction, the kept modes restricted to the domain being
+nearly dependent, and for a function with a jump or a kink the smallest
+solution matching the domain values carries values thousands of times
+larger on the padding (3e4 against 4 for a step on 48 radial modes).
+Three remedies were measured and declined: a coarser rank cut-off
+(1e-4 bounds the padding but costs a smooth fit five digits, 3e-10 to
+1e-5); keeping the fewest modes within a tolerance of the best residual
+(every ill-conditioned direction still lowers the domain residual, so
+nothing is dropped); and a weak penalty pulling the padding toward the
+constant continuation (1e-6 bounds the step's padding at 7 and costs a
+smooth fit four digits, and ruins a field that is in the span, whose own
+padding is not that continuation: whole-mesh error 0.5). No prior on the
+padding is right for both a field in the span and a step, so the fit
+keeps exact recovery of the former and `_checked_fit` warns when the
+padding exceeds ten times the largest domain value, naming the remedy:
+sample with `extension="constant"` or `"odd"`, whose domain values are
+exact and whose padding is bounded. *The integral's part of this decision
+was reversed the same day by D-183: the functional reads a grid array
+through its components, as every operator must.*
+
+**D-183. Matrix-free point evaluation on the spectral-element spaces,
+and the rule that an operator reads a grid array through its components**
+(2026-10-29, David: build it for the spectral-element spaces, where point
+evaluation is a local operation, the linear forms sparse in the nodal
+basis, wrapped by the Riesz map; built by an agent from a brief).
+`point_evaluation_operator(points, form=)` on `Interval`, `Radial`,
+`Ball`, `Disk` and their `Layered` spaces takes `"dense"` (the assembled
+basis matrix, as before), `"local"` (the new route) or `"auto"`, which is
+local when the dense matrix would exceed 256 MB (`_DENSE_EVALUATION_LIMIT`,
+a memory budget: the two cost about the same per application and differ
+in memory). The local route, in `spectral_element/_points.py`: each
+point's Lagrange weights on its element from the mesh, so the radial
+part is sparse with `ngll` entries per point; in a ball or a disk the
+coefficient functions of the components contracted with those weights
+and then with the harmonics or the circular modes at the point's angles,
+grouped by element and chunked at 4e6 entries of work space, the
+harmonics kept when their table fits the same 256 MB and recomputed per
+chunk otherwise (a vectorized recurrence fifteen times faster than
+planetmodel's `real_harmonics`, within 1e-13 of it); the adjoint the
+transpose of the same contraction followed by the Riesz map, which in the
+span of the kept modes is the modal projection with the diagonal Gram,
+no system to solve. Against the dense form: 1e-15 forward and adjoint on
+eleven geometries, the ladder's worst defect 1e-14; on the tomography
+scale (dim 4223, 83 000 points) 0.05 s per application against the dense
+form's 0.07 s and 415 MB against 2.8 GB. The chunks are not threaded:
+threading pays only with the harmonics recomputed and BLAS capped, which
+an operator's action must not do to the process. The rule the build
+settled: the forward reads a vector through `to_components`, the field
+with the components of the array, exactly as the dense form does. With
+raw grid values the adjoint holds only in the span, and the pushforward
+covariance of a pointwise-rescaled prior came out 4 % asymmetric;
+through the components the local form equals the dense one on every
+grid array, products included, and `local @ multiplication_operator(u)`
+passes the ladder. The same test refutes the integral half of D-182:
+with the integral functional reading raw grid values by quadrature,
+`integral @ multiplication_operator(u)` fails the adjoint axiom on a
+radial space and on a ball, and through the components it passes to
+1e-14; so the integral functionals read through the components again,
+their docstrings say so, and the exact integral of a grid product is the
+caller's quadrature, which is what the planet-density app does. Two
+surprises recorded: at the centre of a mesh that starts there the mass
+vanishes and the degree-zero modes carry the condensed value, so
+`Phi^T v` is `modes().T @ v` and not an analysis of `M^-1 v` (39 % wrong
+at `r = 0.01`); `basis_matrix` stays on `real_harmonics` so that the
+dense oracle is independent of the code it checks. Not done:
+`jump_operator` still assembles a dense matrix.
+
+**D-184. The mini-apps revised: answers in the order point, measure,
+set; figures per method; the ball tomography three-dimensional**
+(2026-10-29, David: "I would order them: point, measure, set in order of
+treatment, this being roughly in order of algorithmic complexity"; the
+set estimators' priors, the Gaussian hardened to its 95 % ball, match the
+Bayesian prior in coverage level only, not as models, so "it would be
+better not to compare the methods head to head in summary figures;
+rather, each method gets its own set of figures", with prior against
+posterior the comparison inside the measure and the set parts, and
+titles on every figure "as examples produce several figures and it's
+tricky to keep track"; and the ball part of the tomography app, which
+ran its rays in one plane and drew sections through it so that it read
+like the disk again, must be genuinely three-dimensional with
+intersecting sections; done by an agent from a brief). The parts moved
+by letter, not by file: point_data C point, D Bayesian, E set, F the
+extension; tomography B point, C Bayesian, D set, E the ball, F bent
+rays; waveform C the MAP, D Occam (a point estimate, no longer "D,
+continued"), E Laplace, F the ranks; the three answers inside the MFEM
+app's inverse problem likewise, where the point answer going first cut
+its solves from 2434 to 1234. What feeds what was straightened: a set
+part takes nothing from the point or the measure part any more. Every
+figure is titled "App, part X: what it shows", enforced by each app's
+`save`; the point figures show the estimate with two propagated standard
+deviations, the value on exact data and the truth; the measure figures
+set the prior's standard deviation and marginals against the
+posterior's; the set figures set, per property, the bound the prior's
+ball alone admits (its support function) against the certified bracket,
+which corrected one README claim (Africa's bracket of ±46 is not the
+whole range the ball allows; the ball alone admits ±69); the combined
+comparison figures are gone. The ball tomography: twelve sources spread
+over the sphere, thirty receivers on a continent and eight on islands,
+174 rays each traced radially over its great-circle distance with its
+nodes along that great circle, a layered ball of degree 8 in the core and
+14 in the mantle, a truth of four mantle bumps and one in the core; the
+figures a map of the network with the section planes, the truth on a
+shell with the rays beneath it, and three sections (the equator and two
+meridians, through the continent and away from it) each with the rays
+within 6° of its plane; the answers show the coverage's dependence on
+the network (pointwise standard deviation 0.12 under the continent's box
+against 0.59 at its antipode, the prior's 1.0 in the core). Three
+library findings in CURRENT_STATE §7: `plot_shell` draws on the ball's
+own angular grid, coarse at low degree, and refuses a shading keyword
+the sphere renderer sets itself; there is no public way to draw a path
+on a section; a sampled standard-deviation field read at a point is the
+projection of a grid product, which smooths it (the rule of D-183 at
+work), so a pointwise standard deviation at a point should be sampled
+there. The planet-density app was left to its rebuild (D-185).
+
+**D-185. The planet-density mini-app rebuilt simpler, on PREM's own
+layering** (2026-10-29, David: the results were too complex to read;
+drop the Adams-Williamson reference and the mixture, generate the data
+from PREM with suitable errors, a tight prior about PREM and a
+deliberately wide bound, the boundary radii for the weakly nonlinear
+part, normal-mode data through specnm later; then, on seeing the first
+rebuild, the truth as PREM plus a seeded draw from the tight prior so
+that the point answer moves, PREM's own discontinuities as the layers
+since nothing stops it, and "basis functions" rather than "modes" since
+the word must stay free for normal modes; built by an agent). Eleven
+layers at PREM's boundaries with the ocean and the two crustal layers
+merged (each under 20 km), 104 basis functions at the full scale, 200 km
+length scale except in the merged crust, which gets a quarter of its
+thickness; PREM fitted in every layer where it is smooth (within 4e-4,
+the transition zone within 8e-5 against 0.2 before) and sampled with the
+constant extension in the crust, whose three jumps three basis functions
+cannot follow (0.84 there, its mass 0.1 % short); the reference's mass
+and moment agree with PREM's to 1e-5. The truth is PREM plus a draw from
+the tight prior (0.1 g/cm3 pointwise), the data its mass and moment with
+0.1 % errors, rejecting PREM at chi-squared 266 and fitting the truth at
+3; the seed is 2027 because at 2026 the draw left PREM fitting the data.
+The parts: A the setup, B the tight prior and C the wide bound (a ball
+whose radius is the 95 % radius of the Gaussian with pointwise std 3),
+each answered point (the minimum-norm change from PREM in the prior's
+Mahalanobis norm, through the parameterized problem, with its error
+budget), measure (prior against posterior) and set (the ball alone
+against the data's bracket), with their own titled figures; D the ICB
+and CMB radii as unknowns in units of 50 km, MAP by Newton on the
+Gauss-Newton Hessian, Laplace, Occam. What it shows now: the point
+answer moves most of the way on the mantle mean and its error is almost
+all bias, which its budget states; the wide prior leaves a thin ellipse
+along the line of constant mass; the data prefer the tight prior by 5.5
+nats; MAP recovers the CMB shift within two Laplace standard deviations
+and explains the light Earth partly by moving it. Occam in D remains the
+norm's answer and not the Earth's: it moves the ICB out by 1500 km
+because the model space's Sobolev norm, with a 95 % ball of radius 3e5,
+makes a unit of displacement thirty thousand times cheaper than the
+density change with the same effect on the mass; the 50 km unit does not
+cure that. David: this is a point about norms on direct sums, and about
+Occam itself, since "simple" is norm dependent and nothing fixes the
+norm; so it is the point of the part, shown rather than told. Part D runs
+Occam twice from the same reference to the same level, in the model
+space's own norm and in the prior's Mahalanobis norm through the
+parameterized problem (as the point answers of B and C already measure
+structure): the first leaves the density as PREM's and moves the ICB out
+by 1547 km and the CMB in by 132 km, the second makes the mantle 0.038
+lighter and moves the CMB 24 km in, near the MAP model; each is the
+smaller change in its own norm (31 against 5e4 in the model space's,
+31 against 0.98 in the prior's) and both fit the data equally, and the
+README's paragraph on Occam is written around that.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

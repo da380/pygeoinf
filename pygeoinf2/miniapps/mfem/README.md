@@ -46,7 +46,9 @@ The parts build up from the first form to the second:
   the matrix form's, the true adjoint `M^-1 K^T` of a non-symmetric
   convection form, the Laplacian and MFEM's inverse of it; then the heat
   source behind sixteen sensors under a Matérn prior built from MFEM's
-  solves and white noise, and the same data through the matrix form.
+  solves and white noise, and the same data through the matrix form. Its
+  figure: the truth, the posterior mean and its difference from the matrix
+  form's, and the total source's marginal before and after.
 - **B, the matrix form** (`matrix_form.py`): `MfemSpace` on an interval; its
   axioms and coordinate map, a linear form's load vector against its
   representer, a bilinear form as the Galerkin matrix of its operator, and
@@ -55,7 +57,8 @@ The parts build up from the first form to the second:
   diffusion on the unit square, `u = 0` on the boundary as a subspace on
   which the Laplacian is positive definite, the forward operator the sensors
   composed with MFEM's solve; the posterior on the total source over the
-  central square, and the same data at polynomial orders one to three.
+  central square, and the same data at polynomial orders one to three,
+  drawn as the prior's and the posterior's 95% intervals at each order.
 - **D, the box operator and its check ladder** (`box_ladder.py`): the
   operator's three steps and their composition each checked; the plain
   transpose without the Gram factors refused; the operator against the exact
@@ -64,14 +67,18 @@ The parts build up from the first form to the second:
 - **E, an inverse problem on the box operator** (`box_inverse.py`): the
   source `f` behind noisy readings of `u` at scattered sensors, none inside a
   disc of radius 0.18 about (0.7, 0.3), the prior the identity covariance on
-  the box's `H^2`; the posterior, the minimum-norm estimate under the
-  discrepancy principle and the feasible set's certified brackets on two
-  disc averages of `f`, one among the sensors and one in the gap.
+  the box's `H^2`; the minimum-norm estimate under the discrepancy
+  principle, the posterior and the feasible set's certified brackets on two
+  disc averages of `f`, one among the sensors and one in the gap. A figure
+  for each: the estimate with its error budget, the posterior against the
+  prior (the pointwise standard deviation before and after, each average's
+  marginal before and after), and each bracket against the bound the prior's
+  ball admits alone.
 
 Two scales. `--quick` runs every part in about 20 seconds and is what the
 test suite runs: the unit square in 6 by 6 elements, the box on a 32 by 32
 grid with 24 by 24 quadratic elements, length scale 0.1, screening length
-0.05 and 150 sensors. The full scale runs them in about 100 seconds: the
+0.05 and 150 sensors. The full scale runs them in about 75 seconds: the
 unit square in 10 by 10 elements, the box on a 64 by 64 grid with 48 by 48
 quadratic elements (9216 degrees of freedom), length scale 0.05, screening
 length 0.025 and 600 sensors. Both are seeded.
@@ -91,9 +98,10 @@ MPLBACKEND=Agg python box_ladder.py         # one part; likewise hilbert_form.py
 ```
 
 Every script takes `--quick`, `--outdir` and `--seed`; a part run on its own
-gives the numbers it gives in the sequence. Figures are written next to the
-sources (`quick/` at the quick scale); on the box's maps the first coordinate
-runs up the page, as the library draws a box. The test is
+gives the numbers it gives in the sequence. Each part's figures are titled
+with the app and the part, one kind of answer to a figure, and written next
+to the sources (`quick/` at the quick scale); on the box's maps the first
+coordinate runs up the page, as the library draws a box. The test is
 `pygeoinf2/tests/test_miniapp_mfem.py`, marked `slow` and skipped without
 PyMFEM: it tests the three modules class by class and runs every part at the
 quick scale through its script's entry point.
@@ -185,23 +193,25 @@ reaching modes the elements cannot carry.
 **E, three answers.** 600 sensors, noise 0.05; the truth's chi-squared is
 631 on 600 data.
 
-| average of `f` | truth | posterior, 95% interval | minimum norm, 2 propagated sd | bias | certified bracket |
+| average of `f` | truth | minimum norm, 2 propagated sd | bias | posterior, 95% interval | certified bracket |
 |---|---|---|---|---|---|
-| among the sensors | -0.071 | -0.008, [-0.120, +0.104] | -0.035 ± 0.044 | +0.021 | [-3.70, +3.69] |
-| in the gap | +0.062 | +0.116, [-1.095, +1.327] | +0.151 ± 0.073 | +0.067 | [-39.6, +39.9] |
+| among the sensors | -0.071 | -0.035 ± 0.044 | +0.021 | -0.008, [-0.120, +0.104] | [-3.70, +3.69] |
+| in the gap | +0.062 | +0.151 ± 0.073 | +0.067 | +0.116, [-1.095, +1.327] | [-39.6, +39.9] |
 
-- The posterior: pointwise standard deviation 0.25 at the centre of the
+- The minimum-norm estimate: a damping of 198 meets the discrepancy
+  principle (chi-squared 658 against the critical 658), 1234 solves, 19 s.
+  Its propagated error in the gap, 0.073, says nothing of its bias there,
+  which only the truth reveals.
+- The posterior: pointwise standard deviation 0.25 at the center of the
   observed disc and 0.96, almost the prior's 1, in the gap; the posterior
   mean fits the data to a chi-squared of 237. 1203 MFEM solves for the mean
   and 97 more for 48 samples, 20 s.
-- The minimum-norm estimate: a damping of 198 meets the discrepancy
-  principle (chi-squared 658 against the critical 658), 2434 solves, 42 s.
-  Its propagated error in the gap, 0.073, says nothing of its bias there,
-  which only the truth reveals.
 - The feasible set under the prior's 95% ball (radius 11.6 in `H^2`) and
-  the noise's: 1380 solves, 22 s; the true averages lie in the polytope of
+  the noise's: 1380 solves, 21 s; the true averages lie in the polytope of
   the four half-spaces. A norm bound admits far more than the Gaussian
-  prior, and the gap's bracket is ten times the observed disc's.
+  prior, and the gap's bracket is ten times the observed disc's: the ball
+  alone admits ±45.1 for either average, which the data narrow to a twelfth
+  among the sensors and hardly at all in the gap.
 
 ## Choices
 

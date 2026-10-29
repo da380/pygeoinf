@@ -324,7 +324,16 @@ class TestAlgebraAndMeasures:
     def test_the_prior_lives_on_the_space_with_independent_layers(self, build, rng):
         space = build()
         measure = space.sobolev_measure(2.5, pointwise_std=0.3)
-        assert measure.domain == space
+        assert measure.domain is space
+        # The layered space's own pointwise algebra, and the exact spectrum
+        # of the block-diagonal covariance, are both available to the measure.
+        deviation = measure.sample_pointwise_std(4, rng=rng)
+        assert len(deviation) == len(space.layers)
+        # Rescaled point by point the covariance is not diagonal; without the
+        # rescaling the block-diagonal spectrum is read off exactly.
+        assert measure._diagonal_eigenvalues() is None
+        plain = space.sobolev_measure(2.5)
+        assert plain._diagonal_eigenvalues().shape == (space.dim,)
         check_measure(measure, rng=rng, samples=3000, rtol=0.2)
         a = space.layers[0].random_point(rng=rng)
         b = space.layers[1].random_point(rng=rng)

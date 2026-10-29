@@ -1,4 +1,4 @@
-"""Part F: bent rays.
+"""Part G: bent rays.
 
 The forward problem as it is rather than as linearized: the travel time
 through the slowness the model describes, along the ray that slowness bends.
@@ -7,7 +7,7 @@ equations integrated from the source and the take-off angle found by a root
 find on where the ray emerges (:func:`rays.bend`). By Fermat's principle a
 travel time is stationary under a change of path, so its derivative with
 respect to the slowness is the path integral along the current bent ray: the
-linearized operator at a model is the path-integral operator of parts A to E
+linearized operator at a model is the path-integral operator of parts A to F
 built on that model's rays, with the library's adjoint.
 
 The prior is three times wider than in the other parts, a pointwise standard
@@ -67,9 +67,11 @@ MAX_DISTANCE = 70.0
 #: The mantle under the stations, ``(r1, r2, angle1, angle2)``, where the
 #: rays cross and an error is worth reading.
 UNDER_THE_STATIONS = (0.7, 1.0, 0.0, 150.0)
-#: No re-traced ray may go deeper than this; the deepest reference ray turns
-#: at about 0.65.
-FLOOR = CORE_RADIUS + 0.03
+#: No re-traced ray may go deeper than this, two hundredths above the core.
+#: The deepest reference ray turns at about 0.65, but in a draw from the
+#: wide prior moved by the derivative check's largest step one can turn
+#: below 0.58.
+FLOOR = CORE_RADIUS + 0.02
 #: The integrator's step of arc length.
 STEP = 5e-3
 #: The finite-difference steps of the derivative check, in the space's norm,
@@ -301,7 +303,7 @@ class BentProblem:
 
 def build(scale: Scale, /, *, seed: int) -> BentProblem:
     """The space, the wider prior, the rays, the bent forward and the data."""
-    rng = np.random.default_rng([seed, ord("f")])
+    rng = np.random.default_rng([seed, ord("g")])
     pairs = network(scale.sources, scale.receivers, max_distance=MAX_DISTANCE)
     space = model_space(scale)
     prior = identity_prior(space, std=PRIOR_STD)
@@ -382,7 +384,7 @@ def bent_answer(
     """The derivative check, the bending, the mode against the linear mean."""
     started = time.perf_counter()
     scale, space, forward = problem.scale, problem.space, problem.forward
-    print(f"\n=== F. Bent rays ({scale.name}) ===")
+    print(f"\n=== G. Bent rays ({scale.name}) ===")
     core, mantle = space.layers
     print(
         f"{len(problem.pairs)} rays between 20 and {MAX_DISTANCE:g} degrees on the "
@@ -523,12 +525,13 @@ def bent_answer(
     draw_rays(axes[1, 1], mode_rays, colors="black", linewidths=0.4, alpha=0.6)
     reach = float(np.abs(mantle.interior_values(gap[1])).max())
     draw(space, gap, axes[1, 2], title="the mode less the linear mean", limit=reach)
-    fig.suptitle(
-        f"What bending changes: rays moved by up to {shifts.max():.3f}, the answer by "
-        f"{change:.0%}"
+    save(
+        fig,
+        outdir / "bent.png",
+        title="Tomography, part G: bent rays. What bending changes: the rays moved by "
+        f"up to {shifts.max():.3f}, the answer by {change:.0%}",
     )
-    save(fig, outdir / "bent.png")
-    print(f"F took {time.perf_counter() - started:.1f} s")
+    print(f"G took {time.perf_counter() - started:.1f} s")
     return {
         "zero": zero,
         "shift_at_zero": shift,
@@ -559,7 +562,7 @@ def _relative(problem: BentProblem, model: Any, reference: Any, /) -> float:
 def run(scale: Scale = BENT, /, *, seed: int, outdir: pathlib.Path) -> dict:
     problem = build(scale, seed=seed)
     return {"problem": problem} | bent_answer(
-        problem, rng=part_rng(seed, "f"), outdir=outdir
+        problem, rng=part_rng(seed, "g"), outdir=outdir
     )
 
 

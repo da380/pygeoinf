@@ -646,3 +646,22 @@ class TestMeasures:
             samples=4000,
             rtol=0.18,
         )
+
+
+class TestTheIntegralReadsThroughTheComponents:
+    def test_a_composition_with_a_multiplication_is_self_consistent(self, rng):
+        """A pointwise product is not in the span of the modes; the integral
+        reads it through its components, like every operator on the space,
+        which is what keeps the adjoint of a composition honest."""
+        space = ball(2.0)
+        integral = space.integral_functional()
+        u, x = space.random(rng=rng), space.random(rng=rng)
+        product = space.multiply(u, x)
+        assert integral(product) == pytest.approx(
+            integral.derivative_components @ space.to_components(product), rel=1e-10
+        )
+        check_operator(
+            integral @ space.multiplication_operator(u),
+            rng=rng,
+            measure=space.sobolev_measure(1.0),
+        )

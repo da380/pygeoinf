@@ -35,9 +35,10 @@ NAMES = (
     "common",
     "problem",
     "setup",
-    "bayesian",
     "point",
+    "bayesian",
     "sets",
+    "mixture",
     "ball",
     "bent",
 )
@@ -173,8 +174,7 @@ def quick_problem(app):
 
 @pytest.fixture(scope="module")
 def ball_problem(app):
-    problem = app["problem"]
-    return problem.build(scale=problem.BALL, quiet=True)
+    return app["ball"].build(quiet=True)
 
 
 @pytest.mark.parametrize("which", ["quick_problem", "ball_problem"])
@@ -229,26 +229,22 @@ def test_no_ray_is_counted_twice(app, quick_problem):
     assert np.linalg.matrix_rank(matrix) == len(quick_problem.pairs)
 
 
-def test_an_unseen_direction_is_reached_by_an_explicit_model(app, quick_problem):
-    """The core's mean, which no ray sees: the smallest model fitting the data
-    plus the property's representer, filled out to the ball, is feasible and
-    reaches the certified outer value."""
+def test_an_unseen_direction_has_a_tight_bracket(quick_problem):
+    """The core's mean, which no ray sees: the support search's attaining
+    model reaches the certified outer value, the smallest fitting model plus
+    as much of the property's representer as the ball holds."""
     from pygeoinf2 import BackusGilbertParker, CholeskySolver
 
-    sets, level = app["sets"], app["problem"].LEVEL
     built = quick_problem
+    level = 0.95
     ball = built.prior.ambient_ball(level=level)
     noise_ball = built.problem.error_measure.ambient_ball(level=level)
-    smallest = sets.smallest_fitting_model(built)
     feasible = BackusGilbertParker(
         built.problem, built.properties, ball, noise=noise_ball, solver=CholeskySolver()
     )(built.data)
     core = built.properties.codomain.basis_vector(2)
-    value, norm, misfit = sets.unseen_end(built, ball, noise_ball, smallest, core)
-    assert norm <= 1.0 + 1e-9 and misfit <= 1.0 + 1e-9
-    assert value == pytest.approx(feasible.support(core), rel=1e-5)
-    seen = built.properties.codomain.basis_vector(0)
-    assert sets.unseen_end(built, ball, noise_ball, smallest, seen) is None
+    inner, outer = feasible.support_bracket(core)
+    assert inner == pytest.approx(outer, rel=1e-3)
 
 
 # ------------------------------------------------------------------------- #
@@ -263,50 +259,15 @@ def results(app, tmp_path_factory):
     scale, seed = app["problem"].QUICK, 2026
     problem = app["setup"].run(scale, seed=seed, outdir=outdir)
     results = {"a": problem}
-    results["b"] = app["bayesian"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["c"] = app["point"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["d"] = app["sets"].run(
-        scale,
-        seed=seed,
-        outdir=outdir,
-        problem=problem,
-        bayesian=results["b"],
-        point=results["c"],
-    )
+    results["b"] = app["point"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["c"] = app["bayesian"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["d"] = app["sets"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["e"] = app["mixture"].run(scale, seed=seed, outdir=outdir, problem=problem)
     return results, outdir
 
 
-def test_the_posterior_std_is_smaller_where_the_coverage_is(app, results):
-    part = results[0]["b"]
-    exact, prior = part["exact_std"], part["prior_std"]
-    assert exact["well covered"] < exact["poorly covered"] < exact["core"]
-    assert exact["under the stations"] < 0.5 * prior["under the stations"]
-    # The core is a layer of its own, which no ray enters.
-    assert exact["core"] == pytest.approx(prior["core"], rel=1e-10)
-    # The sampled field agrees with the exact values to its standard error.
-    samples = app["problem"].QUICK.std_samples
-    for name, value in exact.items():
-        assert part["sampled_std"][name] == pytest.approx(
-            value, rel=4.0 / np.sqrt(2.0 * samples)
-        )
-
-
-def test_the_core_posterior_is_its_prior(results):
-    part = results[0]["b"]
-    assert part["center"][2] == pytest.approx(0.0, abs=1e-12)
-    assert part["deviation"][2] == pytest.approx(part["prior_deviation"][2], rel=1e-10)
-    assert np.all(part["deviation"][:2] < part["prior_deviation"][:2])
-    assert part["deviation"][0] < part["deviation"][1]
-
-
-def test_the_truth_lies_in_most_posterior_intervals(results):
-    setup, part = results[0]["a"], results[0]["b"]
-    inside = np.abs(part["center"] - setup.true_properties) <= 1.96 * part["deviation"]
-    assert inside.sum() >= 2
-
-
 def test_the_point_answers(app, results):
-    setup, part = results[0]["a"], results[0]["c"]
+    setup, part = results[0]["a"], results[0]["b"]
     problem = setup.problem
     assert problem.chi_squared(part["smallest"], setup.data) == pytest.approx(
         problem.critical_chi_squared(level=app["problem"].LEVEL), rel=1e-2
@@ -320,8 +281,40 @@ def test_the_point_answers(app, results):
     assert part["bias"][2] == pytest.approx(-setup.true_properties[2], rel=1e-8)
 
 
+def test_the_posterior_std_is_smaller_where_the_coverage_is(app, results):
+    part = results[0]["c"]
+    exact, prior = part["exact_std"], part["prior_std"]
+    assert exact["well covered"] < exact["poorly covered"] < exact["core"]
+    assert exact["under the stations"] < 0.5 * prior["under the stations"]
+    # The core is a layer of its own, which no ray enters.
+    assert exact["core"] == pytest.approx(prior["core"], rel=1e-10)
+    # The sampled field agrees with the exact values to its standard error
+    # and the smoothing of a product of draws read off the grid through the
+    # kept modes, which at the quick truncation moves a value by up to a
+    # fifth where the coverage changes quickly.
+    samples = app["problem"].QUICK.std_samples
+    for name, value in exact.items():
+        assert part["sampled_std"][name] == pytest.approx(
+            value, rel=0.2 + 2.0 / np.sqrt(2.0 * samples)
+        )
+
+
+def test_the_core_posterior_is_its_prior(results):
+    part = results[0]["c"]
+    assert part["center"][2] == pytest.approx(0.0, abs=1e-12)
+    assert part["deviation"][2] == pytest.approx(part["prior_deviation"][2], rel=1e-10)
+    assert np.all(part["deviation"][:2] < part["prior_deviation"][:2])
+    assert part["deviation"][0] < part["deviation"][1]
+
+
+def test_the_truth_lies_in_most_posterior_intervals(results):
+    setup, part = results[0]["a"], results[0]["c"]
+    inside = np.abs(part["center"] - setup.true_properties) <= 1.96 * part["deviation"]
+    assert inside.sum() >= 2
+
+
 def test_the_feasible_brackets_hold_the_truth(results):
-    setup, bayesian, part = results[0]["a"], results[0]["b"], results[0]["d"]
+    setup, bayesian, part = results[0]["a"], results[0]["c"], results[0]["d"]
     low, high = part["brackets"][:, 0], part["brackets"][:, 1]
     assert np.all(low - 1e-6 <= setup.true_properties)
     assert np.all(setup.true_properties <= high + 1e-6)
@@ -329,13 +322,75 @@ def test_the_feasible_brackets_hold_the_truth(results):
     assert np.all(
         part["gaps"] < 1e-3 * np.maximum(1.0, np.abs(part["brackets"]).max(1))
     )
-    # A norm bound admits more than the Gaussian prior does.
+    # A norm bound admits more than the Gaussian prior does, and the data
+    # narrow the bound of the ball alone where the rays cross.
     assert np.all(high - low > 2 * 1.96 * bayesian["deviation"])
+    alone = part["alone"]
+    assert np.all(alone[:, 0] <= low + 1e-9) and np.all(high <= alone[:, 1] + 1e-9)
+    narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
+    assert narrowed[0] < narrowed[1]
+
+
+def test_the_mixture_finds_the_plume(results):
+    """The weights are a distribution over the candidates, the largest on
+    the plume's own at the app's noise, and they flatten toward the prior's
+    equal weights as the noise grows."""
+    part = results[0]["e"]
+    weights, true_index = part["weights"], part["true_index"]
+    count = len(weights)
+    assert weights.sum() == pytest.approx(1.0, abs=1e-12)
+    assert np.all(weights >= 0.0)
+    assert int(np.argmax(weights)) == true_index
+    assert part["prior_weights"] == pytest.approx(np.full(count, 1.0 / count))
+    sweep = part["sweep"]
+    assert np.allclose(sweep["weights"].sum(axis=-1), 1.0, atol=1e-12)
+    factors = list(sweep["factors"])
+    average = part["average_weights"]
+    away = [
+        np.abs(average[factors.index(factor)] - 1.0 / count).max()
+        for factor in (1.0, 10.0, 100.0)
+    ]
+    assert away[0] > away[1] > away[2]
+    assert away[2] < 0.05
+    assert (
+        average[factors.index(1.0), true_index]
+        > average[factors.index(100.0), true_index]
+    )
+    # Each candidate's own travel times favor it.
+    confusion = sweep["confusion"][factors.index(1.0)]
+    assert np.array_equal(np.argmax(confusion, axis=1), np.arange(count))
+
+
+def test_the_mixture_posterior_on_the_properties(results):
+    """Pushed onto the properties the posterior is a mixture with the same
+    weights; the core, which no ray sees, keeps its prior."""
+    part = results[0]["e"]
+    pushed, before = part["on_properties"], part["prior_on_properties"]
+    assert pushed.weights == pytest.approx(part["weights"], abs=1e-12)
+    assert before.weights == pytest.approx(part["prior_weights"], abs=1e-12)
+    space = pushed.domain
+    core = space.basis_vector(2)
+    for after, prior in zip(pushed.components, before.components):
+        assert space.to_components(after.expectation)[2] == pytest.approx(
+            space.to_components(prior.expectation)[2], abs=1e-12
+        )
+        assert space.inner_product(core, after.covariance(core)) == pytest.approx(
+            space.inner_product(core, prior.covariance(core)), rel=1e-10
+        )
 
 
 def test_the_figures_were_written(results):
     outdir = results[1]
-    for name in ("setup", "posterior", "point", "answers"):
+    for name in (
+        "setup",
+        "point",
+        "posterior",
+        "brackets",
+        "mixture_candidates",
+        "mixture_weights",
+        "mixture_marginals",
+        "mixture_mean",
+    ):
         assert (outdir / f"{name}.png").exists(), name
 
 
@@ -344,32 +399,106 @@ def test_the_figures_were_written(results):
 # ------------------------------------------------------------------------- #
 
 
+def test_the_ball_network_spans_the_sphere(app, ball_problem):
+    """Sources and receivers spread over the sphere, not on one great circle,
+    and every ray within the mantle's range of distances."""
+    ball, problem = app["ball"], app["problem"]
+    for stations in (ball_problem.scale.sources, ball_problem.scale.receivers):
+        vectors = ball.unit(*np.array(stations).T)
+        assert np.linalg.matrix_rank(vectors, tol=0.1) == 3
+    distances = [ball.apart(s, r) for s, r in ball_problem.pairs]
+    assert min(distances) >= problem.MIN_DISTANCE
+    assert max(distances) <= problem.MAX_DISTANCE
+    assert 100 <= len(ball_problem.pairs) <= 400
+
+
+def test_a_ball_ray_lies_on_the_great_circle_of_its_ends(app, ball_problem):
+    """Its nodes in the plane of its source, its receiver and the center, at
+    the radii and angles the radial tracer gives, from one end to the other."""
+    ball, problem = app["ball"], app["problem"]
+    for (source, receiver), ray in zip(
+        ball_problem.pairs[::17], ball_problem.rays[::17]
+    ):
+        normal = np.cross(ball.unit(*source), ball.unit(*receiver))
+        normal /= np.linalg.norm(normal)
+        directions = ball.unit(ray.nodes[:, 1], ray.nodes[:, 2])
+        assert np.abs(directions @ normal).max() < 1e-12
+        assert ray.nodes[0, 1:] == pytest.approx(source, abs=1e-9)
+        assert ray.nodes[-1, 1:] == pytest.approx(receiver, abs=1e-9)
+        flat = problem.MANTLE.trace(
+            0.0, ball.apart(source, receiver), nodes=len(ray.nodes)
+        )
+        assert np.allclose(ray.nodes[:, 0], flat.nodes[:, 0])
+        start = ball.unit(*source)
+        swept = np.degrees(
+            np.arctan2(
+                np.linalg.norm(np.cross(directions, start), axis=1), directions @ start
+            )
+        )
+        assert np.allclose(swept, flat.nodes[:, 1], atol=1e-9)
+
+
+@pytest.mark.parametrize("which", [0, 1, 2])
+def test_the_ball_figures_draw_in_the_librarys_section_frame(app, ball_problem, which):
+    """Where the app draws the rays and the boxes on a section is where the
+    library's own section points go."""
+    import matplotlib.pyplot as plt
+
+    from pygeoinf2 import plotting
+
+    ball = app["ball"]
+    _, plane = ball.SECTIONS[which]
+    points = np.concatenate([ray.nodes for ray in ball_problem.rays[::5]])
+    fig, ax = plt.subplots()
+    scatter, near = plotting.plot_section_points(
+        ball_problem.space, points, ax=ax, tolerance=ball.SLAB, **plane
+    )
+    xy, off = ball.in_plane(points, plane)
+    plt.close(fig)
+    assert np.array_equal(near, off <= ball.SLAB)
+    assert np.allclose(scatter.get_offsets(), xy[near], atol=1e-12)
+
+
 @pytest.fixture(scope="module")
 def ball_results(app, tmp_path_factory):
+    # The shells are maps, drawn through cartopy on the sphere's grid.
+    pytest.importorskip("cartopy")
+    pytest.importorskip("pyshtools")
     outdir = tmp_path_factory.mktemp("tomography_ball")
-    return app["ball"].run(app["problem"].BALL, seed=2026, outdir=outdir), outdir
+    return app["ball"].run(app["ball"].BALL, seed=2026, outdir=outdir), outdir
 
 
-def test_the_ball_reads_the_same_structure(ball_results):
+def test_the_ball_answers_follow_the_coverage(ball_results):
     results = ball_results[0]
-    exact = results["b"]["exact_std"]
+    setup, point, measure, sets = (results[key] for key in "abcd")
+    # The standard deviation is smaller where the rays cross, and the core's
+    # posterior is its prior.
+    exact, prior = measure["exact_std"], measure["prior_std"]
     assert exact["well covered"] < exact["poorly covered"] < exact["core"]
-    assert results["b"]["deviation"][2] == pytest.approx(
-        results["b"]["prior_deviation"][2], rel=1e-10
+    assert exact["under the stations"] < 0.5 * prior["under the stations"]
+    assert exact["core"] == pytest.approx(prior["core"], rel=1e-10)
+    assert measure["deviation"][2] == pytest.approx(
+        measure["prior_deviation"][2], rel=1e-10
     )
-    assert (
-        results["c"]["peaks"]["well covered"] > results["c"]["peaks"]["poorly covered"]
-    )
-    setup, part = results["a"], results["d"]
-    low, high = part["brackets"][:, 0], part["brackets"][:, 1]
+    assert measure["deviation"][0] < measure["deviation"][1]
+    # The point estimate is zero in the core, all of its error bias.
+    assert point["estimate"][2] == pytest.approx(0.0, abs=1e-12)
+    # The truth lies in every bracket and in the polytope they bound, and the
+    # data narrow the ball's bound most where the rays cross.
+    low, high = sets["brackets"][:, 0], sets["brackets"][:, 1]
+    assert sets["truth_in_ball"]
     assert np.all(low - 1e-6 <= setup.true_properties)
     assert np.all(setup.true_properties <= high + 1e-6)
-    assert part["inside"]
+    assert sets["inside"]
+    alone = sets["alone"]
+    narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
+    assert narrowed[0] < narrowed[1] < 1.0
+    assert narrowed[0] < 0.2
 
 
 def test_the_ball_figures_were_written(ball_results):
     outdir = ball_results[1]
-    for name in ("setup", "posterior", "point", "answers"):
+    for name in ("setup", "point", "posterior", "brackets"):
         assert (outdir / f"ball_{name}.png").exists(), name
 
 

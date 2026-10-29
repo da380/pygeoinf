@@ -24,18 +24,11 @@ def run_all(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
     problem = truth.run(scale, seed=seed, outdir=outdir)
     results = {"a": problem}
     results["b"] = solve.run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["c"] = bayesian.run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["d"] = point.run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["e"] = sets.run(
-        scale,
-        seed=seed,
-        outdir=outdir,
-        problem=problem,
-        bayesian=results["c"],
-        point=results["d"],
-    )
+    results["c"] = point.run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["d"] = bayesian.run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["e"] = sets.run(scale, seed=seed, outdir=outdir, problem=problem)
     results["f"] = nonstationary.run(
-        scale, seed=seed, outdir=outdir, problem=problem, bayesian=results["c"]
+        scale, seed=seed, outdir=outdir, problem=problem, bayesian=results["d"]
     )
     print(f"\ntotal {time.perf_counter() - started:.1f} s; figures in {outdir}")
     return results

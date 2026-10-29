@@ -20,8 +20,8 @@ and the bottom. The C++ also provides the scheme's linearization, its exact
 discrete adjoint and the second-order adjoint, and they are wrapped as one
 library `Operator` with a first and a second derivative. On it the library's
 nonlinear estimators run unchanged: the MAP model by Newton-CG on the
-Gauss-Newton and on the exact Hessian, the Laplace Gaussian at the mode, and
-Occam's inversion. Built with MPI, the same solver splits its grid across
+Gauss-Newton and on the exact Hessian, Occam's inversion, and the Laplace
+Gaussian at the mode. Built with MPI, the same solver splits its grid across
 ranks, and the operator and the estimators above it do not change.
 
 The parts:
@@ -36,13 +36,15 @@ The parts:
   background.
 - **C, the MAP model** (`newton.py`): Newton-CG from the background with the
   Gauss-Newton Hessian; then, from where that stopped, with the exact
-  Hessian; and a short run with the exact Hessian from the background.
-- **D, the uncertainty** (`laplace.py`): the Laplace Gaussian at the mode,
+  Hessian; and a short run with the exact Hessian from the background. Its
+  figure: the three models against the truth, and how the runs converged.
+- **D, Occam's inversion** (`occam.py`): Occam's model at the 95% level,
+  against the MAP mode and the truth, as its figure shows them.
+- **E, the uncertainty** (`laplace.py`): the Laplace Gaussian at the mode,
   pushed onto the mean of `m` over four boxes, one over each anomaly and one
-  over plain background, against the prior's.
-- **D, continued** (`occam.py`): Occam's model at the 95% level, against the
-  MAP mode and the truth.
-- **E, the grid split across MPI ranks** (`mpi_run.py`, under `mpiexec`): the
+  over plain background, against the prior's; its figure sets each box
+  mean's two standard deviations after against before, with the truth.
+- **F, the grid split across MPI ranks** (`mpi_run.py`, under `mpiexec`): the
   distributed operator against the serial one, the check ladder through it,
   the time of each kind of application, and part C's Gauss-Newton MAP.
 
@@ -60,11 +62,11 @@ mostly sponge, with 300 steps, two shots and twelve receivers.
 ```
 cd pygeoinf2/miniapps/waveform
 python build.py                              # cmake + nanobind, -O3, module copied in place
-MPLBACKEND=Agg python run_all.py --quick     # parts A to D, small scale
+MPLBACKEND=Agg python run_all.py --quick     # parts A to E, small scale
 MPLBACKEND=Agg python proofs.py              # one part at the full scale; likewise
-                                             # synthetic.py, newton.py, laplace.py, occam.py
+                                             # synthetic.py, newton.py, occam.py, laplace.py
 MPICXX=/path/to/mpicxx python build.py --mpi              # also acoustic_mpi
-mpiexec -n 3 python mpi_run.py --quick                    # part E, that MPI's mpiexec
+mpiexec -n 3 python mpi_run.py --quick                    # part F, that MPI's mpiexec
 ```
 
 The build is the C++ backend mini-app's: `find_package(nanobind)`,
@@ -79,14 +81,15 @@ own communication.
 
 Every script takes `--quick`, `--outdir` and `--seed`. A part run alone
 rebuilds the problem from the seed. Part C saves its modes to
-`modes_<scale>_<seed>.npz` beside the figures, and the two scripts of part D
-read the polished mode from there, or run part C's Newton iterations first
-when it is missing; at the full scale run the scripts one at a time, C before
-D. Figures are written next to the sources (`quick/` at the quick scale). The
-test is `pygeoinf2/tests/test_miniapp_waveform.py`, marked `slow`: the proofs
-on the proof grid and parts B to D at the quick scale, in about 50 s, and part
-E on two ranks in a copy of the app built with MPI, in about 25 s, which
-skips when no MPI compiler wrapper builds it (set `MPICXX` to choose one).
+`modes_<scale>_<seed>.npz` beside the figures, and parts D and E read the
+polished mode from there, or run part C's Newton iterations first when it is
+missing; at the full scale run the scripts one at a time, C before D and E.
+Each part's figure is titled with the app and the part, and written next to
+the sources (`quick/` at the quick scale). The test is
+`pygeoinf2/tests/test_miniapp_waveform.py`, marked `slow`: the proofs on the
+proof grid and parts B to E at the quick scale, in about 50 s, and part F on
+two ranks in a copy of the app built with MPI, in about 25 s, which skips
+when no MPI compiler wrapper builds it (set `MPICXX` to choose one).
 
 | file | what it is |
 |---|---|
@@ -96,9 +99,9 @@ skips when no MPI compiler wrapper builds it (set `MPICXX` to choose one).
 | `wave_operator.py` | `WaveformOperator`: the forward map as an `Operator` with both derivatives, its field cache and its threads; the unfused compositions the fused kernels are checked against |
 | `inversion.py` | a Newton-CG that logs its gradient norms, the saved mode |
 | `common.py` | the command line, the stopwatch, the section plots |
-| `proofs.py`, `synthetic.py`, `newton.py`, `laplace.py`, `occam.py` | parts A to D, each a script with a `main()` and a `run()` the others and the test call |
-| `run_all.py` | parts A to D in order |
-| `mpi_run.py` | part E, run by every rank under `mpiexec` |
+| `proofs.py`, `synthetic.py`, `newton.py`, `occam.py`, `laplace.py` | parts A to E, each a script with a `main()` and a `run()` the others and the test call |
+| `run_all.py` | parts A to E in order |
+| `mpi_run.py` | part F, run by every rank under `mpiexec` |
 
 ## The scheme, the adjoints and what the checks found
 
@@ -236,7 +239,21 @@ fits the data better than the truth does, as a mode should, and its relative
 error of 0.27 is the noise and the prior's smoothing, not the solver: the
 Gauss-Newton and the exact modes differ by 0.13 in an objective of 97 536.
 
-**D.** The Laplace covariance on the four box means. A randomized
+**D.** Occam at 95%: five outer iterations of the augmented
+Lagrangian, fifteen Newton iterations on the Gauss-Newton Hessian, 43 s; the
+constraint met to 7 × 10⁻⁶ of the critical value, its multiplier 0.090.
+
+| model | chi-squared | distance from the background (`H²`) | relative error |
+|---|---|---|---|
+| MAP mode | 97 442 | 0.0687 | 0.273 |
+| Occam | 97 927 | 0.0344 | 0.289 |
+| truth | 97 872 | 0.0453 | 0 |
+
+Occam's model is half the MAP's size and smaller than the truth, as the
+least structure the data allow should be; the MAP mode, fitting to the
+noise's mean rather than its 95% level, is larger than the truth.
+
+**E.** The Laplace covariance on the four box means. A randomized
 eigendecomposition of the normal operator at the mode, rank 100, 440
 applications in 31 s; then four conjugate-gradient solves preconditioned by
 it, of 37 to 43 iterations, 159 applications in 35 s, residuals reduced to
@@ -258,26 +275,12 @@ matters because a conjugate-gradient solve stopped early underestimates a
 variance. The posterior correlations between the boxes run from −0.19 to
 +0.39.
 
-**D, continued.** Occam at 95%: five outer iterations of the augmented
-Lagrangian, fifteen Newton iterations on the Gauss-Newton Hessian, 43 s; the
-constraint met to 7 × 10⁻⁶ of the critical value, its multiplier 0.090.
-
-| model | chi-squared | distance from the background (`H²`) | relative error |
-|---|---|---|---|
-| MAP mode | 97 442 | 0.0687 | 0.273 |
-| Occam | 97 927 | 0.0344 | 0.289 |
-| truth | 97 872 | 0.0453 | 0 |
-
-Occam's model is half the MAP's size and smaller than the truth, as the
-least structure the data allow should be; the MAP mode, fitting to the
-noise's mean rather than its 95% level, is larger than the truth.
-
 At the quick scale (2.5 Hz, half the resolution) the same parts give a MAP
 relative error of 0.26 and Occam's 0.41, all four truths within two
 posterior standard deviations, and standard deviations from 9% to 22% of the
 prior's.
 
-## E. The grid split across ranks
+## F. The grid split across ranks
 
 Built with `WAVEFORM_MPI`, each rank owns a contiguous block of the grid's
 columns and its part of every field, and every step of every kernel
@@ -319,7 +322,7 @@ system's Open MPI has no development headers installed):
   share nothing, are the faster way to use three cores. The decomposition is
   for a grid that one process cannot hold.
 
-The `--quick` run of part E on three ranks takes 9 s; the full one 62 s.
+The `--quick` run of part F on three ranks takes 9 s; the full one 62 s.
 
 ## Choices
 
@@ -355,7 +358,7 @@ The `--quick` run of part E on three ranks takes 9 s; the full one 62 s.
   Split across ranks, each rank holds its block of every field.
 - **Threads.** The kernels release the interpreter lock; the operator runs
   its shots on threads (`n_jobs`, `curvature_jobs`), and the randomized
-  eigendecomposition in part D runs two probes at a time on threads through
+  eigendecomposition in part E runs two probes at a time on threads through
   a `joblib.parallel_config(backend="threading")` context. The operator holds
   the C++ solver and cannot be sent to a process.
 - **Stability.** A model with a non-positive value, or fast enough anywhere
@@ -388,8 +391,8 @@ The `--quick` run of part E on three ranks takes 9 s; the full one 62 s.
   of the step, for the first derivative and the second. A sign in the
   second-order adjoint is caught by its dot test or by the symmetry of the
   exact Hessian built on it; the differences test only its forward action.
-- One operator, every nonlinear estimator: the MAP, the Laplace Gaussian and
-  Occam's inversion are the library's classes, unchanged, on a forward map
+- One operator, every nonlinear estimator: the MAP, Occam's inversion and
+  the Laplace Gaussian are the library's classes, unchanged, on a forward map
   that is a C++ time-stepper. Each linearization costs one forward run per
   shot and is cached; a Gauss-Newton Hessian application costs one
   linearized and one adjoint run per shot, an exact one a further linearized

@@ -1,8 +1,8 @@
-"""Every part in order: A to D on one problem in the disk, E in the ball, and
-F with bent rays.
+"""Every part in order: A to E on one problem in the disk, F in the ball, and
+G with bent rays.
 
 ``python run_all.py`` for the full scale, ``--quick`` for the small one; the
-ball is a toy at both, and F is a few dozen rays at its own two sizes.
+ball is a toy at both, and G is a few dozen rays at its own two sizes.
 """
 
 from __future__ import annotations
@@ -13,11 +13,12 @@ import time
 import ball
 import bayesian
 import bent
+import mixture
 import point
 import sets
 import setup
 from common import output_directory, parse
-from problem import BALL, FULL, QUICK, Scale
+from problem import FULL, QUICK, Scale
 
 
 def run_all(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
@@ -25,18 +26,12 @@ def run_all(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
     started = time.perf_counter()
     problem = setup.run(scale, seed=seed, outdir=outdir)
     results = {"a": problem}
-    results["b"] = bayesian.run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["c"] = point.run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["d"] = sets.run(
-        scale,
-        seed=seed,
-        outdir=outdir,
-        problem=problem,
-        bayesian=results["b"],
-        point=results["c"],
-    )
-    results["e"] = ball.run(BALL, seed=seed, outdir=outdir)
-    results["f"] = bent.run(
+    results["b"] = point.run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["c"] = bayesian.run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["d"] = sets.run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["e"] = mixture.run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["f"] = ball.run(ball.BALL, seed=seed, outdir=outdir)
+    results["g"] = bent.run(
         bent.BENT_QUICK if scale is QUICK else bent.BENT, seed=seed, outdir=outdir
     )
     print(f"\ntotal {time.perf_counter() - started:.1f} s; figures in {outdir}")

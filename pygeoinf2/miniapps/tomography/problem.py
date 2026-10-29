@@ -16,9 +16,10 @@ reference ray, in hundredths of a time unit; the truth is a draw from the
 prior and the noise is Gaussian.
 
 Two scales behind one ``build(scale=)``: the quick one runs in seconds, the
-full one is the point. A third puts the same planet in a ball, the rays in
-its equatorial plane and the angle a longitude: the tracer is radial and
-does not change, and every part runs on it unchanged.
+full one is the point. The same planet in a ball, with its stations spread
+over the sphere, is built in :mod:`ball` from the pieces here: the layered
+space, the prior, the path integrals and the means over boxes serve a disk
+and a ball alike.
 """
 
 from __future__ import annotations
@@ -83,8 +84,8 @@ class Scale:
     name: str
     mmax: int
     length_scale: float
-    sources: tuple[float, ...]
-    receivers: tuple[float, ...]
+    sources: tuple[Any, ...]
+    receivers: tuple[Any, ...]
     nodes: int
     std_samples: int
     n_jobs: int | None
@@ -133,20 +134,6 @@ FULL = Scale(
     n_jobs=None,
     bump_width=0.06,
 )
-# The ball: the quick network in the equatorial plane, a few more stations,
-# and the angular truncation a degree.
-BALL = Scale(
-    name="ball",
-    mmax=12,
-    length_scale=0.25,
-    sources=QUICK.sources,
-    receivers=(*np.linspace(0.0, 150.0, 16), 270.0),
-    nodes=201,
-    std_samples=128,
-    n_jobs=None,
-    bump_width=0.15,
-    geometry="ball",
-)
 
 
 def network(
@@ -182,13 +169,11 @@ def path_weights(rays: Sequence[Ray], /) -> csr_matrix:
 
 
 def lift(scale: Scale, nodes: np.ndarray, /) -> list[tuple[float, ...]]:
-    """Points ``(radius, angle)`` of the plane of the rays as points of the
-    model space: themselves in a disk, ``(radius, 0, angle)`` on the
-    equatorial plane of a ball."""
-    nodes = np.asarray(nodes, dtype=float).reshape(-1, 2)
-    if scale.is_ball:
-        return [(r, 0.0, a) for r, a in nodes]
-    return [(r, a) for r, a in nodes]
+    """Ray nodes as points of the model space: ``(radius, angle)`` in a disk,
+    ``(radius, latitude, longitude)`` in a ball."""
+    width = 3 if scale.is_ball else 2
+    nodes = np.asarray(nodes, dtype=float).reshape(-1, width)
+    return [tuple(float(value) for value in node) for node in nodes]
 
 
 def composed_operator(
@@ -232,37 +217,41 @@ def path_integral_operator(
 def box_average_row(
     scale: Scale,
     space: Any,
-    box: tuple[float, float, float, float],
+    box: tuple[float, ...],
     /,
     *,
     size: int = 24,
 ) -> np.ndarray:
-    """The derivative components of the mean over a polar box
-    ``(r1, r2, angle1, angle2)``, by Gauss-Legendre quadrature.
+    """The derivative components of the mean over a box, by Gauss-Legendre
+    quadrature.
 
-    In a disk the box is that annular sector, under ``r dr dangle``. In a
-    ball it is the sector of a shell that straddles the plane of the rays,
-    as far either side of it in latitude as the box is wide in longitude,
-    under ``r^2 cos(latitude) dr dlatitude dlongitude``.
+    In a disk the box is an annular sector ``(r1, r2, angle1, angle2)``,
+    under ``r dr dangle``. In a ball it is the sector of a shell ``(r1, r2,
+    latitude1, latitude2, longitude1, longitude2)``, under ``r^2
+    cos(latitude) dr dlatitude dlongitude``. Angles in degrees.
     """
-    r1, r2, a1, a2 = box
     x, w = np.polynomial.legendre.leggauss(size)
 
     def nodes(low: float, high: float) -> tuple[np.ndarray, np.ndarray]:
         return 0.5 * (high - low) * (x + 1.0) + low, 0.5 * (high - low) * w
 
-    radii, radial = nodes(r1, r2)
-    angles, angular = nodes(a1, a2)
-    angular = np.radians(1.0) * angular
+    degree = np.radians(1.0)
     if not scale.is_ball:
+        r1, r2, a1, a2 = box
+        radii, radial = nodes(r1, r2)
+        angles, angular = nodes(a1, a2)
         points = [(r, a) for r in radii for a in angles]
-        weights = np.einsum("i,j->ij", radial * radii, angular).ravel()
+        weights = np.einsum("i,j->ij", radial * radii, degree * angular).ravel()
     else:
-        half = 0.5 * (a2 - a1)
-        latitudes, polar = nodes(-half, half)
-        polar = np.radians(1.0) * polar * np.cos(np.radians(latitudes))
-        points = [(r, b, a) for r in radii for b in latitudes for a in angles]
-        weights = np.einsum("i,j,k->ijk", radial * radii**2, polar, angular).ravel()
+        r1, r2, b1, b2, a1, a2 = box
+        radii, radial = nodes(r1, r2)
+        latitudes, polar = nodes(b1, b2)
+        longitudes, angular = nodes(a1, a2)
+        polar = degree * polar * np.cos(np.radians(latitudes))
+        points = [(r, b, a) for r in radii for b in latitudes for a in longitudes]
+        weights = np.einsum(
+            "i,j,k->ijk", radial * radii**2, polar, degree * angular
+        ).ravel()
     return weights @ space.basis_matrix(points) / weights.sum()
 
 
@@ -277,10 +266,12 @@ def core_average_row(space: Layered, /) -> np.ndarray:
     return row
 
 
-def property_operator(scale: Scale, space: Layered, /) -> LinearOperator:
+def property_operator(
+    scale: Scale, space: Layered, /, *, boxes: Sequence[tuple[str, tuple]] = BOXES
+) -> LinearOperator:
     """The three means: over the well-covered box, the poorly covered one and
     the core."""
-    rows = [box_average_row(scale, space, box) for _, box in BOXES]
+    rows = [box_average_row(scale, space, box) for _, box in boxes]
     rows.append(core_average_row(space))
     return LinearOperator.from_matrix(
         space, EuclideanSpace(len(rows)), np.array(rows), form="galerkin"
@@ -302,6 +293,17 @@ def model_space(scale: Scale, /) -> Layered:
     )
 
 
+def layer_variances(space: Layered, /, *, std: float = PRIOR_STD) -> list[np.ndarray]:
+    """The identity covariance's spectral variances on each layer, scaled so
+    that its pointwise standard deviation, nearly uniform over the layer,
+    averages ``std``."""
+    variances = []
+    for layer in space.layers:
+        raw = layer.interior_values(layer.pointwise_variance(np.ones(layer.dim)))
+        variances.append(np.full(layer.dim, std**2 / float(raw.mean())))
+    return variances
+
+
 def identity_prior(space: Layered, /, *, std: float = PRIOR_STD) -> GaussianMeasure:
     """The identity covariance on each layer, scaled so that its pointwise
     standard deviation, nearly uniform over each layer, averages ``std``.
@@ -312,15 +314,20 @@ def identity_prior(space: Layered, /, *, std: float = PRIOR_STD) -> GaussianMeas
     and so that the measure lives on the layered space itself, whose
     pointwise algebra its draws and its posteriors keep.
     """
-    variances = []
-    for layer in space.layers:
-        raw = layer.interior_values(layer.pointwise_variance(np.ones(layer.dim)))
-        variances.append(np.full(layer.dim, std**2 / float(raw.mean())))
-    variances = np.concatenate(variances)
+    variances = np.concatenate(layer_variances(space, std=std))
     return GaussianMeasure(
         space,
         covariance_factor=DiagonalLinearOperator(space, np.sqrt(variances)),
         precision=DiagonalLinearOperator(space, 1.0 / variances),
+    )
+
+
+def prior_pointwise_std(space: Layered, /, *, std: float = PRIOR_STD) -> tuple:
+    """The pointwise standard deviation of :func:`identity_prior`, exactly,
+    as a field: its covariance is diagonal in each layer's basis."""
+    return tuple(
+        np.sqrt(layer.pointwise_variance(variances))
+        for layer, variances in zip(space.layers, layer_variances(space, std=std))
     )
 
 
@@ -347,18 +354,11 @@ class Problem:
 
     @property
     def nodes(self) -> np.ndarray:
-        """Every node of every ray, stacked, as ``(radius, angle)`` in the
-        plane of the rays."""
+        """Every node of every ray, stacked, as points of the model space."""
         return np.concatenate([ray.nodes for ray in self.rays])
 
-    @property
-    def tag(self) -> str:
-        """What the figures' names begin with: nothing for the disk."""
-        return "ball_" if self.scale.is_ball else ""
-
     def lift(self, points: Any, /) -> list[tuple[float, ...]]:
-        """Points ``(radius, angle)`` of the plane of the rays as points of
-        the model space."""
+        """Points as tuples of the model space's coordinates."""
         return lift(self.scale, points)
 
     def relative_error(self, model: Any) -> float:

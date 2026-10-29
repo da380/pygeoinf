@@ -108,6 +108,19 @@ class TestQuadratics:
         assert result.converged, result.message
         assert np.allclose(result.minimizer, offset, atol=1e-6)
 
+    def test_newton_reports_why_each_inner_solve_stopped(self, spd_problem, rng):
+        space, phi, offset = spd_problem
+        result = NewtonCG(max_iterations=50).minimize(phi, space.random(rng=rng))
+        assert result.converged
+        assert len(result.inner_stops) == result.iterations
+        assert set(result.inner_stops) <= {
+            "converged",
+            "negative curvature",
+            "boundary",
+            "iteration limit",
+        }
+        assert LBFGS().minimize(phi, space.random(rng=rng)).inner_stops == ()
+
     @pytest.mark.parametrize("method", FIRST_ORDER + SECOND_ORDER)
     def test_it_works_on_a_weighted_space(self, method, rng):
         """Where the metric is not the identity, and the gradient is not the array."""

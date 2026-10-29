@@ -22,7 +22,7 @@ import numpy as np
 from pygeoinf2 import GaussianMeasure
 from pygeoinf2.inference import ForwardProblem
 
-from common import output_directory, parse, part_rng, save, section, sponge_outline
+from common import output_directory, parse, part_rng, save, section
 from survey import (
     BOXES,
     DEPTH_CELLS,
@@ -79,18 +79,21 @@ def setup(
     data = clean + noise.sample(rng=part_rng(seed, "b"))
     problem = ForwardProblem(wave.operator, error=noise)
     first_order = ForwardProblem(wave.first_order, error=noise)
-    width, depth = survey.lengths
+    width, depth = survey.section_lengths
+    jobs = scale.curvature_jobs if serial and scale.curvature_jobs else 1
     say(
-        f"section {width:.1f} km by {depth:.1f} km on {survey.shape[0]} x "
-        f"{survey.shape[1]} cells of {survey.scale.h * 1000:.0f} m; "
-        f"{survey.scale.steps} steps of {survey.scale.dt * 1000:.1f} ms; Ricker "
-        f"{survey.scale.peak_frequency:g} Hz"
+        f"section {width:.1f} km by {depth:.1f} km, in a grid of {survey.shape[0]} x "
+        f"{survey.shape[1]} cells of {survey.scale.h * 1000:.0f} m with a sponge "
+        f"{scale.sponge} cells wide beyond it; {survey.scale.steps} steps of "
+        f"{survey.scale.dt * 1000:.1f} ms; Ricker {survey.scale.peak_frequency:g} Hz"
     )
     say(
         f"{survey.n_shots} shots, {survey.n_receivers} receivers each, "
         f"{wave.data_space.dim} data; noise std {noise_std:.3g} "
         f"({NOISE_FRACTION:.0%} of the data's rms); one stored field "
-        f"{survey.field_megabytes:.0f} MB, {survey.n_shots} cached"
+        f"{survey.field_megabytes:.0f} MB, {survey.n_shots} cached and {jobs} more "
+        f"for the curvature: {(survey.n_shots + jobs) * survey.field_megabytes:.0f} MB "
+        "at most"
     )
     say(f"setup took {time.perf_counter() - started:.1f} s")
     return Setup(experiment, wave, clean, data, noise_std, problem, first_order)
@@ -143,24 +146,22 @@ def data_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
         )
         axes[0, 0].text(x0, z0 - 0.01, name, color="w", fontsize=7, va="bottom")
     axes[0, 0].plot(
-        survey.source_x * survey.scale.h,
-        np.full(survey.n_shots, DEPTH_CELLS * survey.scale.h),
+        survey.x[survey.source_x],
+        np.full(survey.n_shots, survey.z[DEPTH_CELLS]),
         "*",
         color="k",
         ms=9,
     )
-    sponge_outline(axes[0, 0], survey, color="w")
     axes[0, 0].set_title("the true velocity, the boxes asked about, the shots")
-    limit = float(np.abs(gradient).max())
+    limit = float(np.abs(gradient[survey.window]).max())
     image = section(
         axes[0, 1], survey, gradient, cmap="RdBu_r", vmin=-limit, vmax=limit
     )
     fig.colorbar(image, ax=axes[0, 1], shrink=0.8)
-    sponge_outline(axes[0, 1], survey)
     axes[0, 1].set_title("the misfit's gradient at the background")
     extent = (
-        survey.receiver_x[0] * survey.scale.h,
-        survey.receiver_x[-1] * survey.scale.h,
+        survey.x[survey.receiver_x[0]],
+        survey.x[survey.receiver_x[-1]],
         survey.times[-1],
         survey.times[0],
     )
@@ -176,8 +177,12 @@ def data_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
         ax.set_xlabel("receiver x (km)")
         ax.set_ylabel("time (s)")
         ax.set_title(f"{title} (clipped at {clip:.2g})", fontsize=10)
-    fig.tight_layout()
-    save(fig, outdir / "data.png")
+    save(
+        fig,
+        outdir / "data.png",
+        title="Waveform, part B: the synthetic data, and what the anomalies add to "
+        "the background's",
+    )
     return {
         "misfit": misfit,
         "critical": critical,

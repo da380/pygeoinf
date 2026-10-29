@@ -1,4 +1,4 @@
-"""Part C: the point answers.
+"""Part B: the point answers.
 
 Least squares at a guessed damping, the minimum-norm model under the
 discrepancy principle, the latter's resolution of a bump under good and under
@@ -14,15 +14,16 @@ import pathlib
 import time
 from typing import Any, Sequence
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf2 import CholeskySolver, LeastSquares, MinimumNorm
 
 from common import (
     draw,
+    error_budget_panels,
     outline_boxes,
     output_directory,
-    panels,
     parse,
     part_rng,
     save,
@@ -53,16 +54,32 @@ def cartesian(point: Sequence[float], /) -> np.ndarray:
     return r * np.array([np.cos(b) * np.cos(a), np.cos(b) * np.sin(a), np.sin(b)])
 
 
-def bump(problem: Problem, center: tuple[float, float], width: float, /) -> Any:
-    """A Gaussian bump of unit peak about a point ``(radius, angle)`` of the
-    plane of the rays."""
+def bump(
+    problem: Problem,
+    center: tuple[float, ...],
+    width: float,
+    /,
+    *,
+    extension: str = "fit",
+) -> Any:
+    """A Gaussian bump of unit peak about a point of the model space.
+
+    ``extension`` is how the space's projection treats the padding beyond
+    the domain: ``"fit"`` is the best fit on the domain in the kept modes,
+    ``"constant"`` the values on the domain's grid continued at their end
+    values, which keeps a bump much narrower than the layer out of the
+    padding, where a fit of it may grow large.
+    """
     middle = cartesian(problem.lift([center])[0])
 
     def value(point: Sequence[float]) -> float:
         offset = cartesian(point) - middle
         return float(np.exp(-0.5 * offset @ offset / width**2))
 
-    return problem.space.project_function(value)
+    # Nothing in the core, which no ray enters and no box reaches.
+    return problem.space.project_function(
+        [lambda point: 0.0, value], extension=extension
+    )
 
 
 def box_center(box: tuple[float, float, float, float], /) -> tuple[float, float]:
@@ -94,7 +111,7 @@ def point_answers(
     """Both estimators, the budget on the properties, the resolution of bumps."""
     started = time.perf_counter()
     scale, space, forward = problem.scale, problem.space, problem.problem
-    print(f"\n=== C. The point answers ({scale.name} scale) ===")
+    print(f"\n=== B. The point answers ({scale.name} scale) ===")
 
     t0 = time.perf_counter()
     guess = LeastSquares(forward, damping=GUESSED_DAMPING, solver=CholeskySolver())(
@@ -155,7 +172,10 @@ def point_answers(
     for name in seen:
         print(f"  in the {name} box the estimate sees a peak of {peaks[name]:.3f}")
 
-    fig, axes = panels(space, 2, 2)
+    # The maps and the error budget in two subfigures, each laid out on its own.
+    fig = plt.figure(figsize=(9.6, 11.4), layout="constrained")
+    upper, lower = fig.subfigures(2, 1, height_ratios=[2.2, 0.9])
+    axes = np.asarray(upper.subplots(2, 2, subplot_kw={"aspect": "equal"}))
     limit = float(
         np.abs(space.layers[mantle].interior_values(problem.truth[mantle])).max()
     )
@@ -196,12 +216,26 @@ def point_answers(
         )
     for ax in axes[0]:
         outline_boxes(ax, BOXES, color="black", linewidth=0.6)
-    fig.suptitle(
-        "Point estimates, and how they see a feature where the rays cross and where "
-        "they do not"
+    error_budget_panels(
+        lower.subplots(1, len(PROPERTIES)),
+        [
+            f"mean over the {name}" + (" box" if name != "core" else "")
+            for name in PROPERTIES
+        ],
+        budget["estimate"],
+        budget["propagated"],
+        budget["bias"],
+        problem.true_properties,
+        ylabel="mean slowness perturbation (%)",
     )
-    save(fig, outdir / f"{problem.tag}point.png")
-    print(f"C took {time.perf_counter() - started:.1f} s")
+    save(
+        fig,
+        outdir / "point.png",
+        title="Tomography, part B: the point answers. The two estimates, how the "
+        "minimum-norm one sees\na bump where the rays cross and where they do "
+        "not, and its estimate of each mean with its error budget",
+    )
+    print(f"B took {time.perf_counter() - started:.1f} s")
     return {
         "guess": guess,
         "smallest": smallest,
@@ -217,7 +251,7 @@ def run(
 ) -> dict:
     if problem is None:
         problem = build(scale=scale, seed=seed)
-    return point_answers(problem, rng=part_rng(seed, "c"), outdir=outdir)
+    return point_answers(problem, rng=part_rng(seed, "b"), outdir=outdir)
 
 
 def main() -> None:

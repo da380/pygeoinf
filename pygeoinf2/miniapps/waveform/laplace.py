@@ -1,4 +1,4 @@
-"""Part D: the Laplace Gaussian at the MAP mode, on the mean of m over four boxes.
+"""Part E: the Laplace Gaussian at the MAP mode, on the mean of m over four boxes.
 
 The library's ``LaplaceApproximation`` about the polished mode of part C: a
 Gaussian whose covariance is the inverse of the linearized normal operator
@@ -178,8 +178,12 @@ def laplace_answer(
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     ax.set_title("The mean slowness squared in four boxes", fontsize=10)
-    fig.tight_layout()
-    save(fig, outdir / "laplace.png")
+    save(
+        fig,
+        outdir / "laplace.png",
+        title="Waveform, part E: the Laplace Gaussian at the mode, prior against "
+        "posterior on four box means",
+    )
     return {
         "center": center,
         "std": std,
@@ -205,13 +209,13 @@ def run(
     mode: np.ndarray | None = None,
 ) -> dict:
     started = time.perf_counter()
-    print(f"\n=== D. The Laplace Gaussian on four box means ({scale.name} scale) ===")
+    print(f"\n=== E. The Laplace Gaussian on four box means ({scale.name} scale) ===")
     if state is None:
         state = setup(scale, seed=seed)
     if mode is None:
         mode = map_mode(state, outdir=outdir, seed=seed)
-    result = laplace_answer(state, mode, rng=part_rng(seed, "d"), outdir=outdir)
-    print(f"D took {time.perf_counter() - started:.1f} s")
+    result = laplace_answer(state, mode, rng=part_rng(seed, "e"), outdir=outdir)
+    print(f"E took {time.perf_counter() - started:.1f} s")
     return result
 
 

@@ -132,7 +132,12 @@ def matrix_form(
     axes[1].set_xlabel("x")
     axes[1].set_title("-u'' + u = g with natural ends, solved two ways", fontsize=10)
     axes[1].legend(fontsize=8, frameon=False)
-    save(fig, outdir / "matrix_form.png")
+    save(
+        fig,
+        outdir / "matrix_form.png",
+        title="MFEM, part B: the matrix form. A linear form and its representer, "
+        "and a solve two ways",
+    )
     print(f"B took {time.perf_counter() - started:.1f} s")
     return {
         "dim": V.dim,

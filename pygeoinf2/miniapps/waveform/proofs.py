@@ -48,8 +48,10 @@ from survey import (
     QUICK,
     Experiment,
     Scale,
+    Survey,
     box_average_operator,
     build,
+    true_velocity,
 )
 from wave_operator import WaveformOperator
 
@@ -106,17 +108,19 @@ def own_defects(
     r = data_space.random(rng=rng)
     derivative = wave.derivative(point)
     second = wave.second_derivative(point, direction)
-    fields = wave.fields(point)[0]
     traces = wave._shot_traces(r)
+    # The unfused compositions release the cached fields, so the fused
+    # kernels ask for them afresh each time.
     fused_gradient = sum(
-        kernels.gradient(point, f, t) for f, t in zip(fields, traces, strict=True)
+        kernels.gradient(point, f, t)
+        for f, t in zip(wave.fields(point)[0], traces, strict=True)
     )
     out["fused gradient against adjoint + correlate"] = float(
         np.abs(fused_gradient - wave.unfused_gradient(point, r)).max()
         / np.abs(fused_gradient).max()
     )
     fused_curvature = np.zeros(experiment.survey.shape)
-    for f, t in zip(fields, traces, strict=True):
+    for f, t in zip(wave.fields(point)[0], traces, strict=True):
         linearized = kernels.born(point, f, direction)[0]
         fused_curvature += kernels.curvature(point, f, linearized, t, direction)
         kernels.release(linearized)
@@ -272,6 +276,47 @@ def kernel_times(experiment: Experiment) -> dict:
     return times
 
 
+def reflection(scale: Scale, /, *, pad: int = 200) -> dict:
+    """What the sponge sends back, against a run on a grid too big to reflect.
+
+    Every shot over the true model, run on the scale's grid and on one padded
+    by ``pad`` cells of the same medium on each absorbing side, with the same
+    source and receivers: the difference is the reflected field. Its rms over
+    the data of every shot is taken against the data's rms, and its peak over
+    the section at the snapshot times against the peak of the field itself
+    there; the worst shot is reported.
+    """
+    near, far = Survey(scale), Survey(scale, pad=pad)
+    stride = scale.steps // 5
+    wavelet = np.ascontiguousarray(near.wavelet[:, None])
+    inside = near.interior()
+    # The small grid's cells within the padded one, at the snapshot times.
+    window = (slice(1, 5), slice(pad, pad + near.shape[0]), slice(0, near.shape[1]))
+    data, reference, peaks = [], [], []
+    for x_near, x_far in zip(near.source_x, far.source_x, strict=True):
+        runs = []
+        for survey, x in ((near, x_near), (far, x_far)):
+            m = np.ascontiguousarray(1.0 / true_velocity(survey) ** 2)
+            runs.append(
+                survey.model.snapshots(m, [int(x)], [DEPTH_CELLS], wavelet, stride)
+            )
+        (kept, ours), (whole, theirs) = runs
+        data.append(ours)
+        reference.append(theirs)
+        direct = whole[window][:, inside]
+        peaks.append(np.abs(kept[1:5][:, inside] - direct).max() / np.abs(direct).max())
+    data, reference = np.stack(data), np.stack(reference)
+    return {
+        "data": float(
+            np.sqrt(np.mean((data - reference) ** 2) / np.mean(reference**2))
+        ),
+        "interior": float(max(peaks)),
+        "times": (np.arange(1, 5) * stride + 1) * scale.dt,
+        "reflected": data - reference,
+        "reference": reference,
+    }
+
+
 def snapshots(experiment: Experiment, /, *, outdir: pathlib.Path) -> pathlib.Path:
     """Four snapshots of the middle shot over the true model, and its gather."""
     survey, kernels = experiment.survey, experiment.survey.model
@@ -286,29 +331,33 @@ def snapshots(experiment: Experiment, /, *, outdir: pathlib.Path) -> pathlib.Pat
         stride,
     )
     fig, axes = plt.subplots(
-        3, 2, figsize=(10, 9.2), gridspec_kw={"height_ratios": [1, 1, 1.25]}
+        3, 2, figsize=(10, 9.4), gridspec_kw={"height_ratios": [1, 1, 1.2]}
     )
     velocity = 1.0 / np.sqrt(experiment.truth)
+    source = (survey.x[survey.source_x[shot]], survey.z[DEPTH_CELLS])
     for ax, index in zip(axes[:2].ravel(), range(1, 5)):
         snapshot = kept[index]
         limit = np.percentile(np.abs(snapshot), 99.5)
-        section(ax, survey, velocity, cmap="Greys", alpha=0.35)
-        section(ax, survey, snapshot, cmap="RdBu", vmin=-limit, vmax=limit, alpha=0.75)
-        sponge_outline(ax, survey)
-        ax.plot(
-            survey.source_x[shot] * survey.scale.h,
-            DEPTH_CELLS * survey.scale.h,
-            "*",
-            color="k",
-            ms=10,
+        section(ax, survey, velocity, whole=True, cmap="Greys", alpha=0.35)
+        section(
+            ax,
+            survey,
+            snapshot,
+            whole=True,
+            cmap="RdBu",
+            vmin=-limit,
+            vmax=limit,
+            alpha=0.75,
         )
+        sponge_outline(ax, survey)
+        ax.plot(*source, "*", color="k", ms=10)
         ax.set_title(f"t = {(index * stride + 1) * survey.scale.dt:.2f} s", fontsize=10)
     gs = axes[2, 0].get_gridspec()
     for ax in axes[2]:
         ax.remove()
     gather = fig.add_subplot(gs[2, :])
     limit = np.percentile(np.abs(data), 99)
-    width = survey.lengths[0]
+    h = survey.scale.h
     gather.imshow(
         data,
         aspect="auto",
@@ -316,22 +365,22 @@ def snapshots(experiment: Experiment, /, *, outdir: pathlib.Path) -> pathlib.Pat
         vmin=-limit,
         vmax=limit,
         extent=(
-            survey.receiver_x[0] * survey.scale.h,
-            survey.receiver_x[-1] * survey.scale.h,
+            survey.x[survey.receiver_x[0]] - h / 2,
+            survey.x[survey.receiver_x[-1]] + h / 2,
             survey.times[-1],
             survey.times[0],
         ),
     )
-    gather.set_xlim(0, width)
     gather.set_xlabel("receiver x (km)")
     gather.set_ylabel("time (s)")
-    gather.set_title(
-        f"the shot gather at x = {survey.source_x[shot] * survey.scale.h:.2f} km"
-    )
-    fig.suptitle("The middle shot over the true model; the sponge inside the dashes")
-    fig.tight_layout()
+    gather.set_title(f"the shot gather at x = {source[0]:.2f} km")
     path = outdir / "snapshots.png"
-    save(fig, path)
+    save(
+        fig,
+        path,
+        title="Waveform, part A: the middle shot over the true model, on the whole "
+        "grid; the section outlined, the sponge hatched",
+    )
     return path
 
 
@@ -345,6 +394,14 @@ def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
     experiment = build(scale)
     print(f"\n-- the {scale.name} grid --")
     results["scale"] = prove(experiment, rng)
+    sponge = reflection(scale)
+    print(
+        f"the sponge, {scale.sponge} cells at rate {scale.sponge_rate:g}, against a "
+        f"grid too big to reflect: what it sends back is {sponge['data']:.2%} of the "
+        f"data's rms, and at most {sponge['interior']:.2%} of the field's peak in "
+        "the section at the snapshot times"
+    )
+    results["reflection"] = sponge
     times = kernel_times(experiment)
     print(
         "one shot on the true model: "

@@ -28,6 +28,8 @@ means, and one that a damping does not have to make.
 
 from __future__ import annotations
 
+import dataclasses
+
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..algebra.operators import LinearOperator
@@ -35,7 +37,7 @@ from ..algebra.spaces import HilbertSpace
 from ..traits import Traits
 from .normal import FactoredNormalOperator, Formalism, choose_formalism
 from .root_find import DampedSolves, Evaluation, RootResult, monotone_root
-from .solvers import LinearSolver, resolve_solver
+from .solvers import InverseOperator, LinearSolver, resolve_solver
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..probability.gaussian import GaussianMeasure
@@ -331,6 +333,25 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         )
 
 
+class _MemberSolver(LinearSolver):
+    """The solver :meth:`TikhonovFamily.member_solver` returns."""
+
+    def __init__(self, family: TikhonovFamily, damping: float) -> None:
+        self._family = family
+        self._damping = float(damping)
+
+    def _invert(self, operator: LinearOperator) -> InverseOperator:
+        family, damping = self._family, self._damping
+
+        def solve_fn(y: Any, x0: Any | None) -> Any:
+            return family.solve(damping, y, x0=x0)
+
+        return InverseOperator(operator, self, solve_fn, adjoint_solve_fn=solve_fn)
+
+    def __repr__(self) -> str:
+        return f"member_solver({self._damping!r}) of {self._family!r}"
+
+
 class TikhonovFamily:
     """``t -> N(t)``, with the solves along a sweep warm-started.
 
@@ -457,6 +478,25 @@ class TikhonovFamily:
         """
         return self._solves.solve(damping, right_hand_side, x0=x0)
 
+    def member_solver(self, damping: float, /) -> LinearSolver:
+        """A solver that answers every solve with this family's member at
+        *damping*, whatever operator it is handed.
+
+        For an estimator that would otherwise build its own inverse of the
+        same normal operator: a family whose solver factors or assembles
+        once serves the member without doing that work again. The operator
+        handed to the solver is not inspected beyond the usual validation,
+        so it must be the member, which the estimator that asks is built to
+        guarantee.
+
+        Args:
+            damping: which member.
+
+        Returns:
+            A :class:`~pygeoinf2.numerics.solvers.LinearSolver`.
+        """
+        return _MemberSolver(self, damping)
+
     def model(self, damping: float, data: Any, /, *, x0: Any = None) -> tuple[Any, Any]:
         """The model at one damping, and the raw solution to warm-start from.
 
@@ -485,6 +525,7 @@ def misfit_search(
     rtol: float = 1e-6,
     atol: float = 0.0,
     minimum_damping: float = 0.0,
+    limit: float | None = None,
 ) -> RootResult:
     """Find the damping at which a misfit of the damped model reaches *target*.
 
@@ -506,6 +547,10 @@ def misfit_search(
         minimum_damping: a floor on the damping; the search stops there and
             reports the range exhausted rather than probing a numerically
             singular system. Zero is no floor.
+        limit: the misfit at infinite damping, that of the zero model, when
+            the caller has it: at or below the target the data are fitted
+            by the zero model and the search is saturated at once, with the
+            zero solution, instead of walking two hundred probes up.
 
     Returns:
         The root, with its diagnostics and the saturated cases marked.
@@ -519,7 +564,7 @@ def misfit_search(
             iterations=result.iterations,
         )
 
-    return monotone_root(
+    result = monotone_root(
         evaluate,
         target,
         decreasing=False,
@@ -527,4 +572,10 @@ def misfit_search(
         rtol=rtol,
         atol=atol,
         minimum=minimum_damping,
+        limit=limit,
     )
+    if result.solution is None:
+        result = dataclasses.replace(
+            result, solution=family.at(result.argument).domain.zero()
+        )
+    return result

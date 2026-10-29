@@ -59,12 +59,18 @@ class DirectSum[V](HilbertSpace[tuple]):
 
     def __new__(
         cls,
-        spaces: Sequence[HilbertSpace],
+        spaces: Sequence[HilbertSpace] | None = None,
         /,
         *,
         labels: Sequence[str] | None = None,
     ) -> DirectSum:
-        if cls is DirectSum and all(isinstance(s, CoordinateSpace) for s in spaces):
+        # ``spaces`` is optional only so that unpickling, which creates the
+        # instance bare and restores its state afterwards, can call this.
+        if (
+            cls is DirectSum
+            and spaces is not None
+            and all(isinstance(s, CoordinateSpace) for s in spaces)
+        ):
             return object.__new__(CoordinateDirectSum)
         return object.__new__(cls)
 
@@ -876,6 +882,14 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
             offsets,
             form,
         )
+
+    def _known_scaling(self) -> np.ndarray | None:
+        # The components of a direct sum are the summands' concatenated, so a
+        # block diagonal of scalings is the scaling of their concatenation.
+        scalings = [op._known_scaling() for op in self._operators]
+        if any(scaling is None for scaling in scalings):
+            return None
+        return np.concatenate([np.asarray(s, dtype=float) for s in scalings])
 
     def apply_block(
         self, vectors: Sequence[Any], /, *, n_jobs: int | None = None

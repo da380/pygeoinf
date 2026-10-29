@@ -23,6 +23,7 @@ Two further consequences of working in the space rather than in components:
 from __future__ import annotations
 
 import copy
+import dataclasses
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -77,6 +78,13 @@ class OptimizationResult:
     when one ended the run. The rest of the result is still the last
     good state -- ``minimizer`` was evaluated successfully -- so a run of
     hours is returned, not lost. ``None`` on every other outcome."""
+    inner_stops: tuple[str, ...] = ()
+    """Why each inner solve stopped, for the Newton methods that run
+    truncated conjugate gradients inside every iteration: ``"converged"``,
+    ``"negative curvature"``, ``"boundary"`` or ``"iteration limit"``, one
+    entry per outer iteration. A run that keeps meeting negative curvature
+    is being steered by the exits, not by the Hessian, which the final
+    message does not say. Empty for the other optimizers."""
 
     def __repr__(self) -> str:
         return (
@@ -719,6 +727,13 @@ class NewtonCG(Optimizer):
         return super().minimize(functional, x0)
 
     def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
+        stops: list[str] = []
+        result = self._run(functional, x0, stops)
+        return dataclasses.replace(result, inner_stops=tuple(stops))
+
+    def _run(
+        self, functional: Functional, x0: Any, stops: list[str]
+    ) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -740,13 +755,14 @@ class NewtonCG(Optimizer):
                     history,
                 )
 
-            direction, _ = truncated_cg(
+            direction, reason = truncated_cg(
                 model.hessian,
                 space.negative(model.gradient),
                 rtol=min(self._forcing, np.sqrt(gradient_norm)),
                 max_iterations=self._max_cg_iterations,
                 preconditioner=self._preconditioner,
             )
+            stops.append(reason)
             slope = space.inner_product(model.gradient, direction)
             if slope >= 0.0:
                 direction = space.negative(model.gradient)
@@ -868,6 +884,13 @@ class TrustRegionNewton(Optimizer):
         return super().minimize(functional, x0)
 
     def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
+        stops: list[str] = []
+        result = self._run(functional, x0, stops)
+        return dataclasses.replace(result, inner_stops=tuple(stops))
+
+    def _run(
+        self, functional: Functional, x0: Any, stops: list[str]
+    ) -> OptimizationResult:
         space = functional.domain
         x = space.copy(x0)
         model = functional.at(x)
@@ -916,12 +939,13 @@ class TrustRegionNewton(Optimizer):
                     history,
                 )
 
-            step, _ = truncated_cg(
+            step, reason = truncated_cg(
                 model.hessian,
                 space.negative(model.gradient),
                 rtol=min(0.1, np.sqrt(gradient_norm)),
                 radius=radius,
             )
+            stops.append(reason)
             predicted = -(
                 space.inner_product(model.gradient, step)
                 + 0.5 * space.inner_product(model.hessian(step), step)

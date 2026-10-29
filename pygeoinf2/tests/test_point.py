@@ -594,6 +594,56 @@ class TestMinimumNorm:
         assert found.resolution.domain == model
         assert found.propagated_covariance().domain == model
 
+    def test_for_data_does_not_assemble_the_family_again(self, setup, rng):
+        """With a solver that assembles the family once, the fixed-damping
+        estimator the data chose must be served from that assembly, not from
+        a second one: its cost is the search's evaluations and no more."""
+        from pygeoinf2.numerics.solvers import SpectralFamilySolver
+
+        problem = setup
+        model, data = problem.model_space, problem.data_space
+        forward = problem.forward_operator
+        count = [0]
+
+        def apply(x):
+            count[0] += 1
+            return forward(x)
+
+        counted = LinearOperator.from_callables(
+            model, data, apply, adjoint=forward.adjoint
+        )
+        # The spectral family whitens by the noise covariance, which must
+        # claim definiteness.
+        error = GaussianMeasure.from_standard_deviation(data, 0.1)
+        counted_problem = LinearForwardProblem(counted, error=error)
+        observed = counted_problem.synthetic_data(model.random(rng=rng), rng=rng)
+        estimator = MinimumNorm(counted_problem, solver=SpectralFamilySolver())
+        found = estimator.discrepancy_search(observed)
+        count[0] = 0
+        chosen = estimator.for_data(observed)
+        assert count[0] <= found.evaluations + 2
+        assert np.allclose(
+            model.to_components(chosen(observed)),
+            model.to_components(estimator(observed)),
+        )
+
+    def test_data_the_zero_model_fits_saturate_the_search_at_once(self):
+        """The zero model's misfit is the limit at infinite damping; when it
+        is already below the threshold the search has nothing to find and
+        must not walk two hundred probes up to its ceiling."""
+        X, D = EuclideanSpace(3), EuclideanSpace(2)
+        A = LinearOperator.from_matrix(
+            X, D, np.array([[1.0, 2.0, 3.0], [0.0, 1.0, 1.0]]), form="components"
+        )
+        problem = LinearForwardProblem(
+            A, error=GaussianMeasure.from_standard_deviation(D, 1.0)
+        )
+        estimator = MinimumNorm(problem)
+        found = estimator.discrepancy_search(np.array([0.5, -0.5]))
+        assert found.exhausted == "high" and found.evaluations == 1
+        chosen = estimator.for_data(np.array([0.5, -0.5]))
+        assert np.allclose(chosen(np.array([0.5, -0.5])), 0.0, atol=1e-12)
+
     def test_data_that_anything_fits_give_the_smallest_model(self, setup, rng):
         """The saturated case, and the one that was wrong: when the data are
         consistent with noise the model should say so, not reproduce the

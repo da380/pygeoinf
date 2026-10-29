@@ -2,16 +2,20 @@
 The planet-density mini-app keeps working.
 
 ``pygeoinf2/miniapps/planet_density`` infers the Earth's radial density from
-its mass and moment of inertia on a three-layer space, under priors of
-increasing strength and with the two boundary radii as further unknowns.
-The quick scale of every part is run once here, each part through its own
-script's entry point, and what must hold is asserted: the functionals are
-the integrals they claim to be, two numbers constrain the core's and the
-mantle's mean densities through the mass and leave the jump at the
-core-mantle boundary alone, a tight prior about a reference the data reject
-shows that rejection in every kind of answer, the evidence can weigh two
-references only when the prior lets them differ, and the boundary
-derivatives agree with finite differences.
+its mass and moment of inertia on a space of PREM's own layers. PREM in the
+space is the reference; the truth is the reference plus a draw from the
+tight prior about it, and the data are the truth's. The point, measure and
+set answers come under the tight prior and under a deliberately wide one,
+and the two boundary radii are then further unknowns. The quick scale of
+every part is run once here, each part through its own script's entry
+point, and what must hold is asserted: the functionals are the integrals
+they claim to be, the reference is PREM's, the data reject the reference and
+fit the truth, the point answer's error is its bias and its propagated
+noise, under the tight prior the truth lies inside the brackets and within
+two posterior standard deviations, the wide answers are wider, the MAP
+model's boundary displacements recover the truth's to within two Laplace
+standard deviations, and Occam's model in two norms meets the level both
+times with displacements further apart than those deviations.
 
 Needs planetmodel, for PREM and the layered space; without it the tests skip
 and say so.
@@ -38,10 +42,11 @@ MODULES = (
     "reference",
     "common",
     "problem",
+    "answers",
     "setup",
-    "uninformative",
     "tight",
-    "mixture",
+    "wide",
+    "radii",
     "boundaries",
 )
 
@@ -85,19 +90,11 @@ def app():
 def results(app, tmp_path_factory):
     """Every part at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("planet_density")
-    scale, seed = app["problem"].QUICK, 2026
+    scale, seed = app["problem"].QUICK, app["common"].SEED
     problem = app["setup"].run(scale, seed=seed, outdir=outdir)
     results = {"a": problem}
-    results["b"] = app["uninformative"].run(
-        scale, seed=seed, outdir=outdir, problem=problem
-    )
-    results["c"] = app["tight"].run(
-        scale, seed=seed, outdir=outdir, problem=problem, loose=results["b"]
-    )
-    results["d"] = app["mixture"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["e"] = app["boundaries"].run(
-        scale, seed=seed, outdir=outdir, problem=problem
-    )
+    for key, part in (("b", "tight"), ("c", "wide"), ("d", "boundaries")):
+        results[key] = app[part].run(scale, seed=seed, outdir=outdir, problem=problem)
     return results, outdir
 
 
@@ -109,7 +106,7 @@ def test_the_functionals_are_the_integrals(app, results):
     assert np.max(np.abs(volume - exact)) < 1e-10 * np.max(np.abs(exact))
     # The volume of the medium, and the mass and moment of a uniform density
     # against their closed forms, to the accuracy of the constant's fit to
-    # the modes kept.
+    # the basis functions kept.
     one = space.project_function(lambda r: 1.0)
     radius = app["reference"].R_SURFACE
     assert volume @ space.to_components(one) == pytest.approx(
@@ -121,107 +118,109 @@ def test_the_functionals_are_the_integrals(app, results):
     assert moment == pytest.approx(to_moment * 8.0 * np.pi * radius**5 / 15.0, rel=1e-5)
 
 
-def test_the_reference_is_light_and_prem_fits(app, results):
+def test_the_reference_is_prem_and_the_data_the_truths(app, results):
     problem = results[0]["a"]
     data = app["problem"]
-    # The integration settled, and starts at PREM's uppermost-mantle density.
-    assert problem.reference.iterations < 100
-    assert problem.reference(app["reference"].R_SURFACE) == pytest.approx(
-        3.3807, abs=1e-3
-    )
-    # Without the transition zone's jumps the reference is several percent
-    # short of the mass; the jump at 660 km makes up part of it.
-    deficit = problem.reference.mass / data.MASS - 1.0
-    assert -0.12 < deficit < -0.05
-    assert problem.reference.mass < problem.reference_660.mass < data.MASS
-    # The space's functionals agree with the profile's own integrals.
-    mass, moment = problem.forward(problem.reference_model)
-    assert mass * data.MASS_UNIT == pytest.approx(problem.reference.mass, rel=1e-5)
-    assert moment * data.MOMENT_UNIT == pytest.approx(
-        problem.reference.moment, rel=1e-5
-    )
-    # PREM, projected onto the quick scale's modes, fits the data, and keeps
-    # its mean densities; its jump at the core-mantle boundary is rounded by
-    # the mantle's few modes, which also carry PREM's other discontinuities.
-    assert np.all(np.abs(problem.misfit(problem.prem_model)) < 4.0)
-    projected = problem.properties(problem.prem_model)
-    assert projected[:2] == pytest.approx(problem.prem_properties[:2], abs=0.01)
-    assert projected[2] == pytest.approx(problem.prem_properties[2], abs=0.1)
+    # The reference holds PREM's mass, moment and properties: every layer
+    # but the crust holds PREM's density to the truncation's accuracy.
+    own = app["reference"].prem_summary()
+    mass, moment = problem.forward(problem.reference)
+    assert mass * data.MASS_UNIT == pytest.approx(own["mass"], rel=1e-4)
+    assert moment * data.MOMENT_UNIT == pytest.approx(own["moment"], rel=1e-4)
+    expected = [own["core"], own["mantle"], own["jump"]]
+    assert problem.properties(problem.reference) == pytest.approx(expected, abs=0.02)
+    # The data fit the truth and reject the reference.
+    critical = problem.problem.critical_chi_squared(level=data.LEVEL)
+    assert problem.problem.chi_squared(problem.truth, problem.data) < critical
+    assert problem.problem.chi_squared(problem.reference, problem.data) > critical
 
 
-def test_two_numbers_constrain_the_means_and_not_the_jump(results):
+def test_the_point_answer(results):
+    problem, part = results[0]["a"], results[0]["b"]["point"]
+    # The reference is rejected, so the smallest change to it moves, to the
+    # discrepancy level.
+    assert not part["saturated"]
+    critical = problem.problem.critical_chi_squared(level=0.95)
+    assert part["chi_squared"] == pytest.approx(critical, rel=1e-3)
+    reference = problem.properties(problem.reference)
+    assert np.max(np.abs(part["estimate"] - reference)) > 0.005
+    # Its error is its bias at the truth and the noise it propagates, and
+    # the bias is the larger part of it.
+    error = part["estimate"] - problem.true_properties
+    assert np.all(np.abs(error - part["bias"]) < 4.0 * part["propagated"])
+    assert np.any(np.abs(part["bias"]) > 3.0 * part["propagated"])
+
+
+def test_the_tight_prior_holds_the_truth(results):
     problem, part = results[0]["a"], results[0]["b"]
-    assert np.all(np.abs(part["misfit"]) < 1.0)
-    # The mass ties the two means together.
-    assert part["correlation"] < -0.99
-    assert part["deviation"][1] < 0.3 * part["prior_deviation"][1]
-    assert part["deviation"][2] > 0.95 * part["prior_deviation"][2]
-    inside = (
-        np.abs(part["center"] - problem.prem_properties) <= 1.96 * part["deviation"]
-    )
-    assert np.all(inside)
-    # The set side: not empty, brackets that hold PREM and are wider than
-    # the posterior's intervals, certified to a small gap.
-    assert not part["empty"]
-    low, high = part["brackets"][:, 0], part["brackets"][:, 1]
-    assert np.all(low <= problem.prem_properties)
-    assert np.all(problem.prem_properties <= high)
-    assert np.all(high - low > 2 * 1.96 * part["deviation"])
-    assert np.all(part["gaps"] < 0.01 * (high - low))
+    measure, sets = part["measure"], part["set"]
+    truth = problem.true_properties
+    assert np.all(np.abs(measure["center"] - truth) <= 2.0 * measure["deviation"])
+    assert np.all(measure["deviation"] <= measure["prior_deviation"] * (1 + 1e-9))
+    # The mass ties the two means together, and narrows the mantle's most.
+    assert measure["correlation"] < -0.5
+    assert measure["deviation"][1] < 0.3 * measure["prior_deviation"][1]
+    assert sets["truth_in_ball"]
+    low, high = sets["brackets"][:, 0], sets["brackets"][:, 1]
+    assert np.all((low <= truth) & (truth <= high))
+    # The brackets lie within what the ball admits alone, certified to a
+    # small gap.
+    assert np.all(sets["bounds"][:, 0] <= low + 1e-9)
+    assert np.all(high <= sets["bounds"][:, 1] + 1e-9)
+    assert np.all(sets["gaps"] < 0.01 * (high - low))
 
 
-def test_a_tight_prior_about_a_rejected_reference_shows_it(app, results):
-    problem, loose, part = results[0]["a"], results[0]["b"], results[0]["c"]
-    # The posterior had to travel many prior deviations to meet the data.
-    assert np.all(part["shift"][:2] > 5.0)
-    assert part["log_bayes_factor"] > 50.0
-    # Its intervals are narrower than the loose prior's, and miss PREM.
-    assert np.all(part["deviation"] <= loose["deviation"])
-    outside = (
-        np.abs(part["center"] - problem.prem_properties) > 1.96 * part["deviation"]
-    )
-    assert outside[:2].all()
-    # No model within the tight prior's ball fits the data.
-    assert part["empty"]
-    assert part["reach"] > 1.0
-    # The minimum-norm change meets the discrepancy level, and its bias were
-    # PREM the truth exceeds the noise it propagates.
-    point = part["minimum_norm"]
-    assert point["chi_squared"] == pytest.approx(
-        problem.problem.critical_chi_squared(level=app["problem"].LEVEL), rel=1e-2
-    )
-    assert np.any(np.abs(point["bias"]) > point["propagated"])
-
-
-def test_the_evidence_weighs_the_mass_not_the_jump(results):
-    part = results[0]["d"]
-    for strength in ("loose", "tight"):
-        assert part[strength]["weights"].sum() == pytest.approx(1.0)
-    # Under the loose prior the data cannot tell the references apart.
-    assert np.all(np.abs(part["loose"]["weights"] - 0.5) < 0.2)
-    # Under the tight one the heavier reference takes the weight, and it is
-    # the one the data lie nearer to.
-    assert part["tight"]["weights"][1] > 0.99
-    assert part["tight"]["distances"][1] < part["tight"]["distances"][0]
+def test_the_wide_answers_are_wider(results):
+    problem, tight, wide = results[0]["a"], results[0]["b"], results[0]["c"]
+    truth = problem.true_properties
+    # The point is the same: the minimum-norm change sees the prior's shape,
+    # not its size.
+    for key in ("estimate", "bias", "propagated"):
+        assert np.allclose(wide["point"][key], tight["point"][key], atol=1e-4)
+    measure = wide["measure"]
+    assert np.all(measure["deviation"] > tight["measure"]["deviation"])
+    assert np.all(np.abs(measure["center"] - truth) <= 2.0 * measure["deviation"])
+    # Two numbers cut a slice: the means are tied along the line of
+    # constant mass, and the jump at the core-mantle boundary is untouched.
+    assert measure["correlation"] < -0.99
+    assert measure["deviation"][2] > 0.95 * measure["prior_deviation"][2]
+    widths = np.diff(wide["set"]["brackets"], axis=1)
+    assert np.all(widths > np.diff(tight["set"]["brackets"], axis=1))
+    low, high = wide["set"]["brackets"][:, 0], wide["set"]["brackets"][:, 1]
+    assert np.all((low <= truth) & (truth <= high))
+    # The data prefer the prior the truth was drawn from.
+    assert wide["log_bayes_factor"] > 0.0
 
 
 def test_the_boundaries(results):
-    part = results[0]["e"]
+    part = results[0]["d"]
     assert part["worst_defect"] < 1e-6
     assert part["converged"]
-    # The mode pushes the core-mantle boundary out, the one move that adds
-    # mass cheaply; the data barely narrow either displacement.
-    assert part["center"][4] > 0.0
-    assert part["deviation"][3] > 0.95 * 20.0
-    assert part["deviation"][4] < 20.0
-    # Occam meets the discrepancy level, by moving the boundaries far beyond
-    # anything the prior admits.
-    assert part["occam_converged"]
-    assert part["occam_chi_squared"] == pytest.approx(part["critical"], rel=1e-3)
-    assert np.max(np.abs(part["occam_shift"])) > 10 * 20.0
+    # The MAP model's displacements recover the truth's to within two
+    # Laplace standard deviations, which the data narrow at the core-mantle
+    # boundary and leave at the prior's at the inner-core boundary.
+    shifts, deviations = part["center"][3:], part["deviation"][3:]
+    assert np.all(np.abs(shifts - part["truth"][3:]) < 2.0 * deviations)
+    assert deviations[1] < 0.9 * part["prior_deviation"][4]
+    assert deviations[0] > 0.95 * part["prior_deviation"][3]
+    # Occam's model meets the level in the model space's norm and in the
+    # prior's, each is the smaller change in its own norm, and the two put
+    # the boundaries further apart than the data can place either.
+    space, prior = part["occam"]["space"], part["occam"]["prior"]
+    for answer in (space, prior):
+        assert answer["converged"]
+        assert answer["chi_squared"] == pytest.approx(part["critical"], rel=1e-3)
+    assert space["space_norm"] < prior["space_norm"]
+    assert prior["prior_norm"] < space["prior_norm"]
+    assert np.all(np.abs(space["shifts"] - prior["shifts"]) > deviations)
 
 
 def test_the_figures_were_written(results):
     outdir = results[1]
-    for name in ("setup", "uninformative", "tight", "mixture", "boundaries"):
+    names = ["setup", "boundaries"] + [
+        f"{prior}_{answer}"
+        for prior in ("tight", "wide")
+        for answer in ("point", "measure", "set")
+    ]
+    for name in names:
         assert (outdir / f"{name}.png").exists(), name

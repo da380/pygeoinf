@@ -95,6 +95,15 @@ where inline output earns the format.
 
 ## Tier 3: mini-apps (`pygeoinf2/miniapps/`)
 
+> **Documentation rule (David, 2026-10-29).** The mini-apps teach library
+> use: the step from the tutorials to a reader's own application. Once an
+> app settles it gets an `IMPLEMENTATION.md` beside its README that walks
+> through the library and library-adjacent aspects it uses (wrapping a
+> forward code as an operator, the choice of spaces, priors, solvers and
+> estimators, what the checks verified), not the forward code's internals.
+> The README stays brief: what the app does and how to run it. One
+> documentation pass over all the apps, so the walkthroughs read alike.
+
 MFEM-spirit: each a self-contained directory with a README stating the
 problem, realistic data (real geometry where we have it, synthetic fields
 where we do not, said plainly in the first paragraph), shaped like a small
@@ -158,8 +167,22 @@ into 4 and 1.
    elsewhere in the plan are the more interesting ones. Extension, optional and heavy: normal-mode
    eigenfrequencies through specnm, with its radial sensitivity kernels as
    the derivative.
-   **Status, 2026-10-28 night: built (D-176); two design questions for
-   David in CURRENT_STATE §7.**
+   **Status, 2026-10-28 night: built (D-176). Rebuilt simpler from
+   2026-10-29 (David): no Adams-Williamson reference and no mixture; the
+   data from PREM with errors; a tight prior about PREM and a deliberately
+   wide bound, each answered point, measure, set; the boundary radii as the
+   weakly nonlinear part, in units of a radius scale. The extension, after
+   the release, is normal-mode data through specnm.**
+   The mixture functionality, dropped here, wants a home where a discrete
+   hypothesis sits inside a continuous problem (candidate, 2026-10-29): a
+   prior that is a mixture over a few candidate plume locations in the disk
+   tomography, each component a Gaussian centred on a bump at its candidate,
+   so the posterior weights say where the plume is and sharpen with the
+   noise level as the coverage allows. **Decided 2026-10-29: a part of the
+   tomography app on the linear disk, after the set answer and before the
+   ball, through `LinearGaussianMixtureInversion`; it is there to show the
+   functionality exists, and the bent-ray version (a mixture of Laplace
+   approximations) is not built.**
 3. **Ray tomography in a spherical Earth** (after 2). PREM reference rays
    by the radial integrals, in the mini-app's own module, deliberately not
    library code: the demonstration of how a user brings a forward problem

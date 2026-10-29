@@ -1369,9 +1369,16 @@ def test_e_three_answers_on_the_box(results):
     assert part["inside"]
     assert np.all(high - low > 2 * 1.96 * part["deviation"])
     assert high[1] - low[1] > high[0] - low[0]
+    # The data narrow the bound of the prior's ball alone, most among the
+    # sensors.
+    alone = part["alone"]
+    narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
+    assert np.all(narrowed < 1.0) and narrowed[0] < narrowed[1]
 
 
 def test_the_figures_were_written(results):
     outdir = results[1]
-    for name in PARTS.values():
+    names = [name for name in PARTS.values() if name != "box_inverse"]
+    names += [f"box_inverse_{kind}" for kind in ("point", "posterior", "brackets")]
+    for name in names:
         assert (outdir / f"{name}.png").exists(), name

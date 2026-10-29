@@ -62,6 +62,7 @@ from ..spectral_element._cylindrical import (
     RingTransform,
     circular_harmonics,
 )
+from ..spectral_element._points import LocalEvaluation
 from ..spectral_element.base import (
     _EXTENSIONS,
     _NODES_PER_MODE,
@@ -69,6 +70,7 @@ from ..spectral_element.base import (
     LengthScale,
     SpectralElementSpace,
     _clamped_length_scale,
+    _checked_fit,
     _fitted_over_the_domain,
     _length_scale_key,
     _resolved_boundary,
@@ -510,7 +512,7 @@ class Disk(SpectralElementSpace):
             )
             start = self._basis.block(0, m).start
             components[start : start + fitted.size] = fitted.T.reshape(-1)
-        return self.from_components(components)
+        return _checked_fit(self.from_components(components), self.interior_mask)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point ``(radius, angle)`` of the domain, drawn uniformly over its
@@ -534,7 +536,12 @@ class Disk(SpectralElementSpace):
         Only the mode of order zero has one, ``sqrt(2 pi)`` times the radial
         integral of its coefficient function against ``r``, taken by the
         quadrature of the domain's own elements so that the padding
-        contributes nothing.
+        contributes nothing. Applied to a grid array that is not in the span of the kept modes, such
+        as the pointwise product of two fields, it reads the array through
+        its components, that is the projection onto the modes, as every
+        operator on the space does so that adjoints hold under composition;
+        the exact integral of such an array is a quadrature the caller
+        takes.
         """
         radial = self._basis[0]
         interior = radial.modes()[radial.restriction.nodes]
@@ -561,6 +568,77 @@ class Disk(SpectralElementSpace):
             for s in (0,) if m == 0 else (0, 1):
                 matrix[:, self._basis.block(s, m)] = angular[s, m][:, None] * modes
         return matrix
+
+    def _local_evaluation(
+        self, points: Sequence[tuple[float, float]], /
+    ) -> LocalEvaluation:
+        """Evaluation at the points through the nodes of their radial
+        elements and the Fourier modes at their angles.
+
+        The field of components ``c`` has the coefficient function ``f_sm =
+        Phi_m c_sm`` for each mode, ``Phi_m`` the radial modes of order ``m``
+        at every node of the mesh, and its value at a point is ``sum_sm
+        e_sm(angle) (L f_sm)``, ``L`` the Lagrange weights of the point's
+        radius on the nodes of its element. The transpose spreads ``y_i
+        e_sm(p_i)`` onto those nodes, giving ``H_sm = L^T (e_sm y)``, and the
+        derivative components are ``Phi_m^T H_sm``, mode by mode.
+
+        Raises:
+            ValueError: if a radius lies outside the domain.
+        """
+        points = np.asarray(points, dtype=float).reshape(-1, 2)
+        angles = np.radians(points[:, 1])
+        mmax = self._mmax
+        parts, orders = self._mode_layout
+
+        def angular(which: np.ndarray) -> np.ndarray:
+            return circular_harmonics(mmax, angles[which])[parts, orders]
+
+        return LocalEvaluation(
+            self._basis.family.mesh,
+            points[:, 0],
+            self._basis.restriction.interval,
+            self._nodal_functions,
+            self._nodal_projection,
+            angular=angular,
+            count=2 * mmax + 1,
+        )
+
+    @cached_property
+    def _mode_layout(self) -> tuple[np.ndarray, np.ndarray]:
+        """(cosine or sine, order) of each of the ``2 mmax + 1`` modes, as
+        the components order them: by order, the cosine mode first."""
+        parts = [0] + [s for _ in range(self._mmax) for s in (0, 1)]
+        orders = [0] + [m for m in range(1, self._mmax + 1) for _ in (0, 1)]
+        return np.array(parts), np.array(orders)
+
+    def _nodal_functions(self, c: np.ndarray, /) -> np.ndarray:
+        """The coefficient function of every mode at every node of the radial
+        mesh, from components: shape ``(2 mmax + 1, nodes)``, the modes in the
+        order of the components."""
+        c = np.asarray(c, dtype=float)
+        out = np.empty((2 * self._mmax + 1, self.grid_shape[0]))
+        for m, radial in enumerate(self._basis):
+            parts = 1 if m == 0 else 2
+            start = self._basis.block(0, m).start
+            block = c[start : start + parts * radial.nmodes]
+            first = max(2 * m - 1, 0)
+            out[first : first + parts] = (
+                block.reshape(parts, radial.nmodes) @ radial.modes().T
+            )
+        return out
+
+    def _nodal_projection(self, functions: np.ndarray, /) -> np.ndarray:
+        """The transpose of :meth:`_nodal_functions`: each mode's function
+        against the radial modes of its order, summed over every node."""
+        out = np.empty(self.dim)
+        for m, radial in enumerate(self._basis):
+            parts = 1 if m == 0 else 2
+            start = self._basis.block(0, m).start
+            first = max(2 * m - 1, 0)
+            rows = functions[first : first + parts] @ radial.modes()
+            out[start : start + rows.size] = rows.reshape(-1)
+        return out
 
     def _squared_modes(self, weights: np.ndarray, /) -> np.ndarray:
         """``sum_k weights_k phi_k(p)^2`` on the grid.

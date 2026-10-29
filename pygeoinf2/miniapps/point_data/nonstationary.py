@@ -1,9 +1,9 @@
 """Part F: a non-stationary prior.
 
 The stationary prior pushed through a multiplication operator, its
-amplitude larger in the southern hemisphere, and the Bayesian answer rerun
-under it. The Woodbury surrogate keeps the stationary prior, as a surrogate
-may.
+amplitude larger in the southern hemisphere, and the Bayesian answer of D
+rerun under it. The Woodbury surrogate keeps the stationary prior, as a
+surrogate may.
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ import time
 
 import numpy as np
 
-from bayesian import posterior_summary
-from common import draw_map, map_panels, output_directory, parse, part_rng, save
-from problem import FULL, PRIOR_STD, PROBES, QUICK, REGIONS, Problem, Scale, build
+from bayesian import measure_figure, posterior_summary
+from common import output_directory, parse, part_rng
+from problem import FULL, PROBES, QUICK, REGIONS, Problem, Scale, build
 
 
 def shaped_prior(problem: Problem) -> tuple:
@@ -67,24 +67,18 @@ def nonstationary_answer(
             f"{result['deviation'][index]:.3f} (truth {problem.true_averages[index]:+.3f})"
         )
 
-    fig, axes = map_panels(space, 1, 2)
-    draw_map(
-        space,
-        amplitude,
-        axes[0, 0],
-        title="the amplitude the prior is multiplied by",
-        vmin=0.0,
-        vmax=1.6,
+    # The shaped prior's standard deviation is the amplitude times the
+    # stationary prior's, which is the same everywhere.
+    base = float(np.sqrt(space.pointwise_variance_at(problem.prior, [PROBES[0][1]])[0]))
+    measure_figure(
+        problem,
+        result,
+        base * space.grid_values(amplitude),
+        path=outdir / "nonstationary.png",
+        title="Point data, part F: a non-stationary prior, prior against "
+        "posterior\nthe prior 1.5 times wider in the south and half as wide in "
+        "the north; the data overrule it under the sea",
     )
-    draw_map(
-        space,
-        result["std_values"],
-        axes[0, 1],
-        title="posterior pointwise std under the non-stationary prior",
-        vmin=0.0,
-        vmax=1.5 * PRIOR_STD,
-    )
-    save(fig, outdir / "nonstationary.png")
     print(f"F took {time.perf_counter() - started:.1f} s")
     return result
 

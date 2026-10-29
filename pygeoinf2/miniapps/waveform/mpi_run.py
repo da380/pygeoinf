@@ -1,4 +1,4 @@
-"""Part E: the operator with its grid split across MPI ranks.
+"""Part F: the operator with its grid split across MPI ranks.
 
 Every rank runs this script, under the ``mpiexec`` of the MPI installation
 ``acoustic_mpi`` was built against::
@@ -206,8 +206,8 @@ def on_the_scale(
 def lead(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
     """Rank 0: everything, in the order the other ranks serve it."""
     started = time.perf_counter()
-    rng = np.random.default_rng([seed, ord("e")])
-    print(f"\n=== E. The grid split across {acoustic_mpi.size()} MPI ranks ===")
+    rng = np.random.default_rng([seed, ord("f")])
+    print(f"\n=== F. The grid split across {acoustic_mpi.size()} MPI ranks ===")
     results: dict[str, Any] = {"ranks": acoustic_mpi.size(), "scale": scale.name}
     proof = build(PROOF, backend=acoustic_mpi)
     with serving(proof.survey.model):
@@ -218,7 +218,7 @@ def lead(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
     results["seconds"] = time.perf_counter() - started
     path = outdir / f"mpi_{scale.name}.json"
     path.write_text(json.dumps(results, indent=1, default=float))
-    print(f"E took {results['seconds']:.1f} s; numbers written to {path}")
+    print(f"F took {results['seconds']:.1f} s; numbers written to {path}")
     return results
 
 

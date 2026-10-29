@@ -144,6 +144,7 @@ def monotone_root(
     minimum: float = 0.0,
     maximum: float = float("inf"),
     warm_start: bool = True,
+    limit: float | None = None,
 ) -> RootResult:
     """Find the positive multiplier at which a monotone quantity hits *target*.
 
@@ -177,6 +178,13 @@ def monotone_root(
             The discrepancy searches expose it as ``minimum_damping``. Zero,
             the default, is no floor.
         maximum: a ceiling on the multiplier, likewise for the upward walk.
+        limit: the quantity's value in the limit of an infinite multiplier,
+            when the caller knows it: the misfit of the zero model, for a
+            damping search. When that value never reaches the target the
+            search is saturated before it starts, at the endpoint the
+            upward walk would have reached, with no probe taken: the
+            result's value is the limit and its solution is ``None``, for
+            the caller to replace by the vector the limit belongs to.
         warm_start: pass each probe the previous solution.
 
     Returns:
@@ -288,6 +296,13 @@ def monotone_root(
     # Probed once and handed to both walks, rather than once per direction:
     # the starting multiplier is common to them, and a probe is a solve.
     begin = (initial, *probe(initial))
+
+    if limit is not None and sign * limit > goal:
+        # No root above: the quantity never reaches the target however large
+        # the multiplier grows. No probe: a cold solve at the endpoint is
+        # numerically hopeless, and the limit is the answer.
+        endpoint = min(maximum, initial * 10.0**expansions)
+        return finish(endpoint, sign * limit, None, (initial, endpoint), False, "high")
 
     # Upward: the quantity must fall to or below the goal.
     high, scaled, solution, exhausted = widen(

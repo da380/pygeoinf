@@ -79,7 +79,7 @@ def newton(
 
 
 def modes_path(outdir: pathlib.Path, scale: Scale, seed: int) -> pathlib.Path:
-    """Where part C leaves its modes for part D."""
+    """Where part C leaves its modes for parts D and E."""
     return outdir / f"modes_{scale.name}_{seed}.npz"
 
 

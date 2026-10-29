@@ -31,9 +31,13 @@ def truth_map(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
     plotting.plot_balls(
         space, [c for _, c in REGIONS], CAP_RADIUS, ax=ax, color="black", linewidth=1.2
     )
-    ax.set_title(f"The truth and the {len(problem.points)} ocean observation points")
     path = outdir / "truth.png"
-    save(fig, path)
+    save(
+        fig,
+        path,
+        title=f"Point data, part A: the truth, the {len(problem.points)} ocean "
+        "observation points and the three caps asked about",
+    )
     return path
 
 

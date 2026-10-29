@@ -1735,3 +1735,34 @@ class TestNaNIsNotADefectOfZero:
         )
         with pytest.raises(AssertionError, match="not a finite number"):
             check_operator(broken, rng=rng)
+
+
+class TestATraitCheckDoesNotExtractTheMatrix:
+    def test_a_definite_claim_costs_a_few_applications(self, rng):
+        """Positive definite implies invertible, and the invertibility check
+        used to extract the matrix to compute a rank: as many applications as
+        the dimension, paid by every covariance that claimed its traits."""
+        X = EuclideanSpace(300)
+        count = [0]
+
+        def apply(x):
+            count[0] += 1
+            return 2.0 * x
+
+        operator = LinearOperator.self_adjoint(
+            X, apply, traits=Traits.POSITIVE_DEFINITE
+        )
+        check_traits(operator, rng=rng)
+        assert count[0] < 50
+
+
+class TestDiagonalsThroughAScaledComposition:
+    def test_a_diagonal_factor_scales_rows_or_columns(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        X, Y = EuclideanSpace(5), EuclideanSpace(3)
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 5)), form="components")
+        D = DiagonalLinearOperator(X, rng.uniform(1.0, 2.0, 5))
+        for operator in (A @ D @ A.adjoint, A.adjoint @ A @ D, D @ A.adjoint @ A):
+            expected = np.diag(operator.matrix(form="components"))
+            assert np.allclose(np.ravel(operator.diagonals()), expected)

@@ -8,15 +8,16 @@ seeing a finite element. The prior is the identity covariance on the box's
 ``H^2``, so that the space's norm is the prior's and the three answers
 measure size alike. Two properties are asked about, the average source over
 a small disc among the sensors and over one in the empty disc, and each is
-answered three ways: the Bayesian posterior, the minimum-norm estimate under
-the discrepancy principle, and the feasible set's certified brackets under
-the prior's and the noise's balls.
+answered three ways: the minimum-norm estimate under the discrepancy
+principle, the Bayesian posterior, and the feasible set's certified brackets
+under the prior's and the noise's balls.
 """
 
 from __future__ import annotations
 
 import pathlib
 import time
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,8 +37,12 @@ from common import (
     FULL,
     QUICK,
     Scale,
+    ball_alone,
+    bound_panels,
     box_prior,
     box_space,
+    error_budget_panels,
+    marginal_panels,
     output_directory,
     parse,
     part_rng,
@@ -106,6 +111,30 @@ def box_inverse(
     solver = SpectralFamilySolver()
     box.reset_counts()
     t0 = time.perf_counter()
+    estimator = MinimumNorm(problem, level=LEVEL, solver=solver)
+    chosen = estimator.for_data(data)
+    smallest = chosen(data)
+    pushed = chosen.push_forward(averages)
+    estimate = np.asarray(pushed(data))
+    propagated = np.sqrt(pushed.propagated_covariance().diagonals()[0])
+    bias = np.asarray(pushed.bias(truth))
+    print(
+        f"the point: minimum norm by the discrepancy principle, damping "
+        f"{chosen.damping:.3g}, "
+        f"chi-squared {problem.chi_squared(smallest, data):.0f} against the critical "
+        f"{problem.critical_chi_squared(level=LEVEL):.0f}, {box.solves} MFEM solves, "
+        f"{time.perf_counter() - t0:.1f} s"
+    )
+    for (name, _), e, s, b, t in zip(
+        REGIONS, estimate, propagated, bias, true_averages
+    ):
+        print(
+            f"   {name:<18s} estimate {e:+.3f} +/- {2 * s:.3f} (2 propagated sd), "
+            f"bias {b:+.3f}, truth {t:+.3f}"
+        )
+
+    box.reset_counts()
+    t0 = time.perf_counter()
     inversion = LinearGaussianInversion(problem, prior, solver=solver)
     posterior = inversion(data)
     mean = posterior.expectation
@@ -136,30 +165,6 @@ def box_inverse(
 
     box.reset_counts()
     t0 = time.perf_counter()
-    estimator = MinimumNorm(problem, level=LEVEL, solver=solver)
-    chosen = estimator.for_data(data)
-    smallest = chosen(data)
-    pushed = chosen.push_forward(averages)
-    estimate = np.asarray(pushed(data))
-    propagated = np.sqrt(pushed.propagated_covariance().diagonals()[0])
-    bias = np.asarray(pushed.bias(truth))
-    print(
-        f"the point: minimum norm by the discrepancy principle, damping "
-        f"{chosen.damping:.3g}, "
-        f"chi-squared {problem.chi_squared(smallest, data):.0f} against the critical "
-        f"{problem.critical_chi_squared(level=LEVEL):.0f}, {box.solves} MFEM solves, "
-        f"{time.perf_counter() - t0:.1f} s"
-    )
-    for (name, _), e, s, b, t in zip(
-        REGIONS, estimate, propagated, bias, true_averages
-    ):
-        print(
-            f"   {name:<18s} estimate {e:+.3f} +/- {2 * s:.3f} (2 propagated sd), "
-            f"bias {b:+.3f}, truth {t:+.3f}"
-        )
-
-    box.reset_counts()
-    t0 = time.perf_counter()
     ball = prior.ambient_ball(level=LEVEL)
     noise_ball = noise.ambient_ball(level=LEVEL)
     feasible = BackusGilbertParker(
@@ -178,86 +183,95 @@ def box_inverse(
         ]
     )
     inside = bool(feasible.polytope(directions).contains(true_averages))
+    alone = ball_alone(ball, averages)
     print(
         f"the set: the feasible set under the prior's {LEVEL:.0%} ball (radius "
         f"{ball.radius:.1f}) and the noise's: {box.solves} MFEM solves, "
         f"{time.perf_counter() - t0:.1f} s; the true averages in the polytope: {inside}"
     )
-    for (name, _), (low, high), t in zip(REGIONS, brackets, true_averages):
+    for (name, _), (low, high), (a0, a1), t in zip(
+        REGIONS, brackets, alone, true_averages
+    ):
         print(
-            f"   {name:<18s} certified bracket [{low:+.3f}, {high:+.3f}], truth {t:+.3f}"
+            f"   {name:<18s} certified bracket [{low:+.3f}, {high:+.3f}], the "
+            f"ball alone [{a0:+.2f}, {a1:+.2f}], truth {t:+.3f}"
         )
 
-    fig = plt.figure(figsize=(13.0, 7.0), layout="constrained")
-    grid = fig.add_gridspec(2, 6)
-    maps = [fig.add_subplot(grid[0, 2 * i : 2 * i + 2]) for i in range(3)]
+    names = [f"the average source {name}" for name, _ in REGIONS]
     limit = float(np.abs(truth).max())
-    for ax, field, title, options in (
-        (maps[0], truth, "the true source", {"symmetric": True, "cmap": "RdBu_r"}),
-        (maps[1], mean, "posterior mean", {"symmetric": True, "cmap": "RdBu_r"}),
-        (maps[2], std, "posterior pointwise std", {"vmin": 0.0, "vmax": 1.0}),
-    ):
-        if options.get("symmetric"):
-            options = {**options, "vmin": -limit, "vmax": limit}
+
+    def source_map(ax: Any, field: Any, title: str, /, **options: Any) -> None:
+        """A field of the box with the sensors and the two discs."""
         plotting.plot(X, np.asarray(field), ax=ax, **options)
         plotting.plot_points(X, points, ax=ax, marker=".", size=4.0, color="black")
         plotting.plot_balls(
             X, [c for _, c in REGIONS], REGION_RADIUS, ax=ax, color="black"
         )
         ax.set_title(title, fontsize=10)
-    for index, (name, _) in enumerate(REGIONS):
-        ax = fig.add_subplot(grid[1, 3 * index : 3 * index + 3])
-        ax.errorbar(
-            0,
-            estimate[index],
-            yerr=2 * propagated[index],
-            fmt="o",
-            color="C1",
-            capsize=4,
-            label="point, 2 propagated sd",
-        )
-        ax.plot(
-            [1, 1], brackets[index], color="C0", lw=6, alpha=0.6, solid_capstyle="butt"
-        )
-        ax.plot(
-            1,
-            brackets[index].mean(),
-            "_",
-            color="C0",
-            ms=14,
-            label="set, certified bracket",
-        )
-        ax.errorbar(
-            2,
-            center[index],
-            yerr=1.96 * deviation[index],
-            fmt="s",
-            color="C2",
-            capsize=4,
-            label="measure, 95% interval",
-        )
-        ax.axhline(true_averages[index], color="black", ls="--", lw=1.0, label="truth")
-        # The bracket is far wider than the other two answers; the axis is
-        # fitted to those, and the bracket's ends are written where it leaves.
-        spread = max(2.5 * 1.96 * deviation[index], 2.5 * 2 * propagated[index])
-        middle = center[index]
-        ax.set_ylim(middle - spread, middle + spread)
-        low, high = brackets[index]
-        ax.annotate(
-            f"set: [{low:+.2f}, {high:+.2f}]",
-            (1, middle + 0.92 * spread),
-            xytext=(8, 0),
-            textcoords="offset points",
-            fontsize=8,
-            color="C0",
-            va="center",
-        )
-        ax.set_xticks([0, 1, 2], ["point", "set", "measure"])
-        ax.set_xlim(-0.6, 2.6)
-        ax.set_title(f"the average source {name}", fontsize=10)
-        if index == 0:
-            ax.legend(fontsize=7, loc="best")
-    save(fig, outdir / "box_inverse.png")
+
+    signed = {"symmetric": True, "cmap": "RdBu_r", "vmin": -limit, "vmax": limit}
+
+    # The point: the estimate, and its error budget on the two averages.
+    fig = plt.figure(figsize=(11.0, 8.0), layout="constrained")
+    upper, lower = fig.subfigures(2, 1, height_ratios=[1.0, 0.9])
+    left, right = upper.subplots(1, 2)
+    source_map(left, truth, "the true source", **signed)
+    source_map(right, smallest, f"minimum norm, damping {chosen.damping:.3g}", **signed)
+    error_budget_panels(
+        lower.subplots(1, len(REGIONS)),
+        names,
+        estimate,
+        propagated,
+        bias,
+        true_averages,
+        ylabel="average of f",
+    )
+    save(
+        fig,
+        outdir / "box_inverse_point.png",
+        title="MFEM, part E: the point answer. The minimum-norm estimate, and its "
+        "estimate of each average with its error budget",
+    )
+
+    # The measure: prior against posterior.
+    prior_std = float(np.sqrt(X.pointwise_variance_at(prior, [REGIONS[0][1]])[0]))
+    fig = plt.figure(figsize=(13.0, 7.6), layout="constrained")
+    upper, lower = fig.subfigures(2, 1, height_ratios=[1.0, 0.85])
+    maps = upper.subplots(1, 3)
+    top = 1.05 * max(prior_std, float(std.max()))
+    source_map(
+        maps[0],
+        np.full(std.shape, prior_std),
+        "prior pointwise std",
+        vmin=0.0,
+        vmax=top,
+    )
+    source_map(maps[1], std, "posterior pointwise std (sampled)", vmin=0.0, vmax=top)
+    source_map(maps[2], mean, "posterior mean", **signed)
+    marginal_panels(
+        lower.subplots(1, len(REGIONS)),
+        names,
+        on_averages,
+        prior.affine_map(averages),
+        true_averages,
+        xlabel="average of f",
+    )
+    save(
+        fig,
+        outdir / "box_inverse_posterior.png",
+        title="MFEM, part E: the Bayesian answer, prior against posterior. The "
+        "standard deviation before and after, and each average's marginal",
+    )
+
+    # The set: each bracket against the bound of the prior's ball alone.
+    fig, axes = plt.subplots(1, len(REGIONS), figsize=(8.0, 3.8), layout="constrained")
+    bound_panels(axes, names, alone, brackets, true_averages, ylabel="average of f")
+    save(
+        fig,
+        outdir / "box_inverse_brackets.png",
+        title=f"MFEM, part E: the set answer. The bound the prior's {LEVEL:.0%} "
+        "ball admits alone,\nand the certified bracket the data leave",
+    )
     print(f"E took {time.perf_counter() - started:.1f} s")
     return {
         "points": points,
@@ -274,6 +288,7 @@ def box_inverse(
         "propagated": propagated,
         "bias": bias,
         "brackets": brackets,
+        "alone": alone,
         "inside": inside,
         "data": len(points),
     }

@@ -1,4 +1,10 @@
-"""What the part scripts share: the command line, the counter, the figures."""
+"""What the part scripts share: the command line, the counter, the figures.
+
+Each part writes its own figures, one method to a figure: the point
+estimate with its error budget, the measure as prior against posterior, the
+set as the bound the prior's ball admits alone against the bracket the data
+leave.
+"""
 
 from __future__ import annotations
 
@@ -82,6 +88,11 @@ def part_rng(seed: int, part: str) -> np.random.Generator:
     return np.random.default_rng([seed, ord(part)])
 
 
+def map_axes(fig: Any, spec: Any, /) -> Any:
+    """One Robinson map in a cell of a figure's grid."""
+    return fig.add_subplot(spec, projection=crs.Robinson())
+
+
 def map_panels(space: Any, rows: int, columns: int, /) -> tuple[Any, np.ndarray]:
     """A grid of Robinson maps."""
     fig, axes = plotting.subplots(
@@ -123,8 +134,84 @@ def draw_map(
     ax.set_title(title, fontsize=10)
 
 
-def save(fig: Any, path: pathlib.Path) -> None:
-    """Write the figure and close it; nothing is shown on screen."""
+def error_budget_panels(
+    axes: Any,
+    names: Any,
+    estimate: Any,
+    propagated: Any,
+    bias: Any,
+    truth: Any,
+    /,
+    *,
+    ylabel: str,
+) -> None:
+    """A point estimate of each property with its error budget, a panel each.
+
+    The estimate with twice the standard deviation of the noise it
+    propagates, and what it would have been on exact data, the truth plus
+    the bias, which only the truth reveals.
+    """
+    for ax, name, e, s, b, t in zip(axes, names, estimate, propagated, bias, truth):
+        ax.errorbar(
+            0.0,
+            e,
+            yerr=2.0 * s,
+            fmt="o",
+            color="C1",
+            capsize=4,
+            label="estimate, 2 propagated sd",
+        )
+        ax.plot(
+            0.0,
+            t + b,
+            "D",
+            mfc="none",
+            color="C1",
+            ms=8,
+            label="on exact data: truth plus bias",
+        )
+        ax.axhline(t, color="black", ls="--", lw=1.0, label="truth")
+        ax.set_xticks([])
+        ax.set_xlim(-1.0, 1.0)
+        reach = max(abs(e - t) + 2.0 * s, abs(b), 2.0 * s, 1e-3)
+        ax.set_ylim(t - 1.4 * reach, t + 1.4 * reach)
+        ax.set_title(name, fontsize=10)
+    axes[0].set_ylabel(ylabel)
+    axes[0].legend(fontsize=7, loc="lower left", frameon=False)
+
+
+def bound_panels(
+    axes: Any,
+    names: Any,
+    alone: Any,
+    brackets: Any,
+    truth: Any,
+    /,
+    *,
+    ylabel: str,
+) -> None:
+    """For each property, a panel: the bound the prior's ball admits alone
+    against the bracket the data leave, and the truth.
+
+    Both are drawn as bars on an axis linear about zero and logarithmic
+    beyond one, since a bracket the data narrow can be a hundredth of the
+    bound it came from.
+    """
+    for ax, name, (a0, a1), (b0, b1), t in zip(axes, names, alone, brackets, truth):
+        ax.plot([0, 0], [a0, a1], color="0.6", lw=10, solid_capstyle="butt")
+        ax.plot([1, 1], [b0, b1], color="C0", lw=10, solid_capstyle="butt")
+        ax.axhline(t, color="black", ls="--", lw=1.0, label="truth")
+        ax.set_xticks([0, 1], ["the prior's\nball alone", "with the\ndata"])
+        ax.set_xlim(-0.7, 1.7)
+        ax.set_yscale("symlog", linthresh=1.0)
+        ax.set_title(name, fontsize=10)
+    axes[0].set_ylabel(ylabel)
+    axes[0].legend(fontsize=7, loc="lower left", frameon=False)
+
+
+def save(fig: Any, path: pathlib.Path, /, *, title: str) -> None:
+    """Title the figure, write it and close it; nothing is shown on screen."""
+    fig.suptitle(title)
     fig.savefig(path, dpi=130)
     plt.close(fig)
     print(f"figure written to {path}")

@@ -22,6 +22,7 @@ from planetmodel.randomfield import (
 )
 
 from ..algebra.operators import LinearFunctional
+from ._points import LocalEvaluation
 from .base import (
     _EXTENSIONS,
     _NODES_PER_MODE,
@@ -29,6 +30,7 @@ from .base import (
     LengthScale,
     SpectralElementSpace,
     _clamped_length_scale,
+    _checked_fit,
     _fitted_over_the_domain,
     _length_scale_key,
     _resolved_boundary,
@@ -303,7 +305,9 @@ class AxisSpace(SpectralElementSpace):
             fitted = _fitted_over_the_domain(
                 interior, self._basis.weights(), sample(self.interior_nodes)
             )
-            return self._basis.synthesise(fitted, physical=False)
+            return _checked_fit(
+                self._basis.synthesise(fitted, physical=False), self.interior_mask
+            )
         return _sampled_with_extension(self.nodes, *self._bounds, sample, extension)
 
     # ----------------------------------------------------------------- #
@@ -315,7 +319,12 @@ class AxisSpace(SpectralElementSpace):
         space's own measure.
 
         By the quadrature of the domain's elements alone, so the padding
-        contributes nothing, its share of the end nodes included.
+        contributes nothing, its share of the end nodes included. Applied to a grid array that is not in the span of the kept modes, such
+        as the pointwise product of two fields, it reads the array through
+        its components, that is the projection onto the modes, as every
+        operator on the space does so that adjoints hold under composition;
+        the exact integral of such an array is a quadrature the caller
+        takes.
         """
         interior = self._basis.modes()[self._basis.restriction.nodes]
         return LinearFunctional.from_derivative_components(
@@ -331,6 +340,38 @@ class AxisSpace(SpectralElementSpace):
         """
         positions = np.asarray(points, dtype=float).reshape(-1)
         return self._basis.evaluate(positions) / self._scale
+
+    def _local_evaluation(self, points: Sequence[float], /) -> LocalEvaluation:
+        """Evaluation at the points through the nodes of their elements.
+
+        With ``x = Phi c / scale`` the field of components ``c``, ``Phi`` the
+        kept modes at every node of the mesh, and ``L`` the sparse matrix of
+        the points' Lagrange weights, the values are ``L Phi c / scale`` and
+        the derivative components of ``x -> y . L x`` are ``Phi^T L^T y /
+        scale``. ``Phi`` is read at every node, the center of a ball
+        included, where the modes carry the value static condensation gives
+        them and the mass is zero: there ``Phi^T`` is not, as at every other
+        node, the projection ``analyse`` after the inverse mass.
+
+        Raises:
+            ValueError: if a point lies outside the domain.
+        """
+        modes = self._basis.modes()
+        scale = self._scale
+
+        def synthesis(c: np.ndarray) -> np.ndarray:
+            return (modes @ (np.asarray(c, dtype=float) / scale))[None, :]
+
+        def projection(functions: np.ndarray) -> np.ndarray:
+            return modes.T @ functions[0] / scale
+
+        return LocalEvaluation(
+            self._basis.family.mesh,
+            np.asarray(points, dtype=float).reshape(-1),
+            self._basis.restriction.interval,
+            synthesis,
+            projection,
+        )
 
     def _squared_modes(self, weights: np.ndarray, /) -> np.ndarray:
         return (self._basis.modes() ** 2) @ weights / self._scale**2

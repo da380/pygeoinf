@@ -113,6 +113,17 @@ def on_property(
     )
 
 
+def prior_on_property(prior: object, operator: object, /) -> tuple:
+    """The prior pushed to the one-number property: its mean and standard
+    deviation."""
+    pushed = prior.affine_map(operator)
+    one = EuclideanSpace(1)
+    return (
+        float(one.to_components(pushed.expectation)[0]),
+        float(np.sqrt(pushed.covariance.matrix(form="components")[0, 0])),
+    )
+
+
 def matrix_inverse(
     scale: Scale, /, *, rng: np.random.Generator, outdir: pathlib.Path
 ) -> dict:
@@ -164,6 +175,7 @@ def matrix_inverse(
 
     print("the same property on the same data, at three polynomial orders:")
     orders = []
+    priors = []
     for order in ORDERS:
         order_elements, space = constrained_space(order, scale.divisions)
         order_problem, order_prior, order_property = the_problem(order_elements, space)
@@ -171,6 +183,7 @@ def matrix_inverse(
             LinearGaussianInversion(order_problem, order_prior), order_property, data
         )
         orders.append((order, space.dim, value, deviation))
+        priors.append(prior_on_property(order_prior, order_property))
         print(
             f"  order {order}: {space.dim:5d} free dofs   {value:+.4f} +/- {deviation:.4f}"
         )
@@ -197,17 +210,39 @@ def matrix_inverse(
     sensor_x, sensor_y = np.array(SENSOR_POSITIONS).T
     for ax in axes[:2]:
         ax.plot(sensor_x, sensor_y, "k+", ms=6)
-    for order, dim, value, deviation in orders:
+    for (order, dim, value, deviation), (center, spread) in zip(orders, priors):
         axes[2].errorbar(
-            order, value, yerr=1.96 * deviation, fmt="o", capsize=4, color="C0"
+            order - 0.1,
+            center,
+            yerr=1.96 * spread,
+            fmt="s",
+            capsize=4,
+            color="0.55",
+            label="prior" if order == ORDERS[0] else None,
+        )
+        axes[2].errorbar(
+            order + 0.1,
+            value,
+            yerr=1.96 * deviation,
+            fmt="o",
+            capsize=4,
+            color="C0",
+            label="posterior" if order == ORDERS[0] else None,
         )
     axes[2].axhline(actual, color="black", ls="--", lw=1.0, label="truth")
     axes[2].set_xticks(list(ORDERS))
     axes[2].set_xlabel("polynomial order")
     axes[2].set_ylabel("total source over the central square")
-    axes[2].set_title("The property at three orders, 95% intervals", fontsize=10)
+    axes[2].set_title(
+        "The property at three orders, 95% intervals before and after", fontsize=10
+    )
     axes[2].legend(fontsize=8, frameon=False)
-    save(fig, outdir / "matrix_inverse.png")
+    save(
+        fig,
+        outdir / "matrix_inverse.png",
+        title="MFEM, part C: an inverse problem on the matrix form, prior against "
+        "posterior. The posterior mean, and the property at three orders",
+    )
     print(f"C took {time.perf_counter() - started:.1f} s")
     return {
         "dim": V.dim,

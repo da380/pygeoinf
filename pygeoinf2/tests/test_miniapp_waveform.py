@@ -7,12 +7,12 @@ library ``Operator`` with both derivatives, and runs the nonlinear estimators
 on it. Here the adjoints are proved on the small grid -- the explicit
 transpose of the stencil, the fused kernels against the unfused ones, the
 library's check ladder, dot tests and central differences falling as the
-square of the step -- and the quick scale of parts B to D is run through the
+square of the step -- and the quick scale of parts B to E is run through the
 scripts' entry points, with what must hold of each asserted.
 
 The extension is built in a temporary directory when it is not already built
 next to its sources. Without cmake and a working compiler the tests skip and
-say so. Part E, the grid split across MPI ranks, runs on two ranks in a copy of
+say so. Part F, the grid split across MPI ranks, runs on two ranks in a copy of
 the app built with MPI, and skips unless an MPI compiler wrapper builds it:
 ``MPICXX`` names one, or ``mpicxx`` on the path is tried.
 """
@@ -41,8 +41,8 @@ MODULES = (
     "proofs",
     "synthetic",
     "newton",
-    "laplace",
     "occam",
+    "laplace",
 )
 SEED = 2026
 
@@ -199,17 +199,17 @@ class TestTheProofs:
 
 @pytest.fixture(scope="module")
 def results(app, tmp_path_factory):
-    """Parts B to D at the quick scale, once, each through its own entry point."""
+    """Parts B to E at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("waveform_quick")
     scale = app["survey"].QUICK
     results = {"b": app["synthetic"].run(scale, seed=SEED, outdir=outdir)}
     state = results["b"]["setup"]
     results["c"] = app["newton"].run(scale, seed=SEED, outdir=outdir, state=state)
     mode = results["c"]["runs"]["polish"]["model"]
-    results["d"] = app["laplace"].run(
+    results["d"] = app["occam"].run(
         scale, seed=SEED, outdir=outdir, state=state, mode=mode
     )
-    results["occam"] = app["occam"].run(
+    results["e"] = app["laplace"].run(
         scale, seed=SEED, outdir=outdir, state=state, mode=mode
     )
     return results, outdir
@@ -245,24 +245,24 @@ def test_the_map_recovers_the_anomalies(results):
     )
 
 
-def test_the_laplace_gaussian_holds_the_truth(results):
-    part = results[0]["d"]
-    assert np.all(part["inside"])
-    assert np.all(part["std"] < 0.3 * part["prior_std"])
-    assert np.all(part["settling"] > 0.98)
-
-
 def test_occam_meets_its_level_with_less_structure(results):
-    part = results[0]["occam"]
+    part = results[0]["d"]
     assert part["result"].converged
     assert part["chi2"] == pytest.approx(part["target"], rel=1e-3)
     assert part["distance"]["Occam"] < part["distance"]["MAP mode"]
     assert part["distance"]["Occam"] < part["distance"]["truth"]
 
 
+def test_the_laplace_gaussian_holds_the_truth(results):
+    part = results[0]["e"]
+    assert np.all(part["inside"])
+    assert np.all(part["std"] < 0.3 * part["prior_std"])
+    assert np.all(part["settling"] > 0.98)
+
+
 def test_the_figures_were_written(results):
     outdir = results[1]
-    for name in ("data", "map", "laplace", "occam"):
+    for name in ("data", "map", "occam", "laplace"):
         assert (outdir / f"{name}.png").exists(), name
 
 
@@ -288,7 +288,7 @@ def _mpi_tools() -> tuple[str, str] | None:
 
 
 def test_the_grid_split_across_ranks_gives_the_serial_answers(tmp_path):
-    """Part E on two ranks: the operator, the checks and the MAP, bit for bit."""
+    """Part F on two ranks: the operator, the checks and the MAP, bit for bit."""
     import json
     import os
 

@@ -1,4 +1,4 @@
-"""Part D: the point answers.
+"""Part C: the point answers.
 
 Least squares at a guessed damping, the minimum-norm model under the
 discrepancy principle, the error budget of the latter on the regional
@@ -13,11 +13,20 @@ import time
 
 from typing import Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf2 import LeastSquares, MinimumNorm
 
-from common import draw_map, map_panels, output_directory, parse, part_rng, save
+from common import (
+    draw_map,
+    error_budget_panels,
+    map_axes,
+    output_directory,
+    parse,
+    part_rng,
+    save,
+)
 from ocean_mask import geodesic_bump
 from problem import FULL, LEVEL, QUICK, REGIONS, Problem, Scale, build
 from solvers import coarse_identity, woodbury_family_solver
@@ -38,19 +47,6 @@ def family_solver(problem: Problem, /) -> Any:
     )
 
 
-def minimum_norm_on_averages(problem: Problem, /) -> dict:
-    """The minimum-norm estimator the data chose, pushed to the averages."""
-    chosen = MinimumNorm(
-        problem.problem, level=LEVEL, solver=family_solver(problem), rtol=1e-2
-    ).for_data(problem.data)
-    pushed = chosen.push_forward(problem.averages)
-    return {
-        "estimate": pushed(problem.data),
-        "propagated": np.sqrt(pushed.propagated_covariance().diagonals()[0]),
-        "bias": pushed.bias(problem.truth),
-    }
-
-
 def point_answers(
     problem: Problem, /, *, rng: np.random.Generator, outdir: pathlib.Path
 ) -> dict:
@@ -62,7 +58,7 @@ def point_answers(
         problem.counted,
         problem.problem,
     )
-    print(f"\n=== D. The point answers ({scale.name} scale) ===")
+    print(f"\n=== C. The point answers ({scale.name} scale) ===")
     solver = family_solver(problem)
 
     counted.reset()
@@ -128,23 +124,28 @@ def point_answers(
             f"lowest value {values.min():+.3f}"
         )
 
-    fig, axes = map_panels(space, 2, 2)
+    fig = plt.figure(figsize=(12.0, 9.6), layout="constrained")
+    grid = fig.add_gridspec(3, 6, height_ratios=[1.0, 1.0, 0.9])
+    maps = [
+        [map_axes(fig, grid[row, 3 * k : 3 * k + 3]) for k in range(2)]
+        for row in range(2)
+    ]
     limit = float(np.abs(space.grid_values(problem.truth)).max())
     draw_map(
         space,
         guess,
-        axes[0, 0],
+        maps[0][0],
         title=f"least squares at damping {GUESSED_DAMPING:g}",
         limit=limit,
     )
     draw_map(
         space,
         smallest,
-        axes[0, 1],
+        maps[0][1],
         title=f"minimum norm, damping {search.argument:.3g}",
         limit=limit,
     )
-    for ax, name in zip(axes[1], ("North Pacific", "Africa")):
+    for ax, name in zip(maps[1], ("North Pacific", "Africa")):
         draw_map(
             space,
             seen[name],
@@ -152,11 +153,23 @@ def point_answers(
             title=f"resolution of a unit bump under {name}",
             limit=1.0,
         )
-    fig.suptitle(
-        "Point estimates, and how they see a feature under the sea and under land"
+    error_budget_panels(
+        [fig.add_subplot(grid[2, 2 * k : 2 * k + 2]) for k in range(len(REGIONS))],
+        [f"average over {name}" for name, _ in REGIONS],
+        estimate,
+        propagated,
+        bias,
+        problem.true_averages,
+        ylabel="cap average",
     )
-    save(fig, outdir / "point.png")
-    print(f"D took {time.perf_counter() - started:.1f} s")
+    save(
+        fig,
+        outdir / "point.png",
+        title="Point data, part C: the point answers. Least squares and the "
+        "minimum-norm model,\nhow the latter sees a bump under the sea and under "
+        "land, and its estimate of the averages with its error budget",
+    )
+    print(f"C took {time.perf_counter() - started:.1f} s")
     return {
         "guess": guess,
         "smallest": smallest,
@@ -173,7 +186,7 @@ def run(
 ) -> dict:
     if problem is None:
         problem = build(scale=scale, seed=seed)
-    return point_answers(problem, rng=part_rng(seed, "d"), outdir=outdir)
+    return point_answers(problem, rng=part_rng(seed, "c"), outdir=outdir)
 
 
 def main() -> None:

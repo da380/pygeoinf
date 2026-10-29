@@ -1,8 +1,9 @@
-"""Every part in order, on one problem: A to D.
+"""Every serial part in order, on one problem: A to E.
 
 ``python run_all.py --quick`` for the small scale, which runs in well under
 two minutes; the full scale runs each part for about a minute or two, so run
-its scripts one at a time, C before D (D reads the mode C saves).
+its scripts one at a time, C before D and E (both read the mode C saves).
+Part F runs under ``mpiexec``.
 """
 
 from __future__ import annotations
@@ -27,10 +28,8 @@ def run_all(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
     state = results["b"]["setup"]
     results["c"] = newton.run(scale, seed=seed, outdir=outdir, state=state)
     mode = results["c"]["runs"]["polish"]["model"]
-    results["d"] = laplace.run(scale, seed=seed, outdir=outdir, state=state, mode=mode)
-    results["occam"] = occam.run(
-        scale, seed=seed, outdir=outdir, state=state, mode=mode
-    )
+    results["d"] = occam.run(scale, seed=seed, outdir=outdir, state=state, mode=mode)
+    results["e"] = laplace.run(scale, seed=seed, outdir=outdir, state=state, mode=mode)
     print(f"\ntotal {time.perf_counter() - started:.1f} s; figures in {outdir}")
     return results
 
