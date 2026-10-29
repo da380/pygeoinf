@@ -1636,18 +1636,10 @@ class TestTheFunctionSpaceMarkerGatesDensities:
             lambda **k: measure.mahalanobis_squared(x, **k),
             lambda **k: measure.log_normalizing_constant(**k),
             lambda **k: measure.credible_set(level=0.9, **k),
-            lambda **k: measure.weakened_ellipsoid(level=0.9, power=1.0, **k),
         ):
             with pytest.raises(ValueError, match="discretises a function space"):
                 call()
             call(unsafe=True)
-
-    def test_a_weakened_ellipsoid_below_power_one_is_not_a_density(self, rng):
-        """``power < 1`` is covariance geometry, not the distribution's own
-        credible set, and it stays open -- the brief gates ``power == 1``."""
-        space = self.function_space()
-        measure = space.sobolev_measure(2.0, 0.3)
-        measure.weakened_ellipsoid(level=0.9, power=0.5)
 
     def test_a_finite_space_is_untouched(self, rng):
         space = make_dense_metric_space(4)
@@ -1712,18 +1704,6 @@ class TestHardeningsAreGatedOnFunctionSpaces:
             mu.credible_set(level=0.9)
         ellipsoid = mu.credible_set(level=0.9, unsafe=True)
         assert ellipsoid.contains(space.zero())
-
-    def test_the_weakened_ellipsoid_is_gated_only_at_power_one(self):
-        """At ``power == 1`` it is the credible set and refused like it; at
-        a power below one the radius is a quantile that survives
-        refinement, and no flag is needed."""
-        space, mu = self.measure()
-        with pytest.raises(ValueError, match="refused on"):
-            mu.weakened_ellipsoid(power=1.0, level=0.9)
-        assert mu.weakened_ellipsoid(power=1.0, level=0.9, unsafe=True).contains(
-            space.zero()
-        )
-        assert mu.weakened_ellipsoid(power=0.5, level=0.9).contains(space.zero())
 
     def test_the_ambient_ball_needs_no_unsafe(self):
         space, mu = self.measure()

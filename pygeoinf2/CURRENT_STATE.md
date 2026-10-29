@@ -156,7 +156,7 @@ columns and is never written out as a square (D-170).
 - `log_determinant(method="auto")` takes the dense route below
   `dense_limit=4000` only when the matrix is known or probing costs no more
   than the stochastic budget; `kl_divergence` refuses above 4000 rather than
-  guessing; `ambient_ball` and `weakened_ellipsoid` take a dense generalised
+  guessing; `ambient_ball` takes a dense generalised
   eigenproblem below 1024 (D-50).
 - `GaussianMeasure.from_covariance_matrix`, `as_multivariate_normal` and
   `matrix(form=)` are dense by name, as is `nuclear_norm(method="dense")`.
@@ -337,16 +337,8 @@ Recorded rather than settled, so nobody has to rediscover them.
   skips Markdown, so the no-decision-number rule is not enforced on the
   READMEs and walkthroughs.
 - **Findings from re-posing the mini-apps** (2026-10-29, D-191; no
-  library edits). (1) `weakened_ellipsoid(quantile_method="auto")` hands
-  "auto" to `weighted_chi2_quantile`, which takes Imhof, where
-  `ambient_ball` applies `_quantile_method_for` first: on
-  `Sobolev(128, 2, 0.06).sobolev_measure(2, 0.06, pointwise_std=1)` at
-  power 1/4 that is 45 s against 0.004 s for `"matched"`, which agrees to
-  a few parts in a thousand. (2) `weakened_ellipsoid` carries no gate below
-  power one, but its radius has a limit only for `p < 1 - d / 2s`; at
-  `p = 1/2` on the sphere at order 2 a cap average's bound alone grows as
-  9.6, 11.8, 13.8 at degrees 16, 32, 64. A gate, or a warning, at that
-  power would match D-131's. (3) `Layered.sobolev_measure` builds its
+  library edits; the two about the weakened ellipsoid went with it,
+  D-194). (3) `Layered.sobolev_measure` builds its
   operators as `BlockDiagonalLinearOperator`s, whose domain is a bare
   `DirectSum` of the layers, not the layered space: `disk.Layered([0,
   0.55, 1], [9, 16], order=2, length_scale=0.2).sobolev_measure(2,
@@ -388,19 +380,14 @@ Recorded rather than settled, so nobody has to rediscover them.
   `CppSpace(100, 0.08)` reports `is_function_space`, and
   `from_standard_deviation(space, 1.0)` returns an identity covariance on
   it without complaint, where `credible_set` refuses the same space. The
-  refusal should key on `is_function_space`, as D-131's does. (2)
-  `weakened_ellipsoid` on a space without coordinates: `method="auto"`
-  raises "No affordable route... Pass rank="; a truncated `rank`
-  underestimates the radius without a warning, the weights `lambda^(1-p)`
-  decaying like `k^(-3/2)` here (squared radius 6.00 from the leading 50
-  eigenvalues, 6.27 from 100, 6.69 from all 1001 at 1000 elements; the
-  truth's gauge 0.627 against 0.563); full rank costs 11 s and 3.5 million
-  inner products. Under `quantile_method="matched"` only `tr C^(1-p)` and
-  `tr C^(2(1-p))` are needed, which stochastic Lanczos quadrature could
-  estimate matrix-free. `Ellipsoid` exposes no radius. (3) The ellipsoid's
-  fractional powers go through fully reorthogonalized Lanczos at every
-  application: the quick set answer took 9.7 s with the CG family solver
-  against 1.0 s with `SpectralFamilySolver`.
+  refusal should key on `is_function_space`, as D-131's does. (2) A
+  truncated `rank` on `ambient_ball`'s randomized route underestimates the
+  radius without a warning (the docstring says so; nothing at run time
+  does): on the C++ app's 1000-element space the squared radius was 6.00
+  from the leading 50 eigenvalues, 6.27 from 100, 6.69 from all. Under
+  `quantile_method="matched"` only `tr C` and `tr C^2` are needed, which
+  a Hutchinson estimate could supply matrix-free. `Ellipsoid` exposes no
+  radius.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.

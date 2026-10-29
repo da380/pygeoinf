@@ -3331,6 +3331,40 @@ a `HilbertModule`, not every function space, so it accepted this one;
 `weakened_ellipsoid` on a space without coordinates is refused by its
 default route and, at a truncated rank, silently short.
 
+**D-194. The convenience hardening is the ambient ball, in the space's norm
+or in the norm a bounded operator defines; the weakened ellipsoid is gone**
+(2026-10-29, David). The set estimators take a constraint set, and a
+Gaussian prior does not single one out: its draws lie outside the
+Cameron-Martin space almost surely, so its credible set grows without bound
+under refinement (D-131 refuses it on a function space), and any set is a
+modeling choice, as the norm is for Occam (D-185). D-191's weakened
+ellipsoid converged, at powers below `1 - d / 2s`, but its power was a
+convention the answers moved with (squared radius 6.4 at `1/4` against 9.1
+at `3/8` in the C++ app), its convergence slowed toward the limit, it
+needed a gate the library did not have, and every application went through
+Lanczos. David's ruling: this is a convenience, a means of generating a
+constraint set, and within an application the physics and other
+considerations decide the set, which the library leaves people free to
+build; so the convenience is the simple one. `ambient_ball(level=)` is the
+ball of the space's norm with the radius at which a draw lies inside with
+the given probability: the classical Backus-Gilbert-Parker norm bound,
+the prior calibrating the radius, no knob but the level, convergent for
+any trace-class prior since a draw's squared norm has a finite
+expectation. The same method takes `operator=B`, bounded, self-adjoint
+and positive definite on the space, and then gives the ball of the inner
+product `B` defines as an `Ellipsoid` (with `inverse=` for its covariance
+and so its support function): a constraint set of another shape, the `L^2`
+ball of a Sobolev space, a bound weighting one region or one summand of a
+direct sum, convergent because `B` is bounded and the covariance trace
+class. Its weights are the eigenvalues of `B C`: the product of the two
+spectra on the diagonal route, those of `C^(1/2) B C^(1/2)` from the
+matrices on the dense route, of `L* B L` through the factor on the
+randomized route, and the empirical quantile of `(B (x - m), x - m)` on the
+sampling route. `weakened_ellipsoid` and its findings (D-191's first two,
+D-193's second) are removed with it. Every mini-app's set part moves to the
+ball, and the C++ backend app shows the operator form with the `L^2` ball
+of its `H^1` space.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

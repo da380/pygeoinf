@@ -1513,8 +1513,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         quantile of *level*. A hardening is not canonical and it is not
         reversible -- the ellipsoid carries no memory of the distribution it
         came from -- which is why it is a named step rather than something a
-        constructor does quietly. :meth:`ambient_ball` and
-        :meth:`weakened_ellipsoid` are the others.
+        constructor does quietly. :meth:`ambient_ball`, in the space's norm
+        or in the norm an operator defines, is the other.
 
         An ellipsoid is defined by a precision. A measure that has one uses
         it. A measure with only a covariance gets one as the covariance's
@@ -1581,200 +1581,6 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             center=self.expectation,
             covariance=covariance,
             factor=factor,
-        )
-
-    def weakened_ellipsoid(
-        self,
-        /,
-        *,
-        level: float = 0.95,
-        power: float = 0.5,
-        method: str = "auto",
-        quantile_method: str = "auto",
-        rank: int | None = None,
-        dense_limit: int = 1024,
-        rng: Generator | None = None,
-        n_jobs: int | None = None,
-        unsafe: bool = False,
-        **calculus: Any,
-    ) -> Any:
-        """A credible ellipsoid shaped by a fractional power of the covariance.
-
-        Between the two hardenings :meth:`credible_set` and
-        :meth:`ambient_ball`: the set ``{ x : (C^-p (x - m), x - m) <=
-        r^2 }`` carrying the given probability, so that ``p == 1`` is the
-        credible ellipsoid, the distribution's own shape, and ``p == 0`` is
-        the ball in the space's norm. In between the ellipsoid is *weakened*,
-        its axes being ``lambda^(p/2)`` rather than ``lambda^(1/2)``, which
-        is what one wants of a prior that should not commit to the
-        covariance's fine structure at the level of a Mahalanobis form.
-
-        The radius is a quantile of ``sum_i lambda_i^(1 - p) Z_i^2``, the
-        covariance's eigenvalues to the complementary power, and the
-        fractional powers of the covariance come from the operator calculus:
-        exact on a diagonal covariance, and by the Lanczos route otherwise,
-        which is what the covariance must then admit, being positive
-        definite and self-adjoint.
-
-        Args:
-            level: the probability the ellipsoid carries, in ``(0, 1)``.
-            power: the exponent ``p`` in ``[0, 1]``.
-            method: how the spectrum for the radius is found: ``"auto"``,
-                ``"diagonal"``, ``"dense"`` or ``"spectral"``, as for
-                :meth:`ambient_ball`; there is no sampling route, since the
-                fractional gauge of a draw costs a Lanczos application each.
-            quantile_method: how the weighted chi-square is inverted.
-            rank: eigenpairs on the randomized route.
-            dense_limit: the dimension above which ``"auto"`` stops forming
-                matrices.
-            rng: the generator for the probes.
-            n_jobs: workers for them.
-            unsafe: at ``power == 1``, the credible set, proceed even when
-                the domain discretises a function space, as for
-                :meth:`credible_set`. The other powers are covariance
-                geometry rather than a statement about the density, and are
-                not refused there.
-            **calculus: options for the Lanczos operator function on a
-                covariance that is not diagonal.
-
-        Returns:
-            An :class:`~pygeoinf2.geometry.convex.Ellipsoid`, with its
-            covariance so that it has a support function; or the credible
-            set or the ambient ball at the two ends.
-
-        Raises:
-            ValueError: for a power outside ``[0, 1]``, a level outside
-                ``(0, 1)``, or a spectrum this measure cannot supply; and at
-                ``power == 1`` as :meth:`credible_set` does.
-        """
-        from ..geometry.convex import Ellipsoid
-
-        if not 0.0 <= power <= 1.0:
-            raise ValueError(f"The power lies in [0, 1], got {power}.")
-        if not 0.0 < level < 1.0:
-            raise ValueError(f"A credible level lies in (0, 1), got {level}.")
-        if power == 1.0:
-            # The one power that is the distribution's own credible set, and
-            # so the one refused on a function-space discretisation.
-            return self.credible_set(level=level, unsafe=unsafe)
-        if power == 0.0:
-            return self.ambient_ball(
-                level=level,
-                method=method,
-                quantile_method=quantile_method,
-                rank=rank,
-                dense_limit=dense_limit,
-                rng=rng,
-                n_jobs=n_jobs,
-            )
-        from ..numerics.quadratic_forms import weighted_chi2_quantile
-
-        eigenvalues = self._spectrum(
-            method, rank=rank, dense_limit=dense_limit, rng=rng, n_jobs=n_jobs
-        )
-        live = eigenvalues[eigenvalues > 0.0]
-        squared_radius = weighted_chi2_quantile(
-            live ** (1.0 - power), level, method=quantile_method
-        )
-        diagonal = self._diagonal_eigenvalues()
-        if diagonal is not None:
-            from ..algebra.diagonal import DiagonalLinearOperator
-
-            if np.any(diagonal <= 0.0):
-                raise ValueError(
-                    "A weakened ellipsoid needs a positive definite covariance; "
-                    "this one has a zero eigenvalue."
-                )
-            precision = DiagonalLinearOperator(
-                self._domain, diagonal ** (-power) / squared_radius
-            )
-            covariance = DiagonalLinearOperator(
-                self._domain, squared_radius * diagonal**power
-            )
-        else:
-            from ..numerics.functional_calculus import operator_function
-
-            base = self._require_covariance("A weakened ellipsoid").with_traits(
-                Traits.POSITIVE_DEFINITE
-            )
-            precision = operator_function(
-                base,
-                lambda t: t ** (-power) / squared_radius,
-                traits=Traits.POSITIVE_DEFINITE,
-                **calculus,
-            )
-            covariance = operator_function(
-                base,
-                lambda t: squared_radius * t**power,
-                traits=Traits.POSITIVE_DEFINITE,
-                **calculus,
-            )
-        return Ellipsoid(
-            self._domain, precision, center=self.expectation, covariance=covariance
-        )
-
-    def _spectrum(
-        self,
-        method: str,
-        /,
-        *,
-        rank: int | None,
-        dense_limit: int,
-        rng: Generator | None,
-        n_jobs: int | None,
-    ) -> np.ndarray:
-        """The covariance's eigenvalues, by the route asked for or affordable.
-
-        The routes :meth:`ambient_ball` documents, without its sampling one,
-        which yields a radius but no spectrum.
-        """
-        eigenvalues = self._diagonal_eigenvalues()
-        if eigenvalues is not None and method in ("auto", "diagonal"):
-            return np.asarray(eigenvalues, dtype=float)
-        if method == "diagonal":
-            raise ValueError(
-                "The diagonal route needs a covariance diagonal in the space's "
-                "own basis, and this one is not."
-            )
-        if method == "auto":
-            if (
-                isinstance(self._domain, CoordinateSpace)
-                and self._domain.dim <= dense_limit
-            ):
-                method = "dense"
-            elif rank is not None:
-                method = "spectral"
-            else:
-                why = (
-                    "this space provides no coordinate map, so there is no "
-                    "dense route"
-                    if not isinstance(self._domain, CoordinateSpace)
-                    else f"the dimension {self._domain.dim} is above dense_limit"
-                )
-                raise ValueError(
-                    f"No affordable route to the spectrum: {why}. Pass rank= "
-                    "for a randomized spectrum"
-                    + (
-                        ""
-                        if not isinstance(self._domain, CoordinateSpace)
-                        else ", or raise dense_limit"
-                    )
-                    + "."
-                )
-        covariance = self._require_covariance("The spectrum")
-        if method == "spectral":
-            from ..numerics.randomized import random_eig
-
-            decomposition = random_eig(covariance, rank=rank, rng=rng, n_jobs=n_jobs)
-            return np.asarray(decomposition.eigenvalues, dtype=float)
-        if method != "dense":
-            raise ValueError(f"Unknown method {method!r}.")
-        from scipy.linalg import eigh
-
-        require_coordinates(self._domain)
-        galerkin = covariance.matrix(form="galerkin")
-        return np.asarray(
-            eigh(galerkin, self._domain.gram_matrix(), eigvals_only=True), dtype=float
         )
 
     def sample_pointwise_variance(
@@ -1848,6 +1654,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         /,
         *,
         level: float = 0.95,
+        operator: LinearOperator | None = None,
+        inverse: LinearOperator | None = None,
         method: str = "auto",
         quantile_method: str = "auto",
         rank: int | None = None,
@@ -1860,42 +1668,68 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         A different hardening from :meth:`credible_set`, and a cruder one: that
         gives the ellipsoid the distribution's own shape, this gives a ball in
-        the *space's* norm. The two coincide only for an isotropic measure, and
-        the ball is always the larger.
+        the *space's* norm, or, given an *operator*, in the norm that operator
+        defines. The credible set and the ball coincide only for an isotropic
+        measure, and the ball is always the larger.
 
         It is worth having because a norm bound is what a set-theoretic prior
         is, so this is the bridge from a Gaussian belief to one, done in the
         geometry the constraint will be used in. It is also what
         :func:`~pygeoinf2.inference.backus.harden_error` calls on every Backus
         route whose error is a Gaussian, which is why the route taken here
-        matters.
+        matters. On a space discretizing a function space the ball converges
+        under refinement, the squared norm of a draw having a finite
+        expectation whenever the covariance is trace class, which is what the
+        credible set lacks there.
+
+        With an *operator* ``B``, bounded, self-adjoint and positive definite
+        on the space, the set is ``{ x : (B (x - m), x - m) <= r^2 }``, the
+        ball of the inner product ``B`` defines: a constraint set of another
+        shape than the space's own, such as the ``L^2`` ball of a Sobolev
+        space, or a bound that weights one region or one component of a
+        direct sum more than another. Because ``B`` is bounded and the
+        covariance trace class, ``(B (x - m), x - m)`` has a finite
+        expectation and the radius converges as the ball's does. The set is
+        then an :class:`~pygeoinf2.geometry.convex.Ellipsoid`, which has a
+        support function, and so serves a set estimator, only when its
+        covariance is known: pass ``B``'s *inverse* for that.
 
         The radius is a quantile of ``sum_i lambda_i Z_i^2`` with the
-        covariance's eigenvalues as weights, which is not a chi-square unless
-        the measure is isotropic. Four ways to reach it:
+        covariance's eigenvalues as weights, or those of ``B C`` with an
+        operator, which is not a chi-square unless the measure is isotropic.
+        Four ways to reach it:
 
         ``"diagonal"``
-            The spectrum is already the covariance's eigenvalues. Exact,
-            ``O(dim)``, no applications at all. This is the common case -- an
-            isotropic error, a measure from :meth:`from_standard_deviations`,
-            any invariant measure on a symmetric space.
+            The spectrum is already the covariance's eigenvalues, and the
+            operator's if there is one. Exact, ``O(dim)``, no applications at
+            all. This is the common case -- an isotropic error, a measure
+            from :meth:`from_standard_deviations`, any invariant measure on a
+            symmetric space, with an operator that is a spectral function
+            there.
         ``"dense"``
             The generalized symmetric eigenproblem ``C_gal v == lambda G v``,
-            whose eigenvalues are the operator's. Exact, ``O(dim^3)``, and it
-            holds two dense matrices.
+            whose eigenvalues are the operator's; with an operator, the
+            eigenvalues of ``C^(1/2) B C^(1/2)`` from the matrices. Exact,
+            ``O(dim^3)``, and it holds dense matrices.
         ``"spectral"``
-            A randomized eigendecomposition truncated to *rank*. The dropped
-            tail is positive, so the radius
-            comes out **too small**: this is a lower bound on the true one, and
-            a rank has to be large enough that what it leaves out is
-            negligible.
+            A randomized eigendecomposition truncated to *rank*, of the
+            covariance, or of ``L* B L`` through the covariance factor. The
+            dropped tail is positive, so the radius comes out **too small**:
+            this is a lower bound on the true one, and a rank has to be large
+            enough that what it leaves out is negligible.
         ``"sampling"``
-            The empirical quantile of ``||x - m||^2`` over draws. No spectrum
-            at all, and the accuracy is that of an order statistic on
-            *samples* draws.
+            The empirical quantile of ``||x - m||^2``, or of ``(B (x - m),
+            x - m)``, over draws. No spectrum at all, and the accuracy is that
+            of an order statistic on *samples* draws.
 
         Args:
             level: the probability the ball carries, in ``(0, 1)``.
+            operator: a bounded self-adjoint positive definite operator on
+                the space whose inner product the ball is measured in; the
+                space's own when omitted.
+            inverse: the operator's inverse, which gives the ellipsoid its
+                covariance and so its support function. Ignored without an
+                operator.
             method: ``"auto"``, ``"diagonal"``, ``"dense"``, ``"spectral"`` or
                 ``"sampling"``. ``"auto"`` reads a diagonal spectrum if there
                 is one, then goes dense if the space has coordinates and is no
@@ -1912,21 +1746,67 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             n_jobs: workers for them.
 
         Returns:
-            The ball about the expectation carrying probability *level*.
+            The ball about the expectation carrying probability *level*; with
+            an operator, the ellipsoid.
 
         Raises:
             ValueError: for an unknown method, a method whose ingredients this
-                measure does not have, or a measure with no covariance.
+                measure does not have, a measure with no covariance, or an
+                operator that is not a self-adjoint positive definite
+                operator on the space.
         """
-        from ..geometry.convex import Ball
+        from ..geometry.convex import Ball, Ellipsoid
+
+        if operator is not None:
+            required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            if operator.domain != self._domain or operator.codomain != self._domain:
+                raise ValueError(
+                    f"The operator must act on {self._domain!r}; it maps "
+                    f"{operator.domain!r} to {operator.codomain!r}."
+                )
+            if required & operator.traits != required:
+                raise ValueError(
+                    f"The operator must claim {required!s}; it claims "
+                    f"{operator.traits!s}."
+                )
+            if inverse is not None and (
+                inverse.domain != self._domain or inverse.codomain != self._domain
+            ):
+                raise ValueError(f"The inverse must act on {self._domain!r}.")
+
+        def finish(squared_radius: float) -> Any:
+            radius = float(np.sqrt(max(squared_radius, 0.0)))
+            if operator is None:
+                return Ball(self._domain, radius=radius, center=self.expectation)
+            if radius <= 0.0:
+                raise ValueError("The ellipsoid's radius came out zero.")
+            precision = (operator / radius**2).with_traits(required)
+            covariance = (
+                None if inverse is None else (inverse * radius**2).with_traits(required)
+            )
+            return Ellipsoid(
+                self._domain,
+                precision,
+                center=self.expectation,
+                covariance=covariance,
+            )
+
+        def from_spectrum(eigenvalues: np.ndarray) -> Any:
+            return finish(
+                self._squared_radius_from_spectrum(eigenvalues, level, quantile_method)
+            )
 
         eigenvalues = self._diagonal_eigenvalues()
+        if eigenvalues is not None and operator is not None:
+            scaling = operator._known_scaling()
+            eigenvalues = None if scaling is None else eigenvalues * np.asarray(scaling)
         if eigenvalues is not None and method in ("auto", "diagonal"):
-            return self._ambient_ball_from_spectrum(eigenvalues, level, quantile_method)
+            return from_spectrum(eigenvalues)
         if method == "diagonal":
             raise ValueError(
                 "The diagonal route needs a covariance diagonal in the space's "
-                "own basis, and this one is not."
+                "own basis, and an operator diagonal there too, and this one "
+                "is not."
             )
 
         if method == "auto":
@@ -1959,25 +1839,36 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 )
             center = self.expectation
             draws = self.samples(samples, rng=rng, n_jobs=n_jobs)
-            squared = np.array(
-                [
+            if operator is None:
+                squared = [
                     self._domain.squared_norm(self._domain.subtract(x, center))
                     for x in draws
                 ]
-            )
-            radius = float(np.sqrt(max(float(np.quantile(squared, level)), 0.0)))
-            return Ball(self._domain, radius=radius, center=center)
+            else:
+                squared = []
+                for x in draws:
+                    offset = self._domain.subtract(x, center)
+                    squared.append(self._domain.inner_product(operator(offset), offset))
+            return finish(float(np.quantile(np.asarray(squared), level)))
 
         covariance = self._require_covariance("An ambient ball")
         if method == "spectral":
             from ..numerics.randomized import random_eig
 
-            decomposition = random_eig(covariance, rank=rank, rng=rng, n_jobs=n_jobs)
-            return self._ambient_ball_from_spectrum(
-                np.asarray(decomposition.eigenvalues, dtype=float),
-                level,
-                quantile_method,
-            )
+            if operator is None:
+                target = covariance
+            else:
+                factor = self.covariance_factor
+                if factor is None:
+                    raise ValueError(
+                        "The spectral route with an operator needs a covariance "
+                        "factor, to form L* B L."
+                    )
+                target = (factor.adjoint @ operator @ factor).with_traits(
+                    Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+                )
+            decomposition = random_eig(target, rank=rank, rng=rng, n_jobs=n_jobs)
+            return from_spectrum(np.asarray(decomposition.eigenvalues, dtype=float))
         if method != "dense":
             raise ValueError(f"Unknown method {method!r}.")
 
@@ -1990,37 +1881,44 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # (C_gal, G), which is both cheaper and better conditioned than a
         # non-symmetric decomposition of C_c.
         galerkin = covariance.matrix(form="galerkin")
-        spectrum = eigh(
-            0.5 * (galerkin + galerkin.T),
-            self._domain.gram_matrix(),
-            eigvals_only=True,
-        )
-        return self._ambient_ball_from_spectrum(
-            np.asarray(spectrum, dtype=float), level, quantile_method
-        )
+        galerkin = 0.5 * (galerkin + galerkin.T)
+        gram = self._domain.gram_matrix()
+        if operator is None:
+            spectrum = eigh(galerkin, gram, eigvals_only=True)
+            return from_spectrum(np.asarray(spectrum, dtype=float))
+        # With an operator the weights are the eigenvalues of B C, which are
+        # those of the symmetric C^(1/2) B C^(1/2): in Galerkin form, with
+        # S the symmetric root of C_gal, the matrix S G^-1 B_gal G^-1 S.
+        values, vectors = eigh(galerkin)
+        root = (vectors * np.sqrt(np.clip(values, 0.0, None))) @ vectors.T
+        from scipy.linalg import solve
 
-    def _ambient_ball_from_spectrum(
-        self, eigenvalues: np.ndarray, level: float, quantile_method: str, /
-    ) -> Any:
-        """The ball whose radius is the *level* quantile of ``sum lambda_i Z_i^2``.
+        inner = solve(gram, operator.matrix(form="galerkin"), assume_a="pos")
+        inner = solve(gram, inner.T, assume_a="pos").T
+        symmetric = root @ inner @ root
+        spectrum = eigh(0.5 * (symmetric + symmetric.T), eigvals_only=True)
+        return from_spectrum(np.asarray(spectrum, dtype=float))
+
+    @staticmethod
+    def _squared_radius_from_spectrum(
+        eigenvalues: np.ndarray, level: float, quantile_method: str, /
+    ) -> float:
+        """The *level* quantile of ``sum lambda_i Z_i^2``.
 
         Args:
-            eigenvalues: the covariance's spectrum, or as much of it as is
-                known.
-            level: the probability the ball carries.
+            eigenvalues: the weights, or as many of them as are known.
+            level: the probability the set carries.
             quantile_method: how to invert the weighted chi-squared.
 
         Returns:
-            The ball.
+            The squared radius.
         """
-        from ..geometry.convex import Ball
         from ..numerics.quadratic_forms import weighted_chi2_quantile
 
         weights = np.clip(np.asarray(eigenvalues, dtype=float), 0.0, None)
         if quantile_method == "auto":
-            quantile_method = self._quantile_method_for(weights)
-        radius = np.sqrt(weighted_chi2_quantile(weights, level, method=quantile_method))
-        return Ball(self._domain, radius=float(radius), center=self.expectation)
+            quantile_method = GaussianMeasure._quantile_method_for(weights)
+        return float(weighted_chi2_quantile(weights, level, method=quantile_method))
 
     @staticmethod
     def _quantile_method_for(weights: np.ndarray, /) -> str:

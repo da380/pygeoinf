@@ -646,62 +646,109 @@ class TestInvariantAlgebraDrawsInOneTransform:
         assert np.isfinite(first.log_density(X.random(rng=rng), unsafe=True))
 
 
-class TestWeakenedEllipsoid:
-    """The fractional credible geometry, between the credible ellipsoid and
-    the ambient ball."""
+class TestTheBallInAnotherNorm:
+    """The ambient ball measured in the norm a bounded operator defines: a
+    constraint set of another shape than the space's own."""
 
-    def test_the_ends_are_the_two_hardenings(self, rng):
-        from pygeoinf2.geometry.convex import Ball, Ellipsoid
+    @staticmethod
+    def mass_operators(X):
+        """The L2 inner product seen from the Sobolev one, and its inverse:
+        spectral functions, the reciprocal of the Sobolev symbol and the
+        symbol itself."""
+        symbol = X.sobolev_symbol(1.5, 0.3)
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        return (
+            X.spectral_operator(1.0 / symbol, traits=traits),
+            X.spectral_operator(symbol, traits=traits),
+        )
+
+    def test_a_spectral_operator_takes_the_diagonal_route(self, rng):
+        """The L2 ball of a Sobolev space, calibrated by its invariant
+        measure: the weights are the products of the two spectra, and the
+        set carries its level."""
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
 
         X = Sobolev(6, 1.5, 0.3)
         measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
-        full = measure.weakened_ellipsoid(level=0.9, power=1.0, unsafe=True)
-        exact = measure.credible_set(level=0.9, unsafe=True)
-        assert isinstance(full, Ellipsoid)
-        for _ in range(10):
-            x = measure.sample(rng=rng)
-            assert full.contains(x) == exact.contains(x)
-        ball = measure.weakened_ellipsoid(level=0.9, power=0.0)
-        assert isinstance(ball, Ball)
-        assert ball.radius == pytest.approx(measure.ambient_ball(level=0.9).radius)
+        mass, inverse = self.mass_operators(X)
+        ellipsoid = measure.ambient_ball(level=0.9, operator=mass, inverse=inverse)
+        assert isinstance(ellipsoid, Ellipsoid)
+        assert ellipsoid.has_support_function
 
-    def test_it_carries_its_level_and_nests(self, rng):
-        """Coverage by Monte Carlo at three powers, and the weakened set is
-        neither the ellipsoid nor the ball but between them in shape."""
-        X = Sobolev(6, 1.5, 0.3)
-        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        weights = measure._diagonal_eigenvalues() * mass._known_scaling()
+        expected = weighted_chi2_quantile(weights, 0.9)
+        x = measure.sample(rng=rng)
+        assert ellipsoid.mahalanobis_squared(x) == pytest.approx(
+            X.inner_product(mass(x), x) / expected, rel=1e-10
+        )
+
         draws = measure.samples(3000, rng=rng)
-        for power in (0.25, 0.5, 0.75):
-            weakened = measure.weakened_ellipsoid(level=0.9, power=power)
-            assert weakened.has_support_function
-            covered = np.mean([weakened.contains(x) for x in draws])
-            assert covered == pytest.approx(0.9, abs=0.025)
+        covered = np.mean([ellipsoid.contains(y) for y in draws])
+        assert covered == pytest.approx(0.9, abs=0.025)
 
-    def test_a_general_covariance_goes_through_the_calculus(self, rng):
-        """A dense, non-diagonal covariance on a weighted space: the spectrum
-        by the dense route and the fractional powers by Lanczos, and the
-        coverage still holds."""
-        from pygeoinf2.probability.gaussian import GaussianMeasure
+    def test_the_identity_gives_the_ball(self, rng):
+        X = Sobolev(6, 1.5, 0.3)
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        identity = LinearOperator.identity(X).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        ellipsoid = measure.ambient_ball(level=0.9, operator=identity)
+        ball = measure.ambient_ball(level=0.9)
+        x = X.random(rng=rng)
+        assert ellipsoid.mahalanobis_squared(x) == pytest.approx(
+            X.squared_norm(x) / ball.radius**2, rel=1e-10
+        )
 
+    def test_a_general_covariance_agrees_across_routes(self, rng):
+        """A dense, non-diagonal covariance on a weighted space and a dense
+        operator: the dense route against sampling and against the
+        randomized spectrum through the factor."""
         X = make_weighted_space()
         raw = rng.normal(size=(X.dim, X.dim))
-        # A symmetric positive definite Galerkin matrix is a covariance on
-        # any metric; the same numbers as components would not be.
         matrix = raw @ raw.T + X.dim * np.eye(X.dim)
         measure = GaussianMeasure.from_covariance_matrix(X, matrix, form="galerkin")
-        weakened = measure.weakened_ellipsoid(level=0.9, power=0.5)
-        draws = measure.samples(3000, rng=rng)
-        covered = np.mean([weakened.contains(x) for x in draws])
-        assert covered == pytest.approx(0.9, abs=0.03)
-        assert weakened.has_support_function
+        shape = rng.normal(size=(X.dim, X.dim))
+        shape = shape @ shape.T + X.dim * np.eye(X.dim)
+        operator = LinearOperator.from_matrix(X, X, shape, form="galerkin")
+        operator = operator.with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
 
-    def test_a_bad_power_or_level_is_refused(self):
-        X = Lebesgue(4)
-        measure = X.invariant_measure(np.ones(X.dim))
-        with pytest.raises(ValueError, match="power"):
-            measure.weakened_ellipsoid(power=1.5)
-        with pytest.raises(ValueError, match="level"):
-            measure.weakened_ellipsoid(level=1.0, power=0.5)
+        dense = measure.ambient_ball(level=0.9, operator=operator, method="dense")
+        spectral = measure.ambient_ball(
+            level=0.9,
+            operator=operator,
+            method="spectral",
+            rank=X.dim,
+            rng=np.random.default_rng(1),
+        )
+        sampled = measure.ambient_ball(
+            level=0.9,
+            operator=operator,
+            method="sampling",
+            samples=40000,
+            rng=np.random.default_rng(2),
+        )
+        x = X.random(rng=rng)
+        reference = dense.mahalanobis_squared(x)
+        assert spectral.mahalanobis_squared(x) == pytest.approx(reference, rel=1e-6)
+        assert sampled.mahalanobis_squared(x) == pytest.approx(reference, rel=0.05)
+        draws = measure.samples(3000, rng=rng)
+        covered = np.mean([dense.contains(y) for y in draws])
+        assert covered == pytest.approx(0.9, abs=0.03)
+
+    def test_an_operator_off_the_space_or_without_its_traits_is_refused(self):
+        X = Sobolev(6, 1.5, 0.3)
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        elsewhere = LinearOperator.identity(EuclideanSpace(3)).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        with pytest.raises(ValueError, match="must act on"):
+            measure.ambient_ball(level=0.9, operator=elsewhere)
+        unclaimed = LinearOperator.from_callables(
+            X, X, lambda x: x, adjoint=lambda x: x
+        )
+        with pytest.raises(ValueError, match="must claim"):
+            measure.ambient_ball(level=0.9, operator=unclaimed)
 
 
 class TestSampledPointwiseVariance:
