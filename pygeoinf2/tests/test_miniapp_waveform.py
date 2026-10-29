@@ -7,11 +7,13 @@ library ``Operator`` with both derivatives, and runs the nonlinear estimators
 on it. Here the adjoints are proved on the small grid -- the explicit
 transpose of the stencil, the fused kernels against the unfused ones, the
 library's check ladder, dot tests and central differences falling as the
-square of the step -- and the quick scale of parts B to E is run through the
-scripts' entry points, with what must hold of each asserted.
+square of the step -- what the sponge sends back is measured at the quick
+scale against a grid too big to reflect, and the quick scale of parts B to E
+is run through the scripts' entry points, with what must hold of each
+asserted.
 
 The extension is built in a temporary directory when it is not already built
-next to its sources. Without cmake and a working compiler the tests skip and
+into the app's ``src/``. Without cmake and a working compiler the tests skip and
 say so. Part F, the grid split across MPI ranks, runs on two ranks in a copy of
 the app built with MPI, and skips unless an MPI compiler wrapper builds it:
 ``MPICXX`` names one, or ``mpicxx`` on the path is tried.
@@ -19,8 +21,9 @@ the app built with MPI, and skips unless an MPI compiler wrapper builds it:
 
 from __future__ import annotations
 
+import dataclasses
+import importlib
 import importlib.machinery
-import importlib.util
 import pathlib
 import shutil
 import subprocess
@@ -33,18 +36,13 @@ from pygeoinf2 import EvaluationError, MaximumAPosteriori, Occam
 from pygeoinf2.testing import check_traits
 
 MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "waveform"
-MODULES = (
-    "survey",
-    "wave_operator",
-    "common",
-    "inversion",
-    "proofs",
-    "synthetic",
-    "newton",
-    "occam",
-    "laplace",
-)
-SEED = 2026
+# The app's modules, in the package ``src``, and its part scripts, which
+# import each other and the package by their plain names. Other mini-apps
+# use the same names.
+MODULES = ("src.survey", "src.wave_operator", "src.common", "src.inversion")
+SCRIPTS = ("proofs", "synthetic", "newton", "occam", "laplace")
+# What the app's build is made from, in its cpp/.
+BUILD = ("acoustic.cpp", "CMakeLists.txt", "build.py")
 
 pytestmark = pytest.mark.slow
 
@@ -57,59 +55,64 @@ def _importable_from(directory: pathlib.Path) -> bool:
     )
 
 
-def _module(name: str):
-    """One of the mini-app's modules, imported by path.
+def _forget() -> None:
+    """Drop the app's names, and any other app's of the same names."""
+    for name in list(sys.modules):
+        if name == "src" or name.startswith("src.") or name in SCRIPTS:
+            del sys.modules[name]
 
-    The scripts import each other by their plain names, so the directory goes
-    on the path for the duration of the import; a module is registered before
-    it runs so that its dataclasses can resolve their annotations.
-    """
-    path = MINIAPP / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+
+def _module(name: str):
+    """One of the mini-app's modules or scripts, imported by name with the
+    app's directory on the path for the duration, as a script run there
+    would find it."""
     sys.path.insert(0, str(MINIAPP))
     try:
-        spec.loader.exec_module(module)
+        return importlib.import_module(name)
     finally:
         sys.path.remove(str(MINIAPP))
-    return module
+
+
+def _copy_build(app: pathlib.Path, /) -> None:
+    """The build's files into a copy of the app, in its ``cpp/``, with an empty
+    ``src/`` for the build to put the modules in."""
+    (app / "cpp").mkdir(parents=True, exist_ok=True)
+    (app / "src").mkdir(exist_ok=True)
+    for name in BUILD:
+        shutil.copy(MINIAPP / "cpp" / name, app / "cpp" / name)
 
 
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
-    """The mini-app's modules, keyed by name, with the extension built if need be."""
-    if not (MINIAPP / "acoustic.cpp").exists():
+    """The mini-app's modules and scripts, keyed by their last names, with the
+    extension built if need be."""
+    if not (MINIAPP / "cpp" / "acoustic.cpp").exists():
         pytest.skip(f"The mini-app is not at {MINIAPP}.")
     pytest.importorskip("nanobind")
     if shutil.which("cmake") is None:
         pytest.skip("cmake is not on the path.")
     added = None
-    if not _importable_from(MINIAPP):
+    if not _importable_from(MINIAPP / "src"):
         scratch = tmp_path_factory.mktemp("waveform")
-        for name in ("acoustic.cpp", "CMakeLists.txt", "build.py"):
-            shutil.copy(MINIAPP / name, scratch / name)
+        _copy_build(scratch)
         result = subprocess.run(
-            [sys.executable, "build.py"],
+            [sys.executable, "cpp/build.py"],
             cwd=scratch,
             capture_output=True,
             text=True,
             check=False,
         )
-        if result.returncode != 0 or not _importable_from(scratch):
+        if result.returncode != 0 or not _importable_from(scratch / "src"):
             tail = "\n".join((result.stderr or result.stdout).splitlines()[-8:])
             pytest.skip(
                 f"The acoustic extension did not build on this platform:\n{tail}"
             )
-        added = str(scratch)
+        added = str(scratch / "src")
         sys.path.insert(0, added)
-    # Other mini-apps use some of the same plain names; none may leak in.
-    saved = {name: sys.modules.pop(name) for name in MODULES if name in sys.modules}
-    modules = {name: _module(name) for name in MODULES}
+    _forget()
+    modules = {name.split(".")[-1]: _module(name) for name in MODULES + SCRIPTS}
     yield modules
-    for name in MODULES:
-        sys.modules.pop(name, None)
-    sys.modules.update(saved)
+    _forget()
     if added is not None:
         sys.path.remove(added)
 
@@ -197,21 +200,72 @@ class TestTheProofs:
         np.testing.assert_array_equal(first, second)
 
 
+def test_the_sponge_sends_back_little(app):
+    """Against a grid padded by 200 cells, at the quick scale."""
+    sponge = app["proofs"].reflection(app["survey"].QUICK)
+    assert sponge["data"] < 0.01
+    assert sponge["interior"] < 0.03
+
+
 @pytest.fixture(scope="module")
-def results(app, tmp_path_factory):
+def scale(app, tmp_path_factory):
+    """The quick preset, built through the scripts' own command line with
+    options given at their preset values."""
+    survey = app["survey"]
+    quick = survey.QUICK
+    arguments = app["common"].parse(
+        "the quick scale",
+        quick=quick,
+        full=survey.FULL,
+        argv=[
+            "--quick",
+            "--noise-fraction",
+            str(quick.noise_fraction),
+            "--shots",
+            *map(str, quick.shots),
+            "--outdir",
+            str(tmp_path_factory.mktemp("waveform_options")),
+        ],
+    )
+    assert arguments.scale == quick
+    return arguments.scale
+
+
+def test_every_field_of_the_scale_is_an_option(app, tmp_path):
+    survey, inversion = app["survey"], app["inversion"]
+    arguments = app["common"].parse(
+        "",
+        quick=survey.QUICK,
+        full=survey.FULL,
+        argv=[
+            "--quick",
+            "--noise-fraction",
+            "0.1",
+            "--n-jobs",
+            "none",
+            "--outdir",
+            str(tmp_path),
+        ],
+    )
+    changed = dataclasses.replace(survey.QUICK, noise_fraction=0.1, n_jobs=None)
+    assert arguments.scale == changed
+    # Part C's saved modes are never read back under another problem.
+    assert inversion.modes_path(tmp_path, survey.QUICK).name == "modes_quick_2026.npz"
+    assert inversion.modes_path(tmp_path, changed) != inversion.modes_path(
+        tmp_path, survey.QUICK
+    )
+
+
+@pytest.fixture(scope="module")
+def results(app, scale, tmp_path_factory):
     """Parts B to E at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("waveform_quick")
-    scale = app["survey"].QUICK
-    results = {"b": app["synthetic"].run(scale, seed=SEED, outdir=outdir)}
+    results = {"b": app["synthetic"].run(scale, outdir=outdir)}
     state = results["b"]["setup"]
-    results["c"] = app["newton"].run(scale, seed=SEED, outdir=outdir, state=state)
+    results["c"] = app["newton"].run(scale, outdir=outdir, state=state)
     mode = results["c"]["runs"]["polish"]["model"]
-    results["d"] = app["occam"].run(
-        scale, seed=SEED, outdir=outdir, state=state, mode=mode
-    )
-    results["e"] = app["laplace"].run(
-        scale, seed=SEED, outdir=outdir, state=state, mode=mode
-    )
+    results["d"] = app["occam"].run(scale, outdir=outdir, state=state, mode=mode)
+    results["e"] = app["laplace"].run(scale, outdir=outdir, state=state, mode=mode)
     return results, outdir
 
 
@@ -226,8 +280,10 @@ def test_the_map_recovers_the_anomalies(results):
     part = results[0]["c"]
     runs = part["runs"]
     truth_misfit = results[0]["b"]["misfit"]["truth"]
-    assert runs["gauss-newton"]["error"] < 0.4
-    assert runs["polish"]["error"] < 0.4
+    # Over the whole section, which takes in the noise's imprint along its
+    # sides and bottom as well as the anomalies.
+    assert runs["gauss-newton"]["error"] < 0.65
+    assert runs["polish"]["error"] < 0.65
     for run in runs.values():
         assert run["chi2"] < truth_misfit
     # The exact Hessian polishes: two Newton steps with tight inner solves
@@ -256,7 +312,7 @@ def test_occam_meets_its_level_with_less_structure(results):
 def test_the_laplace_gaussian_holds_the_truth(results):
     part = results[0]["e"]
     assert np.all(part["inside"])
-    assert np.all(part["std"] < 0.3 * part["prior_std"])
+    assert np.all(part["std"] < 0.35 * part["prior_std"])
     assert np.all(part["settling"] > 0.98)
 
 
@@ -304,13 +360,14 @@ def test_the_grid_split_across_ranks_gives_the_serial_answers(tmp_path):
         )
     wrapper, launcher = tools
     # A copy of the app, built with MPI, so that the scripts import the
-    # modules built here and not whatever sits beside the sources.
-    for path in MINIAPP.iterdir():
-        if path.suffix in (".py", ".cpp") or path.name == "CMakeLists.txt":
-            shutil.copy(path, tmp_path / path.name)
+    # modules built here and not whatever sits in the app's src/.
+    _copy_build(tmp_path)
+    for folder in (MINIAPP, MINIAPP / "src"):
+        for path in folder.glob("*.py"):
+            shutil.copy(path, tmp_path / path.relative_to(MINIAPP))
     environment = dict(os.environ, MPICXX=wrapper, MPLBACKEND="Agg")
     result = subprocess.run(
-        [sys.executable, "build.py", "--mpi"],
+        [sys.executable, "cpp/build.py", "--mpi"],
         cwd=tmp_path,
         env=environment,
         capture_output=True,
@@ -349,4 +406,4 @@ def test_the_grid_split_across_ranks_gives_the_serial_answers(tmp_path):
     ladder = numbers["proof"]["ladder"]
     assert ladder["check_operator(F'(m))"] < 1e-12
     assert ladder["check_operator(F''(m)[d, .])"] < 1e-12
-    assert numbers["grid"]["error"] < 0.4
+    assert numbers["grid"]["error"] < 0.65

@@ -1,5 +1,7 @@
 # A planet's density
 
+How the app is built on the library is walked through in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+
 ## The problem
 
 The radial density of the Earth from two numbers, its mass and its moment of
@@ -50,8 +52,12 @@ agree with PREM's own to `1.2e-5`, and its three properties, 10.987, 4.449
 and 4.337, are PREM's.
 
 **The truth is the reference plus a draw from the tight prior** of part B, a
-Sobolev measure about the reference with a pointwise standard deviation of
-0.1 g/cm^3 in every layer, independent between the layers. The data are the
+Sobolev measure of order 2 about the reference with a pointwise standard
+deviation of 0.1 g/cm^3 in every layer, independent between the layers: a
+measure of extra regularity on the space, whose covariance is trace class
+on `H^2` (a radial profile's spectrum grows as on a line, so any order
+above one half would be) and whose draws have nearly one and a half
+derivatives more than the space asks. The data are the
 truth's mass and moment of inertia, with Gaussian errors of 0.1% of each
 drawn from the error measure. They are carried in units of `10^24 kg` and
 `10^37 kg m^2`, so that both are of order one.
@@ -80,14 +86,14 @@ Units: radii in km and densities in g/cm^3 throughout.
     propagates and its bias at the truth.
   - The **measure**: the posterior against the prior, as bands on the
     profile and marginals on the three properties, and the log evidence.
-  - The **set**: the prior hardened to its 95% ball in the model space's
-    norm, and the noise to its 95% ball. Their certified brackets on the
-    three properties are drawn against the bound the prior ball admits
-    alone.
-- **C, a deliberately wide bound** (`wide.py`): a ball in the model space's
-  norm whose radius is the 95% radius of the same measure with a pointwise
-  standard deviation of 3 g/cm^3, and that measure as the Gaussian. The same
-  three answers follow, in the same order.
+  - The **set**: the prior hardened to its 95% ellipsoid, the ellipsoid of
+    its covariance to the power three eighths, and the noise to its own 95%
+    ellipse on the two data. Their certified brackets on the three
+    properties are drawn
+    against the bound the prior's ellipsoid admits alone.
+- **C, a deliberately wide bound** (`wide.py`): the same measure with a
+  pointwise standard deviation of 3 g/cm^3 as the Gaussian, and its 95%
+  ellipsoid as the set. The same three answers follow, in the same order.
 - **D, the boundaries** (`boundaries.py`): the inner-core and core-mantle
   boundary radii as further unknowns, a weakly nonlinear problem on
   `DirectSum([space, EuclideanSpace(2)])`.
@@ -115,7 +121,7 @@ Units: radii in km and densities in g/cm^3 throughout.
     Occam asks for the smallest `w`, as the point answers of parts B and C
     do.
   - **The displacement unit.** The displacements are carried in units of
-    `RADIUS_SCALE`, 50 km. A unit is then one standard deviation of the
+    the scale's `radius_scale`, 50 km. A unit is then one standard deviation of the
     displacements' prior, as 0.1 g/cm^3 is of the density's, and that is
     the statement the MAP model and the Laplace Gaussian rest on.
   - **The two norms.** The model space's norm adds the squared
@@ -124,7 +130,7 @@ Units: radii in km and densities in g/cm^3 throughout.
     next to nothing:
     - one unit at the core-mantle boundary changes the mass by 0.55%, as
       the smallest density change of norm `3.9e4` would;
-    - the tight prior's 95% ball has radius `3.5e5`;
+    - 95% of the tight prior's draws have a norm below `3.5e5`;
     - in kilometers it would be cheaper again.
 
     The prior's norm measures both parts in the prior's own standard
@@ -136,16 +142,17 @@ it shows, each with the truth marked:
 
 - the point answer with its error budget;
 - the measure answer as the prior against the posterior;
-- the set answer as the prior ball's bound against the bracket the data
-  leave.
+- the set answer as the prior's ellipsoid's bound against the bracket the
+  data leave.
 
 Part D's one figure shows the density and the displacements of the MAP
 model and of Occam's model in the two norms, side by side.
 
 Two scales. `--quick` keeps 12 basis functions in each core layer and the
 lower mantle and 3 in each thin layer, 60 in all; the full scale keeps 104.
-They run every part in about 5 and 6 seconds on an AMD Ryzen AI 7 PRO 350
-with Python 3.12, numpy 2.4 and planetmodel 1.3.2.
+They run every part in about 30 and 60 seconds on an AMD Ryzen AI 7 PRO 350
+with Python 3.12, numpy 2.4 and planetmodel 1.3.2, most of it the set
+answers.
 
 ## How to run
 
@@ -157,27 +164,76 @@ MPLBACKEND=Agg python tight.py              # one part; likewise setup.py,
                                             # wide.py, boundaries.py
 ```
 
-Every script takes `--quick`, `--outdir` and `--seed`, the seed 2027 by
-default. The seed draws the truth's departure from PREM and the data's
-noise, the points at which part D checks its derivatives, and part D's
-noise. The numbers below are one realization. With another seed, the
-truth's departure can leave the mass and the moment of inertia nearly where
-PREM's are, and PREM may then fit the data, in which case the point answer
-is PREM itself. A part run on its own rebuilds the problem from the seed and
-gives the same numbers. Figures are written next to the sources (`quick/` at
-the quick scale). The test is `pygeoinf2/tests/test_miniapp_planet_density.py`,
-marked `slow`, which runs the quick scale of every part through its script's
-entry point.
+A script runs from any directory, by its path. Every script takes the same
+options: `--quick` or `--full` (the default) picks a preset scale, every
+field of the scale is then an option that overrides it, and `--outdir` says
+where the figures go. `python run_all.py --help`, in short:
+
+```
+  --quick | --full      the quick scale, or the full one (the default)
+  --outdir OUTDIR       where the figures go (default: results/,
+                        results/quick/ at the quick scale)
+the scale, each default the full preset's:
+  --seed int            the truth's departure, the errors, part D's draws (2027)
+  --basis-functions int [int ...]
+                        the basis functions in each of the eleven layers,
+                        inner core first (16 24 4 32 4 4 5 5 4 3 3)
+  --order float         the Sobolev order of every layer (2.0)
+  --length-scale float  every layer's length scale but the crust's, in km (200.0)
+  --measure-order float the order of the priors' Sobolev measure, above
+                        one half (2.0)
+  --tight-std float     the tight prior's pointwise std, in g/cm^3 (0.1)
+  --wide-std float      the wide prior's pointwise std, in g/cm^3 (3.0)
+  --relative-error float
+                        each datum's error, as a fraction of it (0.001)
+  --level float         the discrepancy level's and the sets' credibility (0.95)
+  --set-power float     the power of a prior's covariance that shapes its
+                        ellipsoid, below three quarters (0.375)
+  --radius-scale float  part D's displacement unit and prior std, in km (50.0)
+  --true-shifts float [float ...]
+                        part D's true ICB and CMB displacements, in km (-20 30)
+  --check-points int    the prior draws part D checks its derivatives at (3)
+```
+
+The seed draws the truth's departure from PREM and the data's noise, the
+points at which part D checks its derivatives, and part D's noise. The
+numbers below are one realization. With another seed, the truth's departure
+can leave the mass and the moment of inertia nearly where PREM's are, and
+PREM may then fit the data, in which case the point answer is PREM itself.
+Two overrides at the quick scale show what the options change, against the
+quick scale's own numbers:
+
+- **Noisier data**, `run_all.py --quick --relative-error 0.005`: five times
+  the error on the same truth. PREM now fits the data (chi-squared 5.11
+  against the critical 5.99), so the point answer is PREM itself under both
+  priors, and so is Occam's model in both norms. The posterior on the
+  mantle mean widens from ±0.011 to ±0.020 and the bracket on it from 0.16
+  to 0.24 g/cm^3 wide, and part D's Laplace Gaussian puts the core-mantle
+  boundary at -2 ± 42 km rather than +27 ± 31, the truth being +30.
+- **The core-mantle boundary moved in**, `run_all.py --quick --true-shifts
+  -20 -60`: parts A to C are unchanged. In part D the data reject PREM at
+  its own radii at a chi-squared of 297.5 rather than 49.2; the MAP model
+  puts the boundary at -27 ± 31 km, the truth being -60, and Occam's model
+  in the prior's norm moves it 27 km in, where with the default truth it
+  moved it 3 km out.
+
+A part run on its own rebuilds the problem from the seed and gives the same
+numbers. Figures are written into `results/` (`results/quick/` at the quick
+scale), which git ignores. The test is
+`pygeoinf2/tests/test_miniapp_planet_density.py`, marked `slow`, which builds
+the quick scale through the same command line and runs every part through
+its script's entry point.
 
 | file | what it is |
 |---|---|
-| `reference.py` | PREM through planetmodel: the layering, the density layer by layer, and PREM's own mass, moment and properties by quadrature |
-| `problem.py` | the two scales, the layered space, the reference and the truth, the forward and property operators, the data, the priors, `build(scale=)` |
-| `answers.py` | the point, measure and set answers under one prior, each with its figure |
-| `common.py` | the command line, profiles and their bands, the titles |
-| `radii.py` | part D's forward operator, the density and the two boundary displacements to the mass and the moment, with its derivatives and their check |
+| `src/reference.py` | PREM through planetmodel: the layering, the density layer by layer, and PREM's own mass, moment and properties by quadrature |
+| `src/problem.py` | the scale with its two presets, the layered space, the reference and the truth, the forward and property operators, the data, the priors, `build(scale=)` |
+| `src/answers.py` | the point, measure and set answers under one prior, each with its figure |
+| `src/common.py` | the command line built from the scale, profiles and their bands, the titles |
+| `src/radii.py` | part D's forward operator, the density and the two boundary displacements to the mass and the moment, with its derivatives and their check |
 | `setup.py`, `tight.py`, `wide.py`, `boundaries.py` | parts A to D, each a script with a `main()` and a `run()` the others and the test call |
 | `run_all.py` | the parts in order |
+| `results/` | the figures a run writes, `results/quick/` at the quick scale |
 
 ## The answers at the full scale
 
@@ -190,20 +246,20 @@ PREM's, the reference's, are 10.987, 4.449 and 4.337.
 | B point: bias at the truth | +0.046 | +0.011 | +0.075 |
 | B measure: prior | 10.987 ± 0.069 | 4.449 ± 0.046 | 4.337 ± 0.140 |
 | B measure: posterior | 10.953 ± 0.056 | 4.386 ± 0.011 | 4.316 ± 0.138 |
-| B set: the prior ball alone | [10.229, 11.745] | [4.172, 4.726] | [2.932, 5.742] |
-| B set: with the data | [10.429, 11.436] | [4.301, 4.478] | [2.949, 5.696] |
+| B set: the prior's ellipsoid alone | [10.365, 11.608] | [4.164, 4.733] | [3.180, 5.495] |
+| B set: with the data | [10.488, 11.393] | [4.305, 4.470] | [3.191, 5.453] |
 | C point | as B's | as B's | as B's |
 | C measure: prior | 10.99 ± 2.07 | 4.45 ± 1.37 | 4.34 ± 4.20 |
 | C measure: posterior | 10.95 ± 1.51 | 4.386 ± 0.294 | 4.31 ± 4.11 |
-| C set: the prior ball alone | [-11.76, 33.73] | [-3.87, 12.76] | [-37.8, 46.5] |
-| C set: with the data | [-1.62, 23.49] | [1.96, 6.82] | [-37.5, 46.1] |
+| C set: the prior's ellipsoid alone | [-7.66, 29.63] | [-4.09, 12.99] | [-30.4, 39.1] |
+| C set: with the data | [-0.57, 22.44] | [2.15, 6.62] | [-29.9, 38.6] |
 | D: Laplace about the MAP model | 10.973 ± 0.064 | 4.405 ± 0.018 | 4.330 ± 0.139 |
 
-The brackets are certified to gaps of `4.1e-4` or less under the tight
-prior and `1.3e-2` or less under the wide one. The truth is inside every
-posterior interval and every bracket, and inside both priors' balls.
+The brackets are certified to gaps of `5.3e-6` or less under the tight
+prior and `6.2e-3` or less under the wide one. The truth is inside every
+posterior interval and every bracket, and inside both priors' ellipsoids.
 
-**B** (about 3 s).
+**B** (about 31 s, 30 of them the set).
 
 - **The point.** The damping search takes 12 evaluations and lands at a
   chi-squared of 5.99, the critical value, from 265.8 at PREM. The
@@ -224,12 +280,20 @@ posterior interval and every bracket, and inside both priors' balls.
   correlated at -0.85 through the mass. Pointwise, the posterior band is
   narrowed most in the lower mantle, to about two thirds of the prior's,
   and hardly in the thin layers. The log evidence is 3.94.
-- **The set.** The prior's 95% ball, of radius `3.47e5` in the model space's
-  norm, holds the truth. With the data the brackets on the two means narrow
-  from 1.52 to 1.01 and from 0.55 to 0.18 g/cm^3, and the jump's barely
-  moves.
+- **The set.** The prior's 95% ellipsoid, `(Q^-3/8 (m - m0), m - m0) <= r^2`,
+  holds the truth at 0.91 of its boundary's gauge; the noise is hardened to
+  its own 95% ellipse on the two data, whose errors differ in size. With
+  the data the brackets on the two means narrow from 1.24 to 0.91 and from
+  0.57 to 0.17 g/cm^3, and the jump's barely moves. The ellipsoid has the
+  covariance's shape to a power below three quarters, the one below which
+  a measure of order 2 on a radial profile, whose spectrum grows as on a
+  line, carries its 95% in it however many basis functions there are; the
+  Mahalanobis ellipsoid of the covariance itself does not, its radius
+  growing with their number. Each support value applies the covariance's
+  fractional power through the Lanczos calculus, which is where the set
+  answer's time goes.
 
-**C** (about 2.5 s).
+**C** (about 30 s).
 
 - **The point** is B's, since the minimum-norm change sees the prior's
   shape and not its size.
@@ -245,8 +309,8 @@ posterior interval and every bracket, and inside both priors' balls.
   - The data prefer the tight prior, from which the truth was drawn, by
     5.54 nats: both fit, and the wide prior spreads itself over profiles
     the data rule out.
-- **The set.** Under a ball of radius `1.04e7` the brackets are wider again
-  than the posterior's intervals, as a norm bound is: it admits the profile
+- **The set.** Under the wide prior's ellipsoid the brackets are wider again
+  than the posterior's intervals, as a set bound is: it admits the profile
   that spends its whole budget on one property, which the Gaussian calls
   vanishingly unlikely.
 

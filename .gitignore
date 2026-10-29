@@ -29,9 +29,8 @@ docs/build/
 docs/source/modules.rst
 docs/source/pygeoinf*.rst
 
-# Mini-app build products and figures: built and drawn by running them.
+# Mini-app build products, built by running the builds, and what a run
+# writes: figures, saved modes and timings, each app's under its results/.
 pygeoinf2/miniapps/**/*.so
 pygeoinf2/miniapps/**/*.pyd
-pygeoinf2/miniapps/**/*.png
-pygeoinf2/miniapps/**/*.npz
-pygeoinf2/miniapps/**/mpi_*.json
+pygeoinf2/miniapps/*/results/

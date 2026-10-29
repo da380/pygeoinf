@@ -22,6 +22,7 @@ mid-mantle depth shows where the rays run beneath it.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import time
 from typing import Any, Sequence
@@ -37,35 +38,30 @@ from pygeoinf2 import GaussianMeasure, LinearForwardProblem, plotting
 from pygeoinf2.symmetric_space.sphere import Lebesgue as Sphere
 
 from bayesian import exact_pointwise_std, posterior, property_posterior
-from common import (
+from point import error_budget, minimum_norm
+from sets import brackets_figure, support_brackets
+from src.common import (
+    FIXED,
     error_budget_panels,
     marginal_panels,
-    output_directory,
     parse,
     part_rng,
     save,
 )
-from point import error_budget, minimum_norm
-from problem import (
-    LEVEL,
+from src.problem import (
     MANTLE,
-    MAX_DISTANCE,
-    MIN_DISTANCE,
-    NOISE_STD,
-    ORDER,
-    PRIOR_STD,
+    QUICK,
     RADIUS,
     Problem,
     Scale,
-    identity_prior,
+    sobolev_prior,
     inner_truncation,
     model_space,
     path_integral_operator,
     prior_pointwise_std,
     property_operator,
 )
-from rays import Ray
-from sets import brackets_figure, support_brackets
+from src.rays import Ray
 
 # The network, drawn once from a generator of its own so that it is the same
 # whatever seed the noise is drawn with: a continent of receivers about
@@ -192,11 +188,15 @@ def stations() -> (
 SOURCES, RECEIVERS = stations()
 
 #: The ball: the network above, degree 14, and a length scale wide enough
-#: for the truncation.
-BALL = Scale(
+#: for the truncation; the physics, the noise and the distances the disk's;
+#: the set's power below one quarter, for the ellipsoid of a measure of
+#: order two in three dimensions to survive refinement.
+BALL = dataclasses.replace(
+    QUICK,
     name="ball",
     mmax=14,
     length_scale=0.2,
+    set_power=0.125,
     sources=SOURCES,
     receivers=RECEIVERS,
     nodes=121,
@@ -205,18 +205,26 @@ BALL = Scale(
     bump_width=0.15,
     geometry="ball",
 )
+#: The ball's fields that are not options: its stations, points of the
+#: sphere drawn once above, besides the disk's.
+BALL_FIXED = FIXED | {"sources", "receivers"}
 
 
 def network(
-    sources: Sequence[tuple[float, float]], receivers: Sequence[tuple[float, float]], /
+    sources: Sequence[tuple[float, float]],
+    receivers: Sequence[tuple[float, float]],
+    /,
+    *,
+    min_distance: float,
+    max_distance: float,
 ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Every source-receiver pair between :data:`MIN_DISTANCE` and
-    :data:`MAX_DISTANCE` degrees apart."""
+    """Every source-receiver pair between ``min_distance`` and
+    ``max_distance`` degrees apart."""
     return [
         (source, receiver)
         for source in sources
         for receiver in receivers
-        if MIN_DISTANCE <= apart(source, receiver) <= MAX_DISTANCE
+        if min_distance <= apart(source, receiver) <= max_distance
     ]
 
 
@@ -264,32 +272,38 @@ def bump_field(space: Any, /) -> Any:
     return space.project_function([bumps([CORE_BUMP]), bumps(MANTLE_BUMPS)])
 
 
-def build(*, scale: Scale = BALL, seed: int = 2026, quiet: bool = False) -> Problem:
+def build(*, scale: Scale = BALL, quiet: bool = False) -> Problem:
     """The network, the rays, the space, the prior, the truth and the data."""
     started = time.perf_counter()
-    rng = np.random.default_rng([seed, 0])
+    rng = np.random.default_rng([scale.seed, 0])
     say = (lambda *args: None) if quiet else print
     t0 = time.perf_counter()
-    pairs = network(scale.sources, scale.receivers)
+    pairs = network(
+        scale.sources,
+        scale.receivers,
+        min_distance=scale.min_distance,
+        max_distance=scale.max_distance,
+    )
     rays = [trace(source, receiver, nodes=scale.nodes) for source, receiver in pairs]
     deepest = min(float(ray.nodes[:, 0].min()) for ray in rays)
     say(
         f"rays: {len(scale.sources)} sources, {len(scale.receivers)} receivers "
         f"({COUNTS['continent']} over a continent of radius {CONTINENT_RADIUS:g} "
         f"degrees about {CONTINENT}, {COUNTS['islands']} islands), {len(rays)} "
-        f"pairs between {MIN_DISTANCE:g} and {MAX_DISTANCE:g} degrees apart, "
+        f"pairs between {scale.min_distance:g} and {scale.max_distance:g} degrees "
+        f"apart, "
         f"{scale.nodes} nodes each, traced in {time.perf_counter() - t0:.1f} s; the "
         f"deepest turns at r = {deepest:.3f}"
     )
     space = model_space(scale)
-    prior = identity_prior(space)
+    prior = sobolev_prior(space, order=scale.prior_order, std=scale.prior_std)
     core, mantle = space.layers
     say(
         f"space: the layered ball, core {core.dim} and mantle {mantle.dim} "
         f"coefficients (lmax {inner_truncation(core)} and "
-        f"{inner_truncation(mantle)}), H^{ORDER:g} with length scale "
-        f"{scale.length_scale}; prior: the identity covariance on it, pointwise std "
-        f"{PRIOR_STD:g}%"
+        f"{inner_truncation(mantle)}), H^{scale.order:g} with length scale "
+        f"{scale.length_scale}; prior: a Sobolev measure of order "
+        f"{scale.prior_order:g} on each layer, pointwise std {scale.prior_std:g}%"
     )
     t0 = time.perf_counter()
     forward = path_integral_operator(scale, space, rays)
@@ -297,14 +311,15 @@ def build(*, scale: Scale = BALL, seed: int = 2026, quiet: bool = False) -> Prob
         f"forward: {len(rays)} rows from {len(rays) * scale.nodes} node evaluations "
         f"in {time.perf_counter() - t0:.1f} s"
     )
-    noise = GaussianMeasure.from_standard_deviation(forward.codomain, NOISE_STD)
+    noise = GaussianMeasure.from_standard_deviation(forward.codomain, scale.noise_std)
     problem = LinearForwardProblem(forward, error=noise)
     truth = bump_field(space)
     data = problem.synthetic_data(truth, rng=rng)
     say(
         f"truth: {len(MANTLE_BUMPS)} bumps in the mantle and one in the core, norm "
         f"{space.norm(truth):.2f}; travel-time perturbations of std "
-        f"{np.std(forward(truth)):.3f} against noise of {NOISE_STD}; chi-squared of "
+        f"{np.std(forward(truth)):.3f} against noise of {scale.noise_std}; "
+        f"chi-squared of "
         f"the truth {problem.chi_squared(truth, data):.1f} on {len(rays)} data"
     )
     properties = property_operator(scale, space, boxes=BOXES)
@@ -644,7 +659,7 @@ def point_part(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
     estimator = minimum_norm(problem)
     search = estimator.discrepancy_search(problem.data)
     chosen = estimator.for_data(problem.data)
-    smallest = chosen(problem.data)
+    smallest = problem.prior.covariance_factor(chosen(problem.data))
     budget = error_budget(problem, chosen)
     print(
         f"the point: minimum norm by the discrepancy principle, damping "
@@ -757,20 +772,20 @@ def measure_part(
         label="posterior std",
         cmap="viridis",
         vmin=0.0,
-        vmax=1.1 * PRIOR_STD,
+        vmax=1.1 * scale.prior_std,
     )
     grid = third.add_gridspec(1, 4, width_ratios=[1.0, 1.0, 1.0, 1.55])
     ax = third.add_subplot(grid[0, 0], aspect="equal")
     section_panel(
         problem,
-        prior_pointwise_std(space),
+        prior_pointwise_std(space, order=scale.prior_order, std=scale.prior_std),
         ax,
         SECTIONS[0][1],
         title=f"prior std, {SECTIONS[0][0]}",
         rays=False,
         cmap="viridis",
         vmin=0.0,
-        vmax=1.1 * PRIOR_STD,
+        vmax=1.1 * scale.prior_std,
         colorbar_label=None,
     )
     marginal_panels(
@@ -801,7 +816,7 @@ def measure_part(
 
 def set_part(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
     """The certified brackets on the three means, against the bounds of the
-    prior's ball alone."""
+    prior's ellipsoid alone."""
     print("the set:")
     result = support_brackets(problem)
     brackets_figure(
@@ -810,34 +825,36 @@ def set_part(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
         names=NAMES,
         path=outdir / "ball_brackets.png",
         title="Tomography, part F: the set answer in the ball. For each mean, the "
-        f"bound the prior's {LEVEL:.0%} ball admits alone\nand the certified bracket "
+        f"bound the prior's {problem.scale.level:.0%} ellipsoid admits alone\nand "
+        "the "
+        "certified bracket "
         "the data leave",
     )
     return result
 
 
-def ball_answers(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
+def ball_answers(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
     """The ball's setup, and its three answers with their figures."""
     started = time.perf_counter()
     print("\n=== F. The same planet in a ball ===")
-    problem = build(scale=scale, seed=seed)
+    problem = build(scale=scale)
     setup_figure(problem, outdir=outdir)
     results = {"a": problem}
     results["b"] = point_part(problem, outdir=outdir)
-    results["c"] = measure_part(problem, rng=part_rng(seed, "f"), outdir=outdir)
+    results["c"] = measure_part(problem, rng=part_rng(scale.seed, "f"), outdir=outdir)
     results["d"] = set_part(problem, outdir=outdir)
     print(f"F took {time.perf_counter() - started:.1f} s")
     return results
 
 
-def run(scale: Scale = BALL, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    return ball_answers(scale, seed=seed, outdir=outdir)
+def run(scale: Scale = BALL, /, *, outdir: pathlib.Path) -> dict:
+    return ball_answers(scale, outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
     # The ball is a toy at either scale; --quick only moves the figures.
-    run(BALL, seed=args.seed, outdir=output_directory(args.quick, args.outdir))
+    args = parse(__doc__, quick=BALL, full=BALL, fixed=BALL_FIXED)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

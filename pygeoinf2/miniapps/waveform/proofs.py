@@ -32,16 +32,15 @@ from pygeoinf2.testing import (
     check_traits,
 )
 
-from common import (
+from src.common import (
     describe,
-    output_directory,
     parse,
     part_rng,
     save,
     section,
     sponge_outline,
 )
-from survey import (
+from src.survey import (
     DEPTH_CELLS,
     FULL,
     PROOF,
@@ -53,7 +52,7 @@ from survey import (
     build,
     true_velocity,
 )
-from wave_operator import WaveformOperator
+from src.wave_operator import WaveformOperator
 
 TRIALS = 5
 STEPS = (1e-1, 1e-2, 1e-3, 1e-4, 1e-5)
@@ -384,10 +383,10 @@ def snapshots(experiment: Experiment, /, *, outdir: pathlib.Path) -> pathlib.Pat
     return path
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
     """The proofs on the proof grid and on the scale's grid, and the figure."""
     started = time.perf_counter()
-    rng = part_rng(seed, "a")
+    rng = part_rng(scale.seed, "a")
     print(f"\n=== A. The solver and its proofs ({scale.name} scale) ===")
     print("\n-- the proof grid --")
     results = {"proof": prove(build(PROOF), rng)}
@@ -414,12 +413,8 @@ def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

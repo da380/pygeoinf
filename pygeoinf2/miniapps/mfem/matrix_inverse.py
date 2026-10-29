@@ -38,17 +38,13 @@ from pygeoinf2 import (
 )
 from pygeoinf2.testing import check_traits
 
-from common import (
-    CORRELATION,
+from src.common import (
     FULL,
-    NOISE,
     QUICK,
     SENSOR_POSITIONS,
-    SOURCE_STRENGTH,
     Scale,
     dof_coordinates,
     draw_field,
-    output_directory,
     parse,
     part_rng,
     region_form,
@@ -57,7 +53,7 @@ from common import (
     unit_square,
     values,
 )
-from matrix_space import (
+from src.matrix_space import (
     MfemSpace,
     essential_dofs_of,
     matern_measure,
@@ -66,8 +62,6 @@ from matrix_space import (
     solver_from_bilinear_form,
 )
 
-CONDUCTIVITY = 1.0
-ORDERS = (1, 2, 3)
 DEFINITE = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
 
 
@@ -77,25 +71,30 @@ def constrained_space(order: int, divisions: int, /) -> tuple[object, MfemSpace]
     return elements, MfemSpace(elements, essential_dofs=essential_dofs_of(elements))
 
 
-def stiffness_form(elements: object, /) -> object:
+def stiffness_form(elements: object, /, *, conductivity: float) -> object:
     """The diffusion form, assembled and finalized by MFEM."""
     form = mfem.BilinearForm(elements)
     form.AddDomainIntegrator(
-        mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CONDUCTIVITY))
+        mfem.DiffusionIntegrator(mfem.ConstantCoefficient(conductivity))
     )
     form.Assemble()
     form.Finalize()
     return form
 
 
-def the_problem(elements: object, space: MfemSpace, /) -> tuple:
+def the_problem(elements: object, space: MfemSpace, scale: Scale, /) -> tuple:
     """The forward problem, the prior and the property operator on one space."""
-    solve = solver_from_bilinear_form(space, stiffness_form(elements), rtol=1e-10)
-    forward = operator_from_linear_forms(space, sensor_forms(elements)) @ solve
-    prior = SOURCE_STRENGTH * matern_measure(
-        space, smoothness=1.0, correlation_length=CORRELATION
+    solve = solver_from_bilinear_form(
+        space,
+        stiffness_form(elements, conductivity=scale.conductivity),
+        rtol=1e-10,
     )
-    noise = GaussianMeasure.from_standard_deviation(forward.codomain, NOISE)
+    forms = sensor_forms(elements, width=scale.sensor_width)
+    forward = operator_from_linear_forms(space, forms) @ solve
+    prior = scale.source_strength * matern_measure(
+        space, smoothness=scale.smoothness, correlation_length=scale.correlation_length
+    )
+    noise = GaussianMeasure.from_standard_deviation(forward.codomain, scale.noise_std)
     problem = LinearForwardProblem(forward, error=noise)
     property_operator = operator_from_linear_forms(space, [region_form(elements)])
     return problem, prior, property_operator
@@ -137,7 +136,7 @@ def matrix_inverse(
         f"the boundary, so the constrained space has dimension {V.dim}"
     )
     stiffness = operator_from_bilinear_form(
-        V, stiffness_form(elements), traits=DEFINITE
+        V, stiffness_form(elements, conductivity=scale.conductivity), traits=DEFINITE
     )
     traits_report = check_traits(stiffness, rng=rng)
     print(
@@ -145,13 +144,13 @@ def matrix_inverse(
         f"unconstrained space the constants would be in its kernel"
     )
 
-    problem, prior, property_operator = the_problem(elements, V)
+    problem, prior, property_operator = the_problem(elements, V, scale)
     truth, data = problem.synthetic_model_and_data(prior, rng=rng)
     chi_squared = problem.chi_squared(truth, data)
     print(
         f"{len(SENSOR_POSITIONS)} sensors, forward = sensors @ MFEM's solve; a "
-        f"Matern prior, correlation length {CORRELATION}, amplitude "
-        f"{SOURCE_STRENGTH}, its covariance, factor and precision all elliptic "
+        f"Matern prior, correlation length {scale.correlation_length}, amplitude "
+        f"{scale.source_strength}, its covariance, factor and precision all elliptic "
         f"solves; chi-squared of the truth {chi_squared:.1f} on {len(data)} data"
     )
     t0 = time.perf_counter()
@@ -176,9 +175,11 @@ def matrix_inverse(
     print("the same property on the same data, at three polynomial orders:")
     orders = []
     priors = []
-    for order in ORDERS:
+    for order in scale.orders:
         order_elements, space = constrained_space(order, scale.divisions)
-        order_problem, order_prior, order_property = the_problem(order_elements, space)
+        order_problem, order_prior, order_property = the_problem(
+            order_elements, space, scale
+        )
         value, deviation = on_property(
             LinearGaussianInversion(order_problem, order_prior), order_property, data
         )
@@ -188,7 +189,7 @@ def matrix_inverse(
             f"  order {order}: {space.dim:5d} free dofs   {value:+.4f} +/- {deviation:.4f}"
         )
     narrowest = min(orders, key=lambda row: row[3])[0]
-    if narrowest == ORDERS[0]:
+    if narrowest == scale.orders[0]:
         print(
             "  the lowest order's bar is the narrowest, which is not better "
             "information but overconfidence: a coarse space cannot represent the "
@@ -218,7 +219,7 @@ def matrix_inverse(
             fmt="s",
             capsize=4,
             color="0.55",
-            label="prior" if order == ORDERS[0] else None,
+            label="prior" if order == scale.orders[0] else None,
         )
         axes[2].errorbar(
             order + 0.1,
@@ -227,10 +228,10 @@ def matrix_inverse(
             fmt="o",
             capsize=4,
             color="C0",
-            label="posterior" if order == ORDERS[0] else None,
+            label="posterior" if order == scale.orders[0] else None,
         )
     axes[2].axhline(actual, color="black", ls="--", lw=1.0, label="truth")
-    axes[2].set_xticks(list(ORDERS))
+    axes[2].set_xticks(list(scale.orders))
     axes[2].set_xlabel("polynomial order")
     axes[2].set_ylabel("total source over the central square")
     axes[2].set_title(
@@ -257,17 +258,13 @@ def matrix_inverse(
     }
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    return matrix_inverse(scale, rng=part_rng(seed, "c"), outdir=outdir)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
+    return matrix_inverse(scale, rng=part_rng(scale.seed, "c"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

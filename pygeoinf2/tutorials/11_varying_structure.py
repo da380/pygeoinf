@@ -173,7 +173,7 @@ ax.set_title("Two numbers, mass and moment of inertia, and what they say")
 # %%
 Y = BallSobolev(12, 2.0, 0.2, radial_modes=8)
 print(Y)
-ball_prior = Y.sobolev_measure(1.5, pointwise_std=1.0)
+ball_prior = Y.sobolev_measure(2.0, pointwise_std=1.0)
 field_truth = ball_prior.sample(rng=rng)
 
 stations = [(1.0, *Y.random_point(rng=rng)[1:]) for _ in range(60)]
@@ -265,7 +265,7 @@ planet_reference = planet.project_function(
     ]
 )
 planet_prior = planet.sobolev_measure(
-    1.5, expectation=planet_reference, pointwise_std=[0.6, 0.5, 0.25]
+    2.0, expectation=planet_reference, pointwise_std=[0.6, 0.5, 0.25]
 )
 
 fig, ax = plt.subplots(figsize=(7.0, 3.2), layout="constrained")

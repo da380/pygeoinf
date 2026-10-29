@@ -1,11 +1,13 @@
 """Part B: the point answers.
 
-Least squares at a guessed damping, the minimum-norm model under the
-discrepancy principle, the latter's resolution of a bump under good and under
-poor coverage, and its error budget on the three properties: the noise it
-propagates and the bias only the truth reveals. Every solve is a Cholesky
-factorization of the damped data-space operator ``A A* + t R``, redone at
-each damping the search tries.
+Least squares at the damping a Bayesian would guess, the minimum-norm
+model under the discrepancy principle, the latter's resolution of a bump
+under good and under poor coverage, and its error budget on the three
+properties: the noise it propagates and the bias only the truth reveals.
+Size is measured in the prior's norm: the problem is parameterized by the
+prior's covariance factor, ``m = L w``, and both estimators measure ``|w|``.
+Every solve is a Cholesky factorization of the damped data-space operator
+``A Q A* + t R``, redone at each damping the search tries.
 """
 
 from __future__ import annotations
@@ -19,20 +21,18 @@ import numpy as np
 
 from pygeoinf2 import CholeskySolver, LeastSquares, MinimumNorm
 
-from common import (
+from src.common import (
     draw,
     error_budget_panels,
     outline_boxes,
-    output_directory,
     parse,
     part_rng,
     save,
     variances,
 )
-from problem import (
+from src.problem import (
     BOXES,
     FULL,
-    LEVEL,
     PROPERTIES,
     QUICK,
     Problem,
@@ -40,6 +40,8 @@ from problem import (
     build,
 )
 
+# In the prior's norm, least squares at a damping of one is the posterior
+# mean of part C: the guess a Bayesian would make.
 GUESSED_DAMPING = 1.0
 
 
@@ -88,20 +90,39 @@ def box_center(box: tuple[float, float, float, float], /) -> tuple[float, float]
     return 0.5 * (r1 + r2), 0.5 * (a1 + a2)
 
 
+def whitened(problem: Problem, /) -> Any:
+    """The problem in ``w``, with ``m = L w`` and ``L`` the prior's covariance
+    factor: the norm of ``w`` is the prior's norm of ``m``."""
+    return problem.problem.parameterized(problem.prior.covariance_factor)
+
+
+def whiten(problem: Problem, model: Any, /) -> Any:
+    """The ``w`` of a model, ``L^-1 m = L* Q^-1 m``, exact through the prior's
+    precision."""
+    prior = problem.prior
+    return prior.covariance_factor.adjoint(prior.precision(model))
+
+
 def minimum_norm(problem: Problem, /, *, rtol: float = 1e-3) -> MinimumNorm:
-    """The minimum-norm estimator under the discrepancy principle, its damping
-    found to ``rtol``."""
-    return MinimumNorm(problem.problem, level=LEVEL, solver=CholeskySolver(), rtol=rtol)
+    """The minimum-norm estimator under the discrepancy principle, smallest in
+    the prior's norm, its damping found to ``rtol``."""
+    return MinimumNorm(
+        whitened(problem),
+        level=problem.scale.level,
+        solver=CholeskySolver(),
+        rtol=rtol,
+    )
 
 
 def error_budget(problem: Problem, chosen: Any, /) -> dict:
-    """The estimator the data chose, pushed to the properties: its estimate,
-    the noise it propagates and its bias against the truth."""
-    pushed = chosen.push_forward(problem.properties)
+    """The estimator the data chose, pushed through the prior's factor to the
+    properties: its estimate, the noise it propagates and its bias against
+    the truth."""
+    pushed = chosen.push_forward(problem.properties @ problem.prior.covariance_factor)
     return {
         "estimate": pushed(problem.data),
         "propagated": np.sqrt(variances(pushed.propagated_covariance())),
-        "bias": pushed.bias(problem.truth),
+        "bias": pushed.bias(whiten(problem, problem.truth)),
     }
 
 
@@ -113,15 +134,20 @@ def point_answers(
     scale, space, forward = problem.scale, problem.space, problem.problem
     print(f"\n=== B. The point answers ({scale.name} scale) ===")
 
+    factor = problem.prior.covariance_factor
+    norm = factor.domain.norm
+    truth_norm = norm(whiten(problem, problem.truth))
+
     t0 = time.perf_counter()
-    guess = LeastSquares(forward, damping=GUESSED_DAMPING, solver=CholeskySolver())(
-        problem.data
-    )
+    guess_w = LeastSquares(
+        whitened(problem), damping=GUESSED_DAMPING, solver=CholeskySolver()
+    )(problem.data)
+    guess = factor(guess_w)
     print(
         f"LeastSquares at damping {GUESSED_DAMPING:g}: {time.perf_counter() - t0:.2f} s; "
         f"chi-squared {forward.chi_squared(guess, problem.data):.1f} against the "
-        f"critical {forward.critical_chi_squared(level=LEVEL):.1f}, norm "
-        f"{space.norm(guess):.2f}, relative error over the mantle "
+        f"critical {forward.critical_chi_squared(level=scale.level):.1f}, prior norm "
+        f"{norm(guess_w):.2f}, relative error over the mantle "
         f"{problem.relative_error(guess):.3f}"
     )
 
@@ -129,13 +155,14 @@ def point_answers(
     estimator = minimum_norm(problem)
     search = estimator.discrepancy_search(problem.data)
     chosen = estimator.for_data(problem.data)
-    smallest = chosen(problem.data)
+    change = chosen(problem.data)
+    smallest = factor(change)
     print(
         f"MinimumNorm by the discrepancy principle: damping {search.argument:.4g} after "
         f"{search.evaluations} misfit evaluations, a factorization each, "
         f"{time.perf_counter() - t0:.2f} s; chi-squared "
-        f"{forward.chi_squared(smallest, problem.data):.1f}, norm "
-        f"{space.norm(smallest):.2f} (the truth's {space.norm(problem.truth):.2f}), "
+        f"{forward.chi_squared(smallest, problem.data):.1f}, prior norm "
+        f"{norm(change):.2f} (the truth's {truth_norm:.2f}), "
         f"relative error over the mantle {problem.relative_error(smallest):.3f}"
     )
 
@@ -162,7 +189,8 @@ def point_answers(
     seen, peaks = {}, {}
     for name, box in BOXES:
         feature = bump(problem, box_center(box), scale.bump_width)
-        image = chosen.resolution(feature)
+        # The model-space resolution: L B A L applied to the bump's w.
+        image = chosen.push_forward(factor).resolution(whiten(problem, feature))
         seen[name] = image
         peaks[name] = float(space.layers[mantle].interior_values(image[mantle]).max())
     print(
@@ -239,6 +267,8 @@ def point_answers(
     return {
         "guess": guess,
         "smallest": smallest,
+        "norm": norm(change),
+        "truth_norm": truth_norm,
         "damping": search.argument,
         "evaluations": search.evaluations,
         **budget,
@@ -247,20 +277,16 @@ def point_answers(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return point_answers(problem, rng=part_rng(seed, "b"), outdir=outdir)
+        problem = build(scale=scale)
+    return point_answers(problem, rng=part_rng(scale.seed, "b"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

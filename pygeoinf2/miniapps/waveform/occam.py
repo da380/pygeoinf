@@ -4,10 +4,11 @@ The model closest to the background, in the model space's own Sobolev norm,
 whose chi-squared does not exceed its critical value at 95%: the library's
 ``Occam``, an augmented Lagrangian over Newton-CG inner solves, on the
 Gauss-Newton Hessian of the misfit, started from the MAP mode of part C.
-The prior covariance here is the identity of the model space, so Occam's
-norm is the prior's, and the two answers differ only in how far each lets
-the data pull: the MAP fits to the noise's mean, Occam only to its 95%
-level, and is the smoother for it.
+Occam's norm is the space's ``H^2``, not the prior's: the two answers
+differ in the norm each measures size by, and in how far each lets the data
+pull, the MAP fitting to the noise's mean and Occam only to its 95% level.
+The inner solves are not preconditioned: the Hessian of the space's own
+norm is the identity.
 """
 
 from __future__ import annotations
@@ -21,16 +22,15 @@ import numpy as np
 from pygeoinf2 import Occam
 from pygeoinf2.numerics.optimization import NewtonCG
 
-from common import (
+from src.common import (
     Stopwatch,
     describe,
-    output_directory,
     parse,
     save,
     section,
 )
-from inversion import map_mode
-from survey import BOXES, FULL, LEVEL, QUICK, Scale, box_average_operator
+from src.inversion import map_mode
+from src.survey import BOXES, FULL, QUICK, Scale, box_average_operator
 from synthetic import Setup, setup
 
 
@@ -42,12 +42,11 @@ def occam_answer(state: Setup, mode: np.ndarray, /, *, outdir: pathlib.Path) -> 
     estimator = Occam(
         state.first_order,
         gauss_newton=True,
-        level=LEVEL,
+        level=scale.level,
         reference=experiment.background,
         optimizer=NewtonCG(
             max_iterations=scale.occam_newton_iterations,
             max_cg_iterations=scale.occam_cg_iterations,
-            preconditioner=experiment.prior.covariance,
         ),
         start=mode,
         max_iterations=scale.occam_iterations,
@@ -74,7 +73,7 @@ def occam_answer(state: Setup, mode: np.ndarray, /, *, outdir: pathlib.Path) -> 
         f"multiplier {result.inequality_multipliers[0]:.4g}; {seconds:.1f} s; "
         f"kernels {describe(calls)}"
     )
-    print(f"  critical chi-squared at {LEVEL:.0%}: {target:.0f}")
+    print(f"  critical chi-squared at {scale.level:.0%}: {target:.0f}")
     print(
         f"  {'model':<10s} {'chi-squared':>12s} {'distance':>10s} {'rel. error':>11s}"
     )
@@ -141,7 +140,6 @@ def run(
     scale: Scale,
     /,
     *,
-    seed: int,
     outdir: pathlib.Path,
     state: Setup | None = None,
     mode: np.ndarray | None = None,
@@ -149,21 +147,17 @@ def run(
     started = time.perf_counter()
     print(f"\n=== D. Occam's inversion ({scale.name} scale) ===")
     if state is None:
-        state = setup(scale, seed=seed)
+        state = setup(scale)
     if mode is None:
-        mode = map_mode(state, outdir=outdir, seed=seed)
+        mode = map_mode(state, outdir=outdir)
     result = occam_answer(state, mode, outdir=outdir)
     print(f"D took {time.perf_counter() - started:.1f} s")
     return result
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

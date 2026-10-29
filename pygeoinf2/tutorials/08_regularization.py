@@ -173,14 +173,25 @@ ax.set_title("Deblurring: the smallest model that fits, in three norms")
 #
 # ## An algebraic coincidence, not a hidden prior
 #
-# Tikhonov's minimiser is also the posterior mean of a Gaussian problem
-# whose prior covariance is $I / t$: the same linear system, solved for the
-# same vector.
+# In finite dimensions Tikhonov's minimiser is also the posterior mean of a
+# Gaussian problem whose prior covariance is $I / t$: the same linear
+# system, solved for the same vector. The library refuses to build that
+# prior on a function space, and the refusal is the lesson: the identity is
+# not trace class on a function space, so a "measure" with that covariance
+# has no draws in the space, and the truncation to 256 coefficients only
+# hides it. Tikhonov damping is a norm, which is legitimate on any space;
+# reading it as a prior is not. The agreement below is produced with the
+# escape hatch a test uses, to show the algebra and nothing more.
 
 # %%
 damping = chosen.damping
+try:
+    GaussianMeasure.from_standard_deviation(X, 1.0 / np.sqrt(damping))
+except TypeError as refusal:
+    print(f"refused: {str(refusal)[:90]}...")
 bayes = LinearGaussianInversion(
-    problem, GaussianMeasure.from_standard_deviation(X, 1.0 / np.sqrt(damping))
+    problem,
+    GaussianMeasure.from_standard_deviation(X, 1.0 / np.sqrt(damping), unsafe=True),
 )(data).expectation
 agreement = X.norm(bayes - model) / X.norm(model)
 print(f"Tikhonov and the Gaussian posterior mean agree to {agreement:.1e}")

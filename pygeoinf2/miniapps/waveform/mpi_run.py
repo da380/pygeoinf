@@ -3,7 +3,7 @@
 Every rank runs this script, under the ``mpiexec`` of the MPI installation
 ``acoustic_mpi`` was built against::
 
-    MPICXX=/path/to/mpicxx python build.py --mpi
+    MPICXX=/path/to/mpicxx python cpp/build.py --mpi
     mpiexec -n 3 python mpi_run.py --quick
 
 Each rank owns a block of the grid's columns and the fields on it; rank 0
@@ -18,7 +18,8 @@ one and the library's check ladder through it; on the grid of the scale
 asked for, the same comparison, the time of one application of each kind
 against the serial operator's, and part C's Gauss-Newton MAP, against the
 mode part C saved serially if it is there. The numbers are also written to
-``mpi_<scale>.json`` beside the figures.
+``mpi_<scale>.json`` beside the figures. ``acoustic_mpi`` is imported from the
+app's ``src/``, where ``cpp/build.py --mpi`` puts it.
 """
 
 from __future__ import annotations
@@ -35,17 +36,17 @@ import numpy as np
 
 from pygeoinf2 import MaximumAPosteriori
 
-from common import output_directory, parse
-from inversion import modes_path, newton
 from proofs import library_ladder
-from survey import FULL, PROOF, QUICK, Experiment, Scale, build
+from src.common import parse
+from src.inversion import modes_path, newton
+from src.survey import FULL, PROOF, QUICK, Experiment, Scale, build
+from src.wave_operator import WaveformOperator
 from synthetic import Setup, setup
-from wave_operator import WaveformOperator
 
 try:
     import acoustic_mpi
-except ImportError:  # the built module sits next to this file
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+except ImportError:  # the built module sits in the app's src/
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "src"))
     try:
         import acoustic_mpi
     finally:
@@ -160,7 +161,7 @@ def on_the_proof_grid(experiment: Experiment, /, *, rng: np.random.Generator) ->
 
 
 def on_the_scale(
-    state: Setup, /, *, seed: int, outdir: pathlib.Path, rng: np.random.Generator
+    state: Setup, /, *, outdir: pathlib.Path, rng: np.random.Generator
 ) -> dict:
     """The comparison, the timings and the Gauss-Newton MAP on the scale's grid."""
     experiment = state.experiment
@@ -186,7 +187,7 @@ def on_the_scale(
         f"  Gauss-Newton MAP across the ranks: {result.iterations} iterations, value "
         f"{result.value:.2f}, relative error {error:.3f}, {seconds:.1f} s"
     )
-    saved = modes_path(outdir, scale, seed)
+    saved = modes_path(outdir, scale)
     difference = None
     if saved.exists():
         difference = _relative(result.minimizer, np.load(saved)["gauss_newton"])
@@ -203,18 +204,18 @@ def on_the_scale(
     }
 
 
-def lead(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
+def lead(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
     """Rank 0: everything, in the order the other ranks serve it."""
     started = time.perf_counter()
-    rng = np.random.default_rng([seed, ord("f")])
+    rng = np.random.default_rng([scale.seed, ord("f")])
     print(f"\n=== F. The grid split across {acoustic_mpi.size()} MPI ranks ===")
     results: dict[str, Any] = {"ranks": acoustic_mpi.size(), "scale": scale.name}
     proof = build(PROOF, backend=acoustic_mpi)
     with serving(proof.survey.model):
         results["proof"] = on_the_proof_grid(proof, rng=rng)
-    state = setup(scale, seed=seed, quiet=True, backend=acoustic_mpi)
+    state = setup(scale, quiet=True, backend=acoustic_mpi)
     with serving(state.experiment.survey.model):
-        results["grid"] = on_the_scale(state, seed=seed, outdir=outdir, rng=rng)
+        results["grid"] = on_the_scale(state, outdir=outdir, rng=rng)
     results["seconds"] = time.perf_counter() - started
     path = outdir / f"mpi_{scale.name}.json"
     path.write_text(json.dumps(results, indent=1, default=float))
@@ -229,15 +230,13 @@ def follow(scale: Scale, /) -> None:
 
 
 def main() -> None:
-    args = parse(__doc__)
-    scale = QUICK if args.quick else FULL
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    scale = args.scale
     if acoustic_mpi.rank() == 0:
         # Building a model makes no call on the other ranks, so a failure
         # before the first `serving` would leave them waiting: abort instead.
         try:
-            lead(
-                scale, seed=args.seed, outdir=output_directory(args.quick, args.outdir)
-            )
+            lead(scale, outdir=args.outdir)
         except BaseException:
             traceback.print_exc()
             sys.stdout.flush()

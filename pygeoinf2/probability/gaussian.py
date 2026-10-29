@@ -248,6 +248,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         /,
         *,
         expectation: X | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure[X]:
         """An isotropic measure with covariance ``sigma^2 I`` **on the space**.
 
@@ -255,18 +256,39 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         noise with respect to the space's inner product, and the covariance
         is ``sigma^2`` times the identity on the space whatever its metric.
 
+        On a function space (a :class:`~pygeoinf2.algebra.spaces.HilbertModule`)
+        this is refused: the identity is not trace class there, so the
+        "measure" has no draws in the space, and the truncation only hides
+        it. A prior on a function space is a measure of extra regularity on
+        it, such as a Sobolev measure of order above half the spatial
+        dimension; see :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.sobolev_measure`.
+        Data errors live on Euclidean spaces, where this is the usual noise.
+
         Args:
             domain: the space.
             standard_deviation: one number, this being an isotropic measure.
             expectation: the mean. Zero if omitted.
+            unsafe: build it on a function space anyway, for a test that
+                means it.
 
         Returns:
             The measure, carrying both a factor and a precision factor.
 
         Raises:
+            TypeError: on a function space without *unsafe*.
             ValueError: for a non-positive or non-scalar deviation. Use
                 from_standard_deviations for one per component.
         """
+        from ..algebra.spaces import HilbertModule
+
+        if isinstance(domain, HilbertModule) and not unsafe:
+            raise TypeError(
+                f"An identity covariance on {domain!r} is not a Gaussian "
+                "measure on it: the identity is not trace class on a function "
+                "space and its draws are not functions of the space. Use a "
+                "Sobolev measure of order above half the spatial dimension "
+                "(space.sobolev_measure), or unsafe=True for a test."
+            )
         if np.ndim(standard_deviation) != 0:
             raise ValueError(
                 "from_standard_deviation takes one number, for an isotropic "

@@ -8,11 +8,15 @@ Gaussian on four numbers, whose covariance costs four solves; the prior's,
 which costs nothing, is beside it. The boxes are one over each anomaly and
 one over plain background, and the truth is marked against both.
 
-The data inform hundreds of directions, so a solve preconditioned by the
-prior alone takes hundreds of iterations. The solves here are preconditioned
-by a randomized eigendecomposition of the normal operator itself, the
-library's ``SpectralPreconditioner``: its leading modes inverted exactly and
-the rest damped by one number, paid once and shared by the four solves.
+The normal operator is the prior's precision, whose spectrum spans many
+decades on a Sobolev space, plus the data's term, which informs some
+hundreds of directions. Seen through the prior's covariance factor ``L``,
+``L* (P + J* R^-1 J) L = I + L* J* R^-1 J L``, it is the identity but for
+those directions, and they are what a randomized eigendecomposition finds:
+the library's ``SpectralPreconditioner`` on that operator, its leading modes
+inverted exactly and the rest by the identity's one, and ``L`` on either
+side to take it back to the model space. It is paid once and shared by the
+four solves.
 """
 
 from __future__ import annotations
@@ -25,20 +29,20 @@ import numpy as np
 
 import joblib
 
-from pygeoinf2 import LaplaceApproximation, MaximumAPosteriori
+from pygeoinf2 import LaplaceApproximation, LinearOperator, MaximumAPosteriori
 from pygeoinf2.numerics.preconditioners import SpectralPreconditioner
 from pygeoinf2.numerics.solvers import CGSolver
+from pygeoinf2.traits import Traits
 
-from common import Stopwatch, describe, output_directory, parse, part_rng, save
-from inversion import map_mode
-from survey import BOXES, FULL, QUICK, Scale, box_average_operator
+from src.common import Stopwatch, describe, parse, part_rng, save
+from src.inversion import map_mode
+from src.survey import BOXES, FULL, QUICK, Scale, box_average_operator
 from synthetic import Setup, setup
 
 # CG stopped short of convergence underestimates a variance, the Krylov
 # space not yet holding the directions it misses; at this tolerance the
 # standard deviations have settled to three digits.
 LAPLACE_RTOL = 1e-3
-PROBE_JOBS = 2
 
 
 def laplace_answer(
@@ -70,15 +74,25 @@ def laplace_answer(
             iterate = experiment.space.from_components(iterate)
         solves[-1]["means"].append(np.asarray(boxes(iterate)))
 
-    solver = CGSolver(
-        rtol=LAPLACE_RTOL,
-        max_iterations=scale.laplace_cg_iterations,
-        preconditioner=SpectralPreconditioner(
-            rank=scale.laplace_rank, rng=rng, n_jobs=PROBE_JOBS
-        ),
-        strict=False,
-        callback=record,
-    )
+    factor = prior.covariance_factor
+
+    def solver(normal: LinearOperator) -> CGSolver:
+        """Conjugate gradients on the normal operator, preconditioned by the
+        prior-whitened operator's leading modes."""
+        whitened = (factor.adjoint @ normal @ factor).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+        deflated = SpectralPreconditioner(
+            rank=scale.laplace_rank, damping=1.0, rng=rng, n_jobs=scale.probe_jobs
+        )(whitened)
+        return CGSolver(
+            rtol=LAPLACE_RTOL,
+            max_iterations=scale.laplace_cg_iterations,
+            preconditioner=factor @ deflated @ factor.adjoint,
+            strict=False,
+            callback=record,
+        )
+
     # The decomposition's probes are independent applications of the normal
     # operator, run on threads: the kernels release the interpreter lock, and
     # the operator, which holds the C++ solver, cannot be sent to a process.
@@ -203,7 +217,6 @@ def run(
     scale: Scale,
     /,
     *,
-    seed: int,
     outdir: pathlib.Path,
     state: Setup | None = None,
     mode: np.ndarray | None = None,
@@ -211,21 +224,17 @@ def run(
     started = time.perf_counter()
     print(f"\n=== E. The Laplace Gaussian on four box means ({scale.name} scale) ===")
     if state is None:
-        state = setup(scale, seed=seed)
+        state = setup(scale)
     if mode is None:
-        mode = map_mode(state, outdir=outdir, seed=seed)
-    result = laplace_answer(state, mode, rng=part_rng(seed, "e"), outdir=outdir)
+        mode = map_mode(state, outdir=outdir)
+    result = laplace_answer(state, mode, rng=part_rng(scale.seed, "e"), outdir=outdir)
     print(f"E took {time.perf_counter() - started:.1f} s")
     return result
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

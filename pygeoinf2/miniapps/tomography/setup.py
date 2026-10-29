@@ -8,16 +8,15 @@ import numpy as np
 
 from pygeoinf2 import plotting
 
-from common import (
+from src.common import (
     draw,
     outline_boxes,
-    output_directory,
     panels,
     parse,
     save,
     stations,
 )
-from problem import (
+from src.problem import (
     BOXES,
     CORE_VELOCITY,
     FULL,
@@ -58,33 +57,27 @@ def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
         limit=limit,
         label="slowness perturbation (%)",
     )
-    nodes = problem.nodes[:: max(1, len(problem.nodes) // 6000)]
-    plotting.plot_points(space, nodes, ax=right, size=0.15, color="black")
     outline_boxes(right, BOXES, color="black", linewidth=1.2)
-    right.set_title("The truth, the ray nodes and the two boxes", fontsize=10)
+    right.set_title("The truth and the two boxes", fontsize=10)
     path = outdir / "setup.png"
     save(
         fig,
         path,
         title="Tomography, part A: the rays over the reference velocity, and the "
-        "truth with the ray nodes and the two boxes",
+        "truth with the two boxes",
     )
     return path
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> Problem:
-    problem = build(scale=scale, seed=seed)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> Problem:
+    problem = build(scale=scale)
     setup_figure(problem, outdir=outdir)
     return problem
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

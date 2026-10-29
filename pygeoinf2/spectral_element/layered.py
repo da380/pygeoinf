@@ -696,6 +696,7 @@ class Layered(CoordinateDirectSum, HilbertModule):
         amplitude: float | list[float] = 1.0,
         expectation: tuple | None = None,
         pointwise_std: Any = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian prior under which the layers are independent, each with
         covariance ``amplitude^2 A^-order`` of its own ``A``.
@@ -714,6 +715,8 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 deviation: one number for all, a list of numbers or fields
                 layer by layer, or a vector of this space giving it
                 everywhere.
+            unsafe: build the layers' measures at an order at or below
+                half the dimension anyway, for a test that means it.
 
         Returns:
             The measure, on this space.
@@ -740,6 +743,7 @@ class Layered(CoordinateDirectSum, HilbertModule):
                     amplitude=amplitudes[i],
                     expectation=means[i],
                     pointwise_std=deviations[i],
+                    unsafe=unsafe,
                 )
                 for i, layer in enumerate(self.layers)
             ],

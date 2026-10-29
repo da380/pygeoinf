@@ -49,6 +49,26 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = ["PreparedPoints", "SymmetricSpace", "lift_formal_adjoint"]
 
 
+def _require_trace_class(space: Any, order: float, unsafe: bool, /) -> None:
+    """Refuse a Sobolev measure whose covariance is not trace class on the
+    space: order at or below half the dimension its eigenvalues grow in.
+
+    That is the spatial dimension, except for a space of functions of one
+    coordinate inside a higher-dimensional domain (a radial profile), whose
+    eigenvalues grow as on a line; such a space says so through
+    ``_eigenvalue_dimension``.
+    """
+    dimension = getattr(space, "_eigenvalue_dimension", space.spatial_dimension)
+    if order <= 0.5 * dimension and not unsafe:
+        raise ValueError(
+            f"A Sobolev measure of order {order:g} on {space!r} is not a "
+            f"Gaussian measure on it: its eigenvalues grow as in {dimension} "
+            f"dimension(s), so the covariance is trace class only for an order "
+            f"above {0.5 * dimension:g}, and below that the draws are not in "
+            "the space. Raise the order, or pass unsafe=True for a test."
+        )
+
+
 class PreparedPoints:
     """A set of points, converted once into what a geometry's transforms want.
 
@@ -907,6 +927,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         expectation: V | None = None,
         pointwise_std: float | None = None,
         norm_std: float | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian prior whose covariance is a Sobolev symbol.
 
@@ -915,22 +936,33 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         covariance must decay with the eigenvalue for the measure to be
         supported on functions of that smoothness.
 
+        The covariance is trace class on this space, so that this is a
+        Gaussian measure on it with draws in it, exactly when ``order``
+        exceeds half the spatial dimension, whatever the space's own order:
+        a draw then has ``order - d/2`` more derivatives than the space
+        asks. At or below that the "measure" has no draws in the space (at
+        order zero it is the identity covariance, white noise in the space's
+        metric), and it is refused.
+
         Args:
             order: the Sobolev order of the *measure*: the covariance is
-                ``(1 + scale^2 lambda)^-order`` in this space's metric. On a
-                Lebesgue space the draws are continuous functions when it
-                exceeds half the spatial dimension; on a Sobolev space the
-                space's own order adds to it, since a draw's coefficients are
-                further divided by the metric.
+                ``(1 + scale^2 lambda)^-order`` in this space's metric.
             scale: the correlation length.
             amplitude: an overall scale on the spectrum.
             expectation: the mean. Zero if omitted.
             pointwise_std: calibrate by the pointwise standard deviation.
             norm_std: calibrate by the norm's, mutually exclusive with it.
+            unsafe: build it at an order at or below half the dimension
+                anyway, for a test that means it.
 
         Returns:
             The measure.
+
+        Raises:
+            ValueError: for an order at or below half the spatial dimension
+                without *unsafe*.
         """
+        _require_trace_class(self, order, unsafe)
         return self.invariant_measure(
             amplitude**2 * self.sobolev_symbol(-order, scale),
             expectation=expectation,

@@ -1,12 +1,12 @@
-"""Build the ``cppvec`` extension in place, with CMake and nanobind.
+"""Build the ``cppvec`` extension, with CMake and nanobind.
 
-``python build.py`` configures the ``CMakeLists.txt`` next to this file in a
-scratch directory, pointing CMake at the running interpreter and at
-nanobind's CMake package, builds it in Release mode and copies the module
-(``cppvec.abi3.so``, or ``.pyd`` on Windows) next to the sources.
-``python build.py --check`` only reports whether the module imports, and
-exits with status 1 if it does not. Needs ``cmake`` and a C++17 compiler on
-the path.
+``python build.py`` configures the ``CMakeLists.txt`` in ``cpp/`` in a scratch
+directory, pointing CMake at the running interpreter and at nanobind's CMake
+package, builds it in Release mode and copies the module
+(``cppvec.abi3.so``, or ``.pyd`` on Windows) into the app's ``src/``, beside
+``space.py``, which imports it from there. ``python build.py --check`` only
+reports whether the module imports, and exits with status 1 if it does not.
+Runs from any directory. Needs ``cmake`` and a C++17 compiler on the path.
 """
 
 from __future__ import annotations
@@ -19,23 +19,30 @@ import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
+# The C++ sources and their CMake file.
+SOURCES = HERE / "cpp"
+# Where the built module goes: the app's package of modules.
+DESTINATION = HERE / "src"
 SUFFIXES = (".so", ".pyd", ".dylib")
 
 
 def importable() -> bool:
-    """Whether ``cppvec`` is found in this directory."""
-    return importlib.machinery.PathFinder.find_spec("cppvec", [str(HERE)]) is not None
+    """Whether ``cppvec`` is found where the build puts it."""
+    return (
+        importlib.machinery.PathFinder.find_spec("cppvec", [str(DESTINATION)])
+        is not None
+    )
 
 
 def build() -> None:
-    """Configure, build and copy the module next to the sources."""
+    """Configure, build and copy the module into the app's ``src/``."""
     import nanobind
 
     with tempfile.TemporaryDirectory(prefix="cppvec_build_") as scratch:
         configure = [
             "cmake",
             "-S",
-            str(HERE),
+            str(SOURCES),
             "-B",
             scratch,
             "-DCMAKE_BUILD_TYPE=Release",
@@ -51,9 +58,10 @@ def build() -> None:
         ]
         if not built:
             raise RuntimeError(f"The build produced no module under {scratch}.")
+        DESTINATION.mkdir(exist_ok=True)
         for path in built:
-            shutil.copy(path, HERE / path.name)
-            print(f"copied {path.name} to {HERE}")
+            shutil.copy(path, DESTINATION / path.name)
+            print(f"copied {path.name} to {DESTINATION}")
 
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ import time
 import numpy as np
 
 from bayesian import measure_figure, posterior_summary
-from common import output_directory, parse, part_rng
-from problem import FULL, PROBES, QUICK, REGIONS, Problem, Scale, build
+from src.common import parse, part_rng
+from src.problem import FULL, PROBES, QUICK, REGIONS, Problem, Scale, build
 
 
 def shaped_prior(problem: Problem) -> tuple:
@@ -87,25 +87,20 @@ def run(
     scale: Scale,
     /,
     *,
-    seed: int,
     outdir: pathlib.Path,
     problem: Problem | None = None,
     bayesian: dict | None = None,
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
+        problem = build(scale=scale)
     return nonstationary_answer(
-        problem, rng=part_rng(seed, "f"), outdir=outdir, bayesian=bayesian
+        problem, rng=part_rng(scale.seed, "f"), outdir=outdir, bayesian=bayesian
     )
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

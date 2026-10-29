@@ -1766,3 +1766,30 @@ class TestDiagonalsThroughAScaledComposition:
         for operator in (A @ D @ A.adjoint, A.adjoint @ A @ D, D @ A.adjoint @ A):
             expected = np.diag(operator.matrix(form="components"))
             assert np.allclose(np.ravel(operator.diagonals()), expected)
+
+
+class TestTheComparisonScaleIsRelative:
+    def test_a_wrong_adjoint_on_a_tiny_operator_is_caught(self, rng):
+        """The pairings are of order 1e-10, so an absolute floor at one would
+        read their disagreement as a defect of 1e-10 and pass it."""
+        X = EuclideanSpace(4)
+        wrong = LinearOperator.from_callables(
+            X, X, lambda x: 1e-10 * x, adjoint=lambda y: -1e-10 * y
+        )
+        with pytest.raises(AssertionError, match="adjoint"):
+            check_operator(wrong, rng=rng)
+
+    def test_a_tiny_operator_with_the_right_adjoint_passes(self, rng):
+        X = EuclideanSpace(4)
+        tiny = LinearOperator.from_callables(
+            X, X, lambda x: 1e-10 * x, adjoint=lambda y: 1e-10 * y
+        )
+        report = check_operator(tiny, rng=rng)
+        assert report.worst < 1e-12
+
+    def test_the_absolute_floor_is_atol(self, rng):
+        X = EuclideanSpace(4)
+        wrong = LinearOperator.from_callables(
+            X, X, lambda x: 1e-10 * x, adjoint=lambda y: -1e-10 * y
+        )
+        check_operator(wrong, rng=rng, atol=1e-8)

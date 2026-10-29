@@ -22,19 +22,17 @@ import numpy as np
 from pygeoinf2 import GaussianMeasure
 from pygeoinf2.inference import ForwardProblem
 
-from common import output_directory, parse, part_rng, save, section
-from survey import (
+from src.common import parse, part_rng, save, section
+from src.survey import (
     BOXES,
     DEPTH_CELLS,
     FULL,
-    LEVEL,
-    NOISE_FRACTION,
     QUICK,
     Experiment,
     Scale,
     build,
 )
-from wave_operator import WaveformOperator
+from src.wave_operator import WaveformOperator
 
 
 @dataclass
@@ -50,14 +48,11 @@ class Setup:
     first_order: ForwardProblem
 
 
-def setup(
-    scale: Scale, /, *, seed: int, quiet: bool = False, backend: Any = None
-) -> Setup:
+def setup(scale: Scale, /, *, quiet: bool = False, backend: Any = None) -> Setup:
     """The data and the forward problems, the same for every part from one seed.
 
     Args:
-        scale: the size of the problem.
-        seed: the seed of the noise.
+        scale: the size of the problem, and the seed of the noise.
         quiet: say nothing.
         backend: ``acoustic_mpi`` to split the grid across MPI ranks, the shots
             then running one after another; the serial ``acoustic`` if omitted.
@@ -74,9 +69,9 @@ def setup(
         curvature_jobs=scale.curvature_jobs if serial else None,
     )
     clean = wave.value(experiment.truth)
-    noise_std = NOISE_FRACTION * float(np.sqrt(np.mean(clean**2)))
+    noise_std = scale.noise_fraction * float(np.sqrt(np.mean(clean**2)))
     noise = GaussianMeasure.from_standard_deviation(wave.data_space, noise_std)
-    data = clean + noise.sample(rng=part_rng(seed, "b"))
+    data = clean + noise.sample(rng=part_rng(scale.seed, "b"))
     problem = ForwardProblem(wave.operator, error=noise)
     first_order = ForwardProblem(wave.first_order, error=noise)
     width, depth = survey.section_lengths
@@ -90,7 +85,7 @@ def setup(
     say(
         f"{survey.n_shots} shots, {survey.n_receivers} receivers each, "
         f"{wave.data_space.dim} data; noise std {noise_std:.3g} "
-        f"({NOISE_FRACTION:.0%} of the data's rms); one stored field "
+        f"({scale.noise_fraction:.0%} of the data's rms); one stored field "
         f"{survey.field_megabytes:.0f} MB, {survey.n_shots} cached and {jobs} more "
         f"for the curvature: {(survey.n_shots + jobs) * survey.field_megabytes:.0f} MB "
         "at most"
@@ -109,7 +104,8 @@ def data_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
         "truth": problem.chi_squared(experiment.truth, state.data),
         "background": problem.chi_squared(experiment.background, state.data),
     }
-    critical = problem.critical_chi_squared(level=LEVEL)
+    level = survey.scale.level
+    critical = problem.critical_chi_squared(level=level)
     signal = float(
         np.sqrt(np.mean((state.clean - background_data) ** 2))
         / np.sqrt(np.mean(state.clean**2))
@@ -117,7 +113,7 @@ def data_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
     print(
         f"chi-squared of the truth {misfit['truth']:.0f}, of the background "
         f"{misfit['background']:.0f}, on {wave.data_space.dim} data (critical at "
-        f"{LEVEL:.0%}: {critical:.0f}); the anomalies are {signal:.1%} of the "
+        f"{level:.0%}: {critical:.0f}); the anomalies are {signal:.1%} of the "
         f"data's rms"
     )
     # The misfit's gradient at the background, which the prior term does not
@@ -191,13 +187,11 @@ def data_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
     }
 
 
-def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, state: Setup | None = None
-) -> dict:
+def run(scale: Scale, /, *, outdir: pathlib.Path, state: Setup | None = None) -> dict:
     started = time.perf_counter()
     print(f"\n=== B. Synthetic data ({scale.name} scale) ===")
     if state is None:
-        state = setup(scale, seed=seed)
+        state = setup(scale)
     result = data_answer(state, outdir=outdir)
     result["setup"] = state
     print(f"B took {time.perf_counter() - started:.1f} s")
@@ -205,12 +199,8 @@ def run(
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

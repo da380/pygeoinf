@@ -131,7 +131,9 @@ for name, build in [
 # refined. The pointwise standard deviation is the test. Below, a Sobolev
 # measure with fixed amplitude, at two orders, on grids from 32 to 2048
 # points, hosted on $L^2$ so that no metric smooths it: the field's typical
-# size at a point either settles down or keeps growing.
+# size at a point either settles down or keeps growing. The library refuses
+# to build the order-0.3 measure, for the reason the table shows;
+# `unsafe=True` is the escape hatch for looking.
 
 # %%
 print(f"{'grid':>6} {'order 0.3':>10} {'order 1.5':>10}")
@@ -139,7 +141,7 @@ for n in (32, 128, 512, 2048):
     host = Lebesgue(n)
     stds = []
     for order in (0.3, 1.5):
-        measure = host.sobolev_measure(order, 0.1)
+        measure = host.sobolev_measure(order, 0.1, unsafe=True)
         draws = [measure.sample(rng=rng) for _ in range(20)]
         stds.append(np.std(np.concatenate(draws)))
     print(f"{n:6d} {stds[0]:10.2f} {stds[1]:10.2f}")

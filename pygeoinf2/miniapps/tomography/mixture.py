@@ -41,23 +41,20 @@ from pygeoinf2 import (
     LinearGaussianMixtureInversion,
 )
 
-from common import (
+from point import bump, cartesian
+from src.common import (
     draw,
     draw_rays,
     mixture_marginal,
     mixture_marginal_panels,
-    output_directory,
     parse,
     part_rng,
     save,
     stations,
     variances,
 )
-from point import bump, cartesian
-from problem import (
+from src.problem import (
     FULL,
-    NOISE_STD,
-    PRIOR_STD,
     PROPERTIES,
     QUICK,
     Problem,
@@ -65,46 +62,33 @@ from problem import (
     build,
 )
 
-#: The candidates, ``(radius, angle)`` with the angle in degrees: under the
-#: continent, where the rays cross in every direction, shallow and deep; at
-#: its edge, under moderate coverage; and opposite it, where a handful of
-#: rays pass. The quick scale keeps three of them.
-CANDIDATES = {
-    "full": (
-        (0.85, 75.0),
-        (0.70, 120.0),
-        (0.80, 330.0),
-        (0.75, 200.0),
-        (0.85, 270.0),
-    ),
-    "quick": ((0.85, 75.0), (0.80, 330.0), (0.85, 270.0)),
-}
-#: Where the plume is: the candidate under moderate coverage.
+# The candidates, the plume's width, peak and background, and the redraws of
+# the sweep are the scale's.
+#: Where the plume is: the candidate under moderate coverage, one of the
+#: scale's candidates.
 TRUE_CANDIDATE = (0.80, 330.0)
-#: The plume's peak, in percent of the surface slowness: three times the
-#: prior's pointwise standard deviation.
-AMPLITUDE = 3.0 * PRIOR_STD
-#: The plume's width.
-PLUME_WIDTH = {"full": 0.06, "quick": 0.12}
-#: The size of the draw from the shared covariance beneath the truth's plume.
-BACKGROUND = 0.5
 #: The noise levels of the sweep, as multiples of the app's.
 NOISE_FACTORS = (0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
-#: How many times the data are redrawn at each noise level.
-REDRAWS = {"full": 32, "quick": 8}
 #: The colors of the candidates that are not the truth, which is red.
 OTHERS = ("C0", "C1", "C2", "C4", "C5", "C6")
 
 
+def amplitude(scale: Scale, /) -> float:
+    """The plume's peak, in percent of the surface slowness: the scale's
+    multiple of the prior's pointwise standard deviation."""
+    return scale.plume_peak * scale.prior_std
+
+
 def plume(problem: Problem, center: tuple[float, float], /) -> Any:
-    """The plume at a candidate: the app's bump, of :data:`AMPLITUDE`.
+    """The plume at a candidate: the app's bump, of :func:`amplitude`.
 
     Its values on the domain's grid are continued at their end values across
     the padding: a fit of a bump this narrow over the domain alone leaks
     into the padding at the full scale.
     """
-    shape = bump(problem, center, PLUME_WIDTH[problem.scale.name], extension="constant")
-    return problem.space.scale(AMPLITUDE, shape)
+    scale = problem.scale
+    shape = bump(problem, center, scale.plume_width, extension="constant")
+    return problem.space.scale(amplitude(scale), shape)
 
 
 def plume_prior(problem: Problem, centers: Any, /) -> GaussianMixture:
@@ -122,16 +106,14 @@ def coverage(problem: Problem, center: tuple[float, float], /) -> int:
     for ray in problem.rays:
         t = np.radians(ray.nodes[:, 1])
         xy = ray.nodes[:, :1] * np.column_stack([np.cos(t), np.sin(t)])
-        count += bool(
-            np.hypot(*(xy - middle).T).min() < PLUME_WIDTH[problem.scale.name]
-        )
+        count += bool(np.hypot(*(xy - middle).T).min() < problem.scale.plume_width)
     return count
 
 
 def noisy_problem(problem: Problem, factor: float, /) -> LinearForwardProblem:
     """The forward problem with the noise at a multiple of the app's."""
     noise = GaussianMeasure.from_standard_deviation(
-        problem.forward.codomain, factor * NOISE_STD
+        problem.forward.codomain, factor * problem.scale.noise_std
     )
     return LinearForwardProblem(problem.forward, error=noise)
 
@@ -194,12 +176,12 @@ def mixture_answer(
     print(
         f"\n=== E. A plume among candidates, by a mixture prior ({scale.name} scale) ==="
     )
-    centers = CANDIDATES[scale.name]
+    centers = scale.candidates
     true_index = centers.index(TRUE_CANDIDATE)
 
     t0 = time.perf_counter()
     prior = plume_prior(problem, centers)
-    background = space.scale(BACKGROUND, problem.prior.sample(rng=rng))
+    background = space.scale(scale.background, problem.prior.sample(rng=rng))
     truth = space.add(prior.components[true_index].expectation, background)
     data = problem.problem.synthetic_data(truth, rng=rng)
     # The disk's geometry, prior and noise, with this part's truth and data.
@@ -211,8 +193,8 @@ def mixture_answer(
     )
     counts = [coverage(problem, center) for center in centers]
     print(
-        f"{len(centers)} candidates for a plume of peak {AMPLITUDE:g}% and width "
-        f"{PLUME_WIDTH[scale.name]}, each a component of the prior with the app's "
+        f"{len(centers)} candidates for a plume of peak {amplitude(scale):g}% and "
+        f"width {scale.plume_width}, each a component of the prior with the app's "
         f"covariance, weights equal ({time.perf_counter() - t0:.2f} s):"
     )
     for index, (center, count) in enumerate(zip(centers, counts)):
@@ -223,11 +205,11 @@ def mixture_answer(
         )
     spread = problem.prior.affine_map(problem.forward).covariance
     print(
-        f"truth: the plume at candidate {true_index + 1} over {BACKGROUND:g} of a "
+        f"truth: the plume at candidate {true_index + 1} over {scale.background:g} of a "
         f"draw from the shared covariance; travel-time perturbations of std "
         f"{np.std(problem.forward(truth)):.3f}, the plume's alone "
         f"{np.std(problem.forward(prior.components[true_index].expectation)):.3f}, "
-        f"against noise of {NOISE_STD} and the shared covariance's "
+        f"against noise of {scale.noise_std} and the shared covariance's "
         f"{np.sqrt(variances(spread).mean()):.3f} a datum"
     )
 
@@ -282,10 +264,10 @@ def mixture_answer(
         )
 
     t0 = time.perf_counter()
-    sweep = noise_sweep(problem, prior, truth, redraws=REDRAWS[scale.name], rng=rng)
+    sweep = noise_sweep(problem, prior, truth, redraws=scale.redraws, rng=rng)
     average = sweep["weights"].mean(axis=1)
     print(
-        f"the noise sweep ({time.perf_counter() - t0:.1f} s, {REDRAWS[scale.name]} "
+        f"the noise sweep ({time.perf_counter() - t0:.1f} s, {scale.redraws} "
         f"draws of the data at each level): the average weights, and the "
         f"effective number of candidates"
     )
@@ -386,7 +368,7 @@ def candidates_figure(
     """The prior mixture's mean, a share of each plume, under the rays; and
     the truth, with the candidates circled."""
     space, scale = problem.space, problem.scale
-    centers = CANDIDATES[scale.name]
+    centers = scale.candidates
     fig, axes = plt.subplots(
         1, 2, figsize=(10.4, 4.8), subplot_kw={"aspect": "equal"}, layout="constrained"
     )
@@ -396,7 +378,7 @@ def candidates_figure(
         axes[0],
         title=f"the prior mixture's mean, {1.0 / len(centers):.2g} of each plume, "
         "and the rays",
-        limit=AMPLITUDE / len(centers),
+        limit=amplitude(scale) / len(centers),
     )
     draw_rays(axes[0], problem.rays, colors="black", linewidths=0.4, alpha=0.5)
     stations(axes[0], scale.sources, scale.receivers, radius=space.layers[-1].radius)
@@ -406,12 +388,12 @@ def candidates_figure(
         axes[1],
         title=f"the truth: the plume at candidate {true_index + 1} over a small "
         "draw from the covariance",
-        limit=AMPLITUDE,
+        limit=amplitude(scale),
         label="slowness perturbation (%)",
     )
     for ax in axes:
         _label_candidates(
-            ax, centers, true_index, radius=2.0 * PLUME_WIDTH[scale.name], color="black"
+            ax, centers, true_index, radius=2.0 * scale.plume_width, color="black"
         )
     save(
         fig,
@@ -562,7 +544,7 @@ def winner_figure(
     fig, axes = plt.subplots(
         1, 3, figsize=(14.4, 4.6), subplot_kw={"aspect": "equal"}, layout="constrained"
     )
-    limit = AMPLITUDE
+    limit = amplitude(scale)
     draw(space, truth, axes[0], title="the truth", limit=limit)
     draw(
         space,
@@ -582,9 +564,9 @@ def winner_figure(
     for ax in axes:
         _label_candidates(
             ax,
-            CANDIDATES[scale.name],
+            scale.candidates,
             true_index,
-            radius=2.0 * PLUME_WIDTH[scale.name],
+            radius=2.0 * scale.plume_width,
             color="black",
         )
     save(
@@ -596,20 +578,16 @@ def winner_figure(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return mixture_answer(problem, rng=part_rng(seed, "e"), outdir=outdir)
+        problem = build(scale=scale)
+    return mixture_answer(problem, rng=part_rng(scale.seed, "e"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

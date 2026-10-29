@@ -44,30 +44,17 @@ from pygeoinf2 import (
 from pygeoinf2.inference import LaplaceApproximation
 from pygeoinf2.numerics.optimization import NewtonCG
 
-from common import (
+from src.common import (
     draw_profile,
     finish_profile_axes,
-    output_directory,
     parse,
     part_rng,
     save,
     title,
 )
-from problem import (
-    FULL,
-    LEVEL,
-    PROPERTY_NAMES,
-    QUICK,
-    TIGHT_STD,
-    Problem,
-    Scale,
-    build,
-)
-from radii import CHECK_POINTS, RADIUS_SCALE, boundary_operator, check
+from src.problem import FULL, PROPERTY_NAMES, QUICK, Problem, Scale, build
+from src.radii import boundary_operator, check
 
-# The truth's displacements in km, outward: the inner-core boundary 20 km
-# in, the core-mantle boundary 30 km out.
-TRUE_SHIFTS = np.array([-20.0, 30.0])
 INTERFACE_NAMES = ("ICB", "CMB")
 OCCAM_LABELS = {
     "space": "Occam, the model space's norm",
@@ -85,6 +72,8 @@ def occam_answers(
     data: np.ndarray,
     /,
     *,
+    level: float,
+    radius_scale: float,
     optimizer: Callable[[], NewtonCG],
 ) -> dict[str, dict]:
     """Occam's model in the model space's own norm and in the prior's
@@ -112,7 +101,7 @@ def occam_answers(
         t0 = time.perf_counter()
         result = Occam(
             problem,
-            level=LEVEL,
+            level=level,
             reference=start,
             optimizer=optimizer(),
             gauss_newton=True,
@@ -121,7 +110,7 @@ def occam_answers(
         change = space.subtract(model, reference)
         answers[norm] = {
             "model": model,
-            "shifts": RADIUS_SCALE * np.asarray(model[1]),
+            "shifts": radius_scale * np.asarray(model[1]),
             "chi_squared": forward.chi_squared(model, data),
             "converged": bool(result.converged),
             "outer_iterations": result.outer_iterations,
@@ -141,30 +130,31 @@ def boundaries_answer(
     """The MAP model, the Laplace Gaussian about it and Occam's model in two
     norms, with a figure."""
     started = time.perf_counter()
-    space = problem.space
-    print(f"\n=== D. The boundaries as unknowns ({problem.scale.name} scale) ===")
+    space, scale = problem.space, problem.scale
+    print(f"\n=== D. The boundaries as unknowns ({scale.name} scale) ===")
     model_space, operator = boundary_operator(problem)
     prior = GaussianMeasure.from_product(
         [
-            problem.prior(TIGHT_STD),
+            problem.prior(scale.tight_std),
             GaussianMeasure.from_standard_deviation(EuclideanSpace(2), 1.0),
         ],
         labels=("density", "radii"),
     )
-    worst = check(operator, prior, rng)
+    worst = check(operator, prior, rng, points=scale.check_points)
     print(
-        f"at {CHECK_POINTS} draws from the prior the derivative and the second "
+        f"at {scale.check_points} draws from the prior the derivative and the second "
         f"derivative agree with central differences, and the derivative's adjoint "
         f"with its defining identity: worst relative defect {worst:.1e}"
     )
-    truth = (problem.truth, TRUE_SHIFTS / RADIUS_SCALE)
+    true_shifts = np.asarray(scale.true_shifts)
+    truth = (problem.truth, true_shifts / scale.radius_scale)
     error = problem.problem.error_measure
     data = error.domain.add(operator(truth), error.sample(rng=rng))
     forward = ForwardProblem(operator, error=error)
-    critical = forward.critical_chi_squared(level=LEVEL)
+    critical = forward.critical_chi_squared(level=scale.level)
     print(
-        f"the truth: part A's, with the ICB moved {TRUE_SHIFTS[0]:+g} km and the "
-        f"CMB {TRUE_SHIFTS[1]:+g} km; the data's chi-squared at the reference, "
+        f"the truth: part A's, with the ICB moved {true_shifts[0]:+g} km and the "
+        f"CMB {true_shifts[1]:+g} km; the data's chi-squared at the reference, "
         f"PREM at its own radii, {forward.chi_squared(prior.expectation, data):.1f}, "
         f"at the truth's density with PREM's radii "
         f"{forward.chi_squared((problem.truth, np.zeros(2)), data):.1f}, at the "
@@ -203,7 +193,7 @@ def boundaries_answer(
         np.block(
             [
                 [problem.properties.matrix(form="components"), np.zeros((3, 2))],
-                [np.zeros((2, space.dim)), RADIUS_SCALE * np.eye(2)],
+                [np.zeros((2, space.dim)), scale.radius_scale * np.eye(2)],
             ]
         ),
         form="components",
@@ -224,7 +214,14 @@ def boundaries_answer(
     ):
         print(f"  {name:<12s} {p:8.3f} ± {s0:5.3f} {m:8.3f} ± {s:6.3f} {t:8.3f}")
 
-    occams = occam_answers(forward, prior, data, optimizer=newton)
+    occams = occam_answers(
+        forward,
+        prior,
+        data,
+        level=scale.level,
+        radius_scale=scale.radius_scale,
+        optimizer=newton,
+    )
     print(
         f"Occam's model from PREM at its own radii to chi-squared {critical:.2f}, in "
         f"two norms; the sizes are of the change from PREM, of its density part "
@@ -373,20 +370,16 @@ def boundaries_figure(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return boundaries_answer(problem, rng=part_rng(seed, "d"), outdir=outdir)
+        problem = build(scale=scale)
+    return boundaries_answer(problem, rng=part_rng(scale.seed, "d"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

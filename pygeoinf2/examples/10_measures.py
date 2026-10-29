@@ -15,17 +15,27 @@ from pygeoinf2.testing import check_measure
 rng = np.random.default_rng(0)
 X = Sobolev((16,), 2.0, 0.3)
 
-# An isotropic measure: covariance sigma^2 times the identity ON THE SPACE.
-mu = GaussianMeasure.from_standard_deviation(X, 1.5)
-print("covariance traits:", mu.covariance.traits, " <- nothing was claimed")
+# A measure on a function space must have a covariance that is trace class
+# on it; the identity is not, and the library refuses it. The workhorse is
+# the Sobolev measure: covariance (1 + L^2 lambda)^-order IN THE SPACE'S
+# OWN METRIC, here of order one on a line.
+try:
+    GaussianMeasure.from_standard_deviation(X, 1.5)
+except TypeError as refusal:
+    print("an identity covariance is refused:", str(refusal)[:60], "...")
+mu = X.sobolev_measure(1.0, 0.3, amplitude=1.5)
+print("covariance traits:", mu.covariance.traits)
 print()
 
+# The second moment of a pairing is (C u, u) in the space's inner product,
+# which is the covariance's claim and not a components formula.
 u = X.basis_vector(3)
 draws = mu.samples(4000, rng=rng)
 empirical = np.mean([X.inner_product(x, u) ** 2 for x in draws])
 print(f"E[(x, u)^2] : {empirical:.4f}")
-print(f"sigma^2 (u, u) : {1.5**2 * X.inner_product(u, u):.4f}   <- identity covariance")
-print(f"what a components draw gives: {1.5**2 * X.inner_product(u, u) ** 2:.4f}")
+print(
+    f"(C u, u)    : {X.inner_product(mu.covariance(u), u):.4f}   <- the covariance's claim"
+)
 print()
 
 # Pushforward through a forward operator.

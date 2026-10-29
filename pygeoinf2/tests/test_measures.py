@@ -603,3 +603,50 @@ class TestCorrelatedMeasures:
         X = self.space()
         with pytest.raises(ValueError, match="Expected shape"):
             X.correlated_measure(np.zeros((3, 2, 2)))
+
+
+class TestAMeasureOnAFunctionSpaceIsTraceClass:
+    """An identity covariance, or a Sobolev measure of order at or below half
+    the dimension its eigenvalues grow in, is not a Gaussian measure on a
+    function space; the library refuses both, with an escape for a test."""
+
+    def test_the_identity_is_refused_on_a_function_space(self):
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.symmetric_space.fourier import Sobolev
+
+        box = Sobolev((8, 8), 2.0, 0.3)
+        with pytest.raises(TypeError, match="not trace class"):
+            GaussianMeasure.from_standard_deviation(box, 1.0)
+        assert (
+            GaussianMeasure.from_standard_deviation(box, 1.0, unsafe=True).domain == box
+        )
+        assert (
+            GaussianMeasure.from_standard_deviation(EuclideanSpace(3), 1.0).domain.dim
+            == 3
+        )
+
+    def test_the_order_must_exceed_half_the_dimension(self):
+        from pygeoinf2.ball import Sobolev as Ball
+        from pygeoinf2.disk import Sobolev as Disk
+        from pygeoinf2.interval.radial import Radial
+        from pygeoinf2.symmetric_space.fourier import Sobolev as Box
+
+        box = Box((8, 8), 2.0, 0.3)
+        with pytest.raises(ValueError, match="trace class"):
+            box.sobolev_measure(1.0, 0.3)
+        assert box.sobolev_measure(1.0, 0.3, unsafe=True).domain == box
+        assert box.sobolev_measure(1.5, 0.3).domain == box
+        disk = Disk(4, 2.0, 0.3)
+        with pytest.raises(ValueError, match="trace class"):
+            disk.sobolev_measure(1.0)
+        assert disk.sobolev_measure(1.5).domain == disk
+        ball = Ball(3, 2.0, 0.3)
+        with pytest.raises(ValueError, match="trace class"):
+            ball.sobolev_measure(1.5)
+        assert ball.sobolev_measure(2.0).domain == ball
+        # A radial profile's eigenvalues grow as on a line, whatever the
+        # volume measure it carries.
+        radial = Radial(8, radius=1.0, inner_radius=0.5, order=2.0, length_scale=0.3)
+        assert radial.sobolev_measure(1.0).domain == radial
+        with pytest.raises(ValueError, match="trace class"):
+            radial.sobolev_measure(0.5)

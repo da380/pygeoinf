@@ -199,7 +199,7 @@ class TestInvariantMeasures:
 
     def test_smoother_priors_give_smoother_samples(self, rng):
         space = Lebesgue((64,))
-        rough = space.sobolev_measure(1.0, 0.1).sample(rng=rng)
+        rough = space.sobolev_measure(1.0, 0.1, unsafe=True).sample(rng=rng)
         smooth = space.sobolev_measure(4.0, 0.1).sample(rng=rng)
 
         def roughness(field):

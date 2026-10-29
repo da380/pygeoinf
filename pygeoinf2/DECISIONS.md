@@ -3062,6 +3062,275 @@ smaller change in its own norm (31 against 5e4 in the model space's,
 31 against 0.98 in the prior's) and both fit the data equally, and the
 README's paragraph on Occam is written around that.
 
+**D-186. A mixture-prior part in the tomography app** (2026-10-29,
+David: the mixture functionality, dropped from the planet-density app,
+wants a home where a discrete hypothesis sits inside a continuous
+problem; "just mixture on the linear problem; it makes the
+functionality's existence clear and that is enough"; built by agents
+from a brief). Part E of the tomography app, on the linear disk, after
+the set answer and before the ball (now F) and the bent rays (now G):
+a plume at one of five candidate locations, each component of the prior
+the Gaussian whose mean is the reference plus a bump at its candidate
+with the app's prior covariance shared by all, equal prior weights; the
+truth a bump at the third candidate on half a draw from the prior, the
+data with the app's noise. `LinearGaussianMixtureInversion` updates the
+components and rescores the weights from their evidences: on the app's
+data the true candidate carries 0.92 against the prior's 0.2, with the
+two candidates under sparse coverage confusable at a quarter of each
+other's weight however small the noise; across a sweep of the noise the
+weights go from equal at a hundred times the app's noise to one
+candidate as it falls, and stop sharpening below the app's level, where
+the shared prior covariance dominates the noise. Figures per method with
+the mixture drawn as its density; the README says what the weights are
+(evidence ratios) and why a single Gaussian posterior could not say
+this. The bent-ray version, a mixture of Laplace approximations, is
+deliberately not built. Found on the way: the bent-ray part seeded its
+derivative-check draws from the truth's generator (fixed, its numbers
+refreshed); its shooting depth floor is a safety margin above the core
+and 0.57 is safe at both scales with a margin of 0.009; the mixture's
+marginals are sampled by the plotting helpers (20 000 draws a panel)
+though they are closed form, and the mixture inversion factorizes the
+same normal operator once per component when the covariance is shared,
+both in CURRENT_STATE §7.
+
+**D-187. The waveform app's absorbing boundary: a bigger box, a
+retuned sponge, and results that are worse because they are honest**
+(2026-10-29, David, on the snapshots: the absorbing boundaries are not
+right; use a bigger box as a helper and show the physical domain in every
+plot but the snapshot one; built by agents from a brief). The reflection
+is measured against a run on a grid padded by 200 cells on every
+absorbing side (300 gives the same reference to the last bit): before,
+a 20-cell Cerjan sponge at rate 0.015 inside a grid the size of the
+section sent back 4 % of the data's rms at the quick scale and 5 % at
+the full, with an interior peak of 8 % of the direct wave; the bottom
+reflection crossed the whole section at 0.87 s. Now the 2 by 0.8 km
+section sits inside a 248 by 104 grid (148 by 64 at quick) with the
+sponge beyond it, 24 cells at rate 0.008, the widest whose four stored
+fields fit the 500 MB budget (40 cells would reach 0.2 % at 645 MB);
+the reflection is 0.6 % of the data's rms at full and 0.7 % at quick,
+the gather shows no reflected arrival, a faint arc remains in the
+snapshot; the background velocity levels off below the section so that
+draws from the prior cannot break the stability limit in the deep
+sponge. Part C at full was cut to one polish iteration and two exact
+iterations to stay under two minutes, which loses the quadratic
+convergence demonstration at full (kept at quick); the inner solves'
+stop reasons are now printed and confirm that from the background the
+first two stop on negative curvature and at the Gauss-Newton mode none
+does. The finding worth the work: the old sponge's echo was about the
+noise's size, and since the operator models the sponge the inversion
+was reading the model from the echo; a reflective sponge placed beyond
+the section recovers the old, better numbers (Gauss-Newton error 0.45
+against 0.67). So the full-scale answers are now worse (MAP error over
+the old interior 0.51 against 0.27, Laplace ratios 0.10 to 0.36 against
+0.05 to 0.10, three of four truths 1.8 to 1.9 posterior standard
+deviations from the Laplace mean), and the README says why. The test's
+MAP bound is over the whole section, which is the physical domain, with
+the reflection checked at quick (data below 1 %, section below 3 %).
+The MPI part was rerun against PETSc's MPICH: bit for bit on three and
+six ranks at full; the serial second adjoint is now slower than three
+ranks because the memory budget runs its shots one at a time.
+
+**D-188. Each mini-app carries an implementation walkthrough, and its
+README comments on the results shown and nothing else** (2026-10-29,
+David: the apps teach people to use the library, the step from the
+tutorials to their own applications, so each gets a separate document on
+the library and library-adjacent aspects it uses, not the forward
+code's internals, while the README stays brief; and "we don't need to
+keep track of narrative during development, the README should comment
+on the results shown and that is all"; written by an agent from one
+brief so the five read alike). `IMPLEMENTATION.md` beside each README,
+about 300 lines, in six parts: the spaces, the forward code wrapped as
+an operator and what the checks verified, the priors and the error
+measures, the solvers and preconditioners, the estimators in the order
+point, measure, set, and what a reader would change to use the pattern
+on their own problem; tutorials cited by number, code quoted only in
+short fragments from the app. The READMEs lost every before-and-after
+sentence and comparison with an earlier state of the app (the waveform
+app's old sponge and its echo, the point-data app's first attempt at
+the full scale) and keep the measurements against references and the
+seed-sensitivity remarks, which are comments on the results. The ray
+nodes are no longer drawn in the tomography app's setup figure: they are
+quadrature points of the path integral, chosen dense enough relative to
+the length scale that halving them changes nothing, which the app
+measures. Signals from writing the walkthroughs, in CURRENT_STATE §7:
+rows of derivative components into a Euclidean data space are declared
+`form="components"` in one app and `form="galerkin"` in two others, both
+right because the codomain's Gram is the identity and both needing
+explanation; the point-data app runs no checks and the planet-density
+app checks its linear rows only in its test, so the pattern is shown
+rather than exercised; a layered space has no constructor for the
+identity covariance scaled to a pointwise standard deviation, which the
+tomography app builds by hand; an optimizer's result could carry the
+gradient norms per iteration that the waveform app wraps the objective
+to record.
+
+**D-189. One layout and one command line for every mini-app**
+(2026-10-29, David: "each mini-app has a folder, results or figures,
+where the outputs are written to, to keep things tidy and separate;
+similarly src for the module codes and cpp for any C++ code"; and "build
+in a host of command line arguments through which interesting physical
+parameters can be modified ... more granular control" beyond quick and
+full; done by an agent from a brief, every move by `git mv`). Each app:
+the part scripts, `run_all.py`, `README.md` and `IMPLEMENTATION.md` at
+the top, where a reader runs them; `src/` a package holding the modules,
+imported relatively among themselves and as `src.x` by the scripts;
+`cpp/` for C++ sources and build files (the waveform kernel, whose
+built modules land in `src/`); `results/` for everything a run writes,
+with `results/quick/` beneath it, ignored by one pattern. The command
+line: `--quick` or `--full` picks a preset `Scale`, and every field of
+the scale is an option named after it, typed from its annotation, with
+the preset's value as the default in `--help` and its help text from the
+dataclass's docstring, applied with `dataclasses.replace`; one `parse`
+in each `src/common.py` built from the dataclass, with a stated set of
+fixed fields; the seed is a field of the scale; what was a module
+constant and is size or physics moved into the scale, what is fixed
+geometry, the truth or numerics stayed. The waveform app's saved mode
+carries a digest of the scale in its file name when an option departs
+from the preset, so a later part never reads a mode computed for
+another problem. The tests load `src.*` and the scripts by name and
+clear them afterwards. The quick runs print the same numbers before and
+after the move.
+
+**D-190. No identity covariance on a function space: the library
+refuses a measure whose covariance is not trace class on the space**
+(2026-10-29, David: "we cannot have identity covariances ever on a
+function space; that is a cardinal sin for this library", one the
+removal of `from_standard_deviation` for such spaces was meant to rule
+out; and the problem is posed on a space appropriate to the forward
+model, with the prior a measure of extra regularity on it, never
+re-described as everything relative to `L^2` in the manner of the
+Gaussian-process and SPDE literature). A Gaussian measure on a function
+space has draws in the space exactly when its covariance is trace class
+there: for a Sobolev covariance `(1 + L^2 lambda)^-order` in the
+space's own metric that is `order > d/2`, with `d` the dimension the
+eigenvalues grow in, whatever the space's own order (the draws then
+have `order - d/2` derivatives more than the space asks); at order zero
+it is the identity, white noise in the space's metric, and the
+truncation only hides that the draws are not functions of the space.
+So `sobolev_measure` on every geometry refuses `order <= d/2`, where `d`
+is the spatial dimension except for a space of functions of one
+coordinate in a higher-dimensional domain, a radial profile under
+`r^2 dr`, whose eigenvalues grow as on a line and which says so through
+`_eigenvalue_dimension = 1`; `Layered` passes the refusal through; and
+`GaussianMeasure.from_standard_deviation` refuses a `HilbertModule`
+domain, leaving it to Euclidean spaces, where it is the usual data
+noise. Both take `unsafe=True` for a test or a tutorial that means it:
+tutorial 5's table of the pointwise standard deviation under refinement
+at orders 0.3 and 1.5 is the lesson itself and keeps the order-0.3
+column through the escape; tutorial 8 shows the refusal where it read
+Tikhonov's minimizer as the mean under the prior `I/t`, an algebraic
+coincidence of finite dimensions and not a hidden prior; example 10 puts
+a Sobolev measure on its interval; example 31 and tutorial 11 move
+their ball priors from order 1.5 to 2; the ball and disk tests likewise,
+and a test that needs order 1 for one banded solve says `unsafe`. The
+mini-apps that committed the sin (point data on `H^4` with an order-zero
+measure, chosen last night for the solvers' convenience; the tomography
+app's hand-built diagonal identities; the MFEM box and the waveform box
+at order zero) are re-posed on `H^2` with Sobolev measures of order 2,
+their set answers hardened to the prior's credible ellipsoid rather
+than the ambient norm ball, which coincides with it only for the
+identity (D-191 records the outcome).
+
+**D-191. The mini-apps re-posed on `H^2` with Sobolev measures of order
+two, and their set answers on the prior's weakened ellipsoid** (2026-10-29,
+done by an agent from the brief D-190 left; the hardening below departs
+from that brief and is David's to confirm). Point data: `H^4` with an
+order-zero measure became `H^2` with an order-2 measure, the same draws, so
+parts C, D and F are unchanged to 1e-13; the point answers measure size in
+the prior's norm through `problem.parameterized(prior.covariance_factor)`,
+least squares at damping one being the posterior mean, and a model's `w` is
+`L* Q^-1 m` (or the diagonal factor's inverse). Tomography: the hand-built
+identity on each layer became `Layered.sobolev_measure(2, amplitude=...)`,
+calibrated by an amplitude per layer so that it stays diagonal with a
+precision (pointwise calibration gives `S C S*`, with neither) and
+re-seated as one `DiagonalLinearOperator` on the layered space, because the
+product measure's operators act on the bare direct sum and a posterior
+built from it has no pointwise product; the bent-ray part's prior went from
+3% to 5% for its smooth draws to bend the rays by about the noise. The MFEM
+box and the waveform box went from order 0 to 2; the waveform's Occam lost
+its prior-covariance preconditioner (its norm is the space's, whose Hessian
+is the identity) and its Laplace solves are preconditioned by the leading
+modes of `L* N L`, the normal operator seen through the prior's factor, 17
+iterations a solve where a deflation of `N` itself found the prior
+precision's eigenvalues and stalled. Planet density was already posed this
+way; its set answers moved too, and its noise, two errors of different
+sizes, went to its own credible ellipse. **The hardening.** D-190 asked for
+`prior.credible_set`; D-131 refuses it on a function space, rightly: its
+radius is a chi-squared quantile on as many degrees of freedom as there are
+coefficients, and on the point-data sphere the bound it alone puts on a cap
+average is ±35 at degree 64 and ±69 at 128 (the old app's ball, the
+identity measure's credible set, admitted the same ±69). Every app instead
+hardens to `prior.weakened_ellipsoid(level=0.95, power=p)`, the covariance
+to a power with a radius carrying 95%, whose limit exists when
+`sum lambda^(1-p)` converges, `p < 1 - d / 2s`: the scale's `set_power` is
+half of that, 1/4 on the sphere, the disks and the boxes, 1/8 in the ball,
+3/8 on the radial planet (bound ±12.0 at degree 64, ±12.9 at 128). Not the
+ambient ball. Costs: the point-data set answer at full is about four and a
+half minutes serially (six directions, 37 to 58 s each, the ellipsoid's
+family preconditioned less well by the coarse surrogate), measured direction
+by direction; the planet set answers half a minute each through the Lanczos
+calculus on a dense covariance. Findings, in CURRENT_STATE §7.
+
+**D-192. The checks compare on a relative scale with `atol` as the only
+absolute floor** (2026-10-29, David's call on the signal from the MFEM and
+waveform apps). `_assert_close` and the derivative, gradient and
+second-derivative checks in `testing.py` divided every residual by
+`max(|a|, |b|, 1)`, so on an operator whose values are small the
+"relative" defect was absolute and a wrong adjoint passed: `x -> 1e-10 x`
+against `y -> -1e-10 y` had a worst defect of 7e-10. The floor at one is
+gone; the scale is the larger of the two sizes, `atol` the floor, and the
+three finite-difference checks take an `atol` (default zero) for a
+derivative the difference cannot resolve because the operator's values
+dwarf it. A scalar pairing is judged against its own magnitude, not the
+Cauchy-Schwarz bound `|Ax||y|` that was tried first: on random probes the
+pairing is smaller than that bound by about the root of the dimension, so
+the bound dilutes a wrong adjoint by the same factor (the MFEM ladder's
+matrix-form operator, whose pairings disagree sevenfold, recorded 3e-4
+against a scale of 2 065). The bound does set the rounding error of the
+pairing, `eps |Ax||y|` times a factor for the accumulation, whatever the
+pairing's own size, and a pairing can be structurally small: the
+coefficient operator of a Sobolev line sees three low modes of a draw
+whose norm lives in the high ones, so its pairings are `1e-6` of the bound
+and agree to `1e-15` of it, which is `6e-9` of themselves. So the
+comparison allows `1e3 eps` times the bound on top of `atol + rtol scale`
+(`_ROUNDING`, with the measured ratios at most `2e-14`), while the recorded
+defect stays the residual over the pairing. The sign test of positive
+semidefiniteness keeps `|Ax||x|` alone, bounding roundoff rather than
+agreement. A non-positive scale records the raw residual, exact for zero
+vectors and the route by which a NaN still reaches the finite-number
+guard.
+
+**D-193. The C++ backend app re-posed on `H^1`, and the ellipsoid's power
+counts the covariance's order against the space's own metric** (2026-10-29,
+David's prompt: the app "has precisely the L^2 issue, the point
+observations aren't defined on that space"; built by an agent from a
+brief). `CppSpace` had the mass matrix as its inner product, so point
+evaluation was unbounded on the space the problem was posed on, and its set
+answer hardened with the ambient ball. Now the inner product is
+`x^T (M + l^2 K) y`, the Riesz map the banded Cholesky of that matrix in
+C++, white noise its transposed factor solve, and the Matérn covariance
+`sigma^2 (I + l^2 Delta)^-2`, of order 2 against `L^2`, is a measure on
+`H^1` with a factor, a precision and a precision factor, all four checked,
+`sigma` calibrated to a pointwise standard deviation of one mid-interval.
+Parts in the standard order with their own figures: the ladder (why `H^1`:
+the norm of the evaluation functional converges, 2.4999 to 2.5000 from 250
+to 4000 elements, where the `L^2` norm grows as the root of the count), the
+point answer in the prior's norm, the posterior, the set with the weakened
+ellipsoid; the standard layout (`src/`, `cpp/`, `results/`), every scale
+field a command-line option, `README.md` and `IMPLEMENTATION.md`. **The
+power.** D-191's rule, half of `1 - d / 2s`, takes `s` as the covariance's
+order against the metric of the space it is a measure on, since that is
+the spectrum whose `(1 - p)`-th powers the radius sums; the apps of D-191
+use Sobolev measures whose order is stated that way, but the Matérn
+covariance here is of order 1 against `H^1`, so the limit is `1/2` and the
+power `1/4`, not `3/8`: the squared radius at 50, 100, 200 elements is
+5.86, 6.18, 6.40 at `1/4` (converging like the root of the mesh size),
+7.81, 8.50, 9.07 at `3/8`, and 10.8, 12.4, 13.9 at `1/2`, where it has no
+limit. Findings in CURRENT_STATE §7: `from_standard_deviation` refuses only
+a `HilbertModule`, not every function space, so it accepted this one;
+`weakened_ellipsoid` on a space without coordinates is refused by its
+default route and, at a truncated rank, silently short.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

@@ -38,19 +38,15 @@ from pygeoinf2 import (
 )
 from pygeoinf2.testing import check_operator, check_space, check_traits
 
-import matrix_space as coordinate
-from common import (
-    CORRELATION,
+from src import matrix_space as coordinate
+from src.common import (
     FULL,
-    NOISE,
     QUICK,
     SENSOR_POSITIONS,
-    SOURCE_STRENGTH,
     Scale,
     dof_coordinates,
     draw_field,
     marginal_panels,
-    output_directory,
     parse,
     part_rng,
     region_form,
@@ -59,7 +55,7 @@ from common import (
     unit_square,
     values,
 )
-from hilbert_space import (
+from src.hilbert_space import (
     MfemHilbertSpace,
     matern_measure,
     operator_from_bilinear_form,
@@ -142,13 +138,13 @@ def hilbert_form(
     # The inverse problem: sensors are linear forms, so the observation
     # operator's action is a list of dot products and its adjoint one mass
     # solve however many sensors there are.
-    forms = sensor_forms(elements)
+    forms = sensor_forms(elements, width=scale.sensor_width)
     sensors = operator_from_linear_forms(V, forms)
     forward = sensors @ solve_pde
-    prior = SOURCE_STRENGTH * matern_measure(
-        V, smoothness=1.0, correlation_length=CORRELATION
+    prior = scale.source_strength * matern_measure(
+        V, smoothness=scale.smoothness, correlation_length=scale.correlation_length
     )
-    noise = GaussianMeasure.from_standard_deviation(forward.codomain, NOISE)
+    noise = GaussianMeasure.from_standard_deviation(forward.codomain, scale.noise_std)
     problem = LinearForwardProblem(forward, error=noise)
     truth, data = problem.synthetic_model_and_data(prior, rng=rng)
     chi_squared = problem.chi_squared(truth, data)
@@ -185,8 +181,10 @@ def hilbert_form(
     their_forward = coordinate.operator_from_linear_forms(
         reference, forms
     ) @ coordinate.solver_from_bilinear_form(reference, stiffness_form, rtol=1e-10)
-    their_prior = SOURCE_STRENGTH * coordinate.matern_measure(
-        reference, smoothness=1.0, correlation_length=CORRELATION
+    their_prior = scale.source_strength * coordinate.matern_measure(
+        reference,
+        smoothness=scale.smoothness,
+        correlation_length=scale.correlation_length,
     )
     their_inversion = LinearGaussianInversion(
         LinearForwardProblem(their_forward, error=noise), their_prior
@@ -266,17 +264,13 @@ def hilbert_form(
     }
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    return hilbert_form(scale, rng=part_rng(seed, "a"), outdir=outdir)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
+    return hilbert_form(scale, rng=part_rng(scale.seed, "a"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

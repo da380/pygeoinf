@@ -6,8 +6,8 @@ import pathlib
 
 from pygeoinf2 import plotting
 
-from common import map_panels, output_directory, parse, save
-from problem import CAP_RADIUS, FULL, QUICK, REGIONS, Problem, Scale, build
+from src.common import map_panels, parse, save
+from src.problem import FULL, QUICK, REGIONS, Problem, Scale, build
 
 
 def truth_map(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
@@ -29,7 +29,12 @@ def truth_map(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
         space, problem.points, ax=ax, marker=".", size=1.0 if many else 8.0
     )
     plotting.plot_balls(
-        space, [c for _, c in REGIONS], CAP_RADIUS, ax=ax, color="black", linewidth=1.2
+        space,
+        [c for _, c in REGIONS],
+        problem.scale.cap_radius,
+        ax=ax,
+        color="black",
+        linewidth=1.2,
     )
     path = outdir / "truth.png"
     save(
@@ -41,19 +46,15 @@ def truth_map(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> Problem:
-    problem = build(scale=scale, seed=seed)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> Problem:
+    problem = build(scale=scale)
     truth_map(problem, outdir=outdir)
     return problem
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

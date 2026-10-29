@@ -10,16 +10,18 @@ respect to the slowness is the path integral along the current bent ray: the
 linearized operator at a model is the path-integral operator of parts A to F
 built on that model's rays, with the library's adjoint.
 
-The prior is three times wider than in the other parts, a pointwise standard
-deviation of 3% of the surface slowness, so that the bending matters while
-the problem stays well posed; the rays are kept within 70 degrees, well above
-the core. The derivative is checked by finite differences, the mode is found
-by Newton-CG on the Gauss-Newton Hessian, and the answer is set against the
-linear posterior mean computed on the reference rays from the same data.
+The prior is five times wider than in the other parts, a pointwise standard
+deviation of 5% of the surface slowness, so that the bending of its smooth
+draws matters while the problem stays well posed; the rays are kept within
+70 degrees, well above the core. The derivative is checked by finite differences, the MAP model is
+found by Newton-CG on the Gauss-Newton Hessian, and the answer is set
+against the linear posterior mean computed on the reference rays from the
+same data.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import time
 from dataclasses import dataclass
@@ -43,34 +45,33 @@ from pygeoinf2.algebra.operators import EvaluationError
 from pygeoinf2.numerics.optimization import NewtonCG
 from pygeoinf2.testing import check_derivative
 
-from common import draw, draw_rays, output_directory, panels, parse, part_rng, save
-from problem import (
+from src.common import draw, draw_rays, panels, parse, part_rng, save
+from src.problem import (
     CORE_RADIUS,
     GRADIENT,
     MANTLE,
-    NOISE_STD,
     PROPERTIES,
     QUICK,
     RADIUS,
     SURFACE_VELOCITY,
     Scale,
-    identity_prior,
+    sobolev_prior,
     model_space,
     network,
     path_integral_operator,
     property_operator,
 )
-from rays import Ray, bend
+from src.rays import Ray, bend
 
-PRIOR_STD = 3.0
-MAX_DISTANCE = 70.0
 #: The mantle under the stations, ``(r1, r2, angle1, angle2)``, where the
 #: rays cross and an error is worth reading.
 UNDER_THE_STATIONS = (0.7, 1.0, 0.0, 150.0)
 #: No re-traced ray may go deeper than this, two hundredths above the core.
-#: The deepest reference ray turns at about 0.65, but in a draw from the
-#: wide prior moved by the derivative check's largest step one can turn
-#: below 0.58.
+#: The limit is the core: the medium the rays are shot through has none,
+#: being the mantle continued below its base, and the derivative would read
+#: the core's layer there. The two hundredths are a margin. The deepest
+#: reference ray turns at 0.64; in a draw from the wide prior moved by the
+#: derivative check's largest step one turns at 0.59.
 FLOOR = CORE_RADIUS + 0.02
 #: The integrator's step of arc length.
 STEP = 5e-3
@@ -78,27 +79,27 @@ STEP = 5e-3
 #: in which a draw from the prior measures some tens.
 STEPS = (20.0, 10.0, 5.0, 1.0, 0.1)
 
-BENT_QUICK = Scale(
+#: The two sizes of this part: the quick scale's network, or a denser one, a
+#: prior five times wider than the other parts', and the rays kept within
+#: 70 degrees.
+BENT_QUICK = dataclasses.replace(
+    QUICK,
     name="bent, quick",
     mmax=16,
     length_scale=0.2,
-    sources=QUICK.sources,
-    receivers=QUICK.receivers,
+    prior_std=5.0,
+    max_distance=70.0,
     nodes=401,
     std_samples=0,
     n_jobs=None,
     bump_width=0.0,
 )
-BENT = Scale(
+BENT = dataclasses.replace(
+    BENT_QUICK,
     name="bent",
     mmax=32,
     length_scale=0.15,
-    sources=QUICK.sources,
-    receivers=(*np.linspace(0.0, 150.0, 16), 270.0),
-    nodes=401,
-    std_samples=0,
-    n_jobs=None,
-    bump_width=0.0,
+    receivers=(*(float(a) for a in np.linspace(0.0, 150.0, 16)), 270.0),
 )
 
 
@@ -301,15 +302,20 @@ class BentProblem:
         )
 
 
-def build(scale: Scale, /, *, seed: int) -> BentProblem:
+def build(scale: Scale, /) -> BentProblem:
     """The space, the wider prior, the rays, the bent forward and the data."""
-    rng = np.random.default_rng([seed, ord("g")])
-    pairs = network(scale.sources, scale.receivers, max_distance=MAX_DISTANCE)
+    rng = np.random.default_rng([scale.seed, 0])
+    pairs = network(
+        scale.sources,
+        scale.receivers,
+        min_distance=scale.min_distance,
+        max_distance=scale.max_distance,
+    )
     space = model_space(scale)
-    prior = identity_prior(space, std=PRIOR_STD)
+    prior = sobolev_prior(space, order=scale.prior_order, std=scale.prior_std)
     forward = BentForward(scale, space, pairs)
     noise = GaussianMeasure.from_standard_deviation(
-        forward.operator.codomain, NOISE_STD
+        forward.operator.codomain, scale.noise_std
     )
     problem = ForwardProblem(forward.operator, error=noise)
     linear = LinearForwardProblem(
@@ -381,16 +387,19 @@ def derivative_check(problem: BentProblem, /, *, rng: np.random.Generator) -> di
 def bent_answer(
     problem: BentProblem, /, *, rng: np.random.Generator, outdir: pathlib.Path
 ) -> dict:
-    """The derivative check, the bending, the mode against the linear mean."""
+    """The derivative check, the bending, the MAP model against the linear
+    mean."""
     started = time.perf_counter()
     scale, space, forward = problem.scale, problem.space, problem.forward
     print(f"\n=== G. Bent rays ({scale.name}) ===")
     core, mantle = space.layers
     print(
-        f"{len(problem.pairs)} rays between 20 and {MAX_DISTANCE:g} degrees on the "
+        f"{len(problem.pairs)} rays between {scale.min_distance:g} and "
+        f"{scale.max_distance:g} degrees on the "
         f"layered disk of {space.dim} coefficients (mmax {core.mmax} and "
         f"{mantle.mmax}, length scale {scale.length_scale}); prior pointwise std "
-        f"{PRIOR_STD:g}%, noise {NOISE_STD}; shooting at a step of {STEP:g}, "
+        f"{scale.prior_std:g}%, noise {scale.noise_std}; shooting at a step of "
+        f"{STEP:g}, "
         f"{scale.nodes} nodes a ray"
     )
 
@@ -434,7 +443,7 @@ def bent_answer(
         f"the bending in the truth: travel-time perturbations of std "
         f"{np.std(bent_values):.2f}; bent less linear {np.sqrt(np.mean(difference**2)):.3f} "
         f"rms and {np.abs(difference).max():.3f} at most, against noise of "
-        f"{NOISE_STD}, every one of them negative or nil, as Fermat says "
+        f"{scale.noise_std}, every one of them negative or nil, as Fermat says "
         f"({(difference <= 1e-9).all()}); the rays move by {np.median(shifts):.4f} "
         f"(median) to {shifts.max():.4f}, and their deepest points by up to "
         f"{turning:.4f}"
@@ -469,8 +478,8 @@ def bent_answer(
     mode = result.minimizer
     _, mode_rays = forward.trace(mode)
     print(
-        f"the mode by Newton-CG on the Gauss-Newton Hessian, from the prior's mean: "
-        f"{result.iterations} iterations, {forward.traces - traces} ray tracings, "
+        f"the MAP model by Newton-CG on the Gauss-Newton Hessian, from the prior's "
+        f"mean: {result.iterations} iterations, {forward.traces - traces} ray tracings, "
         f"{time.perf_counter() - t0:.1f} s, {result.message}; chi-squared "
         f"{problem.problem.chi_squared(mode, problem.data):.1f}, objective "
         f"{result.value:.2f} (history "
@@ -480,12 +489,13 @@ def bent_answer(
     )
     change = _relative(problem, mode, linear_mean)
     print(
-        f"the mode against the linear mean: they differ by {change:.3f} of the latter"
+        f"the MAP model against the linear mean: they differ by {change:.3f} of the "
+        "latter"
     )
     truth_properties = problem.properties(problem.truth)
     linear_properties = problem.properties(linear_mean)
     mode_properties = problem.properties(mode)
-    print(f"  {'mean over':<16s} {'linear':>8s} {'mode':>8s} {'truth':>8s}")
+    print(f"  {'mean over':<16s} {'linear':>8s} {'MAP':>8s} {'truth':>8s}")
     for name, a, b, c in zip(
         PROPERTIES, linear_properties, mode_properties, truth_properties
     ):
@@ -510,7 +520,7 @@ def bent_answer(
     ax.set_aspect("auto")
     ax.set_axis_on()
     ax.bar(np.arange(len(difference)), difference, color="C0")
-    for level in (-2.0 * NOISE_STD, 2.0 * NOISE_STD):
+    for level in (-2.0 * scale.noise_std, 2.0 * scale.noise_std):
         ax.axhline(level, color="black", lw=0.8, ls=":")
     ax.set_xlabel("ray")
     ax.set_ylabel("bent less linear (hundredths)")
@@ -521,10 +531,12 @@ def bent_answer(
 
     gap = space.subtract(mode, linear_mean)
     draw(space, linear_mean, axes[1, 0], title="linear posterior mean", limit=limit)
-    draw(space, mode, axes[1, 1], title="the mode, on its bent rays", limit=limit)
+    draw(space, mode, axes[1, 1], title="the MAP model, on its bent rays", limit=limit)
     draw_rays(axes[1, 1], mode_rays, colors="black", linewidths=0.4, alpha=0.6)
     reach = float(np.abs(mantle.interior_values(gap[1])).max())
-    draw(space, gap, axes[1, 2], title="the mode less the linear mean", limit=reach)
+    draw(
+        space, gap, axes[1, 2], title="the MAP model less the linear mean", limit=reach
+    )
     save(
         fig,
         outdir / "bent.png",
@@ -559,20 +571,16 @@ def _relative(problem: BentProblem, model: Any, reference: Any, /) -> float:
     return float(np.sqrt(np.sum(weights * difference**2) / np.sum(weights * base**2)))
 
 
-def run(scale: Scale = BENT, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    problem = build(scale, seed=seed)
+def run(scale: Scale = BENT, /, *, outdir: pathlib.Path) -> dict:
+    problem = build(scale)
     return {"problem": problem} | bent_answer(
-        problem, rng=part_rng(seed, "g"), outdir=outdir
+        problem, rng=part_rng(scale.seed, "g"), outdir=outdir
     )
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        BENT_QUICK if args.quick else BENT,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=BENT_QUICK, full=BENT)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

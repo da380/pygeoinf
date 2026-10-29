@@ -24,16 +24,15 @@ import numpy as np
 
 from pygeoinf2 import MaximumAPosteriori
 
-from common import (
+from src.common import (
     Stopwatch,
     describe,
-    output_directory,
     parse,
     save,
     section,
 )
-from inversion import modes_path, newton
-from survey import FULL, QUICK, Scale
+from src.inversion import modes_path, newton
+from src.survey import FULL, QUICK, Scale
 from synthetic import Setup, setup
 
 COLORS = {"gauss-newton": "#2a78d6", "polish": "#1baf7a", "exact": "#eb6834"}
@@ -47,16 +46,18 @@ def _run(label: str, estimator, optimizer, state: Setup, start) -> dict:
     model = result.minimizer
     chi2 = state.problem.chi_squared(model, state.data)
     error = experiment.relative_error(model)
+    log = list(optimizer.log)
     print(
         f"{label}: {result.iterations} iterations ({result.message}); value "
-        f"{result.value:.2f}, |grad| {result.gradient_norm:.3g}; chi-squared "
-        f"{chi2:.0f}; relative error {error:.3f}; {seconds:.1f} s; kernels "
-        f"{describe(calls)}"
+        f"{result.value:.2f}, |grad| {log[0][1]:.3g} -> {result.gradient_norm:.3g}; "
+        f"chi-squared {chi2:.0f}; relative error {error:.3f}; {seconds:.1f} s; "
+        f"kernels {describe(calls)}"
     )
+    print(f"  each inner solve stopped by: {', '.join(result.inner_stops)}")
     return {
         "model": model,
         "result": result,
-        "log": list(optimizer.log),
+        "log": log,
         "chi2": chi2,
         "error": error,
         "seconds": seconds,
@@ -64,9 +65,7 @@ def _run(label: str, estimator, optimizer, state: Setup, start) -> dict:
     }
 
 
-def map_answer(
-    state: Setup, /, *, outdir: pathlib.Path, seed: int, figure: bool = True
-) -> dict:
+def map_answer(state: Setup, /, *, outdir: pathlib.Path, figure: bool = True) -> dict:
     """The three Newton runs, the saved modes and the figure."""
     experiment = state.experiment
     scale = experiment.survey.scale
@@ -112,7 +111,7 @@ def map_answer(
         experiment.background,
     )
     np.savez(
-        modes_path(outdir, scale, seed),
+        modes_path(outdir, scale),
         gauss_newton=runs["gauss-newton"]["model"],
         polish=runs["polish"]["model"],
     )
@@ -172,25 +171,19 @@ def draw(state: Setup, runs: dict, /, *, outdir: pathlib.Path) -> None:
     )
 
 
-def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, state: Setup | None = None
-) -> dict:
+def run(scale: Scale, /, *, outdir: pathlib.Path, state: Setup | None = None) -> dict:
     started = time.perf_counter()
     print(f"\n=== C. The MAP model by Newton-CG ({scale.name} scale) ===")
     if state is None:
-        state = setup(scale, seed=seed)
-    runs = map_answer(state, outdir=outdir, seed=seed)
+        state = setup(scale)
+    runs = map_answer(state, outdir=outdir)
     print(f"C took {time.perf_counter() - started:.1f} s")
     return {"runs": runs, "setup": state}
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

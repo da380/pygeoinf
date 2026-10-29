@@ -14,18 +14,17 @@ import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-from common import (
+from src.common import (
     draw_prem,
     draw_profile,
     finish_profile_axes,
     layer_radii,
-    output_directory,
     parse,
     save,
     title,
 )
-from problem import FULL, QUICK, Problem, Scale, build
-from reference import R_SURFACE, layering, prem_layer_functions
+from src.problem import FULL, QUICK, Problem, Scale, build
+from src.reference import R_SURFACE, layering, prem_layer_functions
 
 # The upper mantle and the crust, drawn again on their own.
 ZOOM = (5400.0, R_SURFACE)
@@ -98,19 +97,15 @@ def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> Problem:
-    problem = build(scale=scale, seed=seed)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> Problem:
+    problem = build(scale=scale)
     setup_figure(problem, outdir=outdir)
     return problem
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

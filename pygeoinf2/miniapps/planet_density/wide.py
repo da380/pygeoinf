@@ -1,9 +1,9 @@
 """Part C: a deliberately wide bound.
 
-A norm bound on the departure from PREM that says almost nothing: a ball in
-the model space's norm whose radius is the 95% radius of the Sobolev
-measure with a pointwise standard deviation of 3 g/cm^3, and that measure as
-the Gaussian. The same three answers as in part B, in the same order. Two
+A bound on the departure from PREM that says almost nothing: the Sobolev
+measure with a pointwise standard deviation of 3 g/cm^3 as the Gaussian, and
+its 95% ellipsoid as the set. The same three answers as in part B, in the
+same order. Two
 data cut a slice through the space, and this part shows what each answer
 makes of the slice when the prior hardly narrows it.
 """
@@ -14,25 +14,26 @@ import pathlib
 
 from pygeoinf2 import LinearGaussianInversion
 
-from answers import three_answers
-from common import output_directory, parse, part_rng
-from problem import FULL, QUICK, TIGHT_STD, WIDE_STD, Problem, Scale, build
+from src.answers import three_answers
+from src.common import parse, part_rng
+from src.problem import FULL, QUICK, Problem, Scale, build
 
 
-def wide_answers(problem: Problem, /, *, seed: int, outdir: pathlib.Path) -> dict:
+def wide_answers(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
     """The three answers under the wide bound, and the evidence against the
     tight prior's."""
-    print(f"\n=== C. A deliberately wide bound ({problem.scale.name} scale) ===")
-    print(f"prior: about PREM, pointwise std {WIDE_STD:g} g/cm^3 in every layer")
+    scale = problem.scale
+    print(f"\n=== C. A deliberately wide bound ({scale.name} scale) ===")
+    print(f"prior: about PREM, pointwise std {scale.wide_std:g} g/cm^3 in every layer")
     result = three_answers(
         problem,
-        problem.prior(WIDE_STD),
+        problem.prior(scale.wide_std),
         part="C",
         prior_name="wide",
-        rng=part_rng(seed, "c"),
+        rng=part_rng(scale.seed, "c"),
         outdir=outdir,
     )
-    tight = LinearGaussianInversion(problem.problem, problem.prior(TIGHT_STD))
+    tight = LinearGaussianInversion(problem.problem, problem.prior(scale.tight_std))
     result["log_bayes_factor"] = (
         tight.log_evidence(problem.data) - result["measure"]["log_evidence"]
     )
@@ -44,20 +45,16 @@ def wide_answers(problem: Problem, /, *, seed: int, outdir: pathlib.Path) -> dic
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return wide_answers(problem, seed=seed, outdir=outdir)
+        problem = build(scale=scale)
+    return wide_answers(problem, outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

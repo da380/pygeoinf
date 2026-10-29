@@ -4,13 +4,14 @@ The source ``f`` of the screened Poisson equation on the periodic box, from
 noisy readings of the solution ``u`` at scattered sensors, none of them
 inside one disc: the shape of the point-data mini-app in miniature, with
 MFEM computing every forward and adjoint application and the library never
-seeing a finite element. The prior is the identity covariance on the box's
-``H^2``, so that the space's norm is the prior's and the three answers
-measure size alike. Two properties are asked about, the average source over
-a small disc among the sensors and over one in the empty disc, and each is
-answered three ways: the minimum-norm estimate under the discrepancy
-principle, the Bayesian posterior, and the feasible set's certified brackets
-under the prior's and the noise's balls.
+seeing a finite element. The source lies in the box's ``H^2``, on which a
+value at a point exists, and the prior is a Sobolev measure of order two on
+it, a measure of extra regularity. Two properties are asked about, the
+average source over a small disc among the sensors and over one in the empty
+disc, and each is answered three ways: the minimum-norm estimate under the
+discrepancy principle, smallest in the prior's norm; the Bayesian posterior;
+and the feasible set's certified brackets under the prior's 95% ellipsoid
+and the noise's 95% ball.
 """
 
 from __future__ import annotations
@@ -32,29 +33,25 @@ from pygeoinf2 import (
 )
 from pygeoinf2.numerics import SpectralFamilySolver
 
-from box_operator import ScreenedPoisson
-from common import (
+from src.box_operator import ScreenedPoisson
+from src.common import (
     FULL,
     QUICK,
     Scale,
-    ball_alone,
+    prior_alone,
     bound_panels,
     box_prior,
     box_space,
     error_budget_panels,
     marginal_panels,
-    output_directory,
     parse,
     part_rng,
     save,
 )
 
-NOISE_STD = 0.05
-LEVEL = 0.95
-# The sensors avoid a disc of this radius about the gap's center; the
-# properties are averages over smaller discs about the two centers.
-GAP_RADIUS = 0.18
-REGION_RADIUS = 0.08
+# The sensors avoid a disc of the scale's gap radius about the gap's center;
+# the properties are averages over smaller discs, of the scale's region
+# radius, about the two centers.
 REGIONS = (
     ("among the sensors", np.array([0.3, 0.65])),
     ("in the gap", np.array([0.7, 0.3])),
@@ -62,14 +59,15 @@ REGIONS = (
 
 
 def sensor_points(
-    space: object, count: int, /, *, rng: np.random.Generator
+    space: object, count: int, /, *, radius: float, rng: np.random.Generator
 ) -> np.ndarray:
-    """``count`` points uniform over the box, none within the gap's radius."""
+    """``count`` points uniform over the box, none within ``radius`` of the
+    gap's center."""
     center = REGIONS[1][1]
     kept: list[np.ndarray] = []
     while len(kept) < count:
         point = rng.uniform(0.0, 1.0, size=2)
-        if space.geodesic_distance(point, center) > GAP_RADIUS:
+        if space.geodesic_distance(point, center) > radius:
             kept.append(point)
     return np.stack(kept)
 
@@ -81,25 +79,28 @@ def box_inverse(
     started = time.perf_counter()
     print(f"\n=== E. An inverse problem on the box operator ({scale.name} scale) ===")
     X = box_space(scale)
-    prior = box_prior(X)
+    prior = box_prior(X, scale)
     box = ScreenedPoisson(
         X, elements=scale.box_elements, screening_length=scale.screening_length
     )
-    points = sensor_points(X, scale.sensors, rng=rng)
+    points = sensor_points(X, scale.sensors, radius=scale.gap_radius, rng=rng)
     forward = X.point_evaluation_operator(points) @ box.operator
-    noise = GaussianMeasure.from_standard_deviation(forward.codomain, NOISE_STD)
+    noise = GaussianMeasure.from_standard_deviation(
+        forward.codomain, scale.box_noise_std
+    )
     problem = LinearForwardProblem(forward, error=noise)
     truth, data = problem.synthetic_model_and_data(prior, rng=rng)
     averages = X.geodesic_ball_average_operator(
-        [center for _, center in REGIONS], REGION_RADIUS
+        [center for _, center in REGIONS], scale.region_radius
     )
     true_averages = np.asarray(averages(truth))
     print(
-        f"the source in H^{X.order:g} on a {X.shape[0]} x {X.shape[1]} grid under the "
-        f"identity covariance, length scale {X.length_scale}; u = A f by MFEM on "
+        f"the source in H^{X.order:g} on a {X.shape[0]} x {X.shape[1]} grid under a "
+        f"Sobolev measure of order {scale.box_prior_order:g}, length scale "
+        f"{X.length_scale}; u = A f by MFEM on "
         f"{box.size} degrees of freedom, screening length {box.screening_length}; "
-        f"{len(points)} sensors outside a disc of radius {GAP_RADIUS}, noise "
-        f"{NOISE_STD}; chi-squared of the truth {problem.chi_squared(truth, data):.0f}"
+        f"{len(points)} sensors outside a disc of radius {scale.gap_radius}, noise "
+        f"{scale.box_noise_std}; chi-squared of the truth {problem.chi_squared(truth, data):.0f}"
     )
 
     # Every answer below solves in the data space, which has a few hundred
@@ -109,20 +110,27 @@ def box_inverse(
     # MFEM solves than one iterative solve, and every solve after it, for a
     # sample or a damping, is a pair of small matrix products.
     solver = SpectralFamilySolver()
+    # The point answer measures size in the prior's norm: the problem in w,
+    # with f = L w and L the prior's covariance factor, and w of a model
+    # through the prior's precision, L^-1 = L* Q^-1.
+    factor = prior.covariance_factor
+    whiten = factor.adjoint @ prior.precision
     box.reset_counts()
     t0 = time.perf_counter()
-    estimator = MinimumNorm(problem, level=LEVEL, solver=solver)
+    estimator = MinimumNorm(
+        problem.parameterized(factor), level=scale.level, solver=solver
+    )
     chosen = estimator.for_data(data)
-    smallest = chosen(data)
-    pushed = chosen.push_forward(averages)
+    smallest = factor(chosen(data))
+    pushed = chosen.push_forward(averages @ factor)
     estimate = np.asarray(pushed(data))
     propagated = np.sqrt(pushed.propagated_covariance().diagonals()[0])
-    bias = np.asarray(pushed.bias(truth))
+    bias = np.asarray(pushed.bias(whiten(truth)))
     print(
         f"the point: minimum norm by the discrepancy principle, damping "
         f"{chosen.damping:.3g}, "
         f"chi-squared {problem.chi_squared(smallest, data):.0f} against the critical "
-        f"{problem.critical_chi_squared(level=LEVEL):.0f}, {box.solves} MFEM solves, "
+        f"{problem.critical_chi_squared(level=scale.level):.0f}, {box.solves} MFEM solves, "
         f"{time.perf_counter() - t0:.1f} s"
     )
     for (name, _), e, s, b, t in zip(
@@ -165,10 +173,13 @@ def box_inverse(
 
     box.reset_counts()
     t0 = time.perf_counter()
-    ball = prior.ambient_ball(level=LEVEL)
-    noise_ball = noise.ambient_ball(level=LEVEL)
+    # The prior hardened to the ellipsoid of its covariance to a power below
+    # one half, which carries its 95% however fine the grid; the Mahalanobis
+    # ellipsoid's radius grows with it.
+    ellipsoid = prior.weakened_ellipsoid(level=scale.level, power=scale.box_set_power)
+    noise_ball = noise.ambient_ball(level=scale.level)
     feasible = BackusGilbertParker(
-        problem, averages, ball, noise=noise_ball, solver=solver
+        problem, averages, ellipsoid, noise=noise_ball, solver=solver
     )(data)
     P = averages.codomain
     directions = []
@@ -183,10 +194,12 @@ def box_inverse(
         ]
     )
     inside = bool(feasible.polytope(directions).contains(true_averages))
-    alone = ball_alone(ball, averages)
+    alone = prior_alone(ellipsoid, averages)
+    gauge = X.inner_product(ellipsoid.precision(truth), truth)
     print(
-        f"the set: the feasible set under the prior's {LEVEL:.0%} ball (radius "
-        f"{ball.radius:.1f}) and the noise's: {box.solves} MFEM solves, "
+        f"the set: the feasible set under the prior's {scale.level:.0%} ellipsoid "
+        f"(Q^-p f, f) <= r^2 with p = {scale.box_set_power:g}, in which the truth's "
+        f"gauge is {gauge:.2f}, and the noise's ball: {box.solves} MFEM solves, "
         f"{time.perf_counter() - t0:.1f} s; the true averages in the polytope: {inside}"
     )
     for (name, _), (low, high), (a0, a1), t in zip(
@@ -194,7 +207,7 @@ def box_inverse(
     ):
         print(
             f"   {name:<18s} certified bracket [{low:+.3f}, {high:+.3f}], the "
-            f"ball alone [{a0:+.2f}, {a1:+.2f}], truth {t:+.3f}"
+            f"ellipsoid alone [{a0:+.2f}, {a1:+.2f}], truth {t:+.3f}"
         )
 
     names = [f"the average source {name}" for name, _ in REGIONS]
@@ -205,7 +218,7 @@ def box_inverse(
         plotting.plot(X, np.asarray(field), ax=ax, **options)
         plotting.plot_points(X, points, ax=ax, marker=".", size=4.0, color="black")
         plotting.plot_balls(
-            X, [c for _, c in REGIONS], REGION_RADIUS, ax=ax, color="black"
+            X, [c for _, c in REGIONS], scale.region_radius, ax=ax, color="black"
         )
         ax.set_title(title, fontsize=10)
 
@@ -263,14 +276,14 @@ def box_inverse(
         "standard deviation before and after, and each average's marginal",
     )
 
-    # The set: each bracket against the bound of the prior's ball alone.
+    # The set: each bracket against the bound of the prior's ellipsoid alone.
     fig, axes = plt.subplots(1, len(REGIONS), figsize=(8.0, 3.8), layout="constrained")
     bound_panels(axes, names, alone, brackets, true_averages, ylabel="average of f")
     save(
         fig,
         outdir / "box_inverse_brackets.png",
-        title=f"MFEM, part E: the set answer. The bound the prior's {LEVEL:.0%} "
-        "ball admits alone,\nand the certified bracket the data leave",
+        title=f"MFEM, part E: the set answer. The bound the prior's {scale.level:.0%} "
+        "ellipsoid admits alone,\nand the certified bracket the data leave",
     )
     print(f"E took {time.perf_counter() - started:.1f} s")
     return {
@@ -278,7 +291,7 @@ def box_inverse(
         "truth": truth,
         "true_averages": true_averages,
         "chi_squared": problem.chi_squared(mean, data),
-        "critical": problem.critical_chi_squared(level=LEVEL),
+        "critical": problem.critical_chi_squared(level=scale.level),
         "exact_std": exact_std,
         "std": std,
         "center": center,
@@ -290,21 +303,18 @@ def box_inverse(
         "brackets": brackets,
         "alone": alone,
         "inside": inside,
+        "gauge": gauge,
         "data": len(points),
     }
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    return box_inverse(scale, rng=part_rng(seed, "e"), outdir=outdir)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
+    return box_inverse(scale, rng=part_rng(scale.seed, "e"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

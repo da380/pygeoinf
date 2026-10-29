@@ -107,6 +107,13 @@ def _draw(
     return measure.sample(rng=rng)
 
 
+#: The relative rounding error allowed in a pairing, as a multiple of the
+#: Cauchy-Schwarz bound on it: an inner product of two vectors carries an
+#: absolute error of a few hundred times machine precision times the product
+#: of their norms, however small the product itself comes out.
+_ROUNDING = 1e3 * np.finfo(float).eps
+
+
 def _fail(axiom: str, detail: str) -> None:
     raise AssertionError(f"Axiom failed: {axiom}. {detail}")
 
@@ -121,10 +128,15 @@ def _assert_close(
     atol: float = 1e-12,
     record: dict[str, float] | None = None,
 ) -> None:
-    """Assert two vectors agree, measured in the space's own norm."""
+    """Assert two vectors agree, measured in the space's own norm.
+
+    The residual is judged relative to the larger of the two norms, with
+    ``atol`` as an absolute floor, so a vector of any size is held to the
+    same relative agreement.
+    """
     residual = space.norm(space.subtract(a, b))
-    scale = max(space.norm(a), space.norm(b), 1.0)
-    _record(record, axiom, residual / scale)
+    scale = max(space.norm(a), space.norm(b))
+    _record(record, axiom, residual / scale if scale > 0.0 else residual)
     if residual > atol + rtol * scale:
         _fail(axiom, f"residual {residual:g} against scale {scale:g}")
 
@@ -135,12 +147,27 @@ def _assert_scalar(
     axiom: str,
     *,
     rtol: float = 1e-10,
+    atol: float = 0.0,
+    scale: float | None = None,
+    bound: float = 0.0,
     record: dict[str, float] | None = None,
 ) -> None:
-    scale = max(abs(value), abs(expected), 1.0)
-    _record(record, axiom, abs(value - expected) / scale)
-    if abs(value - expected) > rtol * scale:
-        _fail(axiom, f"{value!r} != {expected!r}")
+    """Assert two scalars agree, relative to ``scale``.
+
+    The default scale is the larger magnitude of the two, with ``atol`` as
+    an absolute floor; a check whose expected value is zero passes the
+    scale it means instead. A pairing of two vectors passes the
+    Cauchy-Schwarz bound on it as ``bound``: the rounding error in
+    computing it is a small multiple of machine precision times that
+    bound, whatever the pairing's own size, so that much is allowed on
+    top. The recorded defect is still the residual over the scale.
+    """
+    if scale is None:
+        scale = max(abs(value), abs(expected))
+    residual = abs(value - expected)
+    _record(record, axiom, residual / scale if scale > 0.0 else residual)
+    if residual > atol + rtol * scale + _ROUNDING * bound:
+        _fail(axiom, f"{value!r} != {expected!r} against scale {scale:g}")
 
 
 def check_space(
@@ -178,8 +205,23 @@ def check_space(
     def close(a: object, b: object, axiom: str) -> None:
         _assert_close(space, a, b, axiom, rtol=rtol, atol=atol, record=defects)
 
-    def scalar(value: float, expected: float, axiom: str) -> None:
-        _assert_scalar(value, expected, axiom, rtol=rtol, record=defects)
+    def scalar(
+        value: float,
+        expected: float,
+        axiom: str,
+        scale: float | None = None,
+        bound: float = 0.0,
+    ) -> None:
+        _assert_scalar(
+            value,
+            expected,
+            axiom,
+            rtol=rtol,
+            atol=atol,
+            scale=scale,
+            bound=bound,
+            record=defects,
+        )
 
     if space.dim < 0:
         _fail("dimension is non-negative", f"dim == {space.dim}")
@@ -244,20 +286,24 @@ def check_space(
         )
 
         # --- inner product axioms ----------------------------------------
+        nx, ny, nz = space.norm(x), space.norm(y), space.norm(z)
         scalar(
             space.inner_product(x, y),
             space.inner_product(y, x),
             "the inner product is symmetric",
+            bound=nx * ny,
         )
         scalar(
             space.inner_product(space.add(x, y), z),
             space.inner_product(x, z) + space.inner_product(y, z),
             "the inner product is additive",
+            bound=(nx + ny) * nz,
         )
         scalar(
             space.inner_product(space.scale(a, x), y),
             a * space.inner_product(x, y),
             "the inner product is homogeneous",
+            bound=abs(a) * nx * ny,
         )
         if space.squared_norm(x) <= 0.0:
             _fail(
@@ -296,6 +342,7 @@ def check_space(
                 space.inner_product(u, v),
                 1.0 if i == j else 0.0,
                 "gram_schmidt returns an orthonormal set",
+                1.0,
             )
 
     samples = [_draw(space, rng, measure) for _ in range(4)]
@@ -635,11 +682,17 @@ def check_operator(
 
     for _ in range(trials):
         x, y = _draw(domain, rng, measure), codomain.random(rng=rng)
+        ax, ay = operator(x), adjoint(y)
         _assert_scalar(
-            codomain.inner_product(operator(x), y),
-            domain.inner_product(x, adjoint(y)),
+            codomain.inner_product(ax, y),
+            domain.inner_product(x, ay),
             "the adjoint satisfies (A x, y) == (x, A* y)",
             rtol=rtol,
+            atol=atol,
+            bound=max(
+                codomain.norm(ax) * codomain.norm(y),
+                domain.norm(x) * domain.norm(ay),
+            ),
             record=defects,
         )
     return CheckReport("check_operator", defects)
@@ -691,17 +744,23 @@ def check_traits(
         x, y = _draw(domain, rng, measure), _draw(domain, rng, measure)
 
         if claims(Traits.SELF_ADJOINT):
+            ax, ay = operator(x), operator(y)
             _assert_scalar(
-                codomain.inner_product(operator(x), y),
-                domain.inner_product(x, operator(y)),
+                codomain.inner_product(ax, y),
+                domain.inner_product(x, ay),
                 "the claimed SELF_ADJOINT operator is symmetric",
                 rtol=rtol,
+                bound=max(
+                    codomain.norm(ax) * domain.norm(y),
+                    domain.norm(x) * codomain.norm(ay),
+                ),
                 record=defects,
             )
 
         if claims(Traits.POSITIVE_SEMIDEFINITE):
-            quadratic = domain.inner_product(operator(x), x)
-            if quadratic < -rtol * max(domain.squared_norm(x), 1.0):
+            ax = operator(x)
+            quadratic = domain.inner_product(ax, x)
+            if quadratic < -rtol * domain.norm(ax) * domain.norm(x):
                 _fail(
                     "the claimed POSITIVE_SEMIDEFINITE operator is non-negative",
                     f"(A x, x) == {quadratic:g}",
@@ -769,6 +828,7 @@ def check_derivative(
     step: float = 1e-6,
     trials: int = 3,
     rtol: float = 1e-5,
+    atol: float = 0.0,
 ) -> CheckReport:
     """Check the derivative against central finite differences.
 
@@ -783,7 +843,10 @@ def check_derivative(
             which is why the default is near the square root of machine
             epsilon rather than as small as possible.
         trials: how many directions to check.
-        rtol: the agreement required.
+        rtol: the agreement required, relative to the size of the derivative
+            along the direction.
+        atol: an absolute allowance, for a derivative the difference cannot
+            resolve at all because the operator's values dwarf it.
 
     Returns:
         The report, carrying the worst finite-difference defect.
@@ -815,11 +878,13 @@ def check_derivative(
         analytic = derivative(direction)
 
         residual = codomain.norm(codomain.subtract(numerical, analytic))
-        scale = max(codomain.norm(numerical), codomain.norm(analytic), 1.0)
+        scale = max(codomain.norm(numerical), codomain.norm(analytic))
         _record(
-            defects, "the derivative agrees with finite differences", residual / scale
+            defects,
+            "the derivative agrees with finite differences",
+            residual / scale if scale > 0.0 else residual,
         )
-        if residual > rtol * scale:
+        if residual > atol + rtol * scale:
             _fail(
                 "the derivative agrees with finite differences",
                 f"residual {residual:g} against scale {scale:g}",
@@ -837,6 +902,7 @@ def check_gradient(
     step: float = 1e-6,
     trials: int = 3,
     rtol: float = 1e-5,
+    atol: float = 0.0,
 ) -> CheckReport:
     """Check that the gradient really is the gradient, not the derivative.
 
@@ -855,7 +921,8 @@ def check_gradient(
             place of its ``random`` method; see the module docstring.
         step: the finite-difference step; see :func:`check_derivative`.
         trials: how many directions to check.
-        rtol: the agreement required.
+        rtol: the agreement required, relative to the pairing.
+        atol: an absolute allowance; see :func:`check_derivative`.
 
     Returns:
         The report, carrying the worst pairing defect.
@@ -877,13 +944,15 @@ def check_gradient(
         numerical = (forward - backward) / (2.0 * step)
         analytic = domain.inner_product(gradient, direction)
 
-        scale = max(abs(numerical), abs(analytic), 1.0)
+        scale = max(abs(numerical), abs(analytic))
         _record(
             defects,
             "the gradient pairs with a direction as the derivative does",
-            abs(numerical - analytic) / scale,
+            abs(numerical - analytic) / scale
+            if scale > 0.0
+            else abs(numerical - analytic),
         )
-        if abs(numerical - analytic) > rtol * scale:
+        if abs(numerical - analytic) > atol + rtol * scale:
             _fail(
                 "the gradient pairs with a direction as the derivative does",
                 f"(grad, d) == {analytic:g} but the finite difference is "
@@ -903,6 +972,7 @@ def check_second_derivative(
     step: float = 1e-5,
     trials: int = 3,
     rtol: float = 1e-4,
+    atol: float = 0.0,
 ) -> CheckReport:
     """Check ``F''(x)[d, .]`` against finite differences of the derivative.
 
@@ -916,6 +986,7 @@ def check_second_derivative(
         trials: how many directions to check.
         rtol: the agreement required. Looser than for a first derivative, the
             differencing being of an already-differenced quantity.
+        atol: an absolute allowance; see :func:`check_derivative`.
 
     Returns:
         The report, carrying the worst finite-difference defect.
@@ -947,13 +1018,13 @@ def check_second_derivative(
         analytic = operator.second_derivative(point, d)(e)
 
         residual = codomain.norm(codomain.subtract(numerical, analytic))
-        scale = max(codomain.norm(numerical), codomain.norm(analytic), 1.0)
+        scale = max(codomain.norm(numerical), codomain.norm(analytic))
         _record(
             defects,
             "the second derivative agrees with finite differences",
-            residual / scale,
+            residual / scale if scale > 0.0 else residual,
         )
-        if residual > rtol * scale:
+        if residual > atol + rtol * scale:
             _fail(
                 "the second derivative agrees with finite differences",
                 f"residual {residual:g} against scale {scale:g}",

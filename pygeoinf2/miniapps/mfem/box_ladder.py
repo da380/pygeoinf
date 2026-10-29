@@ -29,14 +29,13 @@ import numpy as np
 from pygeoinf2 import LinearOperator, plotting
 from pygeoinf2.testing import check_operator, check_traits
 
-from box_operator import ScreenedPoisson
-from common import (
+from src.box_operator import ScreenedPoisson
+from src.common import (
     FULL,
     QUICK,
     Scale,
     box_prior,
     box_space,
-    output_directory,
     parse,
     part_rng,
     save,
@@ -86,7 +85,7 @@ def box_ladder(
         f"\n=== D. An operator through MFEM, and its check ladder ({scale.name} scale) ==="
     )
     X = box_space(scale)
-    prior = box_prior(X)
+    prior = box_prior(X, scale)
     t0 = time.perf_counter()
     box = ScreenedPoisson(
         X, elements=scale.box_elements, screening_length=scale.screening_length
@@ -257,17 +256,13 @@ def box_ladder(
     }
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    return box_ladder(scale, rng=part_rng(seed, "d"), outdir=outdir)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
+    return box_ladder(scale, rng=part_rng(scale.seed, "d"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

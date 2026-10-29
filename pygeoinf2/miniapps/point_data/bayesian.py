@@ -19,20 +19,10 @@ import numpy as np
 
 from pygeoinf2 import GaussianMeasure, LinearGaussianInversion, plotting
 
-from common import draw_map, map_axes, output_directory, parse, part_rng, save
-from ocean_mask import area_weights
-from problem import (
-    CAP_RADIUS,
-    FULL,
-    PRIOR_STD,
-    PROBES,
-    QUICK,
-    REGIONS,
-    Problem,
-    Scale,
-    build,
-)
-from solvers import woodbury_solver
+from src.common import draw_map, map_axes, parse, part_rng, save
+from src.ocean_mask import area_weights
+from src.problem import FULL, PROBES, QUICK, REGIONS, Problem, Scale, build
+from src.solvers import woodbury_solver
 
 
 def posterior_summary(
@@ -75,7 +65,7 @@ def posterior_summary(
         f"{time.perf_counter() - t0:.1f} s ({workers}; one solve per sample, relative "
         f"standard error about {1.0 / np.sqrt(2.0 * scale.std_samples):.0%}): "
         f"area-weighted mean {std_land:.3f} over land, {std_sea:.3f} over the sea; "
-        f"the prior's is {PRIOR_STD:.3f}"
+        f"the prior's is {scale.prior_std:.3f}"
     )
     t0 = time.perf_counter()
     places = [p for _, p in PROBES]
@@ -151,7 +141,11 @@ def measure_figure(
     )
     for ax in maps[0]:
         plotting.plot_balls(
-            space, [c for _, c in REGIONS], CAP_RADIUS, ax=ax, color="white"
+            space,
+            [c for _, c in REGIONS],
+            problem.scale.cap_radius,
+            ax=ax,
+            color="white",
         )
     limit = float(np.abs(space.grid_values(problem.truth)).max())
     draw_map(space, result["mean"], maps[1][0], title="posterior mean", limit=limit)
@@ -223,20 +217,16 @@ def bayesian_answer(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return bayesian_answer(problem, rng=part_rng(seed, "d"), outdir=outdir)
+        problem = build(scale=scale)
+    return bayesian_answer(problem, rng=part_rng(scale.seed, "d"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

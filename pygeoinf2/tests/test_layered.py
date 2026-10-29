@@ -272,7 +272,7 @@ class TestJumps:
         discontinuity means; conditioned on a vanishing jump at one interface
         every draw is continuous across it, and still jumps at the other."""
         space = profiles()
-        prior = space.sobolev_measure(1.5, pointwise_std=0.3)
+        prior = space.sobolev_measure(2.0, pointwise_std=0.3)
         welded = prior.condition(space.jump_operator(1), np.zeros(1))
         jumps = np.array(
             [
@@ -360,10 +360,10 @@ class TestAlgebraAndMeasures:
             0.1 + 0.0 * layer.zero() + 0.1 * (i + 1)
             for i, layer in enumerate(space.layers)
         )
-        by_field = space.sobolev_measure(1.5, pointwise_std=fields)
+        by_field = space.sobolev_measure(2.0, pointwise_std=fields)
         covariance = (look @ by_field.covariance @ look.adjoint).matrix(
             form="components"
         )
         assert np.allclose(np.sqrt(np.diag(covariance)), [0.2, 0.3, 0.4], rtol=2e-2)
         with pytest.raises(ValueError, match="layer by layer"):
-            space.sobolev_measure([1.5, 1.5])
+            space.sobolev_measure([2.0, 2.0])

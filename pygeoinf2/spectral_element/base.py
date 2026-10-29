@@ -24,6 +24,7 @@ import warnings
 import numpy as np
 
 from ..algebra.diagonal import DiagonalLinearOperator
+from ..symmetric_space.base import _require_trace_class
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import (
     ArrayVectorMixin,
@@ -876,28 +877,40 @@ class SpectralElementSpace(
         amplitude: float = 1.0,
         expectation: np.ndarray | None = None,
         pointwise_std: float | np.ndarray | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian prior with covariance ``amplitude^2 A^-order``.
 
-        The workhorse prior, and a Matern field: its draws have smoothness
-        ``nu = order + self.order - d/2`` on a ``d``-dimensional domain, and
-        the correlation length ``L`` the space was built with, varying as
-        that does. There is no ``scale`` argument, as a symmetric space's
-        has, because the basis that makes this diagonal is the eigenbasis of
-        one ``A``.
+        The workhorse prior, and a Matern field with the correlation length
+        ``L`` the space was built with, varying as that does. There is no
+        ``scale`` argument, as a symmetric space's has, because the basis
+        that makes this diagonal is the eigenbasis of one ``A``.
+
+        The covariance is trace class on this space, so that this is a
+        Gaussian measure on it with draws in it, exactly when ``order``
+        exceeds half the spatial dimension ``d``, whatever the space's own
+        order: a draw then has ``order - d/2`` more derivatives than the
+        space asks. At or below that the "measure" has no draws in the
+        space (at order zero it is the identity covariance), and it is
+        refused.
 
         Args:
-            order: the Sobolev order of the measure. The draws are functions
-                when ``order + self.order`` exceeds half the spatial
-                dimension.
+            order: the Sobolev order of the measure, above ``d/2``.
             amplitude: an overall scale on the spectrum.
             expectation: the mean. Zero if omitted.
             pointwise_std: calibrate by the pointwise standard deviation, one
                 number or a field; see :meth:`spectral_measure`.
+            unsafe: build it at an order at or below ``d/2`` anyway, for a
+                test that means it.
 
         Returns:
             The measure.
+
+        Raises:
+            ValueError: for an order at or below half the spatial dimension
+                without *unsafe*.
         """
+        _require_trace_class(self, order, unsafe)
         return self.spectral_measure(
             amplitude**2 * self.eigenvalues ** (-float(order)),
             expectation=expectation,

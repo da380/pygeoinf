@@ -169,7 +169,8 @@ columns and is never written out as a square (D-170).
   S-procedure's shape per weight, `sum_of_ellipsoids`, a polytope's
   inscribed ellipsoid (Newton on `dim P (dim P + 3) / 2` unknowns) and a
   point set's enclosing ellipsoid (D-141).
-- The MFEM mini-app's `matrix_space.operator_from_bilinear_form` keeps
+- The MFEM mini-app's `operator_from_bilinear_form`
+  (`miniapps/mfem/src/matrix_space.py`) keeps
   MFEM's sparse matrix (D-96); nothing in its space modules densifies.
 - `with_probed_adjoint()` and `DirectSolver` assemble what they are asked to,
   once, on first use (D-34, D-40).
@@ -185,7 +186,7 @@ whatever of the vector algebra (`add`, `subtract`, `scale`, `axpy`, `copy`,
 `zero`) the vectors do not get for free, and `random` and `white_noise`,
 which every check and every randomised method draws from. A coordinate-free
 backend supplies a `HilbertSpace` and a mass operator, as the MFEM
-mini-app's `hilbert_space` does (D-22, D-96); its vectors need no array behaviour at all, which
+mini-app's `src/hilbert_space.py` does (D-22, D-96); its vectors need no array behaviour at all, which
 `tests/test_no_array_backend.py` holds the library to over a space whose
 vectors are plain Python objects. What such a space cannot be asked for
 refuses by name (`assembled()`, the direct solvers, `random_diagonal`,
@@ -209,7 +210,7 @@ consistent only to discretisation level — a continuous adjoint — pass the
 it is also the floor below which a solver tolerance asks for noise.
 
 A foreign library can also sit inside an operator between the library's own
-spaces, with no space of its own: the MFEM mini-app's `box_operator` is a
+spaces, with no space of its own: the MFEM mini-app's `src/box_operator.py` is a
 finite element solve on a periodic Sobolev box, its adjoint written from the
 transposes of the two transfers with the box's Gram factor and its inverse
 on either side, and the ladder above proves it to the solver's tolerance.
@@ -232,7 +233,7 @@ any backend over foreign memory:
   back to it. Operator, handle and form live and die together, or the next
   `Mult` segfaults.
 - **Partial assembly of a matrix coefficient is broken in PyMFEM 4.8.**
-  Scalar coefficients are fine; the mini-app's `hilbert_space.matern_measure` uses one when
+  Scalar coefficients are fine; the mini-app's `matern_measure` (`src/hilbert_space.py`) uses one when
   the field is isotropic and refuses otherwise (D-97).
 
 ## 7. Open questions
@@ -300,14 +301,6 @@ Recorded rather than settled, so nobody has to rediscover them.
   and took 28 s. `point_evaluation_operator` always builds its dense
   matrix, 3.4 GB at 83 000 points, so the app assembles ray by ray; a
   matrix-free form above some cost is the question.
-- **The checks' comparison scale floors at one** (met by the MFEM and the
-  waveform mini-apps, 2026-10-28). `_assert_close` and the derivative
-  checks in `testing.py` divide by `max(|a|, |b|, 1)`, so on an operator
-  whose pairings are small a "relative" defect is absolute and a wrong
-  adjoint passes: `x -> 1e-10 x` against `y -> -1e-10 y` has a worst
-  defect of 7e-10. Making the scale relative with an absolute floor at
-  `atol` would catch it and may fail small-valued operators with tiny
-  absolute defects that pass today; a decision for David.
 - **Three findings from the revision of the mini-apps' figures** (2026-10-29).
   `plotting.plot_shell` draws on the ball's own angular grid, which at
   degree 14 is a 15 × 29 mosaic, and cannot be smoothed: passing
@@ -321,6 +314,93 @@ Recorded rather than settled, so nobody has to rediscover them.
   tomography quick scale 2000 samples give 0.314 against an exact 0.380,
   while sampling at the point directly gives 0.379; worth a sentence in
   `sample_pointwise_std`'s docstring and perhaps a `points=` argument.
+- **Two mixture findings from the tomography app** (2026-10-29). The
+  plotting helpers `plot_densities` and `moments` sample a
+  `GaussianMixture` (20 000 draws a panel, 40 to 80 s at the app's size)
+  though a mixture's one-dimensional marginals are closed form, a
+  weighted sum of Gaussian densities; worth a closed-form route.
+  `LinearGaussianMixtureInversion` factorizes the identical normal
+  operator once per component when the components share a covariance;
+  harmless at five components, wasteful at fifty.
+- **Signals from the mini-apps' implementation walkthroughs** (2026-10-29).
+  A row of derivative components into a Euclidean data space is
+  `from_matrix(..., form="components")` in the planet-density app and
+  `form="galerkin"` in the tomography and MFEM apps, both right since the
+  codomain's Gram is the identity: one convention across the apps, or a
+  named constructor for "rows of derivative components", would spare the
+  explanation. The point-data app runs no checks at all and the
+  planet-density app checks its linear rows only in its test; each app
+  should exercise the ladder on its own operator in part A.
+  `OptimizationResult` could carry the
+  gradient norm per iteration beside the values in `history`; the
+  waveform app wraps its objective to record them. `test_code_practice`
+  skips Markdown, so the no-decision-number rule is not enforced on the
+  READMEs and walkthroughs.
+- **Findings from re-posing the mini-apps** (2026-10-29, D-191; no
+  library edits). (1) `weakened_ellipsoid(quantile_method="auto")` hands
+  "auto" to `weighted_chi2_quantile`, which takes Imhof, where
+  `ambient_ball` applies `_quantile_method_for` first: on
+  `Sobolev(128, 2, 0.06).sobolev_measure(2, 0.06, pointwise_std=1)` at
+  power 1/4 that is 45 s against 0.004 s for `"matched"`, which agrees to
+  a few parts in a thousand. (2) `weakened_ellipsoid` carries no gate below
+  power one, but its radius has a limit only for `p < 1 - d / 2s`; at
+  `p = 1/2` on the sphere at order 2 a cap average's bound alone grows as
+  9.6, 11.8, 13.8 at degrees 16, 32, 64. A gate, or a warning, at that
+  power would match D-131's. (3) `Layered.sobolev_measure` builds its
+  operators as `BlockDiagonalLinearOperator`s, whose domain is a bare
+  `DirectSum` of the layers, not the layered space: `disk.Layered([0,
+  0.55, 1], [9, 16], order=2, length_scale=0.2).sobolev_measure(2,
+  pointwise_std=1).covariance.domain` is a `CoordinateDirectSum`, and a
+  `LinearGaussianInversion` posterior from it refuses
+  `sample_pointwise_std` (no pointwise product). The tomography app
+  re-seats the factor as one diagonal on the layered space. (4) A
+  spectral-element measure calibrated by `pointwise_std=` is `S C S*`,
+  with no precision and no diagonal, so its norm and its ellipsoid go
+  through solvers and the Lanczos calculus at every application; the
+  tomography app calibrates by `amplitude=` instead, uniform to 2%. (5)
+  A symmetric space's invariant measure has a diagonal precision but no
+  `precision_factor`, which the planet-density pattern of whitening
+  reads. (6) `FeasiblePropertySet.support_sweep` runs `n_jobs` as threads
+  only, which `parallel.py` says crash the `pyshtools` transforms on a
+  sphere (the point-data app passes `n_jobs=8`; it ran, and the threads
+  bought nothing); and the sweep over `±q` repeats each direction's
+  kernel solve, `v` and `-v`. (7) The data-space `Primal`'s solve at its
+  floor is most of a direction's cost on an ill-preconditioned family:
+  350 of about 770 CG iterations at the point-data quick scale at the
+  default floor, half the applications at `floor=1e-4`.
+- **The planet-density app's unit scheme** (2026-10-29, David's prompt
+  to check the planetmodel-based examples for sensible units). Tutorial
+  11, example 31 and the tomography app work on a planet of radius one
+  and their numbers are of order one. The planet-density app keeps radii
+  in kilometers and densities in g/cm^3 with its data scaled to order
+  one, so the Earth's volume sits in every inner product: PREM's norm on
+  the space is `1e7`, squared norms `1e14`. Conditioning is unaffected,
+  the inner product scaling uniformly, but every absolute floor sees it:
+  the checks' old floor at one hid that the app's derivative probes
+  were PREM over its norm with a displacement part of `1e-7`, and the
+  probes had to be rebalanced by hand (`src/radii.py`). A radius in
+  units of the Earth's, with the length scale 200 km as 0.0314 and the
+  plots labeled in kilometers, would bring the norms to order one. A
+  review item for the app, not the library.
+- **Findings from re-posing the C++ backend app** (2026-10-29, D-193; no
+  library edits). (1) `GaussianMeasure.from_standard_deviation` refuses a
+  `HilbertModule` domain but accepts a function space that is not one:
+  `CppSpace(100, 0.08)` reports `is_function_space`, and
+  `from_standard_deviation(space, 1.0)` returns an identity covariance on
+  it without complaint, where `credible_set` refuses the same space. The
+  refusal should key on `is_function_space`, as D-131's does. (2)
+  `weakened_ellipsoid` on a space without coordinates: `method="auto"`
+  raises "No affordable route... Pass rank="; a truncated `rank`
+  underestimates the radius without a warning, the weights `lambda^(1-p)`
+  decaying like `k^(-3/2)` here (squared radius 6.00 from the leading 50
+  eigenvalues, 6.27 from 100, 6.69 from all 1001 at 1000 elements; the
+  truth's gauge 0.627 against 0.563); full rank costs 11 s and 3.5 million
+  inner products. Under `quantile_method="matched"` only `tr C^(1-p)` and
+  `tr C^(2(1-p))` are needed, which stochastic Lanczos quadrature could
+  estimate matrix-free. `Ellipsoid` exposes no radius. (3) The ellipsoid's
+  fractional powers go through fully reorthogonalized Lanczos at every
+  application: the quick set answer took 9.7 s with the CG family solver
+  against 1.0 s with `SpectralFamilySolver`.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.

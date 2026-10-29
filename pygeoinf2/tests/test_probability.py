@@ -1704,7 +1704,7 @@ class TestHardeningsAreGatedOnFunctionSpaces:
 
         space = Sobolev(16, 2.0, 0.2)
         assert space.is_function_space
-        return space, GaussianMeasure.from_standard_deviation(space, 1.0)
+        return space, GaussianMeasure.from_standard_deviation(space, 1.0, unsafe=True)
 
     def test_the_credible_set_is_refused_without_unsafe(self):
         space, mu = self.measure()

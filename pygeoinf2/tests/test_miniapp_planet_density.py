@@ -23,7 +23,8 @@ and say so.
 
 from __future__ import annotations
 
-import importlib.util
+import dataclasses
+import importlib
 import pathlib
 import sys
 
@@ -36,66 +37,95 @@ MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "planet_den
 
 pytestmark = pytest.mark.slow
 
-# Every module of the app, in an order in which each one's own imports are
-# already loaded. Other mini-apps use some of the same plain names.
-MODULES = (
-    "reference",
-    "common",
-    "problem",
-    "answers",
-    "setup",
-    "tight",
-    "wide",
-    "radii",
-    "boundaries",
-)
+# The app's modules, in the package ``src``, and its part scripts, which
+# import the package by its plain name. Other mini-apps use the same names.
+MODULES = ("src.reference", "src.common", "src.problem", "src.answers", "src.radii")
+SCRIPTS = ("setup", "tight", "wide", "boundaries")
+
+
+def _forget() -> None:
+    """Drop the app's names, and any other app's of the same names."""
+    for name in list(sys.modules):
+        if name == "src" or name.startswith("src.") or name in SCRIPTS:
+            del sys.modules[name]
 
 
 def _module(name: str):
-    """One of the mini-app's modules, imported by path.
-
-    The scripts import each other by their plain names, so the directory
-    goes on the path for the duration of the import; a module is registered
-    before it runs so that its dataclasses can resolve their annotations.
-    """
-    path = MINIAPP / f"{name}.py"
-    if not path.exists():
+    """One of the mini-app's modules or scripts, imported by name with the
+    app's directory on the path for the duration, as a script run there
+    would find it."""
+    if not (MINIAPP / f"{name.replace('.', '/')}.py").exists():
         pytest.skip(f"The mini-app is not at {MINIAPP}.")
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
     sys.path.insert(0, str(MINIAPP))
     try:
-        spec.loader.exec_module(module)
+        return importlib.import_module(name)
     finally:
         sys.path.remove(str(MINIAPP))
-    return module
 
 
 @pytest.fixture(scope="module")
 def app():
-    """The mini-app's modules, keyed by name."""
-    # A module of the same plain name left by another mini-app is not ours.
-    for name in MODULES:
-        sys.modules.pop(name, None)
-    modules = {name: _module(name) for name in MODULES}
+    """The mini-app's modules and scripts, keyed by their last names."""
+    _forget()
+    modules = {name.split(".")[-1]: _module(name) for name in MODULES + SCRIPTS}
     yield modules
-    for name in MODULES:
-        sys.modules.pop(name, None)
+    _forget()
 
 
 @pytest.fixture(scope="module")
-def results(app, tmp_path_factory):
+def scale(app, tmp_path_factory):
+    """The quick preset, built through the scripts' own command line with
+    options given at their preset values."""
+    problem = app["problem"]
+    quick = problem.QUICK
+    arguments = app["common"].parse(
+        "the quick scale",
+        quick=quick,
+        full=problem.FULL,
+        argv=[
+            "--quick",
+            "--true-shifts",
+            *map(str, quick.true_shifts),
+            "--basis-functions",
+            *map(str, quick.basis_functions),
+            "--outdir",
+            str(tmp_path_factory.mktemp("planet_density_options")),
+        ],
+    )
+    assert arguments.scale == quick
+    return arguments.scale
+
+
+@pytest.fixture(scope="module")
+def results(app, scale, tmp_path_factory):
     """Every part at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("planet_density")
-    scale, seed = app["problem"].QUICK, app["common"].SEED
-    problem = app["setup"].run(scale, seed=seed, outdir=outdir)
+    problem = app["setup"].run(scale, outdir=outdir)
     results = {"a": problem}
     for key, part in (("b", "tight"), ("c", "wide"), ("d", "boundaries")):
-        results[key] = app[part].run(scale, seed=seed, outdir=outdir, problem=problem)
+        results[key] = app[part].run(scale, outdir=outdir, problem=problem)
     return results, outdir
+
+
+def test_every_field_of_the_scale_is_an_option(app, tmp_path):
+    problem = app["problem"]
+    arguments = app["common"].parse(
+        "",
+        quick=problem.QUICK,
+        full=problem.FULL,
+        argv=[
+            "--wide-std",
+            "1",
+            "--true-shifts",
+            "-20",
+            "-60",
+            "--outdir",
+            str(tmp_path),
+        ],
+    )
+    assert arguments.scale == dataclasses.replace(
+        problem.FULL, wide_std=1.0, true_shifts=(-20.0, -60.0)
+    )
 
 
 def test_the_functionals_are_the_integrals(app, results):
@@ -118,7 +148,7 @@ def test_the_functionals_are_the_integrals(app, results):
     assert moment == pytest.approx(to_moment * 8.0 * np.pi * radius**5 / 15.0, rel=1e-5)
 
 
-def test_the_reference_is_prem_and_the_data_the_truths(app, results):
+def test_the_reference_is_prem_and_the_data_the_truths(app, scale, results):
     problem = results[0]["a"]
     data = app["problem"]
     # The reference holds PREM's mass, moment and properties: every layer
@@ -130,7 +160,7 @@ def test_the_reference_is_prem_and_the_data_the_truths(app, results):
     expected = [own["core"], own["mantle"], own["jump"]]
     assert problem.properties(problem.reference) == pytest.approx(expected, abs=0.02)
     # The data fit the truth and reject the reference.
-    critical = problem.problem.critical_chi_squared(level=data.LEVEL)
+    critical = problem.problem.critical_chi_squared(level=scale.level)
     assert problem.problem.chi_squared(problem.truth, problem.data) < critical
     assert problem.problem.chi_squared(problem.reference, problem.data) > critical
 
@@ -160,11 +190,11 @@ def test_the_tight_prior_holds_the_truth(results):
     # The mass ties the two means together, and narrows the mantle's most.
     assert measure["correlation"] < -0.5
     assert measure["deviation"][1] < 0.3 * measure["prior_deviation"][1]
-    assert sets["truth_in_ball"]
+    assert sets["truth_in_ellipsoid"]
     low, high = sets["brackets"][:, 0], sets["brackets"][:, 1]
     assert np.all((low <= truth) & (truth <= high))
-    # The brackets lie within what the ball admits alone, certified to a
-    # small gap.
+    # The brackets lie within what the prior's ellipsoid admits alone,
+    # certified to a small gap.
     assert np.all(sets["bounds"][:, 0] <= low + 1e-9)
     assert np.all(high <= sets["bounds"][:, 1] + 1e-9)
     assert np.all(sets["gaps"] < 0.01 * (high - low))
@@ -194,7 +224,9 @@ def test_the_wide_answers_are_wider(results):
 
 def test_the_boundaries(results):
     part = results[0]["d"]
-    assert part["worst_defect"] < 1e-6
+    # The checks pass at their own tolerances; the second derivative is the
+    # loosest, at 1e-4.
+    assert part["worst_defect"] < 1e-4
     assert part["converged"]
     # The MAP model's displacements recover the truth's to within two
     # Laplace standard deviations, which the data narrow at the core-mantle

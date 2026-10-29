@@ -53,6 +53,9 @@ class AxisSpace(SpectralElementSpace):
     _weight: str = "one"
     #: What the planetmodel coefficients are multiplied by to give components.
     _scale: float = 1.0
+    #: The eigenvalues of a one-coordinate operator grow as on a line,
+    #: whatever the volume measure, which is what a measure's trace sees.
+    _eigenvalue_dimension: int = 1
     #: The tag of the geometry in the coordinate key.
     _geometry: str = "axis"
 

@@ -24,8 +24,9 @@ from pygeoinf2 import CGSolver, LinearGaussianInversion
 from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
 from pygeoinf2.numerics.solvers import CholeskySolver
 
-from common import machine_name, output_directory, parse, part_rng, save
-from problem import FULL, MEASURE_ORDER, PRIOR_STD, QUICK, Problem, Scale, build
+from src.common import machine_name, parse, part_rng, save
+from src.problem import FULL, QUICK, Problem, Scale, build
+from src.solvers import coarse_prior
 
 
 def the_solve(
@@ -49,9 +50,7 @@ def the_solve(
     right_hand_side = normal.right_hand_side(residual)
 
     coarse, coarse_forward = problem.surrogate()
-    coarse_prior = coarse.sobolev_measure(
-        MEASURE_ORDER, scale.length_scale, pointwise_std=PRIOR_STD
-    )
+    surrogate_prior = coarse_prior(problem)
 
     def plain() -> Any:
         return CGSolver(max_iterations=scale.cg_cap, strict=False)
@@ -60,7 +59,7 @@ def the_solve(
         # Built here, and applied once, so that the factorization on the
         # coarse space is paid for in the build column and not in the first
         # iteration of the solve.
-        surrogate = normal.surrogate(forward=coarse_forward, prior=coarse_prior)
+        surrogate = normal.surrogate(forward=coarse_forward, prior=surrogate_prior)
         preconditioner = WoodburyPreconditioner.from_normal(
             surrogate, solver=CholeskySolver()
         )(normal)
@@ -140,20 +139,16 @@ def the_solve(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return the_solve(problem, rng=part_rng(seed, "b"), outdir=outdir)
+        problem = build(scale=scale)
+    return the_solve(problem, rng=part_rng(scale.seed, "b"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

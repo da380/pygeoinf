@@ -17,7 +17,8 @@ the tests skip and say so.
 
 from __future__ import annotations
 
-import importlib.util
+import dataclasses
+import importlib
 import pathlib
 import sys
 
@@ -33,79 +34,112 @@ MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "point_data
 pytestmark = pytest.mark.slow
 
 
-def _module(name: str):
-    """One of the mini-app's modules, imported by path.
+# The app's modules, in the package ``src``, and its part scripts, which
+# import each other and the package by their plain names. Other mini-apps
+# use the same names.
+MODULES = ("src.common", "src.ocean_mask", "src.problem", "src.solvers")
+SCRIPTS = ("truth", "solve", "point", "bayesian", "sets", "nonstationary")
 
-    The scripts import each other by their plain names, so the directory
-    goes on the path for the duration of the import; a module is registered
-    before it runs so that its dataclasses can resolve their annotations.
-    """
-    path = MINIAPP / f"{name}.py"
-    if not path.exists():
+
+def _forget() -> None:
+    """Drop the app's names, and any other app's of the same names."""
+    for name in list(sys.modules):
+        if name == "src" or name.startswith("src.") or name in SCRIPTS:
+            del sys.modules[name]
+
+
+def _module(name: str):
+    """One of the mini-app's modules or scripts, imported by name with the
+    app's directory on the path for the duration, as a script run there
+    would find it."""
+    if not (MINIAPP / f"{name.replace('.', '/')}.py").exists():
         pytest.skip(f"The mini-app is not at {MINIAPP}.")
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
     sys.path.insert(0, str(MINIAPP))
     try:
-        spec.loader.exec_module(module)
+        return importlib.import_module(name)
     finally:
         sys.path.remove(str(MINIAPP))
-    return module
 
 
 @pytest.fixture(scope="module")
 def app():
-    """The mini-app's modules, keyed by name."""
-    modules = {
-        name: _module(name)
-        for name in (
-            "common",
-            "solvers",
-            "ocean_mask",
-            "problem",
-            "truth",
-            "solve",
-            "point",
-            "bayesian",
-            "sets",
-            "nonstationary",
-        )
-    }
+    """The mini-app's modules and scripts, keyed by their last names."""
+    _forget()
+    modules = {name.split(".")[-1]: _module(name) for name in MODULES + SCRIPTS}
     try:
         modules["ocean_mask"].land_polygons()
     except Exception as error:  # noqa: BLE001 - whatever cartopy raises offline
+        _forget()
         pytest.skip(f"The Natural Earth land polygons are not available: {error}")
     yield modules
-    # The scripts import each other by their plain names, which were
-    # registered for the duration; nothing after this module may see them.
-    for name in modules:
-        sys.modules.pop(name, None)
+    _forget()
 
 
 @pytest.fixture(scope="module")
-def results(app, tmp_path_factory):
+def scale(app, tmp_path_factory):
+    """The quick preset, built through the scripts' own command line with
+    an option given at its preset value."""
+    problem = app["problem"]
+    arguments = app["common"].parse(
+        "the quick scale",
+        quick=problem.QUICK,
+        full=problem.FULL,
+        argv=[
+            "--quick",
+            "--noise-std",
+            str(problem.QUICK.noise_std),
+            "--outdir",
+            str(tmp_path_factory.mktemp("point_data_options")),
+        ],
+    )
+    assert arguments.scale == problem.QUICK
+    return arguments.scale
+
+
+@pytest.fixture(scope="module")
+def results(app, scale, tmp_path_factory):
     """Every part at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("point_data")
-    scale, seed = app["problem"].QUICK, 2026
-    problem = app["truth"].run(scale, seed=seed, outdir=outdir)
+    problem = app["truth"].run(scale, outdir=outdir)
     results = {"a": problem}
-    results["b"] = app["solve"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["c"] = app["point"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["d"] = app["bayesian"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["e"] = app["sets"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["b"] = app["solve"].run(scale, outdir=outdir, problem=problem)
+    results["c"] = app["point"].run(scale, outdir=outdir, problem=problem)
+    results["d"] = app["bayesian"].run(scale, outdir=outdir, problem=problem)
+    results["e"] = app["sets"].run(scale, outdir=outdir, problem=problem)
     results["f"] = app["nonstationary"].run(
-        scale, seed=seed, outdir=outdir, problem=problem, bayesian=results["d"]
+        scale, outdir=outdir, problem=problem, bayesian=results["d"]
     )
     return results, outdir
 
 
-def test_the_setup_is_over_the_sea(app, results):
+def test_every_field_of_the_scale_is_an_option(app, tmp_path):
+    problem = app["problem"]
+    arguments = app["common"].parse(
+        "",
+        quick=problem.QUICK,
+        full=problem.FULL,
+        argv=[
+            "--quick",
+            "--noise-std",
+            "0.3",
+            "--n-jobs",
+            "none",
+            "--outdir",
+            str(tmp_path),
+        ],
+    )
+    assert arguments.scale == dataclasses.replace(problem.QUICK, noise_std=0.3)
+    assert arguments.outdir == tmp_path
+    full = app["common"].parse(
+        "", quick=problem.QUICK, full=problem.FULL, argv=["--outdir", str(tmp_path)]
+    )
+    assert full.scale == problem.FULL
+
+
+def test_the_setup_is_over_the_sea(app, scale, results):
     setup = results[0]["a"]
     mask = app["ocean_mask"]
-    assert len(setup.points) == app["problem"].QUICK.n_data
+    assert len(setup.points) == scale.n_data
     assert not np.any(mask.on_land(setup.land, setup.points[:, 0], setup.points[:, 1]))
     # The grid mask sees both land and sea, in about the real proportion.
     fraction = np.average(setup.on_land, weights=mask.area_weights(setup.space))
@@ -120,22 +154,23 @@ def test_the_preconditioned_solve_agrees_with_the_plain_one(results):
     assert woodbury["iterations"] < plain["iterations"]
 
 
-def test_the_point_answers(app, results):
+def test_the_point_answers(scale, results):
     setup, part = results[0]["a"], results[0]["c"]
     problem = setup.problem
     assert problem.chi_squared(part["smallest"], setup.data) == pytest.approx(
-        problem.critical_chi_squared(level=app["problem"].LEVEL), rel=1e-2
+        problem.critical_chi_squared(level=scale.level), rel=1e-2
     )
-    assert setup.space.norm(part["smallest"]) < setup.space.norm(setup.truth)
+    # Smallest in the prior's norm, which the truth, a draw, is not.
+    assert part["norm"] < part["truth_norm"]
     # A feature under the sea is seen; one under Africa is seen less.
     assert part["peaks"]["North Pacific"] > part["peaks"]["Africa"]
     assert part["peaks"]["North Pacific"] > 0.5
 
 
-def test_the_posterior_std_returns_to_the_prior_under_the_continents(app, results):
+def test_the_posterior_std_returns_to_the_prior_under_the_continents(scale, results):
     part = results[0]["d"]
     exact = part["exact_std"]
-    prior_std = app["problem"].PRIOR_STD
+    prior_std = scale.prior_std
     assert exact["central Asia"] > 0.6 * prior_std
     assert exact["North Pacific"] < 0.3 * prior_std
     assert exact["South Atlantic"] < 0.3 * prior_std
@@ -156,10 +191,12 @@ def test_the_feasible_brackets_hold_the_truth(results):
     assert np.all(setup.true_averages <= high + 1e-6)
     assert part["inside"]
     assert np.all(part["gaps"] < 1e-2)
-    # A norm bound admits more than the Gaussian prior does.
+    # The truth, a draw from the prior, lies in its 95% ellipsoid.
+    assert part["gauge"] <= 1.0
+    # A set bound admits more than the Gaussian posterior does.
     assert np.all(high - low > 2 * 1.96 * bayesian["deviation"])
-    # The data narrow the bound of the ball alone, least where they are
-    # fewest: under Africa the bracket is nearly the ball's whole range.
+    # The data narrow the bound of the ellipsoid alone, least where they
+    # are fewest, under Africa.
     alone = part["alone"]
     assert np.all(alone[:, 0] <= low + 1e-9) and np.all(high <= alone[:, 1] + 1e-9)
     narrowed = (high - low) / (alone[:, 1] - alone[:, 0])

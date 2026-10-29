@@ -70,11 +70,11 @@ print()
 # the padding too. Smooth in r, which in an annulus is all it has to be.
 depth = (1.0 - X.radii) / (1.0 - CMB)
 sigma = 0.01 * (1.0 + np.cos(2.0 * np.pi * np.clip(depth, 0.0, 1.0)) ** 2)
-prior = X.sobolev_measure(1.5, pointwise_std=sigma[:, None, None] + X.zero())
+prior = X.sobolev_measure(2.0, pointwise_std=sigma[:, None, None] + X.zero())
 
-raw = X.interior_values(X.pointwise_variance(X.eigenvalues**-1.5))[:, 0, 0]
+raw = X.interior_values(X.pointwise_variance(X.eigenvalues**-2.0))[:, 0, 0]
 print(
-    "raw variance of A^-1.5, a function of radius alone: "
+    "raw variance of A^-2, a function of radius alone: "
     f"{raw[0]:.3f} at the core-mantle boundary, {raw[-1]:.3f} at the surface"
 )
 

@@ -1,12 +1,19 @@
 """Part D: the set answer.
 
 The feasible set of the three properties, with the prior hardened to its 95%
-ball and the noise to its credible ball: certified support brackets in the
+ellipsoid and the noise to its 95% ball: certified support brackets in the
 six coordinate directions, whether the truth lies in the polytope they
-bound, and each bracket against the bound the prior's ball admits on its
-own, before any datum. The searches work in the data space, where the family
-``A C A* + t R`` is a few hundred square and full rank, and every member is
-inverted by a Cholesky factorization.
+bound, and each bracket against the bound the prior's ellipsoid admits on
+its own, before any datum. The searches work in the data space, where the
+family ``A C A* + t R`` is a few hundred square and full rank, and every
+member is inverted by a Cholesky factorization.
+
+The ellipsoid is ``{m : (Q^-p m, m) <= r^2}``, the prior's covariance ``Q``
+to the scale's power ``p``, with ``r`` the radius that carries 95% of the
+prior. At ``p = 1`` it would be the Mahalanobis ellipsoid, whose radius
+grows with the truncation on a function space; below ``1 - d / 4`` for a
+measure of order two in ``d`` dimensions it carries its probability in the
+limit.
 """
 
 from __future__ import annotations
@@ -20,14 +27,14 @@ import numpy as np
 
 from pygeoinf2 import BackusGilbertParker, CholeskySolver
 
-from common import bound_panels, output_directory, parse, part_rng, save
-from problem import FULL, LEVEL, ORDER, PROPERTIES, QUICK, Problem, Scale, build
+from src.common import bound_panels, parse, part_rng, save
+from src.problem import FULL, PROPERTIES, QUICK, Problem, Scale, build
 
 
-def ball_alone(ball: Any, properties: Any, /) -> np.ndarray:
-    """The bound on each property that the ball admits with no data: its
-    support function either way along the property's representer."""
-    support = ball.support_function()
+def prior_alone(prior_set: Any, properties: Any, /) -> np.ndarray:
+    """The bound on each property that the prior's set admits with no data:
+    its support function either way along the property's representer."""
+    support = prior_set.support_function()
     P = properties.codomain
     bounds = np.zeros((P.dim, 2))
     for index in range(P.dim):
@@ -41,25 +48,32 @@ def ball_alone(ball: Any, properties: Any, /) -> np.ndarray:
 
 def support_brackets(problem: Problem, /, *, names: Sequence[str] = PROPERTIES) -> dict:
     """The certified brackets on the properties, the bounds of the prior's
-    ball alone, and whether the truth lies in the polytope of the brackets.
+    ellipsoid alone, and whether the truth lies in the polytope of the
+    brackets.
 
     Each answer is a bracket: an outer value with a dual certificate and an
     inner one attained by a feasible model, which in a direction no ray
     sees, the core's, is the smallest fitting model plus as much of the
-    property's representer as the ball holds.
+    property's representer as the ellipsoid holds.
     """
     scale, space, forward = problem.scale, problem.space, problem.problem
-    ball = problem.prior.ambient_ball(level=LEVEL)
-    noise_ball = forward.error_measure.ambient_ball(level=LEVEL)
+    level, power = scale.level, scale.set_power
+    ellipsoid = problem.prior.weakened_ellipsoid(level=level, power=power)
+    noise_ball = forward.error_measure.ambient_ball(level=level)
+    gauge = space.inner_product(ellipsoid.precision(problem.truth), problem.truth)
     print(
-        f"the prior hardened to its {LEVEL:.0%} ball: radius {ball.radius:.2f} in "
-        f"H^{ORDER:g}; the truth's norm is {space.norm(problem.truth):.2f}, inside: "
-        f"{ball.contains(problem.truth)}; the noise to its {LEVEL:.0%} ball of "
-        f"radius {noise_ball.radius:.3f}"
+        f"the prior hardened to its {level:.0%} ellipsoid (Q^-p m, m) <= r^2 with "
+        f"p = {power:g}: the truth's gauge is {gauge:.2f} of the boundary's 1, "
+        f"inside: {ellipsoid.contains(problem.truth)}; the noise to its {level:.0%} "
+        f"ball of radius {noise_ball.radius:.3f}"
     )
     t0 = time.perf_counter()
     feasible = BackusGilbertParker(
-        forward, problem.properties, ball, noise=noise_ball, solver=CholeskySolver()
+        forward,
+        problem.properties,
+        ellipsoid,
+        noise=noise_ball,
+        solver=CholeskySolver(),
     )(problem.data)
     print(f"{feasible}; support by {feasible.algorithms['support'][0]}")
     P = problem.properties.codomain
@@ -77,10 +91,10 @@ def support_brackets(problem: Problem, /, *, names: Sequence[str] = PROPERTIES) 
     inner = np.array([result.inner for result in sweep.results])
     brackets = np.zeros((P.dim, 2))
     gaps = np.zeros(P.dim)
-    alone = ball_alone(ball, problem.properties)
+    alone = prior_alone(ellipsoid, problem.properties)
     print(
         f"  {'mean over':<16s} {'from':>8s} {'to':>8s} {'gap':>8s} {'truth':>8s} "
-        f"{'the ball alone':>20s}"
+        f"{'the ellipsoid alone':>20s}"
     )
     for index, name in enumerate(names):
         high, low = 2 * index, 2 * index + 1
@@ -97,8 +111,8 @@ def support_brackets(problem: Problem, /, *, names: Sequence[str] = PROPERTIES) 
         f"half-spaces: {inside}"
     )
     return {
-        "radius": ball.radius,
-        "truth_in_ball": bool(ball.contains(problem.truth)),
+        "gauge": gauge,
+        "truth_in_ellipsoid": bool(ellipsoid.contains(problem.truth)),
         "alone": alone,
         "brackets": brackets,
         "gaps": gaps,
@@ -115,8 +129,8 @@ def brackets_figure(
     path: pathlib.Path,
     title: str,
 ) -> None:
-    """For each property, the bound the prior's ball admits alone against
-    the bracket the data leave, with the truth."""
+    """For each property, the bound the prior's ellipsoid admits alone
+    against the bracket the data leave, with the truth."""
     fig, axes = plt.subplots(1, len(names), figsize=(10.0, 4.0), layout="constrained")
     bound_panels(
         axes,
@@ -132,7 +146,8 @@ def brackets_figure(
 def set_answer(
     problem: Problem, /, *, rng: np.random.Generator, outdir: pathlib.Path
 ) -> dict:
-    """The feasible brackets, against the bounds of the prior's ball alone."""
+    """The feasible brackets, against the bounds of the prior's ellipsoid
+    alone."""
     started = time.perf_counter()
     print(f"\n=== D. The set answer ({problem.scale.name} scale) ===")
     result = support_brackets(problem)
@@ -145,8 +160,9 @@ def set_answer(
         ],
         path=outdir / "brackets.png",
         title="Tomography, part D: the set answer. For each mean, the bound the "
-        f"prior's {LEVEL:.0%} ball admits alone\nand the certified bracket the "
-        "data leave: narrow where the rays cross, barely narrowed in the core",
+        f"prior's {problem.scale.level:.0%} ellipsoid admits alone\nand the "
+        "certified bracket the data leave: narrow where the rays cross, barely "
+        "narrowed in the core",
     )
     print(f"D took {time.perf_counter() - started:.1f} s")
     return result
@@ -156,22 +172,17 @@ def run(
     scale: Scale,
     /,
     *,
-    seed: int,
     outdir: pathlib.Path,
     problem: Problem | None = None,
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return set_answer(problem, rng=part_rng(seed, "d"), outdir=outdir)
+        problem = build(scale=scale)
+    return set_answer(problem, rng=part_rng(scale.seed, "d"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

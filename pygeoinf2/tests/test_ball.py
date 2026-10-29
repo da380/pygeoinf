@@ -551,7 +551,9 @@ class TestMeasures:
             0.0, lmax=3, element_length=0.25, padding=0.3, radial_modes=shell.radii.size
         )
         family = space.basis.family
-        covariance = space.sobolev_measure(1.0).covariance
+        # Order one, so that the covariance is one solve with the family; a
+        # measure of that order is not one the space admits, hence unsafe.
+        covariance = space.sobolev_measure(1.0, unsafe=True).covariance
         x = space.random(rng=rng)
         got = space.basis.synthesise(space.to_components(covariance(x)), physical=False)
         given = space.basis.synthesise(space.to_components(x), physical=False)
@@ -630,18 +632,18 @@ class TestMeasures:
 
     def test_the_diagonal_measure_has_a_precision(self):
         space = ball(2.0)
-        assert space.sobolev_measure(1.0).precision is not None
+        assert space.sobolev_measure(2.0).precision is not None
         with pytest.raises(ValueError, match="positive"):
-            space.sobolev_measure(1.0, pointwise_std=-1.0)
+            space.sobolev_measure(2.0, pointwise_std=-1.0)
 
     @pytest.mark.parametrize("build", GEOMETRIES)
     def test_the_moments_match_the_samples(self, build, rng):
         space = build(2.0, lmax=4, element_length=0.4)
         check_measure(
-            space.sobolev_measure(1.0, amplitude=0.7), rng=rng, samples=4000, rtol=0.18
+            space.sobolev_measure(2.0, amplitude=0.7), rng=rng, samples=4000, rtol=0.18
         )
         check_measure(
-            space.sobolev_measure(1.0, pointwise_std=0.3),
+            space.sobolev_measure(2.0, pointwise_std=0.3),
             rng=rng,
             samples=4000,
             rtol=0.18,
@@ -663,5 +665,5 @@ class TestTheIntegralReadsThroughTheComponents:
         check_operator(
             integral @ space.multiplication_operator(u),
             rng=rng,
-            measure=space.sobolev_measure(1.0),
+            measure=space.sobolev_measure(2.0),
         )

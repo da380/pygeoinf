@@ -264,12 +264,14 @@ into 4 and 1.
    largest build on this list.
    **Status, 2026-10-28 night: built, serial and MPI phases (D-179);
    checkpointing not implemented.**
-9. **A vector backend in C++** (DONE 2026-10-28, D-169): `cpp_backend/`,
-   the vector type and sparse operators in C++ behind nanobind, a
-   finite-element mass matrix as the Gram, the check ladder and the inverse
-   problem end to end with a tally of every member the library called; its
-   regression form is `tests/test_no_array_backend.py`. Kept as 9 so the
-   decisions that name it stay right.
+9. **A vector backend in C++** (DONE 2026-10-28, D-169; re-posed on `H^1`
+   2026-10-29, D-193): `cpp_backend/`, the vector type and sparse operators
+   in C++ behind nanobind, a finite-element `H^1` inner product as the
+   Gram with its Riesz map a banded Cholesky solve, the Matérn prior as a
+   measure on that space, parts point, measure and set each with a tally
+   of every member the library called, the standard layout, CLI and
+   documents; its regression form is `tests/test_no_array_backend.py`.
+   Kept as 9 so the decisions that name it stay right.
 
 Seeds in `work/` (deleted at the release): `sphere_dli_example.py` (real
 stations and earthquakes, cap averages, the feasible set) and `tomo.py` for

@@ -20,21 +20,19 @@ import numpy as np
 
 from pygeoinf2 import CholeskySolver, LinearGaussianInversion
 
-from common import (
+from src.common import (
     draw,
     marginal_panels,
     outline_boxes,
-    output_directory,
     parse,
     part_rng,
     save,
     variances,
 )
-from problem import (
+from src.problem import (
     BOXES,
     CORE_RADIUS,
     FULL,
-    PRIOR_STD,
     PROPERTIES,
     QUICK,
     Problem,
@@ -155,8 +153,8 @@ def bayesian_answer(
 ) -> dict:
     """The posterior, with its figure."""
     started = time.perf_counter()
-    space = problem.space
-    print(f"\n=== C. The Bayesian answer ({problem.scale.name} scale) ===")
+    space, scale = problem.space, problem.scale
+    print(f"\n=== C. The Bayesian answer ({scale.name} scale) ===")
     result = posterior_summary(problem, rng=rng)
 
     # The disks and the marginals in two subfigures, each laid out on its
@@ -167,10 +165,14 @@ def bayesian_answer(
     mantle = space.layers[-1]
     limit = float(np.abs(mantle.interior_values(problem.truth[-1])).max())
     for ax, field, title in (
-        (axes[0, 0], prior_pointwise_std(space), "prior pointwise std"),
+        (
+            axes[0, 0],
+            prior_pointwise_std(space, order=scale.prior_order, std=scale.prior_std),
+            "prior pointwise std",
+        ),
         (axes[0, 1], result["std"], "posterior pointwise std (sampled)"),
     ):
-        draw(space, field, ax, title=title, vmin=0.0, vmax=1.1 * PRIOR_STD)
+        draw(space, field, ax, title=title, vmin=0.0, vmax=1.1 * scale.prior_std)
         outline_boxes(ax, BOXES, color="white", linewidth=1.2)
     draw(space, result["mean"], axes[0, 2], title="posterior mean", limit=limit)
     draw(space, problem.truth, axes[1, 0], title="the truth", limit=limit)
@@ -204,20 +206,16 @@ def bayesian_answer(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return bayesian_answer(problem, rng=part_rng(seed, "c"), outdir=outdir)
+        problem = build(scale=scale)
+    return bayesian_answer(problem, rng=part_rng(scale.seed, "c"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

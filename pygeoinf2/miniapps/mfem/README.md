@@ -1,5 +1,7 @@
 # Finite elements through MFEM, two ways
 
+How the app is built on the library is walked through in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+
 ## What it is
 
 [MFEM](https://mfem.org) is a finite element library; PyMFEM is its Python
@@ -12,12 +14,12 @@ the mass matrix is the Gram matrix, an assembled bilinear form is a Galerkin
 matrix and an assembled linear form is a derivative, whose gradient is a mass
 solve. The vectors are MFEM's own `mfem.Vector` objects. Two arrangements:
 
-- `matrix_space.py`, the matrix form: `MfemSpace` is a `CoordinateSpace`
+- `src/matrix_space.py`, the matrix form: `MfemSpace` is a `CoordinateSpace`
   whose components are the degree-of-freedom values and whose Gram matrix is
   the mass matrix read out of MFEM into SciPy and factorized there once.
   Forms become operators through their matrices, and the library does the
   linear algebra. Right for a serial problem of modest size.
-- `hilbert_space.py`, the Hilbert-space form: `MfemHilbertSpace` is a plain
+- `src/hilbert_space.py`, the Hilbert-space form: `MfemHilbertSpace` is a plain
   `HilbertSpace` (the library's `MassWeightedSpace`) with no coordinates.
   The inner product is MFEM's mass operator, the mass solve MFEM's conjugate
   gradients, forms become operators through `FormSystemMatrix`, partially
@@ -26,7 +28,7 @@ solve. The vectors are MFEM's own `mfem.Vector` objects. Two arrangements:
   distributed, which is what an MPI space would need (not run here).
 
 **Form 2: an operator between the library's own spaces, through MFEM.**
-`box_operator.py`: the space is the library's periodic box, a Sobolev space
+`src/box_operator.py`: the space is the library's periodic box, a Sobolev space
 of grid arrays, and MFEM is only inside the action of an operator on it, the
 screened Poisson solve `(1 - s^2 Laplacian) u = f`. The field is integrated
 against MFEM's basis functions at MFEM's quadrature points (the weak form's
@@ -66,16 +68,19 @@ The parts build up from the first form to the second:
   defect against MFEM's tolerance.
 - **E, an inverse problem on the box operator** (`box_inverse.py`): the
   source `f` behind noisy readings of `u` at scattered sensors, none inside a
-  disc of radius 0.18 about (0.7, 0.3), the prior the identity covariance on
-  the box's `H^2`; the minimum-norm estimate under the discrepancy
-  principle, the posterior and the feasible set's certified brackets on two
-  disc averages of `f`, one among the sensors and one in the gap. A figure
-  for each: the estimate with its error budget, the posterior against the
-  prior (the pointwise standard deviation before and after, each average's
-  marginal before and after), and each bracket against the bound the prior's
-  ball admits alone.
+  disc of radius 0.18 about (0.7, 0.3). The source lies in the box's `H^2`,
+  on which a value at a point exists, and the prior is a Sobolev measure of
+  order 2 on it, a measure of extra regularity whose covariance is trace
+  class there; the minimum-norm estimate under the discrepancy principle,
+  smallest in the prior's norm, the posterior, and the feasible set's
+  certified brackets under the prior's 95% ellipsoid, on two disc averages
+  of `f`, one among the sensors and one in the gap. A figure for each: the
+  estimate with its error budget, the posterior against the prior (the
+  pointwise standard deviation before and after, each average's marginal
+  before and after), and each bracket against the bound the prior's
+  ellipsoid admits alone.
 
-Two scales. `--quick` runs every part in about 20 seconds and is what the
+Two scales. `--quick` runs every part in about 10 seconds and is what the
 test suite runs: the unit square in 6 by 6 elements, the box on a 32 by 32
 grid with 24 by 24 quadratic elements, length scale 0.1, screening length
 0.05 and 150 sensors. The full scale runs them in about 75 seconds: the
@@ -97,23 +102,76 @@ MPLBACKEND=Agg python box_ladder.py         # one part; likewise hilbert_form.py
                                             # box_inverse.py
 ```
 
-Every script takes `--quick`, `--outdir` and `--seed`; a part run on its own
-gives the numbers it gives in the sequence. Each part's figures are titled
-with the app and the part, one kind of answer to a figure, and written next
-to the sources (`quick/` at the quick scale); on the box's maps the first
-coordinate runs up the page, as the library draws a box. The test is
+A script runs from any directory, by its path. Every script takes the same
+options: `--quick` or `--full` (the default) picks a preset scale, every
+field of the scale is then an option that overrides it, and `--outdir` says
+where the figures go. `python run_all.py --help`, in short:
+
+```
+  --quick | --full      the quick scale, or the full one (the default)
+  --outdir OUTDIR       where the figures go (default: results/,
+                        results/quick/ at the quick scale)
+the scale, each default the full preset's:
+  --seed int            the seed of every part's draws (2026)
+  --divisions, --line-elements, --orders
+                        parts A to C's meshes and part C's orders (10, 32, 1 2 3)
+  --conductivity float  part C's conductivity (1.0)
+  --source-strength, --smoothness, --correlation-length
+                        parts A and C's Matern prior (4.0, 1.0, 0.12)
+  --sensor-width, --noise-std
+                        parts A and C's sensor windows and noise (0.06, 0.0002)
+  --box-grid, --box-elements, --refinements
+                        the box's grid and MFEM's meshes on it (64, 48, 24 48 96)
+  --box-order, --length-scale
+                        the box's Sobolev order and length scale (2.0, 0.05)
+  --box-prior-order, --box-prior-std
+                        part E's prior on the box, its order above one (2.0, 1.0)
+  --screening-length    the box solve's screening length (0.025)
+  --sensors, --box-noise-std, --gap-radius, --region-radius
+                        part E's survey and questions (600, 0.05, 0.18, 0.08)
+  --level float         part E's discrepancy level and sets (0.95)
+  --box-set-power float the power of part E's prior covariance that shapes
+                        its ellipsoid, below one half (0.25)
+  --std-samples int     part E's posterior samples (48)
+```
+
+Two overrides of part E at the quick scale, against its own numbers
+(`box_inverse.py --quick ...`):
+
+- **A noisier survey**, `--box-noise-std 0.2`: four times the noise on the
+  same sensors and truth. The posterior standard deviation at the center
+  of the disc among the sensors rises from 0.09 to 0.17 and the 95%
+  interval on its average widens from 0.23 to 0.53; the minimum-norm
+  estimate's two propagated standard deviations there grow from 0.06 to
+  0.15, and its certified bracket widens from 2.0 to 3.4. In the gap,
+  where the data say less, the standard deviation moves from 0.24 to 0.34.
+- **A wider gap**, `--gap-radius 0.3`: the sensors avoid a disc of radius
+  0.3 rather than 0.18. They are drawn before the truth, so this is also a
+  different draw of the truth. The standard deviation at the gap's center
+  rises from 0.24 to 0.52, half way to the prior's 1, and the certified
+  bracket on the gap's average widens from 5.3 to 7.5, against the 11.3 the
+  prior's ellipsoid admits alone; the minimum-norm estimate's bias there
+  grows from -0.21 to -0.60.
+
+A part run on its own gives the numbers it gives in the sequence. Each
+part's figures are titled with the app and the part, one kind of answer to a
+figure, and written into `results/` (`results/quick/` at the quick scale),
+which git ignores; on the box's maps the first coordinate runs up the page,
+as the library draws a box. The test is
 `pygeoinf2/tests/test_miniapp_mfem.py`, marked `slow` and skipped without
-PyMFEM: it tests the three modules class by class and runs every part at the
-quick scale through its script's entry point.
+PyMFEM: it tests the three modules class by class, builds the quick scale
+through the same command line, and runs every part at it through its
+script's entry point.
 
 | file | what it is |
 |---|---|
-| `matrix_space.py` | `MfemSpace`, `essential_dofs_of`, and forms as operators, functionals, solvers, white noise and Matérn measures, through MFEM's matrices |
-| `hilbert_space.py` | `MfemDofSpace`, `MfemHilbertSpace`, and the same constructions with every computation MFEM's |
-| `box_operator.py` | `ScreenedPoisson`: the load, the solve and the evaluation as operators, their composition, and the continuum it discretizes |
-| `common.py` | the command line, the two scales, the figures, the box's space and prior, the sensors of the unit-square problem |
+| `src/matrix_space.py` | `MfemSpace`, `essential_dofs_of`, and forms as operators, functionals, solvers, white noise and Matérn measures, through MFEM's matrices |
+| `src/hilbert_space.py` | `MfemDofSpace`, `MfemHilbertSpace`, and the same constructions with every computation MFEM's |
+| `src/box_operator.py` | `ScreenedPoisson`: the load, the solve and the evaluation as operators, their composition, and the continuum it discretizes |
+| `src/common.py` | the command line built from the scale, the scale with its two presets, the figures, the box's space and prior, the sensors of the unit-square problem |
 | `hilbert_form.py`, `matrix_form.py`, `matrix_inverse.py`, `box_ladder.py`, `box_inverse.py` | parts A to E, each a script with a `main()` and a `run` the others and the test call |
 | `run_all.py` | the parts in order |
+| `results/` | the figures a run writes, `results/quick/` at the quick scale |
 
 ## The numbers at the full scale
 
@@ -151,11 +209,11 @@ fields drawn from E's prior:
 
 | piece | adjoint defect |
 |---|---|
-| the load, box to MFEM's loads | 7.5e-17 |
+| the load, box to MFEM's loads | 9.5e-18 |
 | MFEM's solve | 2.0e-14 (and symmetric to 8.5e-14) |
 | the evaluation, MFEM's coefficients to the box | 2.1e-15 |
-| the whole operator | 8.8e-12 |
-| the plain transpose, Gram factors left out | 0.63, refused |
+| the whole operator | 2.2e-10 |
+| the plain transpose, Gram factors left out | 0.14, refused |
 
 The two transfers are exact transposes and hold to rounding; the solve and
 the whole hold to the solve's tolerance, which the whole amplifies through
@@ -165,8 +223,8 @@ sweep shows:
 
 | MFEM tolerance | 1e-6 | 1e-9 | 1e-12 | 1e-14 |
 |---|---|---|---|---|
-| adjoint defect | 8.5e-4 | 1.3e-6 | 2.2e-9 | 3.2e-11 |
-| iterations a solve | 20 | 31 | 41 | 48 |
+| adjoint defect | 1.4e-2 | 3.8e-5 | 2.9e-8 | 1.9e-10 |
+| iterations a solve | 19 | 30 | 40 | 47 |
 
 Under refinement the operator approaches the exact multiplier
 `1 / (1 + s^2 |k|^2)`, and the adjoint the continuum promises (the solve is
@@ -175,10 +233,10 @@ does, while the true adjoint holds at every mesh:
 
 | elements a side | dofs | against the multiplier, grid | in `H^2` | true adjoint | operator as its own adjoint |
 |---|---|---|---|---|---|
-| 24 | 2304 | 1.4e-2 | 0.31 | 3.0e-13 | 1.5 |
-| 48 | 9216 | 2.2e-3 | 4.2e-2 | 8.3e-11 | 2.0 |
-| 96 | 36864 | 2.7e-5 | 6.1e-4 | 7.2e-11 | 2.2e-3 |
-| 64, aligned with the grid | 16384 | 1.9e-4 | 7.1e-3 | 6.5e-11 | 3.9e-12 |
+| 24 | 2304 | 2.3e-3 | 9.9e-2 | 1.6e-12 | 1.5 |
+| 48 | 9216 | 3.1e-4 | 7.8e-3 | 2.9e-10 | 0.45 |
+| 96 | 36864 | 1.8e-6 | 3.9e-5 | 2.9e-10 | 1.8e-3 |
+| 64, aligned with the grid | 16384 | 1.2e-5 | 1.9e-4 | 2.8e-10 | 1.5e-11 |
 
 The last row is why no other mesh here lines up with the box's grid. When the
 grid spacing is a whole number of element widths, the mesh is invariant under
@@ -195,23 +253,25 @@ reaching modes the elements cannot carry.
 
 | average of `f` | truth | minimum norm, 2 propagated sd | bias | posterior, 95% interval | certified bracket |
 |---|---|---|---|---|---|
-| among the sensors | -0.071 | -0.035 ± 0.044 | +0.021 | -0.008, [-0.120, +0.104] | [-3.70, +3.69] |
-| in the gap | +0.062 | +0.151 ± 0.073 | +0.067 | +0.116, [-1.095, +1.327] | [-39.6, +39.9] |
+| among the sensors | -0.150 | -0.142 ± 0.037 | +0.011 | -0.137, [-0.184, -0.089] | [-0.81, +0.55] |
+| in the gap | +0.233 | +0.395 ± 0.142 | +0.124 | +0.481, [-0.461, +1.422] | [-5.93, +6.37] |
 
-- The minimum-norm estimate: a damping of 198 meets the discrepancy
-  principle (chi-squared 658 against the critical 658), 1234 solves, 19 s.
-  Its propagated error in the gap, 0.073, says nothing of its bias there,
-  which only the truth reveals.
-- The posterior: pointwise standard deviation 0.25 at the center of the
-  observed disc and 0.96, almost the prior's 1, in the gap; the posterior
-  mean fits the data to a chi-squared of 237. 1203 MFEM solves for the mean
-  and 97 more for 48 samples, 20 s.
-- The feasible set under the prior's 95% ball (radius 11.6 in `H^2`) and
-  the noise's: 1380 solves, 21 s; the true averages lie in the polytope of
-  the four half-spaces. A norm bound admits far more than the Gaussian
-  prior, and the gap's bracket is ten times the observed disc's: the ball
-  alone admits ±45.1 for either average, which the data narrow to a twelfth
-  among the sensors and hardly at all in the gap.
+- The minimum-norm estimate, smallest in the prior's norm: a damping of
+  7.1 meets the discrepancy principle (chi-squared 658 against the critical
+  658), 1227 solves, 18 s. Its two propagated standard deviations in the
+  gap, 0.142, say nothing of its bias there, which only the truth reveals.
+- The posterior: pointwise standard deviation 0.07 at the center of the
+  observed disc and 0.65 in the gap, against the prior's 1; the posterior
+  mean fits the data to a chi-squared of 436. 1203 MFEM solves for the mean
+  and 97 more for 48 samples, 17 s.
+- The feasible set under the prior's 95% ellipsoid,
+  `(Q^-1/4 f, f) <= r^2`, in which the truth lies at 0.78 of the boundary's
+  gauge, and the noise's ball: 1368 solves, 21 s; the true averages lie in
+  the polytope of the four half-spaces. A set bound admits far more than
+  the Gaussian posterior, and the gap's bracket is nine times the observed
+  disc's: the ellipsoid alone admits ±9.0 for either average, which the
+  data narrow to a thirteenth among the sensors and to two thirds in the
+  gap.
 
 ## Choices
 
@@ -231,15 +291,20 @@ reaching modes the elements cannot carry.
 - **Serial.** MFEM's solver keeps its work vectors between calls, so the
   operator serializes its solves with a lock, and nothing in the app asks
   for worker threads: they would queue at the lock.
-- **The prior is the space's norm.** In E the prior is the identity
-  covariance on `H^2`, so that the minimum-norm estimate and the prior's
-  ball measure size as the posterior does.
+- **The prior is a measure on the space, and sets the norm.** In E the
+  source lies in `H^2` and the prior is a Sobolev measure of order 2 on
+  it, whose covariance is trace class there. The minimum-norm estimate
+  measures size in the prior's norm, through the problem parameterized by
+  the prior's covariance factor, so that it damps towards what the
+  posterior assumes; the set hardens the prior to the ellipsoid of its
+  covariance to the power one quarter, which carries its 95% however fine
+  the grid, where the Mahalanobis ellipsoid's radius grows with it.
 - **The solve's traits are checked as symmetry alone.** It is positive
   definite too, but a positive-definite claim implies invertibility, which
   `check_traits` verifies on a coordinate space by forming the whole matrix,
   one MFEM solve per degree of freedom.
-- **What PyMFEM 4.8.0.1 needs worked around**, all in `matrix_space.py` and
-  `hilbert_space.py` and each explained where it is done: reading an
+- **What PyMFEM 4.8.0.1 needs worked around**, all in `src/matrix_space.py`
+  and `src/hilbert_space.py` and each explained where it is done: reading an
   unfinalized matrix's CSR arrays segfaults, so it is refused; the CSR
   constructor of `mfem.SparseMatrix` double-frees, so matrices are built
   entry by entry; `FormSystemMatrix` takes ownership of the form's matrix, so

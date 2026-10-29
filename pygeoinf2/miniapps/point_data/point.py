@@ -1,9 +1,11 @@
 """Part C: the point answers.
 
-Least squares at a guessed damping, the minimum-norm model under the
-discrepancy principle, the error budget of the latter on the regional
-averages, and its resolution of a localized bump under the sea and under
-land.
+Least squares at the damping a Bayesian would guess, the minimum-norm model
+under the discrepancy principle, the error budget of the latter on the
+regional averages, and its resolution of a localized bump under the sea and
+under land. Size is measured in the prior's norm: the problem is
+parameterized by the prior's covariance factor, ``m = L w``, and both
+estimators measure ``|w|``.
 """
 
 from __future__ import annotations
@@ -18,30 +20,31 @@ import numpy as np
 
 from pygeoinf2 import LeastSquares, MinimumNorm
 
-from common import (
+from src.common import (
     draw_map,
     error_budget_panels,
     map_axes,
-    output_directory,
     parse,
     part_rng,
     save,
 )
-from ocean_mask import geodesic_bump
-from problem import FULL, LEVEL, QUICK, REGIONS, Problem, Scale, build
-from solvers import coarse_identity, woodbury_family_solver
+from src.ocean_mask import geodesic_bump
+from src.problem import FULL, QUICK, REGIONS, Problem, Scale, build
+from src.solvers import coarse_prior, woodbury_family_solver
 
-GUESSED_DAMPING = 10.0
+# In the prior's norm, least squares at a damping of one is the posterior
+# mean of part D: the guess a Bayesian would make.
+GUESSED_DAMPING = 1.0
 
 
 def family_solver(problem: Problem, /) -> Any:
-    """The Woodbury solver for the families ``A A* + t R`` of both estimators."""
-    identity = coarse_identity(problem)
+    """The Woodbury solver for the families ``A Q A* + t R`` of both estimators."""
+    prior = coarse_prior(problem)
     error = problem.problem.error_measure
     return woodbury_family_solver(
         problem,
-        prior_covariance=identity,
-        prior_precision=identity,
+        prior_covariance=prior.covariance,
+        prior_precision=prior.precision,
         noise_covariance=error.covariance,
         noise_precision=error.precision,
     )
@@ -60,38 +63,48 @@ def point_answers(
     )
     print(f"\n=== C. The point answers ({scale.name} scale) ===")
     solver = family_solver(problem)
+    # The problem in w, with m = L w: the norm of w is the prior's norm of m.
+    # The factor is diagonal in the harmonic basis, so its inverse is exact.
+    factor = problem.prior.covariance_factor
+    whiten = factor.inverse
+    whitened = forward.parameterized(factor)
+    norm = factor.domain.norm
+    truth_norm = norm(whiten(problem.truth))
 
     counted.reset()
     t0 = time.perf_counter()
-    guess = LeastSquares(forward, damping=GUESSED_DAMPING, solver=solver)(problem.data)
+    guess = factor(
+        LeastSquares(whitened, damping=GUESSED_DAMPING, solver=solver)(problem.data)
+    )
     print(
         f"LeastSquares at damping {GUESSED_DAMPING:g}: {time.perf_counter() - t0:.1f} s, "
         f"{counted.forward} forward, {counted.adjoint} adjoint applications; "
         f"chi-squared {forward.chi_squared(guess, problem.data):.0f} against the "
-        f"critical {forward.critical_chi_squared(level=LEVEL):.0f}, norm "
-        f"{space.norm(guess):.2f}, relative error {problem.relative_error(guess):.3f}"
+        f"critical {forward.critical_chi_squared(level=scale.level):.0f}, prior norm "
+        f"{norm(whiten(guess)):.2f}, relative error {problem.relative_error(guess):.3f}"
     )
 
     counted.reset()
     t0 = time.perf_counter()
-    estimator = MinimumNorm(forward, level=LEVEL, solver=solver, rtol=1e-2)
+    estimator = MinimumNorm(whitened, level=scale.level, solver=solver, rtol=1e-2)
     search = estimator.discrepancy_search(problem.data)
     chosen = estimator.for_data(problem.data)
-    smallest = chosen(problem.data)
+    change = chosen(problem.data)
+    smallest = factor(change)
     print(
         f"MinimumNorm by the discrepancy principle: damping {search.argument:.4g} after "
         f"{search.evaluations} misfit evaluations and {search.inner_iterations} CG "
         f"iterations in all, {time.perf_counter() - t0:.1f} s, {counted.forward} "
         f"forward, {counted.adjoint} adjoint applications; chi-squared "
-        f"{forward.chi_squared(smallest, problem.data):.0f}, norm "
-        f"{space.norm(smallest):.2f} (the truth's {space.norm(problem.truth):.2f}), "
+        f"{forward.chi_squared(smallest, problem.data):.0f}, prior norm "
+        f"{norm(change):.2f} (the truth's {truth_norm:.2f}), "
         f"relative error {problem.relative_error(smallest):.3f}"
     )
 
-    pushed = chosen.push_forward(problem.averages)
+    pushed = chosen.push_forward(problem.averages @ factor)
     estimate = pushed(problem.data)
     propagated = np.sqrt(pushed.propagated_covariance().diagonals()[0])
-    bias = pushed.bias(problem.truth)
+    bias = pushed.bias(whiten(problem.truth))
     print("the minimum-norm estimate on the regional averages:")
     print(
         f"  {'region':<16s} {'estimate':>9s} {'propagated sd':>14s} {'bias':>8s} "
@@ -110,7 +123,9 @@ def point_answers(
             ("Africa", REGIONS[2][1]),
         )
     }
-    seen = {name: chosen.resolution(bump) for name, bump in bumps.items()}
+    # The model-space resolution: L B A L applied to the bump's w.
+    resolving = chosen.push_forward(factor)
+    seen = {name: resolving.resolution(whiten(bump)) for name, bump in bumps.items()}
     print(
         f"the resolution of a unit bump of width {scale.bump_width} "
         f"({time.perf_counter() - t0:.1f} s):"
@@ -173,6 +188,8 @@ def point_answers(
     return {
         "guess": guess,
         "smallest": smallest,
+        "norm": norm(change),
+        "truth_norm": truth_norm,
         "damping": search.argument,
         "estimate": estimate,
         "propagated": propagated,
@@ -182,20 +199,16 @@ def point_answers(
 
 
 def run(
-    scale: Scale, /, *, seed: int, outdir: pathlib.Path, problem: Problem | None = None
+    scale: Scale, /, *, outdir: pathlib.Path, problem: Problem | None = None
 ) -> dict:
     if problem is None:
-        problem = build(scale=scale, seed=seed)
-    return point_answers(problem, rng=part_rng(seed, "c"), outdir=outdir)
+        problem = build(scale=scale)
+    return point_answers(problem, rng=part_rng(scale.seed, "c"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

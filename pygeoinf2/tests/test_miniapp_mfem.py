@@ -2,18 +2,19 @@
 The MFEM mini-app keeps working.
 
 ``pygeoinf2/miniapps/mfem`` wraps MFEM two ways. A finite element space
-becomes a Hilbert space, either through its matrices (``matrix_space``: the
-mass matrix as the Gram matrix of a coordinate space, assembled forms as
-Galerkin matrices) or with no coordinates at all (``hilbert_space``: every
-inner product, mass solve and form application is MFEM's own). And an
+becomes a Hilbert space, either through its matrices (``src/matrix_space``:
+the mass matrix as the Gram matrix of a coordinate space, assembled forms as
+Galerkin matrices) or with no coordinates at all (``src/hilbert_space``:
+every inner product, mass solve and form application is MFEM's own). And an
 operator on the library's own periodic box has an MFEM solve as its action
-(``box_operator``). The modules are tested class by class: the space axioms,
+(``src/box_operator``). The modules are tested class by class: the space axioms,
 a linear form as a derivative and a bilinear form as a Galerkin matrix,
 boundary conditions as subspaces, MFEM's solves wrapped as operators, white
 noise and Matern fields from MFEM's own pieces, the two forms agreeing on
 everything they share, and the box operator's steps and their adjoints.
-Then every part of the app runs once at the quick scale, each through its
-own script's entry point, and what it shows is asserted.
+Then every part of the app runs once at the quick scale, built through the
+scripts' own command line, each through its own script's entry point, and
+what it shows is asserted.
 
 Needs PyMFEM, whose wheels are built for Linux only; without it the tests
 skip and say so.
@@ -21,8 +22,9 @@ skip and say so.
 
 from __future__ import annotations
 
+import dataclasses
 import gc
-import importlib.util
+import importlib
 import pathlib
 import sys
 
@@ -49,7 +51,7 @@ mfem = pytest.importorskip(
 )
 
 MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "mfem"
-if not (MINIAPP / "matrix_space.py").exists():
+if not (MINIAPP / "src" / "matrix_space.py").exists():
     pytest.skip(f"The mini-app is not at {MINIAPP}.", allow_module_level=True)
 
 pytestmark = pytest.mark.slow
@@ -61,45 +63,53 @@ PARTS = {
     "d": "box_ladder",
     "e": "box_inverse",
 }
-MODULES = ("matrix_space", "hilbert_space", "box_operator", "common", *PARTS.values())
+# The app's modules are the package ``src``, which its part scripts import by
+# that plain name; other mini-apps' packages have the same name. What this
+# module has loaded, kept here so that every test sees one copy of each.
+_LOADED: dict = {}
+
+
+def _ours(name: str) -> bool:
+    """Whether a module name is the app's package, one of its modules, or one
+    of its part scripts."""
+    return name == "src" or name.startswith("src.") or name in PARTS.values()
 
 
 def _module(name: str):
-    """One of the mini-app's modules, imported by path.
+    """One of the mini-app's modules or scripts, ``src.common`` or
+    ``box_ladder``, imported by name with the app's directory on the path for
+    the duration, as a script run there would find it.
 
-    The scripts import each other by their plain names, so the directory
-    goes on the path for the duration of the import; a module is registered
-    before it runs so that its dataclasses can resolve their annotations.
+    Another app's package of the same name is dropped first, and what this
+    module loaded before is put back, should another app's test have dropped
+    it in between.
     """
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, MINIAPP / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    if sys.modules.get("src") is not _LOADED.get("src"):
+        for loaded in [loaded for loaded in sys.modules if _ours(loaded)]:
+            del sys.modules[loaded]
+        sys.modules.update(_LOADED)
     sys.path.insert(0, str(MINIAPP))
     try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        sys.modules.pop(name, None)
-        raise
+        module = importlib.import_module(name)
     finally:
         sys.path.remove(str(MINIAPP))
+    _LOADED.update({loaded: m for loaded, m in sys.modules.items() if _ours(loaded)})
     return module
 
 
-# The two space modules are needed here, for the classes below, under names
-# no other mini-app uses. The rest, among them a module called ``common``,
-# are imported by the fixtures that need them.
-coordinate = _module("matrix_space")
-opaque = _module("hilbert_space")
+# The two space modules are needed here, for the classes below. The rest are
+# imported by the fixtures that need them.
+coordinate = _module("src.matrix_space")
+opaque = _module("src.hilbert_space")
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _forget_the_app():
     """Nothing after this module may see the app's modules by their plain names."""
     yield
-    for name in MODULES:
-        sys.modules.pop(name, None)
+    for name in [name for name in sys.modules if _ours(name)]:
+        if sys.modules[name] is _LOADED.get(name):
+            del sys.modules[name]
 
 
 # --------------------------------------------------------------------- #
@@ -1198,13 +1208,15 @@ class TestBoxOperator:
 
     @pytest.fixture(scope="class")
     def box(self):
-        return _module("box_operator").ScreenedPoisson(
+        return _module("src.box_operator").ScreenedPoisson(
             a_box(), elements=12, screening_length=0.05
         )
 
     @pytest.fixture(scope="class")
     def prior(self, box):
-        return box.space.sobolev_measure(0.0, 0.1, pointwise_std=1.0)
+        """The probe fields' measure, part E's prior: a Sobolev measure of
+        order two on the box's H^2."""
+        return box.space.sobolev_measure(2.0, 0.1, pointwise_std=1.0)
 
     def test_the_library_sees_no_mfem_space(self, box):
         """The operator is on the box; the steps between pass plain arrays."""
@@ -1253,7 +1265,7 @@ class TestBoxOperator:
             check_operator(wrong, rng=rng, measure=prior)
 
     def test_an_unconverged_solve_is_reported(self):
-        box = _module("box_operator").ScreenedPoisson(
+        box = _module("src.box_operator").ScreenedPoisson(
             a_box(), elements=8, screening_length=0.05, max_iterations=1
         )
         with pytest.raises(ConvergenceError, match="did not reach"):
@@ -1262,7 +1274,7 @@ class TestBoxOperator:
     def test_nonsense_is_refused(self):
         from pygeoinf2.symmetric_space.circle import Sobolev as OnACircle
 
-        ScreenedPoisson = _module("box_operator").ScreenedPoisson
+        ScreenedPoisson = _module("src.box_operator").ScreenedPoisson
         with pytest.raises(ValueError, match="two-dimensional"):
             ScreenedPoisson(OnACircle(16, 2.0, 0.1), elements=8, screening_length=0.05)
         with pytest.raises(ValueError, match="two elements"):
@@ -1279,13 +1291,56 @@ class TestBoxOperator:
 
 
 @pytest.fixture(scope="module")
-def results(tmp_path_factory):
+def scale(tmp_path_factory):
+    """The quick preset, built through the scripts' own command line with
+    options given at their preset values."""
+    common = _module("src.common")
+    quick = common.QUICK
+    arguments = common.parse(
+        "the quick scale",
+        quick=quick,
+        full=common.FULL,
+        argv=[
+            "--quick",
+            "--noise-std",
+            str(quick.noise_std),
+            "--orders",
+            *map(str, quick.orders),
+            "--outdir",
+            str(tmp_path_factory.mktemp("mfem_options")),
+        ],
+    )
+    assert arguments.scale == quick
+    return arguments.scale
+
+
+def test_every_field_of_the_scale_is_an_option(tmp_path):
+    common = _module("src.common")
+    arguments = common.parse(
+        "",
+        quick=common.QUICK,
+        full=common.FULL,
+        argv=[
+            "--box-noise-std",
+            "0.1",
+            "--orders",
+            "2",
+            "3",
+            "--outdir",
+            str(tmp_path),
+        ],
+    )
+    assert arguments.scale == dataclasses.replace(
+        common.FULL, box_noise_std=0.1, orders=(2, 3)
+    )
+
+
+@pytest.fixture(scope="module")
+def results(scale, tmp_path_factory):
     """Every part at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("mfem")
-    common = _module("common")
     return {
-        part: _module(name).run(common.QUICK, seed=common.SEED, outdir=outdir)
-        for part, name in PARTS.items()
+        part: _module(name).run(scale, outdir=outdir) for part, name in PARTS.items()
     }, outdir
 
 
@@ -1362,15 +1417,16 @@ def test_e_three_answers_on_the_box(results):
     assert part["deviation"][0] < part["deviation"][1]
     inside = np.abs(part["center"] - truth) <= 1.96 * part["deviation"]
     assert inside.sum() >= 1
-    # The certified brackets hold the truth, and a norm bound admits more
-    # than the Gaussian prior does.
+    # The certified brackets hold the truth, and a set bound admits more
+    # than the Gaussian posterior does.
     low, high = part["brackets"][:, 0], part["brackets"][:, 1]
     assert np.all(low <= truth) and np.all(truth <= high)
     assert part["inside"]
     assert np.all(high - low > 2 * 1.96 * part["deviation"])
     assert high[1] - low[1] > high[0] - low[0]
-    # The data narrow the bound of the prior's ball alone, most among the
-    # sensors.
+    # The truth lies in the prior's ellipsoid, and the data narrow the
+    # bound of the ellipsoid alone, most among the sensors.
+    assert part["gauge"] <= 1.0
     alone = part["alone"]
     narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
     assert np.all(narrowed < 1.0) and narrowed[0] < narrowed[1]

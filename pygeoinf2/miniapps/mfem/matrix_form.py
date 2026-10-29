@@ -23,17 +23,16 @@ import numpy as np
 from pygeoinf2 import CGSolver, Traits
 from pygeoinf2.testing import check_coordinates, check_operator, check_space
 
-from common import (
+from src.common import (
     FULL,
     QUICK,
     Scale,
     dof_coordinates,
-    output_directory,
     parse,
     part_rng,
     save,
 )
-from matrix_space import (
+from src.matrix_space import (
     MfemSpace,
     functional_from_linear_form,
     operator_from_bilinear_form,
@@ -153,17 +152,13 @@ def matrix_form(
     }
 
 
-def run(scale: Scale, /, *, seed: int, outdir: pathlib.Path) -> dict:
-    return matrix_form(scale, rng=part_rng(seed, "b"), outdir=outdir)
+def run(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
+    return matrix_form(scale, rng=part_rng(scale.seed, "b"), outdir=outdir)
 
 
 def main() -> None:
-    args = parse(__doc__)
-    run(
-        QUICK if args.quick else FULL,
-        seed=args.seed,
-        outdir=output_directory(args.quick, args.outdir),
-    )
+    args = parse(__doc__, quick=QUICK, full=FULL)
+    run(args.scale, outdir=args.outdir)
 
 
 if __name__ == "__main__":

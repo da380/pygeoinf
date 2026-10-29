@@ -16,7 +16,8 @@ ball are built on; without it the tests skip.
 
 from __future__ import annotations
 
-import importlib.util
+import dataclasses
+import importlib
 import pathlib
 import sys
 
@@ -29,58 +30,95 @@ MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "tomography
 
 pytestmark = pytest.mark.slow
 
-#: The app's modules, which import each other by their plain names.
-NAMES = (
-    "rays",
-    "common",
-    "problem",
-    "setup",
-    "point",
-    "bayesian",
-    "sets",
-    "mixture",
-    "ball",
-    "bent",
-)
+#: The app's modules, in the package ``src``, and its part scripts, which
+#: import each other and the package by their plain names. Other mini-apps
+#: use the same names.
+MODULES = ("src.rays", "src.common", "src.problem")
+SCRIPTS = ("setup", "point", "bayesian", "sets", "mixture", "ball", "bent", "run_all")
+
+
+def _forget() -> None:
+    """Drop the app's names, and any other app's of the same names."""
+    for name in list(sys.modules):
+        if name == "src" or name.startswith("src.") or name in SCRIPTS:
+            del sys.modules[name]
 
 
 def _module(name: str):
-    """One of the mini-app's modules, imported by path.
-
-    The scripts import each other by their plain names, so the directory
-    goes on the path for the duration of the import; a module is registered
-    before it runs so that its dataclasses can resolve their annotations.
-    """
-    path = MINIAPP / f"{name}.py"
-    if not path.exists():
+    """One of the mini-app's modules or scripts, imported by name with the
+    app's directory on the path for the duration, as a script run there
+    would find it."""
+    if not (MINIAPP / f"{name.replace('.', '/')}.py").exists():
         pytest.skip(f"The mini-app is not at {MINIAPP}.")
-    if (
-        name in sys.modules
-        and pathlib.Path(getattr(sys.modules[name], "__file__", "") or "").parent
-        == MINIAPP
-    ):
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
     sys.path.insert(0, str(MINIAPP))
     try:
-        spec.loader.exec_module(module)
+        return importlib.import_module(name)
     finally:
         sys.path.remove(str(MINIAPP))
-    return module
 
 
 @pytest.fixture(scope="module")
 def app():
-    """The mini-app's modules, keyed by name."""
-    # Another app's modules of the same plain names must not stand in for these.
-    saved = {name: sys.modules.pop(name) for name in NAMES if name in sys.modules}
-    modules = {name: _module(name) for name in NAMES}
+    """The mini-app's modules and scripts, keyed by their last names."""
+    _forget()
+    modules = {name.split(".")[-1]: _module(name) for name in MODULES + SCRIPTS}
     yield modules
-    for name in NAMES:
-        sys.modules.pop(name, None)
-    sys.modules.update(saved)
+    _forget()
+
+
+@pytest.fixture(scope="module")
+def scale(app, tmp_path_factory):
+    """The quick preset, built through the scripts' own command line with
+    options given at their preset values."""
+    problem = app["problem"]
+    quick = problem.QUICK
+    arguments = app["common"].parse(
+        "the quick scale",
+        quick=quick,
+        full=problem.FULL,
+        argv=[
+            "--quick",
+            "--noise-std",
+            str(quick.noise_std),
+            "--receivers",
+            *map(str, quick.receivers),
+            "--outdir",
+            str(tmp_path_factory.mktemp("tomography_options")),
+        ],
+    )
+    assert arguments.scale == quick
+    return arguments.scale
+
+
+def test_every_field_of_the_scale_is_an_option(app, tmp_path):
+    problem, run_all = app["problem"], app["run_all"]
+    arguments = app["common"].parse(
+        "",
+        quick=problem.QUICK,
+        full=problem.FULL,
+        argv=[
+            "--quick",
+            "--noise-std",
+            "0.1",
+            "--sources",
+            "0",
+            "90",
+            "--outdir",
+            str(tmp_path),
+        ],
+    )
+    expected = dataclasses.replace(problem.QUICK, noise_std=0.1, sources=(0.0, 90.0))
+    assert arguments.scale == expected
+    # The options given are what run_all carries to the ball and the bent rays.
+    assert run_all.given(arguments.scale) == {"noise_std": 0.1, "sources": (0.0, 90.0)}
+    ball = app["common"].parse(
+        "",
+        quick=app["ball"].BALL,
+        full=app["ball"].BALL,
+        fixed=app["ball"].BALL_FIXED,
+        argv=["--mmax", "12", "--outdir", str(tmp_path)],
+    )
+    assert ball.scale == dataclasses.replace(app["ball"].BALL, mmax=12)
 
 
 # ------------------------------------------------------------------------- #
@@ -154,8 +192,9 @@ def test_the_mantle_rays_never_reach_the_core(app):
     low, high = profile.parameter_range
     distances = [profile.distance(p) for p in np.linspace(low, high, 200)[1:-1]]
     assert np.all(np.diff(distances) < 0.0)
-    assert profile.grazing_distance > problem.MAX_DISTANCE
-    deepest = profile.trace(0.0, problem.MAX_DISTANCE)
+    longest = max(problem.QUICK.max_distance, problem.FULL.max_distance)
+    assert profile.grazing_distance > longest
+    deepest = profile.trace(0.0, longest)
     assert deepest.nodes[:, 0].min() > problem.CORE_RADIUS
     with pytest.raises(ValueError, match="reaches"):
         profile.ray_parameter(profile.grazing_distance + 1.0)
@@ -167,9 +206,8 @@ def test_the_mantle_rays_never_reach_the_core(app):
 
 
 @pytest.fixture(scope="module")
-def quick_problem(app):
-    problem = app["problem"]
-    return problem.build(scale=problem.QUICK, quiet=True)
+def quick_problem(app, scale):
+    return app["problem"].build(scale=scale, quiet=True)
 
 
 @pytest.fixture(scope="module")
@@ -232,15 +270,19 @@ def test_no_ray_is_counted_twice(app, quick_problem):
 def test_an_unseen_direction_has_a_tight_bracket(quick_problem):
     """The core's mean, which no ray sees: the support search's attaining
     model reaches the certified outer value, the smallest fitting model plus
-    as much of the property's representer as the ball holds."""
+    as much of the property's representer as the prior's ellipsoid holds."""
     from pygeoinf2 import BackusGilbertParker, CholeskySolver
 
     built = quick_problem
     level = 0.95
-    ball = built.prior.ambient_ball(level=level)
+    ellipsoid = built.prior.weakened_ellipsoid(level=level, power=built.scale.set_power)
     noise_ball = built.problem.error_measure.ambient_ball(level=level)
     feasible = BackusGilbertParker(
-        built.problem, built.properties, ball, noise=noise_ball, solver=CholeskySolver()
+        built.problem,
+        built.properties,
+        ellipsoid,
+        noise=noise_ball,
+        solver=CholeskySolver(),
     )(built.data)
     core = built.properties.codomain.basis_vector(2)
     inner, outer = feasible.support_bracket(core)
@@ -253,24 +295,23 @@ def test_an_unseen_direction_has_a_tight_bracket(quick_problem):
 
 
 @pytest.fixture(scope="module")
-def results(app, tmp_path_factory):
+def results(app, scale, tmp_path_factory):
     """Every part at the quick scale, once, each through its own entry point."""
     outdir = tmp_path_factory.mktemp("tomography")
-    scale, seed = app["problem"].QUICK, 2026
-    problem = app["setup"].run(scale, seed=seed, outdir=outdir)
+    problem = app["setup"].run(scale, outdir=outdir)
     results = {"a": problem}
-    results["b"] = app["point"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["c"] = app["bayesian"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["d"] = app["sets"].run(scale, seed=seed, outdir=outdir, problem=problem)
-    results["e"] = app["mixture"].run(scale, seed=seed, outdir=outdir, problem=problem)
+    results["b"] = app["point"].run(scale, outdir=outdir, problem=problem)
+    results["c"] = app["bayesian"].run(scale, outdir=outdir, problem=problem)
+    results["d"] = app["sets"].run(scale, outdir=outdir, problem=problem)
+    results["e"] = app["mixture"].run(scale, outdir=outdir, problem=problem)
     return results, outdir
 
 
-def test_the_point_answers(app, results):
+def test_the_point_answers(scale, results):
     setup, part = results[0]["a"], results[0]["b"]
     problem = setup.problem
     assert problem.chi_squared(part["smallest"], setup.data) == pytest.approx(
-        problem.critical_chi_squared(level=app["problem"].LEVEL), rel=1e-2
+        problem.critical_chi_squared(level=scale.level), rel=1e-2
     )
     # A bump where the rays cross is seen; one where they do not is seen less.
     assert part["peaks"]["well covered"] > part["peaks"]["poorly covered"]
@@ -279,9 +320,11 @@ def test_the_point_answers(app, results):
     assert part["estimate"][2] == pytest.approx(0.0, abs=1e-12)
     assert part["propagated"][2] == pytest.approx(0.0, abs=1e-12)
     assert part["bias"][2] == pytest.approx(-setup.true_properties[2], rel=1e-8)
+    # Smallest in the prior's norm, which the truth, a draw, is not.
+    assert part["norm"] < part["truth_norm"]
 
 
-def test_the_posterior_std_is_smaller_where_the_coverage_is(app, results):
+def test_the_posterior_std_is_smaller_where_the_coverage_is(scale, results):
     part = results[0]["c"]
     exact, prior = part["exact_std"], part["prior_std"]
     assert exact["well covered"] < exact["poorly covered"] < exact["core"]
@@ -292,7 +335,7 @@ def test_the_posterior_std_is_smaller_where_the_coverage_is(app, results):
     # and the smoothing of a product of draws read off the grid through the
     # kept modes, which at the quick truncation moves a value by up to a
     # fifth where the coverage changes quickly.
-    samples = app["problem"].QUICK.std_samples
+    samples = scale.std_samples
     for name, value in exact.items():
         assert part["sampled_std"][name] == pytest.approx(
             value, rel=0.2 + 2.0 / np.sqrt(2.0 * samples)
@@ -322,8 +365,8 @@ def test_the_feasible_brackets_hold_the_truth(results):
     assert np.all(
         part["gaps"] < 1e-3 * np.maximum(1.0, np.abs(part["brackets"]).max(1))
     )
-    # A norm bound admits more than the Gaussian prior does, and the data
-    # narrow the bound of the ball alone where the rays cross.
+    # A set bound admits more than the Gaussian posterior does, and the data
+    # narrow the bound of the prior's ellipsoid alone where the rays cross.
     assert np.all(high - low > 2 * 1.96 * bayesian["deviation"])
     alone = part["alone"]
     assert np.all(alone[:, 0] <= low + 1e-9) and np.all(high <= alone[:, 1] + 1e-9)
@@ -402,13 +445,13 @@ def test_the_figures_were_written(results):
 def test_the_ball_network_spans_the_sphere(app, ball_problem):
     """Sources and receivers spread over the sphere, not on one great circle,
     and every ray within the mantle's range of distances."""
-    ball, problem = app["ball"], app["problem"]
-    for stations in (ball_problem.scale.sources, ball_problem.scale.receivers):
+    ball, scale = app["ball"], ball_problem.scale
+    for stations in (scale.sources, scale.receivers):
         vectors = ball.unit(*np.array(stations).T)
         assert np.linalg.matrix_rank(vectors, tol=0.1) == 3
     distances = [ball.apart(s, r) for s, r in ball_problem.pairs]
-    assert min(distances) >= problem.MIN_DISTANCE
-    assert max(distances) <= problem.MAX_DISTANCE
+    assert min(distances) >= scale.min_distance
+    assert max(distances) <= scale.max_distance
     assert 100 <= len(ball_problem.pairs) <= 400
 
 
@@ -465,7 +508,7 @@ def ball_results(app, tmp_path_factory):
     pytest.importorskip("cartopy")
     pytest.importorskip("pyshtools")
     outdir = tmp_path_factory.mktemp("tomography_ball")
-    return app["ball"].run(app["ball"].BALL, seed=2026, outdir=outdir), outdir
+    return app["ball"].run(app["ball"].BALL, outdir=outdir), outdir
 
 
 def test_the_ball_answers_follow_the_coverage(ball_results):
@@ -484,9 +527,9 @@ def test_the_ball_answers_follow_the_coverage(ball_results):
     # The point estimate is zero in the core, all of its error bias.
     assert point["estimate"][2] == pytest.approx(0.0, abs=1e-12)
     # The truth lies in every bracket and in the polytope they bound, and the
-    # data narrow the ball's bound most where the rays cross.
+    # data narrow the prior's ellipsoid's bound most where the rays cross.
     low, high = sets["brackets"][:, 0], sets["brackets"][:, 1]
-    assert sets["truth_in_ball"]
+    assert sets["truth_in_ellipsoid"]
     assert np.all(low - 1e-6 <= setup.true_properties)
     assert np.all(setup.true_properties <= high + 1e-6)
     assert sets["inside"]
@@ -533,7 +576,7 @@ def test_shooting_in_the_reference_disk_is_the_radial_tracer(app):
 def bent_results(app, tmp_path_factory):
     outdir = tmp_path_factory.mktemp("tomography_bent")
     bent = app["bent"]
-    return bent.run(bent.BENT_QUICK, seed=2026, outdir=outdir), outdir
+    return bent.run(bent.BENT_QUICK, outdir=outdir), outdir
 
 
 def test_the_bent_forward_starts_where_the_linear_one_does(bent_results):
@@ -555,7 +598,7 @@ def test_the_derivative_is_the_path_integral_along_the_bent_ray(app, bent_result
     assert min(defects["reference"]) < 1e-5
 
 
-def test_bending_shortens_every_time_and_the_mode_fits_it(bent_results):
+def test_bending_shortens_every_time_and_the_map_model_fits_it(bent_results):
     results = bent_results[0]
     # Fermat: the bent ray is the quickest path, so no time exceeds the
     # straight-model prediction.
