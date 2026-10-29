@@ -66,9 +66,6 @@ class Scale:
             (0.3 is about 1900 km).
         level: the credibility of the discrepancy level and of the sets the
             prior and the noise are hardened to.
-        set_power: the power of the prior's covariance that shapes its
-            ellipsoid in the set answer, below one half for the ellipsoid to
-            survive refinement.
         surrogate_degree: the degree of the coarse sphere of the
             preconditioner's surrogate.
         cg_cap: the iterations the plain solve of part B is capped at.
@@ -90,7 +87,6 @@ class Scale:
     noise_std: float
     cap_radius: float
     level: float
-    set_power: float
     surrogate_degree: int
     cg_cap: int
     std_samples: int
@@ -110,7 +106,6 @@ QUICK = Scale(
     noise_std=0.1,
     cap_radius=0.3,
     level=0.95,
-    set_power=0.25,
     surrogate_degree=16,
     cg_cap=400,
     std_samples=32,
@@ -129,7 +124,6 @@ FULL = Scale(
     noise_std=0.1,
     cap_radius=0.3,
     level=0.95,
-    set_power=0.25,
     surrogate_degree=48,
     cg_cap=500,
     std_samples=64,

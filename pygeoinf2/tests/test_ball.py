@@ -217,7 +217,7 @@ class TestTransform:
     def test_beyond_the_measured_degree_the_other_route_is_taken(
         self, monkeypatch, rng
     ):
-        from pygeoinf2 import ball as module
+        from pygeoinf2.ball import space as module
 
         monkeypatch.setattr(module, "_BATCHED_LMAX", 3)
         slow, fast = ball(0.0, lmax=4), None

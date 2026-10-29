@@ -244,18 +244,23 @@ operator will meet.
 The noise is `GaussianMeasure.from_standard_deviation(codomain, sigma)`, on
 the Euclidean data space where an isotropic measure is what it should be.
 Part E hardens the noise to its 95% ball with `ambient_ball`, the credible
-ellipsoid of an isotropic error, and the prior to the ellipsoid of its own
-shape, `prior.weakened_ellipsoid(level=0.95, power=scale.box_set_power)`:
-`{f : (Q^-p f, f) <= r^2}` with `r` the radius carrying 95% of the prior.
-At `p = 1` it would be the Mahalanobis ellipsoid, `prior.credible_set`,
-which the library refuses on a function space because its radius is a
-chi-squared quantile on as many degrees of freedom as the grid has and
-grows with it; at `p = 0` it is the ball in `H^2`, which forgets the
-covariance's shape. The radius has a limit for `p < 1 - d / 2s`, one half
-here, and the scale's power, one quarter, is half way. The covariance is
-diagonal in the box's Fourier basis, so the ellipsoid's operators are exact
-and free. It is still a lossy step: it admits a field spending its whole
-budget on one disc.
+ellipsoid of an isotropic error, and the prior the same way,
+`prior.ambient_ball(level=scale.level)`: the ball `{f : ||f|| <= r}` in
+`H^2`'s own norm, with `r` the radius at which a draw from the prior lies
+inside with probability 0.95. It is the classical Backus-Gilbert-Parker norm
+bound, with the prior used only to calibrate the radius. The radius is the
+0.95 quantile of `sum_i lambda_i Z_i^2` over the covariance's eigenvalues,
+whose expectation is the trace of the covariance; that is finite for a
+trace-class covariance, so the radius has a limit as the grid is refined.
+The Mahalanobis ellipsoid, `prior.credible_set`, has no such limit: its
+radius is a chi-squared quantile on as many degrees of freedom as the grid
+has, which is why the library refuses it on a function space. The
+covariance is diagonal in the box's Fourier basis, so `ambient_ball` reads
+the spectrum off it, exact and free, and the ball's support function is a
+norm. The ball is a convenience, one constraint set among many, and a lossy
+one: it forgets the covariance's shape, and admits a field spending its
+whole budget on one disc. A set built from the physics, a bound on some
+other norm or an intersection of several, goes to the same estimator.
 
 ## 4. The solvers
 
@@ -276,7 +281,7 @@ gradients need more iterations than there are data. The app passes
 `SpectralFamilySolver()` to all three estimators: it assembles the
 data-space operator once, a column per datum, and diagonalizes it, after
 which a posterior sample or a new damping costs two small matrix products.
-The README's counts follow from that: 1227, 1203 and 1368 MFEM solves for
+The README's counts follow from that: 1227, 1203 and 1374 MFEM solves for
 the point, the mean and the set, mostly the assembly. It is dense in the
 number of data and is used only when passed.
 
@@ -308,10 +313,11 @@ nobody wrote down. Figures `hilbert_form.png` and `matrix_inverse.png`.
   `sample_pointwise_std`, `pointwise_variance_at` at the discs' centers and
   `affine_map(averages)`; `box_inverse_posterior.png`, prior against
   posterior;
-- the set: `BackusGilbertParker(problem, averages, ellipsoid,
+- the set: `BackusGilbertParker(problem, averages, ball,
   noise=noise_ball, solver=solver)(data)`, a `support_sweep` in four
   directions and its `polytope`; `box_inverse_brackets.png`, each bracket
-  against what the prior's ellipsoid admits alone.
+  against what the prior's ball admits alone, its support function along
+  the average's representer.
 
 None of them knows that MFEM is inside: they see an operator on the box.
 

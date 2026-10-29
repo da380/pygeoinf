@@ -65,8 +65,8 @@ def woodbury_family_solver(
     ``A C A* + t R`` hand it the family once and ask it for each multiplier.
     The prior pieces are on the coarse sphere (``C`` the coarse prior's
     covariance for the least-squares and minimum-norm families, the shape of
-    the coarse prior's ellipsoid for the set answer); the noise pieces are on
-    the shared data space.
+    the coarse prior's ball for the set answer); the noise pieces are on the
+    shared data space.
     """
     _, coarse_forward = problem.surrogate()
     return CGSolver().with_preconditioner(

@@ -3,7 +3,7 @@ the sensors of the unit-square problem that parts A and C invert.
 
 Each part writes its own figures, one method to a figure: the point
 estimate with its error budget, the measure as prior against posterior, the
-set as the bound the prior's ellipsoid admits alone against the bracket the
+set as the bound the prior's ball admits alone against the bracket the
 data leave.
 """
 
@@ -77,9 +77,6 @@ class Scale:
         region_radius: the radius of the discs part E averages over.
         level: the credibility of part E's discrepancy level and of the sets
             its prior and noise are hardened to.
-        box_set_power: the power of part E's prior covariance that shapes
-            its ellipsoid in the set answer, below one half for the
-            ellipsoid to survive refinement.
         std_samples: the posterior samples behind part E's standard
             deviation map.
     """
@@ -108,7 +105,6 @@ class Scale:
     gap_radius: float
     region_radius: float
     level: float
-    box_set_power: float
     std_samples: int
 
 
@@ -137,7 +133,6 @@ QUICK = Scale(
     gap_radius=0.18,
     region_radius=0.08,
     level=0.95,
-    box_set_power=0.25,
     std_samples=16,
 )
 FULL = dataclasses.replace(
@@ -369,14 +364,14 @@ def bound_panels(
     *,
     ylabel: str,
 ) -> None:
-    """For each property, a panel: the bound the prior's ellipsoid admits
+    """For each property, a panel: the bound the prior's ball admits
     alone against the bracket the data leave, and the truth, on an axis
     linear within one and logarithmic beyond."""
     for ax, name, (a0, a1), (b0, b1), t in zip(axes, names, alone, brackets, truth):
         ax.plot([0, 0], [a0, a1], color="0.6", lw=10, solid_capstyle="butt")
         ax.plot([1, 1], [b0, b1], color="C0", lw=10, solid_capstyle="butt")
         ax.axhline(t, color="black", ls="--", lw=1.0, label="truth")
-        ax.set_xticks([0, 1], ["the prior's\nellipsoid alone", "with the\ndata"])
+        ax.set_xticks([0, 1], ["the prior's\nball alone", "with the\ndata"])
         ax.set_xlim(-0.7, 1.7)
         ax.set_yscale("symlog", linthresh=1.0)
         ax.set_title(name, fontsize=10)

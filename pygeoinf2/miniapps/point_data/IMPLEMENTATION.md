@@ -148,45 +148,47 @@ stationary one, and nothing about it is formed.
 **Hardening to sets** (part E, `sets.py`, in `hardened`):
 
 ```python
-ellipsoid = problem.prior.weakened_ellipsoid(
-    level=level, power=power, quantile_method="matched"
-)
+ball = problem.prior.ambient_ball(level=level)
 noise_ball = forward.error_measure.ambient_ball(level=level)
 ```
 
 The noise is hardened to its 95% ball, which for an isotropic error on a
-Euclidean data space is its credible ellipsoid too. The prior is hardened
-to an ellipsoid of its own shape, `{m : (Q^-p m, m) <= r^2}` with `r` the
-radius that carries 95% of the prior, a quantile of `sum lambda^(1-p) Z^2`
-over the covariance's spectrum (tutorial 7). Which power is a matter of the
-space being one of functions:
+Euclidean data space is its credible ellipsoid too. The prior is hardened to
+the ball `{m : ||m|| <= r}` of the space's own `H^2` norm, with `r` the
+radius at which a draw from the prior lies inside with probability 0.95, a
+quantile of `sum lambda_i Z_i^2` over the covariance's eigenvalues
+(tutorial 7). It is the classical Backus-Gilbert-Parker norm bound, with the
+prior used only to calibrate the radius. That the space is one of functions
+decides what can be calibrated this way:
 
-- At `p = 1` it is the Mahalanobis ellipsoid, `prior.credible_set`, and the
-  library refuses it on a function space: its radius is a chi-squared
-  quantile on as many degrees of freedom as there are coefficients, so it
-  grows with the truncation, and the Cameron-Martin space it bounds holds
-  none of the prior's draws in the limit. Its bound on a cap average alone
-  is ±35 at degree 64 and ±69 at degree 128.
-- At `p = 0` it is the ball in the space's norm, `prior.ambient_ball`, which
-  survives refinement but forgets the covariance's shape.
-- Between them the radius has a limit exactly when `sum lambda^(1-p)`
-  converges, which for an order-`s` measure in `d` dimensions is
-  `p < 1 - d / 2s`, one half on the sphere at order 2. The scale's
-  `set_power`, one quarter, is half way: the ellipsoid bounds a norm half
-  way between the space's and the smoothness the draws have. Its bound on a
-  cap average alone is ±12.0 at degree 64 and ±12.9 at 128.
+- The ball's radius has a limit as the truncation grows. The expectation of
+  `sum lambda_i Z_i^2` is the covariance's trace, finite because the
+  covariance is trace class on `H^2`, and the sum concentrates about it.
+  Its bound on a cap average alone is ±9.86 at degree 64, ±10.07 at 128
+  and ±10.13 at 256.
+- The Mahalanobis ellipsoid, `prior.credible_set`, has none, and the library
+  refuses it on a function space: its radius is a chi-squared quantile on
+  as many degrees of freedom as there are coefficients, so it grows with
+  the truncation, and the Cameron-Martin space it bounds holds none of the
+  prior's draws in the limit. Its bound on a cap average alone is ±35 at
+  degree 64 and ±69 at degree 128.
 
-The covariance is diagonal in the harmonic basis, so the ellipsoid's
-precision and covariance are exact diagonal operators and its support
-function costs nothing. The radius is a weighted chi-square quantile over
-thousands of comparable weights, which the moment-matched chi-square gives
-to a few parts in a thousand; `quantile_method="matched"` says so, where
-Imhof's integral, the default here, would take most of a minute at the full
-scale. A set bound is a lossy step, as tutorial 14 says: it admits the field
-that spends its whole budget on one cap, which the Gaussian calls unlikely;
-that is why the set answer over Africa is ±7.6 where the posterior
-interval is ±0.7. The two answers are not to be reconciled; they answer
-different statements of what is known.
+The covariance is diagonal in the harmonic basis, so `ambient_ball` reads
+the spectrum off it with no applications, and the radius is a weighted
+chi-square quantile over 16 641 weights with an effective rank of about
+800: the method picks the moment-matched chi-square for so long and flat a
+spectrum, which gives the radius to five parts in ten thousand of Imhof's
+integral, at no cost against Imhof's twenty-odd seconds. The ball's
+support function is the radius times the norm of the representer.
+
+The ball is a convenience: one way to turn a Gaussian belief into a
+constraint set, with no knob but the level. A set bound is a lossy step, as
+tutorial 14 says: it admits the field that spends its whole budget on one
+cap, which the Gaussian calls unlikely; that is why the set answer over
+Africa is ±5.5 where the posterior interval is ±0.7. The two answers are
+not to be reconciled; they answer different statements of what is known.
+Where the physics says more, a bound on another norm, on a region, or an
+intersection of several, the same estimator takes that set instead.
 
 No measure is checked here; `testing.check_measure` (tutorial 5), which
 samples a measure against its claimed moments, is the one for a prior built
@@ -203,8 +205,8 @@ N = A Q A* + R        on 20 000 dimensions, never formed
 which `LinearGaussianInversion(...).normal_operator` assembles from its
 factors (tutorial 4), and its damped relatives `A C A* + t R`, which the
 point and set estimators sweep: with `C = Q` in the point answers, which
-measure size by the prior, and with `C` the shape of the prior's ellipsoid
-in the set answer. The data space is the library's default
+measure size by the prior, and with `C = r^2 I`, the shape of the prior's
+ball, in the set answer. The data space is the library's default
 formalism: the model-space form would need `Q^-1` and gives the same answer.
 
 Part B (`solve.py`) sets plain conjugate gradients, capped and with
@@ -252,12 +254,12 @@ WoodburyPreconditioner(
 Handed the family by the estimator, it reads the kernel `A_c* R^-1 A_c` once
 and refactors only the coarse inner operator at each multiplier. The prior
 pieces are the coarse prior's covariance and precision for the point
-answers' family, and the coarse prior's own ellipsoid of the same power for
-the set answer's, its radius close enough to the fine one's for a
-surrogate. The ellipsoid's shape decays more slowly than the prior's, so the
-coarse sphere catches less of it: a member at a small multiplier takes tens
-of iterations rather than the Bayesian solve's 16, and the set answer is
-half the full run. Part F keeps the stationary surrogate under the
+answers' family, and the coarse prior's own ball for the set answer's, its
+radius, 6.07 against the fine one's 6.33, close enough for a surrogate. The
+ball's family `A A* r^2` decays as the space's own kernel does, more slowly
+than the prior's, so the coarse sphere catches less of it: a member takes
+from a few iterations to two dozen, the one at the walk's smallest
+multiplier 70 to 130, and the set answer is nearly half the full run. Part F keeps the stationary surrogate under the
 non-stationary prior, as a surrogate may: the solves take 52 applications
 instead of 18, and give the same answer.
 
@@ -325,30 +327,30 @@ standard-deviation maps on one color scale, and each average's marginal
 before and after by `plotting.plot_densities(posterior, prior=prior, ...)`.
 
 **The set** (part E, `sets.py`). Tutorial 7's feasible property set under
-the prior's ellipsoid and the noise's ball:
+the prior's ball and the noise's:
 
 ```python
 feasible = BackusGilbertParker(
-    forward, problem.averages, ellipsoid, noise=noise_ball, solver=solver
+    forward, problem.averages, ball, noise=noise_ball, solver=solver
 )(problem.data)
 sweep = feasible.support_sweep(directions, via=PRIMAL, n_jobs=scale.n_jobs)
 ```
 
-An ellipsoid or a ball each side makes the set quadratic, and its support is
+A ball or an ellipsoid each side makes the set quadratic, and its support is
 computed by the primal walk over the damped family;
 `via=Primal(tolerance=1e-3, floor=1e-4)` names that algorithm with a looser
 tolerance than its default and the kernel part of each direction taken at a
 ten-thousandth of the family's scale rather than a millionth. The data
 outnumber the coefficients at the full scale, so the walk also stops at that
-floor; every walk here ends above it, as the brackets' gaps below `1e-4`
+floor; every walk here ends above it, as the brackets' gaps below `4e-4`
 say (a walk the floor stopped leaves a wide one), and the solve at the floor
 is the one most iterations go to. Each result carries a
 `value`, the certified outer bound, and an `inner` value attained by a
 feasible model; their difference is the bracket's gap. Six directions, plus
 and minus each average, give a box, and `feasible.polytope(directions)` the
-polytope whose membership of the true averages is the check. What the ellipsoid
+polytope whose membership of the true averages is the check. What the ball
 admits with no data is its support function along each property's
-representer, `ellipsoid.support_function()(averages.adjoint(q))`. Figure
+representer, `ball.support_function()(averages.adjoint(q))`. Figure
 `brackets.png` draws each bracket against that bound on a logarithmic axis.
 
 ## 6. What a reader would change
@@ -362,12 +364,13 @@ representer, `ellipsoid.support_function()(averages.adjoint(q))`. Figure
 - **The space and the prior**, the two lines quoted in section 1: a space on
   which the forward operator is bounded, and a measure on it of order above
   half the dimension. Measure the point answers by the prior's factor if
-  they are to damp in the norm the Bayesian one uses, and keep the set's
-  power below `1 - d / 2s` if its ellipsoid is to survive refinement. To try
-  another order, length scale, power or noise level without editing
-  anything, pass the scale's fields on the command line (`--order`,
-  `--prior-order`, `--length-scale`, `--set-power`, `--noise-std`; the
-  README lists them).
+  they are to damp in the norm the Bayesian one uses. The prior's ball is
+  one line in `hardened` to replace by any convex set with a support
+  function, a ball in another norm through `ambient_ball(operator=...)` or
+  a set of your own. To try another order, length scale or noise level
+  without editing anything, pass the scale's fields on the command line
+  (`--order`, `--prior-order`, `--length-scale`, `--noise-std`; the README
+  lists them).
 - **The surrogate**, in `Problem.surrogate` in `src/problem.py`: a cheaper version of your
   forward operator on a coarser space that shares the data space. Dense if
   it fits; the closer it is, the fewer iterations, and nothing else changes.

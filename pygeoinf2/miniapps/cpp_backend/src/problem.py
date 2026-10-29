@@ -49,9 +49,6 @@ class Scale:
             the interval.
         level: the credibility of the discrepancy level and of the sets the
             prior and the noise are hardened to.
-        set_power: the power of the prior's covariance that shapes its
-            ellipsoid in the set answer, below one half for the ellipsoid to
-            survive refinement.
     """
 
     name: str
@@ -63,7 +60,6 @@ class Scale:
     prior_length: float
     prior_std: float
     level: float
-    set_power: float
 
 
 QUICK = Scale(
@@ -76,7 +72,6 @@ QUICK = Scale(
     prior_length=0.08,
     prior_std=1.0,
     level=0.95,
-    set_power=0.25,
 )
 FULL = Scale(
     name="full",
@@ -88,7 +83,6 @@ FULL = Scale(
     prior_length=0.08,
     prior_std=1.0,
     level=0.95,
-    set_power=0.25,
 )
 
 

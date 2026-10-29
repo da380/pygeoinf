@@ -14,8 +14,8 @@ fit the truth, the point answer's error is its bias and its propagated
 noise, under the tight prior the truth lies inside the brackets and within
 two posterior standard deviations, the wide answers are wider, the MAP
 model's boundary displacements recover the truth's to within two Laplace
-standard deviations, and Occam's model in two norms meets the level both
-times with displacements further apart than those deviations.
+standard deviations, and Occam's model meets the level in two norms, each
+answer the smaller change in its own norm.
 
 Needs planetmodel, for PREM and the layered space; without it the tests skip
 and say so.
@@ -134,18 +134,23 @@ def test_the_functionals_are_the_integrals(app, results):
     volume = app["problem"].volume_integral(space, np.ones_like)
     exact = space.integral_functional().derivative_components
     assert np.max(np.abs(volume - exact)) < 1e-10 * np.max(np.abs(exact))
-    # The volume of the medium, and the mass and moment of a uniform density
+    # The volume of the medium, a ball of radius one in Earth radii, and the
+    # mass and moment of a uniform density of 1 g/cm^3, 1000 kg/m^3, in SI
     # against their closed forms, to the accuracy of the constant's fit to
     # the basis functions kept.
     one = space.project_function(lambda r: 1.0)
-    radius = app["reference"].R_SURFACE
     assert volume @ space.to_components(one) == pytest.approx(
-        4.0 * np.pi * radius**3 / 3.0, rel=1e-5
+        4.0 * np.pi / 3.0, rel=1e-5
     )
     mass, moment = problem.forward(one)
-    to_mass, to_moment = app["problem"].TO_MASS, app["problem"].TO_MOMENT
-    assert mass == pytest.approx(to_mass * 4.0 * np.pi * radius**3 / 3.0, rel=1e-5)
-    assert moment == pytest.approx(to_moment * 8.0 * np.pi * radius**5 / 15.0, rel=1e-5)
+    meters = 1e3 * app["reference"].R_SURFACE
+    units = app["problem"]
+    assert mass * units.MASS_UNIT == pytest.approx(
+        1e3 * 4.0 * np.pi * meters**3 / 3.0, rel=1e-5
+    )
+    assert moment * units.MOMENT_UNIT == pytest.approx(
+        1e3 * 8.0 * np.pi * meters**5 / 15.0, rel=1e-5
+    )
 
 
 def test_the_reference_is_prem_and_the_data_the_truths(app, scale, results):
@@ -159,6 +164,11 @@ def test_the_reference_is_prem_and_the_data_the_truths(app, scale, results):
     assert moment * data.MOMENT_UNIT == pytest.approx(own["moment"], rel=1e-4)
     expected = [own["core"], own["mantle"], own["jump"]]
     assert problem.properties(problem.reference) == pytest.approx(expected, abs=0.02)
+    # With radius in Earth radii the norms are of order one: PREM's is about
+    # 20, the truth's departure from it below one.
+    space = problem.space
+    assert 10.0 < space.norm(problem.reference) < 40.0
+    assert space.norm(space.subtract(problem.truth, problem.reference)) < 1.0
     # The data fit the truth and reject the reference.
     critical = problem.problem.critical_chi_squared(level=scale.level)
     assert problem.problem.chi_squared(problem.truth, problem.data) < critical
@@ -190,11 +200,15 @@ def test_the_tight_prior_holds_the_truth(results):
     # The mass ties the two means together, and narrows the mantle's most.
     assert measure["correlation"] < -0.5
     assert measure["deviation"][1] < 0.3 * measure["prior_deviation"][1]
-    assert sets["truth_in_ellipsoid"]
+    assert sets["truth_in_ball"] and sets["gauge"] <= 1.0
     low, high = sets["brackets"][:, 0], sets["brackets"][:, 1]
     assert np.all((low <= truth) & (truth <= high))
-    # The brackets lie within what the prior's ellipsoid admits alone,
-    # certified to a small gap.
+    # The ball about the reference admits as much either way of the
+    # reference's properties; the brackets lie within that, certified to a
+    # small gap.
+    reference = problem.properties(problem.reference)
+    assert np.allclose(sets["bounds"].mean(axis=1), reference)
+    assert sets["radius"] > 0.0
     assert np.all(sets["bounds"][:, 0] <= low + 1e-9)
     assert np.all(high <= sets["bounds"][:, 1] + 1e-9)
     assert np.all(sets["gaps"] < 0.01 * (high - low))
@@ -224,9 +238,9 @@ def test_the_wide_answers_are_wider(results):
 
 def test_the_boundaries(results):
     part = results[0]["d"]
-    # The checks pass at their own tolerances; the second derivative is the
-    # loosest, at 1e-4.
-    assert part["worst_defect"] < 1e-4
+    # The operator is bilinear, so central differences at a step of one are
+    # exact for it and the defects are rounding.
+    assert part["worst_defect"] < 1e-10
     assert part["converged"]
     # The MAP model's displacements recover the truth's to within two
     # Laplace standard deviations, which the data narrow at the core-mantle
@@ -236,15 +250,17 @@ def test_the_boundaries(results):
     assert deviations[1] < 0.9 * part["prior_deviation"][4]
     assert deviations[0] > 0.95 * part["prior_deviation"][3]
     # Occam's model meets the level in the model space's norm and in the
-    # prior's, each is the smaller change in its own norm, and the two put
-    # the boundaries further apart than the data can place either.
+    # prior's, and each is the smaller change in its own norm. In the model
+    # space's norm a unit of displacement costs far more than a density
+    # change with the same effect on the data, and the boundaries stay
+    # within a few kilometers of PREM's.
     space, prior = part["occam"]["space"], part["occam"]["prior"]
     for answer in (space, prior):
         assert answer["converged"]
         assert answer["chi_squared"] == pytest.approx(part["critical"], rel=1e-3)
     assert space["space_norm"] < prior["space_norm"]
     assert prior["prior_norm"] < space["prior_norm"]
-    assert np.all(np.abs(space["shifts"] - prior["shifts"]) > deviations)
+    assert np.all(np.abs(space["shifts"]) < 0.05 * part["prior_deviation"][3:])
 
 
 def test_the_figures_were_written(results):

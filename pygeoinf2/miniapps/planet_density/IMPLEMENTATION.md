@@ -16,8 +16,8 @@ narrows the choice without making it; a value at a point exists in every
 layer, the center's included, which the bands of the figures need; and its
 norm is the one Occam's first model of part D is measured in (the point
 answers of parts B and C are smallest in the prior's precision, a second
-norm, chosen as such, and the set answers harden the prior to an ellipsoid
-of its own shape). The priors are measures of extra regularity on that
+norm, chosen as such, and the set answers harden the prior to the ball of
+the space's norm that carries 95% of it). The priors are measures of extra regularity on that
 space, Sobolev measures of order two whose covariance is trace class on
 it; they do not move the problem to a smoother space, and nothing is done
 relative to `L^2`.
@@ -31,19 +31,30 @@ mesh (tutorial 11). From `src/problem.py`:
 
 ```python
 space = Layered(
-    list(boundaries),
+    radii,
     list(scale.basis_functions),
     order=scale.order,
-    length_scale=[
-        crust if name == "crust" else scale.length_scale for name in names
-    ],
+    length_scale=scales,
     labels=names,
 )
 ```
 
-with the scale's `order` 2 and `length_scale` 200 km, both command-line
-options like every field of the scale, and the layers read off PREM by
-`layering()` in `src/reference.py`. What each choice buys:
+with `radii` the layers' boundaries, read off PREM by `layering()` in
+`src/reference.py`, and `scales` the scale's `length_scale` of 200 km, the
+crust's excepted, both converted to Earth radii, and the scale's `order` 2.
+Every field of the scale is a command-line option, a length given in
+kilometers.
+
+**The units** are radius in Earth radii, density in g/cm³, and the data in
+`10^24 kg` and `10^37 kg m²`. The inner product is a volume integral, so
+the unit of radius enters every norm through its cube; on a planet of
+radius one the norms are of order one, as the densities and the data are
+(PREM's norm on the space is 20.3), and the library's absolute floors, its
+solvers' tolerances among them, meet numbers of the size they assume.
+Lengths given in kilometers, at the command line and in the figures, are
+converted where they meet the space.
+
+What each choice buys:
 
 - **The layers.** Every interface of PREM is an interface of the space, so a
   profile may jump exactly where PREM's may and nowhere else. The layers
@@ -62,15 +73,20 @@ options like every field of the scale, and the layers read off PREM by
 - **The basis functions per layer**, `Scale.basis_functions`: 104 in all at
   the full scale, most in the core and the lower mantle.
 
-The data space is `EuclideanSpace(2)`, mass and moment in units of
-`10^24 kg` and `10^37 kg m²` so that both are of order one; the property
-space is `EuclideanSpace(3)`.
+The data space is `EuclideanSpace(2)`, mass and moment in the units above;
+the property space is `EuclideanSpace(3)`.
 
 The reference profile is PREM projected into the space layer by layer:
 
 ```python
-layer.project_function(function, extension="constant" if name == "crust" else "fit")
+layer.project_function(
+    lambda r, prem=prem: prem(R_SURFACE * r),
+    extension="constant" if name == "crust" else "fit",
+)
 ```
+
+with `prem` PREM's density in the layer as a function of the radius in km,
+read at `R_SURFACE r` for the space's `r`.
 
 `"fit"` is the best fit over the layer's domain in its basis functions,
 right for a smooth profile; `"constant"` samples at the nodes and continues
@@ -84,8 +100,9 @@ model_space = DirectSum([space, EuclideanSpace(2)], labels=("density", "radii"))
 ```
 
 A direct sum's inner product is the sum of its parts' (tutorial 10), so the
-unit of the displacements, the scale's `radius_scale`, 50 km, decides how a kilometer
-of boundary weighs against density in the model space's norm (section 5).
+unit of the displacements, the scale's `radius_scale`, 50 km, against the
+space's unit of radius decides how a kilometer of boundary weighs against
+density in the model space's norm (section 5).
 
 ## 2. The forward code wrapped as an operator
 
@@ -148,20 +165,19 @@ testing.check_derivative(operator, point, rng=rng, measure=probes, step=1.0)
 testing.check_second_derivative(operator, point, rng=rng, measure=probes, step=1.0)
 ```
 
-The probes are not the prior. Its density part has an expectation, PREM,
-whose norm on the space is of order `1e7` (radii in kilometres put the
-planet's volume into the norm), while a displacement has a standard
-deviation of one: a normalized draw from the prior is PREM over its norm
-with a displacement part of `1e-7`, the same direction every time and
-never the boundaries. `probes` is the centered prior with its density
-part rescaled to the size of its displacement part, built with
-`translate` and `affine_map`, so that each direction moves both. The
-differences take a step of one: the operator is bilinear, central
+The probes are the prior less its expectation,
+`prior.translate(model_space.negative(prior.expectation))`. PREM has a norm
+of 20 on the space, where a centered draw's density part has a norm of
+about a half and each displacement a standard deviation of one, so a
+normalized draw from the prior itself would point along PREM every time,
+with the displacements a small part of it. Centered, the two parts are of
+the same order, and each direction moves the density and both boundaries.
+The differences take a step of one: the operator is bilinear, central
 differences are exact for it, and the only error is rounding, which a
 large step keeps small. The checks judge each defect relative to the size
 of the derivative itself, so a derivative the difference cannot resolve
 shows up as a defect rather than hiding behind the operator's values. The
-worst defect at the full scale is `7.5e-9`. A failure of the first
+worst defect at the full scale is `1.9e-13`. A failure of the first
 would mean the matrix declared in the wrong form on a space whose Gram
 matrix is not the identity, and every gradient of part D wrong with it; of
 the second, a derivative that is not the value's, a sign of the jump or the
@@ -206,27 +222,29 @@ GaussianMeasure.from_product(
 ```
 
 **Hardening to sets** (`set_answer` in `src/answers.py`):
-`prior.weakened_ellipsoid(level=level, power=scale.set_power)` and the error
-measure's `credible_set(level=level)`, its own Mahalanobis ellipse on the
-two data: the errors are independent but of two sizes, so a ball would not
-have their shape, and on a Euclidean data space the credible set is what a
-Gaussian error's 95% region is. The prior's set is `{m : (Q^-p (m - m0), m - m0) <= r^2}`,
-its covariance to a power, with `r` the radius that carries 95% of the
-prior, a quantile of `sum lambda^(1-p) Z^2` over the covariance's spectrum,
-here from a dense eigendecomposition of the 104 by 104 covariance. At
-`p = 1` it would be the Mahalanobis ellipsoid, `prior.credible_set`, which
-the library refuses on a function space: its radius is a chi-squared
-quantile on as many degrees of freedom as there are basis functions. At
-`p = 0` it is the ball in the space's norm, which forgets the covariance's
-shape. In between the radius has a limit when `sum lambda^(1-p)`
-converges, `p < 3/4` for a measure of order 2 whose spectrum grows as on a
-line, and the scale's `set_power`, three eighths, is half way. The
-covariance is dense, not diagonal, so its fractional powers are applied
-through the Lanczos calculus, one run per application: the set answers'
-half minute. It is still a weaker statement than the Gaussian, and its
-brackets are wider than the posterior's intervals wherever the data leave
-a direction free. No measure is checked; `testing.check_measure` (tutorial
-5) is the check for a prior built by hand.
+`prior.ambient_ball(level=level)` and the error measure's
+`credible_set(level=level)`, its own Mahalanobis ellipse on the two data:
+the errors are independent but of two sizes, so a ball would not have their
+shape, and on a Euclidean data space the credible set is what a Gaussian
+error's 95% region is. The prior's set is the ball `{m : ||m - m0|| <= r}`
+in the space's own norm about the prior's expectation, PREM, with `r` the
+radius at which a draw from the prior lies inside with probability 0.95, a
+quantile of `sum lambda_i Z_i^2` over the covariance's spectrum, here from
+a dense generalized eigenproblem of the 104 by 104 covariance against the
+Gram matrix. It is the classical Backus-Gilbert-Parker norm bound with the
+prior used only to calibrate it. The expectation of that sum is the
+covariance's trace, finite for a trace-class covariance, so the radius has
+a limit however many basis functions there are. The Mahalanobis ellipsoid,
+`prior.credible_set`, has none: its radius is a chi-squared quantile on as
+many degrees of freedom as there are basis functions, which is why the
+library refuses it on a function space. The ball forgets the covariance's
+shape, and is a weaker statement than the Gaussian: its brackets are wider
+than the posterior's intervals wherever the data leave a direction free.
+It is a convenience, one constraint set among many; bounds from mineral
+physics on each layer, or a norm that weights the core more than the
+mantle, are convex sets the same estimator takes. No measure is checked;
+`testing.check_measure` (tutorial 5) is the check for a prior built by
+hand.
 
 ## 4. The solvers
 
@@ -286,10 +304,10 @@ posterior side by side and the property marginals in a corner plot,
 `plotting.plot_corner(after, prior=before, truth=...)`.
 
 **The set** (`set_answer`). `BackusGilbertParker(problem, properties,
-ellipsoid, noise=noise)(data)` and `support_sweep` over the six coordinate
+ball, noise=noise)(data)` and `support_sweep` over the six coordinate
 directions: each result's `value` is a certified outer bound, its `inner`
 attained by a feasible model. Figures `*_set.png` draw the brackets against
-the ellipsoid's own support along each property's representer.
+the ball's own support along each property's representer.
 
 **Part D** (`boundaries.py`) answers with the nonlinear estimators:
 
@@ -322,11 +340,12 @@ the second on the problem composed with `m = m0 + L w`, smallest in `w`,
 which is the prior's norm. The results are mapped back to the model space
 and their changes from PREM measured both ways. In the model space's norm a
 displacement of 50 km has norm one, where a density change with the same
-effect on the mass has norm `3.9e4` (README), so Occam moves the boundaries
-alone; in the prior's norm both parts are measured in their own standard
-deviations, and it lands near the MAP model. Nothing in the library
-chooses between them: a direct sum's norm is the caller's choice, and Occam
-reports it. Figure `boundaries.png` draws the three models.
+effect on the mass has norm 0.079 (README), so Occam leaves the boundaries
+where PREM has them and changes the density; in the prior's norm both parts
+are measured in their own standard deviations, and it lands near the MAP
+model. Nothing in the library chooses between them: a direct sum's norm is
+the caller's choice, and Occam reports it. Figure `boundaries.png` draws
+the three models.
 
 ## 6. What a reader would change
 
@@ -339,7 +358,8 @@ reports it. Figure `boundaries.png` draws the three models.
   any other derivative components of a linear functional of the profile,
   stacked into `from_matrix`; check each row against
   `integral_functional()` or a closed form, and choose units in which the
-  data are of order one.
+  data and the space's norms are of order one: the radius in the planet's
+  own.
 - **Further unknowns**: a `DirectSum` and an `Operator.from_callables` with
   its derivatives, as in `boundary_operator` in `src/radii.py`, put through
   its `check` before use. Their unit is part of the model space's norm,

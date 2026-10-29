@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 from scipy.stats import chi2
 
+from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import CoordinateSpace
 from pygeoinf2.inference import (
     BackusGilbertParker,
@@ -38,6 +39,7 @@ from pygeoinf2.inference import (
     MinimumNorm,
 )
 from pygeoinf2.numerics import SpectralFamilySolver
+from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import (
     check_measure,
@@ -77,6 +79,8 @@ CONTRACT = {
     "prior.precision",
     "prior.whiten",
     "prior.whiten.adjoint",
+    "l2_form",
+    "l2_form.inverse",
 }
 
 
@@ -340,22 +344,15 @@ class TestTheAnswers:
         truth_norm = space.norm(prior.precision_factor(small["truth"]))
         assert space.norm(change) < truth_norm
 
-    def test_the_feasible_set_brackets_the_truth(self, small, rng):
-        prior, forward, space = small["prior"], small["problem"], small["space"]
-        ellipsoid = prior.weakened_ellipsoid(
-            level=0.95,
-            power=0.25,
-            method="spectral",
-            rank=space.dim,
-            quantile_method="matched",
-            rng=rng,
-        )
-        assert ellipsoid.contains(small["truth"])
+    @pytest.mark.parametrize("l2", [False, True])
+    def test_the_feasible_set_brackets_the_truth(self, app, small, rng, l2):
+        prior_set = app["sets"].hardened(small["prior"], 0.95, rng, l2=l2)
+        assert prior_set.contains(small["truth"])
         noise_ball = small["noise"].ambient_ball(level=0.95)
         feasible = BackusGilbertParker(
-            forward,
+            small["problem"],
             small["averages"],
-            ellipsoid,
+            prior_set,
             noise=noise_ball,
             solver=SpectralFamilySolver(),
         )(small["data"])
@@ -375,6 +372,77 @@ class TestTheAnswers:
         assert calls["inner_product"] > 0 and calls["prior.covariance"] > 0
 
 
+class TestTheL2Ball:
+    """The prior's ball in the ``L^2`` norm, a constraint set of ``H^1`` given
+    by the operator ``B = G^-1 M`` and its inverse."""
+
+    def test_the_form_is_the_mass_inner_product(self, app, rng):
+        space = app["space"].CppSpace(12, 0.1)
+        form, inverse = app["space"].l2_form(space)
+        mass, _ = _matrices(12)
+        x, y = space.random(rng=rng), space.random(rng=rng)
+        expected = space.values(x) @ mass @ space.values(y)
+        assert space.inner_product(form(x), y) == pytest.approx(expected, rel=1e-12)
+        back = space.subtract(form(inverse(x)), x)
+        assert space.norm(back) < 1e-12 * space.norm(x)
+
+    @pytest.mark.parametrize("which", [0, 1])
+    def test_it_and_its_inverse_hold_their_claims(self, app, small, rng, which):
+        operator = app["space"].l2_form(small["space"])[which]
+        prior = small["prior"]
+        assert check_operator(operator, rng=rng, measure=prior).worst < 1e-10
+        assert check_traits(operator, rng=rng, measure=prior).worst < 1e-10
+
+    def test_an_operator_without_the_traits_is_refused(self, app, small):
+        space = small["space"]
+        form, _ = app["space"].l2_form(space)
+        plain = LinearOperator.from_callables(space, space, form, adjoint=form)
+        with pytest.raises(ValueError, match="claim"):
+            small["prior"].ambient_ball(
+                level=0.95, operator=plain, method="spectral", rank=space.dim
+            )
+
+    @pytest.mark.parametrize("l2", [False, True])
+    def test_the_radius_is_the_quantile_of_the_weights(self, app, small, rng, l2):
+        """Against the weights formed in NumPy: the eigenvalues of the nodal
+        covariance seen through the mass matrix, or through the Gram matrix
+        for the space's own ball."""
+        backend, space, prior = app["space"], small["space"], small["prior"]
+        n = space.dim
+        # The nodal covariance: the operator is Sigma G, and G^-1 is the
+        # Riesz map.
+        columns = []
+        for i in range(n):
+            unit = space.interpolate(np.eye(n)[i])
+            columns.append(space.values(prior.covariance(space.riesz(unit))))
+        sigma = np.array(columns).T
+        mass, stiffness = _matrices(n - 1)
+        metric = mass if l2 else mass + 0.1**2 * stiffness
+        root = np.linalg.cholesky(metric)
+        weights = np.linalg.eigvalsh(root.T @ sigma @ root)
+        expected = np.sqrt(weighted_chi2_quantile(weights, 0.95, method="imhof"))
+        prior_set = app["sets"].hardened(prior, 0.95, rng, l2=l2)
+        form, _ = backend.l2_form(space)
+        radius = (
+            app["sets"].radius_of(prior_set, form, small["truth"])
+            if l2
+            else prior_set.radius
+        )
+        assert radius == pytest.approx(expected, rel=1e-8)
+
+    def test_at_length_zero_it_is_the_ball(self, app, rng):
+        backend = app["space"]
+        space = backend.CppSpace(40, 0.0)
+        prior = backend.matern_measure(space, length_scale=0.1, pointwise_std=1.0)
+        ball = app["sets"].hardened(prior, 0.95, rng)
+        ellipsoid = app["sets"].hardened(prior, 0.95, rng, l2=True)
+        average = backend.local_average_operator(space, [(0.2, 0.4)])
+        direction = average.adjoint(average.codomain.basis_vector(0))
+        assert ellipsoid.support_function()(direction) == pytest.approx(
+            ball.support_function()(direction), rel=1e-8
+        )
+
+
 def test_every_field_of_the_scale_is_an_option(app, tmp_path):
     problem = app["problem"]
     arguments = app["common"].parse(
@@ -386,14 +454,14 @@ def test_every_field_of_the_scale_is_an_option(app, tmp_path):
             "0.05",
             "--n-points",
             "20",
-            "--set-power",
-            "0.2",
+            "--prior-length",
+            "0.1",
             "--outdir",
             str(tmp_path),
         ],
     )
     assert arguments.scale == dataclasses.replace(
-        problem.FULL, space_length=0.05, n_points=20, set_power=0.2
+        problem.FULL, space_length=0.05, n_points=20, prior_length=0.1
     )
     assert arguments.outdir == tmp_path
 
@@ -476,19 +544,34 @@ def test_c_the_bayesian_answer(results):
 
 
 @pytest.mark.slow
-def test_d_the_set_answer(results):
+def test_d_the_set_answer(app, results):
     part = results[0]["d"]
+    sets = app["sets"]
+    assert all(report.worst < 1e-10 for report in part["checks"].values())
     truth = part["true_averages"]
-    low, high = part["brackets"][:, 0], part["brackets"][:, 1]
-    assert np.all(low <= truth) and np.all(truth <= high)
-    assert part["inside"] and part["gauge"] <= 1.0
-    assert np.all(part["gaps"] < 1e-3)
-    alone = part["alone"]
-    assert np.all((high - low) < (alone[:, 1] - alone[:, 0]))
-    # The bound alone grows more slowly under refinement at the scale's
-    # power than at the power where the radius stops converging.
-    (_, p0, l0), _, (_, p1, l1) = part["refinement"]
-    assert p1 - p0 < l1 - l0
+    narrowed = {}
+    for name in (sets.H1, sets.L2):
+        answer = part["answers"][name]
+        low, high = answer["brackets"][:, 0], answer["brackets"][:, 1]
+        assert np.all(low <= truth) and np.all(truth <= high), name
+        assert answer["inside"] and answer["gauge"] <= 1.0, name
+        assert np.all(answer["gaps"] < 1e-3), name
+        alone = answer["alone"]
+        assert np.allclose(alone[:, 0], -alone[:, 1]), name
+        narrowed[name] = (high - low) / (alone[:, 1] - alone[:, 0])
+        assert np.all(narrowed[name] < 1.0), name
+    # The L^2 ball admits more than the H^1 ball for the narrower average and
+    # less for the wider one; the point data narrow it far less, a value at a
+    # point not being bounded in L^2.
+    h1, l2 = part["answers"][sets.H1], part["answers"][sets.L2]
+    assert l2["radius"] < h1["radius"]
+    assert l2["alone"][0, 1] > h1["alone"][0, 1]
+    assert l2["alone"][1, 1] < h1["alone"][1, 1]
+    assert np.all(narrowed[sets.L2] > 2.0 * narrowed[sets.H1])
+    # Both bounds alone settle under a fourfold refinement.
+    refinement = np.array(part["refinement"])[:, 1:]
+    spread = refinement.max(axis=0) - refinement.min(axis=0)
+    assert np.all(spread < 0.02 * refinement.max(axis=0))
     assert set(part["calls"]) <= CONTRACT
 
 

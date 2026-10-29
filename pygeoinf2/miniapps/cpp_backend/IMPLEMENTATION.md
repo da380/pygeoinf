@@ -203,8 +203,8 @@ never builds it there.
 
 There are twelve data. Every answer comes down to the data-space normal
 operator `A C A* + t R` (tutorial 4), with `C` the prior's covariance for
-the point and the measure and the shape of the prior's ellipsoid for the
-set, and the app passes `SpectralFamilySolver()` to all three estimators: it
+the point and the measure, and the shapes of the prior's two balls for the
+set, `r^2 I` and `r^2 B^-1`, and the app passes `SpectralFamilySolver()` to all three estimators: it
 assembles the base `A C A*` once, a column per datum, whitens it by `R` and
 diagonalizes it, after which any member of the family, at any multiplier,
 is two small matrix products. The discrepancy search visits a dozen
@@ -216,13 +216,12 @@ formed.
 
 The library has no other dense route on this space: `matrix()` on an
 operator of it, or anything that would assemble one, needs coordinates the
-space does not have. Two places in the set answer pay for that instead with
-inner products. The radius of the prior's ellipsoid is a quantile over the
-covariance's spectrum, which on a coordinate-free space is the library's
-randomized eigendecomposition, `random_eig`, by Gram-Schmidt in the space's
-inner product; and the ellipsoid's fractional powers of the
-covariance are applied by the Lanczos calculus, each application its own
-reorthogonalized Krylov run. Section 6 counts both.
+space does not have. The set answer pays for that instead with inner
+products: the radius of each of the prior's balls is a quantile over a
+spectrum, which on a coordinate-free space is the library's randomized
+eigendecomposition, `random_eig`, by Gram-Schmidt in the space's inner
+product, once for the covariance and once for `L* B L`. Section 6 counts
+them.
 
 ## 5. The estimators
 
@@ -279,55 +278,118 @@ is the Gaussian on the two averages, drawn against the prior's by
 `plotting.plot_densities(posterior, prior=prior, ...)`.
 
 **The set** (part D, `sets.py`). Tutorial 7's feasible property set, the
-prior hardened to an ellipsoid of its own shape and the noise to its 95%
-ball:
+noise hardened to its 95% ball and the prior to two constraint sets, each
+calibrated by it, by one call:
 
 ```python
-return prior.weakened_ellipsoid(
+operator, inverse = l2_form(prior.domain) if l2 else (None, None)
+return prior.ambient_ball(
     level=level,
-    power=power,
+    operator=operator,
+    inverse=inverse,
     method="spectral",
     rank=prior.domain.dim,
-    quantile_method="matched",
     rng=rng,
 )
 ```
 
-`{u : (Q^-p u, u) <= r^2}`, with `r` the radius that carries 95% of the
-prior, a quantile of `sum lambda^(1-p) Z^2` over the covariance's
-eigenvalues. At `p = 1` it would be the Mahalanobis ellipsoid, whose radius
-grows with the mesh and which the library refuses on a function space; at
-`p = 0` the ball in the space's norm, which forgets the covariance's shape.
-In between the radius has a limit when the sum converges: the eigenvalues
-on `H^1` fall as `k^-2`, so the weights as `k^-2(1-p)`, and the sum
-converges for `p < 1/2`, which is `1 - d / 2s` with `s = 1` the
-covariance's order against the space's metric and `d = 1`. The scale's
-power is half of that, `1/4`. Part D measures it: the bound the ellipsoid
-alone admits on the first average settles at `p = 1/4` and keeps growing at
-`p = 1/2`. The quantile is the moment-matched chi-square, from two traces
-of the spectrum; and the rank is the full dimension, because weights that
-decay as `k^-3/2` leave a tail no truncated spectrum can drop: at 1000
-elements the leading 50 eigenvalues give a squared radius of 6.00, the
-leading 100 give 6.27, and all of them 6.69.
+*The ball in the space's norm*, without an operator: `{u : ||u|| <= r}`,
+`||u||^2 = u^T (M + l^2 K) u`, with `r` the radius at which a draw from the
+prior lies inside with probability 0.95, a quantile of `sum lambda_i Z_i^2`
+over the covariance's eigenvalues on `H^1`. It is the classical
+Backus-Gilbert-Parker norm bound, the prior used only to calibrate the
+radius. The expectation of the sum is the covariance's trace, finite because
+the covariance is trace class on `H^1`, its eigenvalues falling as `k^-2`,
+so the radius has a limit under refinement: part D follows the bound the
+ball alone admits on the first average through 250, 500 and 1000 elements,
+3.709, 3.717 and 3.721. The Mahalanobis ellipsoid, `prior.credible_set`, has
+no limit, its radius a chi-squared quantile on as many degrees of freedom as
+there are nodes, and the library refuses it on a function space. The rank
+is the full dimension, because weights falling as `k^-2` leave a tail a
+truncated spectrum drops: at 1000 elements the leading 50 eigenvalues give a
+squared radius of 3.685, the leading 100 give 3.736, and all of them 3.779.
+The weighted chi-square is inverted by Imhof's integral, which
+`ambient_ball` chooses for a spectrum a few modes dominate, in under a
+second.
+
+*The ball in `L^2`*, with an operator. The `L^2` inner product of two
+functions of the space is `x^T M y`; as a bilinear form on `H^1` it is the
+operator `B` with `(B x, y) = x^T M y` in the space's inner product, and
+since `(B x, y) = y^T G B x`, that is `B = G^-1 M`: the mass matrix, then
+the Riesz map, as for any operator into the space. `l2_form` in
+`src/space.py` writes it and its inverse `M^-1 G` through the backend's two
+Cholesky factors:
+
+```python
+def form(x: Any) -> Any:
+    calls["l2_form"] += 1
+    return gram_factor.solve(mass.apply(x))
+
+def inverse(x: Any) -> Any:
+    calls["l2_form.inverse"] += 1
+    return mass_factor.solve(gram.apply(x))
+
+return (
+    LinearOperator.self_adjoint(space, form, traits=_DEFINITE),
+    LinearOperator.self_adjoint(space, inverse, traits=_DEFINITE),
+)
+```
+
+- **It is bounded on `H^1`.** `(B x, x) = x^T M x <= x^T (M + l^2 K) x =
+  (x, x)`, the stiffness matrix being positive semidefinite, so the norm of
+  `B` is at most one on every mesh; its eigenvalues are `1 / (1 + l^2
+  mu_k)`, with `mu_k` those of `K` against `M`, and fall as `k^-2`. With a
+  trace-class covariance, `B C` is trace class too, its trace at most the
+  covariance's, and the radius of the `L^2` ball has a limit as the `H^1`
+  ball's does: 4.094, 4.098 and 4.102 for the same bound through the same
+  meshes. Its inverse is not bounded, its eigenvalues growing as the square
+  of the number of elements, but on a mesh it is the inverse, and it gives
+  the ellipsoid its covariance `r^2 B^-1` and so its support function
+  `r sqrt((B^-1 q, q))`.
+- **It is self-adjoint there.** `(B x, y) = y^T G G^-1 M x = y^T M x`, which
+  is symmetric in `x` and `y` because `M` is: the adjoint taken in the
+  space's inner product, through the Riesz map, is `B` itself. The matrix
+  `G^-1 M` is not symmetric; self-adjointness is a property of the operator
+  in the space's metric, not of a matrix, which is why it is claimed with
+  `LinearOperator.self_adjoint` rather than read off an array the space does
+  not have. Positive definiteness is `x^T M x > 0`.
+- **The library checks the claims.** `ambient_ball` refuses an operator that
+  does not claim to be self-adjoint and positive definite, with a
+  `ValueError` that names the traits (the test checks the refusal), and
+  part D verifies the claims before using them, `check_operator` and
+  `check_traits` on the form and on its inverse with probes drawn from the
+  prior: the adjoints hold to `3.1e-11` and `7.6e-13` at the full scale,
+  and the traits to `9.4e-14` and `1.3e-12`.
+
+The weights of the `L^2` ball's radius are the eigenvalues of `B C`, which
+`ambient_ball` takes on the spectral route as those of `L* B L`, self-adjoint
+on the space, through the prior's factor `L`. They fall as `k^-4`, so the
+leading 50 already give the squared radius, 2.529, to four figures; the app
+takes the full rank for both sets alike. The ellipsoid carries its precision
+`B / r^2` and its covariance, not `r`, so `radius_of` reads the radius as
+the ratio of `(B u, u)` to `(P u, u)` along any vector.
 
 ```python
 feasible = BackusGilbertParker(
-    forward,
+    problem.problem,
     problem.averages,
-    ellipsoid,
+    prior_set,
     noise=noise_ball,
     solver=SpectralFamilySolver(),
 )(problem.data)
 sweep = feasible.support_sweep(directions)
 ```
 
-An ellipsoid and a ball make the set quadratic, and its support is computed
-by the primal walk over the data-space family. Each result carries a
-`value`, the certified outer bound, and an `inner` value attained by a
+A ball or an ellipsoid each side makes the set quadratic, and its support is
+computed by the primal walk over the data-space family. Each result carries
+a `value`, the certified outer bound, and an `inner` value attained by a
 feasible model; four directions, plus and minus each average, give the
 brackets, and `feasible.polytope(directions).contains(true_averages)` the
-check. What the ellipsoid admits with no data is its support function along
-each property's representer, `prior_alone` in `src/common.py`.
+check. What a set admits with no data is its support function along each
+property's representer, `prior_alone` in `src/common.py`. Either ball is a
+convenience, one constraint set among those a user can build: a bound on a
+region, on the derivative alone, or the intersection of several, goes to the
+same estimator.
 
 ## 6. What the tally shows
 
@@ -346,11 +408,12 @@ full-scale table. Read from it:
 - **The measure** is the pointwise standard deviation: three thousand
   evaluations, Riesz maps and covariance applications for 1001 nodes, prior
   and posterior; the posterior itself costs a dozen.
-- **The set** is five million inner products and as many `axpy`s, three and
-  a half million of them the eigendecomposition to the full dimension and
-  the rest the Lanczos runs of the ellipsoid's powers. That is the price of
-  a coordinate-free space where the library's routes are spectral; a
-  backend with a basis would form a matrix here instead.
+- **The set** is seven million inner products and as many `axpy`s, nearly
+  all of them the two eigendecompositions to the full dimension, three and
+  a half million each; the four thousand applications of the factor, its
+  adjoint and the `L^2` form are their probes and those of the checks. That
+  is the price of a coordinate-free space where the library's routes are
+  spectral; a backend with a basis would form a matrix here instead.
 
 What the library never asked for: a component, a Gram matrix, a basis
 vector, a dense matrix of an operator on the model space, a pointwise
@@ -399,8 +462,11 @@ The lessons of the binding, for a backend of your own:
   carries the space's Gram matrix, with a factor whose adjoint is taken in
   the space's inner product, and its order against the space's metric
   above half the dimension. Measure the point answer by the factor if it
-  is to damp as the Bayesian one does, and keep the set's power below
-  `1 - d / 2s` with `s` that order.
+  is to damp as the Bayesian one does.
+- **The set**: the ball of the space's norm, or of any bounded,
+  self-adjoint, positive definite operator on the space, written as
+  `l2_form` is with its inverse and checked the same way, or any convex set
+  with a support function in place of either.
 - **The solver**: `SpectralFamilySolver` while the data are few; a Krylov
   solver with a preconditioner when they are many, as the point-data app
   shows.

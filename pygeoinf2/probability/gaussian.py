@@ -157,6 +157,74 @@ def _check_round_trip(
         )
 
 
+def _latent_mixing(
+    latents: Sequence[HilbertSpace], matrix: np.ndarray, /
+) -> LinearOperator:
+    """``(xi_j) -> (sum_j S_ij xi_j)_i`` on the direct sum of latent spaces.
+
+    The latent spaces must correspond mode for mode: all the same space, when
+    the sum is taken in it directly, or all coordinate spaces of one
+    dimension with a diagonal metric, when it is taken on standardized
+    components, ``sqrt(g_k) c_k``, which are what white noise makes
+    standard normal there. With a symmetric ``S`` the operator is
+    self-adjoint in either case.
+
+    Raises:
+        ValueError: if the latent spaces correspond in neither way.
+    """
+    from ..algebra.direct_sum import DirectSum
+
+    latents = list(latents)
+    count = len(latents)
+    first = latents[0]
+    domain = DirectSum(latents)
+    if all(space == first for space in latents):
+
+        def apply(xi: tuple) -> tuple:
+            out = []
+            for i in range(count):
+                total = first.zero()
+                for j in range(count):
+                    if matrix[i, j] != 0.0:
+                        total = first.axpy(matrix[i, j], xi[j], total)
+                out.append(total)
+            return tuple(out)
+
+    else:
+        if (
+            not all(
+                isinstance(space, CoordinateSpace) and space.has_diagonal_metric
+                for space in latents
+            )
+            or len({space.dim for space in latents}) != 1
+        ):
+            raise ValueError(
+                "The factors' latent spaces must correspond mode for mode: "
+                "all the same space, or all coordinate spaces of one "
+                "dimension with a diagonal metric. These are "
+                + ", ".join(repr(space) for space in latents)
+                + "."
+            )
+        weights = [np.sqrt(space.gram_diagonal()) for space in latents]
+
+        def apply(xi: tuple) -> tuple:
+            standardized = [
+                weights[j] * latents[j].to_components(xi[j]) for j in range(count)
+            ]
+            out = []
+            for i in range(count):
+                total = np.zeros(first.dim)
+                for j in range(count):
+                    if matrix[i, j] != 0.0:
+                        total += matrix[i, j] * standardized[j]
+                out.append(latents[i].from_components(total / weights[i]))
+            return tuple(out)
+
+    return LinearOperator.from_callables(
+        domain, domain, apply, adjoint=apply, traits=Traits.SELF_ADJOINT
+    )
+
+
 class GaussianMeasure[X](ProbabilityMeasure[X]):
     """A Gaussian measure, defined by any of covariance, factor or precision."""
 
@@ -256,7 +324,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         noise with respect to the space's inner product, and the covariance
         is ``sigma^2`` times the identity on the space whatever its metric.
 
-        On a function space (a :class:`~pygeoinf2.algebra.spaces.HilbertModule`)
+        On a space that discretizes a function space (``is_function_space``)
         this is refused: the identity is not trace class there, so the
         "measure" has no draws in the space, and the truncation only hides
         it. A prior on a function space is a measure of extra regularity on
@@ -279,9 +347,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             ValueError: for a non-positive or non-scalar deviation. Use
                 from_standard_deviations for one per component.
         """
-        from ..algebra.spaces import HilbertModule
-
-        if isinstance(domain, HilbertModule) and not unsafe:
+        if domain.is_function_space and not unsafe:
             raise TypeError(
                 f"An identity covariance on {domain!r} is not a Gaussian "
                 "measure on it: the identity is not trace class on a function "
@@ -424,22 +490,45 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *,
         labels: Sequence[str] | None = None,
         domain: DirectSum | None = None,
+        correlation: np.ndarray | None = None,
     ) -> GaussianMeasure:
-        """The independent product of Gaussians, on the direct sum of domains.
+        """The product of Gaussians on the direct sum of their domains,
+        independent or correlated through their latent white noise.
 
-        The covariance is block diagonal, and the block-diagonal operator gives
-        it the right traits by intersecting the blocks': the whole is positive
-        definite exactly when every factor is. The precision is block diagonal
-        for the same reason, and is built whenever every factor has one.
+        Independent, the covariance is block diagonal, and the block-diagonal
+        operator gives it the right traits by intersecting the blocks': the
+        whole is positive definite exactly when every factor is. The
+        precision is block diagonal for the same reason, and is built
+        whenever every factor has one.
 
         The precision matters beyond the density: a Woodbury preconditioner
         built from a product prior inverts it through the precision when
         there is one, and by conjugate gradients at every application when
         there is not.
 
+        **Correlated.** Each factor draws as ``L_i xi_i`` from its covariance
+        factor and white noise ``xi_i`` on the factor's domain, its latent
+        space. A *correlation* matrix ``R``, symmetric, positive semidefinite
+        and of unit diagonal, makes the latent noises correlated, mode by
+        mode: with ``S`` the symmetric root of ``R``, the draw is ``L_i
+        (sum_j S_ij xi_j)``, so the marginal of each summand is its factor
+        unchanged (``R_ii == 1``) and the cross-covariance of summands ``i``
+        and ``j`` is ``R_ij L_i L_j*``. The covariance factor is the block
+        diagonal of the ``L_i`` composed with the mixing, matrix-free, and
+        the precision factor is the mixing's inverse composed with the
+        factors' precision factors when every factor has one and ``R`` is
+        positive definite. The latent spaces must correspond mode for mode:
+        all the same space, or all coordinate spaces of one dimension with a
+        diagonal metric, where the mixing acts on standardized components.
+        Fields on one symmetric space whose correlation varies with scale are
+        :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.correlated_measure`'s
+        business; this is the constant correlation, on any summands.
+
         Args:
-            measures: the independent factors.
+            measures: the factors.
             labels: names for the summands of the direct sum.
+            correlation: the correlation matrix of the latent noises, one
+                row per factor; ``None`` for the independent product.
             domain: the direct sum to put the measure on, when the caller has
                 one already, such as a space that is a direct sum with more
                 structure than the bare sum of the factors' domains (a
@@ -452,14 +541,21 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Raises:
             ValueError: if no factors are given, if some factor has neither
-                a covariance nor a covariance factor, or if a given domain's
-                summands are not the factors' domains.
+                a covariance nor a covariance factor, if a given domain's
+                summands are not the factors' domains, or, for a correlated
+                product, if the correlation is not a symmetric positive
+                semidefinite matrix of unit diagonal, some factor has no
+                covariance factor, or the latent spaces do not correspond.
         """
         from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
 
         measures = tuple(measures)
         if not measures:
             raise ValueError("A product measure needs at least one factor.")
+        if correlation is not None:
+            return cls._correlated_product(
+                measures, np.asarray(correlation, dtype=float), labels, domain
+            )
         if domain is None:
             domain = DirectSum([m.domain for m in measures], labels=labels)
         else:
@@ -482,21 +578,33 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         covariance = None
         factor = None
         if all(m.covariance_factor is not None for m in measures):
+            # A factor whose blocks map each summand to itself is seated on
+            # the caller's domain at both ends: a self-adjoint one is its own
+            # adjoint, and the covariance built from it must act on that
+            # domain, not on the plain sum.
+            blocks = [m.covariance_factor for m in measures]
+            seated = DirectSum([b.domain for b in blocks]) == domain
             factor = BlockDiagonalLinearOperator(
-                [m.covariance_factor for m in measures]
+                blocks, domain=domain if seated else None, codomain=domain
             )
         elif all(m.covariance is not None for m in measures):
-            covariance = BlockDiagonalLinearOperator([m.covariance for m in measures])
+            covariance = BlockDiagonalLinearOperator(
+                [m.covariance for m in measures], domain=domain, codomain=domain
+            )
         else:
             raise ValueError("Every factor needs a covariance or a covariance factor.")
 
         precision = None
         precision_factor = None
         if all(m.precision is not None for m in measures):
-            precision = BlockDiagonalLinearOperator([m.precision for m in measures])
+            precision = BlockDiagonalLinearOperator(
+                [m.precision for m in measures], domain=domain, codomain=domain
+            )
         elif all(m.precision_factor is not None for m in measures):
+            blocks = [m.precision_factor for m in measures]
+            seated = DirectSum([b.codomain for b in blocks]) == domain
             precision_factor = BlockDiagonalLinearOperator(
-                [m.precision_factor for m in measures]
+                blocks, domain=domain, codomain=domain if seated else None
             )
 
         sample = None
@@ -513,6 +621,84 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             precision=precision,
             precision_factor=precision_factor,
             sample=sample,
+        )
+
+    @classmethod
+    def _correlated_product(
+        cls,
+        measures: tuple[GaussianMeasure, ...],
+        correlation: np.ndarray,
+        labels: Sequence[str] | None,
+        domain: DirectSum | None,
+        /,
+    ) -> GaussianMeasure:
+        """The correlated product; see :meth:`from_product`."""
+        from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
+
+        count = len(measures)
+        if correlation.shape != (count, count):
+            raise ValueError(
+                f"The correlation must be a {count} x {count} matrix, one row "
+                f"per factor; got shape {correlation.shape}."
+            )
+        if not np.allclose(correlation, correlation.T, atol=1e-12):
+            raise ValueError("The correlation must be symmetric.")
+        if not np.allclose(np.diag(correlation), 1.0, atol=1e-12):
+            raise ValueError("The correlation must have a unit diagonal.")
+        values, vectors = np.linalg.eigh(0.5 * (correlation + correlation.T))
+        if values.min() < -1e-10:
+            raise ValueError(
+                "The correlation must be positive semidefinite; its smallest "
+                f"eigenvalue is {values.min():.3e}. For two factors that means "
+                "|correlation| <= 1."
+            )
+        values = np.clip(values, 0.0, None)
+        root = (vectors * np.sqrt(values)) @ vectors.T
+        definite = values.min() > 1e-10 * values.max()
+        for index, measure in enumerate(measures):
+            if measure.covariance_factor is None:
+                raise ValueError(
+                    f"A correlated product needs a covariance factor on every "
+                    f"factor, and factor {index} has none."
+                )
+        latents = [m.covariance_factor.domain for m in measures]
+
+        if domain is None:
+            domain = DirectSum([m.domain for m in measures], labels=labels)
+        elif labels is not None:
+            raise ValueError("Give labels or a domain, which has its own.")
+        elif not isinstance(domain, DirectSum) or list(domain.subspaces) != [
+            m.domain for m in measures
+        ]:
+            raise ValueError(
+                f"The domain must be the direct sum of the factors' domains, "
+                f"got {domain!r}."
+            )
+
+        mixing = _latent_mixing(latents, root)
+        blocks = [m.covariance_factor for m in measures]
+        seated = DirectSum([b.domain for b in blocks]) == domain
+        factor = (
+            BlockDiagonalLinearOperator(
+                blocks, domain=domain if seated else None, codomain=domain
+            )
+            @ mixing
+        )
+        precision_factor = None
+        if definite and all(m.precision_factor is not None for m in measures):
+            inverse_root = (vectors / np.sqrt(values)) @ vectors.T
+            whitening = [m.precision_factor for m in measures]
+            seated = DirectSum([w.codomain for w in whitening]) == domain
+            precision_factor = _latent_mixing(latents, inverse_root) @ (
+                BlockDiagonalLinearOperator(
+                    whitening, domain=domain, codomain=domain if seated else None
+                )
+            )
+        return cls(
+            domain,
+            expectation=tuple(m.expectation for m in measures),
+            covariance_factor=factor,
+            precision_factor=precision_factor,
         )
 
     @classmethod
@@ -1728,8 +1914,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 the space whose inner product the ball is measured in; the
                 space's own when omitted.
             inverse: the operator's inverse, which gives the ellipsoid its
-                covariance and so its support function. Ignored without an
-                operator.
+                covariance and so its support function; it must claim the
+                same traits, and one probe checks that it inverts the
+                operator. Ignored without an operator.
             method: ``"auto"``, ``"diagonal"``, ``"dense"``, ``"spectral"`` or
                 ``"sampling"``. ``"auto"`` reads a diagonal spectrum if there
                 is one, then goes dense if the space has coordinates and is no
@@ -1747,7 +1934,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Returns:
             The ball about the expectation carrying probability *level*; with
-            an operator, the ellipsoid.
+            an operator, the ellipsoid, carrying that radius as its own.
 
         Raises:
             ValueError: for an unknown method, a method whose ingredients this
@@ -1769,10 +1956,23 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     f"The operator must claim {required!s}; it claims "
                     f"{operator.traits!s}."
                 )
-            if inverse is not None and (
-                inverse.domain != self._domain or inverse.codomain != self._domain
-            ):
-                raise ValueError(f"The inverse must act on {self._domain!r}.")
+            if inverse is not None:
+                if inverse.domain != self._domain or inverse.codomain != self._domain:
+                    raise ValueError(f"The inverse must act on {self._domain!r}.")
+                if required & inverse.traits != required:
+                    raise ValueError(
+                        f"The inverse must claim {required!s}; it claims "
+                        f"{inverse.traits!s}."
+                    )
+                probe = self._domain.random(rng=rng)
+                image = operator(inverse(probe))
+                defect = self._domain.norm(self._domain.subtract(image, probe))
+                if defect > 1e-6 * self._domain.norm(probe):
+                    raise ValueError(
+                        f"The inverse is not the operator's: B B^-1 x differs "
+                        f"from x by {defect:g} on a probe of norm "
+                        f"{self._domain.norm(probe):g}."
+                    )
 
         def finish(squared_radius: float) -> Any:
             radius = float(np.sqrt(max(squared_radius, 0.0)))
@@ -1789,6 +1989,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 precision,
                 center=self.expectation,
                 covariance=covariance,
+                radius=radius,
             )
 
         def from_spectrum(eigenvalues: np.ndarray) -> Any:
@@ -1868,7 +2069,26 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
                 )
             decomposition = random_eig(target, rank=rank, rng=rng, n_jobs=n_jobs)
-            return from_spectrum(np.asarray(decomposition.eigenvalues, dtype=float))
+            kept = np.clip(
+                np.asarray(decomposition.eigenvalues, dtype=float), 0.0, None
+            )
+            # The dropped tail is positive, so the radius is a lower bound; a
+            # Hutchinson trace, a few dozen applications against the
+            # decomposition's hundreds, says how much the kept part carries.
+            trace = self._stochastic_trace(
+                target, samples=32, rtol=None, rng=rng, n_jobs=n_jobs
+            )
+            if trace > 0.0 and float(kept.sum()) < 0.95 * trace:
+                import warnings
+
+                warnings.warn(
+                    f"The {kept.size} eigenvalues kept carry about "
+                    f"{100.0 * float(kept.sum()) / trace:.0f}% of the trace "
+                    f"(Hutchinson estimate {trace:.3g}); the radius is a lower "
+                    f"bound by the rest. Raise rank=, or sample.",
+                    stacklevel=2,
+                )
+            return from_spectrum(kept)
         if method != "dense":
             raise ValueError(f"Unknown method {method!r}.")
 

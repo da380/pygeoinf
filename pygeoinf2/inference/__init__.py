@@ -40,7 +40,11 @@ from .estimators import (
     PointEstimator,
     SetEstimator,
 )
-from .gaussian import GaussianPosterior, LinearGaussianInversion
+from .gaussian import (
+    GaussianPosterior,
+    LinearGaussianInversion,
+    LowRankGaussianPosterior,
+)
 from .laplace import LaplaceApproximation, LaplaceResult, MaximumAPosteriori
 from .minimization import (
     ConstrainedMinimization,
@@ -72,6 +76,7 @@ __all__ = [
     "LinearizedFeasiblePropertySet",
     "FeasiblePropertySet",
     "GaussianPosterior",
+    "LowRankGaussianPosterior",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
     "FactoredNormalOperator",

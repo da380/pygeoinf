@@ -1724,3 +1724,116 @@ class TestZeroExpectation:
             space, 1.0, expectation=space.zero()
         )
         assert not explicit.has_zero_expectation
+
+
+class TestTheIdentityRefusalKeysOnTheMarker:
+    def test_a_function_space_that_is_not_a_module_is_refused(self):
+        class Discretization(EuclideanSpace):
+            @property
+            def is_function_space(self) -> bool:
+                return True
+
+        space = Discretization(5)
+        with pytest.raises(TypeError, match="not trace class"):
+            GaussianMeasure.from_standard_deviation(space, 1.0)
+        GaussianMeasure.from_standard_deviation(space, 1.0, unsafe=True)
+
+
+class TestATruncatedSpectrumWarns:
+    def test_the_randomized_route_says_what_it_dropped(self, rng):
+        X = make_dense_metric_space(20)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20), form="galerkin")
+        with pytest.warns(UserWarning, match="of the trace"):
+            mu.ambient_ball(level=0.9, method="spectral", rank=3, rng=rng)
+
+
+class TestACorrelatedProduct:
+    """Factors tied through their latent white noise by a correlation
+    matrix: marginals unchanged, cross blocks ``R_ij L_i L_j*``."""
+
+    @staticmethod
+    def factors():
+        X = EuclideanSpace(5)
+        a = GaussianMeasure.from_standard_deviations(X, np.linspace(0.5, 1.5, 5))
+        b = GaussianMeasure.from_standard_deviations(X, np.linspace(2.0, 0.4, 5))
+        return X, a, b
+
+    def test_the_marginals_and_the_cross_block(self, rng):
+        from pygeoinf2.testing import check_measure
+
+        X, a, b = self.factors()
+        rho = 0.6
+        joint = GaussianMeasure.from_product(
+            [a, b], correlation=np.array([[1.0, rho], [rho, 1.0]])
+        )
+        check_measure(joint, rng=rng)
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        image = joint.covariance((x, X.zero()))
+        assert image[0] == pytest.approx(a.covariance(x))
+        assert image[1] == pytest.approx(
+            rho * b.covariance_factor(a.covariance_factor.adjoint(x))
+        )
+        image = joint.covariance((X.zero(), y))
+        assert image[1] == pytest.approx(b.covariance(y))
+
+    def test_the_identity_is_the_independent_product(self, rng):
+        X, a, b = self.factors()
+        tied = GaussianMeasure.from_product([a, b], correlation=np.eye(2))
+        free = GaussianMeasure.from_product([a, b])
+        v = (X.random(rng=rng), X.random(rng=rng))
+        assert tied.covariance(v)[0] == pytest.approx(free.covariance(v)[0])
+        assert tied.covariance(v)[1] == pytest.approx(free.covariance(v)[1])
+
+    def test_the_precision_inverts_the_covariance(self, rng):
+        X, a, b = self.factors()
+        joint = GaussianMeasure.from_product(
+            [a, b], correlation=np.array([[1.0, -0.4], [-0.4, 1.0]])
+        )
+        assert joint.precision is not None
+        v = (X.random(rng=rng), X.random(rng=rng))
+        back = joint.precision(joint.covariance(v))
+        assert back[0] == pytest.approx(v[0]) and back[1] == pytest.approx(v[1])
+
+    def test_draws_carry_the_correlation(self, rng):
+        X, a, b = self.factors()
+        joint = GaussianMeasure.from_product(
+            [a, b], correlation=np.array([[1.0, 0.9], [0.9, 1.0]])
+        )
+        draws = joint.samples(2000, rng=rng)
+        first = np.array([d[0][0] / 0.5 for d in draws])
+        second = np.array([d[1][0] / 2.0 for d in draws])
+        assert np.corrcoef(first, second)[0, 1] == pytest.approx(0.9, abs=0.05)
+
+    def test_latents_with_a_diagonal_metric_correspond_by_components(self, rng):
+        """Two different spaces of one dimension, each with a diagonal
+        metric: the marginals are still the factors."""
+        from pygeoinf2.symmetric_space.circle import Sobolev
+        from pygeoinf2.testing import check_measure
+
+        A, B = Sobolev(16, 2.0, 0.2), Sobolev(16, 1.5, 0.4)
+        a, b = A.sobolev_measure(2.0, 0.2), B.sobolev_measure(2.0, 0.4)
+        joint = GaussianMeasure.from_product(
+            [a, b], correlation=np.array([[1.0, 0.5], [0.5, 1.0]])
+        )
+        check_measure(joint, rng=rng)
+        x = A.random(rng=rng)
+        assert A.norm(
+            A.subtract(joint.covariance((x, B.zero()))[0], a.covariance(x))
+        ) < 1e-10 * A.norm(a.covariance(x))
+
+    def test_what_is_refused(self):
+        X, a, b = self.factors()
+        with pytest.raises(ValueError, match="unit diagonal"):
+            GaussianMeasure.from_product(
+                [a, b], correlation=np.array([[2.0, 0.0], [0.0, 1.0]])
+            )
+        with pytest.raises(ValueError, match="positive semidefinite"):
+            GaussianMeasure.from_product(
+                [a, b], correlation=np.array([[1.0, 1.5], [1.5, 1.0]])
+            )
+        with pytest.raises(ValueError, match="one row per factor"):
+            GaussianMeasure.from_product([a, b], correlation=np.eye(3))
+        Y = EuclideanSpace(3)
+        c = GaussianMeasure.from_standard_deviation(Y, 1.0)
+        with pytest.raises(ValueError, match="correspond mode for mode"):
+            GaussianMeasure.from_product([a, c], correlation=np.eye(2))

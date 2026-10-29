@@ -20,8 +20,8 @@ The prior is a Gaussian measure of extra regularity on that space, a
 Sobolev measure of order 2 on each layer, whose covariance is trace class
 on `H^2`; it does not move the problem to a smoother space, and nothing is
 done relative to `L^2`. The point answers measure size in the prior's own
-norm and the set answer hardens the prior to an ellipsoid of its own shape
-(sections 3 and 5).
+norm and the set answer hardens the prior to the ball of the space's norm
+that carries 95% of it (sections 3 and 5).
 
 The unknown is the slowness perturbation, in percent of the surface
 slowness, in a planet of radius one with a core no ray enters. It is
@@ -194,10 +194,9 @@ Two choices are in it. **The calibration** is by an amplitude per layer,
 deviation over its interior to one percent; the result is uniform to within
 two per cent. Calibrating with `pointwise_std=` instead would rescale the
 measure from place to place, `S C S*` with `S` a multiplication, exactly
-uniform but neither diagonal nor with a precision, so that the prior's norm,
-its ellipsoid and its spectrum would each go through a solver or the
-Lanczos calculus at every application, where here they are diagonal and
-free. **The re-seating**: the product measure's operators act on the bare
+uniform but neither diagonal nor with a precision, so that the prior's norm
+would go through a solver and its spectrum through dense matrices or draws,
+where here they are diagonal and free. **The re-seating**: the product measure's operators act on the bare
 direct sum of the two layers, and so would a posterior built from it, which
 would then have no pointwise product and no pointwise standard deviation;
 the same factor, as one diagonal operator on the layered space itself,
@@ -209,42 +208,56 @@ rng=rng)` with Gaussian noise of 0.05; part G uses the same construction at
 five times the width, so that the bending of its smooth draws matters.
 
 **A mixture prior** (part E, `mixture.py`) puts a discrete question in the
-continuous problem: a plume at one of five places.
+continuous problem: a plume rising at one of five angles.
 
 ```python
 GaussianMixture(
-    [problem.prior.translate(plume(problem, center)) for center in centers]
+    [problem.prior.translate(plume(problem, axis)) for axis in angles]
 )
 ```
 
-Each component is the app's prior translated to the plume at a candidate,
-all with the same covariance, the weights equal. The plume is projected with
-`extension="constant"`, which keeps a bump much narrower than the layer out
-of the padding.
+Each component is the app's prior translated to the plume at a candidate
+angle, all with the same covariance, the weights equal. The plume is a
+conduit, `exp(-d^2 / (2 w^2))` scaled to its peak, with `d` the distance
+from the point to the radial segment at the candidate's angle between the
+core-mantle boundary and the surface (`distance_to_axis`): Gaussian across
+the segment and flat along it. The layered space takes it as a function of
+position, one piece a layer, nothing in the core:
+
+```python
+space.project_function([lambda point: 0.0, value], extension="constant")
+```
+
+`extension="constant"` keeps the function's values on the mantle's grid and
+continues them at their end values across the padding. The conduit runs at
+full height to both edges of the mantle, and the default, the best fit over
+the domain in the kept modes, would leak into the padding at the full
+scale, with values there in the thousands; the library warns when it does.
 
 **Hardening to sets** (part D, `sets.py`):
-`prior.weakened_ellipsoid(level=0.95, power=scale.set_power)` and the
-noise's `ambient_ball`, which for an isotropic error on a Euclidean data
-space is its credible ellipsoid too. The prior's set is
-`{m : (Q^-p m, m) <= r^2}`, its covariance to a power, with `r` the radius
-that carries 95% of the prior, a quantile of `sum lambda^(1-p) Z^2` over the
-covariance's spectrum. At `p = 1` it would be the Mahalanobis ellipsoid,
-`prior.credible_set`, which the library refuses on a function space: its
+`prior.ambient_ball(level=0.95)` and the noise's `ambient_ball`, which for
+an isotropic error on a Euclidean data space is its credible ellipsoid too.
+The prior's set is the ball `{m : ||m|| <= r}` in the space's own `H^2`
+norm, with `r` the radius at which a draw from the prior lies inside with
+probability 0.95, a quantile of `sum lambda_i Z_i^2` over the covariance's
+spectrum: the classical Backus-Gilbert-Parker norm bound, the prior used
+only to calibrate it. The expectation of that sum is the covariance's
+trace, finite because the covariance is trace class on `H^2`, so the
+radius has a limit however fine the truncation, in the disk and in the
+ball alike. The Mahalanobis ellipsoid, `prior.credible_set`, has none: its
 radius is a chi-squared quantile on as many degrees of freedom as there are
-coefficients and grows with the truncation. At `p = 0` it is the ball in
-the space's norm, which forgets the covariance's shape. In between the
-radius has a limit when `sum lambda^(1-p)` converges, `p < 1 - d/4` at order
-2: one half in the disk, one quarter in the ball. The scale's `set_power`
-is half way, one quarter in the disk and one eighth in the ball: the
-ellipsoid then bounds a norm half way between the space's and the
-smoothness the draws have. The covariance being diagonal, the ellipsoid's
-precision and covariance are exact diagonal operators, and its radius an
-exact quantile with no applications. The set keeps the covariance's shape
-but not its weights: it admits the model that spends its whole budget on
-the core's mean, which is why the core's bracket is the ellipsoid's own
-`±5.2` less what the mantle must spend to fit the data. The test checks that
-bracket's inner end attains its outer one: the smallest fitting model plus
-as much of the core mean's representer as the ellipsoid still holds.
+coefficients, which is why the library refuses it on a function space. The
+covariance being diagonal, the radius is an exact quantile read off its
+diagonal with no applications, and the ball's support function is the
+radius times the norm of the representer. The ball forgets the covariance's
+shape: it admits the model that spends its whole budget on the core's
+mean, which is why the core's bracket is the ball's own `±4.03` less what
+the mantle must spend to fit the data. The test checks that bracket's
+inner end attains its outer one: the smallest fitting model plus as much
+of the core mean's representer as the ball still holds. The ball is a
+convenience, one constraint set among many; a bound the physics suggests,
+on another norm, a region or one layer more than the other, is a convex
+set the same estimator takes.
 
 The test checks the sampled pointwise standard deviation against the exact
 one at four points: the measure check this app needs.
@@ -318,16 +331,16 @@ inversion and rescores the weights by the components' evidences:
 
 The noise sweep rebuilds the estimator at each noise level from
 `LinearForwardProblem(problem.forward, error=noise)`. Figures
-`mixture_*.png` draw the candidates, the weights, the marginals as the
-mixtures' own densities (`mixture_marginal` in `src/common.py`, exact) and the winner's
-mean.
+`mixture_*.png` draw the candidate conduits, the weights, the marginals as
+the mixtures' own densities (`mixture_marginal` in `src/common.py`, exact)
+and the winner's mean.
 
 **The set** (parts D and F, `sets.py`). `BackusGilbertParker(forward,
-properties, ellipsoid, noise=noise_ball, solver=CholeskySolver())(data)`, a
+properties, ball, noise=noise_ball, solver=CholeskySolver())(data)`, a
 `support_sweep` in the six coordinate directions, each result a certified
 `value` with an attained `inner`, and `feasible.polytope(directions)` for
 the truth's membership. Figure `brackets.png` draws each bracket against
-the ellipsoid's own support along the property's representer.
+the ball's own support along the property's representer.
 
 **Bent rays** (part G). `MaximumAPosteriori(problem, prior,
 optimizer=optimizer, gauss_newton=True).solve(data)` from the prior's mean;
@@ -348,9 +361,10 @@ answer inconsistent with its physics. Figure `bent.png` draws both.
   network are the scale's, and each is a command-line option.
 - **The prior and the properties**: `sobolev_prior` is a measure of order
   above half the dimension on each layer, calibrated by an amplitude so that
-  it stays diagonal; the order, the width and the set's power are options
-  (`--prior-order`, `--prior-std`, `--set-power`), the power below
-  `1 - d / 2s` for the ellipsoid to survive refinement. `box_average_row`
+  it stays diagonal; the order, the width and the set's level are options
+  (`--prior-order`, `--prior-std`, `--level`), and the prior's set is one
+  line in `sets.py` to replace by any convex set with a support function.
+  `box_average_row`
   and `core_average_row` are any linear functionals given by derivative
   components.
 - **A nonlinear forward**: a trace that raises `EvaluationError` when it

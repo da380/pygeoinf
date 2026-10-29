@@ -336,58 +336,29 @@ Recorded rather than settled, so nobody has to rediscover them.
   waveform app wraps its objective to record them. `test_code_practice`
   skips Markdown, so the no-decision-number rule is not enforced on the
   READMEs and walkthroughs.
-- **Findings from re-posing the mini-apps** (2026-10-29, D-191; no
-  library edits; the two about the weakened ellipsoid went with it,
-  D-194). (3) `Layered.sobolev_measure` builds its
-  operators as `BlockDiagonalLinearOperator`s, whose domain is a bare
-  `DirectSum` of the layers, not the layered space: `disk.Layered([0,
-  0.55, 1], [9, 16], order=2, length_scale=0.2).sobolev_measure(2,
-  pointwise_std=1).covariance.domain` is a `CoordinateDirectSum`, and a
-  `LinearGaussianInversion` posterior from it refuses
-  `sample_pointwise_std` (no pointwise product). The tomography app
-  re-seats the factor as one diagonal on the layered space. (4) A
-  spectral-element measure calibrated by `pointwise_std=` is `S C S*`,
-  with no precision and no diagonal, so its norm and its ellipsoid go
-  through solvers and the Lanczos calculus at every application; the
-  tomography app calibrates by `amplitude=` instead, uniform to 2%. (5)
-  A symmetric space's invariant measure has a diagonal precision but no
-  `precision_factor`, which the planet-density pattern of whitening
-  reads. (6) `FeasiblePropertySet.support_sweep` runs `n_jobs` as threads
-  only, which `parallel.py` says crash the `pyshtools` transforms on a
-  sphere (the point-data app passes `n_jobs=8`; it ran, and the threads
-  bought nothing); and the sweep over `±q` repeats each direction's
-  kernel solve, `v` and `-v`. (7) The data-space `Primal`'s solve at its
-  floor is most of a direction's cost on an ill-preconditioned family:
-  350 of about 770 CG iterations at the point-data quick scale at the
-  default floor, half the applications at `floor=1e-4`.
-- **The planet-density app's unit scheme** (2026-10-29, David's prompt
-  to check the planetmodel-based examples for sensible units). Tutorial
-  11, example 31 and the tomography app work on a planet of radius one
-  and their numbers are of order one. The planet-density app keeps radii
-  in kilometers and densities in g/cm^3 with its data scaled to order
-  one, so the Earth's volume sits in every inner product: PREM's norm on
-  the space is `1e7`, squared norms `1e14`. Conditioning is unaffected,
-  the inner product scaling uniformly, but every absolute floor sees it:
-  the checks' old floor at one hid that the app's derivative probes
-  were PREM over its norm with a displacement part of `1e-7`, and the
-  probes had to be rebalanced by hand (`src/radii.py`). A radius in
-  units of the Earth's, with the length scale 200 km as 0.0314 and the
-  plots labeled in kilometers, would bring the norms to order one. A
-  review item for the app, not the library.
-- **Findings from re-posing the C++ backend app** (2026-10-29, D-193; no
-  library edits). (1) `GaussianMeasure.from_standard_deviation` refuses a
-  `HilbertModule` domain but accepts a function space that is not one:
-  `CppSpace(100, 0.08)` reports `is_function_space`, and
-  `from_standard_deviation(space, 1.0)` returns an identity covariance on
-  it without complaint, where `credible_set` refuses the same space. The
-  refusal should key on `is_function_space`, as D-131's does. (2) A
-  truncated `rank` on `ambient_ball`'s randomized route underestimates the
-  radius without a warning (the docstring says so; nothing at run time
-  does): on the C++ app's 1000-element space the squared radius was 6.00
-  from the leading 50 eigenvalues, 6.27 from 100, 6.69 from all. Under
-  `quantile_method="matched"` only `tr C` and `tr C^2` are needed, which
-  a Hutchinson estimate could supply matrix-free. `Ellipsoid` exposes no
-  radius.
+- **Findings from re-posing the mini-apps** (2026-10-29, D-191; the
+  layered seating and the sweep's threads fixed as D-195, the weakened
+  ellipsoid's two gone with it, D-194). (4) A spectral-element measure
+  calibrated by `pointwise_std=` is `S C S*`, with no precision and no
+  diagonal, so its norm and its ellipsoid go through solvers and the
+  Lanczos calculus at every application; the tomography app calibrates
+  by `amplitude=` instead, uniform to 2%. (5) A symmetric space's
+  invariant measure has a diagonal precision but no `precision_factor`,
+  which the planet-density pattern of whitening reads. (6) The support
+  sweep over `±q` repeats each direction's kernel solve, `v` and `-v`.
+  (7) The data-space `Primal`'s solve at its floor is most of a
+  direction's cost on an ill-preconditioned family: 350 of about 770 CG
+  iterations at the point-data quick scale at the default floor, half
+  the applications at `floor=1e-4`.
+- **planetmodel's spectral basis does not normalize eigenvector signs**
+  (2026-10-29, D-199). `eig_banded` returns eigenvectors of either sign,
+  so two meshes that differ by one element can flip a basis function, and
+  a seeded draw of the same measure with it. `Radial(12,
+  inner_radius=1221.5, radius=3480.0, order=2.0, length_scale=200.0)`
+  against the same in Earth radii, before the element-length margin, had
+  its first outer-core basis function flipped. For the planetmodel 1.4
+  update after the launch: fix each eigenvector's sign (first nonzero
+  component positive) in `SpectralBasis`.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.
@@ -479,12 +450,33 @@ planetmodel 1.3.2.
   its `main`; its rules want the commit on `develop`), same names, with the
   version bump left for the release branch as its convention requires.
 
+**Pre-review actions, in order (settled with David 2026-10-29):**
+
+1. DONE (D-195). The known §7 defects that change what a user sees.
+2. DONE (D-196). `GaussianMeasure.from_product(correlation=)` and
+   `Layered.sobolev_measure(correlation=)`; `correlated_measure` keeps its
+   own fused path for the scale-dependent case.
+3. DONE (D-198). The low-rank posterior, `LowRankGaussianPosterior`,
+   with `LaplaceApproximation(rank=)` and `from_linear_problem`; to be
+   shown to the student; an example of its own and one of the correlated
+   product belong to the examples review.
+4. DONE (D-199). The planet-density app's unit scheme; David judged
+   part D's weaker contrast better as it is.
+
+Then the review: the public surface against the principles, one agent per
+layer with findings verified; the examples, whether everything the core
+needs is there and the order makes sense, their aim being to illustrate
+the core functionality briefly (David, 2026-10-29); every package's
+`__init__.py` doing only what it should, re-exports and nothing else,
+with no module code (David, 2026-10-29; `ball`, `disk` and `interval`
+were split as D-197, and the rest were already clean); naming and
+consistency; nothing marked
+provisional ("a niche library whose userbase is largely its developers").
+The external asks are out of the review: the student has seen the updates
+and is happy, and sl3dpp's list is not a concern now.
+
 **Decided now, built after the release:**
 
-- `GaussianMeasure.from_product(correlation=)`: a matrix on the latent
-  white noise, unit diagonal, `None` the independent product of today;
-  `correlated_measure` becomes a wrapper keeping its fused spectral path;
-  the spectral-element spaces gain correlated fields. The student builds it.
 - `formalism=` opens on the nonlinear route with `"data_space"` the default
   (D-74's rule everywhere), and `with_probed_derivative()` mirrors D-34:
   the derivative assembled from `dim(Y)` adjoint applications, exactly
@@ -492,14 +484,10 @@ planetmodel 1.3.2.
   privileged: the library offers the range of adjoint strategies — discrete
   adjoints are the backend's business, continuous adjoints are supported
   honestly through measured defects and solver floors, the representer
-  route exists where data are few.
-- One low-rank posterior class: a `GaussianMeasure` carrying the
-  `(C, V, D)` structure of the prior-preconditioned misfit Hessian's
-  leading eigenpairs, which is an `AbsolutelyContinuousMeasure` with an
-  r-dimensional density. Designed jointly with the student before either
-  side writes code; it serves the Laplace route, the sampling layer's
-  references, and is the designated answer to deflated pointwise variance
-  on spaces with no closed form (plain Monte Carlo until then).
+  route exists where data are few. David's caution (2026-10-29): on a
+  large backended problem little or nothing is done datum by datum, the
+  adjoint acting on a general data-space vector through one adjoint
+  solve, so this is not the picture to design around; the details wait.
 - Sampling: the presets (`PCN`, `MALA`, `HMC`, `SMC`) and the result types
   (`SampledPosterior`, `WeightedEnsemble`) are the public contract; whether
   they are built as kernels-and-driver or as discretised SDE dynamics is
@@ -532,5 +520,5 @@ of work, starting with the marker-gated methods already done pre-release
 and `from_product(correlation=)`); the sl3dpp items (the data-space route
 and low-rank posterior above, then blocks with a size hint, process-safety
 declarations, the spectral-element separable-basis export, optimizer checkpointing,
-resource-owning linearizations, and the Kronecker space, which sl3dpp has
+resource-owning linearizations, and the tensor product space, which sl3dpp has
 offered to supply as a backend); and whatever the convex redesign defers.

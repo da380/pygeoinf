@@ -65,18 +65,21 @@ natural ends.
   two standard deviations and samples before and after, and each average's
   marginal before and after, with the truth.
 - **D, the set answer** (`sets.py`): the feasible set of the two averages
-  with the prior hardened to its 95% ellipsoid and the noise to its 95%
-  ball, as certified support brackets; whether the true averages lie in the
-  polytope they bound; and the bound the ellipsoid alone admits under
-  refinement. Its figure sets each bracket against the bound the prior's
-  ellipsoid admits alone, before any datum.
+  with the noise hardened to its 95% ball and the prior to two constraint
+  sets it calibrates: its 95% ball in the space's own `H^1` norm, and its
+  95% ball in the `L^2` norm, an ellipsoid of `H^1` given by the operator
+  `G^-1 M` that represents the `L^2` inner product there, checked on the
+  space before it is used. For each, certified support brackets, whether
+  the true averages lie in the polytope they bound, and the bound the ball
+  alone admits under refinement. Its figure sets each bracket against the
+  bound its ball admits alone, before any datum.
 
 Each part prints the tally of what the backend was asked during it, member
 by member and operator by operator.
 
-Two scales. `--quick` is 100 elements and runs every part in about 2.5
+Two scales. `--quick` is 100 elements and runs every part in about 2
 seconds; it is what the test suite runs. The full scale is 1000 elements and
-runs every part in about 42 seconds. Both are seeded; the points are drawn
+runs every part in about 35 seconds. Both are seeded; the points are drawn
 before the truth, so they are the same at both scales and the truth is not.
 
 ## How to build and run
@@ -117,8 +120,6 @@ the scale, each default the full preset's:
   --prior-length float  the correlation length of the prior (0.08)
   --prior-std float     the prior's pointwise standard deviation at the middle (1.0)
   --level float         the credibility of the discrepancy level and the sets (0.95)
-  --set-power float     the power of the prior's covariance that shapes its
-                        ellipsoid, below one half (0.25)
 ```
 
 Two overrides at the quick scale, against its own numbers:
@@ -128,18 +129,20 @@ Two overrides at the quick scale, against its own numbers:
   the posterior are the prior's and the data's, whatever the space; the
   truth is the same draw too. What changes is part A's representer, whose
   norm at the middle settles at 3.5 at length 0.04 and does not settle at
-  length zero, and part D, whose ellipsoid is the covariance to a power in
-  the space's metric: the bracket on the first average is `[+0.005,
-  +2.505]` at 0.08, `[-0.362, +2.657]` at 0.04 and `[-1.855, +3.150]` in
-  `L^2`.
+  length zero, and part D's `H^1` ball, a ball in the space's metric: the
+  bracket on the first average under it is `[-0.326, +2.623]` at 0.08,
+  `[-1.229, +3.014]` at 0.04 and `[-3.754, +3.908]` at length zero. The
+  `L^2` ball is the same set at every length, and its bracket is
+  `[-3.754, +3.908]` at all three: at length zero the space is `L^2`, and
+  the two balls are one.
 - **A noisier survey**, `--noise-std 0.3`: the same points and truth with
   three times the noise. The posterior standard deviation within a quarter
   of the prior's length of a point rises from 0.20 to 0.32 at most, and
   the first average's from 0.147 to 0.231; the discrepancy principle
   chooses a damping of 9.4 rather than 21.3, and the minimum-norm
   estimate's two propagated standard deviations grow from 0.10 to 0.24;
-  the certified brackets widen from 2.5 to 3.4 and from 2.1 to 3.0, and
-  still hold the truth.
+  the certified brackets under the `H^1` ball widen from 2.9 to 3.8 and
+  from 2.4 to 3.2, and still hold the truth.
 
 A part run on its own builds the problem from the seed, so it gives the
 same numbers as in the full sequence. Each part writes its own figure,
@@ -155,7 +158,7 @@ script's entry point.
 | `cpp/cppvec.cpp` | `Vector` (size, copy, axpy, scale, dot, weighted dot, a seeded normal fill, `to_list`/`from_list`), `SparseMatrix` (CSR from triplets; apply, apply transposed) and `CholeskyFactor` (banded; the solve, the factor and its transpose, their inverses, the log-determinant) |
 | `cpp/CMakeLists.txt` | `find_package(nanobind)` and `nanobind_add_module(cppvec STABLE_ABI NB_STATIC ...)` |
 | `build.py` | drives `cmake` on `cpp/` for the interpreter running it and copies the module into `src/`; `--check` reports whether it imports |
-| `src/space.py` | `CppSpace`, `H^1` over `cppvec.Vector`; `point_evaluation_operator`, `local_average_operator` and `matern_measure`, each from callables with its adjoint through the Riesz map |
+| `src/space.py` | `CppSpace`, `H^1` over `cppvec.Vector`; `point_evaluation_operator`, `local_average_operator`, `l2_form` (the `L^2` inner product as an operator on the space, and its inverse) and `matern_measure`, each from callables with its adjoint through the Riesz map |
 | `src/problem.py` | the scale with its two presets, the intervals, `build(scale)`: space, prior, points, truth, data and the two operators |
 | `src/common.py` | the command line built from the scale, the tally's report, the figure panels |
 | `ladder.py`, `point.py`, `bayesian.py`, `sets.py` | parts A to D, each a script with a `main()` and a `run` the others and the test call |
@@ -178,10 +181,10 @@ the covariance to 3.5e-10, and the precision factor through the factor to
 
 **B, C and D**, on the two averages:
 
-| average | truth | B: minimum norm, 2 propagated sd | bias | C: posterior mean, 95% interval | D: certified bracket | the ellipsoid alone |
-|---|---|---|---|---|---|---|
-| over `[0.2, 0.35]` | +1.638 | +1.416 ± 0.096 | -0.201 | +1.614, [+1.324, +1.903] | [+0.007, +2.955] | ±4.099 |
-| over `[0.6, 0.85]` | -0.033 | -0.043 ± 0.096 | +0.006 | -0.052, [-0.281, +0.177] | [-1.287, +1.218] | ±3.641 |
+| average | truth | B: minimum norm, 2 propagated sd | bias | C: posterior mean, 95% interval | D: bracket, `H^1` ball | the `H^1` ball alone | D: bracket, `L^2` ball | the `L^2` ball alone |
+|---|---|---|---|---|---|---|---|---|
+| over `[0.2, 0.35]` | +1.638 | +1.416 ± 0.096 | -0.201 | +1.614, [+1.324, +1.903] | [-0.373, +3.059] | ±3.721 | [-4.059, +4.090] | ±4.102 |
+| over `[0.6, 0.85]` | -0.033 | -0.043 ± 0.096 | +0.006 | -0.052, [-0.281, +0.177] | [-1.488, +1.437] | ±3.247 | [-3.151, +3.149] | ±3.179 |
 
 - **B** (0.3 s): a damping of 30.9 meets the discrepancy principle,
   chi-squared 21.03 against the critical 21.03 after 12 misfit evaluations;
@@ -198,43 +201,65 @@ the covariance to 3.5e-10, and the precision factor through the factor to
   left end, where there are no data; the first average's standard
   deviation falls from the prior's 0.928 to 0.148, the second's from 0.857
   to 0.117.
-- **D** (37 s): the prior hardened to `(Q^-1/4 u, u) <= r^2`, in which the
-  truth lies at 0.56 of the boundary's gauge, and the noise to its ball of
-  radius 0.459. The brackets hold the truth, each to a gap below 1e-4, and
-  the polytope of the four half-spaces contains the true averages. A set
-  bound admits more than the Gaussian posterior: the brackets are 2.9 and
-  2.5 wide against intervals of 0.58 and 0.46, and the data narrow the
-  ellipsoid's bound alone by a factor of nearly three. That bound settles under
-  refinement at the scale's power, 4.026, 4.069 and 4.099 at 250, 500 and
-  1000 elements, its increments falling by the root of two, and at power
-  one half, where the radius has no limit, it keeps growing, 5.02, 5.28 and
-  5.53. The covariance's spectrum for the radius takes 11 s and the four
-  directions another 11.
+- **D** (30 s): the noise hardened to its ball of radius 0.459, and the
+  prior to its 95% ball in `H^1`, radius 1.944, in which the truth lies at
+  0.42 of the boundary's gauge `(||u|| / r)^2`, and to its 95% ball in
+  `L^2`, `u^T M u <= r^2` with `r = 1.590`, in which it lies at 0.27. Under
+  either the brackets hold the truth, each to a gap below 1.2e-3, and the
+  polytope of the four half-spaces contains the true averages. The form
+  `G^-1 M` and its inverse hold their adjoints in the space's inner product
+  to 3.1e-11 and 7.6e-13, and their claims to be self-adjoint and positive
+  definite to 9.4e-14 and 1.3e-12.
+
+  The two balls bound different things. Alone, the `L^2` ball admits more
+  than the `H^1` ball on the narrower average, ±4.10 against ±3.72, and
+  less on the wider one, ±3.18 against ±3.25: the `L^2` norm does not
+  charge a field for its roughness, so it lets more of its budget into the
+  fine scales a short average weighs, while its smaller radius binds the
+  smoother one harder. With the data the difference is stark. Under the
+  `H^1` ball the twelve values narrow the bounds to under half, brackets
+  3.4 and 2.9 wide against 7.4 and 6.5, still wider than the posterior's
+  intervals of 0.58 and 0.46, as a set bound is. Under the `L^2` ball they
+  barely narrow them, brackets 8.15 and 6.30 wide against 8.20 and 6.36: a
+  value at a point is not a bounded functional on `L^2`, so a model can
+  meet the data with spikes a few elements wide at the points, at an `L^2`
+  cost that vanishes with the mesh, and keep the rest of its budget for
+  the averages. At 100 elements the `L^2` brackets are 94% and 90% of the
+  bounds alone, at 1000 elements 99%. It is part A's lesson again, in the
+  set answer: the data are posed on `H^1`, and a constraint that does not
+  see the derivative cannot use them.
+
+  Both bounds alone settle under refinement: on the first average 3.709,
+  3.717 and 3.721 in `H^1` and 4.094, 4.098 and 4.102 in `L^2`, at 250,
+  500 and 1000 elements, a draw's squared norm having a finite expectation
+  in either. The two spectra for the radii take 12 and 13 s, the four
+  directions under each a fraction of a second, and the refinement 5 s.
 
 **The tally**, the calls the backend answered during each part:
 
 | member | A, the ladder | B, the point | C, the measure | D, the set |
 |---|---|---|---|---|
-| `inner_product` | 120 592 | 3 | 0 | 5 263 712 |
-| `axpy` | 209 | 1 | 1 013 | 5 278 784 |
-| `copy`, `zero` | 386, 16 | 1, 3 | 2 016, 8 | 3 299, 1 165 |
-| `scale_inplace` | 183 | 0 | 1 003 | 26 424 |
-| `random`, `white_noise` | 23, 40 136 | 0, 0 | 0, 6 | 0, 1 001 |
-| `dim`, `_key` | 11, 3 | 0, 0 | 0, 0 | 171, 0 |
-| `riesz`, the Riesz map | 10 | 44 | 3 025 | 156 |
-| point evaluation, value and adjoint | 20, 5 | 42, 42 | 3 025, 3 021 | 52, 144 |
-| local averages, value and adjoint | 20, 5 | 6, 2 | 6, 4 | 4, 12 |
-| prior covariance | 58 | 0 | 2 022 | 27 365 |
-| prior factor, value and adjoint | 20 157, 5 | 48, 44 | 1 009, 1 003 | 0, 0 |
+| `inner_product` | 120 592 | 3 | 0 | 7 025 516 |
+| `axpy` | 209 | 1 | 1 013 | 7 009 412 |
+| `copy`, `zero` | 386, 16 | 1, 3 | 2 016, 8 | 6 676, 2 006 |
+| `scale_inplace` | 183 | 0 | 1 003 | 6 496 |
+| `random`, `white_noise` | 23, 40 136 | 0, 0 | 0, 6 | 10, 2 052 |
+| `dim`, `_key` | 11, 3 | 0, 0 | 0, 0 | 22, 0 |
+| `riesz`, the Riesz map | 10 | 44 | 3 025 | 319 |
+| point evaluation, value and adjoint | 20, 5 | 42, 42 | 3 025, 3 021 | 107, 295 |
+| local averages, value and adjoint | 20, 5 | 6, 2 | 6, 4 | 8, 24 |
+| prior covariance | 58 | 0 | 2 022 | 4 004 |
+| prior factor, value and adjoint | 20 157, 5 | 48, 44 | 1 009, 1 003 | 4 054, 4 004 |
 | prior precision; precision factor, value and adjoint | 46; 21, 5 | 0; 2, 0 | 0; 0, 0 | 0; 0, 0 |
+| the `L^2` form `G^-1 M`, and its inverse | 0, 0 | 0, 0 | 0, 0 | 4 061, 204 |
 
 The 40 000 draws of A are `check_white_noise`'s and `check_measure`'s. C's
 3000 evaluations and Riesz maps are the pointwise standard deviation: the
 prior and the posterior pushed through evaluation at the 1001 nodes, which
-is a point evaluation operator too. D's five million inner
-products are the price of a space without coordinates: the covariance's
-spectrum to the full dimension by Gram-Schmidt, three and a half million of
-them, and the Lanczos iterations of the ellipsoid's fractional powers, each
-reorthogonalized, for the rest. What the library never asked for, at any
+is a point evaluation operator too. D's seven million inner products are
+the price of a space without coordinates: the two spectra for the radii,
+the covariance's and that of `L* B L` with `B` the `L^2` form, each to the
+full dimension by Gram-Schmidt, three and a half million apiece. What the
+library never asked for, at any
 scale: a component, a Gram matrix, a dense matrix of an operator on the
 model space, a basis vector of it, a pointwise product.

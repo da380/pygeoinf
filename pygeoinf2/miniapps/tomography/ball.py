@@ -188,15 +188,12 @@ def stations() -> (
 SOURCES, RECEIVERS = stations()
 
 #: The ball: the network above, degree 14, and a length scale wide enough
-#: for the truncation; the physics, the noise and the distances the disk's;
-#: the set's power below one quarter, for the ellipsoid of a measure of
-#: order two in three dimensions to survive refinement.
+#: for the truncation; the physics, the noise and the distances the disk's.
 BALL = dataclasses.replace(
     QUICK,
     name="ball",
     mmax=14,
     length_scale=0.2,
-    set_power=0.125,
     sources=SOURCES,
     receivers=RECEIVERS,
     nodes=121,
@@ -816,7 +813,7 @@ def measure_part(
 
 def set_part(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
     """The certified brackets on the three means, against the bounds of the
-    prior's ellipsoid alone."""
+    prior's ball alone."""
     print("the set:")
     result = support_brackets(problem)
     brackets_figure(
@@ -825,10 +822,8 @@ def set_part(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
         names=NAMES,
         path=outdir / "ball_brackets.png",
         title="Tomography, part F: the set answer in the ball. For each mean, the "
-        f"bound the prior's {problem.scale.level:.0%} ellipsoid admits alone\nand "
-        "the "
-        "certified bracket "
-        "the data leave",
+        f"bound the prior's {problem.scale.level:.0%} ball admits alone\nand the "
+        "certified bracket the data leave",
     )
     return result
 

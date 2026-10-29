@@ -1424,10 +1424,12 @@ def test_e_three_answers_on_the_box(results):
     assert part["inside"]
     assert np.all(high - low > 2 * 1.96 * part["deviation"])
     assert high[1] - low[1] > high[0] - low[0]
-    # The truth lies in the prior's ellipsoid, and the data narrow the
-    # bound of the ellipsoid alone, most among the sensors.
-    assert part["gauge"] <= 1.0
+    # The truth lies in the prior's ball, whose bound alone is the radius
+    # times the norm of each average's representer, the same either way;
+    # the data narrow it, most among the sensors.
+    assert 0.0 < part["radius"] and part["gauge"] <= 1.0
     alone = part["alone"]
+    assert np.allclose(alone[:, 0], -alone[:, 1])
     narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
     assert np.all(narrowed < 1.0) and narrowed[0] < narrowed[1]
 

@@ -59,8 +59,7 @@ on `H^2` (a radial profile's spectrum grows as on a line, so any order
 above one half would be) and whose draws have nearly one and a half
 derivatives more than the space asks. The data are the
 truth's mass and moment of inertia, with Gaussian errors of 0.1% of each
-drawn from the error measure. They are carried in units of `10^24 kg` and
-`10^37 kg m^2`, so that both are of order one.
+drawn from the error measure.
 
 PREM is then a reference that is wrong by a known amount. The tight prior
 is honest about how much, and part C's wide prior is deliberately loose.
@@ -69,7 +68,13 @@ are 10.919, 4.379 and 4.248. The data fit the truth to a chi-squared of 3.09
 and reject the reference at 265.8. Every answer can be marked against the
 truth.
 
-Units: radii in km and densities in g/cm^3 throughout.
+**The units.** Radius is in Earth radii, so the planet has radius one;
+density is in g/cm^3, and the data are in `10^24 kg` and `10^37 kg m^2`.
+The units are chosen to make everything of order one: the densities, the
+data, and the norms on the space, whose inner product is a volume integral.
+PREM's norm on the space is 20.3, the truth's departure from it 0.63, and
+the tight prior's 95% ball has a radius of 0.68. The command line and the
+figures give lengths in kilometers, converted where they meet the space.
 
 ## The parts
 
@@ -86,14 +91,14 @@ Units: radii in km and densities in g/cm^3 throughout.
     propagates and its bias at the truth.
   - The **measure**: the posterior against the prior, as bands on the
     profile and marginals on the three properties, and the log evidence.
-  - The **set**: the prior hardened to its 95% ellipsoid, the ellipsoid of
-    its covariance to the power three eighths, and the noise to its own 95%
-    ellipse on the two data. Their certified brackets on the three
-    properties are drawn
-    against the bound the prior's ellipsoid admits alone.
+  - The **set**: the prior hardened to its 95% ball, the ball of the
+    space's norm about PREM in which a draw from the prior lies with
+    probability 0.95, and the noise to its own 95% ellipse on the two data.
+    Their certified brackets on the three properties are drawn against the
+    bound the prior's ball admits alone.
 - **C, a deliberately wide bound** (`wide.py`): the same measure with a
   pointwise standard deviation of 3 g/cm^3 as the Gaussian, and its 95%
-  ellipsoid as the set. The same three answers follow, in the same order.
+  ball as the set. The same three answers follow, in the same order.
 - **D, the boundaries** (`boundaries.py`): the inner-core and core-mantle
   boundary radii as further unknowns, a weakly nonlinear problem on
   `DirectSum([space, EuclideanSpace(2)])`.
@@ -121,17 +126,19 @@ Units: radii in km and densities in g/cm^3 throughout.
     Occam asks for the smallest `w`, as the point answers of parts B and C
     do.
   - **The displacement unit.** The displacements are carried in units of
-    the scale's `radius_scale`, 50 km. A unit is then one standard deviation of the
-    displacements' prior, as 0.1 g/cm^3 is of the density's, and that is
-    the statement the MAP model and the Laplace Gaussian rest on.
+    the scale's `radius_scale`, 50 km, which is 50/6371 in Earth radii. A
+    unit is then one standard deviation of the displacements' prior, as
+    0.1 g/cm^3 is of the density's, and that is the statement the MAP model
+    and the Laplace Gaussian rest on.
   - **The two norms.** The model space's norm adds the squared
     displacements, in units of 50 km, to the squared `H^2` norm of the
-    density change, a volume integral in km^3. There a displacement costs
-    next to nothing:
+    density change, a volume integral over a planet of radius one. There a
+    displacement is dear:
     - one unit at the core-mantle boundary changes the mass by 0.55%, as
-      the smallest density change of norm `3.9e4` would;
-    - 95% of the tight prior's draws have a norm below `3.5e5`;
-    - in kilometers it would be cheaper again.
+      the smallest density change of norm 0.079 would;
+    - 95% of the tight prior's draws have a norm below 0.68;
+    - in the density's own unit of length, the Earth's radius, a
+      displacement would be cheap instead: 50 km would have norm 0.008.
 
     The prior's norm measures both parts in the prior's own standard
     deviations, so a unit of displacement costs what a unit of density
@@ -142,17 +149,16 @@ it shows, each with the truth marked:
 
 - the point answer with its error budget;
 - the measure answer as the prior against the posterior;
-- the set answer as the prior's ellipsoid's bound against the bracket the
-  data leave.
+- the set answer as the prior's ball's bound against the bracket the data
+  leave.
 
 Part D's one figure shows the density and the displacements of the MAP
 model and of Occam's model in the two norms, side by side.
 
 Two scales. `--quick` keeps 12 basis functions in each core layer and the
 lower mantle and 3 in each thin layer, 60 in all; the full scale keeps 104.
-They run every part in about 30 and 60 seconds on an AMD Ryzen AI 7 PRO 350
-with Python 3.12, numpy 2.4 and planetmodel 1.3.2, most of it the set
-answers.
+Each runs every part in about 4 seconds on an AMD Ryzen AI 7 PRO 350
+with Python 3.12, numpy 2.4 and planetmodel 1.3.2.
 
 ## How to run
 
@@ -179,7 +185,8 @@ the scale, each default the full preset's:
                         the basis functions in each of the eleven layers,
                         inner core first (16 24 4 32 4 4 5 5 4 3 3)
   --order float         the Sobolev order of every layer (2.0)
-  --length-scale float  every layer's length scale but the crust's, in km (200.0)
+  --length-scale float  every layer's length scale but the crust's, in km,
+                        converted to the space's Earth radii (200.0)
   --measure-order float the order of the priors' Sobolev measure, above
                         one half (2.0)
   --tight-std float     the tight prior's pointwise std, in g/cm^3 (0.1)
@@ -187,11 +194,11 @@ the scale, each default the full preset's:
   --relative-error float
                         each datum's error, as a fraction of it (0.001)
   --level float         the discrepancy level's and the sets' credibility (0.95)
-  --set-power float     the power of a prior's covariance that shapes its
-                        ellipsoid, below three quarters (0.375)
-  --radius-scale float  part D's displacement unit and prior std, in km (50.0)
+  --radius-scale float  part D's displacement unit and prior std, in km,
+                        converted to the space's Earth radii (50.0)
   --true-shifts float [float ...]
-                        part D's true ICB and CMB displacements, in km (-20 30)
+                        part D's true ICB and CMB displacements, in km,
+                        converted likewise (-20 30)
   --check-points int    the prior draws part D checks its derivatives at (3)
 ```
 
@@ -207,8 +214,8 @@ quick scale's own numbers:
   the error on the same truth. PREM now fits the data (chi-squared 5.11
   against the critical 5.99), so the point answer is PREM itself under both
   priors, and so is Occam's model in both norms. The posterior on the
-  mantle mean widens from ±0.011 to ±0.020 and the bracket on it from 0.16
-  to 0.24 g/cm^3 wide, and part D's Laplace Gaussian puts the core-mantle
+  mantle mean widens from ±0.011 to ±0.020 and the bracket on it from 0.18
+  to 0.25 g/cm^3 wide, and part D's Laplace Gaussian puts the core-mantle
   boundary at -2 ± 42 km rather than +27 ± 31, the truth being +30.
 - **The core-mantle boundary moved in**, `run_all.py --quick --true-shifts
   -20 -60`: parts A to C are unchanged. In part D the data reject PREM at
@@ -246,20 +253,20 @@ PREM's, the reference's, are 10.987, 4.449 and 4.337.
 | B point: bias at the truth | +0.046 | +0.011 | +0.075 |
 | B measure: prior | 10.987 ± 0.069 | 4.449 ± 0.046 | 4.337 ± 0.140 |
 | B measure: posterior | 10.953 ± 0.056 | 4.386 ± 0.011 | 4.316 ± 0.138 |
-| B set: the prior's ellipsoid alone | [10.365, 11.608] | [4.164, 4.733] | [3.180, 5.495] |
-| B set: with the data | [10.488, 11.393] | [4.305, 4.470] | [3.191, 5.453] |
+| B set: the prior's ball alone | [10.229, 11.745] | [4.172, 4.726] | [2.932, 5.742] |
+| B set: with the data | [10.436, 11.427] | [4.300, 4.479] | [2.948, 5.694] |
 | C point | as B's | as B's | as B's |
 | C measure: prior | 10.99 ± 2.07 | 4.45 ± 1.37 | 4.34 ± 4.20 |
 | C measure: posterior | 10.95 ± 1.51 | 4.386 ± 0.294 | 4.31 ± 4.11 |
-| C set: the prior's ellipsoid alone | [-7.66, 29.63] | [-4.09, 12.99] | [-30.4, 39.1] |
-| C set: with the data | [-0.57, 22.44] | [2.15, 6.62] | [-29.9, 38.6] |
+| C set: the prior's ball alone | [-11.76, 33.73] | [-3.87, 12.76] | [-37.8, 46.5] |
+| C set: with the data | [-1.61, 23.48] | [1.95, 6.82] | [-37.5, 46.1] |
 | D: Laplace about the MAP model | 10.973 ± 0.064 | 4.405 ± 0.018 | 4.330 ± 0.139 |
 
-The brackets are certified to gaps of `5.3e-6` or less under the tight
-prior and `6.2e-3` or less under the wide one. The truth is inside every
-posterior interval and every bracket, and inside both priors' ellipsoids.
+The brackets are certified to gaps of `1.1e-4` or less under the tight
+prior and `8.8e-4` or less under the wide one. The truth is inside every
+posterior interval and every bracket, and inside both priors' balls.
 
-**B** (about 31 s, 30 of them the set).
+**B** (about 1.2 s, 0.2 of them the set).
 
 - **The point.** The damping search takes 12 evaluations and lands at a
   chi-squared of 5.99, the critical value, from 265.8 at PREM. The
@@ -280,20 +287,20 @@ posterior interval and every bracket, and inside both priors' ellipsoids.
   correlated at -0.85 through the mass. Pointwise, the posterior band is
   narrowed most in the lower mantle, to about two thirds of the prior's,
   and hardly in the thin layers. The log evidence is 3.94.
-- **The set.** The prior's 95% ellipsoid, `(Q^-3/8 (m - m0), m - m0) <= r^2`,
-  holds the truth at 0.91 of its boundary's gauge; the noise is hardened to
-  its own 95% ellipse on the two data, whose errors differ in size. With
-  the data the brackets on the two means narrow from 1.24 to 0.91 and from
-  0.57 to 0.17 g/cm^3, and the jump's barely moves. The ellipsoid has the
-  covariance's shape to a power below three quarters, the one below which
-  a measure of order 2 on a radial profile, whose spectrum grows as on a
-  line, carries its 95% in it however many basis functions there are; the
-  Mahalanobis ellipsoid of the covariance itself does not, its radius
-  growing with their number. Each support value applies the covariance's
-  fractional power through the Lanczos calculus, which is where the set
-  answer's time goes.
+- **The set.** The prior's 95% ball, `||m - m0|| <= r` in the space's own
+  `H^2` norm, holds the truth at 0.86 of its boundary's gauge
+  `(||m - m0|| / r)^2`; the noise is hardened to its own 95% ellipse on
+  the two data, whose errors differ in size. With the data the brackets on
+  the two means narrow from 1.52 to 0.99 and from 0.55 to 0.18 g/cm^3, and
+  the jump's barely moves. The ball is the classical norm bound with the
+  prior calibrating its radius: a draw's squared distance from PREM has
+  the covariance's trace as its expectation, finite for a measure of
+  order 2 on a radial profile, so the ball carries its 95% however many
+  basis functions there are; the Mahalanobis ellipsoid of the covariance
+  does not, its radius growing with their number. The radius comes from
+  the covariance's 104 eigenvalues, and a support value is a norm.
 
-**C** (about 30 s).
+**C** (about 1 s).
 
 - **The point** is B's, since the minimum-norm change sees the prior's
   shape and not its size.
@@ -309,20 +316,22 @@ posterior interval and every bracket, and inside both priors' ellipsoids.
   - The data prefer the tight prior, from which the truth was drawn, by
     5.54 nats: both fit, and the wide prior spreads itself over profiles
     the data rule out.
-- **The set.** Under the wide prior's ellipsoid the brackets are wider again
+- **The set.** Under the wide prior's ball the brackets are wider again
   than the posterior's intervals, as a set bound is: it admits the profile
   that spends its whole budget on one property, which the Gaussian calls
-  vanishingly unlikely.
+  vanishingly unlikely. The ball is a convenience, one constraint set among
+  those a geophysicist might pose; bounds on each layer's density from
+  mineral physics would be another, and would go to the same estimator.
 
 **D** (under a second).
 
 - **The checks.** The derivatives agree with central differences, and the
-  adjoint with its identity, to `3.7e-9` at three prior draws.
+  adjoint with its identity, to `1.9e-13` at three prior draws.
 - **The data.** They reject PREM at its own radii (chi-squared 229.4) and
   the truth's density at PREM's radii (6.2), against a critical 5.99, and
   fit the truth (1.76). The truth's density departure moves the data far
   more than its displacements do.
-- **The MAP model** takes 6 Newton iterations and fits the data to a
+- **The MAP model** takes 5 Newton iterations and fits the data to a
   chi-squared of 0.01. The Laplace Gaussian about it:
 
   | | prior | Laplace about the MAP model | truth |
@@ -341,33 +350,34 @@ posterior interval and every bracket, and inside both priors' ellipsoids.
     the edge of its 95% interval; the ICB's displacement stays at the
     prior's spread.
 - **Occam, in two norms.** Both runs start from PREM at its own radii and
-  meet the same level, a chi-squared of 5.99, in 11 and 8 outer iterations.
+  meet the same level, a chi-squared of 5.99, in 8 outer iterations each.
   The sizes below are of the change from PREM, measured both ways.
 
   | | the model space's norm | the prior's norm |
   |---|---|---|
-  | ICB displacement (km) | +1547 | -0.3 |
-  | CMB displacement (km) | -132 | -24.0 |
-  | core mean | 10.987 | 10.976 |
-  | mantle mean | 4.449 | 4.411 |
-  | CMB jump | 4.337 | 4.331 |
-  | the density change, model space's norm | 0.056 | `5.4e4` |
-  | the whole change, model space's norm | 31.1 | `5.4e4` |
-  | the whole change, prior's norm | 31.1 | 0.98 |
+  | ICB displacement (km) | 0.0 | -0.3 |
+  | CMB displacement (km) | -0.4 | -24.0 |
+  | core mean | 10.941 | 10.976 |
+  | mantle mean | 4.402 | 4.411 |
+  | CMB jump | 4.321 | 4.331 |
+  | the density change, model space's norm | 0.123 | 0.106 |
+  | the whole change, model space's norm | 0.123 | 0.491 |
+  | the whole change, prior's norm | 2.32 | 0.98 |
 
-  - Each answer is the smaller change in its own norm, and the larger, by
-    far, in the other's. Both fit the data equally well.
-  - **In the model space's norm** a displacement is by far the cheapest
-    way to change the mass. Occam leaves the density as PREM's and moves
-    the inner-core boundary out by 1547 km and the core-mantle boundary in
-    by 132 km. That puts the inner-core boundary at 2769 km, more than
-    twice its radius and far beyond where the first-order model holds.
+  - Each answer is the smaller change in its own norm and the larger in
+    the other's, four times as large in the model space's norm and more
+    than twice in the prior's. Both fit the data equally well.
+  - **In the model space's norm** a displacement is the dear way to change
+    the mass. Occam leaves both boundaries within half a kilometer of
+    PREM's and makes the whole change in the density: the core 0.046
+    g/cm^3 lighter on average and the mantle 0.047.
   - **In the prior's norm**, where a unit of displacement costs what a unit
     of density departure does, Occam makes the mantle 0.038 g/cm^3 lighter
     and moves the core-mantle boundary 24 km in. That is close to the MAP
     model, which weighs the same two costs.
-  - The two answers' displacements differ by more than 100 km at both
-    boundaries, more than three Laplace standard deviations.
+  - The two answers differ by 24 km at the core-mantle boundary, most of a
+    Laplace standard deviation, and by 0.036 g/cm^3 in the core mean, about
+    half of one.
   - "Simple" depends on the norm. On a direct sum of spaces, the relative
     scaling of the summands' norms decides what simple means: here, whether
     a kilometer of boundary is cheap or dear against a g/cm^3 of density.
@@ -398,10 +408,11 @@ posterior interval and every bracket, and inside both priors' ellipsoids.
   boundary's displacement against the density on either side of it. The
   MAP model splits the difference as the prior weighs the two. Occam's
   model depends on the norm it is asked to be small in:
-  - in the model space's norm, where the summands' scales make a boundary
-    almost free, it moves the boundaries alone and further than the model
-    can follow;
-  - in the prior's norm it lands near the MAP model.
+  - in the model space's norm, where a planet of radius one makes a
+    boundary's displacement dear against the density, it leaves the
+    boundaries where PREM has them and changes the density alone;
+  - in the prior's norm it moves the core-mantle boundary and lands near
+    the MAP model.
 
   Both fit the data to the same level. The norm on a direct sum is a choice
   the data do not make, and an Occam answer reports that choice as much as

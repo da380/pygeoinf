@@ -1843,12 +1843,17 @@ class Ellipsoid(ConvexSet):
         center: Any = None,
         covariance: LinearOperator | None = None,
         factor: LinearOperator | None = None,
+        radius: float | None = None,
     ) -> None:
         """
         Args:
             domain: the space.
             precision: a positive definite operator on it.
             center: the center. Defaults to zero.
+            radius: when the ellipsoid is a ball of radius ``r`` in the norm
+                an operator ``B`` defines, so that the precision is
+                ``B / r^2``, that ``r``, for reading back; it changes
+                nothing about the set.
             covariance: the inverse of the precision, if it is known. Supplying
                 it is what makes the support function available.
             factor: a factor ``L`` of the covariance, ``C == L L*``, if one
@@ -1877,6 +1882,23 @@ class Ellipsoid(ConvexSet):
         self._covariance = covariance
         self._factor = factor
         self._center = domain.zero() if center is None else center
+        if radius is not None and radius <= 0.0:
+            raise ValueError("A radius must be positive.")
+        self._radius = None if radius is None else float(radius)
+
+    @property
+    def radius(self) -> float:
+        """The radius of the ball this ellipsoid is in its operator's norm.
+
+        Raises:
+            ValueError: if the ellipsoid was not built as such a ball.
+        """
+        if self._radius is None:
+            raise ValueError(
+                "This ellipsoid was not built as a ball in an operator's norm, "
+                "so it has no radius; its shape is its precision."
+            )
+        return self._radius
 
     def support_maximizer(self, direction: Any, /) -> Any:
         """``center + C q / sqrt((C q, q))`` given the covariance; converted without it.
@@ -1906,6 +1928,7 @@ class Ellipsoid(ConvexSet):
             center=self.domain.add(self._center, vector),
             covariance=self._covariance,
             factor=self._factor,
+            radius=self._radius,
         )
 
     @property

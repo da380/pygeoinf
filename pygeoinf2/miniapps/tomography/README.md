@@ -71,15 +71,16 @@ The same questions are answered every way the library offers:
   posterior mean beside the truth, and each mean's marginal before and
   after.
 - **D, the set answer** (`sets.py`): the feasible set of the three means
-  under the prior's 95% ellipsoid and the noise's 95% ball, as certified
-  brackets in the six coordinate directions, and the truth against the
-  polytope they bound. Its figure sets each bracket against the bound the
-  prior's ellipsoid admits alone, before any datum.
+  under the prior's 95% ball and the noise's, as certified brackets in the
+  six coordinate directions, and the truth against the polytope they
+  bound. Its figure sets each bracket against the bound the prior's ball
+  admits alone, before any datum.
 - **E, a plume among candidates** (`mixture.py`): a discrete question
-  inside the continuous problem. A plume sits at one of five places in the
-  mantle, each a component of a mixture prior; the posterior mixture's
-  weights say where, and the three means are answered as mixtures. Its
-  figures: the candidates under the rays and the truth; the weights against
+  inside the continuous problem. A plume rises at one of five angles, a
+  conduit from the core-mantle boundary to the surface, each angle a
+  component of a mixture prior; the posterior mixture's weights say which,
+  and the three means are answered as mixtures. Its figures: the candidate
+  conduits under the rays and the truth; the weights against
   the prior's, against the noise level, and as each candidate's own travel
   times would set them; the three means before and after, each drawn as the
   mixture's density over its weighted components; and the winning
@@ -95,7 +96,7 @@ The same questions are answered every way the library offers:
   box under the continent, over a box at its antipode and over the core.
   The three answers again, each with its figure: the minimum-norm model and
   its error budget, the posterior against the prior, and the brackets
-  against the prior's ellipsoid alone. The figures cut the ball by the
+  against the prior's ball alone. The figures cut the ball by the
   equatorial plane
   and by the meridians of 30 and 120 degrees, the first through the
   continent and its antipode, the second across them, each section with the
@@ -112,9 +113,10 @@ The same questions are answered every way the library offers:
   the reference rays.
 
 The data are a few hundred and the model coefficients a few thousand, so the
-data-space normal operator `A Q A* + R`, and every damped `A C A* + t R` the
-point and set answers sweep, is a few hundred square: every solve is a
-Cholesky factorization of it, and there is no preconditioner story here.
+data-space normal operator `A Q A* + R`, and every damped `A Q A* + t R` and
+`A A* r^2 + t R` the point and set answers sweep, is a few hundred square:
+every solve is a Cholesky factorization of it, and there is no
+preconditioner story here.
 
 Two scales. `--quick` is angular order 16, a length scale of 0.2 and 25 rays,
 and runs parts A to E in about five seconds; it is what the test suite runs.
@@ -159,8 +161,6 @@ the scale, each default the full preset's:
   --prior-std float     the prior's pointwise std, in % of the slowness (1.0)
   --noise-std float     the noise on each travel time, in hundredths (0.05)
   --level float         the discrepancy level's and the sets' credibility (0.95)
-  --set-power float     the power of the prior's covariance that shapes its
-                        ellipsoid in D, below one half (0.25; 0.125 in the ball)
   --sources float [float ...]
                         the sources' angles, in degrees (-60.0 ... 300.0)
   --receivers float [float ...]
@@ -180,17 +180,17 @@ Two overrides at the quick scale, against its own numbers:
   the noise on the same truth and rays. The posterior standard deviation
   under the stations rises from 0.18 to 0.34 and the 95% interval on the
   well-covered box's mean widens from ±0.21 to ±0.42; the bracket on it
-  widens from 3.2 to 4.9. The mixture's weight on the true candidate falls
-  from 1.00 to 0.65. In the bent rays of part G the bending, 0.056 rms, is
-  now below the noise: the linear posterior mean fits the bent data to a
-  chi-squared of 7.6 against the 7.1 it believes, where at the app's noise
-  it was 8.3 against 1.5.
+  widens from 3.7 to 5.4. The mixture's weight on the true candidate
+  barely moves, from 1.00 to 0.98. In the bent rays of part G the
+  bending, 0.056 rms, is now below the noise: the linear posterior mean
+  fits the bent data to a chi-squared of 7.6 against the 7.1 it believes,
+  where at the app's noise it was 8.3 against 1.5.
 - **A sparser network**, `run_all.py --quick --receivers 0 50 100 150 270`:
   five receivers rather than twelve, 12 rays rather than 25 and 9 in part
   G. The posterior standard deviation in the well-covered box rises from
   0.15 to 0.23, the 95% interval on its mean widens from ±0.21 to ±0.37,
-  its bracket from 3.2 to 5.2 wide, and the mixture's weight on the true
-  candidate falls from 1.00 to 0.81.
+  its bracket from 3.7 to 5.8 wide, and the mixture's weight on the true
+  candidate falls from 1.00 to 0.94.
 
 A part run on its own rebuilds the problem from the seed, so it gives the
 same numbers as in the full sequence. Each part writes its own figures,
@@ -201,7 +201,8 @@ command line built from the scale, the tracer against the closed form, the
 operator against the composition it stands for and the library's adjoint
 check, in the disk and in the ball, the ball's rays on the great circles of
 their ends and drawn in the library's section frame, the shooting tracer
-against the radial one, and every part through its script's entry point at
+against the radial one, part E's conduit flat along its axis and Gaussian
+across it, and every part through its script's entry point at
 the quick scale built through the same command line, the mixture's weights
 and part G's derivative check among them.
 
@@ -209,8 +210,8 @@ and part G's derivative check among them.
 |---|---|
 | `src/rays.py` | the ray tracer in a radial medium: ray parameter, turning radius, `Delta(p)`, `T(p)`, the two-point ray, the nodes and weights; the circular rays of a flattened linear gradient, its closed form; and the shooting tracer for a medium that is not radial, `shoot` and the two-point `bend` |
 | `src/problem.py` | the structure, the disk's network, the scale with its two presets, the forward operator, the means over boxes in a disk or a ball, the Sobolev prior and its exact pointwise standard deviation, `build(scale=)` for the disk |
-| `src/common.py` | the command line built from the scale, the disk's panels, the panels of an error budget, of marginals before and after, Gaussian or mixtures', and of brackets against the prior's ellipsoid alone |
-| `setup.py`, `point.py`, `bayesian.py`, `sets.py`, `mixture.py`, `ball.py`, `bent.py` | parts A to G, each a script with a `main()` and a function the others and the test call; `mixture.py` also holds the candidates, the mixture prior and the noise sweep; `ball.py` also holds the network on the sphere, the rays placed on their great circles, the bump truth and the sections and shells; `bent.py` the perturbed slowness, the bent forward operator and the Gauss-Newton MAP |
+| `src/common.py` | the command line built from the scale, the disk's panels, the panels of an error budget, of marginals before and after, Gaussian or mixtures', and of brackets against the prior's ball alone |
+| `setup.py`, `point.py`, `bayesian.py`, `sets.py`, `mixture.py`, `ball.py`, `bent.py` | parts A to G, each a script with a `main()` and a function the others and the test call; `mixture.py` also holds the conduit, the candidates, the mixture prior and the noise sweep; `ball.py` also holds the network on the sphere, the rays placed on their great circles, the bump truth and the sections and shells; `bent.py` the perturbed slowness, the bent forward operator and the Gauss-Newton MAP |
 | `run_all.py` | the parts in order |
 | `results/` | the figures a run writes, `results/quick/` at the quick scale |
 
@@ -238,9 +239,9 @@ AI 7 PRO 350 (16 cpus), Python 3.12, numpy 2.4.
 
 | mean over | truth | B: minimum norm, 2 propagated sd | C: posterior mean, 95% interval | D: certified bracket |
 |---|---|---|---|---|
-| well-covered box | +1.019 | +0.979 ± 0.052 | +0.984, [+0.904, +1.063] | [-0.06, +2.04] |
-| poorly covered box | -0.983 | -0.967 ± 0.102 | -0.958, [-1.498, -0.418] | [-6.03, +4.13] |
-| core | -0.334 | 0.000 ± 0.000 | 0.000, [-0.971, +0.971] | [-4.76, +4.76] |
+| well-covered box | +1.019 | +0.979 ± 0.052 | +0.984, [+0.904, +1.063] | [-0.23, +2.21] |
+| poorly covered box | -0.983 | -0.967 ± 0.102 | -0.958, [-1.498, -0.418] | [-5.67, +3.82] |
+| core | -0.334 | 0.000 ± 0.000 | 0.000, [-0.971, +0.971] | [-3.58, +3.58] |
 
 - **B** (2 s): least squares at a damping of one in the prior's norm is the
   posterior mean of C, and fits to a chi-squared of 190 against a critical
@@ -259,33 +260,33 @@ AI 7 PRO 350 (16 cpus), Python 3.12, numpy 2.4.
   in the middle of the poorly covered one and 1.001 in the core, exactly; 256
   posterior samples, 1.3 s, give the map to 4%. The core's mean has the
   prior's own posterior, center zero and standard deviation 0.496.
-- **D** (8 s): the prior's 95% ellipsoid is `(Q^-1/4 m, m) <= r^2`, which
-  the truth lies in at 0.99 of the boundary's gauge; the six supports take
-  7 s. A set bound admits far more than the Gaussian posterior: the
-  brackets are many times the posterior intervals, widest where the data
-  say least. The ellipsoid alone admits ±10.5 for a box's mean and ±5.2 for
-  the core's; the data narrow the well-covered box's to a tenth of that,
-  the poorly covered one's to a half, and the core's hardly at all, to
-  ±4.76, which is what the ellipsoid has left once the mantle fits the
-  data: the smallest fitting model plus as much of the core mean's
-  representer as the ellipsoid holds, the model the support search's inner
-  end attains. The truth lies in every bracket and in the polytope they
-  bound.
+- **D** (7 s): the prior's 95% ball is `||m|| <= r` in the space's own
+  `H^2` norm with `r = 4.59`, which the truth lies in at 0.98 of the
+  boundary's gauge `(||m|| / r)^2`; the six supports take 6 s. A set bound
+  admits far more than the Gaussian posterior: the brackets are many times
+  the posterior intervals, widest where the data say least. The ball alone
+  admits ±8.74 for a box's mean and ±4.03 for the core's, the radius times
+  the norm of each mean's representer; the data narrow the well-covered
+  box's to a seventh of that, the poorly covered one's to a half, and the
+  core's hardly at all, to ±3.58, which is what the ball has left once the
+  mantle fits the data: the smallest fitting model plus as much of the
+  core mean's representer as the ball holds, the model the support
+  search's inner end attains. The truth lies in every bracket and in the
+  polytope they bound.
 - **E** (6 s): the plume is found at its candidate, with a posterior weight
-  of 0.999 against the prior's 0.2; see
+  of 0.990 against the prior's 0.2; see
   [a plume among candidates](#a-plume-among-candidates) below.
 - **F** (7 s): in the ball, 174 rays of 121 nodes on a layered ball of 984
   coefficients, 240 in the core at degree 8 and 744 in the mantle at degree
   14; the truth's travel-time perturbations have a standard deviation of
-  0.29 against noise of 0.05. The prior's ellipsoid has the power one
-  eighth, below the quarter at which a measure of order 2 in three
-  dimensions stops carrying it in the limit.
+  0.29 against noise of 0.05. The prior's 95% ball has the radius 9.20,
+  which the truth lies in at 0.55 of the boundary's gauge.
 
-  | mean over | truth | minimum norm, 2 propagated sd | posterior mean, 95% interval | certified bracket | the ellipsoid alone |
+  | mean over | truth | minimum norm, 2 propagated sd | posterior mean, 95% interval | certified bracket | the ball alone |
   |---|---|---|---|---|---|
-  | the box under the continent | +1.145 | +1.026 ± 0.042 | +1.118, [+1.042, +1.194] | [+0.13, +2.23] | ±12.6 |
-  | the box at its antipode | -1.019 | -0.627 ± 0.096 | -0.720, [-1.032, -0.408] | [-6.11, +4.85] | ±12.6 |
-  | the core | +0.198 | 0.000 ± 0.000 | 0.000, [-1.270, +1.270] | [-7.07, +7.07] | ±7.15 |
+  | the box under the continent | +1.145 | +1.026 ± 0.042 | +1.118, [+1.042, +1.194] | [+0.08, +2.29] | ±12.1 |
+  | the box at its antipode | -1.019 | -0.627 ± 0.096 | -0.720, [-1.032, -0.408] | [-6.42, +5.21] | ±12.1 |
+  | the core | +0.198 | 0.000 ± 0.000 | 0.000, [-1.270, +1.270] | [-6.40, +6.40] | ±6.47 |
 
   The point estimate's bias at the antipode, +0.36, is seven times the
   noise it propagates there, and nothing in its budget shows it. The
@@ -300,27 +301,31 @@ AI 7 PRO 350 (16 cpus), Python 3.12, numpy 2.4.
 
 ## A plume among candidates
 
-Part E puts a discrete question inside the continuous problem: a plume sits
-at one of a handful of places in the mantle, and which one? The plume is
-part B's bump, of width 0.06 (0.12 at the quick scale), with a peak of 3%,
-three times the prior's pointwise standard deviation. The candidates, of
-which the quick scale keeps the first, third and fifth:
+Part E puts a discrete question inside the continuous problem: a plume rises
+through the mantle at one of a handful of angles, and which one? The plume
+is an idealized conduit, a slowness perturbation `a exp(-d^2 / (2 w^2))`
+with `d` the distance from the point to a radial segment that runs from the
+core-mantle boundary to the surface: Gaussian across the segment, of width
+`w = 0.06` (0.12 at the quick scale), flat along it, and nothing in the
+core. Its peak `a` is 3%, three times the prior's pointwise standard
+deviation. The candidates, of which the quick scale keeps the first, third
+and fifth:
 
 | candidate | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|
-| radius, angle | 0.85, 75° | 0.70, 120° | 0.80, 330° | 0.75, 200° | 0.85, 270° |
-| where | under the continent, in the well-covered box | under the continent, deep | at its edge | opposite it | opposite it, in the poorly covered box |
-| rays within the plume's width | 22 | 20 | 10 | 7 | 2 |
+| angle | 75° | 120° | 330° | 200° | 270° |
+| where | under the continent, through the well-covered box | under the continent | at its edge | opposite it | opposite it, through the poorly covered box |
+| rays within the conduit's width | 105 | 74 | 31 | 10 | 6 |
 
 Each candidate is a component of the prior, a `GaussianMixture`: the app's
-prior translated to the plume there, so that every component has the app's
-covariance, and the weights equal. The truth is the plume at candidate 3,
-under moderate coverage, over half a draw from the shared covariance, and
-the data come from it with the app's noise. Under the linear forward
-problem the posterior is again a mixture (`LinearGaussianMixtureInversion`):
-each component updated by its own linear Gaussian inversion, with the app's
-Cholesky solver in the data space, and the weights rescored by the
-components' evidences.
+prior translated to the conduit there, so that every component has the
+app's covariance, and the weights equal. The truth is the conduit at
+candidate 3, under moderate coverage, over half a draw from the shared
+covariance, and the data come from it with the app's noise. Under the
+linear forward problem the posterior is again a mixture
+(`LinearGaussianMixtureInversion`): each component updated by its own
+linear Gaussian inversion, with the app's Cholesky solver in the data
+space, and the weights rescored by the components' evidences.
 
 **What the weights are.** A posterior weight is the prior weight times the
 component's evidence `p(d | k)`, the density of the data under that
@@ -340,32 +345,35 @@ the data, as the sweep below shows, which a covariance fixed in advance
 cannot.
 
 **The answer** (the whole part in 6 s; a factorization of the 275-square
-normal operator for each component). The plume's travel-time perturbations
-have a standard deviation of 0.078 and the truth's 0.258, against noise of
-0.05 and the shared covariance's 0.64: the plume is a small part of the
-signal.
+normal operator for each component). A conduit is crossed by every ray
+that passes over its angle, and its travel-time perturbations have a
+standard deviation of 0.184, nearly four times the noise of 0.05; the
+truth's have 0.318. But a candidate must stand out from the prior's own
+variability too, which the shared covariance puts at 0.64 a datum on the
+same rays.
 
 | candidate | 1 | 2 | 3, the truth | 4 | 5 |
 |---|---|---|---|---|---|
-| misfit `M_k`, on 275 data | 306.8 | 250.4 | 210.2 | 225.8 | 223.9 |
-| log evidence less the best | -48.30 | -20.12 | 0 | -7.83 | -6.88 |
-| posterior weight, from 0.2 | 1.1e-21 | 1.8e-9 | 0.999 | 4.0e-4 | 1.0e-3 |
+| misfit `M_k`, on 275 data | 273.7 | 255.0 | 210.2 | 220.2 | 221.6 |
+| log evidence less the best | -31.75 | -22.41 | 0 | -5.00 | -5.71 |
+| posterior weight, from 0.2 | 1.6e-14 | 1.8e-10 | 0.990 | 6.7e-3 | 3.3e-3 |
 
-A plume under the continent is ruled out, the deep candidate at odds of
-half a billion to one and the shallow one at far more; where few rays pass, the data can say only that the
-plume is probably not there, and candidates 4 and 5 keep a thousandth or
-less. The winning component's mean has the plume in its place at its full
-height, and over it the part of the background the rays resolve: it fits
-the data to a chi-squared of 188 on 275, and its error over the mantle,
-0.45 of the truth's norm, is the background they leave. On the three means
-the mixtures are drawn as their densities. The prior on a box's mean is
-four components at zero and, for the box's own candidate, one at +0.78,
-0.91 of the mean's prior standard deviation away: a mean over a box 30
-degrees wide averages a plume 0.06 wide down to that, and the hypothesis
-shows as a shoulder, not a second mode. After the data the well-covered
-box's mean is -0.612 ± 0.041 against the truth's -0.618 and the poorly
-covered box's -0.22 ± 0.28 against -0.35, the plume component in it at a
-thousandth; the core's is its prior, exactly.
+A plume under the continent is ruled out, the conduit at 120 degrees at
+odds of five billion to one and the one at 75 at far more; where few rays
+pass, the data can say only that the plume is probably not there, and
+candidates 4 and 5 keep a hundredth between them. The winning component's
+mean has the conduit in its place at its full height, and around it the
+part of the background the rays resolve: it fits the data to a chi-squared
+of 188 on 275, and its error over the mantle, 0.34 of the truth's norm, is
+the background they leave. On the three means the mixtures are drawn as
+their densities. The prior on a box's mean is four components at zero and,
+for the box's own candidate, one at +1.05, 1.2 of the mean's prior standard
+deviation away: a mean over a box 30 degrees wide averages a conduit 0.06
+wide that crosses it down to that, and the hypothesis shows as a shoulder,
+not a second mode. After the data the well-covered box's mean is
+-0.612 ± 0.041 against the truth's -0.618 and the poorly covered box's
+-0.22 ± 0.28 against -0.35, the plume component in it at three
+thousandths; the core's is its prior, exactly.
 
 **The noise sweep** (4 s): the data redrawn 32 times at each of seven noise
 levels, from a tenth of the app's to a hundred times it, the components
@@ -374,47 +382,57 @@ candidates, the exponential of the weights' entropy:
 
 | noise, times the app's | 1 | 2 | 3 | 4 | 5 | effective number |
 |---|---|---|---|---|---|---|
-| 0.1 | 0.000 | 0.000 | 1.000 | 0.000 | 0.000 | 1.00 |
-| 0.3 | 0.000 | 0.000 | 1.000 | 0.000 | 0.000 | 1.00 |
-| 1 | 0.000 | 0.000 | 0.990 | 0.002 | 0.008 | 1.07 |
-| 3 | 0.000 | 0.005 | 0.863 | 0.054 | 0.078 | 1.66 |
-| 10 | 0.039 | 0.103 | 0.539 | 0.135 | 0.184 | 3.58 |
-| 30 | 0.126 | 0.201 | 0.292 | 0.174 | 0.207 | 4.82 |
-| 100 | 0.180 | 0.206 | 0.223 | 0.196 | 0.196 | 4.99 |
+| 0.1 | 0.000 | 0.000 | 0.989 | 0.004 | 0.007 | 1.07 |
+| 0.3 | 0.000 | 0.000 | 0.978 | 0.009 | 0.013 | 1.13 |
+| 1 | 0.000 | 0.000 | 0.962 | 0.014 | 0.023 | 1.20 |
+| 3 | 0.001 | 0.000 | 0.968 | 0.011 | 0.019 | 1.18 |
+| 10 | 0.038 | 0.032 | 0.813 | 0.048 | 0.069 | 2.08 |
+| 30 | 0.072 | 0.172 | 0.487 | 0.121 | 0.148 | 3.98 |
+| 100 | 0.134 | 0.195 | 0.269 | 0.200 | 0.202 | 4.89 |
 
 The weights sharpen from the prior's equal ones at a hundred times the
-noise to one candidate as it falls, and below the app's level there is
-nothing left to sharpen: the misfits are measured in the metric of
-`A C A* + R`, and once `R` is small beside `A C A*` it is the prior's own
-variability, not the noise, that a plume must stand out from. Nor does the
-noise decide which candidates can be told apart. The weights that each
-plume's own travel times would earn, noise-free and with no background, at
-the app's noise:
+noise as it falls, and stop at three times the app's, short of one: from
+there down to a tenth of the app's noise the true candidate keeps 0.96 to
+0.99 on average, and candidates 4 and 5 the rest. The misfits are measured
+in the metric of `A C A* + R`, and once `R` is small beside `A C A*` it is
+the prior's own variability, not the noise, that a plume must stand out
+from: the background beneath the truth, which every redraw keeps, is that
+variability, and it lends the two candidates opposite the continent a
+hundredth or more however small the noise. Nor does the noise decide which
+candidates can be told apart. The weights that each conduit's own travel
+times would earn, noise-free and with no background, at the app's noise:
 
 | the plume at | weight on 1 | on 2 | on 3 | on 4 | on 5 |
 |---|---|---|---|---|---|
 | 1 | 1.000 | 0.000 | 0.000 | 0.000 | 0.000 |
 | 2 | 0.000 | 1.000 | 0.000 | 0.000 | 0.000 |
-| 3 | 0.000 | 0.000 | 0.993 | 0.002 | 0.005 |
-| 4 | 0.000 | 0.000 | 0.002 | 0.882 | 0.116 |
-| 5 | 0.000 | 0.000 | 0.004 | 0.115 | 0.880 |
+| 3 | 0.000 | 0.000 | 0.983 | 0.006 | 0.011 |
+| 4 | 0.000 | 0.000 | 0.006 | 0.927 | 0.067 |
+| 5 | 0.000 | 0.000 | 0.010 | 0.067 | 0.923 |
 
 These are the weights at the mean of the log evidences: for data drawn
 about candidate `j`, the difference `M_k - M_j` averages the squared
 distance between the two candidates' travel times in the same metric, which
-is what the noise-free data give. Under the continent each plume names
-itself. Candidates 4 and 5, under seven rays and two, give each other an
-eighth of their weight, and at a tenth of the noise still 0.06: the
-coverage leaves them the hardest to tell apart, and less noise helps only
-so far.
+is what the noise-free data give. Under the continent each conduit names
+itself. Candidates 4 and 5, with ten rays and six within their width, give
+each other a fifteenth of their weight, and at a tenth of the noise still
+0.055: the coverage leaves them the hardest to tell apart, and less noise
+helps only so far. Even the true conduit, crossed by 31 rays, gives a
+sixtieth of its weight to those two: the rays that cross a conduit cross
+the prior's variability along it too, and the metric that decides weighs
+the one against the other.
 
 The truth's background is half a draw from the shared covariance. With a
 whole draw the truth would be an exact draw from its component, and a
-background that happens to resemble another candidate's plume could win:
-over ten seeds the true candidate's weight at the app's noise then runs
-from 0.79 to 1.00 at the full scale and from 0.64 to 1.00 at the quick
-scale, above a half in all twenty; the prior's draws are smooth beside a
-plume of this width, and seldom mimic one.
+background that happens to resemble another candidate's conduit could win.
+Over ten seeds at the full scale it does in two, candidate 4 taking 0.92
+and 0.91 of the weight and the true candidate 0.03 and 0.05; in the other
+eight the true candidate's weight runs from 0.59 to 1.00, and at the quick
+scale from 0.97 to 1.00 in all ten. Opposite the continent a conduit is
+seen by the handful of rays that cross it there, and along those rays a
+whole draw of the prior can look like one. Under the continent, where the
+rays cross in every direction, none does: candidates 1 and 2 never take
+more than 1e-7 of the weight.
 
 ## Bent rays
 
@@ -509,18 +527,23 @@ does not reduce them.
   member and nothing else. The loops that could run in parallel are run
   serially: worker processes cost more than they save at this size, 256
   posterior samples taking 1.1 s serially and 3.9 s on eight processes.
-- The prior is a Sobolev measure of order 2 on each layer, the point
+- The prior is a Sobolev measure of order 2 on each layer, and the point
   answers measure size by its norm, so that least squares at a damping of
-  one is the posterior mean, and the set answer hardens it to an ellipsoid
-  of its covariance to the power one quarter in the disk and one eighth in
-  the ball, the powers below which those ellipsoids carry their probability
-  however fine the truncation; the Mahalanobis ellipsoid of the covariance
-  itself does not, its radius growing with the coefficient count.
+  one is the posterior mean. The set answer hardens it to the ball of the
+  space's own norm that carries 95% of it: the classical norm bound, the
+  prior only calibrating the radius. A draw's squared norm has the
+  covariance's trace as its expectation, finite because the covariance is
+  trace class, so the radius has a limit however fine the truncation; the
+  Mahalanobis ellipsoid of the covariance does not, its radius growing with
+  the coefficient count. The ball is a convenience, one constraint set
+  among many: a bound the physics suggests, on another norm or a region,
+  goes to the same estimator.
 - A discrete question needs a prior that holds it. A mixture over the
-  places a plume might be returns, in closed form and in seconds, the odds
-  of each place, which no single Gaussian can; the sweep of the noise shows
-  what limits them: below the app's noise the prior's own variability, and
-  for two candidates the rays barely separate, the coverage.
+  places a plume might rise returns, in closed form and in seconds, the
+  odds of each place, which no single Gaussian can; the sweep of the noise
+  shows what limits them: below three times the app's noise the prior's
+  own variability, and for two candidates the rays barely separate, the
+  coverage.
 - The ball asks the same questions of a network spread over a sphere, with
   the same tracer: a radial medium makes every ray planar, so placing the
   traced nodes on the great circle of their ends is all the third dimension

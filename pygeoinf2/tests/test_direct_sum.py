@@ -640,3 +640,21 @@ class TestTheBlockGrid:
         for i in range(2):
             for j in range(2):
                 assert grid[i][j] is operator.block(i, j)
+
+
+class TestABlockDiagonalOnACallersSum:
+    def test_it_acts_on_the_sum_given(self):
+        X, Y = EuclideanSpace(2), EuclideanSpace(3)
+        plain = DirectSum([X, Y])
+        labeled = DirectSum([X, Y], labels=("a", "b"))
+        blocks = [LinearOperator.identity(X), LinearOperator.identity(Y)]
+        seated = BlockDiagonalLinearOperator(blocks, domain=labeled, codomain=labeled)
+        assert seated.domain is labeled
+        assert seated.adjoint.domain is labeled
+        assert BlockDiagonalLinearOperator(blocks).domain == plain
+
+    def test_a_sum_of_other_summands_is_refused(self):
+        X, Y = EuclideanSpace(2), EuclideanSpace(3)
+        blocks = [LinearOperator.identity(X), LinearOperator.identity(Y)]
+        with pytest.raises(ValueError, match="direct sum of the blocks"):
+            BlockDiagonalLinearOperator(blocks, domain=DirectSum([Y, X]))

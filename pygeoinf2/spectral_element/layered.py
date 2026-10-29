@@ -696,15 +696,23 @@ class Layered(CoordinateDirectSum, HilbertModule):
         amplitude: float | list[float] = 1.0,
         expectation: tuple | None = None,
         pointwise_std: Any = None,
+        correlation: np.ndarray | None = None,
         unsafe: bool = False,
     ) -> GaussianMeasure:
-        """A Gaussian prior under which the layers are independent, each with
-        covariance ``amplitude^2 A^-order`` of its own ``A``.
+        """A Gaussian prior on the layers, each with covariance
+        ``amplitude^2 A^-order`` of its own ``A``, independent unless a
+        correlation is given.
 
         Independence is what a discontinuity means: knowing the field on one
         side of an interface says nothing of the other. A medium continuous
         across an interface is this prior conditioned on the vanishing of
-        :meth:`jump_operator` there.
+        :meth:`jump_operator` there. Between the two, a *correlation* ties
+        the layers' latent white noises mode for mode, as
+        :meth:`~pygeoinf2.probability.gaussian.GaussianMeasure.from_product`
+        describes: a positive correlation makes the layers' structure alike
+        in scale and sign without making the field continuous. The layers
+        must then have the same number of basis functions, so that their
+        modes correspond.
 
         Args:
             order: the Sobolev order of each layer's measure, one for all or
@@ -715,6 +723,9 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 deviation: one number for all, a list of numbers or fields
                 layer by layer, or a vector of this space giving it
                 everywhere.
+            correlation: a symmetric positive semidefinite matrix of unit
+                diagonal, one row per layer, correlating the layers' latent
+                noises; ``None`` for independent layers.
             unsafe: build the layers' measures at an order at or below
                 half the dimension anyway, for a test that means it.
 
@@ -748,4 +759,5 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 for i, layer in enumerate(self.layers)
             ],
             domain=self,
+            correlation=correlation,
         )

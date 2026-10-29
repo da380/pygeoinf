@@ -1,5 +1,9 @@
 """What the part scripts share: the command line, the generators, profiles
-and their bands, and the figure titles."""
+and their bands, and the figure titles.
+
+The space's radius is in Earth radii; every figure is drawn against the
+radius in km, converted here at the plot.
+"""
 
 from __future__ import annotations
 
@@ -20,8 +24,6 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-
-from pygeoinf2 import plotting  # noqa: E402
 
 from .reference import R_CMB, R_ICB, R_SURFACE, prem  # noqa: E402
 
@@ -198,7 +200,8 @@ def save(fig: Any, path: pathlib.Path) -> None:
 
 
 def layer_radii(space: Any, /) -> list[np.ndarray]:
-    """Radii inside each layer, never on an interface, for drawing."""
+    """Radii inside each layer, in the space's Earth radii, never on an
+    interface, for drawing."""
     radii = []
     for lower, upper in space.layer_bounds:
         margin = 1e-6 * (upper - lower)
@@ -217,19 +220,28 @@ def pointwise_std(space: Any, measure: Any, /) -> list[np.ndarray]:
 
 
 def draw_profile(space: Any, model: Any, ax: Any, /, **kwargs: Any) -> None:
-    """A layered profile as a line per layer, broken at each interface."""
-    plotting.plot(space, model, ax=ax, **kwargs)
+    """A layered profile as a line per layer in one color, broken at each
+    interface, against the radius in km."""
+    label = kwargs.pop("label", None)
+    for index, radii in enumerate(layer_radii(space)):
+        values = space.layers[index].evaluate(model[index], radii)
+        (line,) = ax.plot(
+            R_SURFACE * radii, values, label=label if index == 0 else None, **kwargs
+        )
+        kwargs["color"] = line.get_color()
+    ax.set_xlim(0.0, R_SURFACE)
 
 
 def draw_band(
     space: Any, model: Any, std: Sequence[np.ndarray], ax: Any, /, **kwargs: Any
 ) -> None:
-    """Two standard deviations either side of a profile, layer by layer."""
+    """Two standard deviations either side of a profile, layer by layer,
+    against the radius in km."""
     label = kwargs.pop("label", None)
     for index, (radii, deviation) in enumerate(zip(layer_radii(space), std)):
         values = space.layers[index].evaluate(model[index], radii)
         ax.fill_between(
-            radii,
+            R_SURFACE * radii,
             values - 2.0 * deviation,
             values + 2.0 * deviation,
             linewidth=0.0,

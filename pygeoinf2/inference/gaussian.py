@@ -766,3 +766,303 @@ class LinearGaussianInversion(GaussianEstimator):
             noise = data_space.subtract(error.sample(rng=rng), error.expectation)
             residual = data_space.subtract(residual, noise)
         return model_space.add(drawn, gain(residual))
+
+
+def _information_eigenpairs(
+    forward: LinearOperator,
+    prior: GaussianMeasure,
+    error_precision: LinearOperator,
+    /,
+    *,
+    rank: int | None,
+    rng: Generator | None,
+    n_jobs: int | None,
+) -> tuple[LinearOperator, np.ndarray]:
+    """The leading eigenpairs of ``L* A* R^-1 A L``, the misfit Hessian seen
+    through the prior's factor ``L``: an isometry from ``R^r`` into the
+    latent space whose columns are the eigenvectors, and the eigenvalues."""
+    from ..numerics.randomized import random_eig
+
+    factor = prior.covariance_factor
+    if factor is None:
+        raise ValueError("A low-rank posterior needs a prior with a covariance factor.")
+    through = forward @ factor
+    hessian = (through.adjoint @ error_precision @ through).with_traits(
+        Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+    )
+    decomposition = random_eig(hessian, rank=rank, rng=rng, n_jobs=n_jobs)
+    eigenvalues = np.clip(np.asarray(decomposition.eigenvalues, dtype=float), 0.0, None)
+    return decomposition.factor, eigenvalues
+
+
+class LowRankGaussianPosterior(GaussianPosterior):
+    """The prior corrected in the ``r`` directions the data inform most.
+
+    The posterior of a Gaussian prior under a linear, or linearized, forward
+    operator differs from the prior only where the data carry information,
+    and the data carry it in at most as many directions as there are data,
+    usually far fewer that matter. Those directions are the eigenvectors of
+    the prior-preconditioned misfit Hessian ``H == L* A* R^-1 A L``, with
+    ``L`` the prior's covariance factor, and its eigenvalues ``lambda`` say
+    how much the data narrow each one. Keeping the ``r`` leading pairs
+    ``(lambda_k, v_k)`` gives
+
+    .. code-block:: text
+
+        C == L (I - V D V*) L*,          D == diag(lambda / (1 + lambda))
+        C^-1 == Li* (I + V Lambda V*) Li,  with  C_prior^-1 == Li* Li
+
+    exact when ``r`` is the number of nonzero eigenvalues and otherwise the
+    prior in the directions dropped, so always between the prior and the
+    full posterior. The covariance factor is ``L (I - V a V*)`` with ``a ==
+    1 - (1 + lambda)^-1/2``, so the measure samples at the cost of a prior
+    draw; the precision factor is ``(I + V b V*) Li`` with ``b == (1 +
+    lambda)^1/2 - 1``. Nothing here is assembled: every operator is the
+    prior's factors composed with rank-``r`` corrections.
+
+    The density relative to the prior is ``r``-dimensional, and the evidence
+    in the potential's convention is ``-J(m) - sum log(1 + lambda) / 2`` with
+    ``J`` the penalized misfit at the mean: exact for a linear problem at
+    full rank, the Laplace estimate otherwise.
+
+    Where the model space has a pointwise product, the amount by which the
+    prior's pointwise variance exceeds this measure's is the field ``sum_k
+    d_k (L v_k)^2``, from :meth:`pointwise_variance_reduction`: the
+    posterior's pointwise variance on a space with no closed form for it,
+    without sampling.
+    """
+
+    def __init__(
+        self,
+        prior: GaussianMeasure,
+        mean: Any,
+        eigenvalues: np.ndarray,
+        directions: LinearOperator,
+        /,
+        *,
+        relative_log_density: "Functional",
+        penalized_misfit: float | None = None,
+    ) -> None:
+        """
+        Args:
+            prior: the Gaussian prior, with a covariance factor.
+            mean: the posterior mean, or the mode the Laplace Gaussian is
+                centered on.
+            eigenvalues: the ``r`` leading eigenvalues of the
+                prior-preconditioned misfit Hessian, non-negative.
+            directions: an isometry from ``R^r`` into the prior factor's
+                domain whose columns are the eigenvectors.
+            relative_log_density: ``-Phi``, the log density against the
+                prior up to the normalizer.
+            penalized_misfit: ``J(m)``, the misfit at the mean plus half its
+                squared prior norm about the prior's mean, for the evidence;
+                computed from the mean when omitted and the prior has a
+                precision or a precision factor, otherwise the evidence is
+                unknown.
+
+        Raises:
+            ValueError: if the prior has no covariance factor, the
+                directions do not map into the factor's domain, or an
+                eigenvalue is negative.
+        """
+        from ..algebra.diagonal import DiagonalLinearOperator
+        from ..numerics.randomized import Estimate
+
+        factor = prior.covariance_factor
+        if factor is None:
+            raise ValueError(
+                "A low-rank posterior needs a prior with a covariance factor."
+            )
+        latent = factor.domain
+        if directions.codomain != latent:
+            raise ValueError(
+                f"The directions must map into the prior factor's domain "
+                f"{latent!r}; they map into {directions.codomain!r}."
+            )
+        eigenvalues = np.asarray(eigenvalues, dtype=float)
+        if eigenvalues.ndim != 1 or eigenvalues.size != directions.domain.dim:
+            raise ValueError(
+                f"Expected {directions.domain.dim} eigenvalues, one per direction, "
+                f"got shape {eigenvalues.shape}."
+            )
+        if np.any(eigenvalues < 0.0):
+            raise ValueError("The eigenvalues of a misfit Hessian are non-negative.")
+        self._prior = prior
+        self._eigenvalues = eigenvalues
+        self._directions = directions
+        space = prior.domain
+        definite = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+
+        def corrected(weights: np.ndarray, sign: float) -> LinearOperator:
+            """``I + sign V diag(weights) V*`` on the latent space."""
+            inner = DiagonalLinearOperator(directions.domain, weights)
+            return (
+                LinearOperator.identity(latent)
+                + sign * (directions @ inner @ directions.adjoint)
+            ).with_traits(definite)
+
+        shrink = eigenvalues / (1.0 + eigenvalues)
+        covariance = (factor @ corrected(shrink, -1.0) @ factor.adjoint).with_traits(
+            definite
+        )
+        covariance_factor = factor @ corrected(
+            1.0 - 1.0 / np.sqrt(1.0 + eigenvalues), -1.0
+        )
+        precision = precision_factor = None
+        whitening = prior.precision_factor
+        prior_precision = prior.precision
+        if whitening is not None:
+            precision = (
+                whitening.adjoint @ corrected(eigenvalues, 1.0) @ whitening
+            ).with_traits(definite)
+            precision_factor = (
+                corrected(np.sqrt(1.0 + eigenvalues) - 1.0, 1.0) @ whitening
+            )
+        elif prior_precision is not None:
+            # Li* V == P L V, the prior precision applied to the modes as
+            # models, so C^-1 == P + (P W) Lambda (P W)* with W == L V: the
+            # precision without a precision factor.
+            pushed = prior_precision @ factor @ directions
+            precision = (
+                prior_precision
+                + pushed
+                @ DiagonalLinearOperator(directions.domain, eigenvalues)
+                @ pushed.adjoint
+            ).with_traits(definite)
+
+        log_normalizer = None
+        if penalized_misfit is None:
+            offset = space.subtract(mean, prior.expectation)
+            if whitening is not None:
+                quadratic = latent.squared_norm(whitening(offset))
+            elif prior_precision is not None:
+                quadratic = space.inner_product(prior_precision(offset), offset)
+            else:
+                quadratic = None
+            if quadratic is not None:
+                penalized_misfit = -float(relative_log_density(mean)) + 0.5 * float(
+                    quadratic
+                )
+        if penalized_misfit is not None:
+            log_normalizer = Estimate(
+                -float(penalized_misfit) - 0.5 * float(np.sum(np.log1p(eigenvalues))),
+                0.0,
+                0,
+            )
+        super().__init__(
+            space,
+            reference=prior,
+            relative_log_density=relative_log_density,
+            log_normalizer=log_normalizer,
+            expectation=mean,
+            covariance=covariance,
+            covariance_factor=covariance_factor,
+            precision=precision,
+            precision_factor=precision_factor,
+        )
+
+    @classmethod
+    def from_linear_problem(
+        cls,
+        problem: LinearForwardProblem,
+        prior: GaussianMeasure,
+        data: Any,
+        /,
+        *,
+        rank: int | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> "LowRankGaussianPosterior":
+        """The low-rank posterior of a linear problem, with no solve at all.
+
+        The mean is ``m_0 + C A* R^-1 (d - A m_0)`` with ``C`` the low-rank
+        covariance, so once the eigenpairs are in hand it is a few
+        applications; at full rank it is the posterior mean exactly.
+
+        Args:
+            problem: the linear forward problem, with a Gaussian error.
+            prior: the Gaussian prior, with a covariance factor.
+            data: the observations.
+            rank: how many directions to keep; adaptive if omitted, as for
+                :func:`~pygeoinf2.numerics.randomized.random_eig`.
+            rng: the generator for the randomized eigendecomposition.
+            n_jobs: workers for it.
+
+        Returns:
+            The posterior.
+
+        Raises:
+            ValueError: if the error measure has no precision, or the prior
+                no covariance factor.
+        """
+        forward = problem.forward_operator
+        error_precision = problem.error_measure.precision
+        if error_precision is None:
+            raise ValueError("The error measure needs a precision.")
+        directions, eigenvalues = _information_eigenpairs(
+            forward, prior, error_precision, rank=rank, rng=rng, n_jobs=n_jobs
+        )
+        factor = prior.covariance_factor
+        latent = factor.domain
+        space = prior.domain
+        residual = forward.codomain.subtract(data, forward(prior.expectation))
+        pulled = factor.adjoint(forward.adjoint(error_precision(residual)))
+        weights = eigenvalues / (1.0 + eigenvalues)
+        coefficients = directions.adjoint(pulled)
+        corrected = latent.subtract(pulled, directions(weights * coefficients))
+        mean = space.add(prior.expectation, factor(corrected))
+        return cls(
+            prior,
+            mean,
+            eigenvalues,
+            directions,
+            relative_log_density=-problem.potential(data),
+        )
+
+    @property
+    def prior(self) -> GaussianMeasure:
+        """The prior this measure corrects."""
+        return self._prior
+
+    @property
+    def rank(self) -> int:
+        """How many directions are kept."""
+        return int(self._eigenvalues.size)
+
+    @property
+    def eigenvalues(self) -> np.ndarray:
+        """The eigenvalues of the prior-preconditioned misfit Hessian kept,
+        largest first: how much the data narrow each direction."""
+        return self._eigenvalues.copy()
+
+    @property
+    def directions(self) -> LinearOperator:
+        """The isometry from ``R^r`` into the latent space whose columns are
+        the directions kept."""
+        return self._directions
+
+    def modes(self) -> list[Any]:
+        """The directions as models, ``L v_k``: the fields the data inform."""
+        factor = self._prior.covariance_factor
+        unit = np.eye(self.rank)
+        return [factor(self._directions(unit[:, k])) for k in range(self.rank)]
+
+    def pointwise_variance_reduction(self) -> Any:
+        """``sum_k d_k (L v_k)^2``, the field by which the prior's pointwise
+        variance exceeds this measure's.
+
+        Raises:
+            TypeError: if the model space has no pointwise product.
+        """
+        from ..algebra.spaces import HilbertModule
+
+        space = self.domain
+        if not isinstance(space, HilbertModule):
+            raise TypeError(
+                f"{space!r} has no pointwise product, so no pointwise variance."
+            )
+        shrink = self._eigenvalues / (1.0 + self._eigenvalues)
+        total = space.zero()
+        for weight, mode in zip(shrink, self.modes()):
+            total = space.axpy(float(weight), space.multiply(mode, mode), total)
+        return total

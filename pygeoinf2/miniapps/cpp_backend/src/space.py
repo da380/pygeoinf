@@ -17,9 +17,10 @@ members the library used.
 The mesh and its matrices are assembled here from element matrices, as lists
 of triplets handed to ``cppvec.SparseMatrix``; the Gram matrix ``M + l^2 K``
 is factorized once by the C++ banded Cholesky, and its solve is the Riesz map
-of the space. The operators built on top -- point evaluation, local averages
-and the covariance of a Matérn-type prior with its factor and precision --
-are written from callables with their adjoints taken through that solve.
+of the space. The operators built on top -- point evaluation, local averages,
+the ``L^2`` inner product seen from the space, and the covariance of a
+Matérn-type prior with its factor and precision -- are written from
+callables with their adjoints taken through that solve.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ __all__ = [
     "CppSpace",
     "point_evaluation_operator",
     "local_average_operator",
+    "l2_form",
     "matern_measure",
 ]
 
@@ -370,6 +372,45 @@ def local_average_operator(
         weights = [hat_integral(i, a, b) / (b - a) for i in range(n + 1)]
         coefficients.append(space.interpolate(weights))
     return _functional_operator(space, coefficients, name="local_average")
+
+
+def l2_form(space: CppSpace, /) -> tuple[LinearOperator, LinearOperator]:
+    """The ``L^2`` inner product as an operator on the space, and its inverse.
+
+    The operator ``B = G^-1 M``, applied as a sparse product by the mass
+    matrix and a solve with the C++ Cholesky factor of the Gram matrix, so
+    that ``(B x, y) = y^T G G^-1 M x = y^T M x``: the ``L^2`` inner product
+    of the two functions, read through the space's own. It is self-adjoint
+    on the space because ``M`` is symmetric, and positive definite because
+    ``M`` is. It is bounded on ``H^1``, with norm at most one, since
+    ``x^T M x <= x^T (M + l^2 K) x``; its inverse ``M^-1 G``, a sparse product
+    by the Gram matrix and a solve with the Cholesky factor of the mass
+    matrix, is not bounded under refinement, its norm growing as the square
+    of the number of elements, but on any one mesh it is the inverse.
+
+    Args:
+        space: the space.
+
+    Returns:
+        ``B`` and ``B^-1``, each self-adjoint and positive definite on the
+        space.
+    """
+    mass, gram = space.mass, space.gram
+    mass_factor, gram_factor = space.mass_cholesky, space.gram_cholesky
+    calls = space.calls
+
+    def form(x: Any) -> Any:
+        calls["l2_form"] += 1
+        return gram_factor.solve(mass.apply(x))
+
+    def inverse(x: Any) -> Any:
+        calls["l2_form.inverse"] += 1
+        return mass_factor.solve(gram.apply(x))
+
+    return (
+        LinearOperator.self_adjoint(space, form, traits=_DEFINITE),
+        LinearOperator.self_adjoint(space, inverse, traits=_DEFINITE),
+    )
 
 
 # --------------------------------------------------------------------- #

@@ -270,17 +270,17 @@ def test_no_ray_is_counted_twice(app, quick_problem):
 def test_an_unseen_direction_has_a_tight_bracket(quick_problem):
     """The core's mean, which no ray sees: the support search's attaining
     model reaches the certified outer value, the smallest fitting model plus
-    as much of the property's representer as the prior's ellipsoid holds."""
+    as much of the property's representer as the prior's ball holds."""
     from pygeoinf2 import BackusGilbertParker, CholeskySolver
 
     built = quick_problem
     level = 0.95
-    ellipsoid = built.prior.weakened_ellipsoid(level=level, power=built.scale.set_power)
+    ball = built.prior.ambient_ball(level=level)
     noise_ball = built.problem.error_measure.ambient_ball(level=level)
     feasible = BackusGilbertParker(
         built.problem,
         built.properties,
-        ellipsoid,
+        ball,
         noise=noise_ball,
         solver=CholeskySolver(),
     )(built.data)
@@ -366,12 +366,46 @@ def test_the_feasible_brackets_hold_the_truth(results):
         part["gaps"] < 1e-3 * np.maximum(1.0, np.abs(part["brackets"]).max(1))
     )
     # A set bound admits more than the Gaussian posterior does, and the data
-    # narrow the bound of the prior's ellipsoid alone where the rays cross.
+    # narrow the bound of the prior's ball alone where the rays cross. The
+    # ball's bound alone is the same either way, and the truth lies inside.
     assert np.all(high - low > 2 * 1.96 * bayesian["deviation"])
+    assert part["truth_in_ball"] and part["gauge"] <= 1.0
     alone = part["alone"]
+    assert np.allclose(alone[:, 0], -alone[:, 1])
     assert np.all(alone[:, 0] <= low + 1e-9) and np.all(high <= alone[:, 1] + 1e-9)
     narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
     assert narrowed[0] < narrowed[1]
+
+
+def test_the_plume_is_a_conduit_flat_along_its_axis(app, scale):
+    """The plume is a conduit from the core-mantle boundary to the surface:
+    flat along its axis between the two radii, Gaussian in the distance
+    across it, and nothing in the core. On the quick space at twice its
+    truncation, which resolves the quick plume's width."""
+    mixture, problem = app["mixture"], app["problem"]
+    space = problem.model_space(dataclasses.replace(scale, mmax=2 * scale.mmax))
+    width, axis = scale.plume_width, mixture.TRUE_CANDIDATE
+    field = mixture.conduit(space, axis, width)
+    bottom, top = problem.CORE_RADIUS, problem.RADIUS
+    radii = np.linspace(bottom, top, 11)[1:-1]
+    along = space.point_evaluation_operator([(r, axis) for r in radii])(field)
+    assert np.allclose(along, 1.0, atol=1e-2)
+    middle = 0.5 * (bottom + top)
+    offsets = np.linspace(0.0, 3.0, 7) * width
+    angles = axis + np.degrees(np.arcsin(offsets / middle))
+    across = space.point_evaluation_operator([(middle, a) for a in angles])(field)
+    assert np.all(np.diff(across) < 0.0)
+    assert np.allclose(across, np.exp(-0.5 * (offsets / width) ** 2), atol=1e-2)
+    inside = space.point_evaluation_operator([(0.2, axis), (0.5, axis)])(field)
+    assert np.allclose(inside, 0.0, atol=1e-12)
+    # The distance it is a Gaussian of: zero on the axis, the offset across
+    # it, and to the nearer end beyond either.
+    distance = mixture.distance_to_axis
+    assert distance(radii, axis, axis) == pytest.approx(0.0, abs=1e-12)
+    assert distance(middle, angles, axis) == pytest.approx(offsets, abs=1e-12)
+    assert distance(0.5 * bottom, axis, axis) == pytest.approx(0.5 * bottom)
+    assert distance(1.5 * top, axis, axis) == pytest.approx(0.5 * top)
+    assert distance(top, axis + 180.0, axis) == pytest.approx(top + bottom)
 
 
 def test_the_mixture_finds_the_plume(results):
@@ -527,9 +561,9 @@ def test_the_ball_answers_follow_the_coverage(ball_results):
     # The point estimate is zero in the core, all of its error bias.
     assert point["estimate"][2] == pytest.approx(0.0, abs=1e-12)
     # The truth lies in every bracket and in the polytope they bound, and the
-    # data narrow the prior's ellipsoid's bound most where the rays cross.
+    # data narrow the prior's ball's bound most where the rays cross.
     low, high = sets["brackets"][:, 0], sets["brackets"][:, 1]
-    assert sets["truth_in_ellipsoid"]
+    assert sets["truth_in_ball"]
     assert np.all(low - 1e-6 <= setup.true_properties)
     assert np.all(setup.true_properties <= high + 1e-6)
     assert sets["inside"]

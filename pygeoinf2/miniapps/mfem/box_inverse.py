@@ -10,8 +10,8 @@ it, a measure of extra regularity. Two properties are asked about, the
 average source over a small disc among the sensors and over one in the empty
 disc, and each is answered three ways: the minimum-norm estimate under the
 discrepancy principle, smallest in the prior's norm; the Bayesian posterior;
-and the feasible set's certified brackets under the prior's 95% ellipsoid
-and the noise's 95% ball.
+and the feasible set's certified brackets under the prior's 95% ball and
+the noise's.
 """
 
 from __future__ import annotations
@@ -173,13 +173,13 @@ def box_inverse(
 
     box.reset_counts()
     t0 = time.perf_counter()
-    # The prior hardened to the ellipsoid of its covariance to a power below
-    # one half, which carries its 95% however fine the grid; the Mahalanobis
-    # ellipsoid's radius grows with it.
-    ellipsoid = prior.weakened_ellipsoid(level=scale.level, power=scale.box_set_power)
+    # The prior hardened to the ball of the space's norm that carries 95% of
+    # it, whose radius has a limit however fine the grid, a draw's squared
+    # norm having a finite expectation under a trace-class covariance.
+    ball = prior.ambient_ball(level=scale.level)
     noise_ball = noise.ambient_ball(level=scale.level)
     feasible = BackusGilbertParker(
-        problem, averages, ellipsoid, noise=noise_ball, solver=solver
+        problem, averages, ball, noise=noise_ball, solver=solver
     )(data)
     P = averages.codomain
     directions = []
@@ -194,20 +194,21 @@ def box_inverse(
         ]
     )
     inside = bool(feasible.polytope(directions).contains(true_averages))
-    alone = prior_alone(ellipsoid, averages)
-    gauge = X.inner_product(ellipsoid.precision(truth), truth)
+    alone = prior_alone(ball, averages)
+    gauge = (X.norm(truth) / ball.radius) ** 2
     print(
-        f"the set: the feasible set under the prior's {scale.level:.0%} ellipsoid "
-        f"(Q^-p f, f) <= r^2 with p = {scale.box_set_power:g}, in which the truth's "
-        f"gauge is {gauge:.2f}, and the noise's ball: {box.solves} MFEM solves, "
-        f"{time.perf_counter() - t0:.1f} s; the true averages in the polytope: {inside}"
+        f"the set: the feasible set under the prior's {scale.level:.0%} ball "
+        f"||f|| <= r, r = {ball.radius:.2f} in H^{X.order:g}, in which the truth's "
+        f"gauge (||f|| / r)^2 is {gauge:.2f}, and the noise's ball: {box.solves} "
+        f"MFEM solves, {time.perf_counter() - t0:.1f} s; the true averages in the "
+        f"polytope: {inside}"
     )
     for (name, _), (low, high), (a0, a1), t in zip(
         REGIONS, brackets, alone, true_averages
     ):
         print(
             f"   {name:<18s} certified bracket [{low:+.3f}, {high:+.3f}], the "
-            f"ellipsoid alone [{a0:+.2f}, {a1:+.2f}], truth {t:+.3f}"
+            f"ball alone [{a0:+.2f}, {a1:+.2f}], truth {t:+.3f}"
         )
 
     names = [f"the average source {name}" for name, _ in REGIONS]
@@ -276,14 +277,14 @@ def box_inverse(
         "standard deviation before and after, and each average's marginal",
     )
 
-    # The set: each bracket against the bound of the prior's ellipsoid alone.
+    # The set: each bracket against the bound of the prior's ball alone.
     fig, axes = plt.subplots(1, len(REGIONS), figsize=(8.0, 3.8), layout="constrained")
     bound_panels(axes, names, alone, brackets, true_averages, ylabel="average of f")
     save(
         fig,
         outdir / "box_inverse_brackets.png",
         title=f"MFEM, part E: the set answer. The bound the prior's {scale.level:.0%} "
-        "ellipsoid admits alone,\nand the certified bracket the data leave",
+        "ball admits alone,\nand the certified bracket the data leave",
     )
     print(f"E took {time.perf_counter() - started:.1f} s")
     return {
@@ -304,6 +305,7 @@ def box_inverse(
         "alone": alone,
         "inside": inside,
         "gauge": gauge,
+        "radius": ball.radius,
         "data": len(points),
     }
 

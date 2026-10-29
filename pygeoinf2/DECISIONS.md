@@ -3365,6 +3365,121 @@ D-193's second) are removed with it. Every mini-app's set part moves to the
 ball, and the C++ backend app shows the operator form with the `L^2` ball
 of its `H^1` space.
 
+**D-195. Four defects the mini-apps surfaced, fixed before the review**
+(2026-10-29, David: "fix what we know needs fixing first"). (1) A block
+diagonal operator takes `domain=` and `codomain=`, which must equal the
+plain sums of its blocks' spaces, and `from_product(domain=)` seats the
+covariance, precision and factors on the caller's space with them, a
+factor whose blocks map each summand to itself at both ends: a product of
+Sobolev measures on a `Layered` space had its operators on the bare
+`CoordinateDirectSum`, which compares equal to the layered space but has no
+pointwise product, so a posterior built from them lost `sample_pointwise_std`;
+the self-adjoint factor was the subtle half, its adjoint being itself with
+the plain domain. (2) `from_standard_deviation` refuses on
+`is_function_space`, not on `HilbertModule`: the C++ backend's space is a
+function space and not a module, and it accepted an identity covariance.
+(3) The ambient ball's randomized route estimates the trace by Hutchinson
+(32 probes, against the decomposition's hundreds of applications) and
+warns when the kept eigenvalues carry less than 95% of it, since the
+dropped tail is positive and the radius a lower bound. (4)
+`FeasiblePropertySet.support_sweep` runs its workers as processes, as every
+loop of the library does (threads crash the sphere transforms and bought
+nothing); the set and its structure drop their locks and caches when
+pickled and recreate them on arrival. With them, two gaps in D-194's
+ellipsoid form: the ellipsoid carries the ball's `radius` when built as
+one, and `inverse=` must claim the operator's traits and pass one probe
+of `B B^-1 x == x`. The tomography app's hand re-seating of its layered
+factor is no longer needed and goes when the app is next touched.
+
+**D-196. Correlated products: `from_product(correlation=)` ties the
+factors through their latent white noise** (2026-10-29, David: it "could be
+built now"; the plan of 2026-10-24 had it after the release). Each factor
+draws as `L_i xi_i`; a correlation matrix `R`, symmetric, positive
+semidefinite, unit diagonal, makes the latent noises correlated mode for
+mode through the symmetric root `S` of `R`: the draw is `L_i (sum_j S_ij
+xi_j)`, the marginals are the factors unchanged, the cross-covariance of
+`i` and `j` is `R_ij L_i L_j*`. The factor is the block diagonal of the
+`L_i` composed with a mixing operator on the direct sum of the latent
+spaces, matrix-free and self-adjoint; the precision factor is the
+mixing's inverse composed with the factors' precision factors, when every
+factor has one and `R` is definite. The latent spaces must correspond mode
+for mode: all the same space, where the sum is taken directly, or all
+coordinate spaces of one dimension with a diagonal metric, where it is
+taken on standardized components `sqrt(g_k) c_k`, the ones white noise
+makes standard normal; anything else is refused with the reason. `Layered
+.sobolev_measure(correlation=)` passes it through, so a planet's layers
+can share structure across an interface without being continuous there.
+The scale-dependent correlation of fields on one symmetric space stays
+`correlated_measure`'s; this is the constant one, on any summands. Not a
+rewrite of `correlated_measure` as a wrapper, which the plan had: its
+fused spectral path is the better implementation of its own case.
+
+**D-197. `ball`, `disk` and `interval` are packages of modules, not of
+one `__init__.py`** (2026-10-29, David: "check that all the `__init__.py`
+files are doing what they should and don't contain module code"). Each
+held its space and the Lebesgue, Sobolev and layered forms in
+`__init__.py`, 850, 866 and 273 lines, as the agents that built them left
+them. Each is now `space.py` (the space and its two forms), `layered.py`
+(the layered wrapper) and an `__init__.py` of the package docstring and
+re-exports, so no import path changes; `interval.radial` stays as it was.
+Every other package's `__init__.py` was already a docstring, imports and
+the export list.
+
+**D-198. The low-rank posterior: the prior corrected in the directions the
+data inform** (2026-10-29, David: build it now and show the student, rather
+than wait to design it jointly). `LowRankGaussianPosterior` in
+`inference.gaussian`, a `GaussianPosterior`, holds the `r` leading
+eigenpairs `(lambda_k, v_k)` of the prior-preconditioned misfit Hessian
+`L* A* R^-1 A L`, found by the randomized eigendecomposition, and is
+`C == L (I - V D V*) L*` with `D == diag(lambda / (1 + lambda))`: exact at
+the number of nonzero eigenvalues, the prior in the directions dropped,
+between the two otherwise. Covariance factor `L (I - V a V*)`, so a draw
+costs a prior draw; precision `Li* (I + V Lambda V*) Li` through the prior's
+precision factor when it has one, and otherwise `P + (P W) Lambda (P W)*`
+with `W == L V` the modes as models, since `Li* V == P L V`, which is what
+the symmetric spaces' invariant measures need, having a precision and no
+factor; precision factor `(I + V b V*) Li` when `Li` exists. Nothing is
+assembled. The evidence in the potential's convention is `-J(m) - sum
+log(1 + lambda) / 2`, exact for a linear problem at full rank (the test
+checks it against `LinearGaussianInversion`'s to 1e-8) and the Laplace
+estimate otherwise, which answers the question D-132 left open.
+`from_linear_problem(problem, prior, data, rank=)` gives the mean in closed
+form, `m_0 + C A* R^-1 (d - A m_0)`, with no solve; `LaplaceApproximation(
+rank=)` returns it at the mode in place of the full Gaussian. `modes()` are
+the fields the data inform and `pointwise_variance_reduction()` is `sum_k
+d_k (L v_k)^2` on any space with a pointwise product: the posterior's
+pointwise variance where no closed form exists, without sampling, which
+retires the Monte Carlo stopgap for deflated pointwise variance. Not yet:
+an example of its own and the sampling layer's use of it as a reference,
+both post-review.
+
+**D-199. The planet-density app's radius is in Earth radii, and a default
+element length carries a rounding margin** (2026-10-29, David: check the
+planetmodel-based examples "are using sensible unit schemes"). The other
+planet-scale examples sit on a planet of radius one; this app kept
+kilometers, which put the Earth's volume into every inner product: PREM's
+norm on the space was `1.03e7`, now 20.3, every density norm scaling by
+`6371^-1.5`; densities stay in g/cm^3, the data in `10^24 kg` and `10^37
+kg m^2`, the options in kilometers converted inside, the plots labeled in
+kilometers. Parts A to C reproduce to every digit. Part D does not, and
+cannot: Occam in the model space's norm depends on that norm, and with a
+displacement unit now costing 1 against 0.079 for the density change with
+the same mass effect, where in kilometers displacements were nearly free
+(ICB moved 1 547 km), the two Occam answers now differ by 24 km at the
+core-mantle boundary rather than by more than 100 km at both; the lesson,
+that simple is norm dependent, stands with less contrast, which David
+judged better as it is. The derivative check's probes needed no
+rebalancing once the norms were of order one, only centering (a draw from
+the prior itself is PREM over its norm); worst defect 1.9e-13. Two things
+in the coordinate change: planetmodel's mesh takes `ceil(span / drmax)`
+elements with no tolerance, so a span that is a whole number of elements
+in exact arithmetic can round up to one more in other units, and its
+banded eigensolver does not normalize eigenvector signs, so the changed
+mesh flipped one basis function and a seeded draw with it. The library's
+default element length is lengthened by a part in `10^9` (`axis.py`), which
+keeps the mesh the one exact arithmetic gives; the sign normalization is
+for the planetmodel 1.4 update after the launch.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

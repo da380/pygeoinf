@@ -736,6 +736,27 @@ class TestTheBallInAnotherNorm:
         covered = np.mean([dense.contains(y) for y in draws])
         assert covered == pytest.approx(0.9, abs=0.03)
 
+    def test_the_ellipsoid_knows_its_radius_and_a_wrong_inverse_is_refused(self, rng):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        X = Sobolev(6, 1.5, 0.3)
+        measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
+        mass, inverse = self.mass_operators(X)
+        ellipsoid = measure.ambient_ball(level=0.9, operator=mass, inverse=inverse)
+        weights = measure._diagonal_eigenvalues() * mass._known_scaling()
+        assert ellipsoid.radius == pytest.approx(
+            np.sqrt(weighted_chi2_quantile(weights, 0.9))
+        )
+        with pytest.raises(ValueError, match="no radius"):
+            measure.credible_set(level=0.9, unsafe=True).radius
+        with pytest.raises(ValueError, match="not the operator's"):
+            measure.ambient_ball(level=0.9, operator=mass, inverse=mass, rng=rng)
+        unclaimed = LinearOperator.from_callables(
+            X, X, lambda x: x, adjoint=lambda x: x
+        )
+        with pytest.raises(ValueError, match="inverse must claim"):
+            measure.ambient_ball(level=0.9, operator=mass, inverse=unclaimed)
+
     def test_an_operator_off_the_space_or_without_its_traits_is_refused(self):
         X = Sobolev(6, 1.5, 0.3)
         measure = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)

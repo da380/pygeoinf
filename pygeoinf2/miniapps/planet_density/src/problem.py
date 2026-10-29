@@ -3,8 +3,14 @@
 The model space is PREM's own layering -- inner core, outer core, eight
 layers of mantle and a crust -- of radial profiles under the volume measure,
 each the Sobolev space ``H^2`` with a length scale of 200 km, the crust's
-excepted: densities in g/cm^3, radii in km. The layers are independent, so the density may jump
-wherever PREM's layering has a boundary, and nowhere else.
+excepted. The layers are independent, so the density may jump wherever
+PREM's layering has a boundary, and nowhere else.
+
+The units: radius in Earth radii, density in g/cm^3, the data in 10^24 kg
+and 10^37 kg m^2. The planet has radius one, so the volume integrals in the
+space's inner product are of order one and so are its norms, as the
+densities and the data are. Lengths given in km, the scale's among them, are
+converted where they meet the space.
 
 The reference is PREM in the space. Within every layer but the crust PREM's
 density is smooth, and there it is fitted over the layer's domain by the
@@ -60,17 +66,19 @@ from .reference import (
     prem_summary,
 )
 
-# The data's units: a volume integral in km^3 of a density in g/cm^3 is
-# 10^12 kg, and a further km^2 is 10^6 m^2.
+# The data's units. A volume integral of a density in g/cm^3 over radii in
+# Earth radii is in units of R_SURFACE^3 km^3 g/cm^3, which is R_SURFACE^3
+# 10^12 kg with R_SURFACE in km; a further r^2 is R_SURFACE^2 10^6 m^2.
 MASS_UNIT = 1e24
 MOMENT_UNIT = 1e37
-TO_MASS = 1e12 / MASS_UNIT
-TO_MOMENT = 1e12 * 1e6 / MOMENT_UNIT
+TO_MASS = R_SURFACE**3 * 1e12 / MASS_UNIT
+TO_MOMENT = R_SURFACE**5 * 1e18 / MOMENT_UNIT
 
 PROPERTY_NAMES = ("core mean", "mantle mean", "CMB jump")
 
-CORE_VOLUME = 4.0 * np.pi / 3.0 * R_CMB**3
-MANTLE_VOLUME = 4.0 * np.pi / 3.0 * (R_SURFACE**3 - R_CMB**3)
+# The core's and the mantle's volumes, in Earth radii cubed.
+CORE_VOLUME = 4.0 * np.pi / 3.0 * (R_CMB / R_SURFACE) ** 3
+MANTLE_VOLUME = 4.0 * np.pi / 3.0 * (1.0 - (R_CMB / R_SURFACE) ** 3)
 
 
 CORE_LAYERS = ("inner_core", "outer_core")
@@ -90,7 +98,8 @@ class Scale:
             mantle, lower mantle, the layer above it, the transition zone's
             three, the low-velocity zone, the lid, the crust.
         order: the Sobolev order of every layer of the model space.
-        length_scale: the length scale of every layer but the crust, in km.
+        length_scale: the length scale of every layer but the crust, in km,
+            converted to the space's Earth radii.
         measure_order: the order of the priors' Sobolev measure on every
             layer, above one half: a radial profile's spectrum grows as on a
             line, and at or below that the covariance is not trace class.
@@ -101,13 +110,11 @@ class Scale:
             fraction of the datum.
         level: the credibility of the discrepancy level and of the sets the
             priors and the noise are hardened to.
-        set_power: the power of a prior's covariance that shapes its
-            ellipsoid in the set answers, below three quarters for the
-            ellipsoid to survive refinement.
-        radius_scale: part D's unit of boundary displacement, in km, which
-            is the displacements' prior standard deviation.
+        radius_scale: part D's unit of boundary displacement, which is the
+            displacements' prior standard deviation, in km, converted to the
+            space's Earth radii.
         true_shifts: part D's true outward displacements of the inner-core
-            and core-mantle boundaries, in km.
+            and core-mantle boundaries, in km, converted likewise.
         check_points: the draws from the prior at which part D checks its
             derivatives.
     """
@@ -122,7 +129,6 @@ class Scale:
     wide_std: float
     relative_error: float
     level: float
-    set_power: float
     radius_scale: float
     true_shifts: tuple[float, ...]
     check_points: int
@@ -139,7 +145,6 @@ QUICK = Scale(
     wide_std=3.0,
     relative_error=1e-3,
     level=0.95,
-    set_power=0.375,
     radius_scale=50.0,
     true_shifts=(-20.0, 30.0),
     check_points=3,
@@ -198,7 +203,8 @@ def sobolev_prior(
 def volume_integral(
     space: Layered, weight: Callable[[np.ndarray], np.ndarray]
 ) -> np.ndarray:
-    """The derivative components of ``rho -> int weight(r) rho dV``.
+    """The derivative components of ``rho -> int weight(r) rho dV``, with
+    ``r`` in Earth radii and ``dV`` in Earth radii cubed.
 
     Five-point Gauss-Legendre between every pair of adjacent nodes of each
     layer, where every basis function is a polynomial of the mesh's degree,
@@ -226,30 +232,35 @@ def build(*, scale: Scale = FULL, quiet: bool = False) -> Problem:
     say = (lambda *args: None) if quiet else print
     say(f"\n=== A. The setup ({scale.name} scale) ===")
     names, boundaries = layering()
-    crust = 0.25 * (boundaries[-1] - boundaries[-2])
+    # The space's radius is in Earth radii: PREM's boundaries and the length
+    # scale, both in km, are converted.
+    radii = [boundary / R_SURFACE for boundary in boundaries]
+    crust = 0.25 * (radii[-1] - radii[-2])
+    scales = [
+        crust if name == "crust" else scale.length_scale / R_SURFACE for name in names
+    ]
     space = Layered(
-        list(boundaries),
+        radii,
         list(scale.basis_functions),
         order=scale.order,
-        length_scale=[
-            crust if name == "crust" else scale.length_scale for name in names
-        ],
+        length_scale=scales,
         labels=names,
     )
     say(
-        f"space: PREM's {len(names)} layers of radial profiles, H^{scale.order:g}, "
+        f"space: PREM's {len(names)} layers of radial profiles, radius in Earth radii, "
+        f"H^{scale.order:g}, "
         f"{'/'.join(map(str, scale.basis_functions))} basis functions "
         f"({space.dim} in all), boundaries at "
         f"{', '.join(f'{b:g}' for b in boundaries[1:-1])} km"
     )
+    # PREM's density is a function of the radius in km, read at R_SURFACE r.
     reference = space.truncate(
         tuple(
             layer.project_function(
-                function, extension="constant" if name == "crust" else "fit"
+                lambda r, prem=prem: prem(R_SURFACE * r),
+                extension="constant" if name == "crust" else "fit",
             )
-            for name, layer, function in zip(
-                names, space.layers, prem_layer_functions()
-            )
+            for name, layer, prem in zip(names, space.layers, prem_layer_functions())
         )
     )
     rng = np.random.default_rng(scale.seed)
@@ -277,7 +288,7 @@ def build(*, scale: Scale = FULL, quiet: bool = False) -> Problem:
             space.jump_operator(
                 int(np.argmin(np.abs(np.asarray(space.interfaces) - radius)))
             ).matrix(form="components")[0]
-            for radius in (R_ICB, R_CMB)
+            for radius in (R_ICB / R_SURFACE, R_CMB / R_SURFACE)
         ]
     )
     volume = volume_integral(space, np.ones_like)
@@ -311,6 +322,10 @@ def build(*, scale: Scale = FULL, quiet: bool = False) -> Problem:
         f"{predicted[0] * MASS_UNIT:.5g} kg and moment of inertia "
         f"{predicted[1] * MOMENT_UNIT:.5g} kg m^2, against PREM's own "
         f"{own['mass']:.5g} and {own['moment']:.5g}"
+    )
+    say(
+        f"norms on the space: the reference's {space.norm(reference):.3g}, the "
+        f"truth's departure from it {space.norm(space.subtract(truth, reference)):.3g}"
     )
     say(
         f"the truth, the reference plus a draw from the prior of pointwise std "

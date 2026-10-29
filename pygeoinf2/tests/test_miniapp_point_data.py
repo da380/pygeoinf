@@ -191,13 +191,16 @@ def test_the_feasible_brackets_hold_the_truth(results):
     assert np.all(setup.true_averages <= high + 1e-6)
     assert part["inside"]
     assert np.all(part["gaps"] < 1e-2)
-    # The truth, a draw from the prior, lies in its 95% ellipsoid.
-    assert part["gauge"] <= 1.0
+    # The truth, a draw from the prior, lies in its 95% ball.
+    assert 0.0 < part["radius"] and part["gauge"] <= 1.0
     # A set bound admits more than the Gaussian posterior does.
     assert np.all(high - low > 2 * 1.96 * bayesian["deviation"])
-    # The data narrow the bound of the ellipsoid alone, least where they
+    # The ball alone admits the same either way, and as much for one cap as
+    # for another of the same radius; the data narrow it, least where they
     # are fewest, under Africa.
     alone = part["alone"]
+    assert np.allclose(alone[:, 0], -alone[:, 1])
+    assert np.allclose(alone[:, 1], alone[0, 1])
     assert np.all(alone[:, 0] <= low + 1e-9) and np.all(high <= alone[:, 1] + 1e-9)
     narrowed = (high - low) / (alone[:, 1] - alone[:, 0])
     assert narrowed[2] > max(narrowed[0], narrowed[1])

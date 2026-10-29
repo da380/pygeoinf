@@ -2,8 +2,8 @@
 
 Each part writes its own figure, one method to a figure: the point estimate
 with its error budget, the measure as prior against posterior, the set as
-the bound the prior's ellipsoid admits alone against the bracket the data
-leave.
+the bound each of the prior's balls admits alone against the bracket the
+data leave.
 """
 
 from __future__ import annotations
@@ -251,21 +251,32 @@ def error_budget_panels(
 def bound_panels(
     axes: Any,
     names: Sequence[str],
-    alone: Any,
-    brackets: Any,
+    sets: Sequence[tuple[str, Any, Any]],
     truth: Any,
     /,
     *,
     ylabel: str,
 ) -> None:
-    """For each property, a panel: the bound the prior's ellipsoid admits
-    alone against the bracket the data leave, and the truth."""
-    for ax, name, (a0, a1), (b0, b1), t in zip(axes, names, alone, brackets, truth):
-        ax.plot([0, 0], [a0, a1], color="0.6", lw=10, solid_capstyle="butt")
-        ax.plot([1, 1], [b0, b1], color="C0", lw=10, solid_capstyle="butt")
+    """For each property, a panel: for each prior set, given as its label,
+    its bounds alone and the brackets under it, the bound it admits alone
+    against the bracket the data leave, and the truth."""
+    for index, (ax, name, t) in enumerate(zip(axes, names, truth)):
+        ticks, labels = [], []
+        for k, (label, alone, brackets) in enumerate(sets):
+            x = 2.5 * k
+            ax.plot([x, x], alone[index], color="0.6", lw=10, solid_capstyle="butt")
+            ax.plot(
+                [x + 1, x + 1],
+                brackets[index],
+                color=f"C{k}",
+                lw=10,
+                solid_capstyle="butt",
+            )
+            ticks += [x, x + 1]
+            labels += [f"{label}\nalone", "with the\ndata"]
         ax.axhline(t, color="black", ls="--", lw=1.0, label="truth")
-        ax.set_xticks([0, 1], ["the prior's\nellipsoid alone", "with the\ndata"])
-        ax.set_xlim(-0.7, 1.7)
+        ax.set_xticks(ticks, labels, fontsize=8)
+        ax.set_xlim(-0.7, 2.5 * (len(sets) - 1) + 1.7)
         ax.set_title(name, fontsize=10)
     axes[0].set_ylabel(ylabel)
     axes[0].legend(fontsize=7, loc="lower left", frameon=False)

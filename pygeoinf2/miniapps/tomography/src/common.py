@@ -2,7 +2,7 @@
 
 Each part writes its own figures, one method to a figure: the point
 estimate with its error budget, the measure as prior against posterior, the
-set as the bound the prior's ellipsoid admits alone against the bracket the
+set as the bound the prior's ball admits alone against the bracket the
 data leave.
 """
 
@@ -32,7 +32,7 @@ from pygeoinf2 import plotting  # noqa: E402
 # Where a run writes: ``results/`` in the app's directory, above this package.
 RESULTS = pathlib.Path(__file__).resolve().parents[1] / "results"
 # The scale's fields that are not command-line options: the preset's name,
-# the geometry its script decides, and part E's candidate places.
+# the geometry its script decides, and part E's candidate angles.
 FIXED = frozenset({"name", "geometry", "candidates"})
 
 
@@ -342,7 +342,7 @@ def bound_panels(
     *,
     ylabel: str,
 ) -> None:
-    """For each property, a panel: the bound the prior's ellipsoid admits alone
+    """For each property, a panel: the bound the prior's ball admits alone
     against the bracket the data leave, and the truth.
 
     Both are drawn as bars on an axis linear within one and logarithmic
@@ -353,7 +353,7 @@ def bound_panels(
         ax.plot([0, 0], [a0, a1], color="0.6", lw=10, solid_capstyle="butt")
         ax.plot([1, 1], [b0, b1], color="C0", lw=10, solid_capstyle="butt")
         ax.axhline(t, color="black", ls="--", lw=1.0, label="truth")
-        ax.set_xticks([0, 1], ["the prior's\nellipsoid alone", "with the\ndata"])
+        ax.set_xticks([0, 1], ["the prior's\nball alone", "with the\ndata"])
         ax.set_xlim(-0.7, 1.7)
         ax.set_yscale("symlog", linthresh=1.0)
         ax.set_title(name, fontsize=10)

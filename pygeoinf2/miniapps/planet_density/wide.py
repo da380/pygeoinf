@@ -2,7 +2,7 @@
 
 A bound on the departure from PREM that says almost nothing: the Sobolev
 measure with a pointwise standard deviation of 3 g/cm^3 as the Gaussian, and
-its 95% ellipsoid as the set. The same three answers as in part B, in the
+its 95% ball as the set. The same three answers as in part B, in the
 same order. Two
 data cut a slice through the space, and this part shows what each answer
 makes of the slice when the prior hardly narrows it.

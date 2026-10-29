@@ -1,19 +1,19 @@
 """Part D: the set answer.
 
 The feasible set of the three properties, with the prior hardened to its 95%
-ellipsoid and the noise to its 95% ball: certified support brackets in the
-six coordinate directions, whether the truth lies in the polytope they
-bound, and each bracket against the bound the prior's ellipsoid admits on
-its own, before any datum. The searches work in the data space, where the
-family ``A C A* + t R`` is a few hundred square and full rank, and every
-member is inverted by a Cholesky factorization.
+ball and the noise to its 95% ball: certified support brackets in the six
+coordinate directions, whether the truth lies in the polytope they bound,
+and each bracket against the bound the prior's ball admits on its own,
+before any datum. The searches work in the data space, where the family
+``A A* r^2 + t R`` is a few hundred square and full rank, and every member
+is inverted by a Cholesky factorization.
 
-The ellipsoid is ``{m : (Q^-p m, m) <= r^2}``, the prior's covariance ``Q``
-to the scale's power ``p``, with ``r`` the radius that carries 95% of the
-prior. At ``p = 1`` it would be the Mahalanobis ellipsoid, whose radius
-grows with the truncation on a function space; below ``1 - d / 4`` for a
-measure of order two in ``d`` dimensions it carries its probability in the
-limit.
+The prior's ball is ``{m : ||m|| <= r}`` in the space's own norm, with ``r``
+the radius at which a draw from the prior lies inside with probability
+0.95: the classical norm bound, with the prior calibrating the radius. A
+draw's squared norm has the covariance's trace as its expectation, finite
+for a trace-class covariance, so the radius has a limit however fine the
+truncation, where the Mahalanobis ellipsoid's grows with it.
 """
 
 from __future__ import annotations
@@ -48,30 +48,29 @@ def prior_alone(prior_set: Any, properties: Any, /) -> np.ndarray:
 
 def support_brackets(problem: Problem, /, *, names: Sequence[str] = PROPERTIES) -> dict:
     """The certified brackets on the properties, the bounds of the prior's
-    ellipsoid alone, and whether the truth lies in the polytope of the
-    brackets.
+    ball alone, and whether the truth lies in the polytope of the brackets.
 
     Each answer is a bracket: an outer value with a dual certificate and an
     inner one attained by a feasible model, which in a direction no ray
     sees, the core's, is the smallest fitting model plus as much of the
-    property's representer as the ellipsoid holds.
+    property's representer as the ball holds.
     """
     scale, space, forward = problem.scale, problem.space, problem.problem
-    level, power = scale.level, scale.set_power
-    ellipsoid = problem.prior.weakened_ellipsoid(level=level, power=power)
+    level = scale.level
+    ball = problem.prior.ambient_ball(level=level)
     noise_ball = forward.error_measure.ambient_ball(level=level)
-    gauge = space.inner_product(ellipsoid.precision(problem.truth), problem.truth)
+    gauge = (space.norm(problem.truth) / ball.radius) ** 2
     print(
-        f"the prior hardened to its {level:.0%} ellipsoid (Q^-p m, m) <= r^2 with "
-        f"p = {power:g}: the truth's gauge is {gauge:.2f} of the boundary's 1, "
-        f"inside: {ellipsoid.contains(problem.truth)}; the noise to its {level:.0%} "
-        f"ball of radius {noise_ball.radius:.3f}"
+        f"the prior hardened to its {level:.0%} ball ||m|| <= r, r = "
+        f"{ball.radius:.2f}: the truth's gauge (||m|| / r)^2 is {gauge:.2f} of the "
+        f"boundary's 1, inside: {ball.contains(problem.truth)}; the noise to its "
+        f"{level:.0%} ball of radius {noise_ball.radius:.3f}"
     )
     t0 = time.perf_counter()
     feasible = BackusGilbertParker(
         forward,
         problem.properties,
-        ellipsoid,
+        ball,
         noise=noise_ball,
         solver=CholeskySolver(),
     )(problem.data)
@@ -91,10 +90,10 @@ def support_brackets(problem: Problem, /, *, names: Sequence[str] = PROPERTIES) 
     inner = np.array([result.inner for result in sweep.results])
     brackets = np.zeros((P.dim, 2))
     gaps = np.zeros(P.dim)
-    alone = prior_alone(ellipsoid, problem.properties)
+    alone = prior_alone(ball, problem.properties)
     print(
         f"  {'mean over':<16s} {'from':>8s} {'to':>8s} {'gap':>8s} {'truth':>8s} "
-        f"{'the ellipsoid alone':>20s}"
+        f"{'the ball alone':>20s}"
     )
     for index, name in enumerate(names):
         high, low = 2 * index, 2 * index + 1
@@ -111,8 +110,9 @@ def support_brackets(problem: Problem, /, *, names: Sequence[str] = PROPERTIES) 
         f"half-spaces: {inside}"
     )
     return {
+        "radius": ball.radius,
         "gauge": gauge,
-        "truth_in_ellipsoid": bool(ellipsoid.contains(problem.truth)),
+        "truth_in_ball": bool(ball.contains(problem.truth)),
         "alone": alone,
         "brackets": brackets,
         "gaps": gaps,
@@ -129,8 +129,8 @@ def brackets_figure(
     path: pathlib.Path,
     title: str,
 ) -> None:
-    """For each property, the bound the prior's ellipsoid admits alone
-    against the bracket the data leave, with the truth."""
+    """For each property, the bound the prior's ball admits alone against
+    the bracket the data leave, with the truth."""
     fig, axes = plt.subplots(1, len(names), figsize=(10.0, 4.0), layout="constrained")
     bound_panels(
         axes,
@@ -146,7 +146,7 @@ def brackets_figure(
 def set_answer(
     problem: Problem, /, *, rng: np.random.Generator, outdir: pathlib.Path
 ) -> dict:
-    """The feasible brackets, against the bounds of the prior's ellipsoid
+    """The feasible brackets, against the bounds of the prior's ball
     alone."""
     started = time.perf_counter()
     print(f"\n=== D. The set answer ({problem.scale.name} scale) ===")
@@ -160,7 +160,7 @@ def set_answer(
         ],
         path=outdir / "brackets.png",
         title="Tomography, part D: the set answer. For each mean, the bound the "
-        f"prior's {problem.scale.level:.0%} ellipsoid admits alone\nand the "
+        f"prior's {problem.scale.level:.0%} ball admits alone\nand the "
         "certified bracket the data leave: narrow where the rays cross, barely "
         "narrowed in the core",
     )

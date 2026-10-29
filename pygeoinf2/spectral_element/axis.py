@@ -113,6 +113,14 @@ class AxisSpace(SpectralElementSpace):
                 (ngll - 1) * padded_length / (_NODES_PER_MODE * modes),
                 0.5 * float(probe.min()),
             )
+            # The mesh takes as few elements of at most this length as fit a
+            # span, by a ceiling with no tolerance; a span that is a whole
+            # number of lengths in exact arithmetic (the padding is a whole
+            # number of half length scales) can round to a hair above it and
+            # take one element more, so that the same geometry in other units
+            # gets another basis. A part in 10^9 keeps the mesh the one exact
+            # arithmetic gives.
+            element_length *= 1.0 + 1e-9
         element_length = float(element_length)
         if element_length <= 0.0:
             raise ValueError("The element length must be positive.")

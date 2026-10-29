@@ -790,24 +790,49 @@ class RowLinearOperator(RowOperator, LinearOperator):
         return result
 
 
+def _seat(
+    given: DirectSum | None, summands: Sequence[HilbertSpace], role: str, /
+) -> DirectSum:
+    """The direct sum a block diagonal operator acts on: the plain sum of the
+    blocks' spaces, or the caller's own when it equals that sum."""
+    plain = DirectSum(list(summands))
+    if given is None:
+        return plain
+    if given != plain:
+        raise ValueError(
+            f"The {role} must be the direct sum of the blocks' own spaces, "
+            f"{plain!r}; got {given!r}."
+        )
+    return given
+
+
 class BlockDiagonalOperator(Operator):
     """``(x_i) -> (F_i(x_i))``, acting on each summand independently."""
 
-    def __new__(cls, operators: Sequence[Operator]) -> BlockDiagonalOperator:
+    def __new__(
+        cls, operators: Sequence[Operator], /, **_: Any
+    ) -> BlockDiagonalOperator:
         if cls is BlockDiagonalOperator and all(
             isinstance(operator, LinearOperator) for operator in operators
         ):
             return object.__new__(BlockDiagonalLinearOperator)
         return object.__new__(cls)
 
-    def __init__(self, operators: Sequence[Operator]) -> None:
+    def __init__(
+        self,
+        operators: Sequence[Operator],
+        /,
+        *,
+        domain: DirectSum | None = None,
+        codomain: DirectSum | None = None,
+    ) -> None:
         self._operators = tuple(operators)
         if not self._operators:
             raise ValueError("A block diagonal operator needs at least one block.")
         Operator.__init__(
             self,
-            DirectSum([op.domain for op in self._operators]),
-            DirectSum([op.codomain for op in self._operators]),
+            _seat(domain, [op.domain for op in self._operators], "domain"),
+            _seat(codomain, [op.codomain for op in self._operators], "codomain"),
         )
 
     @property
@@ -825,7 +850,9 @@ class BlockDiagonalOperator(Operator):
 
     def _derivative(self, x: tuple) -> LinearOperator:
         return BlockDiagonalLinearOperator(
-            [operator.derivative(xi) for operator, xi in zip(self._operators, x)]
+            [operator.derivative(xi) for operator, xi in zip(self._operators, x)],
+            domain=self.domain,
+            codomain=self.codomain,
         )
 
 
@@ -837,15 +864,35 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
     is, and so on.
     """
 
-    def __init__(self, operators: Sequence[LinearOperator]) -> None:
+    def __init__(
+        self,
+        operators: Sequence[LinearOperator],
+        /,
+        *,
+        domain: DirectSum | None = None,
+        codomain: DirectSum | None = None,
+    ) -> None:
+        """
+        Args:
+            operators: the diagonal blocks, in order.
+            domain: the direct sum to act on, when the caller has one that
+                carries more than the plain sum of the blocks' domains does
+                (a layered space, say); it must compare equal to that sum.
+                Defaults to the plain sum.
+            codomain: likewise for the codomain.
+
+        Raises:
+            ValueError: if a given domain or codomain is not the sum of the
+                blocks' own.
+        """
         self._operators = tuple(operators)
         traits = self._operators[0].traits
         for operator in self._operators[1:]:
             traits = traits & operator.traits
         LinearOperator.__init__(
             self,
-            DirectSum([op.domain for op in self._operators]),
-            DirectSum([op.codomain for op in self._operators]),
+            _seat(domain, [op.domain for op in self._operators], "domain"),
+            _seat(codomain, [op.codomain for op in self._operators], "codomain"),
             traits=close(traits),
         )
 
@@ -853,7 +900,11 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
         return tuple(operator.adjoint(yi) for operator, yi in zip(self._operators, y))
 
     def _make_adjoint(self) -> LinearOperator:
-        result = BlockDiagonalLinearOperator([op.adjoint for op in self._operators])
+        result = BlockDiagonalLinearOperator(
+            [op.adjoint for op in self._operators],
+            domain=self.codomain,
+            codomain=self.domain,
+        )
         result._link_adjoint(self)
         return result
 

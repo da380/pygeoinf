@@ -10,11 +10,11 @@ them for whichever it is handed.
   its error budget on the three properties.
 - **The measure**: the posterior, against the prior, on the profile and on
   the three properties, and the log evidence.
-- **The set**: the prior hardened to its 95% ellipsoid, the ellipsoid of its
-  covariance to a power below three quarters, which carries its 95% however
-  fine the space; the noise to its 95% ellipse; and the brackets that leave on
-  the three properties, against what the prior's ellipsoid admits on its
-  own.
+- **The set**: the prior hardened to its 95% ball, the ball of the space's
+  norm about the prior's expectation in which a draw lies with probability
+  0.95, whose radius has a limit however fine the space; the noise to its
+  95% ellipse; and the brackets that leave on the three properties, against
+  what the prior's ball admits on its own.
 """
 
 from __future__ import annotations
@@ -305,23 +305,23 @@ def set_answer(
     prior_name: str,
     outdir: pathlib.Path,
 ) -> dict:
-    """The brackets the data leave under the prior's 95% ellipsoid and the
-    noise's, against the bound the prior's ellipsoid admits alone.
+    """The brackets the data leave under the prior's 95% ball and the
+    noise's ellipse, against the bound the prior's ball admits alone.
 
-    The ellipsoid is ``{m : (Q^-p (m - m0), m - m0) <= r^2}``, the prior's
-    covariance ``Q`` to the scale's power ``p``, with ``r`` the radius that
-    carries 95% of the prior. At ``p = 1`` it would be the Mahalanobis
-    ellipsoid, whose radius grows with the number of basis functions; below
-    three quarters, for a measure of order two whose spectrum grows as on a
-    line, it carries its probability in the limit.
+    The ball is ``{m : ||m - m0|| <= r}`` in the space's own norm, with
+    ``r`` the radius at which a draw from the prior lies inside with
+    probability 0.95. A draw's squared distance from ``m0`` has the
+    covariance's trace as its expectation, finite for a trace-class
+    covariance, so the radius has a limit however many basis functions there
+    are, where the Mahalanobis ellipsoid's grows with their number.
     """
     properties = problem.properties
-    level, power = problem.scale.level, problem.scale.set_power
-    ellipsoid = prior.weakened_ellipsoid(level=level, power=power)
+    level = problem.scale.level
+    ball = prior.ambient_ball(level=level)
     # The errors are independent but of two sizes, so the noise's 95% set is
     # its own Mahalanobis ellipse on the two data, not a ball.
     noise = problem.problem.error_measure.credible_set(level=level)
-    feasible = BackusGilbertParker(problem.problem, properties, ellipsoid, noise=noise)(
+    feasible = BackusGilbertParker(problem.problem, properties, ball, noise=noise)(
         problem.data
     )
     P = properties.codomain
@@ -332,22 +332,22 @@ def set_answer(
     sweep = feasible.support_sweep(directions)
     outer = np.array([result.value for result in sweep.results])
     inner = np.array([result.inner for result in sweep.results])
-    support = ellipsoid.support_function()
+    support = ball.support_function()
     alone = np.array([support(properties.adjoint(q)) for q in directions])
     brackets = np.column_stack([-outer[1::2], outer[0::2]])
     bounds = np.column_stack([-alone[1::2], alone[0::2]])
     gaps = np.maximum(outer[0::2] - inner[0::2], outer[1::2] - inner[1::2])
     space = problem.space
     departure = space.subtract(problem.truth, prior.expectation)
-    gauge = space.inner_product(ellipsoid.precision(departure), departure)
+    gauge = (space.norm(departure) / ball.radius) ** 2
     print(
-        f"set: the prior's {level:.0%} ellipsoid (Q^-p (m - m0), m - m0) <= r^2 "
-        f"with p = {power:g}, the truth's gauge {gauge:.2f} of the boundary's 1, "
-        f"inside: {ellipsoid.contains(problem.truth)}; the noise to its own "
+        f"set: the prior's {level:.0%} ball ||m - m0|| <= r, r = {ball.radius:.4g}, "
+        f"the truth's gauge (||m - m0|| / r)^2 {gauge:.2f} of the boundary's 1, "
+        f"inside: {ball.contains(problem.truth)}; the noise to its own "
         f"{level:.0%} ellipse"
     )
     print(
-        f"  {'property':<12s} {'the ellipsoid alone':>19s} {'with the data':>19s} "
+        f"  {'property':<12s} {'the ball alone':>19s} {'with the data':>19s} "
         f"{'gap':>8s} {'truth':>7s}"
     )
     for name, (a, b), (low, high), gap, t in zip(
@@ -361,7 +361,7 @@ def set_answer(
     fig, axes = plt.subplots(1, P.dim, figsize=(10.0, 4.0), layout="constrained")
     for index, ax in enumerate(axes):
         for position, (low, high), color, label in (
-            (0, bounds[index], "0.6", "the prior's ellipsoid alone"),
+            (0, bounds[index], "0.6", "the prior's ball alone"),
             (1, brackets[index], "C1", "with the data"),
         ):
             ax.plot(
@@ -373,20 +373,21 @@ def set_answer(
                 label=label,
             )
         _truth_line(ax, problem.true_properties[index])
-        ax.set_xticks([0, 1], ["prior ellipsoid", "with the data"])
+        ax.set_xticks([0, 1], ["prior ball", "with the data"])
         ax.set_xlim(-0.6, 1.6)
         ax.set_title(f"{PROPERTY_NAMES[index]} ({UNITS})", fontsize=10)
     axes[0].legend(fontsize=7, frameon=False, loc="best")
     fig.suptitle(
         title(
             f"{part}, the {prior_name} prior",
-            "the set answer, the prior's ellipsoid against the brackets",
+            "the set answer, the prior's ball against the brackets",
         )
     )
     save(fig, outdir / f"{prior_name}_set.png")
     return {
+        "radius": ball.radius,
         "gauge": gauge,
-        "truth_in_ellipsoid": bool(ellipsoid.contains(problem.truth)),
+        "truth_in_ball": bool(ball.contains(problem.truth)),
         "bounds": bounds,
         "brackets": brackets,
         "gaps": gaps,
@@ -407,7 +408,7 @@ def three_answers(
 
     Args:
         problem: the problem.
-        prior: the Gaussian, which the set answer hardens to its ellipsoid.
+        prior: the Gaussian, which the set answer hardens to its ball.
         part: the part's letter, for the titles.
         prior_name: what the prior is called, for the titles and the files.
         rng: the generator for the corner plot, should it need draws.

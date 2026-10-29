@@ -5,8 +5,8 @@ deviation of 0.1 g/cm^3 in every layer, independent between the layers: the
 prior the truth was drawn from. The three answers under it, in order: the point, the smallest change to PREM that fits
 the data, measured in the prior's precision, with its error budget; the
 measure, the posterior against the prior and the log evidence; the set, the
-brackets on the three properties under the prior's 95% ellipsoid and the
-noise's 95% ball.
+brackets on the three properties under the prior's 95% ball and the
+noise's 95% ellipse.
 """
 
 from __future__ import annotations

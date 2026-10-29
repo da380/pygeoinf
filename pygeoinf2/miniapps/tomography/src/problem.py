@@ -98,9 +98,6 @@ class Scale:
             in hundredths of a time unit.
         level: the credibility of the discrepancy level and of the sets the
             prior and the noise are hardened to.
-        set_power: the power of the prior's covariance that shapes its
-            ellipsoid in the set answer, below one half in the disk and one
-            quarter in the ball for the ellipsoid to survive refinement.
         sources: the sources' angles on the surface, in degrees.
         receivers: the receivers' angles on the surface, in degrees.
         min_distance: the shortest ray kept, in degrees between its ends: far
@@ -112,9 +109,9 @@ class Scale:
         std_samples: the posterior samples behind a pointwise standard
             deviation map.
         bump_width: the width of the bumps whose resolution part B shows.
-        candidates: part E's candidate places for the plume, ``(radius,
-            angle)`` with the angle in degrees.
-        plume_width: the width of part E's plume.
+        candidates: part E's candidate angles for the plume, in degrees: the
+            axes of the conduits it may rise through.
+        plume_width: the width of part E's plume, across its conduit.
         plume_peak: the plume's peak, in multiples of the prior's pointwise
             standard deviation.
         background: the size of the draw from the shared covariance beneath
@@ -134,7 +131,6 @@ class Scale:
     prior_std: float
     noise_std: float
     level: float
-    set_power: float
     sources: tuple[Any, ...]
     receivers: tuple[Any, ...]
     min_distance: float
@@ -142,7 +138,7 @@ class Scale:
     nodes: int
     std_samples: int
     bump_width: float
-    candidates: tuple[tuple[float, float], ...]
+    candidates: tuple[float, ...]
     plume_width: float
     plume_peak: float
     background: float
@@ -156,11 +152,10 @@ class Scale:
 
 
 # A continent of stations over the upper half of the planet and three island
-# stations below; the sources spread round it, one far out. The candidates
-# for part E's plume: under the continent, where the rays cross in every
-# direction, shallow and deep; at its edge, under moderate coverage; and
-# opposite it, where a handful of rays pass. The quick scale keeps three of
-# them.
+# stations below; the sources spread round it, one far out. The candidate
+# angles of part E's plume: two under the continent, where the rays cross in
+# every direction; one at its edge, under moderate coverage; and two opposite
+# it, where a handful of rays pass. The quick scale keeps three of them.
 QUICK = Scale(
     name="quick",
     seed=2026,
@@ -171,7 +166,6 @@ QUICK = Scale(
     prior_std=1.0,
     noise_std=0.05,
     level=0.95,
-    set_power=0.25,
     sources=(-40.0, 15.0, 75.0, 135.0, 190.0, 300.0),
     receivers=(*(float(a) for a in np.linspace(0.0, 150.0, 11)), 270.0),
     min_distance=20.0,
@@ -179,7 +173,7 @@ QUICK = Scale(
     nodes=201,
     std_samples=128,
     bump_width=0.12,
-    candidates=((0.85, 75.0), (0.80, 330.0), (0.85, 270.0)),
+    candidates=(75.0, 330.0, 270.0),
     plume_width=0.12,
     plume_peak=3.0,
     background=0.5,
@@ -214,13 +208,7 @@ FULL = dataclasses.replace(
     nodes=301,
     std_samples=256,
     bump_width=0.06,
-    candidates=(
-        (0.85, 75.0),
-        (0.70, 120.0),
-        (0.80, 330.0),
-        (0.75, 200.0),
-        (0.85, 270.0),
-    ),
+    candidates=(75.0, 120.0, 330.0, 200.0, 270.0),
     plume_width=0.06,
     redraws=32,
 )

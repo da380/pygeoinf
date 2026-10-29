@@ -35,6 +35,8 @@ to the prior beside its Gaussian approximation.
 
 from __future__ import annotations
 
+from numpy.random import Generator
+
 from typing import TYPE_CHECKING, Any
 
 from ..algebra.operators import Functional, LinearOperator
@@ -333,6 +335,9 @@ class LaplaceApproximation(MeasureEstimator):
         /,
         *,
         solver: LinearSolver | None = None,
+        rank: int | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -342,6 +347,16 @@ class LaplaceApproximation(MeasureEstimator):
                 covariance: a :class:`~pygeoinf2.numerics.solvers.LinearSolver`,
                 or a callable receiving the normal operator and returning
                 one. Conjugate gradients if omitted.
+            rank: keep only the leading directions the data inform, and
+                return a
+                :class:`~pygeoinf2.inference.gaussian.LowRankGaussianPosterior`
+                in place of the full Gaussian: the prior's factors with
+                rank-``rank`` corrections, no solve behind the covariance,
+                and the Laplace evidence in closed form. The full Gaussian,
+                through the solver, if omitted.
+            rng: the generator for the randomized eigendecomposition behind
+                *rank*.
+            n_jobs: workers for it.
 
         Raises:
             TypeError: if the estimator is not a :class:`MaximumAPosteriori`.
@@ -353,6 +368,9 @@ class LaplaceApproximation(MeasureEstimator):
             )
         self._estimator = estimator
         self._solver = solver
+        self._rank = rank
+        self._rng = rng
+        self._n_jobs = n_jobs
 
     @classmethod
     def from_problem(
@@ -363,6 +381,9 @@ class LaplaceApproximation(MeasureEstimator):
         *,
         optimizer: Optimizer | None = None,
         solver: LinearSolver | None = None,
+        rank: int | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
     ) -> "LaplaceApproximation":
         """The approximation for a problem and a prior, building the MAP inside.
 
@@ -372,6 +393,9 @@ class LaplaceApproximation(MeasureEstimator):
             optimizer: how the mode is found; see :class:`MaximumAPosteriori`.
             solver: how the linearized normal operator is inverted, for the
                 covariance and for the MAP estimator's own derivative.
+            rank: the low-rank form; see the constructor.
+            rng: the generator for its eigendecomposition.
+            n_jobs: workers for it.
 
         Returns:
             The estimator.
@@ -379,6 +403,9 @@ class LaplaceApproximation(MeasureEstimator):
         return cls(
             MaximumAPosteriori(problem, prior, optimizer=optimizer, solver=solver),
             solver=solver,
+            rank=rank,
+            rng=rng,
+            n_jobs=n_jobs,
         )
 
     @property
@@ -415,12 +442,42 @@ class LaplaceApproximation(MeasureEstimator):
 
         Returns:
             A Gaussian with that mean and the linearized posterior covariance,
-            carrying the exact relative density.
+            carrying the exact relative density; the low-rank form when a
+            rank was given.
+
+        Raises:
+            ValueError: on the low-rank route, if the error measure has no
+                precision or the prior no covariance factor.
         """
         from ..inference.gaussian import GaussianPosterior
         from ..numerics.solvers import resolve_solver
 
         estimator = self._estimator
+        if self._rank is not None:
+            from ..inference.gaussian import (
+                LowRankGaussianPosterior,
+                _information_eigenpairs,
+            )
+
+            problem = estimator.forward_problem
+            error_precision = problem.error_measure.precision
+            if error_precision is None:
+                raise ValueError("The error measure needs a precision.")
+            directions, eigenvalues = _information_eigenpairs(
+                problem.forward_operator.derivative(model),
+                estimator.prior,
+                error_precision,
+                rank=self._rank,
+                rng=self._rng,
+                n_jobs=self._n_jobs,
+            )
+            return LowRankGaussianPosterior(
+                estimator.prior,
+                model,
+                eigenvalues,
+                directions,
+                relative_log_density=-problem.potential(data),
+            )
         normal = estimator.linearized_normal(model)
         # In the model-space formalism the posterior covariance *is* N^-1, the
         # construction LinearGaussianInversion makes, here evaluated at this

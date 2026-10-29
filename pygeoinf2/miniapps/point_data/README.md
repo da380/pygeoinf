@@ -54,10 +54,10 @@ build up from the simplest:
   scale, the posterior mean and a sample, and each average's marginal before
   and after, with the truth.
 - **E, the set answer** (`sets.py`): the feasible set of the averages under
-  the prior's 95% ellipsoid and the noise's 95% ball, as certified support
-  brackets, and whether the truth lies in the polytope they bound. Its
-  figure sets each bracket against the bound the prior's ellipsoid admits
-  alone, before any datum, with the truth.
+  the prior's 95% ball and the noise's, as certified support brackets, and
+  whether the truth lies in the polytope they bound. Its figure sets each
+  bracket against the bound the prior's ball admits alone, before any
+  datum, with the truth.
 - **F, an extension** (`nonstationary.py`): the prior pushed through a
   multiplication operator so that its amplitude is three times larger in the
   southern hemisphere than in the northern, and D rerun under it, with D's
@@ -66,8 +66,8 @@ build up from the simplest:
 Two scales. `--quick` is degree 32, 400 points and a length scale of 0.15,
 and runs every part in about 15 seconds; it is what the test suite runs. The
 full scale is degree 128 (16 641 coefficients on a 258 by 258 grid), 20 000
-points and the length scale above, and runs every part in about nine
-minutes, half of them the set answer. Both are seeded.
+points and the length scale above, and runs every part in about eight
+minutes, nearly half of them the set answer. Both are seeded.
 
 ## How to run
 
@@ -100,8 +100,6 @@ the scale, each default the full preset's:
   --noise-std float     the standard deviation of the noise on each datum (0.1)
   --cap-radius float    the radius of the caps averaged over (0.3)
   --level float         the credibility of the discrepancy level and the sets (0.95)
-  --set-power float     the power of the prior's covariance that shapes its
-                        ellipsoid in E, below one half (0.25)
   --surrogate-degree, --cg-cap, --std-samples, --bump-width, --n-jobs
                         the solver's and the sampler's knobs
 ```
@@ -114,14 +112,14 @@ Two overrides at the quick scale, against its own numbers:
   the North Pacific average's from 0.030 to 0.126, and the minimum-norm
   model sees a unit bump under the North Pacific at 0.72 of its height
   rather than 0.96, and one under Africa at 0.30 rather than 0.71. The
-  certified brackets widen with the noise's ball, from 1.8 to 4.8 wide on
-  the North Pacific and from 8.7 to 13.3 on Africa, and still hold the
+  certified brackets widen with the noise's ball, from 2.2 to 5.2 wide on
+  the North Pacific and from 8.5 to 12.1 on Africa, and still hold the
   truth.
 - **A sparser network**, `run_all.py --quick --n-data 100`: a quarter of
   the points. The points are drawn before the truth, so this is also a
   different draw of the truth. Under the sea the posterior standard
   deviation rises from 0.12 to 0.29, central Asia's from 0.74 to 0.87, and
-  the South Atlantic bracket is 5.0 wide rather than 2.9.
+  the South Atlantic bracket is 5.6 wide rather than 3.5.
 
 A part run on its own rebuilds the problem from the seed, so it gives the
 same numbers as in the full sequence; part F, which compares against D,
@@ -171,7 +169,7 @@ applications are counted; its cost is in the build.
 Its damped relatives are what C and E sweep with the same surrogate along
 the family (the kernel read once, the factorization redone at each
 multiplier): `A Q A* + t R` itself in C, which measures size by the prior,
-and `A C A* + t R` in E, with `C` the shape of the prior's ellipsoid. The
+and `A A* r^2 + t R` in E, with `r` the radius of the prior's ball. The
 operator itself is inverted once more for the posterior mean in D and once
 per posterior sample.
 
@@ -182,9 +180,9 @@ the field was drawn with.
 
 | region | truth | C: minimum norm, 2 propagated sd | D: posterior mean, 95% interval | E: certified bracket |
 |---|---|---|---|---|
-| North Pacific | -0.562 | -0.562 ± 0.008 | -0.563, [-0.571, -0.555] | [-0.950, -0.176] |
-| South Atlantic | +0.845 | +0.842 ± 0.008 | +0.844, [+0.836, +0.852] | [+0.465, +1.223] |
-| Africa | +0.593 | +0.035 ± 0.070 | -0.038, [-0.742, +0.667] | [-7.61, +7.52] |
+| North Pacific | -0.562 | -0.562 ± 0.008 | -0.563, [-0.571, -0.555] | [-1.006, -0.118] |
+| South Atlantic | +0.845 | +0.842 ± 0.008 | +0.844, [+0.836, +0.852] | [+0.409, +1.277] |
+| Africa | +0.593 | +0.035 ± 0.070 | -0.038, [-0.742, +0.667] | [-5.51, +5.46] |
 
 - **C** (21 s): least squares at a damping of one in the prior's norm is the
   posterior mean of D, and fits to a chi-squared of 16 666 against a
@@ -200,21 +198,23 @@ the field was drawn with.
   0.87 to 0.99 under the continents, where it returns to the prior's 1.0;
   the two ocean averages are pinned to ±0.004 and Africa's is as wide as
   the prior's.
-- **E** (about four and a half minutes): with the prior hardened to its 95%
-  ellipsoid, `(Q^-1/4 m, m) <= r^2`, which the truth lies in at 0.95 of the
-  boundary's gauge, and the noise to its 95% ball, the certified brackets
-  hold the truth in every region, each to a gap below 1e-4, and the
-  polytope of the six half-spaces contains the true averages. A set bound
-  admits far more than the Gaussian posterior: the ellipsoid alone admits
-  ±12.9 for each average, the data narrow the ocean averages to brackets
-  0.77 wide, and Africa's to ±7.6, what is left of the ellipsoid once the
-  ocean data are fitted. The six directions take about 3000 forward and
-  as many adjoint applications, 37 to 58 s each: the ellipsoid's family
-  decays more slowly than the prior's own, so the coarse surrogate catches
-  less of it and a solve at a small multiplier takes tens of iterations
-  rather than the Bayesian solve's 16. Threads buy nothing here, because a
-  solve is a chain of short calls that hold the interpreter lock between
-  them.
+- **E** (about three and a half minutes, measured direction by
+  direction): with the prior hardened to its 95% ball, `||m|| <= r` in the
+  space's own `H^2` norm with `r = 6.33`, which the truth lies in at 0.92
+  of the boundary's gauge `(||m|| / r)^2`, and the noise to its 95% ball,
+  the certified brackets hold the truth in every region, each to a gap
+  below 4e-4, and the polytope of the six half-spaces contains the true
+  averages. A set bound admits far more than the Gaussian posterior: the
+  ball alone admits ±10.1 for each average, the data narrow the ocean
+  averages to brackets 0.89 and 0.87 wide, and Africa's to ±5.5, what is
+  left of the ball once the ocean data are fitted. The six directions
+  take about 3700 forward and 3900 adjoint applications, 34 to 40 s each,
+  in some 35 solves apiece. The ball's family `A A* r^2` decays only as
+  the space's own kernel does, more slowly than the prior's, so the coarse
+  surrogate catches less of it: a solve takes from a few iterations to two
+  dozen, and the one at the walk's smallest multiplier 70 to 130. Threads
+  buy nothing here, because a solve is a chain of short calls that hold
+  the interpreter lock between them.
 - **F** (128 s): under a prior 1.5 times larger in the south and 0.5
   times in the north, the ocean averages do not move, Africa's interval
   shrinks with its prior, and the standard deviation under central Asia
@@ -229,25 +229,30 @@ the field was drawn with.
   what D inverts once and once per sample. The same surrogate on a sphere
   of degree 48 serves them all through the Woodbury identity: 16
   iterations for the Bayesian solve, eight or so per member of C's family,
-  a dozen to a few dozen for E's.
+  up to two dozen for E's and more at the end of its walk.
 - At this scale nothing finishes without that preconditioner, and no
   spectral deflation of a workable rank would do: the data resolve some
   three thousand modes.
 - The three answers agree where the data speak and say different things
   where they do not. Over Africa the point estimate's error budget is
   small and wrong, the posterior interval is the prior's, and the set
-  answer is three fifths of what the prior's ellipsoid admits alone.
+  answer is a little over half of what the prior's ball admits alone.
 - The model space is `H^2`, the prior a measure of order 2 on it, and the
   point answers measure size by the prior's own norm, so that they damp
   towards what the Bayesian answer assumes and the one surrogate serves
-  all three. The set answer hardens the prior to an ellipsoid of its
-  covariance to the power one quarter: the Mahalanobis ellipsoid of the
-  covariance itself has a radius that grows with the truncation, as the
-  square root of the coefficient count, and alone would bound Africa's
-  average by ±35 at degree 64 and ±69 at 128, where this one's bound moves
-  from ±12.0 to ±12.9.
+  all three. The set answer hardens the prior to the ball of the space's
+  own norm that carries 95% of it, the classical norm bound with the prior
+  calibrating its radius: a draw's squared norm has the covariance's trace
+  as its expectation, finite on `H^2`, so the radius has a limit, and the
+  ball's bound on Africa's average alone is ±9.86 at degree 64, ±10.07 at
+  128 and ±10.13 at 256. The Mahalanobis ellipsoid of the covariance has a
+  radius that grows with the truncation, as the square root of the
+  coefficient count, and alone would bound the same average by ±35 at
+  degree 64 and ±69 at 128. The ball is a convenience, one constraint set
+  among many: a bound the physics suggests, on another norm or a region,
+  goes to the same estimator.
 - The data outnumber the model coefficients, which makes the damped
   family singular at a multiplier of zero; the library's searches and the
   primal walk the multiplier only down to a floor on such a family, set
   here at a ten-thousandth of the family's scale; the six walks end above
-  it, which their gaps below 1e-4 show.
+  it, which their gaps below 4e-4 show.

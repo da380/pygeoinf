@@ -367,3 +367,57 @@ class TestAlgebraAndMeasures:
         assert np.allclose(np.sqrt(np.diag(covariance)), [0.2, 0.3, 0.4], rtol=2e-2)
         with pytest.raises(ValueError, match="layer by layer"):
             space.sobolev_measure([2.0, 2.0])
+
+
+class TestAProductMeasureLivesOnTheLayeredSpace:
+    """The measure's operators act on the layered space itself, not on the
+    plain direct sum of its layers, so what is built from them keeps the
+    layered space's pointwise product."""
+
+    def test_the_covariance_is_seated_on_the_space(self):
+        space = interval.Layered([-1.0, 0.0, 0.5, 2.0], 16, order=2.0, length_scale=0.2)
+        measure = space.sobolev_measure(2.0, amplitude=1.0)
+        assert measure.domain is space
+        assert type(measure.covariance.domain) is type(space)
+        assert type(measure.covariance_factor.codomain) is type(space)
+        assert type(measure.precision.domain) is type(space)
+
+    def test_a_posterior_from_it_has_a_pointwise_standard_deviation(self, rng):
+        from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
+        from pygeoinf2.probability import GaussianMeasure
+
+        space = interval.Layered([-1.0, 0.0, 0.5, 2.0], 16, order=2.0, length_scale=0.2)
+        prior = space.sobolev_measure(2.0, pointwise_std=1.0)
+        forward = space.point_evaluation_operator([(-0.5,), (0.25,), (1.5,)])
+        noise = GaussianMeasure.from_standard_deviation(forward.codomain, 0.1)
+        problem = LinearForwardProblem(forward, error=noise)
+        data = forward(prior.sample(rng=rng))
+        posterior = LinearGaussianInversion(problem, prior)(data)
+        assert type(posterior.domain) is type(space)
+        std = posterior.sample_pointwise_std(4, rng=rng)
+        assert len(std) == len(space.layers)
+
+
+class TestCorrelatedLayers:
+    def test_a_correlation_ties_the_layers_and_keeps_the_space(self, rng):
+        from pygeoinf2.testing import check_measure
+
+        space = interval.Layered([-1.0, 0.0, 1.0], 12, order=2.0, length_scale=0.3)
+        rho = np.array([[1.0, 0.8], [0.8, 1.0]])
+        tied = space.sobolev_measure(2.0, amplitude=1.0, correlation=rho)
+        free = space.sobolev_measure(2.0, amplitude=1.0)
+        assert tied.domain is space
+        assert type(tied.covariance.domain) is type(space)
+        check_measure(tied, rng=rng)
+        x = space.random(rng=rng)
+        lower = space.layers[0]
+        assert lower.norm(
+            lower.subtract(
+                tied.covariance((x[0], space.layers[1].zero()))[0],
+                free.covariance((x[0], space.layers[1].zero()))[0],
+            )
+        ) < 1e-10 * lower.norm(x[0])
+        draws = tied.samples(400, rng=rng)
+        lows = np.array([space.layers[0].to_components(d[0])[0] for d in draws])
+        highs = np.array([space.layers[1].to_components(d[1])[0] for d in draws])
+        assert np.corrcoef(lows, highs)[0, 1] > 0.5

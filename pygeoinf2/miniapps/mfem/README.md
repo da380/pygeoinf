@@ -73,12 +73,12 @@ The parts build up from the first form to the second:
   order 2 on it, a measure of extra regularity whose covariance is trace
   class there; the minimum-norm estimate under the discrepancy principle,
   smallest in the prior's norm, the posterior, and the feasible set's
-  certified brackets under the prior's 95% ellipsoid, on two disc averages
+  certified brackets under the prior's 95% ball, on two disc averages
   of `f`, one among the sensors and one in the gap. A figure for each: the
   estimate with its error budget, the posterior against the prior (the
   pointwise standard deviation before and after, each average's marginal
   before and after), and each bracket against the bound the prior's
-  ellipsoid admits alone.
+  ball admits alone.
 
 Two scales. `--quick` runs every part in about 10 seconds and is what the
 test suite runs: the unit square in 6 by 6 elements, the box on a 32 by 32
@@ -130,8 +130,6 @@ the scale, each default the full preset's:
   --sensors, --box-noise-std, --gap-radius, --region-radius
                         part E's survey and questions (600, 0.05, 0.18, 0.08)
   --level float         part E's discrepancy level and sets (0.95)
-  --box-set-power float the power of part E's prior covariance that shapes
-                        its ellipsoid, below one half (0.25)
   --std-samples int     part E's posterior samples (48)
 ```
 
@@ -143,14 +141,14 @@ Two overrides of part E at the quick scale, against its own numbers
   of the disc among the sensors rises from 0.09 to 0.17 and the 95%
   interval on its average widens from 0.23 to 0.53; the minimum-norm
   estimate's two propagated standard deviations there grow from 0.06 to
-  0.15, and its certified bracket widens from 2.0 to 3.4. In the gap,
+  0.15, and its certified bracket widens from 2.4 to 3.9. In the gap,
   where the data say less, the standard deviation moves from 0.24 to 0.34.
 - **A wider gap**, `--gap-radius 0.3`: the sensors avoid a disc of radius
   0.3 rather than 0.18. They are drawn before the truth, so this is also a
   different draw of the truth. The standard deviation at the gap's center
   rises from 0.24 to 0.52, half way to the prior's 1, and the certified
-  bracket on the gap's average widens from 5.3 to 7.5, against the 11.3 the
-  prior's ellipsoid admits alone; the minimum-norm estimate's bias there
+  bracket on the gap's average widens from 5.9 to 6.5, against the 10.3 the
+  prior's ball admits alone; the minimum-norm estimate's bias there
   grows from -0.21 to -0.60.
 
 A part run on its own gives the numbers it gives in the sequence. Each
@@ -253,8 +251,8 @@ reaching modes the elements cannot carry.
 
 | average of `f` | truth | minimum norm, 2 propagated sd | bias | posterior, 95% interval | certified bracket |
 |---|---|---|---|---|---|
-| among the sensors | -0.150 | -0.142 ± 0.037 | +0.011 | -0.137, [-0.184, -0.089] | [-0.81, +0.55] |
-| in the gap | +0.233 | +0.395 ± 0.142 | +0.124 | +0.481, [-0.461, +1.422] | [-5.93, +6.37] |
+| among the sensors | -0.150 | -0.142 ± 0.037 | +0.011 | -0.137, [-0.184, -0.089] | [-0.93, +0.67] |
+| in the gap | +0.233 | +0.395 ± 0.142 | +0.124 | +0.481, [-0.461, +1.422] | [-5.10, +5.40] |
 
 - The minimum-norm estimate, smallest in the prior's norm: a damping of
   7.1 meets the discrepancy principle (chi-squared 658 against the critical
@@ -264,14 +262,14 @@ reaching modes the elements cannot carry.
   observed disc and 0.65 in the gap, against the prior's 1; the posterior
   mean fits the data to a chi-squared of 436. 1203 MFEM solves for the mean
   and 97 more for 48 samples, 17 s.
-- The feasible set under the prior's 95% ellipsoid,
-  `(Q^-1/4 f, f) <= r^2`, in which the truth lies at 0.78 of the boundary's
-  gauge, and the noise's ball: 1368 solves, 21 s; the true averages lie in
-  the polytope of the four half-spaces. A set bound admits far more than
-  the Gaussian posterior, and the gap's bracket is nine times the observed
-  disc's: the ellipsoid alone admits ±9.0 for either average, which the
-  data narrow to a thirteenth among the sensors and to two thirds in the
-  gap.
+- The feasible set under the prior's 95% ball, `||f|| <= r` in `H^2`'s
+  own norm with `r = 1.94`, in which the truth lies at 0.67 of the
+  boundary's gauge `(||f|| / r)^2`, and the noise's ball: 1374 solves,
+  22 s; the true averages lie in the polytope of the four half-spaces. A
+  set bound admits far more than the Gaussian posterior, and the gap's
+  bracket is six and a half times the observed disc's: the ball alone
+  admits ±7.5 for either average, which the data narrow to a ninth among
+  the sensors and to seven tenths in the gap.
 
 ## Choices
 
@@ -296,9 +294,14 @@ reaching modes the elements cannot carry.
   it, whose covariance is trace class there. The minimum-norm estimate
   measures size in the prior's norm, through the problem parameterized by
   the prior's covariance factor, so that it damps towards what the
-  posterior assumes; the set hardens the prior to the ellipsoid of its
-  covariance to the power one quarter, which carries its 95% however fine
-  the grid, where the Mahalanobis ellipsoid's radius grows with it.
+  posterior assumes. The set hardens the prior to the ball of `H^2`'s own
+  norm that carries 95% of it, the classical norm bound with the prior
+  calibrating its radius: the radius has a limit however fine the grid,
+  because a draw's squared norm has a finite expectation, the trace of
+  the covariance, where the Mahalanobis ellipsoid's radius grows with the
+  grid. The ball is a convenience, one constraint set among those the
+  physics might suggest; any other convex set with a support function
+  serves the same estimator.
 - **The solve's traits are checked as symmetry alone.** It is positive
   definite too, but a positive-definite claim implies invertibility, which
   `check_traits` verifies on a coordinate space by forming the whole matrix,

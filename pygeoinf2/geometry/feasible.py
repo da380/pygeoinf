@@ -256,6 +256,19 @@ class FeasibleStructure:
         self.cache: dict[Any, Any] = {}
         self.lock = threading.RLock()
 
+    def __getstate__(self) -> dict[str, Any]:
+        # A worker process gets the structure without its lock, which cannot
+        # cross a process boundary, and without the cache, which is this
+        # process's warm starts.
+        state = dict(self.__dict__)
+        state["cache"] = {}
+        state.pop("lock")
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self.lock = threading.RLock()
+
     @property
     def solver(self) -> LinearSolver | None:
         """The solver the caller supplied, or None for the default."""
@@ -3166,6 +3179,16 @@ class FeasiblePropertySet(ConvexSet):
         self._cache: dict[Any, Any] = {}
         self._lock = threading.RLock()
 
+    def __getstate__(self) -> dict[str, Any]:
+        state = dict(self.__dict__)
+        state["_cache"] = {}
+        state.pop("_lock")
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     @classmethod
     def from_structure(
         cls, structure: FeasibleStructure, data: Any, /
@@ -3367,7 +3390,11 @@ class FeasiblePropertySet(ConvexSet):
                 neighbouring directions warm-start each other where the
                 algorithm can.
             via: an algorithm's name or instance, to force one.
-            n_jobs: workers over the directions. Serial by default.
+            n_jobs: worker processes over the directions, each taking a
+                contiguous chunk so that one direction's warm start serves
+                its neighbor. Serial by default. Processes, as every loop
+                of the library: the set and its problem are shipped to each
+                worker, so they must be picklable.
         """
         from ..parallel import parallel_map, resolve_jobs
 
@@ -3386,7 +3413,7 @@ class FeasiblePropertySet(ConvexSet):
 
             results = [
                 result
-                for part in parallel_map(sweep, chunks, n_jobs=workers, threads=True)
+                for part in parallel_map(sweep, chunks, n_jobs=workers)
                 for result in part
             ]
         return SweepResult(directions, tuple(results))
@@ -3404,7 +3431,11 @@ class FeasiblePropertySet(ConvexSet):
         Args:
             directions: the directions to evaluate.
             via: an algorithm's name or instance, to force one.
-            n_jobs: workers over the directions. Serial by default.
+            n_jobs: worker processes over the directions, each taking a
+                contiguous chunk so that one direction's warm start serves
+                its neighbor. Serial by default. Processes, as every loop
+                of the library: the set and its problem are shipped to each
+                worker, so they must be picklable.
         """
         return self.support_sweep(directions, via=via, n_jobs=n_jobs).values
 

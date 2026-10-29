@@ -59,21 +59,23 @@ def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
         draw_profile(space, problem.truth, top, color="C0", lw=1.0, label="truth")
         finish_profile_axes(top, legend=False)
         top.set_xlabel("")
+        # The space's radii are in Earth radii, PREM's and the axes' in km.
         for index, radii in enumerate(layer_radii(space)):
             layer = space.layers[index]
             reference = layer.evaluate(problem.reference[index], radii)
             truth = layer.evaluate(problem.truth[index], radii)
-            prem = np.array([functions[index](r) for r in radii])
+            km = R_SURFACE * radii
+            prem = np.array([functions[index](r) for r in km])
             first = index == 0
             bottom.plot(
-                radii,
+                km,
                 reference - prem,
                 color="C3",
                 lw=1.0,
                 label="reference less PREM" if first else None,
             )
             bottom.plot(
-                radii,
+                km,
                 truth - reference,
                 color="C0",
                 lw=1.0,

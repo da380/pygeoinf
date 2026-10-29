@@ -1,16 +1,16 @@
 """Part E: the set answer.
 
 The feasible property set of the three regional averages, with the prior
-hardened to its 95% ellipsoid and the noise to its 95% ball: support
-brackets, whether the truth lies in the polytope they bound, and each
-bracket against the bound the prior's ellipsoid admits on its own, before
-any datum.
+hardened to its 95% ball and the noise to its 95% ball: support brackets,
+whether the truth lies in the polytope they bound, and each bracket against
+the bound the prior's ball admits on its own, before any datum.
 
-The ellipsoid is ``{m : (Q^-p m, m) <= r^2}``, the prior's covariance ``Q``
-to a power ``p`` below one half, with ``r`` the radius that carries 95% of
-the prior. At ``p = 1`` it would be the Mahalanobis ellipsoid, whose radius
-grows with the truncation on a function space; below one half it carries
-its probability in the limit.
+The prior's ball is ``{m : ||m|| <= r}`` in the space's own norm, with ``r``
+the radius at which a draw from the prior lies inside with probability
+0.95: the classical norm bound, with the prior calibrating the radius. A
+draw's squared norm has the covariance's trace as its expectation, finite
+for a trace-class covariance, so the radius has a limit however fine the
+truncation, where the Mahalanobis ellipsoid's grows with it.
 """
 
 from __future__ import annotations
@@ -52,26 +52,20 @@ def prior_alone(prior_set: Any, properties: Any, /) -> np.ndarray:
 
 
 def hardened(problem: Problem, /) -> tuple[Any, Any, Any]:
-    """The prior's ellipsoid, the noise's ball, and the Woodbury solver for
-    the family they make.
+    """The prior's ball, the noise's ball, and the Woodbury solver for the
+    family they make.
 
-    The ellipsoid's radius is the quantile of a weighted chi-square over the
-    whole spectrum, thousands of comparable weights, which the
-    moment-matched chi-square gives to a few parts in a thousand at the
-    quick scale and better at the full one.
+    The prior's covariance is diagonal in the sphere's harmonics, so the
+    ball's radius is read off its eigenvalues with no applications.
     """
     scale, forward = problem.scale, problem.problem
-    level, power = scale.level, scale.set_power
-    ellipsoid = problem.prior.weakened_ellipsoid(
-        level=level, power=power, quantile_method="matched"
-    )
+    level = scale.level
+    ball = problem.prior.ambient_ball(level=level)
     noise_ball = forward.error_measure.ambient_ball(level=level)
-    # The family swept is ``A C A* + t R`` with ``C`` and ``R`` the shape
-    # operators of the ellipsoid and the ball; the surrogate uses the coarse
-    # prior's ellipsoid of the same power, its own radius being close enough.
-    coarse = coarse_prior(problem).weakened_ellipsoid(
-        level=level, power=power, quantile_method="matched"
-    )
+    # The family swept is ``A A* r^2 + t R``, the shape operators of the two
+    # balls being ``r^2 I`` and ``R``; the surrogate uses the coarse prior's
+    # ball, its own radius being close enough.
+    coarse = coarse_prior(problem).ambient_ball(level=level)
     solver = woodbury_family_solver(
         problem,
         prior_covariance=coarse.covariance,
@@ -79,7 +73,7 @@ def hardened(problem: Problem, /) -> tuple[Any, Any, Any]:
         noise_covariance=noise_ball.covariance,
         noise_precision=noise_ball.precision,
     )
-    return ellipsoid, noise_ball, solver
+    return ball, noise_ball, solver
 
 
 def set_answer(
@@ -89,7 +83,7 @@ def set_answer(
     rng: np.random.Generator,
     outdir: pathlib.Path,
 ) -> dict:
-    """The feasible brackets, against the bounds of the prior's ellipsoid alone."""
+    """The feasible brackets, against the bounds of the prior's ball alone."""
     started = time.perf_counter()
     scale, space, counted, forward = (
         problem.scale,
@@ -99,19 +93,19 @@ def set_answer(
     )
     print(f"\n=== E. The set answer ({scale.name} scale) ===")
 
-    level, power = scale.level, scale.set_power
-    ellipsoid, noise_ball, solver = hardened(problem)
-    gauge = space.inner_product(ellipsoid.precision(problem.truth), problem.truth)
+    level = scale.level
+    ball, noise_ball, solver = hardened(problem)
+    gauge = (space.norm(problem.truth) / ball.radius) ** 2
     print(
-        f"the prior hardened to its {level:.0%} ellipsoid (Q^-p m, m) <= r^2 with "
-        f"p = {power:g}: the truth's gauge is {gauge:.2f} of the boundary's 1, "
-        f"inside: {ellipsoid.contains(problem.truth)}; the noise to its {level:.0%} "
-        f"ball of radius {noise_ball.radius:.2f}"
+        f"the prior hardened to its {level:.0%} ball ||m|| <= r, r = "
+        f"{ball.radius:.2f}: the truth's gauge (||m|| / r)^2 is {gauge:.2f} of the "
+        f"boundary's 1, inside: {ball.contains(problem.truth)}; the noise to its "
+        f"{level:.0%} ball of radius {noise_ball.radius:.2f}"
     )
     counted.reset()
     t0 = time.perf_counter()
     feasible = BackusGilbertParker(
-        forward, problem.averages, ellipsoid, noise=noise_ball, solver=solver
+        forward, problem.averages, ball, noise=noise_ball, solver=solver
     )(problem.data)
     print(f"{feasible}; support by {feasible.algorithms['support'][0]}")
     P = problem.averages.codomain
@@ -132,10 +126,10 @@ def set_answer(
         f"support in {len(directions)} directions in {time.perf_counter() - t0:.1f} s "
         f"({cost}):"
     )
-    alone = prior_alone(ellipsoid, problem.averages)
+    alone = prior_alone(ball, problem.averages)
     print(
         f"  {'region':<16s} {'from':>8s} {'to':>8s} {'gap':>8s} {'truth':>8s} "
-        f"{'the ellipsoid alone':>22s}"
+        f"{'the ball alone':>22s}"
     )
     for index, (name, _) in enumerate(REGIONS):
         high, low = sweep.results[2 * index], sweep.results[2 * index + 1]
@@ -166,11 +160,12 @@ def set_answer(
         fig,
         outdir / "brackets.png",
         title="Point data, part E: the set answer. For each average, the bound the "
-        f"prior's {level:.0%} ellipsoid admits alone\nand the certified bracket the "
+        f"prior's {level:.0%} ball admits alone\nand the certified bracket the "
         "data leave, which they narrow least under Africa",
     )
     print(f"E took {time.perf_counter() - started:.1f} s")
     return {
+        "radius": ball.radius,
         "gauge": gauge,
         "alone": alone,
         "brackets": brackets,

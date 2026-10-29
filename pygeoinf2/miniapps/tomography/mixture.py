@@ -1,8 +1,10 @@
 """Part E: a discrete hypothesis inside the continuous problem, by a mixture prior.
 
-A plume sits at one of a handful of candidate places in the mantle, and
-which one is the question. Each candidate is a component of the prior: the
-Gaussian whose mean is the plume there, a bump of the slowness perturbation,
+A plume rises through the mantle at one of a handful of candidate angles,
+and which one is the question. The plume is a conduit, an idealized one: a
+slowness perturbation along a radial line from the core-mantle boundary to
+the surface, Gaussian across the line and flat along it. Each candidate is a
+component of the prior: the Gaussian whose mean is the conduit at that angle
 and whose covariance is the app's prior covariance, the same for every
 component; the prior weights are equal. Under the linear forward problem the
 posterior is again a mixture: each component is updated by its own linear
@@ -41,7 +43,6 @@ from pygeoinf2 import (
     LinearGaussianMixtureInversion,
 )
 
-from point import bump, cartesian
 from src.common import (
     draw,
     draw_rays,
@@ -54,9 +55,11 @@ from src.common import (
     variances,
 )
 from src.problem import (
+    CORE_RADIUS,
     FULL,
     PROPERTIES,
     QUICK,
+    RADIUS,
     Problem,
     Scale,
     build,
@@ -64,9 +67,9 @@ from src.problem import (
 
 # The candidates, the plume's width, peak and background, and the redraws of
 # the sweep are the scale's.
-#: Where the plume is: the candidate under moderate coverage, one of the
-#: scale's candidates.
-TRUE_CANDIDATE = (0.80, 330.0)
+#: Where the plume rises: the candidate under moderate coverage, one of the
+#: scale's candidate angles, in degrees.
+TRUE_CANDIDATE = 330.0
 #: The noise levels of the sweep, as multiples of the app's.
 NOISE_FACTORS = (0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
 #: The colors of the candidates that are not the truth, which is red.
@@ -79,35 +82,61 @@ def amplitude(scale: Scale, /) -> float:
     return scale.plume_peak * scale.prior_std
 
 
-def plume(problem: Problem, center: tuple[float, float], /) -> Any:
-    """The plume at a candidate: the app's bump, of :func:`amplitude`.
+def distance_to_axis(radius: Any, angle: Any, axis: float, /) -> Any:
+    """The distance from points ``(radius, angle)`` of the disk to a
+    conduit's axis, the radial segment at ``axis`` degrees from the
+    core-mantle boundary to the surface: across the segment beside it, and to
+    its nearer end beyond either. Angles in degrees; arrays or numbers."""
+    x = radius * np.cos(np.radians(angle))
+    y = radius * np.sin(np.radians(angle))
+    c, s = np.cos(np.radians(axis)), np.sin(np.radians(axis))
+    along = np.clip(x * c + y * s, CORE_RADIUS, RADIUS)
+    return np.hypot(x - along * c, y - along * s)
 
-    Its values on the domain's grid are continued at their end values across
-    the padding: a fit of a bump this narrow over the domain alone leaks
-    into the padding at the full scale.
+
+def conduit(space: Any, axis: float, width: float, /) -> Any:
+    """A conduit of unit peak on the layered disk: ``exp(-d^2 / (2 width^2))``
+    with ``d`` the distance to its axis at ``axis`` degrees, so that it is
+    Gaussian across the axis and flat along it from the core-mantle boundary
+    to the surface.
+
+    Nothing in the core, which no ray enters and no box reaches. Its values
+    on the mantle's grid are continued at their end values across the
+    padding: a fit over the domain alone of a profile this narrow, at full
+    height at both edges of the layer, leaks into the padding at the full
+    scale.
     """
+
+    def value(point: tuple[float, float]) -> float:
+        d = distance_to_axis(point[0], point[1], axis)
+        return float(np.exp(-0.5 * (d / width) ** 2))
+
+    return space.project_function([lambda point: 0.0, value], extension="constant")
+
+
+def plume(problem: Problem, axis: float, /) -> Any:
+    """The plume at a candidate angle: the conduit there, of the scale's width
+    and of :func:`amplitude`."""
     scale = problem.scale
-    shape = bump(problem, center, scale.plume_width, extension="constant")
+    shape = conduit(problem.space, axis, scale.plume_width)
     return problem.space.scale(amplitude(scale), shape)
 
 
-def plume_prior(problem: Problem, centers: Any, /) -> GaussianMixture:
+def plume_prior(problem: Problem, angles: Any, /) -> GaussianMixture:
     """One component a candidate: the app's prior translated to the plume
     there, every component with the same covariance, the weights equal."""
     return GaussianMixture(
-        [problem.prior.translate(plume(problem, center)) for center in centers]
+        [problem.prior.translate(plume(problem, axis)) for axis in angles]
     )
 
 
-def coverage(problem: Problem, center: tuple[float, float], /) -> int:
-    """How many rays pass within the plume's width of its center."""
-    middle = cartesian(center)[:2]
-    count = 0
-    for ray in problem.rays:
-        t = np.radians(ray.nodes[:, 1])
-        xy = ray.nodes[:, :1] * np.column_stack([np.cos(t), np.sin(t)])
-        count += bool(np.hypot(*(xy - middle).T).min() < problem.scale.plume_width)
-    return count
+def coverage(problem: Problem, axis: float, /) -> int:
+    """How many rays pass within the plume's width of the conduit's axis."""
+    width = problem.scale.plume_width
+    return sum(
+        bool(distance_to_axis(ray.nodes[:, 0], ray.nodes[:, 1], axis).min() < width)
+        for ray in problem.rays
+    )
 
 
 def noisy_problem(problem: Problem, factor: float, /) -> LinearForwardProblem:
@@ -176,11 +205,11 @@ def mixture_answer(
     print(
         f"\n=== E. A plume among candidates, by a mixture prior ({scale.name} scale) ==="
     )
-    centers = scale.candidates
-    true_index = centers.index(TRUE_CANDIDATE)
+    angles = scale.candidates
+    true_index = angles.index(TRUE_CANDIDATE)
 
     t0 = time.perf_counter()
-    prior = plume_prior(problem, centers)
+    prior = plume_prior(problem, angles)
     background = space.scale(scale.background, problem.prior.sample(rng=rng))
     truth = space.add(prior.components[true_index].expectation, background)
     data = problem.problem.synthetic_data(truth, rng=rng)
@@ -191,17 +220,18 @@ def mixture_answer(
         data=data,
         true_properties=problem.properties(truth),
     )
-    counts = [coverage(problem, center) for center in centers]
+    counts = [coverage(problem, axis) for axis in angles]
     print(
-        f"{len(centers)} candidates for a plume of peak {amplitude(scale):g}% and "
-        f"width {scale.plume_width}, each a component of the prior with the app's "
+        f"{len(angles)} candidates for a plume, a conduit from the core-mantle "
+        f"boundary to the surface of peak {amplitude(scale):g}% and width "
+        f"{scale.plume_width}, each a component of the prior with the app's "
         f"covariance, weights equal ({time.perf_counter() - t0:.2f} s):"
     )
-    for index, (center, count) in enumerate(zip(centers, counts)):
+    for index, (axis, count) in enumerate(zip(angles, counts)):
         mark = "  <- the truth" if index == true_index else ""
         print(
-            f"  {index + 1}: r = {center[0]:.2f} at {center[1]:5.1f} degrees, "
-            f"{count:3d} rays within its width{mark}"
+            f"  {index + 1}: at {axis:5.1f} degrees, {count:3d} rays within its "
+            f"width{mark}"
         )
     spread = problem.prior.affine_map(problem.forward).covariance
     print(
@@ -229,7 +259,7 @@ def mixture_answer(
         f"  {'candidate':>9s} {'misfit':>9s} {'log evidence':>13s} "
         f"{'less the best':>14s} {'prior weight':>13s} {'posterior weight':>17s}"
     )
-    for index in range(len(centers)):
+    for index in range(len(angles)):
         print(
             f"  {index + 1:9d} {misfits[index]:9.1f} {terms[index]:13.2f} "
             f"{terms[index] - terms.max():14.2f} {prior.weights[index]:13.3f} "
@@ -298,7 +328,7 @@ def mixture_answer(
     winner_figure(problem, truth, mean, winner, true_index, outdir=outdir)
     print(f"E took {time.perf_counter() - started:.1f} s")
     return {
-        "centers": centers,
+        "angles": angles,
         "true_index": true_index,
         "coverage": counts,
         "truth": truth,
@@ -333,20 +363,24 @@ def _moments(mixture: GaussianMixture, index: int, /) -> tuple[float, float]:
 # --------------------------------------------------------------------------- #
 
 
-def _label_candidates(
-    ax: Any, centers: Any, true_index: int, /, *, radius: float, color: str
-) -> None:
-    """Each candidate circled at twice the plume's width and numbered, the
-    true one in red."""
-    t = np.radians(np.linspace(0.0, 360.0, 121))
-    corner = 1.35 * radius / np.sqrt(2.0)
-    for index, center in enumerate(centers):
-        x0, y0 = cartesian(center)[:2]
-        tone = "red" if index == true_index else color
-        ax.plot(x0 + radius * np.cos(t), y0 + radius * np.sin(t), color=tone, lw=1.0)
+def _label_candidates(ax: Any, angles: Any, true_index: int, /) -> None:
+    """Each candidate's conduit drawn as its axis, from the core-mantle
+    boundary to the surface, dashed so that the field shows through, and
+    numbered at its foot, inside the core: the true one in red, the others
+    in their colors of the weights figure."""
+    for index, axis in enumerate(angles):
+        c, s = np.cos(np.radians(axis)), np.sin(np.radians(axis))
+        tone = "red" if index == true_index else OTHERS[index % len(OTHERS)]
+        ax.plot(
+            [CORE_RADIUS * c, RADIUS * c],
+            [CORE_RADIUS * s, RADIUS * s],
+            color=tone,
+            lw=1.2,
+            ls=(0, (4, 2)),
+        )
         ax.text(
-            x0 + corner,
-            y0 + corner,
+            0.85 * CORE_RADIUS * c,
+            0.85 * CORE_RADIUS * s,
             str(index + 1),
             ha="center",
             va="center",
@@ -366,9 +400,9 @@ def candidates_figure(
     outdir: pathlib.Path,
 ) -> None:
     """The prior mixture's mean, a share of each plume, under the rays; and
-    the truth, with the candidates circled."""
+    the truth, with the candidates' axes drawn."""
     space, scale = problem.space, problem.scale
-    centers = scale.candidates
+    angles = scale.candidates
     fig, axes = plt.subplots(
         1, 2, figsize=(10.4, 4.8), subplot_kw={"aspect": "equal"}, layout="constrained"
     )
@@ -376,9 +410,9 @@ def candidates_figure(
         space,
         prior.expectation,
         axes[0],
-        title=f"the prior mixture's mean, {1.0 / len(centers):.2g} of each plume, "
+        title=f"the prior mixture's mean, {1.0 / len(angles):.2g} of each plume, "
         "and the rays",
-        limit=amplitude(scale) / len(centers),
+        limit=amplitude(scale) / len(angles),
     )
     draw_rays(axes[0], problem.rays, colors="black", linewidths=0.4, alpha=0.5)
     stations(axes[0], scale.sources, scale.receivers, radius=space.layers[-1].radius)
@@ -392,14 +426,12 @@ def candidates_figure(
         label="slowness perturbation (%)",
     )
     for ax in axes:
-        _label_candidates(
-            ax, centers, true_index, radius=2.0 * scale.plume_width, color="black"
-        )
+        _label_candidates(ax, angles, true_index)
     save(
         fig,
         outdir / "mixture_candidates.png",
-        title="Tomography, part E: the candidates for a plume, under the rays, and "
-        "the truth",
+        title="Tomography, part E: the candidate conduits of a plume, under the "
+        "rays, and the truth",
     )
 
 
@@ -562,13 +594,7 @@ def winner_figure(
         label="slowness perturbation (%)",
     )
     for ax in axes:
-        _label_candidates(
-            ax,
-            scale.candidates,
-            true_index,
-            radius=2.0 * scale.plume_width,
-            color="black",
-        )
+        _label_candidates(ax, scale.candidates, true_index)
     save(
         fig,
         outdir / "mixture_mean.png",
