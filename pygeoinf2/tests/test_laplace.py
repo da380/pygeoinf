@@ -16,6 +16,7 @@ from pygeoinf2.inference.laplace import (
 from pygeoinf2.inference.minimization import Minimization, NonlinearLeastSquares
 from pygeoinf2.inference.problem import ForwardProblem, LinearForwardProblem
 from pygeoinf2.numerics.optimization import LBFGS, NewtonCG, OptimizationResult
+from pygeoinf2.testing import check_measure
 
 from .conftest import make_dense_metric_space
 
@@ -315,7 +316,7 @@ class TestTheLaplaceApproximation:
         measure = LaplaceApproximation.from_problem(problem, prior)(data)
         assert isinstance(measure, GaussianPosterior)
         assert measure.reference is prior
-        assert measure.log_normalizer is None
+        assert np.isfinite(measure.log_normalizer.value)
 
     def test_a_start_can_be_given(self, nonlinear_setting, rng):
         forward, prior, error, truth, data = nonlinear_setting
@@ -449,6 +450,178 @@ class TestWithTheExactHessian:
         assert not objective.has_hessian
 
 
+class TestTheCurvatureFollowsTheEstimator:
+    """The Laplace Gaussian's precision is half the Hessian the MAP objective
+    carries: exact by default when the forward operator supplies its second
+    derivative, Gauss-Newton when asked, as for the MAP's own derivative.
+    The forward is ``A m + c (A m)^2``, with an exact second derivative, on
+    a model space with a dense Gram matrix."""
+
+    @pytest.fixture
+    def quadratic(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        from .conftest import spd_matrix
+
+        rng = np.random.default_rng(3)
+        model = make_dense_metric_space(3)
+        data_space = EuclideanSpace(10)
+        matrix = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(10, 3)), form="components"
+        )
+        bend = 0.8
+        forward = Operator.from_callables(
+            model,
+            data_space,
+            lambda m: matrix(m) + bend * matrix(m) ** 2,
+            derivative=lambda m: (
+                DiagonalLinearOperator(data_space, 1.0 + 2.0 * bend * matrix(m))
+                @ matrix
+            ),
+            second_derivative=lambda m, dm: (
+                DiagonalLinearOperator(data_space, 2.0 * bend * matrix(dm)) @ matrix
+            ),
+        )
+        error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.3)
+        prior = gi.GaussianMeasure.from_covariance_matrix(
+            model, 0.3 * spd_matrix(rng, 3), form="galerkin"
+        )
+        problem = ForwardProblem(forward, error=error)
+        data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
+        return problem, prior, data
+
+    @staticmethod
+    def inverses(problem, prior, data, mode):
+        """The inverses of half the exact Hessian and of the Gauss-Newton
+        normal operator at the mode, as component matrices."""
+        exact = MaximumAPosteriori(problem, prior).objective(data).hessian(mode)
+        normal = MaximumAPosteriori(problem, prior).linearized_normal(mode)
+        return (
+            np.linalg.inv(0.5 * exact.matrix(form="components")),
+            np.linalg.inv(normal.matrix(form="components")),
+        )
+
+    @pytest.mark.parametrize("gauss_newton", [False, True])
+    def test_the_covariance_inverts_the_estimators_hessian(
+        self, quadratic, gauss_newton
+    ):
+        problem, prior, data = quadratic
+        laplace = LaplaceApproximation.from_problem(
+            problem,
+            prior,
+            optimizer=NewtonCG(max_iterations=100, preconditioner=prior.covariance),
+            solver=gi.CholeskySolver(),
+            gauss_newton=gauss_newton,
+        )
+        assert laplace.estimator._gauss_newton is gauss_newton
+        result = laplace.solve(data)
+        assert result.converged
+        exact, normal = self.inverses(problem, prior, data, result.model)
+        expected = normal if gauss_newton else exact
+        other = exact if gauss_newton else normal
+        covariance = result.measure.covariance.matrix(form="components")
+        assert np.linalg.norm(covariance - expected) < 1e-10 * np.linalg.norm(expected)
+        # The two curvatures differ here, so the test can tell them apart.
+        assert np.linalg.norm(covariance - other) > 1e-2 * np.linalg.norm(other)
+
+    @pytest.mark.parametrize("gauss_newton", [False, True])
+    def test_the_low_rank_route_takes_the_same_curvature(self, quadratic, gauss_newton):
+        problem, prior, data = quadratic
+        mode = MaximumAPosteriori(
+            problem,
+            prior,
+            optimizer=NewtonCG(max_iterations=100, preconditioner=prior.covariance),
+        )(data)
+        low = LaplaceApproximation.from_problem(
+            problem,
+            prior,
+            gauss_newton=gauss_newton,
+            rank=3,
+            rng=np.random.default_rng(0),
+        ).at(mode, data)
+        exact, normal = self.inverses(problem, prior, data, mode)
+        expected = normal if gauss_newton else exact
+        covariance = low.covariance.matrix(form="components")
+        assert np.linalg.norm(covariance - expected) < 1e-8 * np.linalg.norm(expected)
+
+    @pytest.mark.parametrize("gauss_newton", [False, True])
+    def test_the_evidence_is_the_laplace_estimate(self, quadratic, gauss_newton):
+        """``-J(m) - log det(Q K) / 2``, with ``K`` the curvature, against a
+        dense reference; the full and the low-rank routes agree on it."""
+        problem, prior, data = quadratic
+        laplace = LaplaceApproximation.from_problem(
+            problem,
+            prior,
+            optimizer=NewtonCG(max_iterations=100, preconditioner=prior.covariance),
+            solver=gi.CholeskySolver(),
+            gauss_newton=gauss_newton,
+        )
+        result = laplace.solve(data)
+        mode, measure = result.model, result.measure
+        space = problem.model_space
+        offset = space.subtract(mode, prior.expectation)
+        penalized = problem.potential(data)(mode) + 0.5 * space.inner_product(
+            prior.precision(offset), offset
+        )
+        exact, normal = self.inverses(problem, prior, data, mode)
+        curvature = np.linalg.inv(normal if gauss_newton else exact)
+        volume = np.linalg.slogdet(
+            prior.covariance.matrix(form="components") @ curvature
+        )[1]
+        expected = -penalized - 0.5 * volume
+        assert measure.log_normalizer.value == pytest.approx(expected, rel=1e-10)
+        low = LaplaceApproximation.from_problem(
+            problem,
+            prior,
+            gauss_newton=gauss_newton,
+            rank=3,
+            rng=np.random.default_rng(0),
+        ).at(mode, data)
+        assert low.log_normalizer.value == pytest.approx(expected, rel=1e-8)
+
+    def test_the_gauss_newton_gaussian_samples_and_the_exact_one_does_not(
+        self, quadratic
+    ):
+        problem, prior, data = quadratic
+        built = {
+            gauss_newton: LaplaceApproximation.from_problem(
+                problem,
+                prior,
+                optimizer=NewtonCG(max_iterations=100, preconditioner=prior.covariance),
+                gauss_newton=gauss_newton,
+            )(data)
+            for gauss_newton in (False, True)
+        }
+        assert not built[False].can_sample
+        assert built[True].can_sample
+
+
+class TestTheFullGaussianSamplesAndCarriesTheEvidence:
+    """The full Laplace Gaussian draws by randomize-then-optimize and carries
+    the Laplace evidence, as the low-rank one does; on a linear problem both
+    are the linear posterior's."""
+
+    def test_on_a_linear_problem_the_evidence_is_the_posteriors(self, linear_setting):
+        forward, prior, error, data = linear_setting
+        exact = LinearGaussianInversion(
+            LinearForwardProblem(forward, error=error), prior
+        )(data)
+        found = LaplaceApproximation.from_problem(
+            ForwardProblem(forward, error=error), prior, solver=gi.CholeskySolver()
+        )(data)
+        assert found.log_normalizer.value == pytest.approx(
+            exact.log_normalizer.value, rel=1e-8
+        )
+
+    def test_the_draws_have_the_laplace_covariance(self, nonlinear_setting, rng):
+        forward, prior, error, truth, data = nonlinear_setting
+        measure = LaplaceApproximation.from_problem(
+            ForwardProblem(forward, error=error), prior, solver=gi.CholeskySolver()
+        )(data)
+        assert measure.can_sample
+        check_measure(measure, rng=rng)
+
+
 class TestWithTheGaussNewtonHessian:
     """Asking for the Gauss-Newton Hessian equips the objective with it on a
     forward operator that supplies only its derivative."""
@@ -569,7 +742,7 @@ class TestTheSamplerHooksAreThere:
 
 def tutorial_nine_problem():
     """Tutorial 9's problem: the log-concentration around a ring, averaged
-    over forty sensor footprints, white prior on ``H^2``."""
+    over forty sensor footprints, an order-one Sobolev prior on ``H^2``."""
     from pygeoinf2 import Linearization
     from pygeoinf2.symmetric_space.circle import Sobolev
 
@@ -592,7 +765,7 @@ def tutorial_nine_problem():
     forward = Operator.from_callables(
         space, averaging.codomain, value, linearize=linearize
     )
-    prior = space.invariant_measure(np.ones(space.dim), pointwise_std=0.8)
+    prior = space.sobolev_measure(1.0, 0.2, pointwise_std=0.8)
     truth = prior.sample(rng=rng)
     noise = gi.GaussianMeasure.from_standard_deviation(averaging.codomain, 0.05)
     problem = ForwardProblem(forward, error=noise)
@@ -602,7 +775,7 @@ def tutorial_nine_problem():
 
 def ray_problem():
     """A small instance of tutorial 13's problem: travel times along four
-    bent rays through a field on the square, in the whitened variable."""
+    bent rays through a field on the square, under a Sobolev prior."""
     from pygeoinf2.symmetric_space.plane import Sobolev
 
     rng = np.random.default_rng(13)
@@ -618,41 +791,42 @@ def ray_problem():
         forward.codomain, 0.005 * float(np.mean(times))
     )
     data = forward.codomain.add(times, noise.sample(rng=rng))
-    factor = prior.covariance_factor
-    identity = LinearOperator.identity(space)
-    white = gi.GaussianMeasure(space, covariance=identity, precision=identity)
-    whitened = ForwardProblem(forward @ factor, error=noise)
-    return space, whitened, white, data
+    return space, ForwardProblem(forward, error=noise), prior, data
 
 
 class TestAgainstTheRecordedAnswers:
-    """The mode and the Gaussian on two problems, against the numbers the
-    estimator produced before it was rebuilt on the generic minimization:
-    the same objective, the same search and the same solve, so the answers
-    agree to the optimizer's tolerance. Not to rounding, and not in the
-    iteration count: a line search takes a different number of steps on
-    another platform's BLAS, and the recorded numbers are a regression
-    check on the answer, not on the path to it."""
+    """The mode and the Gaussian on two problems, against recorded numbers:
+    a regression check on the answer, to the optimizer's tolerance. Not to
+    rounding, and not in the iteration count: a search takes a different
+    number of steps on another platform's BLAS, and the recorded numbers
+    are a check on the answer, not on the path to it. The Gaussian is the
+    Gauss-Newton one in both, the curvature a forward operator without a
+    second derivative has anyway."""
 
     def test_tutorial_nine(self):
         space, problem, prior, data = tutorial_nine_problem()
         rng = np.random.default_rng(1)
         probes = [prior.sample(rng=rng) for _ in range(2)]
-        estimator = MaximumAPosteriori(problem, prior)
+        estimator = MaximumAPosteriori(
+            problem,
+            prior,
+            gauss_newton=True,
+            optimizer=NewtonCG(preconditioner=prior.covariance),
+        )
         result = estimator.solve(data)
         assert result.converged
-        assert result.value == pytest.approx(34.436593242648826, rel=1e-6)
+        assert result.value == pytest.approx(31.961649761807358, rel=1e-6)
         assert space.norm(result.minimizer) == pytest.approx(
-            3.167931340702631, rel=1e-5
+            2.260978466139511, rel=1e-5
         )
         assert problem.chi_squared(result.minimizer, data) == pytest.approx(
-            14.835937866136218, rel=1e-5
+            17.298941511833846, rel=1e-5
         )
         measure = LaplaceApproximation(estimator).at(result.minimizer, data)
         for probe, quadratic, mean in zip(
             probes,
-            (51.63257571405984, 49.77694953393492),
-            (-0.37306792523046706, 0.16064533753001276),
+            (0.22121036118396292, 0.3975650083516245),
+            (0.31839897217461366, 0.21824242523329418),
         ):
             assert space.inner_product(measure.covariance(probe), probe) == (
                 pytest.approx(quadratic, rel=1e-6)
@@ -662,26 +836,34 @@ class TestAgainstTheRecordedAnswers:
             )
 
     def test_the_ray_problem(self):
+        """The exact Hessian drives the search, the forward operator
+        supplying its second derivative, and the prior's covariance
+        preconditions it; the Gaussian is placed on the mode found."""
         space, problem, prior, data = ray_problem()
         rng = np.random.default_rng(2)
         probes = [space.random(rng=rng) for _ in range(2)]
         estimator = MaximumAPosteriori(
-            problem, prior, optimizer=NewtonCG(max_iterations=15, max_cg_iterations=40)
+            problem,
+            prior,
+            optimizer=NewtonCG(
+                preconditioner=prior.covariance, max_iterations=15, max_cg_iterations=40
+            ),
         )
         result = estimator.solve(data)
         assert result.converged
-        assert result.value == pytest.approx(1.362973893265137, rel=1e-6)
+        assert result.value == pytest.approx(1.3629738932651345, rel=1e-6)
         assert space.norm(result.minimizer) == pytest.approx(
-            1.166574911014069, rel=1e-5
+            0.4366038043367584, rel=1e-5
         )
         assert problem.chi_squared(result.minimizer, data) == pytest.approx(
-            0.002076870257653671, rel=1e-6
+            0.0020768703102813906, rel=1e-6
         )
-        measure = LaplaceApproximation(estimator)(data)
+        gauss_newton = MaximumAPosteriori(problem, prior, gauss_newton=True)
+        measure = LaplaceApproximation(gauss_newton).at(result.minimizer, data)
         for probe, quadratic, mean in zip(
             probes,
-            (125636.23326192904, 132702.6150648785),
-            (1.8940705107151008, 1.5910898274345833),
+            (22.0260801461811, 22.69915458174353),
+            (0.36827123855287286, 0.6138104952900771),
         ):
             assert space.inner_product(measure.covariance(probe), probe) == (
                 pytest.approx(quadratic, rel=1e-6)

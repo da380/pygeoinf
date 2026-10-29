@@ -658,3 +658,144 @@ class TestABlockDiagonalOnACallersSum:
         blocks = [LinearOperator.identity(X), LinearOperator.identity(Y)]
         with pytest.raises(ValueError, match="direct sum of the blocks"):
             BlockDiagonalLinearOperator(blocks, domain=DirectSum([Y, X]))
+
+
+class TestBlockOperatorsPickle:
+    """Process-parallel loops send operators to workers by pickling them, so
+    every block class must survive a round trip, linear or not."""
+
+    @staticmethod
+    def _round_trip(operator):
+        import pickle
+
+        return pickle.loads(pickle.dumps(operator))
+
+    def _blocks(self, rng):
+        X = make_dense_metric_space(3)
+        Y = make_weighted_space()
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(Y.dim, X.dim)), form="components"
+        )
+        return X, Y, A
+
+    def test_every_linear_block_class_round_trips(self, rng):
+        X, Y, A = self._blocks(rng)
+        IX, IY = LinearOperator.identity(X), LinearOperator.identity(Y)
+        operators = [
+            BlockOperator([[IX, A.adjoint], [A, IY]]),
+            ColumnOperator([IX, A]),
+            RowOperator([A, IY]),
+            BlockDiagonalOperator([IX, IY]),
+        ]
+        expected = [
+            BlockLinearOperator,
+            ColumnLinearOperator,
+            RowLinearOperator,
+            BlockDiagonalLinearOperator,
+        ]
+        for operator, cls in zip(operators, expected):
+            copy = self._round_trip(operator)
+            assert type(copy) is cls
+            x = operator.domain.random(rng=rng)
+            y = operator.codomain.random(rng=rng)
+            assert np.allclose(
+                operator.codomain.to_components(copy(x)),
+                operator.codomain.to_components(operator(x)),
+            )
+            assert np.allclose(
+                operator.domain.to_components(copy.adjoint(y)),
+                operator.domain.to_components(operator.adjoint(y)),
+            )
+
+    def test_every_nonlinear_block_class_round_trips(self, rng):
+        X, Y, A = self._blocks(rng)
+        F = Operator.from_callables(X, X, np.abs)
+        G = Operator.from_callables(Y, Y, np.abs)
+        operators = [
+            BlockOperator([[F, A.adjoint], [A, G]]),
+            ColumnOperator([F, A]),
+            RowOperator([A.adjoint, F]),
+            BlockDiagonalOperator([F, G]),
+        ]
+        expected = [BlockOperator, ColumnOperator, RowOperator, BlockDiagonalOperator]
+        for operator, cls in zip(operators, expected):
+            copy = self._round_trip(operator)
+            assert type(copy) is cls
+            x = operator.domain.random(rng=rng)
+            assert np.allclose(
+                operator.codomain.to_components(copy(x)),
+                operator.codomain.to_components(operator(x)),
+            )
+
+    def test_a_product_measure_samples_in_worker_processes(self):
+        E = EuclideanSpace(2)
+        factor = GaussianMeasure.from_standard_deviation(E, 1.0)
+        measure = GaussianMeasure.from_product([factor, factor])
+        draws = measure.samples(4, rng=np.random.default_rng(0), n_jobs=2)
+        assert len(draws) == 4
+        assert all(len(draw) == 2 for draw in draws)
+
+
+class TestANonlinearBlockIsLinearizedOnce:
+    """``at()`` on a block operator asks each block for its ``at()`` once,
+    so a block that is one solve yielding value and derivative is solved
+    once, as it is on its own."""
+
+    @staticmethod
+    def counted(space, counts):
+        def value(x):
+            counts["value"] += 1
+            return space.from_components(space.to_components(x) ** 2)
+
+        def linearize(x):
+            from pygeoinf2.algebra.linearization import Linearization
+
+            counts["linearize"] += 1
+            c = space.to_components(x)
+            derivative = LinearOperator.from_matrix(
+                space, space, np.diag(2.0 * c), form="components"
+            )
+            return Linearization(x, space.from_components(c**2), derivative)
+
+        return Operator.from_callables(space, space, value, linearize=linearize)
+
+    def test_every_block_arrangement_solves_once(self, rng):
+        X = make_weighted_space()
+        identity = LinearOperator.identity(X)
+        counts = {"value": 0, "linearize": 0}
+        F = self.counted(X, counts)
+        arrangements = [
+            BlockOperator([[identity, LinearOperator.zero(X)], [F, identity]]),
+            ColumnOperator([identity, F]),
+            RowOperator([F, identity]),
+            BlockDiagonalOperator([F, identity]),
+        ]
+        for operator in arrangements:
+            counts.update(value=0, linearize=0)
+            x = operator.domain.random(rng=rng)
+            model = operator.at(x)
+            assert counts == {"value": 0, "linearize": 1}, operator
+            expected = operator(x)
+            for got, want in zip(
+                model.value if isinstance(model.value, tuple) else (model.value,),
+                expected if isinstance(expected, tuple) else (expected,),
+            ):
+                assert np.allclose(got, want)
+            check_derivative(operator, x, rng=rng)
+
+    def test_a_linear_block_operator_is_its_own_derivative(self, rng):
+        X = make_weighted_space()
+        identity = LinearOperator.identity(X)
+        operator = BlockDiagonalOperator([identity, 2.0 * identity])
+        x = operator.domain.random(rng=rng)
+        assert operator.at(x).derivative is operator
+        assert operator.derivative(x) is operator
+
+
+class TestAnEmptyBlockOperatorIsRefusedByName:
+    @pytest.mark.parametrize(
+        "build", [ColumnOperator, RowOperator, BlockDiagonalOperator, BlockOperator]
+    )
+    def test_no_blocks(self, build):
+        with pytest.raises(ValueError, match="at least one"):
+            build([])

@@ -24,16 +24,20 @@ are the quantitative form of that preference.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..probability.mixture import GaussianMixture
-from .estimators import MeasureEstimator
+from .estimators import MeasureEstimator, _PushedMeasureEstimator
 from .gaussian import LinearGaussianInversion
 from ..numerics.normal import Formalism
 from .problem import LinearForwardProblem
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..numerics.randomized import Estimate
 
 __all__ = ["LinearGaussianMixtureInversion"]
 
@@ -57,6 +61,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         solver: Any = None,
         formalism: Formalism = "data_space",
         evidence: Any = None,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -68,8 +73,19 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
             formalism: which space to assemble each component in.
             evidence: keyword arguments for each component's
                 :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.log_evidence`,
-                as a dict -- ``{"method": "stochastic", "samples": 200}`` to
-                keep the weight update matrix-free on a large data space.
+                as a dict. The direct determinant, taken by default wherever
+                the data space can be assembled, is exact and the weights are
+                then exact; ``{"method": "stochastic", "samples": 200}`` keeps
+                the weight update matrix-free on a data space too large for
+                that, at the cost of weights that carry the estimate's error. A
+                generator under ``"rng"`` is split into one child per
+                component, so that the components draw independent probes
+                and a parallel run gives the numbers a serial one does.
+            n_jobs: workers for the components, each one solve and one
+                evidence. Serial by default. A worker answers on its own copy
+                of the component's inversion, and the volume terms it
+                computes are kept on this one, so a later call does not
+                compute them again.
 
         Raises:
             TypeError: if the prior is not a ``GaussianMixture``.
@@ -86,6 +102,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         self._problem = problem
         self._prior = prior
         self._evidence = {} if evidence is None else dict(evidence)
+        self._n_jobs = n_jobs
         self._inversions = [
             LinearGaussianInversion(
                 problem, component, solver=solver, formalism=formalism
@@ -131,6 +148,30 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
     #                            The posterior                          #
     # ----------------------------------------------------------------- #
 
+    def _answers(self, data: Any, /, *, posterior: bool) -> list[tuple[Any, Any]]:
+        """Each component's posterior, when asked for, and log evidence."""
+        from numpy.random import Generator
+
+        from ..parallel import parallel_map
+
+        settings = [dict(self._evidence) for _ in self._inversions]
+        rng = self._evidence.get("rng")
+        if isinstance(rng, Generator):
+            for setting, child in zip(settings, rng.spawn(len(settings))):
+                setting["rng"] = child
+        tasks = [
+            (inversion, data, setting, posterior)
+            for inversion, setting in zip(self._inversions, settings)
+        ]
+        results = parallel_map(_component_answer, tasks, n_jobs=self._n_jobs)
+        for inversion, (_, _, volumes) in zip(self._inversions, results):
+            inversion._log_determinants.update(volumes)
+        return [(measure, evidence) for measure, evidence, _ in results]
+
+    def _component_log_evidences(self, data: Any, /) -> list[Any]:
+        """Each component's log evidence, as an ``Estimate``."""
+        return [evidence for _, evidence in self._answers(data, posterior=False)]
+
     def log_evidence_terms(self, data: Any, /) -> np.ndarray:
         """``log p(d | k)`` for each component.
 
@@ -138,12 +179,18 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         model comparison between the components would report. A component with
         a wide prior is penalized for it here, which is what stops the widest
         component from always winning.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The values, one per component. Each component's standard error,
+            nonzero on the stochastic route, is on its own inversion's
+            :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.log_evidence`,
+            and :meth:`log_evidence` carries their combination.
         """
         return np.array(
-            [
-                inversion.log_evidence(data, **self._evidence)
-                for inversion in self._inversions
-            ]
+            [estimate.value for estimate in self._component_log_evidences(data)]
         )
 
     def weights(self, data: Any, /) -> np.ndarray:
@@ -153,81 +200,87 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         because the evidences of competing components routinely differ by
         hundreds of nats and the ratio is the only part that matters.
         """
+        return self._weights_from(self.log_evidence_terms(data))
+
+    def _weights_from(self, terms: np.ndarray, /) -> np.ndarray:
         from scipy.special import softmax
 
         with np.errstate(divide="ignore"):
             prior_logs = np.log(self._prior.weights)
-        return softmax(prior_logs + self.log_evidence_terms(data))
+        return softmax(prior_logs + terms)
 
-    def log_evidence(self, data: Any, /) -> float:
+    def log_evidence(self, data: Any, /) -> "Estimate":
         """``log p(d)`` for the mixture as a whole.
 
         The mixture's own evidence, for comparing it against a different prior
         entirely. It is *not* the largest component's: a mixture that hedges
         pays for the components that turned out to be wrong, and this is where
         that shows up.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            An :class:`~pygeoinf2.numerics.randomized.Estimate`. Its standard
+            error combines the components' in quadrature, each weighted by
+            its posterior weight, the derivative of the log-sum-exp; zero on
+            the dense route.
         """
-        from scipy.special import logsumexp
+        from scipy.special import logsumexp, softmax
 
+        from ..numerics.randomized import Estimate
+
+        estimates = self._component_log_evidences(data)
+        values = np.array([estimate.value for estimate in estimates])
+        errors = np.array([estimate.standard_error for estimate in estimates])
         with np.errstate(divide="ignore"):
-            prior_logs = np.log(self._prior.weights)
-        return float(logsumexp(prior_logs + self.log_evidence_terms(data)))
-
-    def __call__(self, data: Any) -> GaussianMixture:
-        """The posterior mixture for this data."""
-        return GaussianMixture(
-            [inversion(data) for inversion in self._inversions],
-            weights=self.weights(data),
+            logs = np.log(self._prior.weights) + values
+        weights = softmax(logs)
+        return Estimate(
+            float(logsumexp(logs)),
+            float(np.sqrt(np.sum((weights * errors) ** 2))),
+            max(estimate.samples for estimate in estimates),
         )
 
-    def push_forward(self, operator: Any, /) -> "_PushedMixture":
+    def __call__(self, data: Any) -> GaussianMixture:
+        """The posterior mixture for this data.
+
+        Each component's posterior and evidence come from one pass over the
+        components, sharing each component's solve between the two.
+        """
+        answers = self._answers(data, posterior=True)
+        terms = np.array([evidence.value for _, evidence in answers])
+        return GaussianMixture(
+            [measure for measure, _ in answers], weights=self._weights_from(terms)
+        )
+
+    def push_forward(self, operator: LinearOperator, /) -> MeasureEstimator:
         """The posterior for a property, component by component.
 
         The weights do not change: they are decided by the data through the
-        evidence, and a property map is applied afterwards. So this pushes each
-        component's estimator forward and leaves the scoring alone.
+        evidence, and a property map is applied afterwards. Each component's
+        *measure* is pushed forward, not its estimator: the two give the
+        identical measure, but a pushed estimator would solve the normal
+        equations again for data each component has already inverted.
+
+        Args:
+            operator: the property map ``T``, from the model space.
+
+        Returns:
+            The measure estimator of the property, whose answers are
+            Gaussian mixtures on the property space.
+
+        Raises:
+            ValueError: if ``T`` does not act on the model space.
         """
-        return _PushedMixture(self, operator)
+        return _PushedMeasureEstimator(self, operator)
 
 
-class _PushedMixture(MeasureEstimator):
-    """A mixture inversion seen through a property operator."""
-
-    def __init__(self, base: LinearGaussianMixtureInversion, operator: Any, /) -> None:
-        self._base = base
-        self._operator = operator
-
-    @property
-    def data_space(self) -> HilbertSpace:
-        """The space the data live on."""
-        return self._base.data_space
-
-    @property
-    def property_space(self) -> HilbertSpace:
-        """The property space."""
-        return self._operator.codomain
-
-    def weights(self, data: Any, /) -> np.ndarray:
-        """The same weights as the model-space mixture: the data decide them."""
-        return self._base.weights(data)
-
-    def __call__(self, data: Any) -> GaussianMixture:
-        """The posterior mixture on the property space.
-
-        Each component's *measure* is pushed forward, not its estimator.
-        The two give the identical measure -- same expectation, same
-        covariance ``T C T*``, same sampler -- but a pushed estimator would
-        solve the normal equations again for data each component has already
-        inverted.
-        """
-        return GaussianMixture(
-            [
-                inversion(data).push_forward(self._operator)
-                for inversion in self._base.inversions
-            ],
-            weights=self._base.weights(data),
-        )
-
-    def push_forward(self, operator: Any, /) -> "_PushedMixture":
-        """A further property of the same posterior."""
-        return _PushedMixture(self._base, operator @ self._operator)
+def _component_answer(task: tuple[Any, Any, dict, bool]) -> tuple[Any, Any, dict]:
+    """One component's work: its posterior if asked for, its log evidence,
+    and the volume terms its inversion holds afterwards, which a worker's
+    copy must hand back for them to be kept."""
+    inversion, data, evidence, posterior = task
+    measure = inversion(data) if posterior else None
+    log_evidence = inversion.log_evidence(data, **evidence)
+    return measure, log_evidence, dict(inversion._log_determinants)

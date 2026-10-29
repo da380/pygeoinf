@@ -220,7 +220,7 @@ alpha = 1e-2
 print(f"{'grid':>5} {'in the space':>13} {'on the arrays':>14}")
 for n in (32, 64, 128, 256):
     S = Sobolev(n, 2.0, 0.2)
-    evaluate = S.point_evaluation_operator(points, dense=True)
+    evaluate = S.point_evaluation_operator(points, route="dense")
     rows = evaluate.matrix(form="components")
     metric = S.metric_values  # the diagonal Gram matrix of H^2
 

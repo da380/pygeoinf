@@ -388,10 +388,14 @@ class TestExtendedGrid:
         assert wide.colatitudes[-1] == pytest.approx(np.pi)
         assert wide.longitudes[-1] == pytest.approx(2.0 * np.pi)
         assert wide.dim == plain.dim
-        # Equality is of the space, not the grid, as for sampling; the grids
-        # differ in their coordinate key.
-        assert wide == plain
-        assert wide._coordinate_key() != plain._coordinate_key()
+        # Same components, but fields of another shape: different spaces, as
+        # for sampling, so that no operator of one is handed the other's
+        # vectors.
+        assert wide != plain
+        assert hash(wide) != hash(plain)
+        assert not wide.shares_vectors_with(plain)
+        assert Lebesgue(6, sampling=2) != plain
+        assert Lebesgue(6, grid="GLQ") != plain
 
     def test_synthesis_closes_the_seam_and_the_pole(self, rng):
         plain, wide = Lebesgue(6), Lebesgue(6, extend=True)

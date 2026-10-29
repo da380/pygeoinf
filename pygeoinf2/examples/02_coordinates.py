@@ -12,13 +12,13 @@ differ from a dot product.
 import numpy as np
 
 from pygeoinf2 import CoordinateSpace, EuclideanSpace
-from pygeoinf2.symmetric_space import Lebesgue, Sobolev
+from pygeoinf2.symmetric_space import circle
 
 rng = np.random.default_rng(0)
 
 euclidean = EuclideanSpace(4)
-lebesgue = Lebesgue((16,))  # L2 on the unit circle
-sobolev = Sobolev((16,), 2.0, 0.3)  # H2 on the same grid
+lebesgue = circle.Lebesgue(16)  # L2 on the unit circle
+sobolev = circle.Sobolev(16, 2.0, 0.3)  # H2 on the same grid
 
 for name, space in [("Euclidean", euclidean), ("L2", lebesgue), ("H2", sobolev)]:
     print(
@@ -47,4 +47,5 @@ print(
 )
 print()
 print("A space with no coordinates is still a perfectly good Hilbert space;")
-print("it simply cannot be handed to a method that needs a matrix.")
+print("it simply cannot be handed to a method that needs a matrix. Example 7")
+print("builds one.")

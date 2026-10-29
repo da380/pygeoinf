@@ -190,7 +190,7 @@ class LinearSolver(ABC):
         """Build the inverse, having passed validation."""
 
 
-SolverLike = "LinearSolver | Callable[[LinearOperator], LinearSolver]"
+type SolverLike = LinearSolver | Callable[[LinearOperator], LinearSolver]
 """A solver, or a function that builds one once the operator is known."""
 
 
@@ -607,6 +607,11 @@ class DirectSolver(LinearSolver):
                 default; see :mod:`pygeoinf2.parallel`.
         """
         self._n_jobs = n_jobs
+
+    @property
+    def n_jobs(self) -> int | None:
+        """The workers for extracting a matrix that has to be probed."""
+        return self._n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         domain: CoordinateSpace = operator.domain
@@ -1244,6 +1249,15 @@ class IterativeSolver(LinearSolver):
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         preconditioner = self._resolve_preconditioner(operator)
+        if preconditioner is not None and not (
+            preconditioner.domain == operator.codomain
+            and preconditioner.codomain == operator.domain
+        ):
+            raise ValueError(
+                f"A preconditioner approximates the inverse, so it maps "
+                f"{operator.codomain!r} to {operator.domain!r}; this one maps "
+                f"{preconditioner.domain!r} to {preconditioner.codomain!r}."
+            )
         solve_fn = self._solve_fn(operator, preconditioner)
 
         # The adjoint system ``A* w == x`` is preconditioned by ``P*``, from
@@ -1515,6 +1529,39 @@ class FlexibleCGSolver(IterativeSolver):
         return SolveResult(x, self._limit(operator), residual, False, tuple(history))
 
 
+# A Krylov space has closed when the new direction left after
+# orthogonalization is this small against the image it was taken from: the
+# rounding level of the orthogonalization, relative, so the test does not
+# depend on the units of the operator.
+_CLOSURE = 1e-13
+
+
+def _triangular_weights(triangle: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    """``R y == g`` for the upper-triangular factor of a Krylov least squares.
+
+    By back substitution when ``R`` is nonsingular, and by least squares
+    when a diagonal entry is at rounding level against the largest entry:
+    ``R`` is singular exactly when the operator is singular on the Krylov
+    space, and back substitution then returns numbers of order one over
+    rounding error where the least-squares solution is the minimum the
+    method promises.
+
+    Args:
+        triangle: ``R``, upper triangular and square.
+        rhs: ``g``.
+
+    Returns:
+        ``y``.
+    """
+    size = triangle.shape[0]
+    largest = float(np.max(np.abs(triangle))) if size else 0.0
+    smallest = float(np.min(np.abs(np.diag(triangle)))) if size else 0.0
+    eps = float(np.finfo(float).eps)
+    if largest > 0.0 and smallest > size * eps * largest:
+        return solve_triangular(triangle, rhs)
+    return np.linalg.lstsq(triangle, rhs, rcond=None)[0]
+
+
 class GMRESSolver(IterativeSolver):
     """Generalized minimal residual, for an operator with no symmetry at all.
 
@@ -1527,6 +1574,23 @@ class GMRESSolver(IterativeSolver):
     Restarted, because the cost and storage of a step grow with the step
     number: ``restart`` vectors are held, then the basis is discarded and the
     iteration begins again from the current residual.
+
+    **Preconditioned from the right**, ``A P u == b`` with ``x == P u``, so
+    the residual it minimizes, reports and stops on is the true ``b - A x``
+    in the space's own norm, as for the other Krylov solvers here: ``rtol``
+    means the same thing with a preconditioner as without one.
+
+    **Convergence is declared on the true residual.** The recurrence's
+    residual is what the iteration stops on, but each cycle ends by forming
+    ``b - A x`` and testing that, so a cycle whose recurrence has drifted from
+    the truth restarts rather than reporting success. A Krylov space that
+    closes -- the new Arnoldi vector vanishing against the image it came
+    from -- ends the solve with the true residual: on a singular operator
+    with a right-hand side outside its range (a mask, a projector, a diagonal
+    with a zero) the space closes before the residual can reach the
+    tolerance, and the solve reports that rather than convergence. The small
+    triangular system is solved by least squares when it is singular, which
+    is the minimum over the Krylov space that GMRES promises.
     """
 
     requires: ClassVar[Traits] = Traits.NONE
@@ -1549,16 +1613,17 @@ class GMRESSolver(IterativeSolver):
         b: Any,
         x0: Any | None,
     ) -> SolveResult:
-        space = operator.domain
+        domain, codomain = operator.domain, operator.codomain
         x, r = self._initial(operator, b, x0)
-        tolerance = self._tolerance(operator.codomain, b)
-        if preconditioner is not None:
-            r = preconditioner(r)
-            tolerance = max(self._rtol * space.norm(preconditioner(b)), self._atol)
+        tolerance = self._tolerance(codomain, b)
+
+        def lift(vector: Any) -> Any:
+            """``P v``, the domain vector a Krylov vector stands for."""
+            return vector if preconditioner is None else preconditioner(vector)
 
         history: list[float] = []
-        residual = space.norm(r)
-        self._record(0, residual, history, lambda: space.copy(x))
+        residual = codomain.norm(r)
+        self._record(0, residual, history, lambda: domain.copy(x))
         if residual <= tolerance:
             return SolveResult(x, 0, residual, True, tuple(history))
 
@@ -1566,28 +1631,33 @@ class GMRESSolver(IterativeSolver):
         total = 0
         while total < limit:
             width = min(self._restart, limit - total)
-            basis = [space.scale(1.0 / residual, r)]
+            start = residual
+            basis = [codomain.scale(1.0 / residual, r)]
             hessenberg = np.zeros((width + 1, width))
             cosines, sines = np.zeros(width), np.zeros(width)
             rhs = np.zeros(width + 1)
             rhs[0] = residual
             used = 0
+            closed = False
 
             for column in range(width):
                 total += 1
                 used = column + 1
-                w = operator(basis[column])
-                if preconditioner is not None:
-                    w = preconditioner(w)
+                w = operator(lift(basis[column]))
+                image = codomain.norm(w)
                 for row in range(column + 1):
-                    hessenberg[row, column] = space.inner_product(basis[row], w)
-                    w = space.axpy(-hessenberg[row, column], basis[row], w)
+                    hessenberg[row, column] = codomain.inner_product(basis[row], w)
+                    w = codomain.axpy(-hessenberg[row, column], basis[row], w)
                 # Kept aside: the rotations below overwrite the subdiagonal
                 # entry with zero, which is the point of them, and it is still
                 # needed both as the breakdown test and as the next basis
                 # vector's normalization.
-                subdiagonal = space.norm(w)
+                subdiagonal = codomain.norm(w)
                 hessenberg[column + 1, column] = subdiagonal
+                # The space has closed when what is left of the image after
+                # orthogonalization is rounding: relative to the image itself,
+                # so the test is the same in any units.
+                closed = subdiagonal <= _CLOSURE * image
 
                 # Apply the rotations already accumulated, then make a new one
                 # that zeroes the subdiagonal entry this column introduced.
@@ -1617,29 +1687,38 @@ class GMRESSolver(IterativeSolver):
                     # The iterate GMRES would return if it stopped here: the
                     # cycle's own assembly below, on the triangular system as
                     # it stands. Later columns leave rows up to this one alone.
-                    weights = np.linalg.solve(hessenberg[:used, :used], rhs[:used])
-                    iterate = space.copy(x)
+                    weights = _triangular_weights(hessenberg[:used, :used], rhs[:used])
+                    step = codomain.zero()
                     for index in range(used):
-                        iterate = space.axpy(weights[index], basis[index], iterate)
-                    return iterate
+                        step = codomain.axpy(weights[index], basis[index], step)
+                    return domain.add(x, lift(step))
 
                 self._record(total, residual, history, form)
-                if residual <= tolerance or subdiagonal == 0.0:
+                if residual <= tolerance or closed:
                     break
                 if total >= limit:
                     break
-                basis.append(space.scale(1.0 / subdiagonal, w))
+                basis.append(codomain.scale(1.0 / subdiagonal, w))
 
-            weights = np.linalg.solve(hessenberg[:used, :used], rhs[:used])
+            claimed = residual <= tolerance
+            weights = _triangular_weights(hessenberg[:used, :used], rhs[:used])
+            step = codomain.zero()
             for index in range(used):
-                x = space.axpy(weights[index], basis[index], x)
+                step = codomain.axpy(weights[index], basis[index], step)
+            x = domain.add(x, lift(step))
 
+            # The verdict is the true residual's, never the recurrence's.
+            _, r = self._initial(operator, b, x)
+            residual = codomain.norm(r)
             if residual <= tolerance:
                 return SolveResult(x, total, residual, True, tuple(history))
-            _, r = self._initial(operator, b, x)
-            if preconditioner is not None:
-                r = preconditioner(r)
-            residual = space.norm(r)
+            if (claimed or closed) and residual > 0.5 * start:
+                # The recurrence stopped -- on its tolerance, or because the
+                # Krylov space closed -- and the true residual did not follow
+                # far. A restart would search inside the same closed space,
+                # or meet the same rounding floor: only a cycle that was
+                # still gaining is worth repeating, as a refinement.
+                break
 
         return SolveResult(x, total, residual, False, tuple(history))
 
@@ -1657,6 +1736,16 @@ class MinResSolver(IterativeSolver):
     rather than producing a NaN some iterations later. That is the only extra
     condition -- the operator itself may still be indefinite, which is the
     reason to reach for MINRES over CG in the first place.
+
+    **Convergence is declared on the true residual.** The recurrence's
+    residual is what the iteration stops on; the solve then forms
+    ``b - A x`` and tests its ``M``-norm against the same tolerance. A
+    recurrence that has drifted from the truth starts again from the current
+    iterate while that still gains, and a Krylov space that closes -- the
+    next Lanczos vector vanishing against the column it came from, as it does
+    on a mask, a projector or a diagonal with a zero -- ends the cycle there.
+    On a singular operator with a right-hand side outside its range the solve
+    therefore reports the residual it reached and does not claim convergence.
     """
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
@@ -1703,6 +1792,62 @@ class MinResSolver(IterativeSolver):
         if beta <= tolerance:
             return SolveResult(x, 0, beta, True, tuple(history))
 
+        limit = self._limit(operator)
+        total = 0
+        while total < limit:
+            start = beta
+            x, steps = self._cycle(
+                operator,
+                preconditioned,
+                m_norm,
+                x,
+                r,
+                z,
+                beta,
+                tolerance,
+                limit - total,
+                total,
+                history,
+            )
+            total += steps
+            # The verdict is the true residual's, never the recurrence's.
+            _, r = self._initial(operator, b, x)
+            z = preconditioned(r)
+            beta = m_norm(r, z)
+            if beta <= tolerance:
+                return SolveResult(x, total, beta, True, tuple(history))
+            if beta > 0.5 * start:
+                # The cycle gained little, so another from here would gain
+                # less: a closed Krylov space, or a recurrence that has
+                # outrun what rounding lets the true residual reach.
+                break
+
+        return SolveResult(x, total, beta, False, tuple(history))
+
+    def _cycle(
+        self,
+        operator: LinearOperator,
+        preconditioned: Callable[[Any], Any],
+        m_norm: Callable[[Any, Any], float],
+        x: Any,
+        r: Any,
+        z: Any,
+        beta: float,
+        tolerance: float,
+        budget: int,
+        offset: int,
+        history: list[float],
+    ) -> tuple[Any, int]:
+        """One run of the recurrences from ``x``, with ``r == b - A x``.
+
+        Stops when the recurrence's residual reaches the tolerance, when the
+        Krylov space closes, or when the budget is spent.
+
+        Returns:
+            The iterate and the steps taken.
+        """
+        space = operator.domain
+
         # Lanczos state: the two previous *unpreconditioned* residuals, which
         # are what the three-term recurrence runs on, and v_k == M r_k / beta.
         r_prev = space.zero()
@@ -1718,10 +1863,9 @@ class MinResSolver(IterativeSolver):
         # Solution update state: w_{k-2}, w_{k-1}.
         w_prev = space.zero()
         w = space.zero()
-        residual = beta
         beta_prev = 1.0
 
-        for iteration in range(1, self._limit(operator) + 1):
+        for step in range(1, budget + 1):
             # --- Lanczos step: extend the tridiagonalization ----------
             # The recurrence is carried on the residuals rather than on the
             # M-orthonormal vectors: p is the next unpreconditioned residual,
@@ -1729,10 +1873,18 @@ class MinResSolver(IterativeSolver):
             p = operator(v)
             alpha = space.inner_product(v, p)
             p = space.axpy(-alpha / beta, r_current, p)
-            if iteration > 1:
+            if step > 1:
                 p = space.axpy(-beta / beta_prev, r_prev, p)
             z_next = preconditioned(p)
             beta_next = m_norm(p, z_next)
+
+            # The column of the tridiagonal matrix this step added, whose size
+            # is the scale the closure is judged against: the space has
+            # closed when the next off-diagonal is rounding against it.
+            column = float(
+                np.hypot(np.hypot(alpha, beta if step > 1 else 0.0), beta_next)
+            )
+            closed = beta_next <= _CLOSURE * column
 
             # --- apply the previous rotation to the new column --------
             delta = c * delta_bar + s * alpha
@@ -1742,8 +1894,10 @@ class MinResSolver(IterativeSolver):
 
             # --- the new rotation, annihilating beta_next -------------
             gamma = float(np.hypot(gamma_bar, beta_next))
-            if gamma == 0.0:
-                return SolveResult(x, iteration, residual, True, tuple(history))
+            if gamma <= _CLOSURE * column:
+                # The projected system is singular on a closed space: the
+                # update would divide by rounding error. The iterate stands.
+                return x, step
             c = gamma_bar / gamma
             s = beta_next / gamma
             tau = c * phi_bar
@@ -1756,13 +1910,11 @@ class MinResSolver(IterativeSolver):
             w_next = space.scale_inplace(1.0 / gamma, w_next)
             x = space.axpy(tau, w_next, x)
 
-            # phi_bar is the residual norm, available without forming it.
-            residual = abs(phi_bar)
-            self._record(iteration, residual, history, lambda: space.copy(x))
-            if residual <= tolerance:
-                return SolveResult(x, iteration, residual, True, tuple(history))
-            if beta_next == 0.0:
-                return SolveResult(x, iteration, residual, True, tuple(history))
+            # phi_bar is the recurrence's residual norm, available without
+            # forming it; the caller checks it against the true one.
+            self._record(offset + step, abs(phi_bar), history, lambda: space.copy(x))
+            if abs(phi_bar) <= tolerance or closed:
+                return x, step
 
             # --- roll the state ---------------------------------------
             w_prev, w = w, w_next
@@ -1772,7 +1924,7 @@ class MinResSolver(IterativeSolver):
             delta_bar = delta_bar_next
             epsilon = epsilon_next
 
-        return SolveResult(x, self._limit(operator), residual, False, tuple(history))
+        return x, budget
 
 
 class BiCGStabSolver(IterativeSolver):

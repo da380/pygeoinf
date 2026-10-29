@@ -129,14 +129,18 @@ class ConvexSet(Subset):
 
         Args:
             x: a vector of the space.
-            rtol: how far outside still counts as inside. Scaled by the set's
-                own size, so it means the same thing whatever the units are.
+            rtol: how far outside still counts as inside, as a distance
+                relative to the larger of the norms of the point and of its
+                projection, so it means the same thing whatever the units
+                are.
 
         Returns:
             Whether the set contains the point.
         """
-        distance = self._domain.norm(self._domain.subtract(x, self.project(x)))
-        return distance <= rtol * max(self._domain.norm(x), 1.0)
+        space = self._domain
+        nearest = self.project(x)
+        distance = space.norm(space.subtract(x, nearest))
+        return distance <= rtol * max(space.norm(x), space.norm(nearest))
 
     def support_function(self) -> SupportFunction:
         """``h(y) == sup { (y, x) : x in this set }``.
@@ -216,9 +220,9 @@ class ConvexSet(Subset):
         loses in practice is cheapness: every question has to go through the
         oracle, and one call may be an optimization.
 
-        The Backus-Gilbert-Parker engines use it for a feasible property set
-        whose support function is a dual minimization with no other
-        description, so that the set is the oracle.
+        The distance algorithm of a feasible property set uses it for a set
+        whose support values are computed by its other algorithms, so that
+        the set is the oracle.
 
         Args:
             domain: the space.
@@ -435,7 +439,8 @@ class _OracleSet(ConvexSet):
         Args:
             x: a vector of the space.
             rtol: passed to the membership test, or the distance's tolerance
-                relative to ``max(||x||, 1)``.
+                relative to the larger of the norms of the point and of its
+                projection.
 
         Raises:
             NotImplementedError: if there is neither a membership test nor a
@@ -449,23 +454,34 @@ class _OracleSet(ConvexSet):
                 "maximizer to convert its support function with. Use outside() "
                 "for a certificate of exclusion, or polytope() for an outer bound."
             )
-        _, distance, _ = _project_by_support(self, x)
-        return distance <= rtol * max(self._domain.norm(x), 1.0)
+        space = self._domain
+        nearest, distance, _ = _project_by_support(self, x)
+        return distance <= rtol * max(space.norm(x), space.norm(nearest))
 
     def outside(self, x: Any, directions: Any, /, *, rtol: float = 1e-9) -> bool:
         """True when some direction proves the point is not in the set.
 
         One-sided, and honestly so: a ``True`` is a proof, and a ``False`` is
-        only the absence of one among the directions tried.
+        only the absence of one among the directions tried. The point is
+        past the supporting hyperplane of a direction ``q`` when
+        ``(q, x) > h(q) + rtol * max(|h(q)|, ||q|| ||x||)``: relative to the
+        larger of the support value and the size of the pairing itself, so
+        that it means the same whatever the units and whatever the sign of
+        the support.
 
         Args:
             x: the point to test.
+            directions: the directions to try.
             rtol: how far past a supporting hyperplane the point must lie
-                before it counts as outside it.
+                before it counts as outside it, relative to that scale.
         """
+        space = self.domain
+        size = space.norm(x)
         for direction in directions:
-            pairing = self.domain.inner_product(direction, x)
-            if pairing > self._oracle(direction) * (1.0 + rtol) + rtol:
+            pairing = space.inner_product(direction, x)
+            bound = self._oracle(direction)
+            scale = max(abs(bound), space.norm(direction) * size)
+            if pairing > bound + rtol * scale:
                 return True
         return False
 
@@ -530,7 +546,7 @@ class _LevelSupport(SupportFunction):
             functional: ``f``, convex with a gradient.
             level: ``c``.
             start: where each inner minimization begins; a point of the
-                set, such as its centre. The origin if omitted.
+                set, such as its center. The origin if omitted.
         """
         super().__init__(domain)
         self._functional = functional
@@ -618,8 +634,8 @@ def _project_by_support(
     minimization of the negated objective is strongly convex with subgradient
     ``p̂(q) − x + q``, ``p̂`` the maximizer, and a bundle method takes it. The
     bundle stops on the value, which is quadratic in the error of ``q``, so
-    the projection is accurate to about the square root of its gap
-    tolerance: ``1e-12`` gives a point good to ``1e-6``.
+    the projection is accurate to about the square root of its relative gap
+    tolerance, in units of the distance.
 
     Returns:
         ``(projection, distance, result)``.
@@ -824,7 +840,7 @@ def sum_of_ellipsoids(
         covariances: the summands' covariances, as operators on the space.
             A summand that is a point has covariance zero and may be left
             out; one that is given is dropped.
-        center: the sum of the summands' centres. The origin if omitted.
+        center: the sum of the summands' centers. The origin if omitted.
         criterion: what the ellipsoid is smallest in -- the sum of its
             squared semi-axes, or its volume.
 
@@ -1145,8 +1161,18 @@ class Polytope(ConvexSet):
         """
         return _dykstra(self.domain, self._half_spaces, x, max_iterations)
 
-    def __and__(self, other: "Polytope") -> "Polytope":
-        """Both sets of constraints, which tightens an outer bound."""
+    def __and__(self, other: Subset) -> Subset:
+        """Both sets of constraints, which tightens an outer bound.
+
+        With another polytope, one polytope carrying both sets of
+        half-spaces; with any other set, the general intersection, as
+        :meth:`intersect` gives.
+
+        Raises:
+            ValueError: for an outer and an inner polytope.
+        """
+        if not isinstance(other, Polytope):
+            return self.intersect(other)
         if self._outer != other.is_outer:
             raise ValueError(
                 "An outer and an inner polytope cannot be intersected: the "
@@ -1166,7 +1192,7 @@ class Polytope(ConvexSet):
         A description of the polytope, not of the set it bounds: an outer
         polytope's inscribed ellipsoid need not contain the set and need
         not lie inside it. It is the ellipsoid a plot of the polytope
-        reads off -- its centre and its principal widths -- and a
+        reads off -- its center and its principal widths -- and a
         description that stays stable as more half-spaces are added.
 
         The ellipsoid ``{ c + B u : |u| <= 1 }`` lies in a half-space
@@ -1175,7 +1201,7 @@ class Polytope(ConvexSet):
         half-space, a convex program in the ``dim (dim + 3) / 2`` entries
         of ``B`` and ``c`` (Boyd and Vandenberghe, section 8.4.2). It is
         solved by Newton's method on the logarithmic barrier, from the
-        Chebyshev centre, and is dense in the dimension of the space.
+        Chebyshev center, and is dense in the dimension of the space.
 
         Args:
             tolerance: on the duality gap of the barrier method, relative
@@ -1223,7 +1249,7 @@ class Polytope(ConvexSet):
                     raise ValueError(
                         "The polytope is unbounded; it has no largest ellipsoid."
                     )
-        # The Chebyshev centre: the largest ball inside, as a start.
+        # The Chebyshev center: the largest ball inside, as a start.
         program = linprog(
             np.append(np.zeros(dim), -1.0),
             A_ub=np.column_stack([normals, lengths]),
@@ -1257,13 +1283,13 @@ class Polytope(ConvexSet):
             return np.einsum("k,kpq->pq", z[:size], basis), z[size:]
 
         def slacks(z: np.ndarray) -> np.ndarray | None:
-            shape, centre = unpack(z)
+            shape, center = unpack(z)
             try:
                 np.linalg.cholesky(shape)
             except np.linalg.LinAlgError:
                 return None
             reach = np.linalg.norm(normals @ shape, axis=1)
-            slack = offsets - normals @ centre - reach
+            slack = offsets - normals @ center - reach
             return slack if np.all(slack > 0.0) else None
 
         def objective(z: np.ndarray, weight: float) -> float:
@@ -1344,7 +1370,7 @@ class Polytope(ConvexSet):
             if 1.0 / weight <= tolerance:
                 break
             weight *= 20.0
-        shape, centre = unpack(z)
+        shape, center = unpack(z)
         # In components the ellipsoid is (x − c)ᵀ B⁻² (x − c) <= 1: the
         # Galerkin matrix of the precision is B⁻².
         shape_inverse = np.linalg.inv(shape)
@@ -1358,7 +1384,7 @@ class Polytope(ConvexSet):
                 form="galerkin",
                 traits=traits,
             ),
-            center=space.from_components(centre),
+            center=space.from_components(center),
             covariance=LinearOperator.from_matrix(
                 space,
                 space,
@@ -1625,14 +1651,16 @@ class Hyperplane(ConvexSet):
 
         Args:
             x: a vector of the space.
-            rtol: how far outside still counts as inside. Scaled by the set's
-                own size, so it means the same thing whatever the units are.
+            rtol: how far outside still counts as inside, relative to the
+                larger of ``|offset|`` and ``||normal|| ||x||``, the sizes of
+                the two sides of the equation, so it means the same thing
+                whatever the units are.
 
         Returns:
             Whether the set contains the point.
         """
         scale = max(
-            abs(self._offset), self._domain.norm(x) * np.sqrt(self._squared_norm), 1.0
+            abs(self._offset), self._domain.norm(x) * np.sqrt(self._squared_norm)
         )
         return abs(self._residual(x)) <= rtol * scale
 
@@ -1724,7 +1752,7 @@ class HalfSpace(ConvexSet):
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """True when the inequality holds to tolerance.
 
-        Scaled by the same three quantities :meth:`Hyperplane.contains` uses,
+        Scaled by the same two quantities :meth:`Hyperplane.contains` uses,
         which is what makes a point on the boundary of a half-space and a
         point on its bounding hyperplane agree about whether they are on it.
         The offset alone is not enough: a constraint through the origin has
@@ -1733,8 +1761,9 @@ class HalfSpace(ConvexSet):
 
         Args:
             x: a vector of the space.
-            rtol: how far outside still counts as inside. Scaled by the set's
-                own size, so it means the same thing whatever the units are.
+            rtol: how far outside still counts as inside, relative to the
+                larger of ``|offset|`` and ``||normal|| ||x||``, so it means
+                the same thing whatever the units are.
 
         Returns:
             Whether the set contains the point.
@@ -1743,7 +1772,6 @@ class HalfSpace(ConvexSet):
         scale = max(
             abs(self._offset),
             self._domain.norm(x) * self._domain.norm(self._normal),
-            1.0,
         )
         return residual <= rtol * scale
 
@@ -1813,6 +1841,35 @@ class HalfSpace(ConvexSet):
         return f"HalfSpace(offset={self._offset})"
 
 
+_INVERSE_RTOL = 1e-6
+"""How closely, relative to ``(x, C x)``, a covariance must invert its precision on the probe."""
+
+
+def _check_inverse(
+    space: HilbertSpace, precision: LinearOperator, covariance: LinearOperator
+) -> None:
+    """Refuse a covariance that is not the precision's inverse, on one probe.
+
+    With ``y == C x`` for a fixed random ``x``, ``(P y, y) == (x, y)`` when
+    ``P C == I``. The quadratic form rather than ``P C x`` itself keeps the
+    test indifferent to the conditioning of an ellipsoid long in some
+    directions and thin in others, while a covariance off by a scale, or of
+    another shape, fails it.
+
+    Raises:
+        ValueError: if the two differ by more than a millionth of ``(x, y)``.
+    """
+    probe = space.random(rng=np.random.default_rng(0))
+    image = covariance(probe)
+    expected = float(space.inner_product(probe, image))
+    found = float(space.inner_product(precision(image), image))
+    if not abs(found - expected) <= _INVERSE_RTOL * abs(expected):
+        raise ValueError(
+            "The covariance is not the precision's inverse: with y == C x on a "
+            f"probe x, (P y, y) is {found:.6g} where (x, y) is {expected:.6g}."
+        )
+
+
 class Ellipsoid(ConvexSet):
     """``{ x : (x - center, P (x - center)) <= 1 }`` for a positive semidefinite ``P``.
 
@@ -1848,14 +1905,19 @@ class Ellipsoid(ConvexSet):
         """
         Args:
             domain: the space.
-            precision: a positive definite operator on it.
+            precision: a self-adjoint positive semidefinite operator on it;
+                positive definite for a bounded ellipsoid.
             center: the center. Defaults to zero.
             radius: when the ellipsoid is a ball of radius ``r`` in the norm
                 an operator ``B`` defines, so that the precision is
                 ``B / r^2``, that ``r``, for reading back; it changes
                 nothing about the set.
             covariance: the inverse of the precision, if it is known. Supplying
-                it is what makes the support function available.
+                it is what makes the support function available. It is
+                checked on one probe ``x``, at the cost of one application of
+                each operator: with ``y == C x``, ``(P y, y)`` must equal
+                ``(x, y)`` to a millionth, which a covariance that is not the
+                precision's inverse fails, a scaled one included.
             factor: a factor ``L`` of the covariance, ``C == L L*``, if one
                 is known -- a Gaussian measure usually carries one. The
                 support function then costs one adjoint application of the
@@ -1864,8 +1926,9 @@ class Ellipsoid(ConvexSet):
 
         Raises:
             ValueError: if the precision does not claim to be self-adjoint
-                and positive semidefinite, or an operator is on the wrong
-                space.
+                and positive semidefinite, an operator is on the wrong
+                space, or the covariance is not the precision's inverse on
+                the probe.
         """
         super().__init__(domain)
         required = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
@@ -1878,6 +1941,10 @@ class Ellipsoid(ConvexSet):
             raise ValueError(f"The precision must be an operator on {domain!r}.")
         if factor is not None and factor.codomain != domain:
             raise ValueError(f"The factor must map into {domain!r}.")
+        if covariance is not None:
+            if covariance.domain != domain or covariance.codomain != domain:
+                raise ValueError(f"The covariance must be an operator on {domain!r}.")
+            _check_inverse(domain, precision, covariance)
         self._precision = precision
         self._covariance = covariance
         self._factor = factor
@@ -1922,14 +1989,16 @@ class Ellipsoid(ConvexSet):
 
     def translate(self, vector: Any, /) -> "Ellipsoid":
         """The same ellipsoid, moved by a vector."""
-        return Ellipsoid(
+        moved = Ellipsoid(
             self.domain,
             self._precision,
             center=self.domain.add(self._center, vector),
-            covariance=self._covariance,
             factor=self._factor,
             radius=self._radius,
         )
+        # The covariance was checked when this one was built.
+        moved._covariance = self._covariance
+        return moved
 
     @property
     def covariance(self) -> LinearOperator | None:
@@ -1984,13 +2053,19 @@ class Ellipsoid(ConvexSet):
         return bool(Traits.POSITIVE_DEFINITE & self._precision.traits)
 
     def level_function(self) -> Functional:
-        """The Mahalanobis form ``(P (x - c), x - c)``, at level one."""
+        """The Mahalanobis form ``(P (x - c), x - c)``, at level one.
+
+        Its Hessian ``2 P`` claims what the precision claims: positive
+        definite for a bounded ellipsoid, semidefinite otherwise.
+        """
         space, precision, center = self._domain, self._precision, self._center
+        definite = Traits.POSITIVE_DEFINITE if self.is_bounded else Traits.NONE
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE | definite
         return Functional.from_callables(
             space,
             self.mahalanobis_squared,
             gradient=lambda x: space.scale(2.0, precision(space.subtract(x, center))),
-            hessian=lambda x: (precision * 2.0).with_traits(Traits.POSITIVE_DEFINITE),
+            hessian=lambda x: (precision * 2.0).with_traits(traits),
         )
 
     @property
@@ -2486,13 +2561,14 @@ class ConvexIntersection(ConvexSet):
         Raises:
             NotImplementedError: always. There is no formula for the support
                 function of an intersection. :meth:`support_bound` gives the
-                upper bound ``min_i h_i``, and the Backus-Gilbert-Parker
-                estimator computes the true value by minimization.
+                upper bound ``min_i h_i``; a feasible property set, whose
+                support values are computed by minimization, is the way to
+                the true value.
         """
         raise NotImplementedError(
             "An intersection has no closed-form support function. Use "
-            "support_bound() for the upper bound min_i h_i, and the "
-            "inference.backus routes for the true value."
+            "support_bound() for the upper bound min_i h_i, or pose it as a "
+            "FeasiblePropertySet, whose algorithms compute the true value."
         )
 
     def __repr__(self) -> str:

@@ -235,7 +235,7 @@ class TestTheLaplacePosterior:
 
         assert isinstance(measure, GaussianPosterior)
         assert measure.reference is prior
-        assert measure.log_normalizer is None
+        assert np.isfinite(measure.log_normalizer.value)
         # Scaled down: the exponential forward overflows on a wild draw, and
         # a comparison of two infinities proves nothing.
         x = model.scale(0.3, prior.sample(rng=rng))

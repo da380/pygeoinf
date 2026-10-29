@@ -254,7 +254,7 @@ class TestDenseObservationOperators:
         paths = list(zip(points[:4], points[4:]))
         builders = [
             lambda n_jobs: sphere.point_evaluation_operator(
-                points, dense=True, n_jobs=n_jobs
+                points, route="dense", n_jobs=n_jobs
             ),
             lambda n_jobs: sphere.path_integral_operator(
                 paths, count=6, dense=True, n_jobs=n_jobs
@@ -300,3 +300,136 @@ class TestTheContextProbe:
         monkeypatch.undo()
         monkeypatch.delattr(joblib.parallel, "_backend")
         assert _context_is_set() is False
+
+
+class TestTheFamilyAndDiagonalProbesForwardTheirWorkers:
+    """The spectral family's shift on its resolved modes, the damped sweep's
+    two matrix extractions under a direct solver, and the diagonals of a
+    normal operator's error covariance and of a family's shift all go to the
+    workers ``n_jobs`` names."""
+
+    @staticmethod
+    def recording(monkeypatch):
+        import pygeoinf2.parallel as parallel
+
+        seen = []
+        real = parallel.parallel_map
+
+        def record(function, items, *args, n_jobs=None, **kwargs):
+            seen.append(n_jobs)
+            return real(function, items, *args, n_jobs=n_jobs, **kwargs)
+
+        monkeypatch.setattr(parallel, "parallel_map", record)
+        return seen
+
+    @staticmethod
+    def opaque(space, matrix, traits):
+        """Matrix-free, so its matrix and diagonal have to be probed."""
+        return LinearOperator.self_adjoint(
+            space,
+            lambda x: space.solve_gram(matrix @ space.to_components(x)),
+            traits=traits,
+        )
+
+    def test_the_spectral_family_applies_its_shift_on_the_workers(
+        self, rng, monkeypatch
+    ):
+        space = make_dense_metric_space(8)
+        base = spd(space, rng)
+        shift = self.opaque(
+            space, space.gram_matrix(), Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        serial = SpectralPreconditioner(rank=3, rng=np.random.default_rng(1))
+        expected = serial.for_family(base, shift).at(0.5, base + 0.5 * shift)
+        seen = self.recording(monkeypatch)
+        parallel = SpectralPreconditioner(
+            rank=3, rng=np.random.default_rng(1), n_jobs=2
+        ).for_family(base, shift)
+        assert 2 in seen
+        member = base + 0.5 * shift
+        vector = space.random(rng=rng)
+        assert same(space, parallel.at(0.5, member)(vector), expected(vector))
+
+    def test_the_damped_sweep_extracts_on_the_direct_solvers_workers(
+        self, rng, monkeypatch
+    ):
+        from pygeoinf2.numerics import DampedSolves
+
+        space = make_dense_metric_space(8)
+        matrix = spd_operator(space, rng).matrix(form="galerkin")
+        base = self.opaque(space, matrix, Traits.POSITIVE_SEMIDEFINITE)
+        seen = self.recording(monkeypatch)
+        solves = DampedSolves(
+            base,
+            LinearOperator.identity(space),
+            CholeskySolver(n_jobs=2),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        vector = space.random(rng=rng)
+        solution = solves.solve(0.5, vector).solution
+        assert 2 in seen
+        gram = space.gram_matrix()
+        expected = np.linalg.solve(
+            matrix + 0.5 * gram, gram @ space.to_components(vector)
+        )
+        assert solution == pytest.approx(expected, rel=1e-10)
+
+    def test_the_normal_diagonal_probes_its_error_on_the_workers(
+        self, rng, monkeypatch
+    ):
+        model, data = EuclideanSpace(6), make_weighted_space()
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
+        )
+        chol = CholeskySolver()
+        covariance = spd(model, rng)
+        prior = GaussianMeasure(
+            model, covariance=covariance, precision=chol(covariance)
+        )
+        noise_matrix = np.diag(data.gram_diagonal() * rng.uniform(0.5, 2.0, data.dim))
+        noise = self.opaque(
+            data, noise_matrix, Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        error = GaussianMeasure(data, covariance=noise)
+        normal = NormalOperator(forward, prior, error=error, formalism="data_space")
+        serial = NormalDiagonalPreconditioner()(normal)
+        seen = self.recording(monkeypatch)
+        parallel = NormalDiagonalPreconditioner(n_jobs=2)(normal)
+        assert seen and all(jobs == 2 for jobs in seen)
+        for _ in range(3):
+            vector = data.random(rng=rng)
+            assert same(data, serial(vector), parallel(vector))
+
+
+class TestTheMapRunsProcesses:
+    def test_there_is_no_switch_to_threads(self):
+        """A thread backend is chosen by a ``joblib.parallel_config`` context
+        around the call, never by a keyword on the loop."""
+        from pygeoinf2.parallel import parallel_map
+
+        assert parallel_map(abs, [-1, -2], n_jobs=None) == [1, 2]
+        with pytest.raises(TypeError):
+            parallel_map(abs, [-1, -2], n_jobs=2, threads=True)
+
+
+class TestTheAlgebrasProbes:
+    """The adjoint probe and the banded diagonal probe are loops of
+    independent applications too."""
+
+    def test_the_probed_adjoint_does_not_depend_on_the_job_count(self, rng):
+        X, Y = make_weighted_space(), EuclideanSpace(3)
+        matrix = rng.normal(size=(3, X.dim))
+        bare = LinearOperator.from_callables(
+            X, Y, lambda x: matrix @ X.to_components(x)
+        )
+        serial = bare.with_probed_adjoint().matrix(by="rows")
+        parallel = bare.with_probed_adjoint(n_jobs=2).matrix(by="rows")
+        assert np.allclose(parallel, serial)
+
+    def test_the_banded_probe_does_not_depend_on_the_job_count(self, rng):
+        X = make_dense_metric_space(8)
+        operator = spd_operator(X, rng)
+        probed = LinearOperator.from_callables(X, X, operator, adjoint=operator.adjoint)
+        serial = probed.diagonals(offsets=(-1, 0, 1), probe="banded")
+        parallel = probed.diagonals(offsets=(-1, 0, 1), probe="banded", n_jobs=2)
+        assert np.allclose(parallel, serial)

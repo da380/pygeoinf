@@ -27,7 +27,7 @@ each solve as its ``x0``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Callable, Literal
 
 import numpy as np
@@ -372,6 +372,11 @@ def monotone_root(
     return finish(multiplier, scaled, solution, (low, high), converged)
 
 
+# How many members of a family a sweep keeps assembled: the one in hand and
+# the one before it, which is all a root find comes back to.
+_KEPT_MEMBERS = 2
+
+
 @dataclass
 class DampedSolves:
     """Solve ``(base + multiplier * shift) x == b`` along a sweep of multipliers.
@@ -410,6 +415,7 @@ class DampedSolves:
     base: LinearOperator
     shift: LinearOperator
     solver: LinearSolver
+    _: KW_ONLY
     traits: Traits | None = None
     assemble: Callable[[float], LinearOperator] | None = None
     """How to build the member at one multiplier, when ``base + t * shift``
@@ -427,18 +433,21 @@ class DampedSolves:
     this factor from where it was built. Infinity never rebuilds; one always
     does."""
 
-    _cache: dict = field(default_factory=dict, repr=False)
-    _prepared: LinearSolver | None = field(default=None, repr=False)
-    _prepared_at: float | None = field(default=None, repr=False)
-    _family_matrices: Any = field(default=_UNSET, repr=False)
-    _bound_solver: Any = field(default=None, repr=False)
-    _bound_preconditioner: Any = field(default=None, repr=False)
+    _cache: dict = field(default_factory=dict, init=False, repr=False)
+    _prepared: LinearSolver | None = field(default=None, init=False, repr=False)
+    _prepared_at: float | None = field(default=None, init=False, repr=False)
+    _family_matrices: Any = field(default=_UNSET, init=False, repr=False)
+    _bound_solver: Any = field(default=None, init=False, repr=False)
+    _bound_preconditioner: Any = field(default=None, init=False, repr=False)
 
     def operator(self, multiplier: float) -> LinearOperator:
         """The member at one multiplier, assembled once and kept.
 
         :attr:`assemble` when one was given, and ``base + multiplier * shift``
-        otherwise.
+        otherwise. Only the most recent members are kept: a member may hold a
+        dense matrix, and a sweep that kept every one would grow by that much
+        per probe, while a root find revisits only the multiplier it has
+        just been at.
 
         Args:
             multiplier: which member of the family.
@@ -453,6 +462,8 @@ class DampedSolves:
                 assembled = self._sum_member(multiplier)
             if self.traits is not None:
                 assembled = assembled.with_traits(self.traits)
+            while len(self._cache) >= _KEPT_MEMBERS:
+                self._cache.pop(next(iter(self._cache)))
             self._cache[multiplier] = assembled
         return self._cache[multiplier]
 
@@ -503,9 +514,12 @@ class DampedSolves:
                 # member reads its matrix or has to be applied for it, and
                 # asking costs no applications either way.
                 if (self.base + self.shift).known_matrix(form=form) is None:
+                    # With the workers the direct solver was given for its
+                    # own extraction, which this one replaces.
+                    n_jobs = self.solver.n_jobs
                     self._family_matrices = (
-                        self.base.matrix(form=form),
-                        self.shift.matrix(form=form),
+                        self.base.matrix(form=form, n_jobs=n_jobs),
+                        self.shift.matrix(form=form, n_jobs=n_jobs),
                         form,
                     )
         return self._family_matrices

@@ -8,8 +8,7 @@ them separately means solving twice. ``F.at(x)`` returns both from one call;
 
 import numpy as np
 
-from pygeoinf2 import EuclideanSpace, LinearOperator, Operator
-from pygeoinf2.algebra.linearization import Linearization
+from pygeoinf2 import EuclideanSpace, LinearOperator, Linearization, Operator
 from pygeoinf2.testing import check_derivative
 
 rng = np.random.default_rng(0)
@@ -51,7 +50,7 @@ print("20 value-only evaluations cost", solves["count"], "solves")
 print("  -- a line search is not charged for Jacobians it will discard.")
 print()
 
-check_derivative(F, m, rng=rng)
+print(check_derivative(F, m, rng=rng))
 print("check_derivative passed: the derivative matches finite differences.")
 print()
 
@@ -62,5 +61,5 @@ A = LinearOperator.from_matrix(
 )
 composed = A @ F
 print("(A @ F).has_derivative:", composed.has_derivative)
-check_derivative(composed, m, rng=rng)
+print(check_derivative(composed, m, rng=rng))
 print("and its derivative is right too.")

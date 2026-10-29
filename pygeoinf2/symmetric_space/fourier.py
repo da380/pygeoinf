@@ -180,10 +180,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
     @cached_property
     def degrees(self) -> np.ndarray:
-        """The wavenumber magnitude of each component, rounded down.
+        """The magnitude of each component's integer wavevector, rounded down.
 
-        The analogue of a harmonic degree: components sharing one are the
-        modes of a common spatial scale.
+        The analogue of a harmonic degree. It is counted in the box's own
+        grid units, the wavevector ``k`` of the mode ``exp(2 pi i k . x /
+        L)``, so components sharing a degree are the modes of a common
+        spatial scale only when every axis has the same period; on a box
+        whose periods differ, one degree groups wavelengths that differ by
+        the ratio of the periods, and :meth:`power_measure`,
+        :meth:`power_spectrum` and a band limit by degree inherit that. The
+        physical wavenumbers are in :attr:`laplacian_eigenvalues`.
         """
         wavenumbers = self._packing.wavenumbers
         return np.floor(np.sqrt(np.sum(wavenumbers.astype(float) ** 2, axis=0))).astype(
@@ -304,7 +310,9 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         return self._laplacian_eigenvalues
 
     def _key(self) -> Hashable:
-        return (self._shape, self._lengths, self._order, self._length_scale)
+        # The length scale enters the metric only above order zero.
+        scale = self._length_scale if self._order != 0.0 else None
+        return (self._shape, self._lengths, self._order, scale)
 
     def _coordinate_key(self) -> Hashable:
         """The grid, which the order and length scale do not touch.
@@ -322,6 +330,11 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
         return f"PeriodicBox({self._shape}, {kind})"
+
+    def _domain_key(self) -> Hashable:
+        """The domain and where its points are, whatever the grid: what two
+        boxes must share for a field to move between them by its modes."""
+        return ("periodic_box", self._lengths)
 
     def _compute_eigenvalues(self) -> np.ndarray:
         """``sum_i (2 pi k_i / L_i)^2`` for each component."""
@@ -661,8 +674,8 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             step = 1.0e-3 * self._lengths[axis] / self._shape[axis]
             offset = np.zeros(self.spatial_dimension)
             offset[axis] = step
-            forward = self.evaluate(x, list(self._wrap(positions + offset)))
-            backward = self.evaluate(x, list(self._wrap(positions - offset)))
+            forward = self.evaluate(x, self._prepared_nearby(positions + offset))
+            backward = self.evaluate(x, self._prepared_nearby(positions - offset))
             gradient[:, axis] = (forward - backward) / (2.0 * step)
         return gradient
 
@@ -810,6 +823,11 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         """A point brought back into ``[0, L)`` on each axis."""
         return np.asarray(point, dtype=float) % np.asarray(self._lengths, dtype=float)
 
+    def _prepared_nearby(self, positions: np.ndarray, /) -> PreparedPoints:
+        """Rows of positions a finite difference away from points of the box,
+        prepared for evaluation; wrapped, since the box is periodic."""
+        return self.prepare_points(self._wrap(positions))
+
     def to_coefficients(self, x: np.ndarray, /) -> np.ndarray:
         """The field's complex Fourier coefficients, in numpy's convention.
 
@@ -913,9 +931,11 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
         The counterpart of :meth:`~pygeoinf2.symmetric_space.sphere.Sphere.with_degree`.
         A grid of ``n`` points along an axis carries wavenumbers up to
-        ``n // 2``, so this asks for ``2 * degree`` points on each -- an
-        *isotropic* band limit, which is what a degree means. Where the axes
-        should be resolved differently, say so with :meth:`with_shape`.
+        ``n // 2``, so this asks for ``2 * degree`` points on each -- a band
+        limit isotropic in the grid's wavenumbers, which is isotropic in
+        space only when the periods are equal (see :attr:`degrees`). Where
+        the axes should be resolved differently, say so with
+        :meth:`with_shape`.
 
         Args:
             degree: the wavenumber to resolve on each axis.
@@ -965,8 +985,13 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         Raises:
             ValueError: if the two boxes are not the same domain.
         """
-        if target.lengths != self._lengths:
-            raise ValueError("Degree transfer needs a common domain.")
+        if not isinstance(target, PeriodicBox) or (
+            target._domain_key() != self._domain_key()
+        ):
+            raise ValueError(
+                f"Degree transfer needs a common domain; {target!r} is not on "
+                f"the domain of {self!r}."
+            )
 
         here = self._component_index()
         there = target._component_index()

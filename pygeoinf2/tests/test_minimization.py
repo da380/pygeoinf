@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import pygeoinf2 as gi
+import pygeoinf2.testing  # noqa: F401 - gi.testing below
 from pygeoinf2.algebra.operators import Functional, LinearOperator, Operator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.inference.estimators import PointEstimator
@@ -177,6 +178,29 @@ class TestMinimization:
         )
         further = pushed.push_forward(LinearOperator.identity(target) * 2.0)
         assert further(data) == pytest.approx(2.0 * operator(estimator(data)))
+
+    def test_push_forward_is_the_public_composition(self, setting, rng):
+        """The composed estimator every point estimator pushes forward to,
+        with the inner estimator and the property operator reachable, a
+        ``start=`` reaching the search, and the domain checked."""
+        from pygeoinf2.inference import ComposedPointEstimator
+
+        space, data_space, forward, estimator = setting
+        target = EuclideanSpace(2)
+        operator = LinearOperator.from_matrix(
+            space, target, rng.standard_normal((2, 5)), form="components"
+        )
+        pushed = estimator.push_forward(operator)
+        assert isinstance(pushed, ComposedPointEstimator)
+        assert pushed.estimator is estimator
+        assert pushed.property_operator is operator
+        data = data_space.random(rng=rng)
+        start = space.random(rng=rng)
+        assert pushed(data, start=start) == pytest.approx(
+            operator(estimator(data, start=start))
+        )
+        with pytest.raises(ValueError, match="property space"):
+            estimator.push_forward(LinearOperator.identity(target))
 
 
 class TestNonlinearLeastSquares:
@@ -439,7 +463,11 @@ class TestOccam:
 
         space, problem, prior, data = ray_problem()
         mode = MaximumAPosteriori(
-            problem, prior, optimizer=NewtonCG(max_iterations=15, max_cg_iterations=40)
+            problem,
+            prior,
+            optimizer=NewtonCG(
+                preconditioner=prior.covariance, max_iterations=15, max_cg_iterations=40
+            ),
         )(data)
         # The ray operator supplies its second derivative, so the objective
         # and the constraint both carry Hessians and the inner solves can be

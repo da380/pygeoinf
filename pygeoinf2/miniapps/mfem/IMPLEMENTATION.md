@@ -163,11 +163,11 @@ Each piece is `from_callables` with its hand-written adjoint, and the
 whole's adjoint is the composition's. Part E's forward operator is
 `X.point_evaluation_operator(points) @ box.operator`.
 
-**What was checked.** Part A: `check_space` on the Hilbert form, `1.0e-15`,
+**What was checked.** Part A: `check_space` on the Hilbert form, `3.1e-15`,
 every inner product an MFEM `Mult`; `check_operator` on the convection
-form's operator, `1.3e-14`; `check_traits` on the Laplacian, positive
+form's operator, `4.5e-14`; `check_traits` on the Laplacian, positive
 definite on the constrained space. Part B: `check_space` and
-`check_coordinates`, `2.5e-15`, and `check_operator` on a form's operator,
+`check_coordinates`, `6.1e-15`, and `check_operator` on a form's operator,
 `1.3e-14`; the test adds `check_white_noise`. Part D runs the ladder on the
 box operator, piece by piece and whole, the probes on the box drawn from
 part E's prior with `measure=prior`:
@@ -175,26 +175,27 @@ part E's prior with `measure=prior`:
 ```python
 "sampling": check_operator(box.sampling, rng=rng, measure=prior),
 "solve": check_operator(box.solve, rng=rng),
-"solve traits": check_traits(symmetric, rng=rng),
+"solve traits": check_traits(box.solve, rng=rng),
 "evaluation": check_operator(box.evaluation, rng=rng),
 "operator": check_operator(box.operator, rng=rng, measure=prior),
 ```
 
 The transfers hold to rounding, the solve and the whole to MFEM's tolerance
-(`8.8e-12`). What failures would have meant: `check_coordinates`, a mass
-solve that does not invert the mass multiply, the lumped mass of tutorial
-12; `check_operator` on a form, an adjoint taken as `K^T` without the mass
-solve; on the box operator, a Gram factor in the wrong place, which the app
-shows by building the plain transpose and watching it refused with a defect
-of 0.63. The solve's traits are claimed as symmetry alone: a
-positive-definite claim implies invertibility, which `check_traits`
-verifies on a coordinate space by forming the whole matrix, one MFEM solve
-per degree of freedom.
+(`8.5e-10` for the whole at the full scale). What failures would have
+meant: `check_coordinates`, a mass solve that does not invert the mass
+multiply, the lumped mass of tutorial 12; `check_operator` on a form, an
+adjoint taken as `K^T` without the mass solve; on the box operator, a Gram
+factor in the wrong place, which the app shows by building the plain
+transpose and watching it refused with a defect of 0.15. The solve claims to be self-adjoint and positive definite, and
+`check_traits` tests both claims on probes; the invertibility that positive
+definiteness implies it takes on trust for an operator that is applied
+rather than stored, since verifying it would form the whole matrix, one
+MFEM solve per degree of freedom.
 
 Part D then reads defects rather than judging them,
 `check_operator(operator, rtol=np.inf, ...)`, for two studies. The true
-adjoint's defect follows MFEM's tolerance down, `8.5e-4` at `1e-6` to
-`3.2e-11` at `1e-14`: an operator that is a solve is adjoint only to the
+adjoint's defect follows MFEM's tolerance down, `3.5e-2` at `1e-6` to
+`1.9e-10` at `1e-14`: an operator that is a solve is adjoint only to the
 solve's tolerance, which is also the floor below which an outer solver asks
 for noise (tutorial 12). And the adjoint the continuum promises, the
 operator as its own adjoint, holds only as well as the discretization does,
@@ -281,7 +282,7 @@ gradients need more iterations than there are data. The app passes
 `SpectralFamilySolver()` to all three estimators: it assembles the
 data-space operator once, a column per datum, and diagonalizes it, after
 which a posterior sample or a new damping costs two small matrix products.
-The README's counts follow from that: 1227, 1203 and 1374 MFEM solves for
+The README's counts follow from that: 1226, 1203 and 1370 MFEM solves for
 the point, the mean and the set, mostly the assembly. It is dense in the
 number of data and is used only when passed.
 
@@ -307,7 +308,7 @@ nobody wrote down. Figures `hilbert_form.png` and `matrix_inverse.png`.
   (the box's own `H^2` norm is the other honest choice); `for_data(data)`,
   and its `push_forward(averages @ factor)` with `propagated_covariance()`
   and `bias(whiten(truth))`, `whiten` the factor's inverse `L* Q^-1`
-  through the prior's precision (tutorials 8 and 14);
+  through the prior's precision (example 23, tutorial 14);
   `box_inverse_point.png`;
 - the measure: `LinearGaussianInversion(problem, prior, solver=solver)`,
   `sample_pointwise_std`, `pointwise_variance_at` at the discs' centers and

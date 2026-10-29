@@ -33,7 +33,7 @@ from ..algebra.spaces import (
     HilbertModule,
     HilbertSpace,
 )
-from ..probability.gaussian import GaussianMeasure
+from ..probability.gaussian import GaussianMeasure, _refuse_identity_covariance
 from ..traits import Traits
 from ._points import LocalEvaluation
 
@@ -69,6 +69,19 @@ _ROBIN_COEFFICIENT = 0.7
 #: and not the operator's, so the modes kept should be the lower part of what
 #: the mesh can hold.
 _NODES_PER_MODE = 2.5
+
+
+def _default_element_length(length: float, /) -> float:
+    """A default element length, made independent of the unit of length.
+
+    The mesh takes as few elements of at most this length as fit a span, by
+    a ceiling with no tolerance; a span that is a whole number of lengths in
+    exact arithmetic (the padding is a whole number of half length scales)
+    can round to a hair above it and take one element more, so that the same
+    geometry in other units would get another basis. A part in 10^9 keeps the
+    mesh the one exact arithmetic gives.
+    """
+    return float(length) * (1.0 + 1e-9)
 
 
 def _clamped_length_scale(
@@ -289,33 +302,33 @@ def _length_scale_key(
     return float(length_scale)
 
 
-#: The memory a dense point evaluation may take, in bytes: under ``form="auto"``
+#: The memory a dense point evaluation may take, in bytes: under ``route="auto"``
 #: an evaluation whose matrix, eight bytes per point per component, would be
 #: larger is matrix-free instead. A memory budget and not a speed threshold:
-#: the matrix-free form does per point about the work of a row of the matrix,
-#: so an application costs about the same either way, and only the dense form
+#: the matrix-free route does per point about the work of a row of the matrix,
+#: so an application costs about the same either way, and only the dense route
 #: holds the rows. On a ball of 4223 components at 83 000 points, the dense
 #: matrix 2.8 GB, an application took 0.07 s dense and 0.045 s or 0.15 s
 #: matrix-free, with the harmonics at the points kept or recomputed.
 _DENSE_EVALUATION_LIMIT = 256 * 2**20
 
-#: The forms a point evaluation can take.
-_EVALUATION_FORMS = ("auto", "dense", "local")
+#: The routes a point evaluation can take.
+_EVALUATION_ROUTES = ("auto", "dense", "local")
 
 
-def _evaluation_form(form: str, points: int, dim: int, /) -> str:
-    """``"dense"`` or ``"local"``: the form asked for, or under ``"auto"`` the
+def _evaluation_route(route: str, points: int, dim: int, /) -> str:
+    """``"dense"`` or ``"local"``: the route asked for, or under ``"auto"`` the
     dense one while its matrix fits :data:`_DENSE_EVALUATION_LIMIT`.
 
     Raises:
-        ValueError: for a form that is none of ``"auto"``, ``"dense"`` and
+        ValueError: for a route that is none of ``"auto"``, ``"dense"`` and
             ``"local"``.
     """
-    if form not in _EVALUATION_FORMS:
-        raise ValueError(f"form must be 'auto', 'dense' or 'local', got {form!r}.")
-    if form == "auto":
+    if route not in _EVALUATION_ROUTES:
+        raise ValueError(f"route must be 'auto', 'dense' or 'local', got {route!r}.")
+    if route == "auto":
         return "local" if 8 * points * dim > _DENSE_EVALUATION_LIMIT else "dense"
-    return form
+    return route
 
 
 def _local_operator(
@@ -650,7 +663,7 @@ class SpectralElementSpace(
         ``x``, which off the grid is the only field there is to evaluate.
 
         Matrix-free, as :meth:`point_evaluation_operator` is under
-        ``form="local"``, and the same to rounding as the rows of
+        ``route="local"``, and the same to rounding as the rows of
         :meth:`basis_matrix` applied to the components.
 
         Args:
@@ -691,18 +704,18 @@ class SpectralElementSpace(
         points: Sequence[Any],
         /,
         *,
+        route: Literal["auto", "dense", "local"] = "auto",
         unsafe: bool = False,
-        form: Literal["auto", "dense", "local"] = "auto",
     ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
-        Two forms, which agree to rounding and differ in memory. ``"dense"``
+        Two routes, which agree to rounding and differ in memory. ``"dense"``
         assembles the rows, :meth:`basis_matrix`, known in closed form: it
         holds eight bytes per point per component, and an application is a
         product with that matrix. ``"local"`` holds no matrix. Along the mesh
         a field is the polynomial through its nodal values on each element,
         so a point's value needs only the nodes of its element and, in a ball
-        or a disk, the harmonics at its angles: the form holds the ``ngll``
+        or a disk, the harmonics at its angles: the route holds the ``ngll``
         Lagrange weights of each point and, in a ball or a disk, the angular
         functions at the points, all of them while those fit 256 MB and
         otherwise one chunk of points at a time, recomputed in every
@@ -711,8 +724,8 @@ class SpectralElementSpace(
         the work of a row of the matrix: measured on a ball, a little less
         than the dense product with the angular functions kept, and about
         twice it when they are recomputed. ``"auto"``, the default, is the
-        dense form while its matrix fits 256 MB, which keeps the matrix at
-        hand for whatever reads it, and the local form beyond.
+        dense route while its matrix fits 256 MB, which keeps the matrix at
+        hand for whatever reads it, and the local route beyond.
 
         Both read a vector through its components, the field the space
         holds, so they agree on any grid array, a pointwise product left off
@@ -731,27 +744,27 @@ class SpectralElementSpace(
 
         Args:
             points: where to evaluate.
+            route: ``"auto"``, ``"dense"`` or ``"local"``.
             unsafe: build it even on a space too rough to admit it.
-            form: ``"auto"``, ``"dense"`` or ``"local"``.
 
         Returns:
             The operator.
 
         Raises:
             ValueError: if no points are given, one lies outside the domain,
-                the form is none of the three, or the order is at or below
+                the route is none of the three, or the order is at or below
                 the order :meth:`point_evaluation_order` gives and *unsafe*
                 is not set.
         """
         points = list(points)
         if not points:
             raise ValueError("At least one point is needed.")
-        form = _evaluation_form(form, len(points), self.dim)
+        route = _evaluation_route(route, len(points), self.dim)
         self._require_point_evaluation(
             "A point evaluation operator", points=points, unsafe=unsafe
         )
         codomain = EuclideanSpace(len(points))
-        if form == "dense":
+        if route == "dense":
             return LinearOperator.from_matrix(
                 self, codomain, self.basis_matrix(points), form="galerkin"
             )
@@ -804,6 +817,7 @@ class SpectralElementSpace(
         *,
         expectation: np.ndarray | None = None,
         pointwise_std: float | np.ndarray | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian whose covariance is diagonal in the eigenbasis, or is
         one such rescaled from place to place.
@@ -811,6 +825,15 @@ class SpectralElementSpace(
         Without ``pointwise_std`` the covariance is the diagonal operator of
         the variances, its factor the exact square root, and a draw one
         synthesis.
+
+        The variances are the covariance operator's eigenvalues in this
+        space's own metric, so a constant spectrum is a multiple of the
+        identity, which is not trace class here and is refused without
+        *unsafe*. Whether any other spectrum is trace class in the limit
+        cannot be judged from a truncation and is the caller's to ensure:
+        it must decay faster than the eigenvalues grow,
+        :meth:`sobolev_measure` above half the dimension being the safe
+        choice.
 
         With it the draws are those of the diagonal measure multiplied by the
         field ``pointwise_std / raw_std``, with ``raw_std`` the square root of
@@ -829,16 +852,24 @@ class SpectralElementSpace(
             pointwise_std: the standard deviation of the field, one number or
                 a vector of the space giving it point by point, on the
                 padding too.
+            unsafe: accept a constant spectrum, for a test that means it.
 
         Returns:
             The measure.
 
         Raises:
             ValueError: for negative variances, the wrong number of them, a
-                standard deviation that is not positive, or a raw variance
-                that vanishes somewhere.
+                standard deviation that is not positive, a raw variance
+                that vanishes somewhere, or a constant spectrum without
+                *unsafe*.
         """
         variances = self._resolve_variances(spectral_variances)
+        _refuse_identity_covariance(
+            self,
+            "A constant spectrum, a multiple of the identity covariance,",
+            unsafe=unsafe,
+            spectrum=variances,
+        )
         diagonal = DiagonalLinearOperator(self, np.sqrt(variances))
         if pointwise_std is None:
             precision = (
@@ -851,6 +882,7 @@ class SpectralElementSpace(
                 expectation=expectation,
                 covariance_factor=diagonal,
                 precision=precision,
+                unsafe=unsafe,
             )
 
         target = np.broadcast_to(
@@ -866,7 +898,10 @@ class SpectralElementSpace(
             )
         scaling = self.multiplication_operator(target / np.sqrt(raw))
         return GaussianMeasure(
-            self, expectation=expectation, covariance_factor=scaling @ diagonal
+            self,
+            expectation=expectation,
+            covariance_factor=scaling @ diagonal,
+            unsafe=unsafe,
         )
 
     def sobolev_measure(
@@ -915,4 +950,5 @@ class SpectralElementSpace(
             amplitude**2 * self.eigenvalues ** (-float(order)),
             expectation=expectation,
             pointwise_std=pointwise_std,
+            unsafe=unsafe,
         )

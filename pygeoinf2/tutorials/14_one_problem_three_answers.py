@@ -2,8 +2,8 @@
 # # Tutorial 14: one problem, three answers
 #
 # The course so far has produced three kinds of answer to an inverse
-# problem: a point (tutorial 8), a measure (tutorial 6) and a set
-# (tutorial 7). They were introduced on different problems, for different
+# problem: a point (tutorial 6), a measure (tutorial 7) and a set
+# (tutorial 8). They were introduced on different problems, for different
 # reasons, and it is easy to come away thinking of them as three methods
 # that happen to be in one library. They are not. They are three answers
 # to one question, and which one you get is decided before any data are
@@ -12,7 +12,7 @@
 # This tutorial puts the three side by side on a single problem, with a
 # known truth so that each can be marked. The point comes with its error
 # budget, and the budget is shown to be exactly that: a budget, not an
-# uncertainty. The set and the measure are the two ways of completing it.
+# uncertainty. The measure and the set are the two ways of completing it.
 # A nonlinear coda repeats the pattern where the forward map bends.
 
 # %%
@@ -25,14 +25,15 @@ from pygeoinf2 import (
     CholeskySolver,
     ForwardProblem,
     GaussianMeasure,
+    LaplaceApproximation,
+    LinearCertificate,
     LinearForwardProblem,
     LinearGaussianInversion,
     MaximumAPosteriori,
     MinimumNorm,
+    Occam,
     plotting,
 )
-from pygeoinf2.geometry import LinearCertificate
-from pygeoinf2.inference import LaplaceApproximation, Occam
 from pygeoinf2.numerics.optimization import NewtonCG
 from pygeoinf2.symmetric_space import circle, plane
 
@@ -142,17 +143,46 @@ print(
 # and it depends on $m$ as much as on the sensors: where the truth happens
 # to be flat, a blurred average of it is close to the true one, and where
 # it bends, not. Nothing in the data can say how large it is, because
-# $m$ is what nobody knows. Bounding it takes a statement about the model, and there are two
-# honest ones: a set the model lies in, or a measure it is drawn from. Each
-# gives a complete answer, and the point estimator is what either of them
-# completes.
+# $m$ is what nobody knows. Bounding it takes a statement about the
+# model, and there are two honest ones: a measure it is drawn from, or a
+# set it lies in. Each gives a complete answer, and the point estimator is
+# what either of them completes.
 #
+# ## The measure
+#
+# The first statement is the prior measure itself. `LinearGaussianInversion`
+# returns the posterior, a Gaussian on the model space, and pushing it
+# through $T$ gives the posterior on the three averages: a Gaussian on
+# $\mathbb{R}^3$, with a standard deviation per average and a credible
+# interval at any level. The truth lies within each interval.
+
+# %%
+posterior = LinearGaussianInversion(problem, prior)(data)
+marginal = posterior.push_forward(T)
+mean = marginal.expectation
+posterior_sd = np.array(
+    [
+        np.sqrt(
+            P.inner_product(marginal.covariance(P.basis_vector(i)), P.basis_vector(i))
+        )
+        for i in range(3)
+    ]
+)
+interval = np.stack([mean - 1.96 * posterior_sd, mean + 1.96 * posterior_sd], axis=1)
+print(f"{'arc':>4} {'mean':>8} {'sd':>7} {'95% from':>9} {'to':>8} {'truth':>8}")
+for i, c in enumerate(centers):
+    print(
+        f"{c:4.1f} {mean[i]:+8.3f} {posterior_sd[i]:7.3f} {interval[i, 0]:+9.3f}"
+        f" {interval[i, 1]:+8.3f} {true_property[i]:+8.3f}"
+    )
+
+# %% [markdown]
 # ## The set
 #
-# The first statement is a norm bound: $\|m\| \le M$ in the model space's
+# The second statement is a norm bound: $\|m\| \le M$ in the model space's
 # norm, which in $H^2$ bounds roughness as well as size. To ask the two
 # completions from comparable knowledge, the bound here is the ball that
-# carries 95 per cent of the prior measure, which is a lossy hardening of
+# carries 95 per cent of the prior measure just used, a lossy hardening of
 # it; the noise is hardened the same way, into the ball carrying 95 per
 # cent of the error measure. The truth, a draw from the prior, should
 # satisfy the bound, and does.
@@ -241,35 +271,6 @@ for i, c in enumerate(centers):
 # because a fixed $X$ cannot adapt to the data as the exact optimisation
 # does.
 #
-# ## The measure
-#
-# The second statement is the prior measure itself. `LinearGaussianInversion`
-# returns the posterior, a Gaussian on the model space, and pushing it
-# through $T$ gives the posterior on the three averages: a Gaussian on
-# $\mathbb{R}^3$, with a standard deviation per average and a credible
-# interval at any level. The truth lies within each interval.
-
-# %%
-posterior = LinearGaussianInversion(problem, prior)(data)
-marginal = posterior.push_forward(T)
-mean = marginal.expectation
-posterior_sd = np.array(
-    [
-        np.sqrt(
-            P.inner_product(marginal.covariance(P.basis_vector(i)), P.basis_vector(i))
-        )
-        for i in range(3)
-    ]
-)
-interval = np.stack([mean - 1.96 * posterior_sd, mean + 1.96 * posterior_sd], axis=1)
-print(f"{'arc':>4} {'mean':>8} {'sd':>7} {'95% from':>9} {'to':>8} {'truth':>8}")
-for i, c in enumerate(centers):
-    print(
-        f"{c:4.1f} {mean[i]:+8.3f} {posterior_sd[i]:7.3f} {interval[i, 0]:+9.3f}"
-        f" {interval[i, 1]:+8.3f} {true_property[i]:+8.3f}"
-    )
-
-# %% [markdown]
 # ## Three answers, one plot per property
 
 # %%
@@ -284,17 +285,8 @@ for i, (ax, c) in enumerate(zip(axes, centers)):
         capsize=4,
         label="point, 2 propagated sd",
     )
-    ax.plot([1, 1], bracket[i], color="C0", lw=6, alpha=0.6, solid_capstyle="butt")
-    ax.plot(
-        1,
-        0.5 * np.sum(bracket[i]),
-        "_",
-        color="C0",
-        ms=14,
-        label="set, certified bracket",
-    )
     ax.errorbar(
-        2,
+        1,
         mean[i],
         yerr=1.96 * posterior_sd[i],
         fmt="s",
@@ -302,8 +294,17 @@ for i, (ax, c) in enumerate(zip(axes, centers)):
         capsize=4,
         label="measure, 95% interval",
     )
+    ax.plot([2, 2], bracket[i], color="C0", lw=6, alpha=0.6, solid_capstyle="butt")
+    ax.plot(
+        2,
+        0.5 * np.sum(bracket[i]),
+        "_",
+        color="C0",
+        ms=14,
+        label="set, certified bracket",
+    )
     ax.axhline(true_property[i], color="black", ls="--", lw=1.0, label="truth")
-    ax.set_xticks([0, 1, 2], ["point", "set", "measure"])
+    ax.set_xticks([0, 1, 2], ["point", "measure", "set"])
     ax.set_xlim(-0.6, 2.6)
     ax.set_title(f"arc at {c}, {near[i]} sensors near", fontsize=10)
 axes[0].set_ylabel("average")
@@ -314,13 +315,13 @@ fig.suptitle("The same question, answered three ways")
 # Read the three columns of each panel together. The point's bar is the
 # noise alone: on the arc at 2.6 it misses the truth, because the bias is
 # not in it, and on the other two it contains the truth only because the
-# bias there happened to be small. The set's bracket and the measure's
-# interval both contain the truth, and both are
-# wider where the data are thin — but they are wide in different
-# measures. The bracket is a guarantee: given the bound, the average is
-# in it, full stop. The interval is a probability: given the prior, it
-# holds the average with 95 per cent credence, and the prior is doing most
-# of the work where the sensors are absent. The bracket is the wider by
+# bias there happened to be small. The measure's interval and the set's
+# bracket both contain the truth, and both are wider where the data are
+# thin — but they are wide in different senses. The interval is a
+# probability: given the prior, it holds the average with 95 per cent
+# credence, and the prior is doing most of the work where the sensors are
+# absent. The bracket is a guarantee: given the bound, the average is in
+# it, full stop. The bracket is the wider by
 # far, and that is not a defect of the algorithm but of what it was told:
 # a norm bound admits the field that spends its whole budget on one arc,
 # which the Gaussian prior calls vanishingly unlikely. More knowledge,
@@ -448,14 +449,15 @@ print("the truth is in the ball the set assumes:", ray_ball.contains(ray_truth))
 #
 # ## The pattern
 #
-# Data go in, and a point, a set or a measure comes out, and the kind of
+# Data go in, and a point, a measure or a set comes out, and the kind of
 # answer is not a choice of method but a consequence of how the
 # uncertainty was described: no statement about the model gives a point
-# with a budget it cannot close; a set the model lies in gives a set; a
-# measure it is drawn from gives a measure. Every estimator in the library
-# is one of the three, linear or not, and every one has `push_forward`,
-# which takes the answer from the model to a property of it — applying $T$
-# to a point, taking the image of a set, pushing a measure — so that the
+# with a budget it cannot close; a measure it is drawn from gives a
+# measure; a set the model lies in gives a set. Every estimator in the
+# library is one of the three, linear or not, and every one has
+# `push_forward`, which takes the answer from the model to a property of it
+# — applying $T$ to a point, pushing a measure, taking the image of a set —
+# so that the
 # question "what do the data say about this?" is asked the same way
 # whatever kind of answer it gets.
 

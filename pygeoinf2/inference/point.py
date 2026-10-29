@@ -71,12 +71,32 @@ def _error_measure(problem: LinearForwardProblem) -> Any:
     return problem.error_measure if problem.has_error else None
 
 
+def _error_expectation(problem: LinearForwardProblem) -> Any:
+    """The error measure's expectation, or None when it is known to be zero.
+
+    None for exact data and for a Gaussian built without an expectation, so
+    that an estimator need not apply itself to a zero vector to learn that
+    its offset vanishes.
+    """
+    error = _error_measure(problem)
+    if error is None:
+        return None
+    if isinstance(error, GaussianMeasure) and error.has_zero_expectation:
+        return None
+    return error.expectation
+
+
 class LeastSquares(LinearPointEstimator):
     """Tikhonov-regularized least squares: minimize ``|A u - d|^2_R + t |u|^2``.
 
     The estimator *is* the mapping from data to the fitted model, so it is an
     affine operator and joins the algebra. The damping is fixed here; to let
     the data choose it, see :class:`MinimumNorm`.
+
+    The misfit is that of ``d - mu_e - A u``, the data less the error's
+    expectation, so the estimate is ``B (d - mu_e)``. The offset ``-B mu_e``
+    costs one solve, made on first use rather than at construction, and
+    none at all for an error built without an expectation.
     """
 
     def __init__(
@@ -120,15 +140,17 @@ class LeastSquares(LinearPointEstimator):
             operator = problem.forward_operator.adjoint @ inverse
 
         translation = None
-        if problem.has_error:
-            expectation = problem.error_measure.expectation
-            shift = operator(expectation)
-            if problem.model_space.norm(shift) > 0.0:
-                translation = problem.model_space.negative(shift)
+        expectation = _error_expectation(problem)
+        if expectation is not None:
+            model_space = problem.model_space
+
+            def translation() -> Any:
+                return model_space.negative(operator(expectation))
 
         super().__init__(
             operator,
             translation=translation,
+            lazy=True,
             forward_operator=problem.forward_operator,
             error=_error_measure(problem),
         )
@@ -296,6 +318,39 @@ class LeastSquares(LinearPointEstimator):
             formalism=self._normal.formalism,
         )
 
+    @classmethod
+    def _member(
+        cls,
+        problem: LinearForwardProblem,
+        family: TikhonovFamily,
+        damping: float,
+        /,
+    ) -> "LeastSquares":
+        """The estimator at one damping of a family, inverted by the family's solves.
+
+        Its inverse is the family's member at this damping, so a family
+        whose solver assembled or factored once serves it without doing that
+        work again. The member answers at this damping only, so the
+        estimator records the family's own solver as its solver: a rebuild
+        at another damping, or on another problem, inverts afresh.
+
+        Args:
+            problem: the problem the family was built on.
+            family: the family.
+            damping: the Tikhonov parameter.
+
+        Returns:
+            The estimator.
+        """
+        estimator = cls(
+            problem,
+            damping=damping,
+            solver=family.member_solver(damping),
+            formalism=family.formalism,
+        )
+        estimator._solver = family.solver
+        return estimator
+
     def residual_callback(
         self,
         data: Any,
@@ -346,12 +401,16 @@ def _discrepancy_search(
     rtol: float = 1e-6,
     atol: float = 0.0,
     minimum_damping: float = 0.0,
+    limit: float | None = None,
 ) -> RootResult:
     """Find the damping at which the chi-squared misfit reaches its threshold.
 
     The zero model's misfit, one forward application, is the limit at
-    infinite damping: data it already fits saturate the search at once.
+    infinite damping: data it already fits saturate the search at once. A
+    caller that has already evaluated it passes it as *limit*.
     """
+    if limit is None:
+        limit = problem.chi_squared(problem.model_space.zero(), data)
     return misfit_search(
         family,
         family.right_hand_side(data),
@@ -361,7 +420,7 @@ def _discrepancy_search(
         rtol=rtol,
         atol=atol,
         minimum_damping=minimum_damping,
-        limit=problem.chi_squared(problem.model_space.zero(), data),
+        limit=limit,
     )
 
 
@@ -376,6 +435,7 @@ def _searched_damping(
     rtol: float = 1e-6,
     atol: float = 0.0,
     minimum_damping: float = 0.0,
+    limit: float | None = None,
 ) -> RootResult:
     """The discrepancy search, refusing data that no model fits.
 
@@ -391,6 +451,7 @@ def _searched_damping(
         rtol=rtol,
         atol=atol,
         minimum_damping=minimum_damping,
+        limit=limit,
     )
     if found.exhausted == "low":
         # No damping small enough brings the misfit to its target, so the
@@ -762,12 +823,7 @@ class MinimumNorm(PointEstimator, Operator):
         """
         # The family's own member, so that a solver which assembled or
         # factored the family once is not asked to do it again.
-        return LeastSquares(
-            self._problem,
-            damping=damping,
-            solver=self._family.member_solver(damping),
-            formalism=self._formalism,
-        )
+        return LeastSquares._member(self._problem, self._family, damping)
 
     # ----------------------------------------------------------------- #
     #                       Value and derivative                        #
@@ -788,7 +844,8 @@ class MinimumNorm(PointEstimator, Operator):
         """
         target = self._problem.critical_chi_squared(level=self._level)
         model_space = self._problem.model_space
-        if self._problem.chi_squared(model_space.zero(), data) <= target:
+        limit = self._problem.chi_squared(model_space.zero(), data)
+        if limit <= target:
             # The zero model already fits, so it is the smallest that does.
             return model_space.zero(), 0.0, False
         found = _searched_damping(
@@ -800,6 +857,7 @@ class MinimumNorm(PointEstimator, Operator):
             rtol=self._rtol,
             atol=self._atol,
             minimum_damping=self._minimum_damping,
+            limit=limit,
         )
         return (
             self._family.model_from(found.solution),
@@ -916,11 +974,13 @@ class ConstrainedLeastSquares(LinearPointEstimator):
     condition, a fixed total mass, a known mean — which a prior cannot express
     and a penalty only approximates.
 
-    The subspace is written as ``t + range(P)``, so substituting ``u == t + P w``
+    The subspace is written as ``c + range(P)``, so substituting ``u == c + P w``
     turns the constrained problem into an unconstrained one for the operator
-    ``A P`` and the data ``d - A t``. The answer is affine in the data, so this
-    is still an operator and still joins the algebra: the projector supplies
-    the linear part and the translation the offset.
+    ``A P`` and the data ``d - A c``, solved by :class:`LeastSquares`, which
+    removes the error's expectation. The answer is affine
+    in the data, ``c + P B (d - A c - mu_e)``, so this is still an operator
+    and still joins the algebra: the projector supplies the linear part and
+    the rest the offset, which costs one solve and is formed on first use.
     """
 
     def __init__(
@@ -940,34 +1000,77 @@ class ConstrainedLeastSquares(LinearPointEstimator):
             damping: the Tikhonov parameter, applied within the subspace.
             solver: how to invert the reduced normal operator.
             formalism: which space to solve in.
+
+        Raises:
+            ValueError: if the subspace is not in the model space.
         """
         if subspace.domain != problem.model_space:
             raise ValueError("The subspace must live in the model space.")
-        model_space = problem.model_space
-        projector = subspace.projector
-        translation = subspace.translation
-
-        reduced = _reduced_problem(problem, subspace)
         inner = LeastSquares(
-            reduced, damping=damping, solver=solver, formalism=formalism
+            _reduced_problem(problem, subspace),
+            damping=damping,
+            solver=solver,
+            formalism=formalism,
         )
-        operator = projector @ inner.operator
-        offset = model_space.subtract(
-            translation, operator(problem.forward_operator(translation))
-        )
+        self._attach(problem, subspace, inner, solver, formalism)
+
+    @classmethod
+    def _from_reduced(
+        cls,
+        problem: LinearForwardProblem,
+        subspace: AffineSubspace,
+        inner: LeastSquares,
+        /,
+        *,
+        solver: Any,
+        formalism: Formalism,
+    ) -> "ConstrainedLeastSquares":
+        """The estimator around an unconstrained one already built on the reduced problem."""
+        estimator = cls.__new__(cls)
+        estimator._attach(problem, subspace, inner, solver, formalism)
+        return estimator
+
+    def _attach(
+        self,
+        problem: LinearForwardProblem,
+        subspace: AffineSubspace,
+        inner: LeastSquares,
+        solver: Any,
+        formalism: Formalism,
+    ) -> None:
+        model_space = problem.model_space
+        data_space = problem.data_space
+        forward = problem.forward_operator
+        point = subspace.translation
+        operator = subspace.projector @ inner.operator
+        expectation = _error_expectation(problem)
+
+        def offset() -> Any:
+            # c - P B (A c + mu_e): the subspace's point, less the estimate
+            # of the data that it and the error's expectation would produce.
+            shift = forward(point)
+            if expectation is not None:
+                shift = data_space.add(shift, expectation)
+            return model_space.subtract(point, operator(shift))
 
         super().__init__(
             operator,
             translation=offset,
-            forward_operator=problem.forward_operator,
+            lazy=True,
+            forward_operator=forward,
             error=_error_measure(problem),
         )
         self._problem = problem
         self._subspace = subspace
         self._inner = inner
-        self._damping = damping
+        self._damping = inner.damping
         self._solver = solver
         self._formalism = formalism
+
+    @property
+    def forward_problem(self) -> LinearForwardProblem:
+        """The forward problem."""
+        return self._problem
 
     @property
     def subspace(self) -> AffineSubspace:
@@ -994,25 +1097,35 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         """Which space the reduced normal equations were assembled in."""
         return self._inner.formalism
 
+    def _rebuild(
+        self,
+        *,
+        problem: LinearForwardProblem | None = None,
+        subspace: AffineSubspace | None = None,
+        **changes: Any,
+    ) -> "ConstrainedLeastSquares":
+        """A copy with the given settings replaced."""
+        settings: dict[str, Any] = dict(
+            damping=self._damping, solver=self._solver, formalism=self._formalism
+        )
+        settings.update(changes)
+        return type(self)(
+            self._problem if problem is None else problem,
+            self._subspace if subspace is None else subspace,
+            **settings,
+        )
+
     def with_solver(self, solver: Any, /) -> "ConstrainedLeastSquares":
         """The same estimator, solved a different way."""
-        return type(self)(
-            self._problem,
-            self._subspace,
-            damping=self._damping,
-            solver=solver,
-            formalism=self._formalism,
-        )
+        return self._rebuild(solver=solver)
 
     def with_formalism(self, formalism: Formalism, /) -> "ConstrainedLeastSquares":
         """The same estimator, assembled in the other space."""
-        return type(self)(
-            self._problem,
-            self._subspace,
-            damping=self._damping,
-            solver=self._solver,
-            formalism=formalism,
-        )
+        return self._rebuild(formalism=formalism)
+
+    def with_damping(self, damping: float, /) -> "ConstrainedLeastSquares":
+        """The same estimator at a different damping."""
+        return self._rebuild(damping=damping)
 
     def parameterized(
         self, parameterization: LinearOperator, /
@@ -1043,35 +1156,21 @@ class ConstrainedLeastSquares(LinearPointEstimator):
             ValueError: if the parameter space is too small to carry the
                 constraints.
         """
-        subspace = _parameterized_subspace(self._subspace, parameterization)
-        return type(self)(
-            self._problem.parameterized(parameterization),
-            subspace,
-            damping=self._damping,
-            solver=self._solver,
-            formalism=self._formalism,
+        return self._rebuild(
+            problem=self._problem.parameterized(parameterization),
+            subspace=_parameterized_subspace(self._subspace, parameterization),
         )
-
-    def _parameterized_subspace(
-        self, parameterization: LinearOperator, /
-    ) -> AffineSubspace:
-        """The constraint, read in the parameter space."""
-        return _parameterized_subspace(self._subspace, parameterization)
 
     def data_reduced(self, *args: Any, **kwargs: Any) -> "ConstrainedLeastSquares":
         """The same estimator on a reduced set of data.
 
         The constraint lives in the *model* space and a data reduction does not
         touch it, so unlike :meth:`parameterized` there is nothing to pull
-        back: the reduction applies to the problem alone.
+        back: the reduction applies to the problem alone. The arguments are
+        those of
+        :meth:`~pygeoinf2.inference.problem.LinearForwardProblem.data_reduced`.
         """
-        return type(self)(
-            self._problem.data_reduced(*args, **kwargs),
-            self._subspace,
-            damping=self._damping,
-            solver=self._solver,
-            formalism=self._formalism,
-        )
+        return self._rebuild(problem=self._problem.data_reduced(*args, **kwargs))
 
 
 def _parameterized_subspace(
@@ -1138,7 +1237,10 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
     solve the unconstrained problem for ``w`` against the shifted data
     ``d - A c``, and add ``c`` back. "Fits" is the discrepancy principle
     when the problem carries an error measure and exact agreement when it
-    does not, as for the unconstrained class.
+    does not, as for the unconstrained class, whose settings and surface
+    this one shares: :meth:`for_data` returns the
+    :class:`ConstrainedLeastSquares` at the damping the data chose, with the
+    error budget of one.
 
     The derivative follows from the unconstrained one by the chain rule, and
     since both substitutions are affine with constant parts, it is simply the
@@ -1156,16 +1258,28 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         formalism: Formalism = "data_space",
         max_iterations: int = 60,
         rtol: float = 1e-6,
+        atol: float = 0.0,
+        minimum_damping: float = 0.0,
     ) -> None:
         """
         Args:
             problem: the forward problem, with an error measure or without.
             subspace: an ``AffineSubspace`` of the model space.
-            level: the confidence level setting the misfit target.
-            solver: how to invert each reduced ``N(t)``.
+            level: the confidence level setting the misfit target. Unused
+                when the problem has no error.
+            solver: how to invert each reduced ``N(t)``. Conjugate gradients
+                by default.
             formalism: which space to solve in.
             max_iterations: the discrepancy search's budget.
             rtol: the search's bracket tolerance.
+            atol: the absolute half of that tolerance, for a damping near
+                zero, where a relative test never closes.
+            minimum_damping: a floor on the damping. The reduced operator
+                ``A P`` is rank deficient whenever the constraint removes
+                directions the data see, and data that no model fits are
+                then refused once the search reaches the floor, rather than
+                after probing ever smaller dampings on a numerically
+                singular system. Zero is no floor.
 
         Raises:
             ValueError: if the subspace is not in the model space.
@@ -1177,6 +1291,13 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         self._subspace = subspace
         self._projector = subspace.projector
         self._translation = subspace.translation
+        self._level = level
+        self._solver = solver
+        self._formalism = formalism
+        self._max_iterations = max_iterations
+        self._rtol = rtol
+        self._atol = atol
+        self._minimum_damping = minimum_damping
         self._inner = MinimumNorm(
             _reduced_problem(problem, subspace),
             level=level,
@@ -1184,18 +1305,30 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
             formalism=formalism,
             max_iterations=max_iterations,
             rtol=rtol,
+            atol=atol,
+            minimum_damping=minimum_damping,
         )
         self._offset = problem.forward_operator(self._translation)
-        # Kept so parameterized() and data_reduced() can rebuild with the
-        # same settings; the inner method does not expose all of them.
-        self._level = level
-        self._solver = solver
-        self._formalism = formalism
 
     @property
     def forward_problem(self) -> LinearForwardProblem:
         """The forward problem."""
         return self._problem
+
+    @property
+    def level(self) -> float:
+        """The confidence level the misfit is damped towards."""
+        return self._level
+
+    @property
+    def solver(self) -> LinearSolver | None:
+        """How each reduced normal operator is inverted; None for the default."""
+        return self._solver
+
+    @property
+    def formalism(self) -> str:
+        """Which space the reduced normal equations are assembled in."""
+        return self._inner.formalism
 
     @property
     def data_space(self) -> HilbertSpace:
@@ -1213,6 +1346,9 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
 
     def push_forward(self, operator: LinearOperator, /) -> ComposedPointEstimator:
         """The estimator of ``T m``: this one followed by ``T``, derivative and all.
+
+        As for :meth:`MinimumNorm.push_forward`, the composition carries no
+        error budget; push :meth:`for_data`'s estimator forward for one.
 
         Args:
             operator: ``T``, acting on the model space.
@@ -1232,6 +1368,46 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         """The unconstrained method on the reduced problem."""
         return self._inner
 
+    # ----------------------------------------------------------------- #
+    #                          The same, but                            #
+    # ----------------------------------------------------------------- #
+
+    def _rebuild(
+        self,
+        *,
+        problem: LinearForwardProblem | None = None,
+        subspace: AffineSubspace | None = None,
+        **changes: Any,
+    ) -> "ConstrainedMinimumNorm":
+        """A copy with the given settings replaced."""
+        settings: dict[str, Any] = dict(
+            level=self._level,
+            solver=self._solver,
+            formalism=self._formalism,
+            max_iterations=self._max_iterations,
+            rtol=self._rtol,
+            atol=self._atol,
+            minimum_damping=self._minimum_damping,
+        )
+        settings.update(changes)
+        return type(self)(
+            self._problem if problem is None else problem,
+            self._subspace if subspace is None else subspace,
+            **settings,
+        )
+
+    def with_solver(self, solver: Any, /) -> "ConstrainedMinimumNorm":
+        """The same method, solved a different way."""
+        return self._rebuild(solver=solver)
+
+    def with_formalism(self, formalism: Formalism, /) -> "ConstrainedMinimumNorm":
+        """The same method, assembled in the other space."""
+        return self._rebuild(formalism=formalism)
+
+    def with_level(self, level: float, /) -> "ConstrainedMinimumNorm":
+        """The same method at another confidence level."""
+        return self._rebuild(level=level)
+
     def parameterized(
         self, parameterization: LinearOperator, /
     ) -> "ConstrainedMinimumNorm":
@@ -1240,28 +1416,162 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         As :meth:`ConstrainedLeastSquares.parameterized`: the constraint
         ``B u == w`` is pulled back to ``(B M) p == w``, which needs the
         subspace to remember the equation it was built from.
+
+        Args:
+            parameterization: ``M``, from the parameter space into the model
+                space.
+
+        Returns:
+            The method on the parameter space, with the same settings.
+
+        Raises:
+            NotImplementedError: if the subspace was built from a basis rather
+                than an equation.
+            ValueError: if the parameter space is too small to carry the
+                constraints.
         """
-        return type(self)(
-            self._problem.parameterized(parameterization),
-            _parameterized_subspace(self._subspace, parameterization),
-            level=self._level,
-            solver=self._solver,
-            formalism=self._formalism,
+        return self._rebuild(
+            problem=self._problem.parameterized(parameterization),
+            subspace=_parameterized_subspace(self._subspace, parameterization),
         )
 
     def data_reduced(self, *args: Any, **kwargs: Any) -> "ConstrainedMinimumNorm":
-        """The same method on a reduced set of data.
+        """The same method on a reduced set of data, with the same settings.
 
         The constraint is in the model space, so a data reduction leaves it
-        alone and only the problem changes.
+        alone and only the problem changes. The arguments are those of
+        :meth:`~pygeoinf2.inference.problem.LinearForwardProblem.data_reduced`.
         """
-        return type(self)(
-            self._problem.data_reduced(*args, **kwargs),
+        return self._rebuild(problem=self._problem.data_reduced(*args, **kwargs))
+
+    # ----------------------------------------------------------------- #
+    #                            The search                             #
+    # ----------------------------------------------------------------- #
+
+    def discrepancy_search(
+        self,
+        data: Any,
+        /,
+        *,
+        level: float | None = None,
+        max_iterations: int | None = None,
+        rtol: float | None = None,
+        atol: float | None = None,
+        minimum_damping: float | None = None,
+    ) -> RootResult:
+        """The damping search for this data, with its diagnostics.
+
+        :meth:`MinimumNorm.discrepancy_search` of the reduced problem, at the
+        shifted data. Saturation is reported, not raised.
+
+        Args:
+            data: the observations.
+            level: the confidence level setting the misfit target. The
+                method's own if omitted, as for every setting below.
+            max_iterations: bisection steps once the root is bracketed.
+            rtol: how tightly to close the bracket.
+            atol: its absolute half, for a root near zero damping.
+            minimum_damping: a floor on the damping.
+
+        Returns:
+            The root result, with its bracket, evaluation count and inner
+            iteration total.
+
+        Raises:
+            ValueError: if the problem has no error measure.
+        """
+        return self._inner.discrepancy_search(
+            self._shifted(data),
+            level=level,
+            max_iterations=max_iterations,
+            rtol=rtol,
+            atol=atol,
+            minimum_damping=minimum_damping,
+        )
+
+    def search(self, data: Any, /) -> RootResult:
+        """The damping search for this data with the method's own settings.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The root result; see :meth:`discrepancy_search`.
+
+        Raises:
+            ValueError: if the problem has no error measure.
+        """
+        return self.discrepancy_search(data)
+
+    def for_data(
+        self,
+        data: Any,
+        /,
+        *,
+        level: float | None = None,
+        max_iterations: int | None = None,
+        rtol: float | None = None,
+        atol: float | None = None,
+        minimum_damping: float | None = None,
+    ) -> ConstrainedLeastSquares:
+        """The fixed-damping estimator at the damping these data choose.
+
+        As :meth:`MinimumNorm.for_data`, within the subspace: the result is
+        affine in the data, carries the error budget of one, and applied to
+        the same data gives this method's answer.
+
+        Args:
+            data: the data vector.
+            level: the confidence level setting the misfit target. The
+                method's own if omitted, as for every setting below.
+            max_iterations: the search's budget.
+            rtol: the search's bracket tolerance.
+            atol: its absolute half, for a root near zero damping.
+            minimum_damping: a floor on the damping.
+
+        Returns:
+            A :class:`ConstrainedLeastSquares` with its damping fixed at the
+            value found.
+
+        Raises:
+            ValueError: when no model in the subspace fits the data to the
+                threshold.
+        """
+        reduced = self._inner.for_data(
+            self._shifted(data),
+            level=level,
+            max_iterations=max_iterations,
+            rtol=rtol,
+            atol=atol,
+            minimum_damping=minimum_damping,
+        )
+        return self._around(reduced)
+
+    def estimator_at(self, damping: float, /) -> ConstrainedLeastSquares:
+        """The fixed-damping estimator this collapses to at one damping.
+
+        Args:
+            damping: the Tikhonov parameter, applied within the subspace.
+
+        Returns:
+            The :class:`ConstrainedLeastSquares` with this method's solver
+            and formalism.
+        """
+        return self._around(self._inner.estimator_at(damping))
+
+    def _around(self, reduced: LeastSquares) -> ConstrainedLeastSquares:
+        """The constrained estimator around a fixed-damping one on the reduced problem."""
+        return ConstrainedLeastSquares._from_reduced(
+            self._problem,
             self._subspace,
-            level=self._level,
+            reduced,
             solver=self._solver,
             formalism=self._formalism,
         )
+
+    # ----------------------------------------------------------------- #
+    #                       Value and derivative                        #
+    # ----------------------------------------------------------------- #
 
     def _shifted(self, data: Any) -> Any:
         return self._problem.data_space.subtract(data, self._offset)
@@ -1274,6 +1584,14 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
 
     def _derivative(self, data: Any) -> LinearOperator:
         return self._projector @ self._inner.derivative(self._shifted(data))
+
+    def _linearize(self, data: Any) -> Linearization:
+        """The model and its derivative from a single damping search."""
+        inner = self._inner.at(self._shifted(data))
+        model = self._problem.model_space.add(
+            self._translation, self._projector(inner.value)
+        )
+        return Linearization(data, model, self._projector @ inner.derivative)
 
     def constraint_value_mapping(self, data: Any, /) -> Operator:
         """How the answer moves when the constraint value does, at fixed data.

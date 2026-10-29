@@ -56,7 +56,7 @@ The parts:
 
 Two scales of the same section. `--quick` puts it on 100 by 40 cells of
 20 m, in a grid of 148 by 64 with the sponge, with 50 receivers, a 2.5 Hz
-wavelet and 400 steps of 3.6 ms; parts A to E run in about 80 s in all, and
+wavelet and 400 steps of 3.6 ms; parts A to E run in about 70 s in all, and
 it is what the test runs. The full scale is 200 by 80 cells of 10 m, in a
 grid of 248 by 104, with 67 receivers, a 5 Hz wavelet and 600 steps of
 1.8 ms; each part runs in under two minutes. In both, the shortest wavelength
@@ -132,14 +132,16 @@ Two overrides at the quick scale, against its own numbers:
   a tenth of the data's rms rather than three hundredths, on the same
   truth. The background's chi-squared falls from 81 916 to 62 577 on 60 000
   data, so the anomalies barely stand above the noise; the MAP model's
-  relative error rises from 0.54 to 0.76, Occam's from 0.37 to 0.57, and the
-  Laplace standard deviation of the slow box's mean doubles, from 0.12 to
-  0.26 of the prior's.
+  relative error rises from 0.60 to 1.05, further from the truth than the
+  background is, Occam's from 0.37 to 0.57, and the Laplace standard
+  deviation of the slow box's mean more than doubles, from 0.08 to 0.18 of
+  the prior's, the truth lying more than two of them from the Laplace
+  mean.
 - **A single shot**, `run_all.py --quick --shots 1.0`: one shot in the
   middle of the section rather than three, 20 000 data. The MAP model's
-  relative error rises from 0.54 to 0.71, and the Laplace standard
-  deviations rise from 0.08 to 0.21 of the prior's on the shallow fast
-  box and from 0.20 to 0.42 on the deep one.
+  relative error rises from 0.60 to 0.90, and the Laplace standard
+  deviations rise from 0.06 to 0.12 of the prior's on the shallow fast
+  box and from 0.13 to 0.23 on the deep one.
 
 A part run alone rebuilds the problem from the seed. Part C saves its modes
 to `modes_<scale>_<seed>.npz` beside the figures, with a digest of the scale
@@ -202,22 +204,16 @@ derivative `F''(m)[δm, ·]` applied to `w` is
 `M_w` at step `k` being `δm ⊙ (λ^{k−1}/τ − 2λ^k + τ λ^{k+1})/Δt²`, each taper
 factor on the other side of the step from where the forward has it.
 
-Three things to get right, and the check that decides each:
-
-- **The sign of the second adjoint's last term**, by the dot test. With
-  `Aᵀ M_w = ∂A[δm]ᵀ Λ_w` the term is `+(∂A[·] U)ᵀ M_w`, not `−`, and the
-  dot test of `F''(m)[δm, ·]` below holds to fifteen digits only with that
-  sign; the opposite one changes the pairing outright.
-- **The index alignment of the adjoint**, by the dot test of `F'(m)`. `λ^n`
-  is the multiplier of the equation of step `n`, which produces `u^{n+1}`; it
-  pairs with `a^n`, which contains `u^{n+1}`, and the residual of the data of
-  `u^k` is injected at backward step `k`. The stored field is
-  `U[n] = u^{n+1}`.
-- **The sponge**, by measuring what it sends back, since the checks pass
-  with any taper whose transpose is taken consistently. The taper is
-  Cerjan's, applied to both time levels as above, so that it damps the field
-  and its rate of change together; its width and rate, and what it sends
-  back, are below.
+Two conventions the expressions above depend on. `λ^n` is the multiplier of
+the equation of step `n`, which produces `u^{n+1}`; it pairs with `a^n`,
+which contains `u^{n+1}`, and the residual of the data of `u^k` is injected
+at backward step `k`; the stored field is `U[n] = u^{n+1}`. The taper is
+Cerjan's, applied to both time levels as above, so that it damps the field
+and its rate of change together; its width and rate, and what it sends
+back, are below. The dot tests of `F'(m)` and `F''(m)[δm, ·]` and the
+differences test cover the first two; the sponge is judged by what it
+sends back, since the checks pass with any taper whose transpose is taken
+consistently.
 
 The Laplacian is not symmetric: its row 0, the free surface, is zero, while
 rows 1 and 2 reach row 0 of the field, and above the surface the stencil
@@ -297,9 +293,9 @@ their scale at one.
 | fused `second_born` against two `born` runs | 7.4e-15 | 3.6e-14 |
 | `(F'(m) x, y) − (x, F'(m)* y)`, five pairs | 6.9e-17 | 1.1e-16 |
 | `(F''(m)[d, x], y) − (x, F''(m)[d, ·]* y)`, five pairs | 7.7e-16 | 1.2e-15 |
-| `check_operator(F'(m))` | 3.4e-16 | 3.7e-15 |
-| `check_operator(F''(m)[d, ·])` | 2.1e-15 | 1.9e-14 |
-| `check_operator` of the box means | | 4.2e-17 |
+| `check_operator(F'(m))` | 3.3e-14 | 1.1e-12 |
+| `check_operator(F''(m)[d, ·])` | 7.1e-13 | 2.6e-13 |
+| `check_operator` of the box means | | 3.8e-14 |
 | `check_derivative(F)`, step 1e-6 | 9.7e-10 | 2.6e-9 |
 | `check_second_derivative(F)`, step 1e-5 | 6.9e-8 | 6.4e-8 |
 | `check_gradient` of the MAP objective | 1.3e-7 | 7.1e-6 |
@@ -343,11 +339,11 @@ chi-squared):
 
 | run | iterations | objective | gradient norm | chi-squared | relative error | kernel runs per shot: linearized / adjoint / curvature | seconds |
 |---|---|---|---|---|---|---|---|
-| Gauss-Newton from the background | 5 | 121 850.34 | 1 220 | 121 193 | 0.643 | 159 / 165 / 0 | 32.6 |
-| then the exact Hessian, forcing 0.01, inner cap 60, one step | 1 | 121 850.30 | 50.6 | 121 194 | 0.646 | 120 / 62 / 60 | 44.0 |
-| exact Hessian from the background, capped at 2 | 2 | 142 638.23 | 2.8 × 10⁶ | 142 293 | 3.30 | 54 / 30 / 27 | 20.7 |
+| Gauss-Newton from the background | 5 | 121 850.34 | 1 220 | 121 193 | 0.643 | 159 / 165 / 0 | 31.7 |
+| then the exact Hessian, forcing 0.01, inner cap 60, one step | 1 | 121 850.30 | 50.6 | 121 194 | 0.646 | 120 / 62 / 60 | 43.8 |
+| exact Hessian from the background, capped at 2 | 2 | 142 638.23 | 2.8 × 10⁶ | 142 293 | 3.30 | 54 / 30 / 27 | 20.5 |
 
-Part C took 98 s. The relative error is
+Part C took 97 s. The relative error is
 `|m − truth| / |m0 − truth|` over the section: one at the background. The
 gradient norm starts at 3.0 × 10⁶. Gauss-Newton gets the mode; one exact
 Newton step from there, its inner solve stopped by the cap of 60, takes the
@@ -466,8 +462,8 @@ system's Open MPI has no development headers installed):
 
   | | forward | `F'` | `F'*` | `F''*` | Gauss-Newton MAP |
   |---|---|---|---|---|---|
-  | serial, the shots on three threads, the curvature's one at a time | 0.07 | 0.06 | 0.06 | 0.53 | 32.6 |
-  | three ranks | 0.08 | 0.07 | 0.07 | 0.26 | 42.5 |
+  | serial, the shots on three threads, the curvature's one at a time | 0.07 | 0.06 | 0.06 | 0.52 | 31.7 |
+  | three ranks | 0.08 | 0.07 | 0.07 | 0.25 | 42.8 |
   | six ranks | 0.06 | 0.07 | 0.07 | 0.23 | 40.8 |
 
   At 248 by 104 cells a rank's block takes microseconds a step, and with two
@@ -551,9 +547,8 @@ three ranks and 46 s on six.
 
 - An adjoint method written as the transpose of the discrete scheme is
   exact: the dot tests hold to 10⁻¹⁵ and the differences fall as the square
-  of the step, for the first derivative and the second. A sign in the
-  second-order adjoint is caught by its dot test or by the symmetry of the
-  exact Hessian built on it; the differences test only its forward action.
+  of the step, for the first derivative and the second; the differences
+  test only the forward action, the dot tests the adjoints.
 - One operator, every nonlinear estimator: the MAP, Occam's inversion and
   the Laplace Gaussian are the library's classes, unchanged, on a forward map
   that is a C++ time-stepper. Each linearization costs one forward run per

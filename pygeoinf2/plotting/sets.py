@@ -50,6 +50,7 @@ def plot_set(
     route: Route = "auto",
     engine: Engine = "matplotlib",
     padding: float = 0.05,
+    n_jobs: int | None = None,
     **kwargs: Any,
 ) -> tuple[Any, Any]:
     """Draw a convex set in one, two or three dimensions.
@@ -83,8 +84,14 @@ def plot_set(
             picture that can be turned by hand. plotly is the ``plot3d``
             extra, imported only when asked for.
         padding: the fraction by which derived bounds are widened.
+        n_jobs: workers for the support route's directions, each a support
+            value or a supporting point, which on a feasible property set
+            is an optimization; a set with a ``support_sweep`` takes them
+            through it, so that neighboring directions warm-start each
+            other and the results are kept. Serial by default.
         **kwargs: passed to the matplotlib or plotly call that draws the
-            set.
+            set. ``color`` is honored on every route, given as ``colors``
+            where the set is drawn by filled contours.
 
     Returns:
         The ``(axes, artist)`` pair. In three dimensions the artist is a
@@ -130,6 +137,7 @@ def plot_set(
             directions,
             engine,
             padding,
+            n_jobs,
             **kwargs,
         )
 
@@ -142,7 +150,7 @@ def plot_set(
         artist = (
             _support_1d(ax, subset, picture, **kwargs)
             if picture.dimension == 1
-            else _support_2d(ax, subset, picture, directions, **kwargs)
+            else _support_2d(ax, subset, picture, directions, n_jobs, **kwargs)
         )
     else:
         box = _bounds(subset, picture, bounds, padding)
@@ -276,8 +284,29 @@ def _support_1d(ax: Any, subset: Any, picture: _Picture, **kwargs: Any) -> Any:
     return ax.axvspan(low, high, **kwargs)
 
 
+def _support_values(
+    subset: Any, picture: _Picture, normals: np.ndarray, n_jobs: int | None
+) -> np.ndarray:
+    """The support in each picture direction: through the set's own sweep
+    when it has one, otherwise one support-function value per direction."""
+    from ..parallel import parallel_map
+
+    vectors = [picture.direction(normal) for normal in normals]
+    if hasattr(subset, "support_values"):
+        return np.asarray(subset.support_values(vectors, n_jobs=n_jobs), dtype=float)
+    support = subset.support_function()
+    return np.array(
+        parallel_map(lambda q: float(support(q)), vectors, n_jobs=n_jobs), dtype=float
+    )
+
+
 def _support_2d(
-    ax: Any, subset: Any, picture: _Picture, directions: int, **kwargs: Any
+    ax: Any,
+    subset: Any,
+    picture: _Picture,
+    directions: int,
+    n_jobs: int | None,
+    **kwargs: Any,
 ) -> Any:
     """The polygon of supporting lines: consecutive lines meet at its vertices.
 
@@ -286,10 +315,9 @@ def _support_2d(
     """
     if directions < 3:
         raise ValueError(f"At least three directions are needed, got {directions}.")
-    support = subset.support_function()
     angles = np.linspace(0.0, 2.0 * np.pi, directions, endpoint=False)
     normals = np.column_stack([np.cos(angles), np.sin(angles)])
-    values = np.array([float(support(picture.direction(n))) for n in normals])
+    values = _support_values(subset, picture, normals, n_jobs)
     vertices = []
     for k in range(directions):
         a, b = normals[k], normals[(k + 1) % directions]
@@ -343,6 +371,10 @@ def _sampled_2d(
     for i in range(grid_x.shape[0]):
         for j in range(grid_x.shape[1]):
             values[i, j] = inside(np.array([grid_x[i, j], grid_y[i, j]]))
+    if "color" in kwargs:
+        # contourf colors its levels by colors=, and ignores color= with a
+        # warning, filling from the color map instead.
+        kwargs["colors"] = [kwargs.pop("color")]
     if route == "level":
         level = float(subset.level)
         floor = min(float(values.min()), level) - 1.0
@@ -365,10 +397,11 @@ def _plot_3d(
     directions: int,
     engine: str,
     padding: float,
+    n_jobs: int | None,
     **kwargs: Any,
 ) -> tuple[Any, Any]:
     if route == "support":
-        points, simplices = _support_hull_3d(subset, picture, directions)
+        points, simplices = _support_hull_3d(subset, picture, directions, n_jobs=n_jobs)
         if engine == "plotly":
             return None, _plotly_mesh(points, simplices, **kwargs)
         axes = _axes_3d(ax)
@@ -410,7 +443,7 @@ def _fibonacci_sphere(count: int) -> np.ndarray:
 
 
 def _support_hull_3d(
-    subset: Any, picture: _Picture, directions: int
+    subset: Any, picture: _Picture, directions: int, *, n_jobs: int | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """The convex hull of the points attaining the support, as vertices and triangles.
 
@@ -427,14 +460,18 @@ def _support_hull_3d(
 
     if directions < 4:
         raise ValueError(f"At least four directions are needed, got {directions}.")
+    from ..parallel import parallel_map
+
     space = picture.space
-    points = np.array(
-        [
-            space.to_components(subset.support_maximizer(picture.direction(normal)))
-            for normal in _fibonacci_sphere(directions)
-        ],
-        dtype=float,
-    )
+    vectors = [picture.direction(normal) for normal in _fibonacci_sphere(directions)]
+    if hasattr(subset, "support_sweep"):
+        # Solved in a sweep, which keeps its results: the maximizers below
+        # are then reads.
+        subset.support_sweep(vectors, n_jobs=n_jobs)
+        maximizers = [subset.support_maximizer(q) for q in vectors]
+    else:
+        maximizers = parallel_map(subset.support_maximizer, vectors, n_jobs=n_jobs)
+    points = np.array([space.to_components(m) for m in maximizers], dtype=float)
     try:
         hull = ConvexHull(points)
     except QhullError as error:

@@ -76,10 +76,25 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
     @staticmethod
     def _deduce_traits(domain: CoordinateSpace, values: np.ndarray) -> Traits:
-        """Read off the traits the eigenvalues and metric already imply."""
-        if not domain.has_diagonal_metric:
+        """Read off the traits the eigenvalues and metric already imply.
+
+        Invertibility (no zero eigenvalue) and idempotence (every eigenvalue
+        zero or one) are properties of the map and hold on any metric, and a
+        constant spectrum ``s`` is ``s I``, whose traits do not depend on the
+        metric either. The rest -- symmetry, definiteness, unitarity --
+        need the metric to commute with the spectrum, which a diagonal one
+        does.
+        """
+        if not domain.has_diagonal_metric and not (
+            values.size and np.all(values == values[0])
+        ):
             # Diagonal in the components, but not symmetric in the metric.
-            return Traits.NONE
+            result = Traits.NONE
+            if np.all(values != 0.0):
+                result |= Traits.INVERTIBLE
+            if np.all((values == 0.0) | (values == 1.0)):
+                result |= Traits.IDEMPOTENT
+            return result
         result = Traits.SELF_ADJOINT
         if np.all(values >= 0.0):
             result |= Traits.POSITIVE_SEMIDEFINITE
@@ -141,13 +156,21 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
     # Each combination carries the traits that follow from the operands',
     # on top of what the new eigenvalues let the constructor deduce. On a
     # diagonal metric the two agree; on any other the constructor deduces
-    # nothing, and without this a product of two self-adjoint diagonals --
-    # ``(sigma I)(sigma I)``, the covariance of every isotropic measure --
-    # would claim nothing at all.
+    # only what holds on every metric, and without this a product of two
+    # self-adjoint diagonals would lose its symmetry.
 
     def _combine_add(self, other: Operator) -> Operator | None:
         if isinstance(other, DiagonalLinearOperator) and other.domain == self.domain:
             return self._rebuild(self._eigenvalues + other.eigenvalues).with_traits(
+                sum_traits(self.traits, other.traits)
+            )
+        if (
+            isinstance(other, LinearOperator)
+            and other.is_identity
+            and other.domain == self.domain
+        ):
+            # ``D + I``, as in ``C + I`` or ``sigma^2 I + D``: still diagonal.
+            return self._rebuild(self._eigenvalues + 1.0).with_traits(
                 sum_traits(self.traits, other.traits)
             )
         return None
@@ -401,15 +424,21 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
         Args:
             power: the exponent. A fractional one needs a non-negative
-                spectrum; an integer one is defined for any.
+                spectrum, a negative one a spectrum without zeros; a
+                non-negative integer one is defined for any.
 
         Returns:
             The diagonal operator with spectrum ``d ** power``.
 
         Raises:
             ValueError: for a fractional power of a spectrum with a negative
+                eigenvalue, or a negative power of one with a zero
                 eigenvalue, naming it.
         """
+        if power < 0:
+            self._require_spectrum(
+                self._eigenvalues != 0.0, "a negative power", "non-zero eigenvalues"
+            )
         if power != int(power):
             self._require_spectrum(
                 self._eigenvalues >= 0.0,
@@ -432,8 +461,8 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         :attr:`sqrt`, :attr:`log`, :attr:`log_determinant` and fractional
         powers outright on every space whose Gram matrix is not diagonal:
         there ``G diag(d)`` is symmetric only where the two commute, so
-        :meth:`_deduce_traits` deduces nothing and the operator "has NONE"
-        however positive its spectrum. That is a true statement about
+        :meth:`_deduce_traits` deduces no symmetry or definiteness however
+        positive the spectrum. That is a true statement about
         self-adjointness and the wrong question to ask of a square root.
 
         What the metric does decide is what the *result* is: on a diagonal

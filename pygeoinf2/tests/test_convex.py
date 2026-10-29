@@ -633,3 +633,47 @@ class TestReportedCounts:
         )
         assert calls["value"] == result.iterations + 1
         assert result.evaluations == calls["value"]
+
+
+class TestTheBundleMethodDoesNotDependOnUnits:
+    """The gap test is relative to the objective's own scale. Floored at
+    one, it would be met by the first model of an objective small in its
+    units, and the method would return its start as converged: at a scale
+    of ``1e-4``, a value 2.3 times the minimum and the minimizer 100% away.
+    """
+
+    @staticmethod
+    def objective(space, center, scale):
+        """``scale (||x - c|| + 0.3 ||x||)``, minimized at ``c`` itself."""
+
+        def value(x):
+            return scale * (space.norm(space.subtract(x, center)) + 0.3 * space.norm(x))
+
+        def subgradient(x):
+            offset = space.subtract(x, center)
+            gradient = space.zero()
+            if space.norm(offset) > 0.0:
+                gradient = space.axpy(1.0 / space.norm(offset), offset, gradient)
+            if space.norm(x) > 0.0:
+                gradient = space.axpy(0.3 / space.norm(x), x, gradient)
+            return space.scale(scale, gradient)
+
+        return Functional.from_callables(space, value), subgradient
+
+    @pytest.mark.parametrize("scale", [1.0, 1e-4, 1e-8, 1e4])
+    @pytest.mark.parametrize("qp_solver", [None, "builtin"])
+    def test_the_minimum_is_found_at_every_scale(self, scale, qp_solver, rng):
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        space = make_dense_metric_space(6)
+        center = space.random(rng=rng)
+        functional, subgradient = self.objective(space, center, scale)
+        result = ProximalBundleMethod(max_iterations=500, qp_solver=qp_solver).minimize(
+            functional, space.zero(), subgradient=subgradient
+        )
+        minimum = scale * 0.3 * space.norm(center)
+        assert result.converged
+        assert result.iterations > 1
+        assert (result.value - minimum) / minimum < 1e-6
+        distance = space.norm(space.subtract(result.minimizer, center))
+        assert distance < 1e-6 * space.norm(center)

@@ -44,6 +44,6 @@ print("The pattern only exists once the composition is complete, which is why")
 print("the algebra keeps its operands instead of collapsing into a closure.")
 print()
 
-check_traits(normal, rng=rng)
+print(check_traits(normal, rng=rng))
 print("check_traits passed. A false claim would have been caught here,")
 print("and CGSolver would refuse an operator that had not earned the trait.")

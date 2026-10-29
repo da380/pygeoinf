@@ -188,9 +188,9 @@ def point_answers(
     mantle = space.index("mantle")
     seen, peaks = {}, {}
     for name, box in BOXES:
-        feature = bump(problem, box_center(box), scale.bump_width)
+        feature = bump(problem, box_center(box), scale.bump_width, extension="constant")
         # The model-space resolution: L B A L applied to the bump's w.
-        image = chosen.push_forward(factor).resolution(whiten(problem, feature))
+        image = chosen.push_forward(factor).resolution()(whiten(problem, feature))
         seen[name] = image
         peaks[name] = float(space.layers[mantle].interior_values(image[mantle]).max())
     print(

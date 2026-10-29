@@ -489,7 +489,9 @@ class TestTheDiagonalCalculusOnANonDiagonalMetric:
         assert not space.has_diagonal_metric
         values = np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0])
         operator = DiagonalLinearOperator(space, values)
-        assert operator.traits == Traits.NONE
+        assert not operator.traits & (
+            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        )
         return space, values, operator
 
     def test_the_square_root_squares_to_the_operator(self, dense, rng):
@@ -1082,3 +1084,149 @@ class TestFunctionCalculusNeedsSelfAdjointness:
         assert operator_function(operator, np.sqrt).eigenvalues == pytest.approx(
             np.sqrt(values)
         )
+
+
+class TestWeightedChi2DoesNotDependOnUnits:
+    """The distribution scales exactly with its weights, so a quantile in the
+    weights' own units must be the same number whatever those units are. An
+    absolute equality test, or Imhof's floors left absolute, would read
+    weights below about ``1e-8`` as equal, and the 95% ball of a covariance
+    in such units would hold almost every draw."""
+
+    WEIGHTS = np.array([5.0, 2.0, 1.0, 0.5, 0.1])
+
+    @pytest.mark.parametrize("method", ["auto", "saddlepoint", "matched"])
+    def test_the_quantile_in_units_of_the_weights_is_the_same_at_every_scale(
+        self, method
+    ):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        unit = weighted_chi2_quantile(self.WEIGHTS, 0.95, method=method)
+        for scale in (1e-9, 1e9):
+            scaled = weighted_chi2_quantile(scale * self.WEIGHTS, 0.95, method=method)
+            assert scaled / scale == pytest.approx(unit, rel=1e-10)
+
+    def test_the_distribution_function_is_the_same_at_every_scale(self):
+        from pygeoinf2.numerics.quadratic_forms import _imhof, weighted_chi2_cdf
+
+        unit = weighted_chi2_cdf(self.WEIGHTS, 20.0)
+        for scale in (1e-12, 1e-9, 1e9):
+            assert weighted_chi2_cdf(
+                scale * self.WEIGHTS, scale * 20.0
+            ) == pytest.approx(unit, abs=1e-12)
+            assert _imhof(
+                scale * self.WEIGHTS, scale * 20.0, tolerance=1e-10
+            ) == pytest.approx(unit, abs=1e-12)
+
+    def test_nearly_equal_weights_are_a_chi_square_at_their_mean(self):
+        from scipy.stats import chi2
+
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        for scale in (1e-12, 1.0, 1e12):
+            weights = scale * np.array([1.0, 1.0 + 1e-9, 1.0 - 1e-9])
+            assert weighted_chi2_quantile(weights, 0.9) / scale == pytest.approx(
+                float(chi2.ppf(0.9, 3)), rel=1e-12
+            )
+
+    def test_the_ambient_ball_of_a_covariance_in_small_units_holds_its_level(self, rng):
+        """Deviations of ``3e-5`` on a dense metric: weights read as equal at
+        their first would make the 95% ball hold 99.8% of the draws."""
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = make_dense_metric_space(5)
+        shape = np.diag([5.0, 2.0, 1.0, 0.5, 0.1])
+        covariance = (3e-5) ** 2 * space.gram_matrix() @ shape @ space.gram_matrix()
+        measure = GaussianMeasure.from_covariance_matrix(
+            space, covariance, form="galerkin"
+        )
+        ball = measure.ambient_ball(level=0.95)
+        count = 4000
+        draws = measure.samples(count, rng=rng)
+        inside = np.mean([ball.contains(draw) for draw in draws])
+        # Four standard errors of a binomial proportion at 0.95.
+        assert abs(inside - 0.95) < 4.0 * np.sqrt(0.95 * 0.05 / count)
+
+
+class TestLanczosHoldsOnlyTheStepsItTakes:
+    """The default cap is the dimension, so a buffer of ``dim x cap``
+    reserved up front would be 107 GiB at dimension 120 000 for an operator
+    Lanczos resolves in five steps; the memory held follows the steps
+    taken."""
+
+    def test_a_large_space_with_five_eigenvalues_costs_a_few_vectors(self):
+        import tracemalloc
+
+        from .conftest import WeightedSpace
+
+        n = 120_000
+        space = WeightedSpace(np.linspace(1.0, 4.0, n))
+        values = 1.0 + np.arange(n) % 5
+        applications = []
+
+        def apply(x):
+            applications.append(1)
+            return values * x
+
+        operator = LinearOperator.from_callables(
+            space,
+            space,
+            apply,
+            adjoint=lambda x: values * x,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        x = np.ones(n)
+        tracemalloc.start()
+        try:
+            root = apply_operator_function(operator, np.sqrt, x)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert len(applications) <= 6
+        vector = 8 * n
+        assert peak < 32 * vector
+        exact = np.sqrt(values) * x
+        assert space.norm(space.subtract(root, exact)) < 1e-10 * space.norm(exact)
+
+
+class TestLanczosBreakdownIsRelative:
+    """The breakdown test is relative to the operator's own scale. Against
+    ``max(|alpha|, 1)`` an operator of norm ``1e-13`` would close its Krylov
+    space after one step and give a square root 14% wrong."""
+
+    @pytest.mark.parametrize("scale", [1.0, 1e-13, 1e-15, 1e13])
+    @pytest.mark.parametrize("fast", [True, False])
+    def test_the_square_root_is_right_at_every_scale(self, scale, fast, rng):
+        from pygeoinf2.algebra.spaces import CoordinateSpace
+
+        n = 50
+        space = make_dense_metric_space(n)
+        gram = space.gram_matrix()
+        # Self-adjoint in the metric: a Galerkin matrix G V diag V* G with V
+        # G-orthonormal, so the eigenvalues are those of the diagonal.
+        basis = np.linalg.qr(rng.standard_normal((n, n)))[0]
+        basis = np.linalg.solve(np.linalg.cholesky(gram).T, basis)
+        eigenvalues = np.linspace(1.0, 3.0, n)
+        galerkin = gram @ basis @ np.diag(eigenvalues) @ basis.T @ gram
+        operator = LinearOperator.from_callables(
+            space,
+            space,
+            lambda x: space.solve_gram(scale * (galerkin @ x)),
+            adjoint=lambda x: space.solve_gram(scale * (galerkin @ x)),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        x = rng.standard_normal(n)
+        exact = basis @ (np.sqrt(scale * eigenvalues) * (basis.T @ gram @ x))
+        monkeypatch = pytest.MonkeyPatch()
+        if not fast:
+            monkeypatch.setattr(
+                CoordinateSpace,
+                "uses_component_fast_paths",
+                property(lambda self: False),
+            )
+        try:
+            root = apply_operator_function(operator, np.sqrt, x)
+        finally:
+            monkeypatch.undo()
+        error = space.norm(space.subtract(root, exact))
+        assert error < 1e-9 * space.norm(exact)

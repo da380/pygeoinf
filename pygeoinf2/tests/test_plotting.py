@@ -400,7 +400,7 @@ class TestSampledDensity:
 
     ``gaussian_kde`` evaluates a kernel at every draw for every point asked
     for. On the default 20 000 draws over a 160 x 160 panel that is 5e8
-    kernels, 8.9 of example 26's 12.2 seconds. Binning the draws first and
+    kernels, 8.9 of example 29's 12.2 seconds. Binning the draws first and
     convolving once with the same kernel is the same estimate to within the
     bin width, so these tests are about *how much* the binning costs.
     """
@@ -1289,3 +1289,63 @@ class TestGaussLegendreFields:
             field = X.project_function(lambda p: np.cos(np.radians(p[0])))
             ax, mappable = plotting.plot(X, field)
             assert mappable is not None
+
+
+class TestTheDistributionPlottersTakeWorkers:
+    def test_the_draws_do_not_depend_on_the_job_count(self):
+        from pygeoinf2.algebra.operators import Operator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        X = EuclideanSpace(2)
+        base = GaussianMeasure.from_standard_deviation(X, 1.0)
+        folded = base.push_forward(Operator.from_callables(X, X, np.abs))
+        serial = plotting.moments(folded, samples=200, rng=np.random.default_rng(0))
+        parallel = plotting.moments(
+            folded, samples=200, rng=np.random.default_rng(0), n_jobs=2
+        )
+        assert np.allclose(serial[2], parallel[2])
+        assert np.all(serial[2] >= 0.0)
+        plotting.plot_densities(folded, samples=200, n_jobs=2)
+        plotting.plot_corner(folded, samples=200, n_jobs=2)
+
+
+class TestPlotSetHonorsItsKnobs:
+    @staticmethod
+    def square():
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+
+        space = EuclideanSpace(2)
+        planes = [
+            HalfSpace(space, space.scale(sign, space.basis_vector(axis)), offset=1.0)
+            for axis in (0, 1)
+            for sign in (1.0, -1.0)
+        ]
+        return space, Polytope(space, planes, outer=True)
+
+    def test_a_color_fills_a_polytope(self):
+        """The level route draws by filled contours, which take ``colors``;
+        ``color`` is passed on as that rather than dropped with a warning."""
+        import warnings
+
+        from matplotlib.colors import to_rgba
+
+        _, square = self.square()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _, filled = plotting.plot_set(
+                square, bounds=((-2, 2), (-2, 2)), resolution=21, color="green"
+            )
+        face = np.asarray(filled.get_facecolor())[0]
+        assert np.allclose(face[:3], to_rgba("green")[:3])
+
+    def test_the_support_directions_take_workers(self):
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.geometry.convex import Ball
+
+        space = EuclideanSpace(2)
+        ball = Ball(space, radius=1.5)
+        _, serial = plotting.plot_set(ball, directions=24)
+        _, parallel = plotting.plot_set(ball, directions=24, n_jobs=2)
+        assert np.allclose(serial.get_xy(), parallel.get_xy())

@@ -35,9 +35,8 @@ space. What is here is what they share and what a backend author may build
 on: :class:`SpectralElementSpace`, the Sobolev scale, the pointwise algebra,
 point evaluation and the Gaussian measures of any such space;
 :class:`AxisSpace`, a space of functions of one coordinate on a padded mesh;
-the :class:`Layered` direct sum, which the geometries subclass; the
-:data:`Boundary` and :data:`LengthScale` argument types; and
-:class:`ShellTransform`, the batched harmonic transform of a ball's shells.
+the :class:`Layered` direct sum, which the geometries subclass; and the
+:data:`Boundary` and :data:`LengthScale` argument types.
 
 The mesh ends with a Robin condition matched to the operator, under which two
 length scales of padding are enough; ``boundary=None`` is the natural condition
@@ -70,7 +69,6 @@ if (
     )
 del _grid_fields
 
-from ._transform import ShellTransform  # noqa: E402
 from .axis import AxisSpace  # noqa: E402
 from .base import Boundary, LengthScale, SpectralElementSpace  # noqa: E402
 from .layered import Layered  # noqa: E402
@@ -80,6 +78,5 @@ __all__ = [
     "Boundary",
     "Layered",
     "LengthScale",
-    "ShellTransform",
     "SpectralElementSpace",
 ]

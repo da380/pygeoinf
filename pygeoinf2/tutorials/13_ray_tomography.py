@@ -21,17 +21,18 @@
 import numpy as np
 
 from pygeoinf2 import (
+    CGSolver,
     ForwardProblem,
     GaussianMeasure,
+    LaplaceApproximation,
     LinearForwardProblem,
     LinearGaussianInversion,
     MaximumAPosteriori,
     plotting,
 )
-from pygeoinf2.algebra.operators import LinearOperator
-from pygeoinf2.inference import LaplaceApproximation
 from pygeoinf2.numerics.optimization import LBFGS, NewtonCG
 from pygeoinf2.symmetric_space.plane import Sobolev
+from pygeoinf2.testing import check_derivative, check_second_derivative
 
 rng = np.random.default_rng(13)
 
@@ -121,24 +122,15 @@ ax.set_title("The velocity anomaly, the geodesics (grey) and the rays (black)")
 # time stationary in the ray, so that to first order a change of the model
 # changes the travel time only through the slowness along the ray that
 # was already found. The derivative of the operator is therefore a path
-# integral along the traced ray — the linear operator of tutorial 10 on a
-# bent path — and its adjoint is the one that operator carries. The check
-# is the same as for any operator: finite differences in a random
-# direction.
+# integral along the traced ray — the path-average operator of example 20,
+# on a bent path — and its adjoint is the one that operator carries. The
+# check is the same as for any operator: central differences, here in
+# directions drawn from the prior, the kind of field the operator will meet,
+# with a step suited to a ray tracer's own tolerance.
 
 # %%
 linearized = F.at(truth)
-direction = prior.sample(rng=rng)
-step = 1.0e-4
-differences = (
-    F(X.add(truth, X.scale(step, direction)))
-    - F(X.add(truth, X.scale(-step, direction)))
-) / (2.0 * step)
-predicted = linearized.derivative(direction)
-print(
-    "derivative against central differences: relative error "
-    f"{np.max(np.abs(predicted - differences)) / np.max(np.abs(differences)):.1e}"
-)
+print(check_derivative(F, truth, rng=rng, measure=prior, step=1.0e-4))
 
 # %% [markdown]
 # The adjoint applied to one datum's unit vector is a *function* on the
@@ -179,16 +171,9 @@ axes[1].plot(ray[:, 1], ray[:, 0], color="black", linewidth=0.8)
 # must be the derivative of the derivative, and it must be symmetric.
 
 # %%
-second = prior.sample(rng=rng)
+print(check_second_derivative(F, truth, rng=rng, measure=prior, step=1.0e-4))
+direction, second = prior.sample(rng=rng), prior.sample(rng=rng)
 action = F.second_derivative(truth, direction)(second)
-differences = (
-    F.derivative(X.add(truth, X.scale(step, direction)))(second)
-    - F.derivative(X.add(truth, X.scale(-step, direction)))(second)
-) / (2.0 * step)
-print(
-    "Hessian against differences of the derivative: relative error "
-    f"{np.max(np.abs(action - differences)) / np.max(np.abs(differences)):.1e}"
-)
 transposed = F.second_derivative(truth, second)(direction)
 print(
     "symmetry in its two directions: relative error "
@@ -198,9 +183,10 @@ print(
 # %% [markdown]
 # How much the ray's response contributes can be read off by comparing
 # with the curvature of the slowness alone, integrated along the fixed
-# ray. For the pairs below it is not a correction but a term of the same
-# size, which is the reason a Gauss-Newton Hessian — the derivative's
-# square, no second derivative at all — is only an approximation here.
+# ray. For the pairs below it is not a correction but a term as large as
+# the rest or larger, which is the reason a Gauss-Newton Hessian — the
+# derivative's square, no second derivative at all — is only an
+# approximation here.
 
 # %%
 fixed_ray = np.zeros(len(paths))
@@ -227,12 +213,13 @@ print(f"the ray's response, as a share of the Hessian action: up to {share.max()
 # ## The inverse problem
 #
 # Noisy travel times, a Gaussian prior on $m$, and the question of
-# tutorial 6 and tutorial 9: what is the most probable field, and how sure
+# tutorial 7 and tutorial 9: what is the most probable field, and how sure
 # is it? Three answers are compared.
 #
 # 1. **Linear tomography.** Straight rays: the operator linearised at
-#    $m = 0$, which is the path-integral operator of tutorial 10 scaled by
-#    $-1/c_0$, and the linear Gaussian inversion on it. One solve.
+#    $m = 0$, which is the path-integral operator along the geodesics
+#    scaled by $-1/c_0$, and the linear Gaussian inversion on it. One
+#    solve.
 # 2. **The MAP field with gradients.** Tutorial 9's `MaximumAPosteriori`
 #    with L-BFGS: every iteration traces the rays afresh and uses the
 #    derivative's adjoint for the gradient.
@@ -242,22 +229,13 @@ print(f"the ray's response, as a share of the Hessian action: up to {share.max()
 #    Gauss-Newton term plus the operator's curvature weighted by the
 #    residual — and each step solves it by conjugate gradients.
 #
-# One change of variables first. The prior's precision on $H^2$ is a
-# fourth-order differential operator, so an optimizer working on $m$
-# directly faces a Hessian whose eigenvalues span many decades and makes
-# slow progress along the smooth directions that matter. Writing
-# $m = L w$ with $C = L L^*$ the prior's covariance and $w$ white turns
-# the prior term into $\|w\|^2$ and leaves the data term to supply all
-# the structure: the posterior in $w$ is the identity plus something of
-# low rank, which is what every method here likes. The prior carries its
-# factor, and composing the operator with it is one line.
-
-# %%
-L = prior.covariance_factor
-identity = LinearOperator.identity(X)
-white = GaussianMeasure(X, covariance=identity, precision=identity)
-G = F @ L
-print("the composed operator keeps its second derivative:", G.has_second_derivative)
+# The Hessian is badly conditioned. The prior's precision on $H^2$ is a
+# fourth-order differential operator, confident about fine scales the
+# data never see, so the curvature's eigenvalues span many decades and an
+# optimizer working on $m$ makes slow progress along the smooth
+# directions that matter. The cure is the one of tutorial 9: the prior's
+# covariance as the preconditioner of Newton's inner solve, which leaves
+# it only the data's spectrum to work through. L-BFGS has no such knob.
 
 # %%
 noise = GaussianMeasure.from_standard_deviation(
@@ -273,44 +251,50 @@ linear = LinearGaussianInversion(
 )
 linear_model = linear(F.codomain.subtract(data, F(X.zero()))).expectation
 
-# 2. Gradients, in the whitened variable. The estimator returns the mode;
-#    `solve` returns the optimizer's record, which is what is compared here.
-whitened = ForwardProblem(G, error=noise)
+# 2. Gradients. The estimator returns the mode; `solve` returns the
+#    optimizer's record, which is what is compared here.
 by_lbfgs = MaximumAPosteriori(
-    whitened, white, optimizer=LBFGS(max_iterations=100)
+    problem, prior, optimizer=LBFGS(max_iterations=100)
 ).solve(data)
 
-# 3. Newton, likewise.
+# 3. Newton, with the prior's covariance as its preconditioner.
 newton = MaximumAPosteriori(
-    whitened, white, optimizer=NewtonCG(max_iterations=15, max_cg_iterations=40)
+    problem,
+    prior,
+    optimizer=NewtonCG(
+        preconditioner=prior.covariance, max_iterations=15, max_cg_iterations=40
+    ),
 )
 by_newton = newton.solve(data)
-lbfgs_model, newton_model = L(by_lbfgs.minimizer), L(by_newton.minimizer)
+lbfgs_model, newton_model = by_lbfgs.minimizer, by_newton.minimizer
 
 
 def error_of(model):
     return X.norm(X.subtract(model, truth)) / X.norm(truth)
 
 
-print(f"{'':28s} {'relative error':>14s} {'iterations':>10s}")
-print(f"{'straight rays, linear':28s} {error_of(linear_model):14.3f} {1:10d}")
+print(f"{'':22s} {'relative error':>14s} {'iterations':>10s} {'converged':>9s}")
+print(f"{'straight rays, linear':22s} {error_of(linear_model):14.3f} {1:10d}")
+for name, run in (("MAP, L-BFGS", by_lbfgs), ("MAP, Newton", by_newton)):
+    print(
+        f"{name:22s} {error_of(run.minimizer):14.3f} {run.iterations:10d}"
+        f" {str(run.converged):>9s}"
+    )
 print(
-    f"{'MAP, L-BFGS':28s} {error_of(lbfgs_model):14.3f} " f"{by_lbfgs.iterations:10d}"
-)
-print(
-    f"{'MAP, Newton':28s} {error_of(newton_model):14.3f} " f"{by_newton.iterations:10d}"
-)
-print(
-    "the two MAP fields agree to "
-    f"{X.norm(X.subtract(newton_model, lbfgs_model)) / X.norm(lbfgs_model):.1e}"
+    "the two MAP fields differ by "
+    f"{X.norm(X.subtract(newton_model, lbfgs_model)) / X.norm(newton_model):.1e}"
 )
 
 # %% [markdown]
 # The straight-ray answer is not wrong so much as misplaced: it puts the
-# anomalies where the geodesics cross, and the rays did not go there. The
-# two nonlinear answers agree with each other, and Newton gets there in a
-# fraction of the iterations because its model of the objective includes
-# how the rays move.
+# anomalies where the geodesics cross, and the rays did not go there.
+# Newton reaches the mode in a dozen or so steps: its model of the
+# objective includes how the rays move, and the prior's covariance leaves
+# its inner solve only the data's spectrum. L-BFGS, with neither, stops at
+# its cap of a hundred iterations well short of the mode: its field differs
+# from Newton's by a third, and is further from the truth than the straight
+# rays. It would get there, but at a ray trace per iteration it is the
+# expensive way.
 
 # %%
 figure, axes = plotting.subplots(X, columns=3, figsize=(15.0, 4.6))
@@ -330,19 +314,27 @@ for ax, field, title in (
 #
 # The Laplace approximation of tutorial 9 is a Gaussian about the mode
 # whose covariance is the inverse of the linearised normal operator there;
-# `LaplaceApproximation` wraps the MAP estimator and places it on the mode
-# already found. It was found in $w$; pushed through $L$ it is a Gaussian on
-# the field,
-# and its pointwise standard deviation — one covariance application per
-# point, each a solve with the linearised normal operator — says what the
-# survey can and cannot see: the uncertainty is lowest where rays cross
-# and rises towards the corners no ray reaches.
+# `LaplaceApproximation` wraps a MAP estimator and places it on the mode
+# already found. It takes the estimator's curvature: the exact Hessian for
+# the Newton estimator above, whose every application carries the ray's
+# response. Here each point is a whole solve, so the Gauss-Newton curvature
+# is taken instead, from an estimator built with `gauss_newton=True` and
+# placed on the mode Newton found, which costs no new search. Its pointwise
+# standard deviation — one covariance application per point, each a solve
+# with the linearised normal operator, preconditioned by the prior's
+# covariance as Newton's inner solve was — says what the survey can and
+# cannot see: the uncertainty is lowest where rays cross and rises towards
+# the corners no ray reaches.
 
 # %%
 grid = [
     np.array([x, y]) for x in np.linspace(0.3, 1.7, 6) for y in np.linspace(0.3, 1.7, 6)
 ]
-laplace = L @ LaplaceApproximation(newton).at(by_newton.minimizer, data)
+gauss_newton = MaximumAPosteriori(problem, prior, gauss_newton=True)
+solver = CGSolver().with_preconditioner(prior.covariance)
+laplace = LaplaceApproximation(gauss_newton, solver=solver).at(
+    by_newton.minimizer, data
+)
 spread = np.sqrt(X.pointwise_variance_at(laplace, grid))
 prior_spread = np.sqrt(X.pointwise_variance_at(prior, grid[:1]))[0]
 print(

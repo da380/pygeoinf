@@ -546,7 +546,9 @@ def misfit_search(
         atol: its absolute half, for a root near zero damping.
         minimum_damping: a floor on the damping; the search stops there and
             reports the range exhausted rather than probing a numerically
-            singular system. Zero is no floor.
+            singular system. Zero is no floor. A damping has the units of
+            the operator, so a floor above one is ordinary: the search then
+            starts a decade above the floor rather than at one.
         limit: the misfit at infinite damping, that of the zero model, when
             the caller has it: at or below the target the data are fitted
             by the zero model and the search is saturated at once, with the
@@ -568,6 +570,7 @@ def misfit_search(
         evaluate,
         target,
         decreasing=False,
+        initial=max(1.0, 10.0 * minimum_damping),
         max_iterations=max_iterations,
         rtol=rtol,
         atol=atol,

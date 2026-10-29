@@ -540,15 +540,16 @@ class TestCoefficientAccess:
         _, base = geometry
         space = base.with_order(0.0)
         degrees = space.degrees
-        measure = space.power_measure(np.full(degrees.max() + 1, 4.0))
+        power = 4.0 * (1.0 + np.arange(degrees.max() + 1)) ** -2.0
+        measure = space.power_measure(power)
 
         drawn = np.mean(
             [space.power_spectrum(measure.sample(rng=rng)) for _ in range(400)],
             axis=0,
         )
         present = np.unique(degrees)
-        assert np.all(drawn[present] > 2.0)
-        assert np.all(drawn[present] < 8.0)
+        assert np.all(drawn[present] > 0.5 * power[present])
+        assert np.all(drawn[present] < 2.0 * power[present])
 
     def test_on_a_sobolev_space_the_round_trip_still_holds(self, geometry, rng):
         """``power_measure(p)`` means the L2 spectrum on
@@ -559,19 +560,20 @@ class TestCoefficientAccess:
         covariance carries multiplied by the gram diagonal."""
         _, space = geometry
         degrees = space.degrees
-        measure = space.power_measure(np.full(degrees.max() + 1, 4.0))
+        power = 4.0 * (1.0 + np.arange(degrees.max() + 1)) ** -2.0
+        measure = space.power_measure(power)
 
         drawn = np.mean(
             [space.power_spectrum(measure.sample(rng=rng)) for _ in range(400)],
             axis=0,
         )
         present = np.unique(degrees)
-        assert drawn[present] == pytest.approx(4.0, rel=0.35)
+        assert drawn[present] == pytest.approx(power[present], rel=0.35)
 
         eigenvalues = measure.covariance.eigenvalues
         counts = np.bincount(degrees)[degrees]
         assert eigenvalues == pytest.approx(
-            4.0 / counts * space.gram_diagonal(), rel=1e-12
+            power[degrees] / counts * space.gram_diagonal(), rel=1e-12
         )
 
     def test_analysis_and_synthesis_invert_each_other(self, geometry, rng):

@@ -85,9 +85,12 @@ evaluation: the representer of a value at a point in `H^2`. The app writes
 no adjoint at all. `lift` turns the tracer's nodes into the space's points,
 `(radius, angle)` or `(radius, latitude, longitude)`.
 
-The composition holds a dense evaluation of every basis function at every
-node, gigabytes at the full scale, so the operator the app uses,
-`path_integral_operator`, forms the same product a ray at a time:
+A dense evaluation of every basis function at every node would be
+gigabytes at the full scale, where `route="auto"` evaluates locally
+instead; the composition then applies in a fifth of a second, against a
+millisecond for the matrix of 275 rows that `path_integral_operator` forms a
+ray at a time, and assembling the data-space normal operator applies the
+forward operator once per datum. So the operator the app uses is the rows:
 
 ```python
 for index, ray in enumerate(rays):
@@ -113,8 +116,8 @@ a box by Gauss-Legendre under `r dr dangle` or `r² cos(latitude)`, and
 - the row-by-row operator against the composition written as it reads, to
   `1e-12`, in the disk and in the ball;
 - `check_operator(forward, rng=rng, measure=prior, rtol=1e-12)`, a defect of
-  `2.2e-15`: the adjoint identity in the layered metric, with probes drawn
-  from the prior rather than from white noise;
+  `1.8e-15` at the full scale: the adjoint identity in the layered metric,
+  with probes drawn from the prior rather than from white noise;
 - the operator on the reference slowness against the tracer's own travel
   times, and on the constant one against the path lengths.
 
@@ -158,7 +161,7 @@ check_derivative(problem.forward.operator, point, rng=np.random.default_rng(seed
 ```
 
 The defect falls as the square of the step, which says the derivative is
-right, down to a floor of `1e-5` to `2e-4`, which says how far it is from
+right, down to a floor of `4e-6` to `2.5e-4`, which says how far it is from
 the derivative of the computed map. The floor is the integrator's: the path
 integral is the derivative of the exact travel time, the Runge-Kutta time a
 discretization of it. As with the continuous adjoint of tutorial 12, a
@@ -176,33 +179,24 @@ space's own `Layered.sobolev_measure`, which refuses an order at or below
 half the dimension, built in `sobolev_prior` in `src/problem.py`:
 
 ```python
-measure = space.sobolev_measure(
+return space.sobolev_measure(
     order, amplitude=layer_amplitudes(space, order=order, std=std)
-)
-deviations = np.concatenate(
-    [block.eigenvalues for block in measure.covariance_factor.operators]
-)
-return GaussianMeasure(
-    space,
-    covariance_factor=DiagonalLinearOperator(space, deviations),
-    precision=DiagonalLinearOperator(space, deviations**-2.0),
 )
 ```
 
-Two choices are in it. **The calibration** is by an amplitude per layer,
-`layer_amplitudes`, the one that brings the layer's mean pointwise standard
-deviation over its interior to one percent; the result is uniform to within
-two per cent. Calibrating with `pointwise_std=` instead would rescale the
-measure from place to place, `S C S*` with `S` a multiplication, exactly
-uniform but neither diagonal nor with a precision, so that the prior's norm
-would go through a solver and its spectrum through dense matrices or draws,
-where here they are diagonal and free. **The re-seating**: the product measure's operators act on the bare
-direct sum of the two layers, and so would a posterior built from it, which
-would then have no pointwise product and no pointwise standard deviation;
-the same factor, as one diagonal operator on the layered space itself,
-keeps the space's pointwise algebra in the draws and the posteriors.
-Because the covariance is diagonal in each layer's basis, the prior's
-pointwise standard deviation is exact and cheap, `prior_pointwise_std`. The
+**The calibration** is by an amplitude per layer, `layer_amplitudes`, the
+one that brings the layer's mean pointwise standard deviation over its
+interior to one percent; the result is uniform to within two per cent.
+Calibrating with `pointwise_std=` instead would rescale the measure from
+place to place, `S C S*` with `S` a multiplication, exactly uniform but
+neither diagonal nor with a precision, so that the prior's norm would go
+through a solver and its spectrum through dense matrices or draws, where
+here they are diagonal and free. The measure is the product of the layers'
+measures, put by the library on the layered space itself, so that its draws
+and its posteriors are vectors of that space, with the pointwise product a
+pointwise standard deviation needs. Because the covariance is diagonal in
+each layer's basis, the prior's pointwise standard deviation is exact and
+cheap, `prior_pointwise_std`. The
 truth and the data come from `problem.synthetic_model_and_data(prior,
 rng=rng)` with Gaussian noise of 0.05; part G uses the same construction at
 five times the width, so that the bending of its smooth draws matters.
@@ -273,8 +267,9 @@ factorization, a fifth of a second; the discrepancy search one per damping
 it tries, nine in all; the mixture one per component and per noise level.
 There is no preconditioner, because there is no iteration.
 
-The posterior samples and the support directions take `n_jobs=` and run
-serially here: at this size workers cost more than they save (README).
+The posterior samples, the support directions and the mixture's components
+take `n_jobs=` and run serially here: at this size workers cost more than
+they save (README).
 
 Part G's MAP model is the only iterative solve: `NewtonCG` on the
 Gauss-Newton Hessian, preconditioned by the prior covariance so that the
@@ -283,10 +278,10 @@ ray tracings at the full size.
 
 ## 5. The estimators
 
-**The point** (parts B and F, `point.py`). Tutorial 8's estimators with the
-error budget of tutorial 14, with size measured in the prior's norm: the
-problem is parameterized by the prior's covariance factor, `m = L w`, so
-that `|w|` is the prior's norm of `m`:
+**The point** (parts B and F, `point.py`). Tutorial 6's estimators with the
+error budget of tutorial 14, with size measured in the prior's norm
+(example 23): the problem is parameterized by the prior's covariance
+factor, `m = L w`, so that `|w|` is the prior's norm of `m`:
 
 ```python
 whitened = problem.problem.parameterized(problem.prior.covariance_factor)
@@ -303,7 +298,7 @@ model is the smallest in the norm the prior calls typical. `pushed(data)` is
 the estimate of the three means, `pushed.propagated_covariance()` the noise
 it carries, and `pushed.bias(whiten(problem, truth))` the error only the
 truth reveals, with `whiten` the factor's inverse, `L* Q^-1`, exact through
-the prior's precision. `chosen.push_forward(factor).resolution(...)` of a
+the prior's precision. `chosen.push_forward(factor).resolution()(...)` of a
 bump's `w` is what the estimate makes of a unit bump in each box. In the
 core the estimate is zero and so is its propagated noise: its whole error
 is bias, which nothing in the point answer shows. Figure `point.png` draws
@@ -318,8 +313,9 @@ is `sample_pointwise_std(samples, rng=rng)`; the means' posterior is
 map beside the posterior's, and each mean's marginal before and after.
 
 **The mixture** (part E). `LinearGaussianMixtureInversion(forward, prior,
-solver=CholeskySolver())` updates each component by its own linear Gaussian
-inversion and rescores the weights by the components' evidences:
+solver=CholeskySolver(), n_jobs=scale.n_jobs)` updates each component by its
+own linear Gaussian inversion, on the scale's workers, and rescores the
+weights by the components' evidences:
 
 - `estimator.weights(data)`, the posterior weights, which are evidence
   ratios times the prior's;

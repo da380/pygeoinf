@@ -1,8 +1,8 @@
 """Point evaluation on the spectral-element spaces, assembled and matrix-free.
 
-The assembled form is the oracle: its rows are the basis at the points, by
+The assembled route is the oracle: its rows are the basis at the points, by
 ``planetmodel``'s harmonics and the element polynomials of the modes, while
-the matrix-free form interpolates nodal values within the points' elements
+the matrix-free route interpolates nodal values within the points' elements
 and sums its own harmonics. The two share the components and nothing else,
 and must agree forward and adjoint to rounding on every geometry; the
 matrix-free one must also pass the adjoint check on its own, against each
@@ -142,8 +142,8 @@ def operators(space, points, /):
     interface of a layered space is taken from below."""
     options = {"side": "below"} if hasattr(space, "layers") else {}
     return (
-        space.point_evaluation_operator(points, form="dense", **options),
-        space.point_evaluation_operator(points, form="local", **options),
+        space.point_evaluation_operator(points, route="dense", **options),
+        space.point_evaluation_operator(points, route="local", **options),
     )
 
 
@@ -194,7 +194,7 @@ class TestTheLocalFormIsTheDenseOne:
     def test_a_field_off_the_span_is_read_through_its_components(
         self, build, where, rng
     ):
-        """A pointwise product is left on the grid, off the span: both forms
+        """A pointwise product is left on the grid, off the span: both routes
         read it through its components, so they agree there too, and the
         evaluation composed with a multiplication keeps an exact adjoint."""
         space = build()
@@ -227,13 +227,13 @@ def test_chunks_and_a_recomputed_table_change_nothing(build, rng, monkeypatch):
     rather than kept."""
     space = build()
     points = [space.random_point(rng=rng) for _ in range(60)]
-    dense = space.point_evaluation_operator(points, form="dense")
+    dense = space.point_evaluation_operator(points, route="dense")
     harmonics_count = (
         (space.lmax + 1) ** 2 if hasattr(space, "lmax") else 2 * space.mmax + 1
     )
     monkeypatch.setattr(_points, "_CHUNK_ENTRIES", 7 * harmonics_count)
     monkeypatch.setattr(_points, "_TABLE_BUDGET", 0)
-    local = space.point_evaluation_operator(points, form="local")
+    local = space.point_evaluation_operator(points, route="local")
     c = rng.standard_normal(space.dim)
     y = rng.standard_normal(len(points))
     assert (
@@ -266,7 +266,7 @@ def test_auto_is_dense_within_the_limit_and_local_beyond(
 
 
 class TestRefusals:
-    @pytest.mark.parametrize("form", ["auto", "dense", "local"])
+    @pytest.mark.parametrize("route", ["auto", "dense", "local"])
     @pytest.mark.parametrize(
         ("build", "outside"),
         [
@@ -280,12 +280,12 @@ class TestRefusals:
             (balls, (1.5, 0.0, 0.0)),
         ],
     )
-    def test_a_point_outside_the_domain(self, build, outside, form):
+    def test_a_point_outside_the_domain(self, build, outside, route):
         space = build()
         with pytest.raises(ValueError):
-            space.point_evaluation_operator([outside], form=form)
+            space.point_evaluation_operator([outside], route=route)
 
-    @pytest.mark.parametrize("form", ["auto", "dense", "local"])
+    @pytest.mark.parametrize("route", ["auto", "dense", "local"])
     @pytest.mark.parametrize(
         ("build", "point", "threshold"),
         [
@@ -296,26 +296,26 @@ class TestRefusals:
             (lambda: lines().with_order(0.5), 0.2, "0.5"),
         ],
     )
-    def test_an_order_too_low(self, build, point, threshold, form):
+    def test_an_order_too_low(self, build, point, threshold, route):
         space = build()
         with pytest.raises(ValueError, match=f"above {threshold}"):
-            space.point_evaluation_operator([point], form=form)
-        space.point_evaluation_operator([point], form=form, unsafe=True)
+            space.point_evaluation_operator([point], route=route)
+        space.point_evaluation_operator([point], route=route, unsafe=True)
 
     @pytest.mark.parametrize("build", [line, whole_ball, lines])
-    def test_no_points_and_an_unknown_form(self, build, rng):
+    def test_no_points_and_an_unknown_route(self, build, rng):
         space = build()
         with pytest.raises(ValueError, match="one point"):
-            space.point_evaluation_operator([], form="local")
+            space.point_evaluation_operator([], route="local")
         point = space.random_point(rng=rng) if hasattr(space, "random_point") else 0.1
-        with pytest.raises(ValueError, match="form"):
-            space.point_evaluation_operator([point], form="sparse")
+        with pytest.raises(ValueError, match="route"):
+            space.point_evaluation_operator([point], route="sparse")
 
     def test_a_latitude_past_a_pole(self):
         space = whole_ball()
-        for form in ("dense", "local"):
+        for route in ("dense", "local"):
             with pytest.raises(ValueError):
-                space.point_evaluation_operator([(0.5, 91.0, 0.0)], form=form)
+                space.point_evaluation_operator([(0.5, 91.0, 0.0)], route=route)
 
 
 @pytest.mark.parametrize("lmax", [0, 1, 2, 7, 40])

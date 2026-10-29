@@ -352,7 +352,9 @@ class Sphere(SymmetricSpace[Any]):
     ``lmax + 1`` rows at the Legendre zeros and ``2 lmax + 1`` columns: fewer
     points for the same truncation, a quadrature exact to degree ``2 lmax``
     in closed form, and no pole row. The two hold the same components, so a
-    space is the same space on either; only the fields' shape differs.
+    field moves from one to the other through them; but the fields differ in
+    shape, so the spaces differ and an operator of one does not take the
+    other's vectors. The same holds for ``sampling`` and ``extend``.
     """
 
     def __init__(
@@ -380,16 +382,18 @@ class Sphere(SymmetricSpace[Any]):
                 Driscoll-Healy grid, which is pyshtools' default and this
                 one; two doubles the longitude resolution, and the memory.
                 Both represent the same functions exactly -- the transforms
-                cost the same and the components are identical -- so this is a
-                statement about the grid, not about the space.
+                cost the same and the components are identical -- but the
+                fields differ in shape, so the spaces differ; see the class
+                docstring.
             extend: whether a field's grid carries the wrap column at 360
                 degrees and the south-pole row, as pyshtools' ``extend=True``
                 grids do. Off by default. The two extras carry no quadrature
                 weight and are not seen by the transforms; they are there for
                 plotting and interchange, where a closed grid is what is
-                wanted. Same components, same space; a statement about the
-                grid, like ``sampling``. On a Gauss-Legendre grid only the
-                wrap column is added, there being no pole row to add.
+                wanted. Same components, but fields of another shape and so
+                another space, as with ``sampling``. On a Gauss-Legendre grid
+                only the wrap column is added, there being no pole row to
+                add.
             grid: ``"DH"`` for Driscoll-Healy, ``"GLQ"`` for Gauss-Legendre.
                 See the class docstring. ``sampling`` applies to the first
                 only.
@@ -562,8 +566,10 @@ class Sphere(SymmetricSpace[Any]):
             self._lmax,
             self._radius,
             self._order,
-            self._length_scale,
+            # The length scale enters the metric only above order zero.
+            self._length_scale if self._order != 0.0 else None,
             self._sampling,
+            self._extend,
             self._grid.kind,
         )
 
@@ -1996,17 +2002,31 @@ class Sphere(SymmetricSpace[Any]):
             ValueError: if the angular radius is outside ``[0, 180]``, or if an
                 average over a cap of zero area is asked for.
         """
+        centers = tuple(centers)
+        weights = self._cap_weights(angular_radius, normalize=normalize)
+        if not np.any(weights):
+            return np.zeros((len(centers), self.dim))
+        return self.basis_matrix(centers, n_jobs=n_jobs) * weights
+
+    def _cap_weights(self, angular_radius: float, /, *, normalize: bool) -> np.ndarray:
+        """``c_k`` with ``g_k == c_k phi_k(center)`` for a cap of the given
+        half-angle, in degrees: the zonal filter a cap integral, or average,
+        applies before evaluation at its center.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
+        """
         if angular_radius < 0.0 or angular_radius > 180.0:
             raise ValueError(
                 f"A cap's angular radius lies in [0, 180] degrees, got "
                 f"{angular_radius}."
             )
-        centers = tuple(centers)
         cosine = float(np.cos(np.radians(angular_radius)))
         if 1.0 - cosine <= 0.0:
             if normalize:
                 raise ValueError("A cap of zero area has no average.")
-            return np.zeros((len(centers), self.dim))
+            return np.zeros(self.dim)
 
         # P_0 ... P_{lmax+1} at the single point cos(alpha).
         legendre = np.polynomial.legendre.legvander(np.array([cosine]), self._lmax + 1)[
@@ -2020,12 +2040,10 @@ class Sphere(SymmetricSpace[Any]):
             integrals[1:] = (legendre[rest - 1] - legendre[rest + 1]) / (2 * rest + 1)
 
         scale = 2.0 * np.pi * self._radius**2
-        rows = self.basis_matrix(centers, n_jobs=n_jobs) * (
-            scale * integrals[self.degrees]
-        )
+        weights = scale * integrals[self.degrees]
         if normalize:
-            rows = rows / (scale * (1.0 - cosine))
-        return rows
+            weights = weights / (scale * (1.0 - cosine))
+        return weights
 
     def spherical_cap_average(
         self, center: Any, angular_radius: float, /
@@ -2059,6 +2077,13 @@ class Sphere(SymmetricSpace[Any]):
         quadrature route and exists so the two can be checked against each
         other.
 
+        A cap integral is a zonal filter followed by evaluation at the
+        center (see :meth:`cap_integral_components`), and that is how the
+        exact route applies it unless *dense* is set: one filter and one
+        evaluation at the centers, with nothing of size
+        ``len(centers) x dim`` held. With *dense* the rows are assembled in
+        closed form instead.
+
         Args:
             centers: the cap centers, in degrees.
             radius: the *physical* cap radius, not an angle.
@@ -2067,10 +2092,10 @@ class Sphere(SymmetricSpace[Any]):
             normalize: divide by the cap's area, giving an average rather
                 than an integral.
             dense: assemble the derivative matrix rather than staying
-                matrix-free.
-            n_jobs: workers for the basis evaluations at the centers on the
-                exact route, and for the dense assembly on the quadrature
-                route. Serial by default.
+                matrix-free, on either route.
+            n_jobs: workers for the dense assembly, the basis evaluations at
+                the centers on the exact route and at the nodes on the
+                quadrature route. Serial by default.
 
         Returns:
             The operator.
@@ -2098,11 +2123,25 @@ class Sphere(SymmetricSpace[Any]):
         # `radius` here is a *physical* distance, in the units of self.radius;
         # cap_integral_components takes the half-angle in degrees.
         angular_radius = np.degrees(radius / self._radius)
-        rows = self.cap_integral_components(
-            centers, angular_radius, normalize=normalize, n_jobs=n_jobs
-        )
-        return LinearOperator.from_matrix(
-            self, EuclideanSpace(len(centers)), rows, form="galerkin"
+        codomain = EuclideanSpace(len(centers))
+        if dense:
+            rows = self.cap_integral_components(
+                centers, angular_radius, normalize=normalize, n_jobs=n_jobs
+            )
+            return LinearOperator.from_matrix(self, codomain, rows, form="galerkin")
+
+        weights = self._cap_weights(angular_radius, normalize=normalize)
+        points = self.prepare_points(centers)
+
+        def value(x: Any) -> np.ndarray:
+            filtered = self.from_components(weights * self.to_components(x))
+            return self.evaluate(filtered, points)
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            return weights * self.accumulate(y, points)
+
+        return LinearOperator.from_derivative_callables(
+            self, codomain, value, derivative_components
         )
 
     # ----------------------------------------------------------------- #

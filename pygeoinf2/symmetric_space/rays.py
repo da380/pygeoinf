@@ -69,6 +69,14 @@ class _Chart:
         """
         raise NotImplementedError
 
+    def evaluation_points(self, vectors: np.ndarray) -> Any:
+        """Vectors of the embedding as points to evaluate a field at.
+
+        The points of :meth:`unembed`, unless the geometry has something to
+        add for the tracer's own evaluations.
+        """
+        return self.unembed(vectors)
+
     def separation_end(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
         """The receiver, placed so that the geodesic from the source is direct."""
         return end
@@ -177,10 +185,18 @@ class _BoxChart(_Chart):
 
     def unembed(self, vectors: np.ndarray) -> Any:
         """Vectors of the embedding back as points of the space: an array of rows."""
-        wrap = getattr(self.space, "_wrap", None)
-        if wrap is not None and not hasattr(self.space, "bounds"):
-            vectors = wrap(vectors)
-        return np.asarray(vectors, dtype=float)
+        return np.asarray(self.space._wrap(vectors), dtype=float)
+
+    def evaluation_points(self, vectors: np.ndarray) -> Any:
+        """The points, prepared without the bounded box's domain check.
+
+        A ray between two points of a bounded box can bend out of the domain
+        on its way to convergence, or at it, and the tracer reads the field
+        in the padding there rather than stop.
+        """
+        if hasattr(self.space, "bounds"):
+            return self.space._prepared(np.asarray(vectors, dtype=float), check=False)
+        return self.unembed(vectors)
 
     def separation_end(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
         """The receiver, placed so that the geodesic from the source is direct."""
@@ -214,7 +230,9 @@ class _BoxChart(_Chart):
         self, field: Any, vectors: np.ndarray, **kwargs: Any
     ) -> np.ndarray:
         """The field's gradient at embedded points, as vectors of the embedding."""
-        return self.space.evaluate_gradient(field, self.unembed(vectors), **kwargs)
+        return self.space.evaluate_gradient(
+            field, self.evaluation_points(vectors), **kwargs
+        )
 
     def frame(
         self, start: np.ndarray, end: np.ndarray
@@ -309,7 +327,7 @@ class _SphereChart(_Chart):
     ) -> np.ndarray:
         """The field's gradient at embedded points, as vectors of the embedding."""
         components = self.space.evaluate_gradient(
-            field, self.unembed(vectors), **kwargs
+            field, self.evaluation_points(vectors), **kwargs
         )
         south, east = self._tangent_frame(vectors)
         return components[:, :1] * south + components[:, 1:] * east
@@ -386,7 +404,7 @@ class _Slowness:
         """The slowness at embedded points, shaped like the points without their last axis."""
         flat = vectors.reshape(-1, vectors.shape[-1])
         m = self.chart.space.evaluate(
-            self.model, self.chart.unembed(flat), **self.kwargs
+            self.model, self.chart.evaluation_points(flat), **self.kwargs
         )
         return (np.exp(-m) / self.c0).reshape(vectors.shape[:-1])
 
@@ -1104,6 +1122,7 @@ def ray_travel_time_operator(
     max_iterations: int = 50,
     eps: float | None = None,
     nthreads: int | None = None,
+    unsafe: bool = False,
 ) -> Operator:
     """Travel times through ``c₀ exp(m)`` along the rays traced in it.
 
@@ -1122,14 +1141,18 @@ def ray_travel_time_operator(
         max_iterations: the budget of Newton steps or root-find iterations.
         eps: accuracy for the non-uniform transforms, where used.
         nthreads: threads for them.
+        unsafe: build it even on a space too rough for its derivative, a
+            path integral, to be bounded.
 
     Returns:
         The operator, from the space to ``EuclideanSpace(len(paths))``.
 
     Raises:
-        ValueError: if no paths are given, or the method is unknown.
+        ValueError: if no paths are given, the method is unknown, or the
+            order is at or below ``(d - 1) / 2`` and *unsafe* is not set.
         NotImplementedError: on a geometry without a ray tracer.
     """
+    space._require_path_evaluation("A ray travel-time operator", unsafe=unsafe)
     chart = _chart(space)
     paths = tuple(paths)
     if not paths:
@@ -1143,8 +1166,10 @@ def ray_travel_time_operator(
     kwargs = {k: v for k, v in (("eps", eps), ("nthreads", nthreads)) if v is not None}
     data_space = EuclideanSpace(len(paths))
 
-    def traced(model: Any) -> _Rays:
-        if not np.all(np.isfinite(space.to_components(model))):
+    def traced(model: Any, components: np.ndarray | None = None) -> _Rays:
+        if components is None:
+            components = space.to_components(model)
+        if not np.all(np.isfinite(components)):
             raise EvaluationError(
                 "The model has non-finite values; the rays cannot be traced "
                 "through it."
@@ -1164,7 +1189,7 @@ def ray_travel_time_operator(
     def integral_operator(points: np.ndarray, values: np.ndarray) -> LinearOperator:
         """``δm -> Σ values δm(points)`` per path: a weighted path integral."""
         P, n = values.shape
-        nodes = chart.unembed(points.reshape(-1, points.shape[-1]))
+        nodes = chart.evaluation_points(points.reshape(-1, points.shape[-1]))
         rows = np.repeat(np.arange(P), n)
         columns = np.arange(P * n)
         sparse = _weight_matrix(P, P * n, rows, columns, values.reshape(-1))
@@ -1179,10 +1204,14 @@ def ray_travel_time_operator(
 
     def traced_memo(model: Any) -> _Rays:
         # The second derivative at a point follows a linearization there;
-        # one trace serves both while the model object is the same.
-        if memo.get("model") is not model:
-            memo["model"] = model
-            memo["rays"] = traced(model)
+        # one trace serves both while the model's values are the same. The
+        # key is the components, not the object: a vector updated in place
+        # is the same object with other values.
+        components = np.array(space.to_components(model), dtype=float)
+        key = memo.get("components")
+        if key is None or not np.array_equal(key, components):
+            memo["rays"] = traced(model, components)
+            memo["components"] = components
         return memo["rays"]
 
     def second_derivative(model: Any, direction: Any) -> LinearOperator:
@@ -1190,9 +1219,9 @@ def ray_travel_time_operator(
         rays = traced_memo(model)
         slowness = _Slowness(chart, model, reference_velocity, **kwargs)
         flat = rays.points.reshape(-1, rays.points.shape[-1])
-        along = space.evaluate(direction, chart.unembed(flat), **kwargs).reshape(
-            rays.weights.shape
-        )
+        along = space.evaluate(
+            direction, chart.evaluation_points(flat), **kwargs
+        ).reshape(rays.weights.shape)
         # ∂²s/∂m² == s: the explicit term, a path integral of s δm₁ δm₂.
         explicit = integral_operator(rays.points, rays.weights * rays.slowness * along)
         if rays.shooting is not None:
@@ -1211,7 +1240,9 @@ def ray_travel_time_operator(
             points, weights = polylines.rule(polylines.nodes(u))
             flat = points.reshape(-1, points.shape[-1])
             s_values = slowness.values(points)
-            d_values = space.evaluate(direction, chart.unembed(flat), **kwargs)
+            d_values = space.evaluate(
+                direction, chart.evaluation_points(flat), **kwargs
+            )
             return np.sum(
                 weights * (-s_values) * d_values.reshape(points.shape[:-1]), axis=-1
             )

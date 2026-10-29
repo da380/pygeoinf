@@ -163,7 +163,12 @@ class ForwardProblem:
         """The weighted misfit of a model against data.
 
         With a Gaussian error this is the squared Mahalanobis distance of the
-        residual; without an error measure it is the squared norm.
+        residual; without an error measure it is the squared norm. It is
+        computed on a data space that discretizes a function space as on any
+        other: a misfit is a potential, not a density on the data space. Its
+        value there depends on the discretization, and a limit under
+        refinement needs the error measure to be trace class, which is the
+        caller's to ensure.
         """
         residual = self.data_space.subtract(data, self._forward_operator(model))
         return self.chi_squared_from_residual(residual)
@@ -246,7 +251,9 @@ class ForwardProblem:
         evidence. Where the forward operator has a derivative, the potential
         is built from one linearization per point serving the value and the
         derivative together, so a caller asking for both pays for one forward
-        evaluation, not two.
+        evaluation, not two. As for :meth:`chi_squared`, on a data space that
+        discretizes a function space a limit under refinement needs the error
+        measure to be trace class.
 
         Args:
             data: the observations.
@@ -259,7 +266,10 @@ class ForwardProblem:
             wherever the forward operator has one.
 
         Raises:
-            ValueError: for a non-positive temperature.
+            ValueError: for a non-positive temperature, or when the problem
+                has no data uncertainty: exact data have no likelihood, and a
+                posterior conditioned on them is singular with respect to
+                the prior, with no density against it.
             TypeError: for a set-valued data uncertainty, which has no
                 likelihood.
         """
@@ -268,7 +278,15 @@ class ForwardProblem:
 
         if temperature <= 0.0:
             raise ValueError(f"A temperature is positive, got {temperature}.")
-        if self._error is not None and not isinstance(self._error, ProbabilityMeasure):
+        if self._error is None:
+            raise ValueError(
+                "The problem has no data uncertainty, so there is no "
+                "likelihood and no potential: exact data condition the prior "
+                "onto the models that fit them, which has no density against "
+                "it. Give the problem an error measure, or use chi_squared "
+                "for the misfit itself."
+            )
+        if not isinstance(self._error, ProbabilityMeasure):
             raise TypeError(
                 "A potential needs a measure-valued data uncertainty; a set "
                 "has no likelihood. Use the feasibility machinery instead."
@@ -277,7 +295,7 @@ class ForwardProblem:
         space = self.model_space
         data_space = self.data_space
         forward = self._forward_operator
-        error = self.error_measure if self.has_error else None
+        error = self.error_measure
         scale = 1.0 / (2.0 * temperature)
 
         def value(model: Any) -> float:
@@ -286,12 +304,7 @@ class ForwardProblem:
         def linearize(model: Any) -> QuadraticModel:
             linearization = forward.at(model)
             residual = data_space.subtract(data, linearization.value)
-            if error is None:
-                weighted = residual
-            else:
-                weighted = error.precision(
-                    data_space.subtract(residual, error.expectation)
-                )
+            weighted = error.precision(data_space.subtract(residual, error.expectation))
             gradient = space.scale(
                 -2.0 * scale, linearization.derivative.adjoint(weighted)
             )
@@ -311,7 +324,11 @@ class ForwardProblem:
         The error measure hardened into a set: its credible ellipsoid at
         *level*, centered on the data the model predicts. It discards
         information, and says so by being a separate, named step rather than
-        something a constructor does quietly.
+        something a constructor does quietly. Its members are the data whose
+        misfit against the model passes :meth:`chi_squared_test` at the same
+        level, and like the misfit it is built on a data space that
+        discretizes a function space as on any other; a limit under
+        refinement needs the error measure to be trace class.
 
         Args:
             model: the model whose predictions the set is centered on.
@@ -319,8 +336,14 @@ class ForwardProblem:
 
         Returns:
             An ellipsoid in the data space.
+
+        Raises:
+            ValueError: if the problem has no data uncertainty, or for a
+                level outside ``(0, 1)``.
+            TypeError: if the uncertainty is a set rather than a measure.
         """
-        return self.error_measure.credible_set(level=level).translate(
+        # unsafe=True as for the misfit, which the set is the sublevel set of.
+        return self.error_measure.credible_set(level=level, unsafe=True).translate(
             self._forward_operator(model)
         )
 
@@ -524,9 +547,9 @@ class LinearForwardProblem(ForwardProblem):
             The problem on the reduced data space.
 
         Raises:
-            ValueError: if the reduction does not map from the data space,
-                or -- with no explicit *error* -- if the current one is a set,
-                which cannot be pushed forward the way a measure can.
+            ValueError: if the reduction does not map from the data space.
+            TypeError: with no explicit *error*, if the current one is a
+                set, which cannot be pushed forward the way a measure can.
         """
         if reduction.domain != self.data_space:
             raise ValueError("The reduction must map from the data space.")

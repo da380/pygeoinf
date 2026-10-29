@@ -10,12 +10,12 @@ is why there is a check for it.
 import numpy as np
 
 from pygeoinf2 import EuclideanSpace, LinearOperator
-from pygeoinf2.symmetric_space import Sobolev
+from pygeoinf2.symmetric_space import circle
 from pygeoinf2.testing import check_operator
 
 rng = np.random.default_rng(0)
 
-X = Sobolev((16,), 2.0, 0.3)  # a weighted space: the metric is not the identity
+X = circle.Sobolev(16, 2.0, 0.3)  # a weighted space: the metric is not the identity
 Y = EuclideanSpace(3)
 matrix = rng.normal(size=(3, X.dim))
 
@@ -36,8 +36,12 @@ print(
 )
 print()
 
-check_operator(A, rng=rng)
+# The check probes with vectors drawn from a measure on the space. The space's
+# own random vector is white noise, rough in every mode at once, which is not
+# the kind of field an operator meets; a smooth prior is the better probe.
+report = check_operator(A, rng=rng, measure=X.sobolev_measure(2.0, 0.3))
 print("check_operator passed: linear, and the adjoint identity holds.")
+print("  ", report, "-- the worst relative defect it measured")
 print()
 
 # Adjoints are memoized, which matters more than it looks -- see example 4.

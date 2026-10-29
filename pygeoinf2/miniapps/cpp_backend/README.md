@@ -239,19 +239,19 @@ the covariance to 3.5e-10, and the precision factor through the factor to
 
 | member | A, the ladder | B, the point | C, the measure | D, the set |
 |---|---|---|---|---|
-| `inner_product` | 120 592 | 3 | 0 | 7 025 516 |
-| `axpy` | 209 | 1 | 1 013 | 7 009 412 |
-| `copy`, `zero` | 386, 16 | 1, 3 | 2 016, 8 | 6 676, 2 006 |
-| `scale_inplace` | 183 | 0 | 1 003 | 6 496 |
-| `random`, `white_noise` | 23, 40 136 | 0, 0 | 0, 6 | 10, 2 052 |
+| `inner_product` | 120 619 | 2 | 0 | 7 020 856 |
+| `axpy` | 218 | 1 | 1 013 | 7 004 696 |
+| `copy`, `zero` | 395, 16 | 1, 3 | 2 016, 8 | 6 672, 2 005 |
+| `scale_inplace` | 183 | 0 | 1 003 | 6 490 |
+| `random`, `white_noise` | 23, 40 136 | 0, 0 | 0, 6 | 12, 2 116 |
 | `dim`, `_key` | 11, 3 | 0, 0 | 0, 0 | 22, 0 |
-| `riesz`, the Riesz map | 10 | 44 | 3 025 | 319 |
-| point evaluation, value and adjoint | 20, 5 | 42, 42 | 3 025, 3 021 | 107, 295 |
-| local averages, value and adjoint | 20, 5 | 6, 2 | 6, 4 | 8, 24 |
-| prior covariance | 58 | 0 | 2 022 | 4 004 |
-| prior factor, value and adjoint | 20 157, 5 | 48, 44 | 1 009, 1 003 | 4 054, 4 004 |
-| prior precision; precision factor, value and adjoint | 46; 21, 5 | 0; 2, 0 | 0; 0, 0 | 0; 0, 0 |
-| the `L^2` form `G^-1 M`, and its inverse | 0, 0 | 0, 0 | 0, 0 | 4 061, 204 |
+| `riesz`, the Riesz map | 10 | 43 | 3 025 | 319 |
+| point evaluation, value and adjoint | 20, 5 | 42, 41 | 3 025, 3 021 | 103, 291 |
+| local averages, value and adjoint | 20, 5 | 6, 2 | 6, 4 | 8, 28 |
+| prior covariance | 64 | 0 | 2 022 | 4 036 |
+| prior factor, value and adjoint | 20 160, 8 | 48, 43 | 1 009, 1 003 | 4 083, 4 033 |
+| prior precision; precision factor, value and adjoint | 52; 24, 8 | 0; 2, 0 | 0; 0, 0 | 0; 0, 0 |
+| the `L^2` form `G^-1 M`, and its inverse | 0, 0 | 0, 0 | 0, 0 | 4 090, 204 |
 
 The 40 000 draws of A are `check_white_noise`'s and `check_measure`'s. C's
 3000 evaluations and Riesz maps are the pointwise standard deviation: the

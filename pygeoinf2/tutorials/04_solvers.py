@@ -30,10 +30,11 @@ from pygeoinf2 import (
     GaussianMeasure,
     LinearForwardProblem,
     LinearGaussianInversion,
+    NormalDiagonalPreconditioner,
+    NormalOperator,
     SpectralPreconditioner,
     plotting,
 )
-from pygeoinf2.inference import NormalDiagonalPreconditioner, NormalOperator
 from pygeoinf2.numerics import random_trace
 from pygeoinf2.numerics.solvers import ConvergenceError
 from pygeoinf2.symmetric_space.torus import Sobolev
@@ -190,7 +191,7 @@ print(f"the two answers agree to {same:.0e}")
 # same operator is solved with many times: the estimate at the end of this
 # tutorial takes twenty solves. Preconditioners that exploit the structure of
 # the problem more deeply — a cheap *surrogate* problem on a coarser model space — are the
-# subject of example 24.
+# subject of example 28.
 #
 # ## Estimates
 #

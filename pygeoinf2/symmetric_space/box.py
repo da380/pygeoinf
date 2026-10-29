@@ -36,6 +36,10 @@ from .fourier import PeriodicBox
 
 __all__ = ["Box", "Interval", "Lebesgue", "Sobolev"]
 
+#: Relative allowance on the boundary of the domain: a point this close
+#: outside counts as on it, and one further out is refused.
+_POSITION_RTOL = 1e-12
+
 
 class Box(PeriodicBox):
     """A field on a bounded box, embedded in a padded periodic one."""
@@ -114,7 +118,8 @@ class Box(PeriodicBox):
             self._bounds,
             self._padding,
             self._order,
-            self._length_scale,
+            # The length scale enters the metric only above order zero.
+            self._length_scale if self._order != 0.0 else None,
         )
 
     def _coordinate_key(self) -> Hashable:
@@ -133,14 +138,54 @@ class Box(PeriodicBox):
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
         return f"Box({self._shape}, bounds={self._bounds}, {kind})"
 
-    def _to_enclosing(self, point: Any) -> np.ndarray:
-        """Map a point of the domain into the enclosing periodic box."""
+    def _domain_key(self) -> Hashable:
+        """The bounds and the padding, which place the domain in the
+        enclosing box: two boxes of one period on different bounds hold
+        different fields under the same modes."""
+        return ("box", self._bounds, self._padding)
+
+    def _require_inside(self, positions: np.ndarray, /) -> None:
+        """Refuse any row of *positions* that lies outside the domain.
+
+        The padding is a numerical device, not part of the domain, and a
+        point beyond it would be wrapped round the enclosing period onto
+        another point altogether; either way the value read there is not the
+        field's at the point asked for. A point within a relative ``1e-12``
+        of the boundary counts as on it.
+
+        Raises:
+            ValueError: naming the domain and the first point outside it.
+        """
+        lower = np.array([a for a, _ in self._bounds])
+        upper = np.array([b for _, b in self._bounds])
+        slack = _POSITION_RTOL * (upper - lower)
+        outside = np.any(
+            (positions < lower - slack) | (positions > upper + slack), axis=1
+        )
+        if np.any(outside):
+            domain = " x ".join(f"[{a:g}, {b:g}]" for a, b in self._bounds)
+            point = ", ".join(f"{c:g}" for c in positions[outside][0])
+            raise ValueError(
+                f"Every point must lie in the domain, {domain}; one is at "
+                f"({point})."
+            )
+
+    def _to_enclosing(self, point: Any, /, *, check: bool = True) -> np.ndarray:
+        """Map a point of the domain into the enclosing periodic box.
+
+        Raises:
+            ValueError: if the point lies outside the domain, unless *check*
+                is false, which only a quadrature reaching into the padding
+                on purpose asks for.
+        """
         position = np.atleast_1d(np.asarray(point, dtype=float))
         if position.shape != (self.spatial_dimension,):
             raise ValueError(
                 f"A point needs {self.spatial_dimension} coordinates, got "
                 f"{position.shape}."
             )
+        if check:
+            self._require_inside(position[None, :])
         lower = np.array([a for a, _ in self._bounds])
         return position - lower + np.asarray(self._padding)
 
@@ -158,9 +203,51 @@ class Box(PeriodicBox):
             )
         )
 
+    @property
+    def reference_point(self) -> np.ndarray:
+        """The grid point nearest the domain's lower corner, inside it.
+
+        A grid point, as :meth:`pointwise_variance` needs, and a point of the
+        domain, where evaluation is allowed.
+        """
+        corner = []
+        for axis, (lower, upper) in zip(self.grid_axes, self._bounds):
+            inside = axis[axis >= lower - _POSITION_RTOL * (upper - lower)]
+            corner.append(float(np.min(inside)))
+        return np.array(corner)
+
     def basis_at(self, point: Any, /) -> np.ndarray:
-        """The basis functions at a point of the domain."""
+        """The basis functions at a point of the domain.
+
+        Raises:
+            ValueError: if the point lies outside the domain.
+        """
         return super().basis_at(self._to_enclosing(point))
+
+    def basis_matrix(
+        self, points: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> np.ndarray:
+        """The basis at many points of the domain, one row per point.
+
+        Args:
+            points: points of the domain, or a set prepared by
+                :meth:`prepare_points`, whose conversion is reused.
+            n_jobs: workers for the points. Serial by default.
+
+        Raises:
+            ValueError: if a point lies outside the domain.
+        """
+        from functools import partial
+
+        from ..parallel import parallel_map
+
+        prepared = self.prepare_points(points)
+        lengths = np.asarray(self._lengths, dtype=float)
+        enclosed = np.column_stack(prepared.data) * lengths / (2.0 * np.pi)
+        # The enclosing box's basis, by name rather than as ``super()``'s
+        # bound method, which a worker process would rebind to this class.
+        at = partial(PeriodicBox.basis_at, self)
+        return np.stack(parallel_map(at, list(enclosed), n_jobs=n_jobs))
 
     def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
         """The points as angles, through the same seam :meth:`basis_at` uses.
@@ -180,18 +267,36 @@ class Box(PeriodicBox):
 
         Returns:
             The prepared points, carrying one angle array per axis.
+
+        Raises:
+            ValueError: if a point lies outside the domain, which the
+                spectral-element spaces refuse too: the padding is not part
+                of the domain, and a point past it would wrap round.
         """
+        return self._prepared(points, check=True)
+
+    def _prepared(self, points: Sequence[Any], /, *, check: bool) -> PreparedPoints:
+        """:meth:`prepare_points`, with the domain check optional for the
+        quadratures that step into the padding on purpose."""
         if isinstance(points, PreparedPoints):
             return points
         lower = np.array([a for a, _ in self._bounds])
         shift = np.asarray(self._padding) - lower
         if isinstance(points, np.ndarray) and points.ndim == 2:
             # An array of rows moves into the enclosing box in one step.
-            inside = np.asarray(points, dtype=float) + shift
+            rows = np.asarray(points, dtype=float)
+            if rows.shape[1] == self.spatial_dimension and check:
+                self._require_inside(rows)
+            inside = rows + shift
         else:
             points = tuple(points)
-            inside = [self._to_enclosing(point) for point in points]
+            inside = [self._to_enclosing(point, check=check) for point in points]
         return PreparedPoints(points, data=super().prepare_points(inside).data)
+
+    def _prepared_nearby(self, positions: np.ndarray, /) -> PreparedPoints:
+        """Positions a finite difference away from points of the domain,
+        which may lie a step outside it."""
+        return self._prepared(positions, check=False)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly from the domain, never from the padding."""
@@ -220,6 +325,45 @@ class Box(PeriodicBox):
     def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
         """The coordinates, with nothing wrapping: see :meth:`_separation`."""
         return np.stack([self._as_point(point) for point in points]), None
+
+    def _wrap(self, point: np.ndarray, /) -> np.ndarray:
+        """Points left where they are: a bounded domain does not wrap, for the
+        reason :meth:`_separation` gives."""
+        return np.asarray(point, dtype=float)
+
+    def geodesic_ball_quadrature(
+        self, center: Any, radius: float, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating over a ball inside the domain.
+
+        The rule of :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox`,
+        unwrapped. The ball must lie in the domain: past its boundary is the
+        padding, which is not part of the domain, so an average reaching
+        into it is not an average of the field.
+
+        Args:
+            center: the ball's center.
+            radius: its radius, in the units of the domain.
+            count: roughly how many nodes.
+
+        Returns:
+            ``(nodes, weights)``.
+
+        Raises:
+            ValueError: for a negative radius, fewer than one node, or a ball
+                that leaves the domain.
+            NotImplementedError: in three dimensions or more.
+        """
+        nodes, weights = super().geodesic_ball_quadrature(center, radius, count=count)
+        try:
+            self._require_inside(np.stack(nodes))
+        except ValueError as error:
+            raise ValueError(
+                f"A ball of radius {radius:g} about "
+                f"{tuple(float(c) for c in self._as_point(center))} leaves the "
+                f"domain. {error}"
+            ) from None
+        return nodes, weights
 
     def with_order(
         self, order: float, /, *, length_scale: float | None = None

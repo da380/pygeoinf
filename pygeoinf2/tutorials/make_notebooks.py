@@ -31,6 +31,10 @@ NOTEBOOKS = HERE / "notebooks"
 
 MARKER = "# %%"
 
+# The branch of the repository the Colab cell installs from, and the README's
+# badges open the notebooks on.
+BRANCH = "<release-branch>"
+
 INSTALL = """\
 # Generated from pygeoinf2/tutorials/{name}.
 # Edit the script, not this notebook. On Google Colab the library is
@@ -47,7 +51,7 @@ if "google.colab" in sys.modules:
             "pip",
             "install",
             "--quiet",
-            "pygeoinf[{extras}] @ git+https://github.com/da380/pygeoinf@main",
+            "pygeoinf[{extras}] @ git+https://github.com/da380/pygeoinf@{branch}",
         ],
         check=True,
     )"""
@@ -115,6 +119,7 @@ def notebook(script: Path) -> str:
         name=script.name,
         extras=EXTRAS.get(script.stem, DEFAULT_EXTRAS),
         note=NOTES.get(script.stem, ""),
+        branch=BRANCH,
     )
     cells.insert(first_code, ("code", install))
     nb = nbformat.v4.new_notebook(metadata=METADATA)

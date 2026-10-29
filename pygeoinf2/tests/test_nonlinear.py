@@ -369,7 +369,7 @@ class TestAffineCheck:
         )
         check_affine(AffineOperator(A, Y.random(rng=rng)), rng=rng)
         # A deferred translation is computed on demand and checked the same.
-        check_affine(AffineOperator(A, lambda: Y.zero()), rng=rng)
+        check_affine(AffineOperator(A, lambda: Y.zero(), lazy=True), rng=rng)
 
     def test_a_wrong_derivative_or_translation_fails(self, spaces, rng):
         """Built by hand from the operator protocol, so the affine claim can
@@ -435,6 +435,40 @@ class TestAffineOperator:
         assert np.allclose(F(x), A(x) + b)
         assert F.derivative(x) is A
         check_derivative(F, x, rng=rng)
+
+    def test_a_callable_vector_is_a_translation_not_a_thunk(self, rng):
+        """A backend's vectors may be callable, a field that evaluates at a
+        point; the translation is taken as a vector unless ``lazy=True``."""
+        from .doubles import Opaque
+
+        class Field(Opaque):
+            __slots__ = ()
+
+            def __call__(self, point):
+                return float(np.polyval(self.data, point))
+
+        class FieldSpace(OpaqueSpace):
+            def zero(self):
+                return Field(np.zeros(self.dim))
+
+            def copy(self, x):
+                return Field(x.data.copy())
+
+            def random(self, *, rng=None):
+                return Field(rng.standard_normal(self.dim))
+
+        V = FieldSpace(np.array([1.0, 2.0, 3.0]))
+        b = Field(np.array([1.0, 2.0, 3.0]))
+        F = AffineOperator(LinearOperator.identity(V), b)
+        assert F.translation is b
+        assert np.allclose(F(V.zero()).data, b.data)
+        lazy = AffineOperator(LinearOperator.identity(V), lambda: b, lazy=True)
+        assert lazy.translation is b
+
+    def test_a_lazy_translation_must_be_callable(self, rng):
+        Y = EuclideanSpace(3)
+        with pytest.raises(TypeError, match="zero-argument callable"):
+            AffineOperator(LinearOperator.identity(Y), Y.zero(), lazy=True)
 
     def test_affineness_survives_the_algebra(self, rng):
         """The protocol, not a type check, carries affineness through the algebra."""
@@ -722,3 +756,173 @@ class TestTheLinearFunctionalAlgebraIsClosed:
                 representer=lambda: space.zero(),
                 derivative_components=lambda: np.zeros(space.dim),
             )
+
+
+class TestTheFunctionalAlgebraLinearizesOnce:
+    """A sum or a scaling of functionals builds its Hessian from the quadratic
+    models its parts already returned, so ``at()`` costs one linearization of
+    the forward model however the objective is assembled."""
+
+    @staticmethod
+    def misfit(space, counts):
+        """``0.5 |F(x)|^2`` with ``F`` the componentwise square, built from
+        one ``linearize`` callable that also gives a Hessian."""
+        from pygeoinf2.algebra.linearization import QuadraticModel
+
+        def value(x):
+            return 0.5 * float(np.sum(space.to_components(x) ** 4))
+
+        def linearize(x):
+            counts["linearize"] += 1
+            c = space.to_components(x)
+            derivative = LinearFunctional.from_derivative_components(space, 2.0 * c**3)
+            hessian = LinearOperator.from_matrix(
+                space, space, np.diag(6.0 * c**2), form="components"
+            )
+            return QuadraticModel(x, value(x), derivative, hessian)
+
+        def hessian(x):
+            counts["hessian"] += 1
+            return linearize(x).hessian
+
+        return Functional.from_callables(
+            space, value, linearize=linearize, hessian=hessian
+        )
+
+    def test_sums_and_scalings_reuse_the_models(self, rng):
+        X = make_weighted_space()
+        counts = {"linearize": 0, "hessian": 0}
+        phi = self.misfit(X, counts)
+        regularizer = quadratic_on(X, np.identity(X.dim))
+        x = X.random(rng=rng)
+        for objective in (
+            phi,
+            0.5 * phi,
+            phi + regularizer,
+            0.5 * phi + regularizer,
+            -0.5 * (phi + regularizer),
+        ):
+            counts.update(linearize=0, hessian=0)
+            model = objective.at(x)
+            assert model.hessian is not None
+            assert counts == {"linearize": 1, "hessian": 0}, objective
+            dx = X.random(rng=rng)
+            assert np.allclose(
+                X.to_components(model.hessian(dx)),
+                X.to_components(objective.hessian(x)(dx)),
+            )
+
+
+class TestALinearizationAndAHessianSuppliedApart:
+    def test_the_model_carries_the_hessian(self, rng):
+        """``linearize=`` without a Hessian beside ``hessian=``: ``at()``
+        returns a model with the Hessian, as ``has_hessian`` promises."""
+        from pygeoinf2.algebra.linearization import QuadraticModel
+
+        X = make_dense_metric_space(3)
+
+        def value(x):
+            return 0.5 * X.squared_norm(x)
+
+        def linearize(x):
+            return QuadraticModel(x, value(x), LinearFunctional.from_representer(X, x))
+
+        f = Functional.from_callables(
+            X, value, linearize=linearize, hessian=lambda x: LinearOperator.identity(X)
+        )
+        assert f.has_hessian
+        x = X.random(rng=rng)
+        model = f.at(x)
+        assert model.hessian is not None
+        from pygeoinf2.numerics.optimization import NewtonCG
+
+        result = NewtonCG().minimize(f, x)
+        assert X.norm(result.minimizer) < 1e-6
+
+
+class TestCheckHessian:
+    """``check_hessian``: the Hessian against differences of the gradient,
+    on a dense metric, where a Hessian written in components rather than
+    lifted by the inverse metric is wrong by a factor of the Gram matrix."""
+
+    def test_a_correct_hessian_passes(self, rng):
+        from pygeoinf2.testing import check_hessian
+
+        X = make_dense_metric_space(4)
+        M = rng.normal(size=(4, 4))
+        phi = quadratic_on(X, M @ M.T + np.identity(4))
+        report = check_hessian(phi, X.random(rng=rng), rng=rng)
+        assert (
+            report.defects["the Hessian agrees with differences of the gradient"] < 1e-6
+        )
+        assert "the Hessian is self-adjoint" in report.defects
+
+    def test_a_composed_hessian_passes(self, rng):
+        from pygeoinf2.testing import check_hessian
+
+        X = make_dense_metric_space(3)
+        Y = make_weighted_space()
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(4, 3)), form="components")
+        phi = quadratic_on(Y, np.identity(4))
+        check_hessian(0.5 * (phi @ A) + phi @ A, X.random(rng=rng), rng=rng)
+
+    def test_a_hessian_missing_the_inverse_metric_fails(self, rng):
+        from pygeoinf2.testing import check_hessian
+
+        X = make_dense_metric_space(4)
+        M = np.identity(4) * 2.0
+        good = quadratic_on(X, M)
+        wrong = Functional.from_callables(
+            X,
+            good,
+            derivative=good.derivative,
+            hessian=lambda x: LinearOperator.self_adjoint(
+                X, lambda v: X.from_components(M @ X.to_components(v))
+            ),
+        )
+        with pytest.raises(AssertionError, match="differences of the gradient"):
+            check_hessian(wrong, X.random(rng=rng), rng=rng)
+
+    def test_a_functional_without_one_is_refused(self, rng):
+        from pygeoinf2.testing import check_hessian
+
+        X = EuclideanSpace(3)
+        f = Functional.from_callables(
+            X, lambda x: float(x @ x), gradient=lambda x: 2.0 * x
+        )
+        with pytest.raises(AssertionError, match="carries a Hessian"):
+            check_hessian(f, X.random(rng=rng), rng=rng)
+
+
+class TestAnAffineMapInTheSecondOrderAlgebra:
+    """An affine map's second derivative is zero, so ``F @ (A + b)`` keeps
+    the second derivative ``F @ A`` has, ``phi @ (A + b)`` keeps a Hessian,
+    and a linear functional composed with one is a functional."""
+
+    @staticmethod
+    def setting(rng):
+        X, Y = make_dense_metric_space(3), make_weighted_space()
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(4, 3)), form="components")
+        return X, Y, AffineOperator(A, Y.random(rng=rng))
+
+    def test_the_second_derivative_is_zero(self, rng):
+        from pygeoinf2.testing import check_hessian
+
+        X, Y, F = self.setting(rng)
+        assert F.has_second_derivative
+        x = X.random(rng=rng)
+        assert Y.norm(F.second_derivative(x, X.random(rng=rng))(x)) == 0.0
+        phi = quadratic_on(Y, np.identity(Y.dim))
+        assert (phi @ F).has_hessian
+        check_hessian(phi @ F, x, rng=rng)
+
+    def test_a_linear_functional_after_it_is_a_functional(self, rng):
+        from pygeoinf2.testing import check_gradient
+
+        X, Y, F = self.setting(rng)
+        functional = LinearFunctional.from_representer(Y, Y.random(rng=rng))
+        composed = functional @ F
+        assert isinstance(composed, Functional)
+        x = X.random(rng=rng)
+        assert composed(x) == pytest.approx(functional(F(x)))
+        check_gradient(composed, x, rng=rng)

@@ -74,10 +74,13 @@ class ProbabilityMeasure[X](ABC):
     def can_sample(self) -> bool:
         """Whether the measure can be drawn from.
 
-        True here, because :meth:`sample` is abstract and so every concrete
-        measure implements it. :class:`~pygeoinf2.probability.gaussian.GaussianMeasure`
-        overrides it: a covariance without a factor defines a measure that
-        cannot be sampled, which is a real state and not an oversight.
+        True here. A measure whose :meth:`sample` refuses says so by
+        overriding it: :class:`~pygeoinf2.probability.gaussian.GaussianMeasure`,
+        whose covariance without a factor or sampler defines a measure that
+        cannot be drawn from, which is a real state and not an oversight;
+        :class:`~pygeoinf2.probability.absolutely_continuous.AbsolutelyContinuousMeasure`,
+        a density being no sampler; and the measures built on others, which
+        answer for what they are built on.
 
         Declared on the base so that a caller can ask any measure the question
         rather than asking only the ones that happen to answer.
@@ -125,13 +128,45 @@ class ProbabilityMeasure[X](ABC):
         Raises:
             ValueError: if *n* is negative.
         """
+        return self._map_draws(lambda draw: draw, n, rng=rng, n_jobs=n_jobs)
+
+    def _map_draws(
+        self,
+        function: Any,
+        n: int,
+        /,
+        *,
+        rng: Generator | None,
+        n_jobs: int | None,
+    ) -> list:
+        """*function* of each of ``n`` draws, keeping only what it returns.
+
+        The draws are those :meth:`samples` gives for the same *rng*, each
+        from its own generator spawned from it, and *function* runs where
+        the draw is made, in the worker when the loop is parallel. A
+        reduction to one number per draw so holds ``n`` numbers rather than
+        ``n`` vectors.
+
+        Args:
+            function: applied to each draw. Picklable under a process
+                backend.
+            n: how many draws.
+            rng: the generator the per-draw streams are spawned from.
+            n_jobs: workers. Serial by default.
+
+        Returns:
+            What *function* returned, in the order of the draws.
+
+        Raises:
+            ValueError: if *n* is negative.
+        """
         if n < 0:
             raise ValueError("n must be non-negative.")
         from ..parallel import parallel_map
 
-        parent = resolve_rng(rng)
+        streams = resolve_rng(rng).spawn(n)
         return parallel_map(
-            lambda stream: self.sample(rng=stream), parent.spawn(n), n_jobs=n_jobs
+            lambda stream: function(self.sample(rng=stream)), streams, n_jobs=n_jobs
         )
 
     def sample_expectation(
@@ -144,7 +179,7 @@ class ProbabilityMeasure[X](ABC):
             rng: the generator, as for :meth:`samples`.
             n_jobs: workers for the draws, as for :meth:`samples`.
         """
-        return self._domain.mean(self.samples(n, rng=rng, n_jobs=n_jobs))
+        return self._domain.sample_expectation(self.samples(n, rng=rng, n_jobs=n_jobs))
 
     # ----------------------------------------------------------------- #
     #                              Moments                              #
@@ -414,6 +449,10 @@ class ProbabilityMeasure[X](ABC):
             return NotImplemented
         return self + (-1.0 * other)
 
+    def __neg__(self) -> ProbabilityMeasure:
+        """The law of ``-X``."""
+        return -1.0 * self
+
     def __mul__(self, alpha: float) -> ProbabilityMeasure:
         """The law of ``alpha X``, so the covariance scales by ``alpha^2``."""
         if not isinstance(alpha, (int, float)):
@@ -467,10 +506,9 @@ class PushForwardMeasure[X, Y](ProbabilityMeasure[Y]):
     def can_sample(self) -> bool:
         """Only if the measure being pushed forward can be.
 
-        The base says True because ``sample`` is abstract there. A measure
-        built on another cannot make that promise on its own behalf: a
-        covariance with no factor gives a Gaussian that cannot be drawn from,
-        and pushing it through an operator does not change that.
+        A measure built on another cannot make that promise on its own
+        behalf: a covariance with no factor gives a Gaussian that cannot be
+        drawn from, and pushing it through an operator does not change that.
         """
         return self._base.can_sample
 

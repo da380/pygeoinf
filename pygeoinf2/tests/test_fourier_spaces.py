@@ -531,3 +531,45 @@ class TestWithShape:
         assert finer.spatial_dimension == box.spatial_dimension
         with pytest.raises(ValueError, match="axes"):
             box.with_shape((16, 24, 4))
+
+
+class TestALebesgueSpaceHasNoLengthScale:
+    """At order zero the length scale is not in the metric, so two Lebesgue
+    spaces that differ only in it are the same space."""
+
+    def test_the_periodic_box(self):
+        plain = PeriodicBox((8,), order=0.0)
+        scaled = PeriodicBox((8,), order=0.0, length_scale=2.0)
+        assert plain == scaled and hash(plain) == hash(scaled)
+        assert Sobolev((8,), 1.0, 0.5) != Sobolev((8,), 1.0, 0.25)
+
+    def test_the_bounded_box_and_the_sphere(self):
+        from pygeoinf2.symmetric_space import line
+
+        assert line.Line(16, order=0.0) == line.Line(16, order=0.0, length_scale=0.3)
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space import sphere
+
+        assert sphere.Sphere(4, order=0.0) == sphere.Sphere(
+            4, order=0.0, length_scale=0.3
+        )
+
+
+class TestThePointEvaluationRoute:
+    def test_the_two_routes_agree_and_an_unknown_one_is_refused(self, rng):
+        from pygeoinf2.algebra.operators import MatrixLinearOperator
+
+        space = Sobolev((32,), 2.0, 0.3)
+        points = [np.array([0.4]), np.array([2.1]), np.array([5.0])]
+        local = space.point_evaluation_operator(points)
+        dense = space.point_evaluation_operator(points, route="dense")
+        assert not isinstance(local, MatrixLinearOperator)
+        assert isinstance(dense, MatrixLinearOperator)
+        assert not isinstance(
+            space.point_evaluation_operator(points, route="local"),
+            MatrixLinearOperator,
+        )
+        x = space.random(rng=rng)
+        assert np.allclose(local(x), dense(x), atol=1e-10)
+        with pytest.raises(ValueError, match="route"):
+            space.point_evaluation_operator(points, route="sparse")

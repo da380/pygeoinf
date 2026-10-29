@@ -1081,9 +1081,23 @@ class ProximalBundleMethod(Optimizer):
     ) -> None:
         """
         Args:
-            weight: the proximal weight. Larger keeps steps shorter.
-            tolerance: stop when the model's gap falls below this times
-                ``max(|f|, 1)``, with ``f`` the best value so far.
+            weight: the starting proximal weight, in the units of a
+                subgradient per unit length. Larger keeps steps shorter. It
+                halves on every serious step and doubles on every null step,
+                within ``1e-8`` and ``1e12`` times its starting value, so a
+                weight in other units than the problem's costs iterations.
+                One so heavy that the first model, a single linearization,
+                predicts a decrease below the tolerance is not taken for
+                convergence: a linear model certifies nothing, and the weight
+                is reset to ``||g||^2 / |f|`` at the start, the weight whose
+                first step takes the linearization to zero.
+            tolerance: relative. Stop when the model's gap falls below this
+                times the larger of ``|f|``, the best value so far, and half
+                ``|f|`` at the start, the objective's own scale where its
+                minimum is zero; where the value at the start is zero, the
+                first model's gap stands in for it. There is no absolute
+                floor: the same problem in other units stops at the same
+                iterate.
             max_iterations: the cap.
             capacity: how many cuts to keep; the oldest are dropped.
             descent: the fraction of the predicted decrease a step must
@@ -1173,7 +1187,6 @@ class ProximalBundleMethod(Optimizer):
         # current center* is f(x_i) + (g_i, c - x_i), and dropping the second
         # term makes every cut look tight and the method stop at once.
         cuts: list[tuple[Any, float, Any]] = []
-        weight = self._weight
         gap = float("inf")
 
         # The bundle starts with the cut at the starting point; every later
@@ -1183,12 +1196,31 @@ class ProximalBundleMethod(Optimizer):
         # trial point just evaluated, and make the model's Gram matrix
         # exactly singular.
         cuts.append((space.copy(slope(center)), best, space.copy(center)))
+        weight = self._weight
         evaluations = 1
         history: list[float] = []
+        # The objective's scale where the best value is no help, at a
+        # minimum of zero: half the starting value, which is the decrease a
+        # first step aiming the linear model at zero predicts, or the first
+        # model's own predicted decrease where the start's value is zero.
+        reference: float | None = 0.5 * abs(best) if best != 0.0 else None
+        lightest, heaviest = 1e-8 * weight, 1e12 * weight
 
         for iteration in range(1, self._max_iterations + 1):
             candidate, gap = self._solve_model(space, center, best, cuts, weight)
-            if gap <= self._gap_tolerance * max(abs(best), 1.0):
+            if reference is None:
+                reference = gap
+            if (
+                len(cuts) == 1
+                and 0.0 < gap <= self._gap_tolerance * max(abs(best), reference)
+                and best != 0.0
+            ):
+                # One linearization is no certificate: a gap this small from
+                # it says the weight is too heavy for the problem's units.
+                weight = space.squared_norm(cuts[0][0]) / abs(best)
+                lightest, heaviest = 1e-8 * weight, 1e12 * weight
+                candidate, gap = self._solve_model(space, center, best, cuts, weight)
+            if gap <= self._gap_tolerance * max(abs(best), reference):
                 return BundleResult(
                     minimizer=center,
                     value=best,
@@ -1210,9 +1242,9 @@ class ProximalBundleMethod(Optimizer):
 
             if best - value >= self._descent * gap:
                 center, best = candidate, value  # a serious step
-                weight = max(weight * 0.5, 1e-8)
+                weight = max(weight * 0.5, lightest)
             else:
-                weight = min(weight * 2.0, 1e12)  # a null step: trust less
+                weight = min(weight * 2.0, heaviest)  # a null step: trust less
             history.append(best)
 
         return BundleResult(
@@ -1401,16 +1433,27 @@ def _minimize_on_simplex(
         quadratic: the ``Q`` above, symmetric positive semidefinite.
         linear: the ``l`` above.
         max_iterations: the cap.
-        tolerance: the KKT residual to stop at, relative to the gradient's
-            scale.
+        tolerance: the KKT residual to stop at, relative to the scale of
+            the program, the largest entry of ``Q`` and ``l``.
         warn_above: warn when the iterations run out with the residual still
-            above this. Set to infinity to silence it.
+            above this, relative to the same scale. Set to infinity to
+            silence it.
 
     Returns:
         The minimizing weights.
     """
     size = linear.size
-    step = 1.0 / max(float(np.linalg.eigvalsh(quadratic).max()), 1e-12)
+    # The scale of the gradient's entries, which the stopping test and the
+    # warning are relative to: no floor, so the answer does not depend on
+    # the units of the program.
+    scale = max(float(np.max(np.abs(quadratic))), float(np.max(np.abs(linear))))
+    if scale == 0.0:
+        return np.full(size, 1.0 / size)
+    largest = float(np.linalg.eigvalsh(quadratic).max())
+    # A curvature at rounding level against the data is a linear program,
+    # for which any step reaches the vertex; one over the data's scale keeps
+    # the step in its units.
+    step = 1.0 / largest if largest > 1e-12 * scale else 1.0 / scale
     weights = np.full(size, 1.0 / size)
     # The extrapolated point the gradient is taken at, and the momentum
     # coefficient's running term.
@@ -1426,7 +1469,7 @@ def _minimize_on_simplex(
         current = float(gradient[support].max() - gradient.min())
         if current < residual:
             best, residual = weights.copy(), current
-        if residual <= tolerance * max(float(np.abs(gradient).max()), 1.0):
+        if residual <= tolerance * scale:
             return best
 
         moved = _project_on_simplex(lookahead - step * (quadratic @ lookahead - linear))
@@ -1443,7 +1486,6 @@ def _minimize_on_simplex(
         best, residual = weights.copy(), current
     weights = best
 
-    scale = max(float(np.abs(quadratic @ weights - linear).max()), 1.0)
     if residual > warn_above * scale:
         warnings.warn(
             f"The bundle subproblem did not converge in {max_iterations} "
@@ -1476,14 +1518,42 @@ class SaddlePointResult(OptimizationResult):
     certificate: a weighting of the data."""
 
     residual: float = float("nan")
-    """``||G m + v - d||``, the feasibility gap. This is what convergence is
-    declared on -- not the objective, which is monotone in neither variable."""
+    """``||G m + v - d||``, the feasibility gap, in the data's units.
+
+    Half of what convergence is declared on: it must be small against the
+    sizes of the terms it balances, and :attr:`stationarity` must be small
+    too. Feasibility alone is not optimality -- a point on the boundary of
+    the prior that fits the data is feasible whatever its objective.
+    """
+
+    stationarity: float = float("nan")
+    """The larger of the two optimality residuals, each relative to its scale.
+
+    The model's, ``||m_prev - m|| / tau`` against the larger of ``||c||``
+    and ``||G* y||``, and the data error's, ``||v_prev - v|| / tau`` against
+    the larger of ``||y||`` and ``||c|| / ||G||``. Both are what the last
+    step left of the saddle-point conditions ``c - G* y`` in the prior's
+    normal cone and ``-y`` in the noise set's, so they vanish exactly at a
+    saddle point; the objective itself is monotone in neither variable and
+    says nothing on its own.
+    """
 
     def __repr__(self) -> str:
         return (
             f"SaddlePointResult(value={self.value:.6g}, "
             f"residual={self.residual:.3g}, converged={self.converged})"
         )
+
+
+def _relative(residual: float, scale: float) -> float:
+    """A residual against its scale; a zero residual is zero at any scale.
+
+    A positive residual against a zero scale is infinite, which no
+    tolerance accepts: there is nothing it could be small relative to.
+    """
+    if residual == 0.0:
+        return 0.0
+    return residual / scale if scale > 0.0 else float("inf")
 
 
 class ChambollePockSolver:
@@ -1502,9 +1572,22 @@ class ChambollePockSolver:
     iteration is small and the number of them is large, which is the opposite
     trade to the bundle methods and the reason to have both.
 
-    Converges at ``O(1/N)`` in the primal-dual gap when
-    ``tau sigma ||K||^2 <= 1``; the step sizes are chosen to satisfy that from
-    a power-iteration estimate of ``||G||`` unless given.
+    Converges at ``O(1/N)`` in the primal-dual gap when the steps satisfy
+    ``sigma ||K T K*|| <= 1`` for ``T`` the primal steps; unless given, they
+    are chosen to, from a power-iteration estimate of ``||G||``.
+
+    **Nothing depends on the units.** Left to the solver, the steps are set
+    per solve, separately for the model and for the data error, from
+    ``||G||``, ``||d||`` and ``||c||``: the model's step is
+    ``theta rho / ||G||``, the data error's ``theta rho ||G||`` and the dual
+    step ``theta / (rho ||G||)``, with ``rho == ||d|| / ||c||`` the ratio of
+    the sizes of the primal and the dual solution and ``theta**2 == 0.495``.
+    Rescaling the model, the data or the objective then rescales the
+    iterates and leaves the iteration otherwise unchanged. The stopping rule
+    is relative in the same way: the feasibility residual against the sizes
+    of the terms it balances, and the two stationarity residuals against
+    theirs (:attr:`SaddlePointResult.stationarity`), so ``converged`` means a
+    saddle point to the tolerance, not merely a feasible point.
 
     **It projects rather than supports.** Every
     :class:`~pygeoinf2.geometry.convex.ConvexSet` knows its own nearest point,
@@ -1544,11 +1627,19 @@ class ChambollePockSolver:
             noise: the convex set the data error lies in.
             forward: ``G``, from the model space to the data space.
             data: the observations.
-            sigma: the dual step. Chosen with *tau* from ``||G||`` if unset.
-            tau: the primal step.
+            sigma: the dual step. Given, it is used as it is, with *tau*
+                for both the model and the data error; the two must satisfy
+                ``tau sigma (||G||^2 + 1) <= 1``, and one given alone fixes
+                the other at ``0.99`` of that bound. Both unset, the steps
+                are chosen per solve, as the class docstring describes.
+            tau: the primal step; see *sigma*.
             theta: the over-relaxation, one being the standard choice.
             max_iterations: the cap.
-            tolerance: on the feasibility residual.
+            tolerance: relative. The solve has converged when the
+                feasibility residual ``||G m + v - d||`` is at most this
+                times the largest of ``||G m||``, ``||v||`` and ``||d||``,
+                and both stationarity residuals are at most this times their
+                own scales (see :attr:`SaddlePointResult.stationarity`).
             rng: for the power iteration that estimates ``||G||``.
 
         Raises:
@@ -1570,26 +1661,30 @@ class ChambollePockSolver:
         self._max_iterations = max_iterations
         self._tolerance = tolerance
 
-        if sigma is None or tau is None:
-            chosen_sigma, chosen_tau = self._steps(rng)
-            sigma = chosen_sigma if sigma is None else sigma
-            tau = chosen_tau if tau is None else tau
-        if sigma <= 0.0 or tau <= 0.0:
-            raise ValueError("The step sizes must be positive.")
+        self._norm = self._operator_norm(rng)
+        if sigma is not None or tau is not None:
+            # One step given: the other from tau sigma (||G||^2 + 1) == 0.99.
+            bound = 0.99 / (self._norm**2 + 1.0)
+            if sigma is None:
+                sigma = bound / tau if tau > 0.0 else 0.0
+            elif tau is None:
+                tau = bound / sigma if sigma > 0.0 else 0.0
+            if sigma <= 0.0 or tau <= 0.0:
+                raise ValueError("The step sizes must be positive.")
         self._sigma, self._tau = sigma, tau
 
-    def _steps(self, rng: Generator | None) -> tuple[float, float]:
-        """Steps satisfying ``tau sigma ||K||^2 <= 0.99``.
+    def _operator_norm(self, rng: Generator | None) -> float:
+        """``||G||``, from twenty power iterations on ``G* G``.
 
-        ``||K||^2 <= ||G||^2 + 1`` since ``K == [G; I]``, and ``||G||`` comes
-        from twenty power iterations -- enough for a step size, which needs an
-        estimate rather than a number.
+        Enough for a step size, which needs an estimate rather than a
+        number. A zero operator reports one, so that the steps stay finite;
+        the problem is then a projection onto the prior alone.
         """
         model_space = self._forward.domain
         vector = model_space.random(rng=rng)
         norm = model_space.norm(vector)
         if norm == 0.0:  # pragma: no cover - a zero draw
-            return 1.0, 1.0
+            return 1.0
         vector = model_space.scale(1.0 / norm, vector)
 
         estimate = 0.0
@@ -1599,9 +1694,32 @@ class ChambollePockSolver:
             if estimate == 0.0:
                 break
             vector = model_space.scale(1.0 / estimate, image)
-        operator_norm = float(np.sqrt(max(estimate, 0.0)) ** 2 + 1.0)
-        step = float(np.sqrt(0.99 / max(operator_norm, 1e-30)))
-        return step, step
+        root = float(np.sqrt(max(estimate, 0.0)))
+        return root if root > 0.0 else 1.0
+
+    def _steps(self, objective: Any) -> tuple[float, float, float]:
+        """The model's, the data error's and the dual step, for one solve.
+
+        Given steps are used as they are. Otherwise, with ``g == ||G||``,
+        ``rho == ||d|| / ||c||`` and ``theta**2 == 0.495``, the model's step
+        is ``theta rho / g``, the data error's ``theta rho g`` and the dual
+        step ``theta / (rho g)``: then ``sigma ||K T K*||`` is at most
+        ``sigma (tau_m g**2 + tau_v) == 2 theta**2 == 0.99``, and each step
+        carries the units of its variable. Where the data or the objective
+        is zero, ``rho`` is one.
+        """
+        if self._sigma is not None:
+            return self._tau, self._tau, self._sigma
+        data_size = self._forward.codomain.norm(self._data)
+        objective_size = self._forward.domain.norm(objective)
+        ratio = (
+            data_size / objective_size
+            if data_size > 0.0 and objective_size > 0.0
+            else 1.0
+        )
+        theta = float(np.sqrt(0.495))
+        g = self._norm
+        return theta * ratio / g, theta * ratio * g, theta / (ratio * g)
 
     def solve(self, objective: Any, /, *, start: Any = None) -> SaddlePointResult:
         """Maximize ``(objective, m)`` over the feasible set.
@@ -1612,17 +1730,25 @@ class ChambollePockSolver:
                 when sweeping directions.
 
         Returns:
-            The result, whose ``converged`` says whether the feasibility
-            residual reached the tolerance.
+            The result, whose ``converged`` says whether the feasibility and
+            the stationarity residuals both reached the tolerance, each
+            relative to its own scale.
         """
         model_space = self._forward.domain
         data_space = self._forward.codomain
+        tau_model, tau_noise, sigma = self._steps(objective)
+        tolerance = self._tolerance
+        data_size = data_space.norm(self._data)
+        objective_size = model_space.norm(objective)
+        # The scale of the dual variable where it is zero at the solution.
+        dual_floor = objective_size / self._norm
 
         model = model_space.zero() if start is None else model_space.copy(start)
         discrepancy = data_space.zero()
         certificate = data_space.zero()
         model_bar, discrepancy_bar = model, discrepancy
         residual = float("inf")
+        stationarity = float("inf")
         history: list[float] = []
 
         for iteration in range(1, self._max_iterations + 1):
@@ -1630,16 +1756,33 @@ class ChambollePockSolver:
             gap = data_space.subtract(
                 data_space.add(self._forward(model_bar), discrepancy_bar), self._data
             )
-            certificate = data_space.axpy(self._sigma, gap, certificate)
+            certificate = data_space.axpy(sigma, gap, certificate)
 
             # Primal descent, then back onto each set.
             pulled = self._forward.adjoint(certificate)
-            step = model_space.axpy(-self._tau, pulled, model_space.copy(model))
-            step = model_space.axpy(self._tau, objective, step)
+            step = model_space.axpy(-tau_model, pulled, model_space.copy(model))
+            step = model_space.axpy(tau_model, objective, step)
             next_model = self._prior.project(step)
 
             next_discrepancy = self._noise.project(
-                data_space.axpy(-self._tau, certificate, data_space.copy(discrepancy))
+                data_space.axpy(-tau_noise, certificate, data_space.copy(discrepancy))
+            )
+
+            # What this step left of the two optimality conditions, each
+            # against the sizes of the terms in it.
+            model_change = model_space.norm(model_space.subtract(model, next_model))
+            noise_change = data_space.norm(
+                data_space.subtract(discrepancy, next_discrepancy)
+            )
+            stationarity = max(
+                _relative(
+                    model_change / tau_model,
+                    max(objective_size, model_space.norm(pulled)),
+                ),
+                _relative(
+                    noise_change / tau_noise,
+                    max(data_space.norm(certificate), dual_floor),
+                ),
             )
 
             # Over-relaxation: the extrapolation that buys the O(1/N) rate.
@@ -1659,13 +1802,13 @@ class ChambollePockSolver:
             )
             model, discrepancy = next_model, next_discrepancy
 
+            image = self._forward(model)
             residual = data_space.norm(
-                data_space.subtract(
-                    data_space.add(self._forward(model), discrepancy), self._data
-                )
+                data_space.subtract(data_space.add(image, discrepancy), self._data)
             )
             history.append(residual)
-            if residual < self._tolerance:
+            fit = max(data_space.norm(image), data_space.norm(discrepancy), data_size)
+            if _relative(residual, fit) <= tolerance and stationarity <= tolerance:
                 return SaddlePointResult(
                     minimizer=model,
                     value=-float(model_space.inner_product(objective, model)),
@@ -1673,11 +1816,12 @@ class ChambollePockSolver:
                     iterations=iteration,
                     evaluations=iteration,
                     converged=True,
-                    message="feasibility residual reached the tolerance",
+                    message="feasibility and stationarity reached the tolerance",
                     history=history,
                     discrepancy=discrepancy,
                     certificate=certificate,
                     residual=residual,
+                    stationarity=stationarity,
                 )
 
         return SaddlePointResult(
@@ -1692,4 +1836,5 @@ class ChambollePockSolver:
             discrepancy=discrepancy,
             certificate=certificate,
             residual=residual,
+            stationarity=stationarity,
         )

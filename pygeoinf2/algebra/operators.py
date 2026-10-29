@@ -588,10 +588,10 @@ class LinearOperator[X, Y](Operator[X, Y]):
                 "SELF_ADJOINT was claimed for an operator whose domain and "
                 f"codomain differ: {self.domain!r} against {self.codomain!r}."
             )
-        # Not copy.copy: the block operators define a __new__ that takes their
-        # blocks, and the copy protocol would call it with none. Building the
-        # instance directly and taking the dictionary sidesteps __new__ and
-        # __init__ together, which is what a copy of an immutable object wants.
+        # Building the instance directly and taking the dictionary sidesteps
+        # __new__ and __init__ together, which is what a copy of an immutable
+        # object wants: the block operators' __new__ dispatches on its
+        # arguments, which a copy does not have.
         clone = object.__new__(type(self))
         clone.__dict__.update(self.__dict__)
         clone._traits = combined
@@ -665,7 +665,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
             f"dim(domain) applications, if that cost is acceptable."
         )
 
-    def with_probed_adjoint(self) -> LinearOperator[X, Y]:
+    def with_probed_adjoint(self, *, n_jobs: int | None = None) -> LinearOperator[X, Y]:
         """The same operator, its adjoint derived from its assembled matrix.
 
         For an operator whose action is known and whose adjoint is not. Such
@@ -680,6 +680,10 @@ class LinearOperator[X, Y](Operator[X, Y]):
         default: ``dim(domain)`` applications is a full assembly, and on a
         large space it is exactly what an attribute access should not hide.
 
+        Args:
+            n_jobs: workers for the assembly, one column each; worth it when
+                an application is expensive. Serial by default.
+
         Returns:
             The operator with a probed adjoint. Its traits are this one's.
 
@@ -687,7 +691,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
             TypeError: if either space has no component map, which the probe
                 needs.
         """
-        return _ProbedAdjointOperator(self)
+        return _ProbedAdjointOperator(self, n_jobs=n_jobs)
 
     # ----------------------------------------------------------------- #
     #                       Operator specialization                     #
@@ -742,7 +746,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
         ``dim(X)`` applications of the operator; rows costs ``dim(Y)``
         applications of its adjoint. For an observation operator — a few
         hundred data from a model space of many thousands — the difference is
-        two orders of magnitude, so ``"auto"`` takes whichever side is smaller.
+        two orders of magnitude, so ``"auto"`` takes whichever side is smaller,
+        and the columns when the operator has no adjoint to fill rows with.
 
         Those applications are independent of each other, which is what
         ``n_jobs`` is for: one column per worker. It is worth it when a single
@@ -756,7 +761,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
             n_jobs: workers for the column or row loop. Serial by default.
 
         Returns:
-            The matrix.
+            The matrix. On an operator that stores it in this form this is
+            the stored array itself, so treat it as read-only.
 
         Raises:
             ValueError: for an unknown *form* or *by*.
@@ -766,7 +772,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
             form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
         if form not in ("components", "galerkin"):
             raise ValueError(f"Unknown matrix form {form!r}.")
-        if by == "auto":
+        automatic = by == "auto"
+        if automatic:
             by = "rows" if self.codomain.dim < self.domain.dim else "columns"
         if by not in ("columns", "rows"):
             raise ValueError(f"Unknown fill direction {by!r}.")
@@ -775,6 +782,21 @@ class LinearOperator[X, Y](Operator[X, Y]):
             return known
 
         from ..parallel import parallel_map
+
+        # Row i of the Galerkin matrix holds the derivative components of
+        # x -> (A x, e_i)_Y == (x, A* e_i)_X, which is G_X applied to the
+        # components of the adjoint's image, not those components themselves.
+        def row(index: int) -> np.ndarray:
+            representer = self.adjoint(self.codomain.basis_vector(index))
+            return self.domain.apply_gram(self.domain.to_components(representer))
+
+        first: list[np.ndarray] = []
+        if by == "rows" and automatic and self.codomain.dim:
+            # The first row says whether there is an adjoint to fill with.
+            try:
+                first.append(row(0))
+            except NotImplementedError:
+                by = "columns"
 
         if by == "columns":
 
@@ -793,16 +815,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
                 matrix = self.codomain.apply_gram_to_columns(matrix)
             return matrix
 
-        # Row i of the Galerkin matrix holds the derivative components of
-        # x -> (A x, e_i)_Y == (x, A* e_i)_X, which is G_X applied to the
-        # components of the adjoint's image, not those components themselves.
-        adjoint = self.adjoint
-
-        def row(index: int) -> np.ndarray:
-            representer = adjoint(self.codomain.basis_vector(index))
-            return self.domain.apply_gram(self.domain.to_components(representer))
-
-        rows = parallel_map(row, range(self.codomain.dim), n_jobs=n_jobs)
+        rows = first + parallel_map(
+            row, range(len(first), self.codomain.dim), n_jobs=n_jobs
+        )
         matrix = np.stack(rows) if rows else np.zeros((0, self.domain.dim))
         if form == "components":
             # A_c == G_Y^-1 M, so the inverse metric acts down each column.
@@ -987,6 +1002,18 @@ class LinearOperator[X, Y](Operator[X, Y]):
         """
         return None
 
+    def _known_sparse(self) -> Any | None:
+        """The components matrix as a ``scipy.sparse`` array, when the
+        operator stores it sparse and can give it without densifying;
+        ``None`` otherwise.
+
+        The hook a composition reads, after :meth:`_known_scaling` and before
+        :meth:`_known_matrix`, so that the product or the diagonal of a chain
+        with a sparse factor is formed by sparse products rather than through
+        that factor's dense square.
+        """
+        return None
+
     def known_matrix(
         self, /, *, form: Literal["components", "galerkin"]
     ) -> np.ndarray | None:
@@ -1004,7 +1031,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         Returns:
             The matrix, or None when producing it would mean applying the
-            operator.
+            operator. It may be the operator's own stored array, so treat
+            it as read-only.
 
         Raises:
             ValueError: for an unknown *form*.
@@ -1152,8 +1180,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
             offsets: which diagonals, ``0`` being the main one.
             form: which matrix representation to read.
             probe: how to obtain the entries, when they have to be probed.
-            n_jobs: workers for the exact probe, whose columns are
-                independent. Serial by default.
+            n_jobs: workers for the probe, whose columns, or residue
+                classes, are independent. Serial by default.
 
         Returns:
             One row per offset, aligned as ``scipy.sparse.spdiags`` expects.
@@ -1168,6 +1196,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
             raise ValueError("At least one offset is needed.")
         if form == "auto":
             form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
+        if form not in ("components", "galerkin"):
+            raise ValueError(f"Unknown matrix form {form!r}.")
         if probe not in ("exact", "banded"):
             raise ValueError(f"Unknown probe {probe!r}.")
         known = self._known_diagonals(offsets, form)
@@ -1182,8 +1212,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
                 return self.codomain.apply_gram(components)
             return components
 
+        from ..parallel import parallel_map
+
         if probe == "exact":
-            from ..parallel import parallel_map
 
             def probe_column(column: int) -> np.ndarray:
                 return read(self(self.domain.basis_vector(column)))
@@ -1198,10 +1229,15 @@ class LinearOperator[X, Y](Operator[X, Y]):
             return result
 
         width = max(offsets) - min(offsets) + 1
-        for residue in range(width):
+
+        def probe_residue(residue: int) -> np.ndarray:
             probe_components = np.zeros(self.domain.dim)
             probe_components[residue::width] = 1.0
-            entries = read(self(self.domain.from_components(probe_components)))
+            return read(self(self.domain.from_components(probe_components)))
+
+        for residue, entries in enumerate(
+            parallel_map(probe_residue, range(width), n_jobs=n_jobs)
+        ):
             for index, offset in enumerate(offsets):
                 columns = np.arange(residue, size, width)
                 rows = columns - offset
@@ -1957,10 +1993,13 @@ class _ProbedAdjointOperator[X, Y](LinearOperator[X, Y]):
     application, or the first request for the matrix, whichever comes first.
     """
 
-    def __init__(self, base: LinearOperator[X, Y]) -> None:
+    def __init__(
+        self, base: LinearOperator[X, Y], *, n_jobs: int | None = None
+    ) -> None:
         require_coordinates(base.domain, base.codomain)
         super().__init__(base.domain, base.codomain, traits=base.traits)
         self._base = base
+        self._n_jobs = n_jobs
         self._components: np.ndarray | None = None
 
     @property
@@ -1970,7 +2009,9 @@ class _ProbedAdjointOperator[X, Y](LinearOperator[X, Y]):
 
     def _assembled(self) -> np.ndarray:
         if self._components is None:
-            self._components = self._base.matrix(form="components", by="columns")
+            self._components = self._base.matrix(
+                form="components", by="columns", n_jobs=self._n_jobs
+            )
         return self._components
 
     def _value(self, x: X) -> Y:
@@ -2102,6 +2143,18 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
 
     def _known_matrix(self, form: str) -> np.ndarray | None:
         return self._in_form(form)
+
+    def _known_sparse(self) -> Any | None:
+        from scipy.sparse import diags, issparse
+
+        if not issparse(self._stored):
+            return None
+        if self._form == "components":
+            return self._stored.tocsr()
+        if self.codomain.has_diagonal_metric:
+            # G_Y A_c with G_Y diagonal: its inverse scales the rows.
+            return (diags(1.0 / self.codomain.gram_diagonal()) @ self._stored).tocsr()
+        return None
 
     def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
         stored, codomain = self._stored, self.codomain
@@ -2357,7 +2410,9 @@ class Functional[X](Operator[X, float]):
             prox: ``(x, step) -> vector``, for a proximal method.
             linearize: ``x -> QuadraticModel``, when one call yields the value
                 and the derivative together. ``at()`` then uses it, and it
-                stands in for ``derivative`` when none is given.
+                stands in for ``derivative`` when none is given. A model
+                returned without a Hessian is given the one *hessian*
+                computes, when that is supplied.
 
         Returns:
             The functional.
@@ -2430,7 +2485,13 @@ class _CallableFunctional[X](Functional[X]):
 
     def _linearize(self, x: X) -> QuadraticModel[X]:
         if self._linearize_fn is not None:
-            return self._linearize_fn(x)
+            model = self._linearize_fn(x)
+            if model.hessian is None and self._hessian_fn is not None:
+                # The two callables are independent; the model carries both.
+                return QuadraticModel(
+                    model.point, model.value, model.derivative, self._hessian_fn(x)
+                )
+            return model
         return super()._linearize(x)
 
     def _hessian(self, x: X) -> LinearOperator[X, X]:
@@ -2683,18 +2744,39 @@ class AffineOperator[X, Y](Operator[X, Y]):
     specialization protocol keeps sums and compositions with linear operators
     inside this class, so affineness survives the algebra.
 
-    The translation may be given as a zero-argument callable, which is then
-    evaluated on the first request for it and kept.
+    With ``lazy=True`` the translation is given as a zero-argument callable
+    instead, evaluated on the first request for it and kept: an inversion's
+    constant term is one solve, and building the estimator should not pay
+    for it. Without the flag the translation is taken as a vector whatever
+    it is, so a backend whose vectors are themselves callable is safe.
     """
 
     def __init__(
         self,
         linear_part: LinearOperator[X, Y],
         translation: "Y | Callable[[], Y]",
+        *,
+        lazy: bool = False,
     ) -> None:
+        """
+        Args:
+            linear_part: the linear part ``A``.
+            translation: the translation ``b``, a vector of the codomain; or,
+                with *lazy*, a zero-argument callable returning it.
+            lazy: take *translation* as a callable to evaluate on first use.
+
+        Raises:
+            TypeError: if *lazy* is set and *translation* is not callable.
+        """
         super().__init__(linear_part.domain, linear_part.codomain)
+        if lazy and not callable(translation):
+            raise TypeError(
+                "A lazy translation is a zero-argument callable returning the "
+                f"vector; got {type(translation).__name__}."
+            )
         self._linear_part = linear_part
         self._translation = translation
+        self._pending = bool(lazy)
 
     @property
     def linear_part(self) -> LinearOperator[X, Y]:
@@ -2704,11 +2786,9 @@ class AffineOperator[X, Y](Operator[X, Y]):
     @property
     def translation(self) -> Y:
         """The translation ``b``."""
-        # A translation may be given as a thunk and is then computed on the
-        # first request and kept: an inversion's constant term is one solve,
-        # and building the estimator should not pay for it.
-        if callable(self._translation):
+        if self._pending:
             self._translation = self._translation()
+            self._pending = False
         return self._translation
 
     @property
@@ -2724,6 +2804,12 @@ class AffineOperator[X, Y](Operator[X, Y]):
 
     def _linearize(self, x: X) -> Linearization[X, Y]:
         return Linearization(x, self._value(x), self._linear_part)
+
+    def _second_derivative(self, x: X, dx: X) -> LinearOperator[X, Y]:
+        # The derivative is constant, so the second derivative is zero.
+        from .nodes import _Zero
+
+        return _Zero(self.domain, self.codomain)
 
     # --- specialization: stay affine -----------------------------------
 
@@ -2752,8 +2838,12 @@ class AffineOperator[X, Y](Operator[X, Y]):
         return None
 
     def _combine_rcompose(self, other: Operator) -> Operator | None:
-        """``other @ self`` with ``other`` linear stays affine."""
-        if isinstance(other, LinearOperator):
+        """``other @ self`` with ``other`` linear stays affine.
+
+        Not with a linear functional, whose composition must stay a
+        functional, with a gradient and a quadratic model.
+        """
+        if isinstance(other, LinearOperator) and not isinstance(other, Functional):
             return AffineOperator(other @ self._linear_part, other(self.translation))
         return None
 

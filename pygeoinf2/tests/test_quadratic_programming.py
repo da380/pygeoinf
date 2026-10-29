@@ -275,3 +275,164 @@ class TestTheTwoRoutesMeet:
                 forward,
                 data_space.zero(),
             )
+
+
+class TestChambollePockDoesNotDependOnUnits:
+    """The stop is relative to the sizes of the terms, and asks for a saddle
+    point, not feasibility alone. An absolute ``||G m + v - d|| < 1e-6``
+    would be met by one iteration on data of size ``1e-7``, with a support
+    5.4 times the true one."""
+
+    @pytest.fixture
+    def pieces(self, rng):
+        from .conftest import make_dense_metric_space, make_weighted_space
+
+        model = make_dense_metric_space(8)
+        data_space = make_weighted_space()
+        forward = LinearOperator.from_matrix(
+            model,
+            data_space,
+            rng.standard_normal((data_space.dim, model.dim)),
+            form="components",
+        )
+        raw = model.random(rng=rng)
+        truth = model.scale(0.5 / model.norm(raw), raw)
+        data = data_space.add(
+            forward(truth), data_space.scale(0.02, data_space.random(rng=rng))
+        )
+        objective = model.random(rng=rng)
+        return model, data_space, forward, data, objective
+
+    @staticmethod
+    def reference(model, data_space, forward, data, objective):
+        """The support by SLSQP in components, both metrics explicit."""
+        from scipy.optimize import minimize
+
+        gram_m, gram_d = model.gram_matrix(), data_space.gram_matrix()
+        matrix = forward.matrix(form="components")
+        c, d = model.to_components(objective), data_space.to_components(data)
+        constraints = [
+            {"type": "ineq", "fun": lambda m: 1.0 - m @ gram_m @ m},
+            {
+                "type": "ineq",
+                "fun": lambda m: 0.05**2 - (matrix @ m - d) @ gram_d @ (matrix @ m - d),
+            },
+        ]
+        result = minimize(
+            lambda m: -(c @ gram_m @ m),
+            np.zeros(model.dim),
+            constraints=constraints,
+            method="SLSQP",
+            options={"ftol": 1e-14, "maxiter": 2000},
+        )
+        return -float(result.fun)
+
+    @pytest.mark.parametrize("scale", [1.0, 1e-7, 1e5])
+    def test_the_rescaled_problem_has_the_same_support(self, pieces, scale):
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.numerics.convex import ChambollePockSolver
+
+        model, data_space, forward, data, objective = pieces
+        expected = self.reference(model, data_space, forward, data, objective)
+        solver = ChambollePockSolver(
+            Ball(model, radius=scale),
+            Ball(data_space, radius=0.05 * scale),
+            forward,
+            data_space.scale(scale, data),
+            tolerance=1e-8,
+            max_iterations=50_000,
+        )
+        result = solver.solve(objective)
+        assert result.converged
+        assert -result.value / scale == pytest.approx(expected, rel=1e-6)
+        assert result.residual <= 1e-7 * scale * data_space.norm(data)
+
+    def test_feasibility_alone_is_not_convergence(self, pieces):
+        """One step from zero lands on the prior's boundary along ``c``, a
+        point that fits small data to a small absolute residual and is far
+        from optimal; the stationarity residual is what refuses it."""
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.numerics.convex import ChambollePockSolver
+
+        model, data_space, forward, data, objective = pieces
+        scale = 1e-7
+        result = ChambollePockSolver(
+            Ball(model, radius=scale),
+            Ball(data_space, radius=0.05 * scale),
+            forward,
+            data_space.scale(scale, data),
+            max_iterations=1,
+        ).solve(objective)
+        assert not result.converged
+        assert result.stationarity > 1e-6
+
+    def test_the_splitting_route_keeps_its_inner_end_below_the_outer(self, rng):
+        """Through the feasible set, on the problem scaled by ``1e-5``, where
+        an absolute stop would put the inner end above the outer, 4.878
+        against 4.850."""
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.geometry.feasible import FeasiblePropertySet
+
+        from .conftest import make_weighted_space
+
+        model = make_weighted_space()
+        data_space = EuclideanSpace(2)
+        property_space = EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(2, 4)), form="galerkin"
+        )
+        target = LinearOperator.from_matrix(
+            model, property_space, rng.normal(size=(2, 4)), form="galerkin"
+        )
+        raw = model.random(rng=rng)
+        truth = model.scale(2.0 / model.norm(raw), raw)
+        data = forward(truth)
+        answers = {}
+        for scale in (1.0, 1e-5):
+            feasible = FeasiblePropertySet(
+                forward,
+                target,
+                Ball(model, radius=3.0 * scale),
+                data_space.scale(scale, data),
+                noise=Ball(data_space, radius=0.1 * scale),
+            )
+            for angle in (0.0, 1.0, 2.0):
+                q = np.array([np.cos(angle), np.sin(angle)])
+                split = feasible.support_result(q, via="splitting")
+                primal = feasible.support_result(q, via="primal")
+                assert split.converged
+                assert split.inner <= split.value * (1.0 + 1e-6)
+                assert split.value / scale == pytest.approx(
+                    primal.value / scale, rel=1e-5
+                )
+                answers.setdefault(angle, []).append(split.value / scale)
+        for values in answers.values():
+            assert values[0] == pytest.approx(values[1], rel=1e-8)
+
+
+class TestOnlySuccessIsSolved:
+    """Only a backend's own success status is ``"solved"``. A test of
+    ``"solved" in status.lower()`` would read OSQP's ``unsolved`` and
+    Clarabel's ``Unsolved`` and ``AlmostSolved`` as solved, and the bundle
+    method would never fall back to its own solver."""
+
+    @pytest.mark.parametrize(
+        ("reported", "success", "expected"),
+        [
+            ("solved", "solved", "solved"),
+            ("unsolved", "solved", "unsolved"),
+            ("solved inaccurate", "solved", "solved inaccurate"),
+            ("Solved", "Solved", "solved"),
+            ("Unsolved", "Solved", "Unsolved"),
+            ("AlmostSolved", "Solved", "AlmostSolved"),
+        ],
+    )
+    def test_the_mapping(self, reported, success, expected):
+        from pygeoinf2.numerics.quadratic_programming import _status
+
+        assert _status(reported, success) == expected
+
+    def test_a_capped_osqp_run_is_not_solved(self, program):
+        pytest.importorskip("osqp")
+        result = OSQPQPSolver(max_iterations=1, polish=False).solve(*program)
+        assert not result.solved

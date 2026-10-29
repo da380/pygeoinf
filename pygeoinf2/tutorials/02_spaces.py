@@ -165,8 +165,7 @@ print("representer          :", integral.representer.round(3))
 # into the real numbers, and its adjoint maps a number back into the space;
 # applied to one, it returns the representer. So every functional lives in
 # the space it acts on, through its adjoint, and the library has no separate
-# dual space and no dual vectors to keep track of. (Version 1 did, and
-# converting between the two was a place mistakes lived.)
+# dual space and no dual vectors to keep track of.
 
 # %%
 print("representer == adjoint(1):", np.allclose(integral.adjoint(1.0), np.ones(11)))

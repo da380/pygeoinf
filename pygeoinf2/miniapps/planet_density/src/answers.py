@@ -208,7 +208,7 @@ def measure_answer(
     center = after.expectation
     covariance = after.covariance.matrix(form="components")
     correlation = covariance[0, 1] / np.sqrt(covariance[0, 0] * covariance[1, 1])
-    log_evidence = inversion.log_evidence(problem.data)
+    log_evidence = inversion.log_evidence(problem.data).value
     misfit = problem.problem.chi_squared(posterior.expectation, problem.data)
     print(
         f"measure: posterior mean chi-squared {misfit:.2f}; log evidence "

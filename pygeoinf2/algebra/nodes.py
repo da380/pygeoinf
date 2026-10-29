@@ -272,17 +272,41 @@ class _Adjoint[X, Y](LinearOperator[Y, X]):
             return transposed
         return self.codomain.solve_gram_to_columns(transposed)
 
+    def _known_sparse(self) -> Any | None:
+        # A*_c == G_X^-1 A_c^T G_Y, sparse when both metrics are diagonal.
+        from scipy.sparse import diags
+
+        stored = self._base._known_sparse()
+        domain, codomain = self._base.domain, self._base.codomain
+        if stored is None or not (
+            isinstance(domain, CoordinateSpace)
+            and isinstance(codomain, CoordinateSpace)
+            and domain.has_diagonal_metric
+            and codomain.has_diagonal_metric
+        ):
+            return None
+        return (
+            diags(1.0 / domain.gram_diagonal())
+            @ stored.T
+            @ diags(codomain.gram_diagonal())
+        ).tocsr()
+
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:
-        if form != "galerkin":
-            # Only the Galerkin form transposes cleanly; the components form of
-            # an adjoint carries G_X^-1 across the rows.
+        # Only the Galerkin form transposes cleanly; the components form of an
+        # adjoint carries G_X^-1 across the rows, which is a division row by
+        # row on a diagonal metric and nothing so cheap otherwise.
+        on_diagonal_metric = (
+            isinstance(self.codomain, CoordinateSpace)
+            and self.codomain.has_diagonal_metric
+        )
+        if form != "galerkin" and not on_diagonal_metric:
             return None
         size = min(self.domain.dim, self.codomain.dim)
         # Transposing swaps offset k for -k, and in the spdiags alignment the
         # entries slide by k columns: (A^T)[c - k, c] == A[c, c - k].
-        mirrored = self._base._known_diagonals(tuple(-k for k in offsets), form)
+        mirrored = self._base._known_diagonals(tuple(-k for k in offsets), "galerkin")
         if mirrored is None:
             return None
         result = np.zeros((len(offsets), size))
@@ -292,6 +316,14 @@ class _Adjoint[X, Y](LinearOperator[Y, X]):
                 result[index, offset:] = row[: size - offset]
             else:
                 result[index, : size + offset] = row[-offset:]
+        if form != "galerkin":
+            # result[i, c] sits in row c - offsets[i], divided by g there.
+            metric = self.codomain.gram_diagonal()
+            columns = np.arange(size)
+            for index, offset in enumerate(offsets):
+                rows = columns - offset
+                valid = (rows >= 0) & (rows < self.codomain.dim)
+                result[index, valid] /= metric[rows[valid]]
         return result
 
     def apply_block(
@@ -361,6 +393,10 @@ class _Scaled[X, Y](LinearOperator[X, Y]):
 
     def _known_scaling(self) -> np.ndarray | None:
         known = self._base._known_scaling()
+        return None if known is None else self._alpha * known
+
+    def _known_sparse(self) -> Any | None:
+        known = self._base._known_sparse()
         return None if known is None else self._alpha * known
 
     def _known_diagonals(
@@ -497,6 +533,17 @@ class _Sum[X, Y](LinearOperator[X, Y]):
             total = np.array(known) if total is None else total + known
         return total
 
+    def _known_scaling(self) -> np.ndarray | None:
+        # A sum of scalings is the scaling by the sum.
+        total = None
+        for term in self._terms:
+            known = term._known_scaling()
+            if known is None:
+                return None
+            known = np.asarray(known, dtype=float)
+            total = known.copy() if total is None else total + known
+        return total
+
     def _known_diagonals(
         self, offsets: tuple[int, ...], form: str
     ) -> np.ndarray | None:
@@ -591,6 +638,49 @@ def _apply_chain(
             index += 1
         result = target_of(last).from_components(components)
     return result
+
+
+def _is_sparse(matrix: Any) -> bool:
+    from scipy.sparse import issparse
+
+    return issparse(matrix)
+
+
+def _chain_product(left: Any, right: Any, largest: int) -> Any | None:
+    """``left @ right`` for the factors of a known chain: one-dimensional
+    scalings, dense arrays and sparse ones. A scaling scales rows or
+    columns; a product of two arrays is formed only when it holds no more
+    than *largest* entries, and ``None`` is returned otherwise."""
+    from scipy.sparse import diags
+
+    if left.ndim == 1 and right.ndim == 1:
+        return left * right
+    if left.ndim == 1:
+        return diags(left) @ right if _is_sparse(right) else left[:, None] * right
+    if right.ndim == 1:
+        return left @ diags(right) if _is_sparse(left) else left * right[None, :]
+    if _is_sparse(left) and _is_sparse(right):
+        product = (left @ right).tocsr()
+        return product if product.nnz <= largest else None
+    if left.shape[0] * right.shape[1] > largest:
+        return None
+    return np.asarray(left @ right)
+
+
+def _diagonal_of_product(first: Any, inner: Any) -> np.ndarray:
+    """The main diagonal of ``first @ inner``, ``sum_j F_ij I_ji``, without
+    the product."""
+    if first.ndim == 1 and inner.ndim == 1:
+        return first * inner
+    if first.ndim == 1:
+        return first * np.asarray(inner.diagonal()).ravel()
+    if inner.ndim == 1:
+        return np.asarray(first.diagonal()).ravel() * inner
+    if _is_sparse(first):
+        return np.asarray(first.multiply(inner.T).sum(axis=1)).ravel()
+    if _is_sparse(inner):
+        return np.asarray(inner.T.multiply(first).sum(axis=1)).ravel()
+    return np.einsum("ij,ji->i", first, inner)
 
 
 class _Composition[X, Y](LinearOperator[X, Y]):
@@ -696,18 +786,25 @@ class _Composition[X, Y](LinearOperator[X, Y]):
 
         return chained
 
-    def _known_factors(self) -> list[np.ndarray] | None:
+    def _known_factors(self) -> list[Any] | None:
         """The factors' component matrices, when every one is known.
 
         A factor that is a scaling of components is returned as its
         diagonal, a one-dimensional array, rather than as the square matrix
-        it would write down: the product scales rows or columns by it.
+        it would write down: the product scales rows or columns by it. A
+        factor stored sparse stays a ``scipy.sparse`` array, whose ``size``
+        counts its stored entries, so the guards below weigh it by what it
+        holds and never by its dense square.
         """
-        known = []
+        known: list[Any] = []
         for factor in self._factors:
             scaling = factor._known_scaling()
             if scaling is not None:
                 known.append(np.asarray(scaling, dtype=float))
+                continue
+            sparse = factor._known_sparse()
+            if sparse is not None:
+                known.append(sparse)
                 continue
             matrix = factor._known_matrix("components")
             if matrix is None:
@@ -741,18 +838,17 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         largest = max((matrix.size for matrix in known if matrix.ndim == 2), default=0)
         product = known[0]
         for matrix in known[1:]:
-            if product.ndim == 1 and matrix.ndim == 1:
-                product = product * matrix
-            elif product.ndim == 1:
-                product = product[:, None] * matrix
-            elif matrix.ndim == 1:
-                product = product * matrix[None, :]
-            else:
-                if product.shape[0] * matrix.shape[1] > largest:
-                    return None
-                product = product @ matrix
+            product = _chain_product(product, matrix, largest)
+            if product is None:
+                return None
         if product.ndim == 1:
             product = np.diag(product)
+        elif _is_sparse(product):
+            # The dense answer is asked for; it is formed only if it is no
+            # larger than what the factors already hold.
+            if product.shape[0] * product.shape[1] > largest:
+                return None
+            product = product.toarray()
         if form == "components":
             return product
         return self.codomain.apply_gram_to_columns(product)
@@ -767,10 +863,17 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         # expand, as above.
         if offsets != (0,) or self.domain.dim != self.codomain.dim:
             return None
-        if form == "galerkin" and not (
-            isinstance(self.codomain, CoordinateSpace) and self.codomain.is_orthonormal
-        ):
-            return None
+        # The Galerkin diagonal is the components one on an orthonormal
+        # basis, and that one times the metric's diagonal on a diagonal
+        # metric, G_ii (A_c)_ii; on any other metric it mixes the columns.
+        metric = None
+        if form == "galerkin":
+            if not isinstance(self.codomain, CoordinateSpace):
+                return None
+            if not self.codomain.is_orthonormal:
+                if not self.codomain.has_diagonal_metric:
+                    return None
+                metric = np.asarray(self.codomain.gram_diagonal(), dtype=float)
         # A diagonal factor (one-dimensional) scales rows or columns, as in
         # ``_known_matrix``.
         known = self._known_factors()
@@ -779,25 +882,12 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         largest = max((matrix.size for matrix in known if matrix.ndim == 2), default=0)
         inner = known[-1]
         for matrix in reversed(known[1:-1]):
-            if matrix.ndim == 1 and inner.ndim == 1:
-                inner = matrix * inner
-            elif matrix.ndim == 1:
-                inner = matrix[:, None] * inner
-            elif inner.ndim == 1:
-                inner = matrix * inner[None, :]
-            else:
-                if matrix.shape[0] * inner.shape[1] > largest:
-                    return None
-                inner = matrix @ inner
-        first = known[0]
-        if first.ndim == 1 and inner.ndim == 1:
-            diagonal = first * inner
-        elif first.ndim == 1:
-            diagonal = first * np.diagonal(inner)
-        elif inner.ndim == 1:
-            diagonal = np.diagonal(first) * inner
-        else:
-            diagonal = np.einsum("ij,ji->i", first, inner)
+            inner = _chain_product(matrix, inner, largest)
+            if inner is None:
+                return None
+        diagonal = _diagonal_of_product(known[0], inner)
+        if metric is not None:
+            diagonal = metric * diagonal
         return np.asarray(diagonal, dtype=float)[None, :]
 
     def apply_block(
@@ -1032,6 +1122,15 @@ def linear_composition(factors: Sequence[LinearOperator]) -> LinearOperator:
 # (giving `F* H F`) or carries a second derivative.
 
 
+def _model_hessian(
+    functional: Functional, model: Linearization, x: Any
+) -> LinearOperator:
+    """The Hessian a functional's quadratic model carries, or, when the
+    model came without one, the functional's own at *x*."""
+    hessian = getattr(model, "hessian", None)
+    return functional.hessian(x) if hessian is None else hessian
+
+
 class _FunctionalSum[X](_OperatorSum[X, float], Functional[X]):
     """``phi + psi``, still a functional."""
 
@@ -1042,7 +1141,16 @@ class _FunctionalSum[X](_OperatorSum[X, float], Functional[X]):
         for part in parts[1:]:
             value = value + part.value
             derivative = derivative + part.derivative
-        hessian = self._hessian(x) if self.has_hessian else None
+        hessian = None
+        if self.has_hessian:
+            # From the models already in hand: asking each term for its
+            # Hessian afresh would linearize it a second time.
+            hessians = [
+                _model_hessian(term, part, x) for term, part in zip(self._terms, parts)
+            ]
+            hessian = hessians[0]
+            for extra in hessians[1:]:
+                hessian = hessian + extra
         return QuadraticModel(x, value, derivative, hessian)
 
     @property
@@ -1065,7 +1173,9 @@ class _FunctionalScaled[X](_OperatorScaled[X, float], Functional[X]):
 
     def _linearize(self, x: X) -> QuadraticModel[X]:
         part = self._base.at(x)
-        hessian = self._hessian(x) if self.has_hessian else None
+        hessian = None
+        if self.has_hessian:
+            hessian = _model_hessian(self._base, part, x) * self._alpha
         return QuadraticModel(
             x,
             self._alpha * part.value,

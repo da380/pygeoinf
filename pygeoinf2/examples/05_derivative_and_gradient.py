@@ -13,13 +13,12 @@ happens.
 
 import numpy as np
 
-from pygeoinf2 import LinearFunctional
-from pygeoinf2.symmetric_space import Sobolev
+from pygeoinf2 import EuclideanSpace, Functional, LinearFunctional
+from pygeoinf2.symmetric_space import circle
 from pygeoinf2.testing import check_gradient
-from pygeoinf2.algebra.operators import Functional
 
 rng = np.random.default_rng(0)
-X = Sobolev((16,), 2.0, 0.3)
+X = circle.Sobolev(16, 2.0, 0.3)
 
 # What an adjoint code returns: an array of partial derivatives.
 g = rng.normal(size=X.dim)
@@ -40,8 +39,6 @@ print()
 
 # The distinction is invisible on an orthonormal basis, which is exactly why
 # the error survives: it does not show up in the toy problem.
-from pygeoinf2 import EuclideanSpace  # noqa: E402
-
 flat = EuclideanSpace(X.dim)
 flat_functional = LinearFunctional.from_derivative_components(flat, g)
 print(
@@ -71,9 +68,12 @@ wrong = Functional.from_callables(
     X, value, gradient=lambda x: X.from_components(matrix @ X.to_components(x))
 )
 
-check_gradient(right, X.random(rng=rng), rng=rng)
-print("check_gradient passes on the correct functional.")
+# Probe directions from a smooth measure on the space, not white noise.
+probes = X.sobolev_measure(2.0, 0.3)
+at = probes.sample(rng=rng)
+print("check_gradient passes on the correct functional:")
+print("  ", check_gradient(right, at, rng=rng, measure=probes))
 try:
-    check_gradient(wrong, X.random(rng=rng), rng=rng)
+    check_gradient(wrong, at, rng=rng, measure=probes)
 except AssertionError:
     print("check_gradient FAILS when the derivative is passed as a gradient.")

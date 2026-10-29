@@ -21,6 +21,7 @@ from ..spectral_element._points import LocalEvaluation
 from ..spectral_element.base import (
     _EXTENSIONS,
     _NODES_PER_MODE,
+    _default_element_length,
     Boundary,
     LengthScale,
     SpectralElementSpace,
@@ -162,9 +163,11 @@ class Disk(SpectralElementSpace):
             else:
                 wavenumber = (mmax + 0.81 * mmax ** (1.0 / 3.0) + 1.0) / outer
                 wavenumber *= probe.max() / probe.min()
-            element_length = min(
-                (ngll - 1) * np.pi / (_NODES_PER_MODE * max(wavenumber, 1e-300)),
-                0.5 * float(probe.min()),
+            element_length = _default_element_length(
+                min(
+                    (ngll - 1) * np.pi / (_NODES_PER_MODE * max(wavenumber, 1e-300)),
+                    0.5 * float(probe.min()),
+                )
             )
         element_length = float(element_length)
         if element_length <= 0.0:

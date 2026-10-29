@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from pygeoinf2 import Traits
-from pygeoinf2.symmetric_space import Box, Interval, lift_formal_adjoint
+from pygeoinf2.symmetric_space import Box, Interval, lift_formal_adjoint, line, plane
 from pygeoinf2.symmetric_space.box import Box as BoxClass
 from pygeoinf2.testing import (
     check_coordinates,
@@ -116,6 +116,68 @@ class TestBoundedDomains:
         assert components @ space.basis_at(point) == pytest.approx(
             field[index], abs=1e-10
         )
+
+    @pytest.mark.parametrize(
+        "make, outside",
+        [
+            (
+                lambda: line.Sobolev(64, 1.0, 0.05, lower=0.0, upper=1.0),
+                [np.array([1.5])],
+            ),
+            (
+                lambda: plane.Sobolev(
+                    (16, 16), 2.0, 0.1, bounds=[(0.0, 1.0), (5.0, 6.0)]
+                ),
+                [np.array([0.5, 4.9])],
+            ),
+            (
+                lambda: Box(
+                    (16, 12),
+                    bounds=((0.0, 1.0), (-1.0, 1.0)),
+                    order=2.0,
+                    length_scale=0.2,
+                ),
+                [np.array([-0.05, 0.0])],
+            ),
+        ],
+        ids=["line", "plane", "box"],
+    )
+    def test_a_point_outside_the_domain_is_refused(self, make, outside):
+        """The padding is not part of the domain, and a point past it would
+        wrap round onto another; every route refuses, as the spectral-element
+        spaces do."""
+        space = make()
+        message = "Every point must lie in the domain"
+        inside = [np.array([0.5 * (a + b) for a, b in space.bounds])]
+        with pytest.raises(ValueError, match=message):
+            space.point_evaluation_operator(inside + outside)
+        with pytest.raises(ValueError, match=message):
+            space.point_evaluation_operator(inside + outside, route="dense")
+        with pytest.raises(ValueError, match=message):
+            space.dirac(outside[0])
+        with pytest.raises(ValueError, match=message):
+            space.basis_at(outside[0])
+        with pytest.raises(ValueError, match=message):
+            space.prepare_points(np.stack(inside + outside))
+        on_the_boundary = np.array([b for _, b in space.bounds])
+        assert space.basis_at(on_the_boundary).shape == (space.dim,)
+
+    def test_a_ball_leaving_the_domain_is_refused(self):
+        space = Interval(64, lower=0.0, upper=1.0, order=1.0, length_scale=0.05)
+        with pytest.raises(ValueError, match="leaves the domain"):
+            space.geodesic_ball_average_operator([np.array([0.95])], 0.1)
+        space.geodesic_ball_average_operator([np.array([0.85])], 0.1)
+
+    def test_a_domain_away_from_the_origin_evaluates_inside_it(self, rng):
+        """Paths, balls and the reference point all stay in a domain that
+        does not contain the origin."""
+        space = Interval(64, lower=5.0, upper=6.0, order=1.0, length_scale=0.05)
+        field = space.project_function(lambda t: 1.0)
+        path = space.path_integral_operator([(np.array([5.2]), np.array([5.8]))])
+        assert path(field)[0] == pytest.approx(0.6, rel=1e-3)
+        ball = space.geodesic_ball_average_operator([np.array([5.5])], 0.1)
+        assert ball(field)[0] == pytest.approx(1.0, rel=1e-3)
+        assert 5.0 <= space.reference_point[0] <= 6.0
 
     def test_random_points_stay_inside_the_domain(self, rng):
         space = Interval(32, lower=2.0, upper=5.0)
@@ -482,3 +544,40 @@ class TestSphereGrids:
         space = sphere_module.Lebesgue(6)
         with pytest.raises(ValueError, match="shape"):
             space.plotting_grid(np.zeros((3, 3)))
+
+
+class TestDegreeTransferNeedsOneDomain:
+    def test_boxes_on_different_bounds_are_refused(self):
+        from pygeoinf2.symmetric_space.fourier import PeriodicBox
+
+        here = line.Lebesgue(16)
+        elsewhere = line.Lebesgue(32, lower=5.0, upper=6.0)
+        with pytest.raises(ValueError, match="common domain"):
+            here.degree_transfer_operator(elsewhere)
+        with pytest.raises(ValueError, match="common domain"):
+            here.degree_transfer_operator(PeriodicBox((32,), lengths=here.lengths))
+        finer = line.Lebesgue(32)
+        assert here.degree_transfer_operator(finer).codomain == finer
+
+
+class TestABoxsReferencePointIsAGridPointOfTheDomain:
+    def test_a_pointwise_calibration_holds_at_the_grid_points(self):
+        """The calibration reads the variance at the reference point, which
+        must be a grid point, where every grid point's variance is the same;
+        between grid points it dips."""
+        space = plane.Sobolev((6, 4), 2.0, 0.1, bounds=[(0.3, 1.3), (0.3, 1.3)])
+        reference = space.reference_point
+        assert all(
+            np.any(np.isclose(axis, value))
+            for axis, value in zip(space.grid_axes, reference)
+        )
+        measure = space.invariant_measure(
+            space.sobolev_symbol(-2.0, 0.01), pointwise_std=1.0
+        )
+        inside = [
+            np.array([x, y])
+            for x in space.grid_axes[0]
+            for y in space.grid_axes[1]
+            if 0.3 <= x <= 1.3 and 0.3 <= y <= 1.3
+        ]
+        assert np.allclose(space.pointwise_variance_at(measure, inside), 1.0)

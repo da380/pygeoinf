@@ -637,3 +637,147 @@ class TestALowRankProductIsNeverExpanded:
         assert measure.hilbert_schmidt_norm() == pytest.approx(
             float(np.sqrt(np.sum(gram * gram.T)))
         )
+
+
+class TestASumWithTheIdentityStaysDiagonal:
+    """``C + I``, ``sigma^2 I + D``: the sum of a diagonal and the identity is
+    a diagonal, so a product through it scales rows rather than forming a
+    dense square."""
+
+    def test_either_order_gives_a_diagonal(self, rng):
+        space = make_dense_metric_space(5)
+        values = rng.uniform(1.0, 2.0, 5)
+        D = DiagonalLinearOperator(space, values)
+        identity = LinearOperator.identity(space)
+        for total in (D + identity, identity + D):
+            assert isinstance(total, DiagonalLinearOperator)
+            assert np.allclose(total.eigenvalues, values + 1.0)
+            x = space.random(rng=rng)
+            assert np.allclose(total(x), D(x) + x)
+
+    def test_the_traits_follow_on_a_diagonal_metric(self, rng):
+        from .conftest import make_weighted_space
+
+        space = make_weighted_space()
+        D = DiagonalLinearOperator(space, rng.uniform(1.0, 2.0, space.dim))
+        total = D + LinearOperator.identity(space)
+        assert Traits.POSITIVE_DEFINITE & total.traits
+
+    def test_a_product_through_it_reads_the_scaling(self, rng):
+        space = make_dense_metric_space(6)
+        other = make_dense_metric_space(4)
+        A = LinearOperator.from_matrix(
+            other, space, rng.normal(size=(6, 4)), form="components"
+        )
+        D = DiagonalLinearOperator(space, rng.uniform(1.0, 2.0, 6))
+        normal = A.adjoint @ (D + LinearOperator.identity(space)) @ A
+        assert normal.known_matrix(form="components") is not None
+        assert normal.matrix(form="components") == pytest.approx(
+            probed(normal).matrix(form="components")
+        )
+
+    def test_a_sum_of_scalings_is_a_scaling(self, rng):
+        from .conftest import make_weighted_space
+
+        space = make_weighted_space()
+        first = BlockDiagonalLinearOperator(
+            [DiagonalLinearOperator(space, rng.uniform(1.0, 2.0, space.dim))] * 2
+        )
+        second = BlockDiagonalLinearOperator(
+            [DiagonalLinearOperator(space, rng.uniform(1.0, 2.0, space.dim))] * 2
+        )
+        total = first + second
+        assert np.allclose(
+            total._known_scaling(), first._known_scaling() + second._known_scaling()
+        )
+
+
+class TestASparseFactorIsNeverDensified:
+    """The diagonal of ``A* R A`` with ``A`` sparse is read by sparse
+    products: forming ``A``'s dense square to produce ``n`` numbers is what a
+    diagonal exists to avoid."""
+
+    @pytest.fixture
+    def no_densifying(self, monkeypatch):
+        def refuse(self):
+            raise AssertionError("a sparse matrix was densified")
+
+        monkeypatch.setattr(MatrixLinearOperator, "_dense", refuse)
+
+    @staticmethod
+    def tridiagonal(space, rng, form="components"):
+        n = space.dim
+        from scipy.sparse import diags
+
+        matrix = diags(
+            [rng.normal(size=n - 1), rng.normal(size=n) + 4.0, rng.normal(size=n - 1)],
+            [-1, 0, 1],
+            format="csr",
+        )
+        return LinearOperator.from_matrix(space, space, matrix, form=form)
+
+    @pytest.mark.parametrize("stored", ["components", "galerkin"])
+    def test_the_diagonal_of_a_normal_operator(self, rng, stored, no_densifying):
+        from .conftest import WeightedSpace
+
+        space = WeightedSpace(rng.uniform(0.5, 2.0, 40))
+        A = self.tridiagonal(space, rng, form=stored)
+        R = DiagonalLinearOperator(space, rng.uniform(1.0, 2.0, space.dim))
+        normal = A.adjoint @ R @ A
+        for form in FORMS:
+            assert normal.diagonals(form=form) == pytest.approx(
+                probed(normal).diagonals(form=form)
+            )
+
+    def test_a_large_one_stays_small(self, rng, no_densifying):
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space = EuclideanSpace(5000)
+        A = self.tridiagonal(space, rng)
+        R = DiagonalLinearOperator(space, rng.uniform(1.0, 2.0, space.dim))
+        diagonal = (A.adjoint @ R @ A).diagonals()[0]
+        stored = A.stored_matrix
+        expected = np.asarray(
+            stored.T.multiply(stored.T.multiply(R.eigenvalues)).sum(axis=1)
+        ).ravel()
+        assert diagonal == pytest.approx(expected)
+
+
+class TestTheGalerkinDiagonalOnADiagonalMetric:
+    """On a diagonal metric the Galerkin diagonal of a composition is the
+    components one times the metric's, a read; the Jacobi preconditioner of
+    a normal operator on a Sobolev space must not probe it column by
+    column."""
+
+    def test_a_normal_operator_is_read(self, rng):
+        from .conftest import make_weighted_space
+
+        space = make_weighted_space()
+        data = make_dense_metric_space(3)
+        A = LinearOperator.from_matrix(
+            space, data, rng.normal(size=(3, space.dim)), form="components"
+        )
+        normal = A.adjoint @ A + LinearOperator.identity(space)
+        composition = A.adjoint @ A
+        assert composition._known_diagonals((0,), "galerkin") is not None
+        for form in FORMS:
+            assert composition.diagonals(form=form) == pytest.approx(
+                probed(composition).diagonals(form=form)
+            )
+        with counting_applications() as counts:
+            JacobiPreconditioner()(normal)
+        assert counts["n"] == 0
+
+    def test_an_adjoints_components_diagonals_are_read(self, rng):
+        from .conftest import make_weighted_space
+
+        space = make_weighted_space()
+        A = LinearOperator.from_matrix(
+            space, space, rng.normal(size=(space.dim, space.dim)), form="components"
+        )
+        assert A.adjoint._known_diagonals(OFFSETS, "components") is not None
+        assert A.adjoint.diagonals(offsets=OFFSETS, form="components") == (
+            pytest.approx(
+                probed(A.adjoint).diagonals(offsets=OFFSETS, form="components")
+            )
+        )

@@ -243,7 +243,7 @@ print("R^3 does not:          ", R3.is_function_space)
 # %% [markdown]
 # What *does* survive refinement is a density **relative to another
 # measure**: the posterior relative to the prior, for instance, whose log is
-# the data misfit and is finite for every draw. Tutorial 6 meets it, as the
+# the data misfit and is finite for every draw. Tutorial 7 meets it, as the
 # density a posterior carries. Sampling methods are built on that, and it is
 # why they can be made to work in any dimension.
 

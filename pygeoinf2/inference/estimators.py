@@ -82,11 +82,11 @@ class PointEstimator(Estimator):
 
 
 class MeasureEstimator(Estimator):
-    """An estimator returning a probability measure on the target space."""
+    """An estimator returning a probability measure on the property space."""
 
 
 class SetEstimator(Estimator):
-    """An estimator returning a subset of the target space."""
+    """An estimator returning a subset of the property space."""
 
 
 class LinearPointEstimator(PointEstimator, AffineOperator):
@@ -95,19 +95,24 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
     It is an :class:`~pygeoinf2.algebra.operators.AffineOperator`, ``d -> B d +
     t``, and carries its error budget alongside the estimate itself. With
     ``A`` the forward operator, ``T`` the property operator and ``e`` the data
-    error, the estimate of ``T m`` from data ``d == A m + e`` is in error by
+    error, of expectation ``mu_e``, the estimate of ``T m`` from data
+    ``d == A m + e`` is in error by
 
     .. code-block:: text
 
-        B d - T m == (B A - T) m + B e
+        B d + t - T m == [B (A m + mu_e) + t - T m] + B (e - mu_e)
 
-    and the budget is the two operators in that expression:
+    The first term is the bias, the error the estimate makes on average; the
+    second is the noise, of mean zero. An estimator that removes the error's
+    expectation has ``t == -B mu_e`` and the bias is ``(B A - T) m``; one
+    confined to an affine subspace keeps a constant part as well. The
+    budget is two operators, each returned by a method of the same name:
 
-    ``resolution``
+    :meth:`resolution`
         ``B A``, the averaging kernel: how the estimate sees the true model.
-        Its departure from ``T`` is the first term, the bias, which
-        :meth:`bias` evaluates for a given model.
-    ``propagated_covariance``
+        Its departure from ``T`` is what makes the bias, which :meth:`bias`
+        evaluates for a given model.
+    :meth:`propagated_covariance`
         ``B R B*``, the data error mapped into the property space: the
         covariance of the second term.
 
@@ -124,6 +129,7 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
         /,
         *,
         translation: Any = None,
+        lazy: bool = False,
         forward_operator: LinearOperator | None = None,
         error: ProbabilityMeasure | None = None,
         property_operator: LinearOperator | None = None,
@@ -131,9 +137,15 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
         """
         Args:
             operator: ``B``, mapping data to the property space.
-            translation: an offset added to ``B d``; zero if omitted.
+            translation: an offset added to ``B d``, a vector of the
+                property space; zero if omitted. With *lazy*, a
+                zero-argument callable computing it on first use instead.
+            lazy: take *translation* as such a callable. An estimator whose
+                offset costs a solve passes one, so that building it does
+                not pay for the solve.
             forward_operator: ``A``, kept so ``resolution`` can be formed.
-            error: the data error, kept so its covariance can be propagated.
+            error: the data error, kept so its covariance can be propagated
+                and its expectation taken in :meth:`bias`.
             property_operator: ``T``, from the model space to the property
                 space, which :meth:`bias` subtracts from the resolution. The
                 identity when omitted, the estimator then being of the model
@@ -144,10 +156,10 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
                 model space ``A`` acts on, so that there is no identity to
                 take, or if ``T`` is given on the wrong spaces.
         """
-        super().__init__(
-            operator,
-            operator.codomain.zero() if translation is None else translation,
-        )
+        if translation is None:
+            super().__init__(operator, operator.codomain.zero())
+        else:
+            super().__init__(operator, translation, lazy=lazy)
         if property_operator is None:
             if (
                 forward_operator is not None
@@ -196,9 +208,8 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
         """The estimate ``B d + t``."""
         return self._value(data)
 
-    @property
     def resolution(self) -> LinearOperator:
-        """``B A``: what the estimate reports when the truth is ``m`` and the data are exact.
+        """``B A``: how the estimate sees the model, the part of it that varies with the truth.
 
         The resolution operator, which says what is actually being estimated:
         it is the property operator ``T`` only for a perfectly resolved
@@ -222,13 +233,15 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
         return self._operator @ self._forward_operator
 
     def bias(self, model: Any, /) -> Any:
-        """``(B A - T) m``: the error the estimate makes on a given model with exact data.
+        """``B (A m + mu_e) + t - T m``: the error the estimate makes on a given model, on average.
 
-        The term the propagated covariance leaves out. The resolution
-        operator applied to the model, less the property the estimate is of,
-        so zero for every model only when the problem is perfectly resolved.
-        It needs a model to evaluate, which is the point: without a statement
-        about the model there is no bound on it.
+        The term the propagated covariance leaves out: the estimate of the
+        data the model predicts, at the error's expectation ``mu_e``, less
+        the property the estimate is of. It is ``(B A - T) m`` for an
+        estimator that removes the error's expectation, so zero for every
+        model only when the problem is perfectly resolved. It needs a model
+        to evaluate, which is the point: without a statement about the model
+        there is no bound on it.
 
         Args:
             model: the model to evaluate the bias at.
@@ -240,8 +253,16 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
             ValueError: if the estimator was built without a forward
                 operator.
         """
+        if self._forward_operator is None:
+            raise ValueError(
+                "This estimator was built without a forward operator, so it "
+                "cannot form its bias."
+            )
+        expected = self._forward_operator(model)
+        if self._error is not None:
+            expected = self.data_space.add(expected, self._error.expectation)
         return self.property_space.subtract(
-            self.resolution(model), self._property_operator(model)
+            self._value(expected), self._property_operator(model)
         )
 
     def propagated_covariance(self) -> LinearOperator:
@@ -274,10 +295,13 @@ class LinearPointEstimator(PointEstimator, AffineOperator):
 
         Returns:
             The estimator ``T B d + T t``, with its budget composed likewise.
+            The offset ``T t`` is formed on first use, so pushing forward an
+            estimator whose offset is still unevaluated does not evaluate it.
         """
         return LinearPointEstimator(
             operator @ self._operator,
-            translation=operator(self.translation),
+            translation=lambda: operator(self.translation),
+            lazy=True,
             forward_operator=self._forward_operator,
             error=self._error,
             property_operator=operator @ self._property_operator,
@@ -336,9 +360,18 @@ class ComposedPointEstimator(PointEstimator, Operator):
         """True when the inner estimator is an operator carrying a derivative."""
         return isinstance(self._estimator, Operator) and self._estimator.has_derivative
 
-    def __call__(self, data: Any) -> Any:
-        """``T`` applied to the inner estimate."""
-        return self._value(data)
+    def __call__(self, data: Any, /, **kwargs: Any) -> Any:
+        """``T`` applied to the inner estimate.
+
+        Args:
+            data: the observations.
+            **kwargs: passed to the inner estimator's call, such as the
+                ``start=`` of an estimator that searches.
+
+        Returns:
+            A vector of the property space.
+        """
+        return self._operator(self._estimator(data, **kwargs))
 
     def _value(self, data: Any) -> Any:
         return self._operator(self._estimator(data))
@@ -372,6 +405,62 @@ class ComposedPointEstimator(PointEstimator, Operator):
         return ComposedPointEstimator(self._estimator, operator @ self._operator)
 
 
+class _PushedMeasureEstimator(MeasureEstimator):
+    """A measure estimator whose every answer is pushed through an operator.
+
+    What ``push_forward`` returns for a measure estimator with no simpler
+    form for the pushed estimator: the measure for the data is computed and
+    then pushed forward, which a Gaussian and a Gaussian mixture both do in
+    closed form.
+    """
+
+    def __init__(
+        self, estimator: MeasureEstimator, operator: LinearOperator, /
+    ) -> None:
+        """
+        Args:
+            estimator: the measure estimator, of the model or of a property.
+            operator: ``T``, from the estimator's property space.
+
+        Raises:
+            ValueError: if ``T`` does not act on the estimator's property
+                space.
+        """
+        if operator.domain != estimator.property_space:
+            raise ValueError(
+                f"The property operator acts on {operator.domain!r}, not on "
+                f"the estimator's space {estimator.property_space!r}."
+            )
+        self._estimator = estimator
+        self._operator = operator
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The inner estimator's data space."""
+        return self._estimator.data_space
+
+    @property
+    def property_space(self) -> HilbertSpace:
+        """``T``'s codomain."""
+        return self._operator.codomain
+
+    def __call__(self, data: Any, /, **kwargs: Any) -> ProbabilityMeasure:
+        """The inner estimator's measure for the data, pushed through ``T``.
+
+        Args:
+            data: the observations.
+            **kwargs: passed to the inner estimator's call.
+
+        Returns:
+            A measure on the property space.
+        """
+        return self._estimator(data, **kwargs).push_forward(self._operator)
+
+    def push_forward(self, operator: LinearOperator, /) -> "_PushedMeasureEstimator":
+        """The estimator of ``S T m``: one composition, not a chain of them."""
+        return _PushedMeasureEstimator(self._estimator, operator @ self._operator)
+
+
 class GaussianEstimator(MeasureEstimator):
     """A measure-valued estimator whose covariance does not depend on the data.
 
@@ -392,7 +481,7 @@ class GaussianEstimator(MeasureEstimator):
         """
         Args:
             expectation_operator: data to the posterior expectation.
-            covariance: the posterior covariance, on the target space.
+            covariance: the posterior covariance, on the property space.
             centered_sample: a callable taking a generator and returning one
                 draw of the *fluctuation* about the expectation. Supplied when
                 the posterior can be sampled without a covariance factor --

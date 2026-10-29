@@ -1236,8 +1236,10 @@ class TestBoxOperator:
             report = check_operator(step, rng=rng, measure=measure)
             assert report.worst < 1e-9
 
-    def test_the_solve_is_symmetric(self, box, rng):
-        check_traits(LinearOperator.self_adjoint(box.coefficients, box.solve), rng=rng)
+    def test_the_solve_is_symmetric_and_positive_definite(self, box, rng):
+        required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        assert box.solve.traits & required == required
+        check_traits(box.solve, rng=rng)
 
     def test_it_approximates_the_multiplier(self, box, prior, rng):
         f = prior.sample(rng=rng)

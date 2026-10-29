@@ -744,3 +744,37 @@ class TestAcquisitionHelpers:
         assert paths
         assert all(X.geodesic_distance(a, b) > 0.4 for a, b in paths)
         assert len(paths) < 20  # some pairs were dropped
+
+
+class TestExactCapAveragesAreMatrixFree:
+    """The exact cap average is a zonal filter and an evaluation at the
+    centers, applied as such unless the matrix is asked for."""
+
+    @pytest.mark.parametrize("count", [5, 250])
+    def test_the_two_forms_agree(self, space, rng, count):
+        from pygeoinf2.algebra.operators import MatrixLinearOperator
+
+        centers = space.random_points(count, rng=rng)
+        free = space.geodesic_ball_average_operator(centers, 0.3)
+        dense = space.geodesic_ball_average_operator(centers, 0.3, dense=True)
+        assert not isinstance(free, MatrixLinearOperator)
+        assert isinstance(dense, MatrixLinearOperator)
+        x = space.random(rng=rng)
+        assert np.allclose(free(x), dense(x), rtol=1e-8, atol=1e-10)
+        y = rng.normal(size=count)
+        assert np.allclose(
+            space.to_components(free.adjoint(y)),
+            space.to_components(dense.adjoint(y)),
+            rtol=1e-8,
+            atol=1e-10,
+        )
+        check_operator(free, rng=rng)
+
+    def test_integrals_as_well_as_averages(self, lebesgue, rng):
+        centers = lebesgue.random_points(4, rng=rng)
+        free = lebesgue.geodesic_ball_average_operator(centers, 0.3, normalize=False)
+        dense = lebesgue.geodesic_ball_average_operator(
+            centers, 0.3, normalize=False, dense=True
+        )
+        x = lebesgue.random(rng=rng)
+        assert np.allclose(free(x), dense(x), rtol=1e-8, atol=1e-10)

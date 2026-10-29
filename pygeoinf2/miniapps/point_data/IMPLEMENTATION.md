@@ -157,8 +157,9 @@ Euclidean data space is its credible ellipsoid too. The prior is hardened to
 the ball `{m : ||m|| <= r}` of the space's own `H^2` norm, with `r` the
 radius at which a draw from the prior lies inside with probability 0.95, a
 quantile of `sum lambda_i Z_i^2` over the covariance's eigenvalues
-(tutorial 7). It is the classical Backus-Gilbert-Parker norm bound, with the
-prior used only to calibrate the radius. That the space is one of functions
+(`ambient_ball`, tutorial 14 and example 30). It is the classical
+Backus-Gilbert-Parker norm bound, with the prior used only to calibrate the
+radius. That the space is one of functions
 decides what can be calibrated this way:
 
 - The ball's radius has a limit as the truncation grows. The expectation of
@@ -227,7 +228,7 @@ formalism survives the substitution. `WoodburyPreconditioner.from_normal`
 reads the factors off it and inverts it exactly through the Woodbury
 identity, the inner solve one Cholesky factorization of
 `Q_c^-1 + A_c* R^-1 A_c` on the coarse space. The coarse forward operator is
-`coarse.point_evaluation_operator(points, dense=True)`, a dense matrix that
+`coarse.point_evaluation_operator(points, route="dense")`, a dense matrix that
 is cheap to apply and to multiply through. The function returns a factory
 rather than a solver because the surrogate is read off whichever normal
 operator the inversion builds. The surrogate's accuracy decides the
@@ -259,20 +260,23 @@ radius, 6.07 against the fine one's 6.33, close enough for a surrogate. The
 ball's family `A A* r^2` decays as the space's own kernel does, more slowly
 than the prior's, so the coarse sphere catches less of it: a member takes
 from a few iterations to two dozen, the one at the walk's smallest
-multiplier 70 to 130, and the set answer is nearly half the full run. Part F keeps the stationary surrogate under the
-non-stationary prior, as a surrogate may: the solves take 52 applications
-instead of 18, and give the same answer.
+multiplier 70 to 130, and the set answer is a third of the full run. Part F
+keeps the stationary surrogate under the non-stationary prior, as a
+surrogate may: the solves take 52 applications instead of 18, and give the
+same answer.
 
 The posterior samples of D and F and the support directions of E take
-`n_jobs=`; in E the first direction is solved serially, so that the family's
-factorizations exist before the threads share them.
+`n_jobs=`, worker processes. In E each worker is sent the set without the
+pieces it has built, and builds the family's factorizations for its own
+directions; the applications it makes are counted in the worker, not in
+the parent's tally, which the part's printout says.
 
 ## 5. The estimators
 
-**The point** (part C, `point.py`). Tutorial 8's two deterministic answers,
-with size measured in the prior's norm. The problem is parameterized by the
-prior's covariance factor, `m = L w`, so that `|w|` is the prior's norm of
-`m` (`|m|` in the Cameron-Martin space):
+**The point** (part C, `point.py`). Tutorial 6's two deterministic answers,
+with size measured in the prior's norm (example 23). The problem is
+parameterized by the prior's covariance factor, `m = L w`, so that `|w|` is
+the prior's norm of `m` (`|m|` in the Cameron-Martin space):
 
 ```python
 factor = problem.prior.covariance_factor
@@ -304,13 +308,13 @@ bias = pushed.bias(whiten(problem.truth))
 with `whiten` the factor's inverse, exact because the factor is diagonal in
 the harmonic basis. The propagated covariance is the noise seen through the
 estimator; the bias is `(BA - T) m`, which only the truth reveals.
-`chosen.push_forward(factor).resolution(whiten(bump))` applies `L B A L` to a
+`chosen.push_forward(factor).resolution()(whiten(bump))` applies `L B A L` to a
 unit bump's `w`, which is what the estimate makes of the bump, under the sea
 and under Africa. Figure `point.png` draws each estimate with two
 propagated standard deviations beside the truth plus the bias.
 
 **The measure** (part D, `bayesian.py`). `LinearGaussianInversion` with the
-Woodbury solver returns a `GaussianPosterior` (tutorial 6). The app reads
+Woodbury solver returns a `GaussianPosterior` (tutorial 7). The app reads
 from it:
 
 - `posterior.expectation`, one solve;
@@ -326,7 +330,7 @@ Figure `posterior.png` sets each quantity against the prior's: the two
 standard-deviation maps on one color scale, and each average's marginal
 before and after by `plotting.plot_densities(posterior, prior=prior, ...)`.
 
-**The set** (part E, `sets.py`). Tutorial 7's feasible property set under
+**The set** (part E, `sets.py`). Tutorial 8's feasible property set under
 the prior's ball and the noise's:
 
 ```python

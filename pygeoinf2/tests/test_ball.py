@@ -182,7 +182,7 @@ class TestTransform:
         from planetmodel import harmonics
         from planetmodel.sampling import gauss_legendre
 
-        from pygeoinf2.spectral_element import ShellTransform
+        from pygeoinf2.spectral_element._transform import ShellTransform
 
         grid = gauss_legendre(lmax)
         transform = ShellTransform(grid)
@@ -207,7 +207,7 @@ class TestTransform:
     def test_a_grid_that_is_not_gauss_legendre_is_refused(self):
         from planetmodel.sampling import equiangular, gauss_legendre
 
-        from pygeoinf2.spectral_element import ShellTransform
+        from pygeoinf2.spectral_element._transform import ShellTransform
 
         with pytest.raises(ValueError, match="Gauss-Legendre"):
             ShellTransform(equiangular(6, 11))
@@ -667,3 +667,14 @@ class TestTheIntegralReadsThroughTheComponents:
             rng=rng,
             measure=space.sobolev_measure(2.0),
         )
+
+
+class TestTheMeshDoesNotDependOnTheUnit:
+    @pytest.mark.parametrize("unit", [1.0e-3, 7.3, 3480.0, 6371.0])
+    @pytest.mark.parametrize("length_scale", [0.3, 0.15])
+    def test_the_same_geometry_in_other_units(self, unit, length_scale):
+        """A ball of radius one and one of radius ``unit``, with the length
+        scale scaled alike, have the same mesh and so the same basis."""
+        here = Lebesgue(2, radius=1.0, length_scale=length_scale)
+        there = Lebesgue(2, radius=unit, length_scale=length_scale * unit)
+        assert there.grid_shape == here.grid_shape

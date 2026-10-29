@@ -615,7 +615,7 @@ class TestAMeasureOnAFunctionSpaceIsTraceClass:
         from pygeoinf2.symmetric_space.fourier import Sobolev
 
         box = Sobolev((8, 8), 2.0, 0.3)
-        with pytest.raises(TypeError, match="not trace class"):
+        with pytest.raises(ValueError, match="not trace class"):
             GaussianMeasure.from_standard_deviation(box, 1.0)
         assert (
             GaussianMeasure.from_standard_deviation(box, 1.0, unsafe=True).domain == box
@@ -650,3 +650,121 @@ class TestAMeasureOnAFunctionSpaceIsTraceClass:
         assert radial.sobolev_measure(1.0).domain == radial
         with pytest.raises(ValueError, match="trace class"):
             radial.sobolev_measure(0.5)
+
+
+def _identity_routes():
+    """Every route to a multiple of the identity covariance on a function
+    space, each a callable of ``unsafe``."""
+    from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+    from pygeoinf2.interval import Sobolev as Interval
+    from pygeoinf2.symmetric_space import circle, sphere
+
+    X = circle.Sobolev(16, 1.0, 0.3)
+    S = sphere.Sobolev(8, 2.0, 0.3)
+    line = Interval(12, 1.0, 0.2)
+    identity = LinearOperator.identity(X)
+    constant = DiagonalLinearOperator(X, np.full(X.dim, 0.5))
+    slices = np.broadcast_to(np.diag([1.0, 2.0]), (X.dim, 2, 2)).copy()
+    return {
+        "from_standard_deviation": lambda unsafe: (
+            GaussianMeasure.from_standard_deviation(X, 1.0, unsafe=unsafe)
+        ),
+        "from_standard_deviations": lambda unsafe: (
+            GaussianMeasure.from_standard_deviations(
+                X, np.full(X.dim, 2.0), unsafe=unsafe
+            )
+        ),
+        "covariance": lambda unsafe: GaussianMeasure(
+            X, covariance=identity, unsafe=unsafe
+        ),
+        "scaled covariance": lambda unsafe: GaussianMeasure(
+            X, covariance=3.0 * identity, unsafe=unsafe
+        ),
+        "covariance factor": lambda unsafe: GaussianMeasure(
+            X, covariance_factor=constant, unsafe=unsafe
+        ),
+        "precision": lambda unsafe: GaussianMeasure(
+            X, precision=identity, unsafe=unsafe
+        ),
+        "precision factor": lambda unsafe: GaussianMeasure(
+            X, precision_factor=constant, unsafe=unsafe
+        ),
+        "component matrix": lambda unsafe: GaussianMeasure.from_covariance_matrix(
+            X, np.eye(X.dim), form="components", unsafe=unsafe
+        ),
+        "galerkin matrix": lambda unsafe: GaussianMeasure.from_covariance_matrix(
+            X, 2.0 * X.gram_matrix(), form="galerkin", unsafe=unsafe
+        ),
+        "invariant": lambda unsafe: X.invariant_measure(
+            np.ones(X.dim), pointwise_std=0.8, unsafe=unsafe
+        ),
+        "heat at zero": lambda unsafe: X.heat_measure(0.0, unsafe=unsafe),
+        "correlated": lambda unsafe: X.correlated_measure(slices, unsafe=unsafe),
+        "correlations": lambda unsafe: X.correlated_measure_from_correlations(
+            [np.ones(X.dim), X.heat_symbol(0.3)], np.eye(2), unsafe=unsafe
+        ),
+        "flat power": lambda unsafe: S.power_measure(
+            lambda degree: np.ones_like(degree), unsafe=unsafe
+        ),
+        "white power": lambda unsafe: S.power_measure(
+            lambda degree: 2.0 * degree + 1.0, unsafe=unsafe
+        ),
+        "spectral": lambda unsafe: line.spectral_measure(
+            np.ones(line.dim), unsafe=unsafe
+        ),
+        "sobolev at order zero": lambda unsafe: X.sobolev_measure(
+            0.0, 0.3, unsafe=unsafe
+        ),
+    }
+
+
+class TestTheIdentityIsRefusedByEveryRoute:
+    """The literal identity, in whatever form it reaches the library, is
+    refused on a function space without ``unsafe=True``, with one exception
+    class and one message; past that, trace class is the caller's to ensure."""
+
+    @pytest.mark.parametrize("route", list(_identity_routes()))
+    def test_refused_and_built_with_unsafe(self, route):
+        build = _identity_routes()[route]
+        with pytest.raises(ValueError, match="trace class"):
+            build(False)
+        assert build(True) is not None
+
+    def test_a_decaying_spectrum_on_each_route_is_accepted(self):
+        from pygeoinf2.interval import Sobolev as Interval
+        from pygeoinf2.symmetric_space import circle, sphere
+
+        X = circle.Sobolev(16, 1.0, 0.3)
+        S = sphere.Sobolev(8, 2.0, 0.3)
+        line = Interval(12, 1.0, 0.2)
+        decaying = X.sobolev_symbol(-1.0, 0.3)
+        GaussianMeasure.from_standard_deviations(X, np.sqrt(decaying))
+        X.invariant_measure(decaying, pointwise_std=0.8)
+        X.heat_measure(0.1)
+        X.correlated_measure_from_correlations(
+            [decaying, X.heat_symbol(0.3)], np.eye(2)
+        )
+        S.power_measure(lambda degree: (1.0 + degree) ** -3.0)
+        line.spectral_measure(line.eigenvalues**-1.0)
+        GaussianMeasure.from_covariance_matrix(X, np.diag(decaying), form="components")
+
+    def test_a_finite_dimensional_space_is_untouched(self):
+        E = EuclideanSpace(4)
+        GaussianMeasure.from_standard_deviation(E, 1.0)
+        GaussianMeasure.from_standard_deviations(E, np.ones(4))
+        GaussianMeasure(E, covariance=LinearOperator.identity(E))
+        GaussianMeasure.from_covariance_matrix(E, np.eye(4), form="components")
+
+    def test_the_algebra_on_an_unsafe_measure_is_not_judged_again(self, rng):
+        from pygeoinf2.symmetric_space import circle
+
+        X = circle.Sobolev(16, 1.0, 0.3)
+        white = GaussianMeasure.from_standard_deviation(X, 1.0, unsafe=True)
+        for derived in (
+            white.translate(X.random(rng=rng)),
+            2.0 * white,
+            white + white,
+            GaussianMeasure.from_product([white, white]).marginal(0),
+            white.with_dense_covariance(),
+        ):
+            assert derived.can_sample

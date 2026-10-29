@@ -278,9 +278,9 @@ ax.legend(fontsize=8)
 ax.set_title("A layered planet: one space per layer, jumps between")
 
 # %% [markdown]
-# Example 33 inverts this planet's mass, moment of inertia, a jump and a
+# Example 36 inverts this planet's mass, moment of inertia, a jump and a
 # handful of densities together, and welds two layers by conditioning, as
-# tutorial 10 did on an interval; example 31 does the mantle of the ball
+# tutorial 10 did on an interval; example 34 does the mantle of the ball
 # section above at a resolution worth looking at, with a standard deviation
 # that varies with depth.
 

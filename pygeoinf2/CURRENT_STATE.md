@@ -9,8 +9,8 @@ journal, the review rounds and the functionality audit lived until they were
 retired on 2026-09-18.
 
 Last reconciled against the code on 2026-10-28, at 3206 passing tests in the
-fast suite and 32 marked slow; the 35 examples and 13 tutorials last ran in
-full on 2026-10-27. The release plan in §10 was settled with David on
+fast suite and 32 marked slow; the 36 examples and 14 tutorials last ran in
+full on 2026-10-29. The release plan in §10 was settled with David on
 2026-10-24 and its first tranche landed the same day as D-127 to D-133; the
 feasible-set rebuild and the ray operator followed on 2026-10-27 (D-134 to
 D-156) and the review clean-up on 2026-10-28 (D-157 to D-160); the
@@ -56,9 +56,9 @@ is what most of the rest follows from:
 
 111 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `testing`,
-`compat`, `spectral_element`, `interval`, `ball` and `disk` are imported explicitly. Thirty-two examples under `examples/`
-run as a slow test; their README says what each shows. Fourteen tutorials
-under `tutorials/` with generated notebooks, and the first mini-app under
+`compat`, `spectral_element`, `interval`, `ball` and `disk` are imported explicitly. Thirty-six examples under `examples/`
+run in the suite, two of them marked slow; their README says what each shows. Fourteen tutorials
+under `tutorials/` with generated notebooks (two marked slow), and the first mini-app under
 `pygeoinf2/miniapps/` (the C++ vector backend, D-169), run in the fast suite.
 MFEM is not in the package: `miniapps/mfem/` wraps it, as a finite element
 space and as a solve inside an operator on a box, and its test is slow and
@@ -140,7 +140,8 @@ or supplied; `BackusGilbert` is the point estimator with that `X` and no
 prior bound (D-163). A nonlinear forward enters through `model=`: the set
 is built on the linearisation with one data shift, exact for the linearised
 problem and local for the real one, in absolute property values. The
-S-procedure ellipsoid is certified and checked against support values; a
+S-procedure ellipsoid, model-space by default, is checked against the
+set's support along its principal axes before it is returned (D-203); a
 polytope's `inscribed_ellipsoid()` describes the polytope and a point set's
 `enclosing_ellipsoid()` the points, neither the set (D-141).
 
@@ -295,12 +296,11 @@ Recorded rather than settled, so nobody has to rediscover them.
   where the serial run took about two minutes; BLAS threads and the worker
   pool contending, most likely (D-52's measurements point the same way).
   The mini-app no longer uses it (D-170); not investigated further.
-- **Findings from the tomography mini-app's build still open** (2026-10-28;
-  the rest were fixed on 2026-10-29, D-181). The `splitting` algorithm's
-  inner end exceeded its outer on a direction the data cannot see by 1e-4
-  and took 28 s. `point_evaluation_operator` always builds its dense
-  matrix, 3.4 GB at 83 000 points, so the app assembles ray by ray; a
-  matrix-free form above some cost is the question.
+- **The splitting route's inner end on a direction the data cannot see**
+  (2026-10-28, the rest of that build's findings fixed as D-181; the
+  dense point evaluation went with D-183's `route="local"`). It exceeded
+  its outer by 1e-4 and took 28 s; D-202's relative stop keeps the inner
+  end at or below the outer on the cases measured since.
 - **Three findings from the revision of the mini-apps' figures** (2026-10-29).
   `plotting.plot_shell` draws on the ball's own angular grid, which at
   degree 14 is a 15 × 29 mosaic, and cannot be smoothed: passing
@@ -344,8 +344,9 @@ Recorded rather than settled, so nobody has to rediscover them.
   Lanczos calculus at every application; the tomography app calibrates
   by `amplitude=` instead, uniform to 2%. (5) A symmetric space's
   invariant measure has a diagonal precision but no `precision_factor`,
-  which the planet-density pattern of whitening reads. (6) The support
-  sweep over `±q` repeats each direction's kernel solve, `v` and `-v`.
+  which the planet-density pattern of whitening reads; D-204's low-rank
+  posterior builds its precision without one. (6) Done, D-203: the
+  support sweep shares the kernel solve between `±q`.
   (7) The data-space `Primal`'s solve at its floor is most of a
   direction's cost on an ill-preconditioned family: 350 of about 770 CG
   iterations at the point-data quick scale at the default floor, half
@@ -359,6 +360,55 @@ Recorded rather than settled, so nobody has to rediscover them.
   its first outer-core basis function flipped. For the planetmodel 1.4
   update after the launch: fix each eigenvector's sign (first nonzero
   component positive) in `SpectralBasis`.
+- **Left open by the 2.0 review's fix packages** (2026-10-29, D-200 to
+  D-205; each needs a decision or new API, and none blocks 2.0):
+  - *Data-space S-procedure*: its repair through the resolvent identity
+    and a floored walk, so that it is right where the data outnumber a
+    slack prior; today it raises there and the model-space form is the
+    default.
+  - *`covariance=` and `reference=` on `LeastSquares` and `MinimumNorm`*,
+    so the prior-norm whitening the apps build by hand through
+    `parameterized(covariance_factor)` becomes a knob: the Tikhonov family
+    would carry a model-space weighting and `MinimumNorm`'s derivative be
+    re-derived.
+  - *`credible_set` and `condition` on exact data claim positive
+    definiteness for the user*: refusing breaks tutorial 7, whose property
+    prior and posterior are push-forwards claiming semidefiniteness; the
+    right fix is trait propagation through a push-forward with a trivial
+    kernel. Gates on `as_multivariate_normal` and `kl_divergence` on a
+    function space: docstrings only for now.
+  - *Degenerate (semidefinite) priors* still go through `_covariance_of`
+    in the model-space primal and the splitting route, the one route that
+    answers them; which cached pieces of a feasible structure may cross a
+    process boundary is unruled; appending a half-space to a polytope
+    (outer or inner bound) is undecided.
+  - *`Optimizer`'s `gtol=1e-8` is absolute* and `_precision_limited` is
+    floored with `1 + |f|`; every smooth optimizer and the MAP, Laplace
+    and nonlinear least-squares routes inherit it; the Armijo `min_step`,
+    the slope-ratio clip and the proximal gradient's probe length are
+    absolute too; Clarabel's absolute tolerances still apply to the bundle
+    subproblem at tiny scales (conservative, costs iterations only).
+  - *`Ball.contains` at radius zero* has no tolerance, so a zero-radius
+    ball rejects its own center after rounding; `InclusionResult.multiplier`
+    means opposite things on the quadratic and general searches.
+  - *`Functional.gradient`'s cost model*: for a composed functional the
+    derivative route can cost two forward evaluations where `at()` costs
+    one. One `atol` default across the checks is a policy call.
+  - *`random_diagonal` as an `Estimate`* needs an array-valued estimate;
+    `log_determinant` samples to `sample_rtol`, which §4 and D-51 should
+    say; LSQR's `damping` and the five tolerance spellings are renames not
+    taken; Jacobi on a nonsymmetric operator; bundle reentrancy and
+    `with_tolerance`; `max_cg_iterations` and the waveform `factor=`.
+  - *Spaces*: the base `Layered` accepting disks; a domain quadrature on
+    spectral-element spaces; `import pygeoinf2` loading planetmodel
+    eagerly (a module `__getattr__` and lazy renderer registration would
+    defer it); the length scale carried through `Lebesgue`; radial
+    pointwise calibration.
+  - *`check_operator`'s `measure=`* draws the domain's probes only; the
+    adjoint identity's codomain probe is always white noise there.
+  - *Correlated layers*: `from_product(correlation=)` ties factors on one
+    latent space only (D-206); a layered correlation waits for sign-
+    normalized spectral bases from the planetmodel update.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.
@@ -431,7 +481,7 @@ planetmodel 1.3.2.
 - DONE (D-133). 3-D slice plotting returns (the audit's drop is
   reversed): `plot_set` grew the third dimension in v2's own
   route-by-capability style rather than as a port of v1's
-  `SubspaceSlicePlotter`; plotly is the optional `plot3d` extra. Example 34
+  `SubspaceSlicePlotter`; plotly is the optional `plot3d` extra. Example 18
   shows it.
 - DONE 2026-10-27 (D-153 to D-155). The feasible-set layer is rebuilt to
   D-135 to D-152 (§7); its plan was `CONVEX_PLAN.md`, retired 2026-10-28,
@@ -458,8 +508,8 @@ planetmodel 1.3.2.
    own fused path for the scale-dependent case.
 3. DONE (D-198). The low-rank posterior, `LowRankGaussianPosterior`,
    with `LaplaceApproximation(rank=)` and `from_linear_problem`; to be
-   shown to the student; an example of its own and one of the correlated
-   product belong to the examples review.
+   shown to the student; examples 25 and 15 show it and the correlated
+   product (D-206).
 4. DONE (D-199). The planet-density app's unit scheme; David judged
    part D's weaker contrast better as it is.
 
@@ -499,13 +549,12 @@ minimization, BiCG, and a separate deflated pointwise-variance estimator.
 
 **Docs phase:** three tiers. The reference examples here stay as they are,
 one idea each. The v1 notebooks under `tutorials/` are replaced by
-tutorial *scripts* covering the whole core, thirteen drafted as of
-2026-10-27 under `pygeoinf2/tutorials/` with notebooks generated from them
+tutorial *scripts* covering the whole core, fourteen as of
+2026-10-29 under `pygeoinf2/tutorials/` with notebooks generated from them
 by `make_notebooks.py` (Colab entry points; the suite checks they are
 current). Mini-apps in the MFEM spirit — each a realistic inverse problem
-end to end, deeper than any one feature — are new and not started; the
-first grow out of tutorial 10's tomography and the preconditioning example
-(D-155). The approved list is `EXAMPLES_PLAN.md`, a working document that is
+end to end, deeper than any one feature — are six, under `miniapps/`
+(D-176 to D-199). The approved list is `EXAMPLES_PLAN.md`, a working document that is
 deleted when the phase completes. `README.md` and the Sphinx tree are
 rewritten against the new name, after the rename, not before.
 

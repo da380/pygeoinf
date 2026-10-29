@@ -379,10 +379,10 @@ class TestMeasureStatistics:
 
     def test_a_bad_method_is_refused_and_so_is_a_route_that_does_not_apply(self, pair):
         _, first, second = pair
-        with pytest.raises(ValueError, match="'auto', 'spectral'"):
+        with pytest.raises(ValueError, match="'auto', 'diagonal'"):
             first.kl_divergence(second, method="lanczos")
         with pytest.raises(ValueError, match="both covariances diagonal"):
-            first.kl_divergence(second, method="spectral")
+            first.kl_divergence(second, method="diagonal")
 
     def test_measures_on_different_spaces_are_refused(self, pair):
         space, first, _ = pair
@@ -454,6 +454,51 @@ class TestMeasureStatistics:
             first.directional_covariance(v, u)
         )
         assert first.directional_variance(u) > 0.0
+
+
+class TestACorrelatedMeasureCrossesProcesses:
+    """Process-parallel draws pickle the measure, and with it the spectral
+    block operator its factor is."""
+
+    def _measure(self):
+        X = Sobolev(6, 2.0, 0.2)
+        return X.correlated_measure_from_correlations(
+            [X.sobolev_symbol(-2.0, 0.2)] * 2, np.array([[1.0, 0.5], [0.5, 1.0]])
+        )
+
+    def test_the_spectral_block_operator_round_trips(self, rng):
+        import pickle
+
+        factor = self._measure().covariance_factor
+        copy = pickle.loads(pickle.dumps(factor))
+        assert type(copy) is type(factor)
+        assert np.array_equal(copy.slices, factor.slices)
+        x = factor.domain.random(rng=rng)
+        assert np.allclose(
+            factor.codomain.to_components(copy(x)),
+            factor.codomain.to_components(factor(x)),
+        )
+
+    def test_it_samples_in_worker_processes(self):
+        measure = self._measure()
+        draws = measure.samples(4, rng=np.random.default_rng(0), n_jobs=2)
+        assert len(draws) == 4 and all(len(draw) == 2 for draw in draws)
+
+    def test_a_posterior_from_it_samples_in_worker_processes(self, rng):
+        from pygeoinf2.algebra.direct_sum import RowLinearOperator
+        from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
+
+        prior = self._measure()
+        field = prior.domain.subspaces[0]
+        evaluate = field.point_evaluation_operator([(10.0, 20.0), (-30.0, 100.0)])
+        forward = RowLinearOperator([evaluate, evaluate])
+        noise = GaussianMeasure.from_standard_deviation(forward.codomain, 0.1)
+        problem = LinearForwardProblem(forward, error=noise)
+        posterior = LinearGaussianInversion(problem, prior)(
+            forward(prior.sample(rng=rng))
+        )
+        draws = posterior.samples(4, rng=np.random.default_rng(0), n_jobs=2)
+        assert len(draws) == 4
 
 
 class TestTwoPointCovariance:
@@ -601,7 +646,7 @@ class TestInvariantAlgebraDrawsInOneTransform:
     def test_the_algebra_keeps_the_one_transform_draw(self, rng):
         X = Sobolev(8, 1.5, 0.3)
         prior = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
-        noise = X.invariant_measure(np.full(X.dim, 0.01))
+        noise = X.invariant_measure(lambda k: 0.01 / (1.0 + k))
         assert self.syntheses(X, prior, rng) == 1
         assert self.syntheses(X, 3.0 * prior, rng) == 1
         assert self.syntheses(X, prior / 2.0, rng) == 1
@@ -614,7 +659,7 @@ class TestInvariantAlgebraDrawsInOneTransform:
 
         X = Sobolev(6, 1.0, 0.3)
         prior = X.invariant_measure(lambda k: 1.0 / (1.0 + k) ** 2)
-        noise = X.invariant_measure(np.full(X.dim, 0.05))
+        noise = X.invariant_measure(lambda k: 0.05 / (1.0 + k))
         for measure in (2.0 * prior, prior + noise, prior - noise):
             check_measure(measure, rng=rng, samples=3000)
 
@@ -717,7 +762,7 @@ class TestTheBallInAnotherNorm:
         spectral = measure.ambient_ball(
             level=0.9,
             operator=operator,
-            method="spectral",
+            method="randomized",
             rank=X.dim,
             rng=np.random.default_rng(1),
         )
@@ -795,7 +840,9 @@ class TestSampledPointwiseVariance:
         with pytest.raises(TypeError, match="pointwise product"):
             measure.sample_pointwise_variance(3, rng=rng)
         with pytest.raises(ValueError, match="one draw"):
-            Lebesgue(3).invariant_measure(np.ones(16)).sample_pointwise_variance(0)
+            Lebesgue(3).invariant_measure(
+                lambda k: 1.0 / (1.0 + k) ** 2
+            ).sample_pointwise_variance(0)
 
 
 class TestAdaptiveDiagonals:
@@ -908,6 +955,6 @@ class TestPriorWeightedProbes:
             random_range(
                 forward,
                 rank=4,
-                measure=X.invariant_measure(np.ones(X.dim)).push_forward(forward),
+                measure=prior.push_forward(forward),
                 rng=rng,
             )

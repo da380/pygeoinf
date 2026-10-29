@@ -570,7 +570,7 @@ class TestLinearEstimators:
         )
         assert_close(P, estimator(setting.d), Xc @ setting.data, rel=1e-7)
         m = setting.X.random(rng=rng)
-        assert_close(P, estimator.resolution(m), Xc @ setting.M @ arr(m), rel=1e-7)
+        assert_close(P, estimator.resolution()(m), Xc @ setting.M @ arr(m), rel=1e-7)
         pushed = estimator.push_forward(setting.S)
         assert_close(Q, pushed(setting.d), setting.Sm @ Xc @ setting.data, rel=1e-7)
 
@@ -686,10 +686,10 @@ class TestNonlinearEstimators:
         assert_close(X, measure.expectation, mean, rel=1e-6)
         assert_close(X, measure.covariance(u), cov @ arr(u), rel=1e-6)
         # The covariance is an inverse through a solver and carries no
-        # factor, so the approximation is not samplable, on any space.
-        assert not measure.can_sample
-        with pytest.raises(NotImplementedError, match="factor"):
-            measure.sample(rng=rng)
+        # factor, and the approximation draws by randomize-then-optimize,
+        # which needs none, on any space.
+        assert measure.can_sample
+        assert np.isfinite(X.norm(measure.sample(rng=rng)))
         pushed = laplace.push_forward(setting.T)(setting.d)
         assert_close(P, pushed.expectation, setting.Tm @ mean, rel=1e-6)
 
@@ -878,12 +878,13 @@ class TestRandomized:
         exact = np.sqrt(np.trace(setting.C @ setting.C))
         assert norm == pytest.approx(exact, rel=0.15)
 
-    def test_hilbert_schmidt_norm_by_default_takes_the_stochastic_route(self, setting):
-        exact = np.sqrt(np.trace(setting.C @ setting.C))
-        norm = setting.prior.hilbert_schmidt_norm(
-            samples=400, rng=np.random.default_rng(3)
-        )
-        assert norm == pytest.approx(exact, rel=0.15)
+    def test_hilbert_schmidt_norm_by_default_is_not_an_estimate(self, setting):
+        """Without coordinates there is no exact route, and ``"auto"`` says
+        so rather than return an estimate as though it were exact."""
+        with pytest.raises(TypeError, match="coordinate"):
+            setting.prior.hilbert_schmidt_norm(
+                samples=400, rng=np.random.default_rng(3)
+            )
 
 
 # --------------------------------------------------------------------- #

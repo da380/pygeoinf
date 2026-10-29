@@ -249,6 +249,15 @@ each iterate's box means, which is how the app knows each standard deviation
 had settled: a conjugate-gradient solve stopped early underestimates a
 variance.
 
+`LaplaceApproximation(..., rank=)` reads the Gaussian off the same kind of
+decomposition with no solve at all, but keeps the prior in every direction
+beyond the rank, so it overstates a variance where the solves do not. At a
+rank of 100 its box means' standard deviations are 30% to 40% above the
+solves' at the full scale; at the quick scale it matches them to 2% at
+twice the app's rank, 120 against 60, which takes 520 applications against
+the 345 of the decomposition and the four solves together. Here the solves
+are the cheaper route to the same answer.
+
 ## 5. The estimators
 
 **The point, by the MAP model** (part C, `newton.py`), three runs of

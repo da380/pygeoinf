@@ -125,7 +125,7 @@ def point_answers(
     }
     # The model-space resolution: L B A L applied to the bump's w.
     resolving = chosen.push_forward(factor)
-    seen = {name: resolving.resolution(whiten(bump)) for name, bump in bumps.items()}
+    seen = {name: resolving.resolution()(whiten(bump)) for name, bump in bumps.items()}
     print(
         f"the resolution of a unit bump of width {scale.bump_width} "
         f"({time.perf_counter() - t0:.1f} s):"

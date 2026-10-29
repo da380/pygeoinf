@@ -69,8 +69,12 @@ def choose_formalism(
     discretization's size as though it were the problem's. Data spaces can be
     large; model spaces are usually larger still, so the data space is where
     the normal equations belong unless there is a reason otherwise, and the
-    model-space formalism is kept for when there *is* one — an overdetermined
-    problem with a cheap precision, or a surrogate.
+    model-space formalism is kept for when there *is* one: an explicitly
+    finite-dimensional problem, overdetermined and with a cheap precision,
+    or a low-dimensional surrogate, which is such a problem by construction.
+    It is not for a model space that discretizes a function space, where
+    its evidence is a difference of log-determinants that have no limit
+    under refinement.
 
     Args:
         model_space: where the models live.
@@ -578,7 +582,7 @@ class NormalOperator(FactoredNormalOperator):
         preconditioner for the true operator, and correctness never depends on
         how close the surrogate is — only the iteration count does.
 
-        The surrogate may live on a **different model space**. In example 24
+        The surrogate may live on a **different model space**. In example 28
         (preconditioning) it is a sphere of a sixth the degree, with its own
         prior and its own path-average operator, and only the data space is
         shared. That is

@@ -54,7 +54,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.spaces import HilbertSpace
     from ..numerics.randomized import Estimate
 
-__all__ = ["GaussianPosterior", "LinearGaussianInversion"]
+__all__ = ["GaussianPosterior", "LinearGaussianInversion", "LowRankGaussianPosterior"]
 
 
 class GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure):
@@ -137,7 +137,9 @@ class LinearGaussianInversion(GaussianEstimator):
                 default), ``"model_space"``, or ``"auto"`` to take the
                 smaller, which for an underdetermined problem is the data
                 space and for an overdetermined one the model space; see
-                :func:`~pygeoinf2.numerics.normal.choose_formalism`.
+                :func:`~pygeoinf2.numerics.normal.choose_formalism`. The model-space
+                formalism is for explicitly finite-dimensional problems and
+                low-dimensional surrogates.
         """
         if not isinstance(prior, GaussianMeasure):
             raise TypeError(
@@ -183,7 +185,7 @@ class LinearGaussianInversion(GaussianEstimator):
         # The sampler is passed *in* rather than attached on the way out, so
         # that push_forward carries it to the property posterior too.
         super().__init__(
-            AffineOperator(gain, translation),
+            AffineOperator(gain, translation, lazy=True),
             covariance,
             centered_sample=(
                 self._draw_fluctuation
@@ -496,7 +498,7 @@ class LinearGaussianInversion(GaussianEstimator):
             self._solved_key, self._solved = key, result
         return result
 
-    def __call__(self, data: Any) -> GaussianPosterior:
+    def __call__(self, data: Any) -> GaussianMeasure:
         """The posterior measure for this data.
 
         As :meth:`~pygeoinf2.inference.estimators.GaussianEstimator.__call__`,
@@ -505,10 +507,14 @@ class LinearGaussianInversion(GaussianEstimator):
         computes the same mean without the shared solve, for a caller who
         wants the affine operator itself.
 
-        The result is a :class:`GaussianPosterior`: the posterior Gaussian,
-        also carrying the prior as its reference, ``-Phi`` as its density
-        against it, and, when the problem has an error measure, the evidence
-        as its normalizer -- computed lazily, since it costs log-determinants.
+        When the problem has an error measure the result is a
+        :class:`GaussianPosterior`: the posterior Gaussian, also carrying the
+        prior as its reference, ``-Phi`` as its density against it, and the
+        evidence as its normalizer -- computed lazily, since it costs
+        log-determinants. For exact data it is a plain
+        :class:`~pygeoinf2.probability.gaussian.GaussianMeasure`: the prior
+        conditioned on ``A m == d`` is singular with respect to the prior and
+        has no density against it.
 
         Args:
             data: the observations.
@@ -521,6 +527,13 @@ class LinearGaussianInversion(GaussianEstimator):
         mean = self._problem.model_space.add(
             self._prior.expectation, self._normal.model_update(solved)
         )
+        if not self._problem.has_error:
+            return GaussianMeasure(
+                self.property_space,
+                expectation=mean,
+                covariance=self.covariance,
+                sample=self._centered_sample,
+            )
         return GaussianPosterior(
             self.property_space,
             expectation=mean,
@@ -528,9 +541,7 @@ class LinearGaussianInversion(GaussianEstimator):
             sample=self._centered_sample,
             reference=self._prior,
             relative_log_density=-self._problem.potential(data),
-            log_normalizer=(
-                self._log_normalizer_for(data) if self._problem.has_error else None
-            ),
+            log_normalizer=self._log_normalizer_for(data),
         )
 
     def _log_normalizer_for(self, data: Any, /) -> Any:
@@ -622,8 +633,9 @@ class LinearGaussianInversion(GaussianEstimator):
     ) -> "Estimate":
         """``log |A Q A* + R|``, the volume half of the evidence.
 
-        Densely when the space is small enough to afford it, and by stochastic
-        Lanczos quadrature otherwise -- see
+        Densely or by stochastic Lanczos quadrature, as *method* says, the
+        default choosing between them by counting the applications each
+        needs -- see
         :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`. The
         stochastic route needs only applications of the operator, so the
         evidence is available on problems too large to assemble.
@@ -704,7 +716,7 @@ class LinearGaussianInversion(GaussianEstimator):
         self._log_determinants[key] = result
         return result
 
-    def evidence_terms(self, data: Any, /, **kwargs: Any) -> tuple[float, float]:
+    def evidence_terms(self, data: Any, /, **kwargs: Any) -> tuple[float, "Estimate"]:
         """The two halves of the log evidence: misfit and volume.
 
         ``log p(d) == -(mahalanobis + log det N + dim log 2pi) / 2`` with ``N``
@@ -713,20 +725,44 @@ class LinearGaussianInversion(GaussianEstimator):
         surprising under this model, the second penalizes a model flexible
         enough that they would not have been.
 
-        Keyword arguments go to :meth:`normal_log_determinant`; pass
-        ``method="stochastic"`` to keep the calculation matrix-free.
-        """
-        return self.mahalanobis(data), self.normal_log_determinant(**kwargs).value
+        Args:
+            data: the observations.
+            **kwargs: passed to :meth:`normal_log_determinant`; pass
+                ``method="stochastic"`` to keep the calculation matrix-free.
 
-    def log_evidence(self, data: Any, /, **kwargs: Any) -> float:
+        Returns:
+            The misfit, a float, and the volume ``log det N``, an
+            :class:`~pygeoinf2.numerics.randomized.Estimate` whose standard
+            error is zero on the dense route.
+
+        Raises:
+            ValueError: if the problem has no data error measure.
+        """
+        return self.mahalanobis(data), self.normal_log_determinant(**kwargs)
+
+    def log_evidence(self, data: Any, /, **kwargs: Any) -> "Estimate":
         """``log p(d)``: how well this model explains the data at all.
 
         The quantity model comparison needs, and the one a posterior cannot
         supply — a posterior is conditional on the model being right.
+
+        Args:
+            data: the observations.
+            **kwargs: passed to :meth:`normal_log_determinant`, which supplies
+                the volume term.
+
+        Returns:
+            An :class:`~pygeoinf2.numerics.randomized.Estimate`, carrying the
+            standard error of a stochastic volume term, zero on the dense
+            route.
+
+        Raises:
+            ValueError: if the problem has no data error measure.
         """
         mahalanobis, volume = self.evidence_terms(data, **kwargs)
         dimension = self.data_space.dim
-        return -0.5 * (mahalanobis + volume + dimension * np.log(2.0 * np.pi))
+        constant = mahalanobis + dimension * np.log(2.0 * np.pi)
+        return combine_log_normalizer([(-0.5, float(constant)), (-0.5, volume)])
 
     @staticmethod
     def _prior_and_noise_can_be_drawn(
@@ -769,27 +805,34 @@ class LinearGaussianInversion(GaussianEstimator):
 
 
 def _information_eigenpairs(
-    forward: LinearOperator,
+    misfit_hessian: LinearOperator,
     prior: GaussianMeasure,
-    error_precision: LinearOperator,
     /,
     *,
     rank: int | None,
     rng: Generator | None,
     n_jobs: int | None,
+    semidefinite: bool = True,
 ) -> tuple[LinearOperator, np.ndarray]:
-    """The leading eigenpairs of ``L* A* R^-1 A L``, the misfit Hessian seen
+    """The leading eigenpairs of ``L* M L``, the misfit Hessian ``M`` seen
     through the prior's factor ``L``: an isometry from ``R^r`` into the
-    latent space whose columns are the eigenvectors, and the eigenvalues."""
+    latent space whose columns are the eigenvectors, and the eigenvalues.
+
+    ``M`` is ``A* R^-1 A`` for a linear or Gauss-Newton misfit, which is
+    positive semi-definite. An exact Hessian, with the forward operator's
+    curvature weighted by the residual, need not be (*semidefinite* False):
+    its eigenpairs are taken by magnitude and the negative eigenvalues are
+    clipped at zero, so the directions in which the curvature would widen
+    the prior keep the prior instead."""
     from ..numerics.randomized import random_eig
 
     factor = prior.covariance_factor
     if factor is None:
         raise ValueError("A low-rank posterior needs a prior with a covariance factor.")
-    through = forward @ factor
-    hessian = (through.adjoint @ error_precision @ through).with_traits(
-        Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
-    )
+    traits = Traits.SELF_ADJOINT
+    if semidefinite:
+        traits |= Traits.POSITIVE_SEMIDEFINITE
+    hessian = (factor.adjoint @ misfit_hessian @ factor).with_traits(traits)
     decomposition = random_eig(hessian, rank=rank, rng=rng, n_jobs=n_jobs)
     eigenvalues = np.clip(np.asarray(decomposition.eigenvalues, dtype=float), 0.0, None)
     return decomposition.factor, eigenvalues
@@ -814,11 +857,15 @@ class LowRankGaussianPosterior(GaussianPosterior):
 
     exact when ``r`` is the number of nonzero eigenvalues and otherwise the
     prior in the directions dropped, so always between the prior and the
-    full posterior. The covariance factor is ``L (I - V a V*)`` with ``a ==
-    1 - (1 + lambda)^-1/2``, so the measure samples at the cost of a prior
-    draw; the precision factor is ``(I + V b V*) Li`` with ``b == (1 +
-    lambda)^1/2 - 1``. Nothing here is assembled: every operator is the
-    prior's factors composed with rank-``r`` corrections.
+    full posterior. The mean built from a linear problem by
+    :meth:`from_linear_problem` is the same truncation: the update is kept
+    in the retained directions only, so at a truncated rank it omits the
+    update in the directions dropped. The covariance factor is
+    ``L (I - V a V*)`` with ``a == 1 - (1 + lambda)^-1/2``, so the measure
+    samples at the cost of a prior draw; the precision factor is
+    ``(I + V b V*) Li`` with ``b == (1 + lambda)^1/2 - 1``. Nothing here is
+    assembled: every operator is the prior's factors composed with
+    rank-``r`` corrections.
 
     The density relative to the prior is ``r``-dimensional, and the evidence
     in the potential's convention is ``-J(m) - sum log(1 + lambda) / 2`` with
@@ -975,9 +1022,22 @@ class LowRankGaussianPosterior(GaussianPosterior):
     ) -> "LowRankGaussianPosterior":
         """The low-rank posterior of a linear problem, with no solve at all.
 
-        The mean is ``m_0 + C A* R^-1 (d - A m_0)`` with ``C`` the low-rank
-        covariance, so once the eigenpairs are in hand it is a few
-        applications; at full rank it is the posterior mean exactly.
+        The mean is
+
+        .. code-block:: text
+
+            m == m_0 + L V diag(1 / (1 + lambda)) V* L* A* R^-1 (d - A m_0 - mu_e)
+
+        with ``mu_e`` the error's expectation: the update of the full
+        posterior, ``m_0 + L (I + H)^-1 L* A* R^-1 (d - A m_0 - mu_e)``, kept
+        in the retained directions only, where ``(I + H)^-1`` is
+        ``1 / (1 + lambda)``. The vector ``L* A* R^-1 (d - A m_0 - mu_e)``
+        lies in the range of ``H``, so at full rank this is the posterior
+        mean exactly. Below it, the update in the directions dropped is
+        omitted rather than left unshrunk: the update is the full
+        posterior's projected onto the retained directions in the prior's
+        Cameron-Martin norm, so never larger in that norm. Once the
+        eigenpairs are in hand it is a few applications.
 
         Args:
             problem: the linear forward problem, with a Gaussian error.
@@ -1000,17 +1060,20 @@ class LowRankGaussianPosterior(GaussianPosterior):
         if error_precision is None:
             raise ValueError("The error measure needs a precision.")
         directions, eigenvalues = _information_eigenpairs(
-            forward, prior, error_precision, rank=rank, rng=rng, n_jobs=n_jobs
+            forward.adjoint @ error_precision @ forward,
+            prior,
+            rank=rank,
+            rng=rng,
+            n_jobs=n_jobs,
         )
         factor = prior.covariance_factor
-        latent = factor.domain
         space = prior.domain
-        residual = forward.codomain.subtract(data, forward(prior.expectation))
+        data_space = forward.codomain
+        residual = data_space.subtract(data, forward(prior.expectation))
+        residual = data_space.subtract(residual, problem.error_measure.expectation)
         pulled = factor.adjoint(forward.adjoint(error_precision(residual)))
-        weights = eigenvalues / (1.0 + eigenvalues)
-        coefficients = directions.adjoint(pulled)
-        corrected = latent.subtract(pulled, directions(weights * coefficients))
-        mean = space.add(prior.expectation, factor(corrected))
+        coefficients = directions.adjoint(pulled) / (1.0 + eigenvalues)
+        mean = space.add(prior.expectation, factor(directions(coefficients)))
         return cls(
             prior,
             mean,
@@ -1041,15 +1104,31 @@ class LowRankGaussianPosterior(GaussianPosterior):
         the directions kept."""
         return self._directions
 
-    def modes(self) -> list[Any]:
-        """The directions as models, ``L v_k``: the fields the data inform."""
-        factor = self._prior.covariance_factor
-        unit = np.eye(self.rank)
-        return [factor(self._directions(unit[:, k])) for k in range(self.rank)]
+    def modes(self, /, *, n_jobs: int | None = None) -> list[Any]:
+        """The directions as models, ``L v_k``: the fields the data inform.
 
-    def pointwise_variance_reduction(self) -> Any:
+        Args:
+            n_jobs: workers for the applications of the prior's factor, one
+                per direction. Serial by default.
+
+        Returns:
+            The ``r`` models, in the order of the eigenvalues.
+        """
+        unit = np.eye(self.rank)
+        through = self._prior.covariance_factor @ self._directions
+        return through.apply_block(
+            [unit[:, k] for k in range(self.rank)], n_jobs=n_jobs
+        )
+
+    def pointwise_variance_reduction(self, /, *, n_jobs: int | None = None) -> Any:
         """``sum_k d_k (L v_k)^2``, the field by which the prior's pointwise
         variance exceeds this measure's.
+
+        Args:
+            n_jobs: workers for the modes; see :meth:`modes`.
+
+        Returns:
+            A vector of the model space.
 
         Raises:
             TypeError: if the model space has no pointwise product.
@@ -1063,6 +1142,6 @@ class LowRankGaussianPosterior(GaussianPosterior):
             )
         shrink = self._eigenvalues / (1.0 + self._eigenvalues)
         total = space.zero()
-        for weight, mode in zip(shrink, self.modes()):
+        for weight, mode in zip(shrink, self.modes(n_jobs=n_jobs)):
             total = space.axpy(float(weight), space.multiply(mode, mode), total)
         return total

@@ -113,14 +113,16 @@ def set_answer(
     for index in range(len(REGIONS)):
         q = P.basis_vector(index)
         directions += [q, P.scale(-1.0, q)]
-    # The first direction serially, so the family and its factorizations are
-    # built once before the threads share them.
-    feasible.support_result(directions[0], via=PRIMAL)
+    # In worker processes, each building the family and its factorizations
+    # for its own directions.
     sweep = feasible.support_sweep(directions, via=PRIMAL, n_jobs=scale.n_jobs)
     brackets = np.zeros((len(REGIONS), 2))
     gaps = np.zeros(len(REGIONS))
-    cost = f"{counted.forward} forward, {counted.adjoint} adjoint applications" + (
-        "" if scale.n_jobs is None else f", in {scale.n_jobs} worker threads"
+    cost = (
+        f"{counted.forward} forward, {counted.adjoint} adjoint applications"
+        if scale.n_jobs is None
+        else f"in {min(scale.n_jobs, len(directions))} worker processes, whose "
+        "applications this tally does not see"
     )
     print(
         f"support in {len(directions)} directions in {time.perf_counter() - t0:.1f} s "

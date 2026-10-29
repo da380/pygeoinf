@@ -156,7 +156,7 @@ class Problem:
             coarse = self.space.with_degree(self.scale.surrogate_degree)
             self._surrogate = (
                 coarse,
-                coarse.point_evaluation_operator(self.points, dense=True),
+                coarse.point_evaluation_operator(self.points, route="dense"),
             )
         return self._surrogate
 

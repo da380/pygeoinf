@@ -1,18 +1,16 @@
 """Quadratic programs, and the backends that solve them.
 
 A bundle method's subproblem is a small dense QP: minimize a quadratic over a
-simplex, or over a level set, in as many variables as there are cuts. It is
+simplex, in as many variables as there are cuts. It is
 tiny compared with the space the outer problem lives in, and it is solved many
 times, so what matters is that it is solved *accurately* and without setup
 overhead.
 
 ``pygeoinf2.numerics.convex`` has its own accelerated projected gradient for
 the simplex case, which needs nothing installed; the proximal bundle method
-falls back to it when no QP backend is available. The level bundle method's
-subproblem has a general linear constraint and is not a simplex projection, so
-it needs a QP solver proper. On the ill-conditioned Gram matrices a converging
-bundle produces, a QP solver is also the more accurate for the proximal
-method.
+falls back to it when no QP backend is available, and when a backend reports
+that it did not solve. On the ill-conditioned Gram matrices a converging
+bundle produces, a QP solver proper is the more accurate of the two.
 
 Three backends, in the order :func:`best_available_qp_solver` prefers them:
 
@@ -65,7 +63,10 @@ class QPResult:
     A string rather than a boolean because the three backends fail in
     different ways -- infeasible, unbounded, iteration limit -- and which one
     it was is the useful part. Compare against ``"solved"`` for the plain
-    question.
+    question. Only the backend's own success status is ``"solved"``: its
+    inexact successes (OSQP's ``solved inaccurate``, Clarabel's
+    ``AlmostSolved``) keep their own names, and so does a status such as
+    ``unsolved`` that merely contains the word.
     """
 
     @property
@@ -327,11 +328,10 @@ class OSQPQPSolver:
         # raise_error: OSQP warns that its default will flip to raising on a
         # failed solve. The status is read below, so ask for it explicitly.
         outcome = problem.solve(raise_error=False)
-        reported = str(outcome.info.status)
         return QPResult(
             x=np.asarray(outcome.x, dtype=float),
             objective=float(outcome.info.obj_val),
-            status="solved" if "solved" in reported.lower() else reported,
+            status=_status(str(outcome.info.status), "solved"),
         )
 
 
@@ -452,14 +452,26 @@ class ClarabelQPSolver:
         ).solve()
 
         x = np.asarray(outcome.x, dtype=float)
-        reported = str(outcome.status)
         return QPResult(
             x=x,
             # Clarabel reports its own objective on the transformed problem, so
             # this is evaluated directly to be sure it is the one asked for.
             objective=float(0.5 * x @ P @ x + q @ x),
-            status="solved" if "solved" in reported.lower() else reported,
+            status=_status(str(outcome.status), "Solved"),
         )
+
+
+def _status(reported: str, success: str) -> str:
+    """``"solved"`` for the backend's exact success status, else the status.
+
+    Args:
+        reported: what the backend said.
+        success: its spelling of success.
+
+    Returns:
+        The status for :attr:`QPResult.status`.
+    """
+    return "solved" if reported.strip() == success else reported
 
 
 def best_available_qp_solver() -> QPSolver:
@@ -469,9 +481,10 @@ def best_available_qp_solver() -> QPSolver:
     The point of the ordering is that a caller need not know which of the
     optional packages the user has, and gets the best of them without asking.
     Clarabel leads because an interior-point method suits the small, badly
-    conditioned programs of the bundle methods better than ADMM does: on the
-    level method's master problem, whose quadratic is singular in the level
-    variable, OSQP can stop at its iteration cap where Clarabel solves.
+    conditioned programs of the bundle method better than ADMM does: on a
+    quadratic that is singular in some variable, as the Gram matrix of
+    near-parallel cuts nearly is, OSQP can stop at its iteration cap where
+    Clarabel solves.
 
     Returns:
         An instance of the best available backend.

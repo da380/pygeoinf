@@ -66,8 +66,9 @@ build up from the simplest:
 Two scales. `--quick` is degree 32, 400 points and a length scale of 0.15,
 and runs every part in about 15 seconds; it is what the test suite runs. The
 full scale is degree 128 (16 641 coefficients on a 258 by 258 grid), 20 000
-points and the length scale above, and runs every part in about eight
-minutes, nearly half of them the set answer. Both are seeded.
+points and the length scale above, and runs every part in about six
+minutes, most of them the set answer and the non-stationary extension. Both
+are seeded.
 
 ## How to run
 
@@ -150,8 +151,8 @@ pyshtools 4.14, finufft for the point evaluations.
 
 | solver | iterations | converged | build `A`/`A*` | solve `A`/`A*` | build s | solve s |
 |---|---|---|---|---|---|---|
-| plain CG, capped at 500 | 500 | no | 0/0 | 500/501 | 0.0 | 20.5 |
-| Woodbury surrogate, degree 48 | 16 | yes | 0/0 | 16/17 | 2.0 | 1.7 |
+| plain CG, capped at 500 | 500 | no | 0/0 | 500/501 | 0.0 | 15.0 |
+| Woodbury surrogate, degree 48 | 16 | yes | 0/0 | 16/17 | 1.2 | 0.9 |
 
 The capped plain solve is 1.3e-3 away from the preconditioned answer in
 relative norm, and it was not going to arrive: the data resolve the field to
@@ -184,7 +185,7 @@ the field was drawn with.
 | South Atlantic | +0.845 | +0.842 ± 0.008 | +0.844, [+0.836, +0.852] | [+0.409, +1.277] |
 | Africa | +0.593 | +0.035 ± 0.070 | -0.038, [-0.742, +0.667] | [-5.51, +5.46] |
 
-- **C** (21 s): least squares at a damping of one in the prior's norm is the
+- **C** (18 s): least squares at a damping of one in the prior's norm is the
   posterior mean of D, and fits to a chi-squared of 16 666 against a
   critical 20 330; the discrepancy principle chooses a damping of 6.6 in 6
   misfit evaluations and 48 CG iterations in all, and its model is
@@ -193,34 +194,33 @@ the field was drawn with.
   bias there, -0.52, which only the truth reveals: the estimate sees a
   unit bump under the Pacific at 0.99 of its height and one under Africa
   at 0.17.
-- **D** (44 s): the posterior mean fits the data to a chi-squared of 16 666
+- **D** (43 s): the posterior mean fits the data to a chi-squared of 16 666
   on 20 000; the pointwise standard deviation is 0.04 under the oceans and
   0.87 to 0.99 under the continents, where it returns to the prior's 1.0;
   the two ocean averages are pinned to ±0.004 and Africa's is as wide as
   the prior's.
-- **E** (about three and a half minutes, measured direction by
-  direction): with the prior hardened to its 95% ball, `||m|| <= r` in the
-  space's own `H^2` norm with `r = 6.33`, which the truth lies in at 0.92
-  of the boundary's gauge `(||m|| / r)^2`, and the noise to its 95% ball,
-  the certified brackets hold the truth in every region, each to a gap
-  below 4e-4, and the polytope of the six half-spaces contains the true
-  averages. A set bound admits far more than the Gaussian posterior: the
+- **E** (115 s, the six directions in six worker processes): with the
+  prior hardened to its 95% ball, `||m|| <= r` in the space's own `H^2`
+  norm with `r = 6.33`, which the truth lies in at 0.92 of the boundary's
+  gauge `(||m|| / r)^2`, and the noise to its 95% ball, the certified
+  brackets hold the truth in every region, each to a gap below 4e-4, and
+  the polytope of the six half-spaces contains the true averages. A set bound admits far more than the Gaussian posterior: the
   ball alone admits ±10.1 for each average, the data narrow the ocean
   averages to brackets 0.89 and 0.87 wide, and Africa's to ±5.5, what is
   left of the ball once the ocean data are fitted. The six directions
-  take about 3700 forward and 3900 adjoint applications, 34 to 40 s each,
-  in some 35 solves apiece. The ball's family `A A* r^2` decays only as
-  the space's own kernel does, more slowly than the prior's, so the coarse
-  surrogate catches less of it: a solve takes from a few iterations to two
-  dozen, and the one at the walk's smallest multiplier 70 to 130. Threads
-  buy nothing here, because a solve is a chain of short calls that hold
-  the interpreter lock between them.
-- **F** (128 s): under a prior 1.5 times larger in the south and 0.5
-  times in the north, the ocean averages do not move, Africa's interval
-  shrinks with its prior, and the standard deviation under central Asia
-  halves with the prior's amplitude there; the Woodbury surrogate still
-  uses the stationary prior and the solves take 52 applications instead
-  of 18.
+  take about 3700 forward and 3900 adjoint applications in all, in some
+  35 solves apiece, and 39 to 52 s each when run one at a time; each
+  worker builds the family's factorizations for its own direction. The
+  ball's family `A A* r^2` decays only as the space's own kernel does,
+  more slowly than the prior's, so the coarse surrogate catches less of
+  it: a solve takes from a few iterations to two dozen, and the one at the
+  walk's smallest multiplier 70 to 130.
+- **F** (about 160 s, 100 of them the 64 samples): under a prior 1.5 times
+  larger in the south and 0.5 times in the north, the ocean averages do
+  not move, Africa's interval shrinks with its prior, and the standard
+  deviation under central Asia halves with the prior's amplitude there;
+  the Woodbury surrogate still uses the stationary prior and the solves
+  take 52 applications instead of 18.
 
 ## What the app shows
 

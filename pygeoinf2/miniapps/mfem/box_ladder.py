@@ -103,15 +103,14 @@ def box_ladder(
     )
 
     box.reset_counts()
-    # The solve's traits are checked as a claim of symmetry alone. It is
-    # positive definite too, but that claim implies invertibility, which
-    # check_traits verifies on a coordinate space by forming the whole
-    # matrix: one MFEM solve per degree of freedom.
-    symmetric = LinearOperator.self_adjoint(box.coefficients, box.solve)
+    # The solve claims to be self-adjoint and positive definite, and both
+    # claims are checked on probes; the invertibility the second implies is
+    # taken on trust, verifying it costing one MFEM solve per degree of
+    # freedom.
     ladder = {
         "sampling": check_operator(box.sampling, rng=rng, measure=prior),
         "solve": check_operator(box.solve, rng=rng),
-        "solve traits": check_traits(symmetric, rng=rng),
+        "solve traits": check_traits(box.solve, rng=rng),
         "evaluation": check_operator(box.evaluation, rng=rng),
         "operator": check_operator(box.operator, rng=rng, measure=prior),
     }

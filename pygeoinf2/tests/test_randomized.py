@@ -705,3 +705,29 @@ class TestDegenerateInputs:
             random_diagonal(A, samples=0, rng=rng)
         with pytest.raises(ValueError, match="probe"):
             random_diagonal(A, samples=-3, rng=rng)
+
+
+class TestMeasureProbesAreCentered:
+    """Probes drawn from a measure are centered on its expectation, so a
+    prior with a nonzero mean spends no direction of the range on the image
+    of the mean, only on what the covariance lets through."""
+
+    def test_the_mean_spends_no_direction(self, rng):
+        from pygeoinf2.numerics.randomized import random_range
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = make_weighted_space()
+        mean = space.scale(1e4, space.basis_vector(2))
+        # A covariance of rank two, on the first two coordinates.
+        factor = LinearOperator.from_matrix(
+            EuclideanSpace(2),
+            space,
+            np.array([[1.0, 0.0], [0.5, 2.0], [0.0, 0.0], [0.0, 0.0]]),
+            form="components",
+        )
+        measure = GaussianMeasure(space, expectation=mean, covariance_factor=factor)
+        identity = LinearOperator.identity(space)
+        basis = random_range(identity, rank=2, measure=measure, power=0, rng=rng)
+        assert len(basis) == 2
+        for vector in basis:
+            assert np.abs(space.to_components(vector)[2:]).max() < 1e-10

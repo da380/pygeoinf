@@ -114,15 +114,16 @@ class TestProbedAdjoint:
             A.adjoint(np.zeros(3))
 
     def test_a_wide_operator_gets_its_matrix_by_rows_after_opting_in(self, rng):
-        """``matrix(by="auto")`` fills by rows through the adjoint when the
-        codomain is the smaller side, which an operator without one could not
-        do; with the opt-in it can, and gets the assembled matrix."""
+        """Filling by rows goes through the adjoint, which an operator without
+        one cannot do; with the opt-in it can, and gets the assembled matrix.
+        The default fill falls back to the columns instead."""
         X, Y = EuclideanSpace(8), EuclideanSpace(3)
         matrix = rng.normal(size=(3, 8))
         bare = self.action_only(X, Y, matrix)
         with pytest.raises(NotImplementedError):
-            bare.matrix()
-        assert np.allclose(bare.with_probed_adjoint().matrix(), matrix)
+            bare.matrix(by="rows")
+        assert np.allclose(bare.matrix(), matrix)
+        assert np.allclose(bare.with_probed_adjoint().matrix(by="rows"), matrix)
 
     def test_a_space_without_coordinates_is_refused(self):
         X = OpaqueSpace(np.ones(4))
@@ -1756,6 +1757,58 @@ class TestATraitCheckDoesNotExtractTheMatrix:
         assert count[0] < 50
 
 
+class TestTheInvertibilityClaimIsCheckedOnlyWhereCheap:
+    """Every covariance claims invertibility through positive definiteness,
+    so ``check_traits`` must not form and decompose a dense matrix for it."""
+
+    @pytest.fixture
+    def no_dense_rank(self, monkeypatch):
+        def refuse(*args, **kwargs):
+            raise AssertionError("a dense rank decomposition was computed")
+
+        monkeypatch.setattr(np.linalg, "matrix_rank", refuse)
+
+    def test_a_diagonal_claim_is_read_off_its_scalings(self, rng, no_dense_rank):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        X = make_weighted_space()
+        D = DiagonalLinearOperator(X, rng.uniform(1.0, 2.0, X.dim))
+        assert Traits.INVERTIBLE & D.traits
+        check_traits(D, rng=rng)
+        check_traits(D @ (2.0 * D), rng=rng)
+
+    def test_a_zero_scaling_is_caught(self, rng, no_dense_rank):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        X = EuclideanSpace(3)
+        singular = DiagonalLinearOperator(X, np.array([0.0, 1.0, 2.0]))
+        with pytest.raises(AssertionError, match="scalings are zero"):
+            check_traits(singular.with_traits(Traits.INVERTIBLE), rng=rng)
+
+    def test_a_sparse_array_is_not_densified(self, rng, no_dense_rank):
+        import scipy.sparse
+
+        n = 50
+        X = EuclideanSpace(n)
+        matrix = scipy.sparse.diags(
+            [np.full(n - 1, -1.0), np.full(n, 4.0), np.full(n - 1, -1.0)],
+            [-1, 0, 1],
+            format="csr",
+        )
+        A = LinearOperator.from_matrix(
+            X, X, matrix, form="components", traits=Traits.INVERTIBLE
+        )
+        check_traits(A, rng=rng)
+
+    def test_a_dense_stored_array_is_still_ranked(self, rng):
+        X = EuclideanSpace(3)
+        singular = LinearOperator.from_matrix(
+            X, X, np.diag([1.0, 1.0, 0.0]), form="components", traits=Traits.INVERTIBLE
+        )
+        with pytest.raises(AssertionError, match="full rank"):
+            check_traits(singular, rng=rng)
+
+
 class TestDiagonalsThroughAScaledComposition:
     def test_a_diagonal_factor_scales_rows_or_columns(self, rng):
         from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
@@ -1793,3 +1846,183 @@ class TestTheComparisonScaleIsRelative:
             X, X, lambda x: 1e-10 * x, adjoint=lambda y: -1e-10 * y
         )
         check_operator(wrong, rng=rng, atol=1e-8)
+
+
+class TestTheShortcutsAreChecked:
+    """A product or a sum applies its factors through their components
+    actions and block applications whenever it can, so ``check_operator``
+    holds each to the operator's own action."""
+
+    def test_a_components_action_that_disagrees_is_caught(self, rng):
+        X = make_dense_metric_space(4)
+        G = X.gram_matrix()
+        wrong = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: 2.0 * x,
+            adjoint=lambda y: 2.0 * y,
+            components_action=lambda c: 2.0 * G @ c,
+            components_adjoint_action=lambda c: 2.0 * c,
+        )
+        with pytest.raises(AssertionError, match="components action"):
+            check_operator(wrong, rng=rng)
+
+    def test_an_adjoint_components_action_that_disagrees_is_caught(self, rng):
+        X = make_dense_metric_space(4)
+        G = X.gram_matrix()
+        wrong = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: 2.0 * x,
+            adjoint=lambda y: 2.0 * y,
+            components_action=lambda c: 2.0 * c,
+            components_adjoint_action=lambda c: 2.0 * G @ c,
+        )
+        with pytest.raises(AssertionError, match="adjoint's components action"):
+            check_operator(wrong, rng=rng)
+
+    def test_agreeing_shortcuts_pass_and_are_reported(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        X = make_dense_metric_space(4)
+        right = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: 2.0 * x,
+            adjoint=lambda y: 2.0 * y,
+            components_action=lambda c: 2.0 * c,
+            components_adjoint_action=lambda c: 2.0 * c,
+        )
+        report = check_operator(right, rng=rng)
+        assert "the components action agrees with the action" in report.defects
+        W = make_weighted_space()
+        D = DiagonalLinearOperator(W, rng.uniform(1.0, 2.0, W.dim))
+        report = check_operator(D, rng=rng)
+        assert "the block application agrees with single applications" in (
+            report.defects
+        )
+
+    def test_a_block_application_that_disagrees_is_caught(self, rng):
+        X = make_weighted_space()
+
+        class Wrong(LinearOperator):
+            def _value(self, x):
+                return X.copy(x)
+
+            def _adjoint_value(self, y):
+                return X.copy(y)
+
+            def apply_block(self, vectors, /, *, n_jobs=None):
+                return [X.scale(2.0, x) for x in vectors]
+
+        with pytest.raises(AssertionError, match="block application"):
+            check_operator(Wrong(X, X), rng=rng)
+
+
+class TestAMatrixWithoutAnAdjoint:
+    def test_the_default_fill_falls_back_to_columns(self):
+        """A forward operator into a smaller data space, built without an
+        adjoint: the rows cannot be filled, the columns can, and the
+        defaults should not ask for an adjoint the matrix does not need."""
+        X, Y = EuclideanSpace(5), EuclideanSpace(3)
+        A = LinearOperator.from_callables(X, Y, lambda x: x[:3].copy())
+        expected = np.eye(3, 5)
+        assert np.array_equal(A.matrix(), expected)
+        assert np.array_equal(A.matrix(by="columns"), expected)
+        with pytest.raises(NotImplementedError):
+            A.matrix(by="rows")
+
+
+class TestADiagonalOnADenseMetric:
+    """Invertibility and idempotence are properties of the map, and a
+    constant spectrum is a multiple of the identity, on any metric; a
+    diagonal on a finite element space keeps them, and a congruence of a
+    definite operator by it is definite."""
+
+    def test_metric_independent_traits_are_deduced(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        X = make_dense_metric_space(5)
+        D = DiagonalLinearOperator(X, rng.uniform(1.0, 2.0, 5))
+        assert D.traits & Traits.INVERTIBLE
+        assert not D.traits & Traits.SELF_ADJOINT
+        mask = DiagonalLinearOperator(X, np.array([0.0, 1.0, 1.0, 0.0, 1.0]))
+        assert mask.traits & Traits.IDEMPOTENT
+        constant = DiagonalLinearOperator(X, np.full(5, 2.0))
+        assert constant.traits & Traits.SELF_ADJOINT
+        assert constant.traits & Traits.POSITIVE_DEFINITE
+        for operator in (D, mask, constant):
+            check_traits(operator, rng=rng)
+
+    def test_a_congruence_is_definite_and_solvable(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        from .conftest import spd_operator
+
+        X = make_dense_metric_space(5)
+        D = DiagonalLinearOperator(X, rng.uniform(1.0, 2.0, 5))
+        congruence = D.adjoint @ spd_operator(X, rng) @ D
+        assert congruence.traits & Traits.POSITIVE_DEFINITE
+        check_traits(congruence, rng=rng)
+        inverse = CholeskySolver()(congruence)
+        x = X.random(rng=rng)
+        assert np.allclose(inverse(congruence(x)), x)
+
+
+class TestDiagonalsRefuseAnUnknownForm:
+    def test_an_unknown_form_is_refused(self, rng):
+        X = EuclideanSpace(4)
+        with pytest.raises(ValueError, match="form"):
+            (2.0 * LinearOperator.identity(X)).diagonals(form="nonsense")
+
+
+class TestEveryCheckTakesBothTolerances:
+    def test_the_vector_comparing_checks_take_atol(self):
+        import inspect
+
+        from pygeoinf2 import testing
+
+        for name in (
+            "check_space",
+            "check_coordinates",
+            "check_operator",
+            "check_traits",
+            "check_projection",
+            "check_affine",
+            "check_hessian",
+        ):
+            parameters = inspect.signature(getattr(testing, name)).parameters
+            assert "rtol" in parameters and "atol" in parameters, name
+
+    def test_check_traits_honors_atol(self, rng):
+        """A projector off by a part in 1e8 of its output: refused at the
+        default tolerances, accepted with an absolute allowance that covers
+        it."""
+        X = EuclideanSpace(4)
+        nearly = LinearOperator.from_matrix(
+            X,
+            X,
+            np.diag([1.0, 1.0 + 1e-6, 0.0, 0.0]),
+            form="components",
+            traits=Traits.IDEMPOTENT,
+        )
+        with pytest.raises(AssertionError, match="IDEMPOTENT"):
+            check_traits(nearly, rng=rng)
+        check_traits(nearly, rng=rng, atol=1e-4)
+
+
+class TestANegativePowerOfASingularDiagonal:
+    def test_it_is_refused(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        D = DiagonalLinearOperator(EuclideanSpace(3), np.array([0.0, 1.0, 2.0]))
+        with pytest.raises(ValueError, match="non-zero"):
+            D**-1
+        assert np.allclose((D**2).eigenvalues, [0.0, 1.0, 4.0])
+        assert np.allclose(
+            (
+                DiagonalLinearOperator(EuclideanSpace(2), np.array([2.0, 4.0])) ** -1
+            ).eigenvalues,
+            [0.5, 0.25],
+        )

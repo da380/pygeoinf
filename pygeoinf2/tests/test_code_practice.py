@@ -130,10 +130,10 @@ CORE_VECTOR_API = frozenset(
         "copy",
         "dim",
         "inner_product",
-        "mean",
         "negative",
         "norm",
         "random",
+        "sample_expectation",
         "scale",
         "scale_inplace",
         "squared_norm",
@@ -342,6 +342,28 @@ class TestTheNamespaceHasNoHoles:
         for name in names:
             assert hasattr(module, name), f"{package}.{name} is not reachable"
             assert name in module.__all__, f"{package}.{name} is not in __all__"
+
+
+class TestSpacesAreReachedByGeometry:
+    """A space is named by its geometry's module, ``sphere.Sobolev`` or
+    ``interval.Sobolev``; nothing at the top level stands for one of many
+    geometries that share a name, and nothing provisional is public."""
+
+    @pytest.mark.parametrize(
+        "name", ["Box", "Interval", "Lebesgue", "PeriodicBox", "Sobolev"]
+    )
+    def test_no_space_is_exported_flat(self, name):
+        import pygeoinf2
+        from pygeoinf2 import symmetric_space
+
+        assert not hasattr(pygeoinf2, name)
+        assert name not in pygeoinf2.__all__
+        assert name in symmetric_space.__all__
+
+    def test_the_shell_transform_is_not_public(self):
+        spectral_element = pytest.importorskip("pygeoinf2.spectral_element")
+        assert "ShellTransform" not in spectral_element.__all__
+        assert not hasattr(spectral_element, "ShellTransform")
 
 
 class TestImportCost:

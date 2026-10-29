@@ -334,7 +334,7 @@ class TestMixtureInversion:
             model.from_components(np.full(model.dim, 2.0)), rng=rng
         )
         terms = inversion.log_evidence_terms(observed)
-        assert inversion.log_evidence(observed) < terms.max()
+        assert inversion.log_evidence(observed).value < terms.max()
 
     def test_a_property_posterior_is_a_mixture_with_the_same_weights(self, setup, rng):
         """The weights are decided by the data through the evidence; a property
@@ -356,6 +356,61 @@ class TestMixtureInversion:
         assert target.to_components(pushed.expectation) == pytest.approx(
             target.to_components(operator(inversion(observed).expectation)), abs=1e-9
         )
+
+    def test_a_property_operator_on_another_space_is_refused(self, setup):
+        problem, prior, model, _ = setup
+        inversion = LinearGaussianMixtureInversion(problem, prior)
+        elsewhere = LinearOperator.identity(EuclideanSpace(model.dim + 1))
+        with pytest.raises(ValueError, match="property operator"):
+            inversion.push_forward(elsewhere)
+
+    def test_the_answer_does_not_depend_on_the_job_count(self, setup, rng):
+        """The components go to the workers, and the volume terms a worker
+        computes are kept here, so the next call does not recompute them."""
+        problem, prior, model, _ = setup
+        observed = problem.synthetic_data(
+            model.from_components(np.full(model.dim, 2.0)), rng=rng
+        )
+        serial = LinearGaussianMixtureInversion(problem, prior, solver=CholeskySolver())
+        parallel = LinearGaussianMixtureInversion(
+            problem, prior, solver=CholeskySolver(), n_jobs=2
+        )
+        assert parallel.weights(observed) == pytest.approx(serial.weights(observed))
+        assert all(inversion._log_determinants for inversion in parallel.inversions)
+        assert parallel.log_evidence(observed).value == pytest.approx(
+            serial.log_evidence(observed).value
+        )
+        mixed, reference = parallel(observed), serial(observed)
+        for one, other in zip(mixed.components, reference.components):
+            assert model.to_components(one.expectation) == pytest.approx(
+                model.to_components(other.expectation)
+            )
+
+    def test_a_stochastic_evidence_carries_its_error_and_ignores_the_job_count(
+        self, setup, rng
+    ):
+        problem, prior, model, _ = setup
+        observed = problem.synthetic_data(
+            model.from_components(np.full(model.dim, 2.0)), rng=rng
+        )
+
+        def evidence(n_jobs):
+            return LinearGaussianMixtureInversion(
+                problem,
+                prior,
+                solver=CholeskySolver(),
+                evidence={
+                    "method": "stochastic",
+                    "samples": 30,
+                    "rng": np.random.default_rng(5),
+                },
+                n_jobs=n_jobs,
+            ).log_evidence(observed)
+
+        serial, parallel = evidence(None), evidence(2)
+        assert serial.standard_error > 0.0
+        assert parallel.value == pytest.approx(serial.value)
+        assert parallel.standard_error == pytest.approx(serial.standard_error)
 
     def test_a_single_gaussian_prior_is_refused(self, setup):
         problem, prior, _, _ = setup

@@ -16,10 +16,11 @@
 
 # %%
 import numpy as np
+import scipy.linalg as linalg
 import scipy.sparse as sparse
 import scipy.sparse.linalg as sparse_linalg
 
-from pygeoinf2 import CGSolver, CoordinateSpace, LinearOperator, Traits
+from pygeoinf2 import CGSolver, CoordinateSpace, GaussianMeasure, LinearOperator, Traits
 from pygeoinf2.testing import (
     check_coordinates,
     check_operator,
@@ -44,15 +45,25 @@ rng = np.random.default_rng(12)
 # | `to_components`, `from_components` | the coordinate map, both ways |
 # | `apply_gram`, `solve_gram` | the metric: $G c$ and $G^{-1} c$ on components |
 #
-# The inner product, the norm, white noise, matrices and everything above
-# them follow. A coordinate-free backend supplies a plain `HilbertSpace`
-# with an `inner_product` instead of the last two rows, as the finite
-# element space at the end does in one of its two forms.
+# The inner product, the norm, matrices and everything above them follow.
+# So does white noise, which every check and every randomized method draws,
+# but by default from a dense factorisation of the Gram matrix: right at
+# this size, and not at a million unknowns. A backend at scale overrides one
+# more member:
+#
+# | | |
+# |---|---|
+# | `white_noise_components` | $c = L^{-\mathsf T} \xi$, from a sparse factor $G = L L^{\mathsf T}$; the default is dense |
+#
+# A coordinate-free backend supplies a plain `HilbertSpace` with an
+# `inner_product` instead of the coordinate rows, as the finite element
+# space at the end does in one of its two forms, and its own `white_noise`.
 #
 # Our vectors will be instances of a class that stands for a foreign
 # library's: it holds nodal values of a piecewise-linear function on
 # $[0, 1]$ and knows no arithmetic at all. The metric is the mass matrix,
-# sparse, factorised once.
+# sparse, factorised once; white noise comes from its banded Cholesky
+# factor.
 
 
 # %%
@@ -76,6 +87,10 @@ class PiecewiseLinear(CoordinateSpace):
             h / 6.0
         )
         self._factor = sparse_linalg.splu(self._mass)
+        # The banded Cholesky factor of the same matrix, G == U^T U.
+        self._upper = linalg.cholesky_banded(
+            np.vstack([np.r_[0.0, off], diagonal]) * (h / 6.0)
+        )
 
     @property
     def dim(self):
@@ -109,6 +124,12 @@ class PiecewiseLinear(CoordinateSpace):
 
     def solve_gram(self, c):
         return self._factor.solve(np.asarray(c, dtype=float))
+
+    def white_noise_components(self, *, rng=None):
+        # c = U^-1 xi has covariance U^-1 U^-T == G^-1: the components of
+        # white noise on the space, at the cost of a banded solve.
+        xi = np.random.default_rng(rng).standard_normal(self._nodes)
+        return linalg.solve_banded((0, 1), self._upper, xi)
 
 
 V = PiecewiseLinear(41)
@@ -237,7 +258,16 @@ for check, broken, options in (
 #
 # The cumulative integral $f \mapsto \int_0^x f$ has adjoint
 # $g \mapsto \int_x^1 g$ in $L^2$. Discretise both with the trapezoidal rule
-# and check the pair on four meshes:
+# and check the pair on four meshes.
+#
+# The probes matter here. The space's `random` vector is white noise, rough
+# in every mode at once, and a discretisation error is largest exactly on
+# the modes a mesh barely resolves, so a defect measured on white noise
+# swings from probe to probe. Probes drawn from a smooth measure on the
+# space, passed as `measure=`, are the kind of field the operator will
+# meet. One is built from the backend's own pieces: covariance
+# $(1 - \ell^2 d^2/dx^2)^{-2}$, whose factor is the inverse of
+# $1 - \ell^2 d^2/dx^2$, a sparse solve.
 
 
 # %%
@@ -259,14 +289,34 @@ def cumulative_integral(nodes):
     return LinearOperator.from_callables(space, space, forward, adjoint=adjoint)
 
 
+def smooth_measure(space, length=0.1):
+    """The measure of covariance (1 - l^2 d^2/dx^2)^-2 on the space."""
+    nodes = space.dim
+    main = np.full(nodes, 2.0)
+    main[[0, -1]] = 1.0
+    off = -np.ones(nodes - 1)
+    stiffness = sparse.diags([off, main, off], [-1, 0, 1], format="csc") * (nodes - 1)
+    solve = sparse_linalg.splu((space._mass + length**2 * stiffness).tocsc()).solve
+    root = LinearOperator.self_adjoint(
+        space,
+        lambda f: NodalField(solve(space._mass @ f.values)),
+        traits=Traits.POSITIVE_DEFINITE,
+    )
+    return GaussianMeasure(space, covariance_factor=root)
+
+
 adjoint_identity = "the adjoint satisfies (A x, y) == (x, A* y)"
 print(f"{'nodes':>6} {'adjoint defect':>15}")
-for count in (11, 41, 161, 641):
-    report = check_operator(cumulative_integral(count), rng=rng, rtol=0.1)
+for count in (41, 161, 641, 2561):
+    operator = cumulative_integral(count)
+    report = check_operator(
+        operator, rng=rng, rtol=0.1, measure=smooth_measure(operator.domain), trials=12
+    )
     print(f"{count:6d} {report.defects[adjoint_identity]:15.1e}")
 
 # %% [markdown]
-# The defect falls steadily: the adjoint is consistent, and the report
+# The defect falls under refinement, by orders of magnitude: the adjoint is
+# consistent, and the report
 # records by how much at each resolution. That number has a second use. A
 # solver asked for a tolerance below it is asking for noise: no iteration
 # can make an operator and its adjoint agree better than they do.

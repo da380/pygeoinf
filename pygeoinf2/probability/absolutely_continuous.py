@@ -175,6 +175,15 @@ class AbsolutelyContinuousMeasure[X](ProbabilityMeasure[X]):
             )
         return self._relative_log_density - other.relative_log_density
 
+    @property
+    def can_sample(self) -> bool:
+        """False: a density states where the probability is, not how to draw.
+
+        A subclass that also draws, the linear-Gaussian posterior being one,
+        is a ``GaussianMeasure`` first and answers as one.
+        """
+        return False
+
     def sample(self, *, rng: Generator | None = None) -> X:
         """Refused: a density states where probability is, not how to draw it.
 

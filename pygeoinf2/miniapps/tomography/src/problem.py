@@ -35,7 +35,6 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from pygeoinf2 import (
-    DiagonalLinearOperator,
     EuclideanSpace,
     GaussianMeasure,
     LinearForwardProblem,
@@ -118,7 +117,8 @@ class Scale:
             part E's true plume.
         redraws: how many times part E redraws the data at each noise level
             of its sweep.
-        n_jobs: the workers for the posterior samples; none for serial.
+        n_jobs: the workers for the posterior samples, the support
+            directions and the mixture's components; none for serial.
         geometry: ``"disk"``, or ``"ball"`` for part F.
     """
 
@@ -260,9 +260,10 @@ def composed_operator(
 ) -> LinearOperator:
     """The path integrals as the composition of point evaluation at every
     node with the sparse weights: what the forward operator is, written as
-    it reads. Its point evaluation is a dense ``(nodes, dim)`` matrix, which
-    at the full scale would be gigabytes; :func:`path_integral_operator`
-    forms the same product ray by ray."""
+    it reads. Its point evaluation as a dense ``(nodes, dim)`` matrix would
+    be gigabytes at the full scale, where the library evaluates locally
+    instead; :func:`path_integral_operator` forms the same product ray by
+    ray as rows."""
     nodes = np.concatenate([ray.nodes for ray in rays])
     evaluation = space.point_evaluation_operator(lift(scale, nodes))
     weights = LinearOperator.from_matrix(
@@ -394,22 +395,12 @@ def sobolev_prior(space: Layered, /, *, order: float, std: float) -> GaussianMea
     solve. It is calibrated by an amplitude per layer rather than pointwise,
     which would rescale it from place to place and leave it neither diagonal
     nor with a precision; its pointwise standard deviation stays within two
-    per cent of uniform. Its factor is then re-seated as one diagonal
-    operator on the layered space itself: the product measure's operators
-    act on the bare direct sum of the layers, and so would its posteriors,
-    which would lose the layered space's pointwise algebra that a pointwise
-    standard deviation needs.
+    per cent of uniform. The measure is on the layered space itself, so its
+    draws and its posteriors keep the space's pointwise algebra, which a
+    pointwise standard deviation needs.
     """
-    measure = space.sobolev_measure(
+    return space.sobolev_measure(
         order, amplitude=layer_amplitudes(space, order=order, std=std)
-    )
-    deviations = np.concatenate(
-        [block.eigenvalues for block in measure.covariance_factor.operators]
-    )
-    return GaussianMeasure(
-        space,
-        covariance_factor=DiagonalLinearOperator(space, deviations),
-        precision=DiagonalLinearOperator(space, deviations**-2.0),
     )
 
 

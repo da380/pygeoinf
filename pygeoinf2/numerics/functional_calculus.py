@@ -143,8 +143,12 @@ def iter_lanczos_tridiagonalize(
             and the cheap three-term recurrence alone is not usable for
             spectral work; full reorthogonalization costs ``O(k)`` inner
             products per step and is worth it at the small ``k`` used here.
-        breakdown_tol: relative norm below which the Krylov space is taken to
-            have closed, which is exact termination rather than failure.
+        breakdown_tol: the size of a new off-diagonal ``beta``, relative to
+            the operator's scale on the Krylov space so far -- the largest
+            ``|alpha|`` and ``beta`` met -- below which the space is taken to
+            have closed, which is exact termination rather than failure. No
+            absolute floor: an operator whose norm is ``1e-13`` in its
+            units runs exactly as one of norm one does.
 
     Yields:
         ``(basis, T)`` after each step, with ``T`` symmetric tridiagonal of
@@ -177,6 +181,7 @@ def iter_lanczos_tridiagonalize(
     off_diagonal: list[float] = []
 
     previous_beta = 0.0
+    scale = 0.0
     for step in range(max_iterations):
         w = operator(basis[-1])
         alpha = space.inner_product(w, basis[-1])
@@ -198,7 +203,8 @@ def iter_lanczos_tridiagonalize(
         yield list(basis), _tridiagonal(diagonal, off_diagonal)
 
         beta = space.norm(w)
-        if beta <= breakdown_tol * max(abs(alpha), 1.0) or step + 1 == max_iterations:
+        scale = max(scale, abs(alpha), previous_beta)
+        if beta <= breakdown_tol * scale or step + 1 == max_iterations:
             return
         off_diagonal.append(beta)
         previous_beta = beta
@@ -224,6 +230,12 @@ def _iter_lanczos_on_components(
     classical Gram-Schmidt against the whole basis with Kahan's second pass
     when the first removes more than ``1 - 1/sqrt(2)`` of the norm, which is
     one metric application per pass instead of one per basis vector.
+
+    The columns are held in a buffer that doubles when it fills, starting
+    from a few columns, so the memory held is proportional to the steps
+    actually taken and never to *max_iterations*, whose default is the
+    dimension: a run that terminates in five steps on a space of dimension
+    ``10^5`` holds a few vectors, not ``10^5`` of them.
     """
     c = np.array(space.to_components(start), dtype=float)
     weighted = space.apply_gram(c)
@@ -231,13 +243,14 @@ def _iter_lanczos_on_components(
     if norm == 0.0:
         raise ValueError("The starting vector for Lanczos must be nonzero.")
 
-    columns = np.empty((space.dim, max_iterations))
+    columns = np.empty((c.size, min(max_iterations, _INITIAL_COLUMNS)))
     columns[:, 0] = c / norm
     basis = [space.from_components(columns[:, 0].copy())]
     diagonal: list[float] = []
     off_diagonal: list[float] = []
 
     previous_beta = 0.0
+    scale = 0.0
     for step in range(max_iterations):
         w = np.array(space.to_components(operator(basis[-1])), dtype=float)
         weighted = space.apply_gram(w)
@@ -267,12 +280,24 @@ def _iter_lanczos_on_components(
 
         yield list(basis), _tridiagonal(diagonal, off_diagonal)
 
-        if beta <= breakdown_tol * max(abs(alpha), 1.0) or step + 1 == max_iterations:
+        scale = max(scale, abs(alpha), previous_beta)
+        if beta <= breakdown_tol * scale or step + 1 == max_iterations:
             return
         off_diagonal.append(beta)
         previous_beta = beta
+        if step + 1 == columns.shape[1]:
+            grown = np.empty(
+                (columns.shape[0], min(2 * columns.shape[1], max_iterations))
+            )
+            grown[:, : step + 1] = columns
+            columns = grown
         columns[:, step + 1] = w / beta
         basis.append(space.from_components(columns[:, step + 1].copy()))
+
+
+# The component Lanczos buffer's first allocation, in columns; it doubles from
+# there as the iteration needs.
+_INITIAL_COLUMNS = 8
 
 
 def _tridiagonal(
@@ -460,13 +485,15 @@ def operator_quadratic_form(
     """``(x, f(A) x)``, by Gauss quadrature on the Lanczos spectrum.
 
     Cheaper than forming ``f(A) x`` and pairing it, because only the first row
-    of the eigenvector matrix is needed. This is the kernel of stochastic
-    Lanczos quadrature, which is how a log-determinant gets estimated without
-    a factorization.
+    of the eigenvector matrix is needed and the Krylov basis is never
+    recombined. It is the quadrature that stochastic Lanczos quadrature
+    averages over probes; :func:`log_determinant` takes the trace of
+    ``log(A)`` through :func:`~pygeoinf2.numerics.randomized.random_trace`
+    instead, applying :class:`OperatorFunction` to each probe.
 
     Stops when the quadrature value settles, rather than running every one
-    of ``max_iterations``: for the outer stochastic estimator -- many probes,
-    each its own Lanczos run -- that is the cost that matters.
+    of ``max_iterations``: for a stochastic estimator built on it -- many
+    probes, each its own Lanczos run -- that is the cost that matters.
 
     Args:
         operator: a self-adjoint ``A``.

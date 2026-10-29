@@ -15,7 +15,10 @@ space, a spherical-harmonic field or a finite element space. The subpackages:
   spaces, the last three on the ``spectral_element`` core;
 * ``plotting`` -- figures for fields, measures and sets.
 
-The names a typical workflow needs are also exported here, flat.
+The names a typical workflow needs are also exported here, flat, except
+the spaces, which are reached by geometry: ``symmetric_space.sphere.Sobolev``,
+``symmetric_space.line.Lebesgue``, ``interval.Sobolev``, and so on, every
+geometry naming its own ``Lebesgue`` and ``Sobolev``.
 ``compat``, ``datasets`` and ``testing`` are imported separately.
 """
 
@@ -147,7 +150,6 @@ from .probability.base import (
 )
 from .probability.gaussian import GaussianMeasure
 from .probability.mixture import GaussianMixture
-from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
 from .traits import Traits
 
 __all__ = [
@@ -267,12 +269,6 @@ __all__ = [
     "SublevelSet",
     "LevelSet",
     "UniversalSet",
-    # spaces
-    "Box",
-    "Interval",
-    "Lebesgue",
-    "PeriodicBox",
-    "Sobolev",
     # probability
     "AbsolutelyContinuousMeasure",
     "GaussianMeasure",

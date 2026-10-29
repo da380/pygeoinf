@@ -120,6 +120,7 @@ plotting.show()
 #   fifteen-dimensional data space; no 128 × 128 matrix was ever formed
 #   (tutorial 4).
 # - **The prior and the posterior are Gaussian measures on a function
-#   space** (tutorial 5), and the forward problem with its error measure is
-#   the object every inference method in the library starts from
-#   (tutorial 6).
+#   space** (tutorial 5). The forward problem with its error measure is the
+#   object every inference method in the library starts from (tutorial 6),
+#   and the posterior is one of the three kinds of answer it gives: a point
+#   (tutorial 6), a measure (tutorial 7) or a set (tutorial 8).

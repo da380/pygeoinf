@@ -51,7 +51,7 @@ from ..algebra.spaces import EuclideanSpace, HilbertModule
 from ..probability.gaussian import GaussianMeasure
 from ._points import LocalEvaluation
 from .axis import AxisSpace
-from .base import SpectralElementSpace, _evaluation_form, _local_operator
+from .base import SpectralElementSpace, _evaluation_route, _local_operator
 
 __all__ = ["Layered"]
 
@@ -513,13 +513,13 @@ class Layered(CoordinateDirectSum, HilbertModule):
         /,
         *,
         side: str | None = None,
+        route: Literal["auto", "dense", "local"] = "auto",
         unsafe: bool = False,
-        form: Literal["auto", "dense", "local"] = "auto",
     ) -> LinearOperator:
         """Evaluation at points anywhere in the medium, as an operator into a
         Euclidean space.
 
-        In the layers' two forms, which agree to rounding and differ in
+        By the layers' two routes, which agree to rounding and differ in
         memory. ``"dense"`` assembles :meth:`basis_matrix`, eight bytes per
         point per component of the whole, zero outside each point's layer.
         ``"local"`` is each layer's matrix-free evaluation at the points in
@@ -527,32 +527,32 @@ class Layered(CoordinateDirectSum, HilbertModule):
         angular functions at the points; an application costs about what the
         dense one does. See
         :meth:`~pygeoinf2.spectral_element.SpectralElementSpace.point_evaluation_operator`.
-        ``"auto"`` is the dense form while its matrix fits 256 MB, and the
+        ``"auto"`` is the dense route while its matrix fits 256 MB, and the
         local one beyond.
 
         Args:
             points: where to evaluate.
             side: which value is meant at the points on an interface.
+            route: ``"auto"``, ``"dense"`` or ``"local"``.
             unsafe: build it even in layers too rough to admit it.
-            form: ``"auto"``, ``"dense"`` or ``"local"``.
 
         Returns:
             The operator.
 
         Raises:
             ValueError: if no points are given, one is in no layer or on an
-                interface with no side named, the form is none of the three,
+                interface with no side named, the route is none of the three,
                 or a layer's order is too low and *unsafe* is not set.
         """
         points = list(points)
         if not points:
             raise ValueError("At least one point is needed.")
-        form = _evaluation_form(form, len(points), self.dim)
+        route = _evaluation_route(route, len(points), self.dim)
         self._require_point_evaluation(
             "A point evaluation operator", points=points, side=side, unsafe=unsafe
         )
         codomain = EuclideanSpace(len(points))
-        if form == "dense":
+        if route == "dense":
             return LinearOperator.from_matrix(
                 self, codomain, self.basis_matrix(points, side=side), form="galerkin"
             )
@@ -696,23 +696,15 @@ class Layered(CoordinateDirectSum, HilbertModule):
         amplitude: float | list[float] = 1.0,
         expectation: tuple | None = None,
         pointwise_std: Any = None,
-        correlation: np.ndarray | None = None,
         unsafe: bool = False,
     ) -> GaussianMeasure:
-        """A Gaussian prior on the layers, each with covariance
-        ``amplitude^2 A^-order`` of its own ``A``, independent unless a
-        correlation is given.
+        """A Gaussian prior under which the layers are independent, each with
+        covariance ``amplitude^2 A^-order`` of its own ``A``.
 
         Independence is what a discontinuity means: knowing the field on one
         side of an interface says nothing of the other. A medium continuous
         across an interface is this prior conditioned on the vanishing of
-        :meth:`jump_operator` there. Between the two, a *correlation* ties
-        the layers' latent white noises mode for mode, as
-        :meth:`~pygeoinf2.probability.gaussian.GaussianMeasure.from_product`
-        describes: a positive correlation makes the layers' structure alike
-        in scale and sign without making the field continuous. The layers
-        must then have the same number of basis functions, so that their
-        modes correspond.
+        :meth:`jump_operator` there.
 
         Args:
             order: the Sobolev order of each layer's measure, one for all or
@@ -723,9 +715,6 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 deviation: one number for all, a list of numbers or fields
                 layer by layer, or a vector of this space giving it
                 everywhere.
-            correlation: a symmetric positive semidefinite matrix of unit
-                diagonal, one row per layer, correlating the layers' latent
-                noises; ``None`` for independent layers.
             unsafe: build the layers' measures at an order at or below
                 half the dimension anyway, for a test that means it.
 
@@ -733,7 +722,9 @@ class Layered(CoordinateDirectSum, HilbertModule):
             The measure, on this space.
 
         Raises:
-            ValueError: for a list of the wrong length.
+            ValueError: for a list of the wrong length, or for an order at or
+                below half the dimension without *unsafe*, which each
+                layer's measure refuses.
         """
         count = len(self)
         orders = _per_layer(order, count, "order")
@@ -759,5 +750,4 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 for i, layer in enumerate(self.layers)
             ],
             domain=self,
-            correlation=correlation,
         )

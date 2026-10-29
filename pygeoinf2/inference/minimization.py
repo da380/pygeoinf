@@ -41,7 +41,7 @@ from ..numerics.optimization import (
 )
 from ..numerics.solvers import LinearSolver, resolve_solver
 from ..traits import Traits
-from .estimators import PointEstimator
+from .estimators import ComposedPointEstimator, PointEstimator
 from .problem import ForwardProblem
 
 __all__ = [
@@ -299,64 +299,24 @@ class Minimization(PointEstimator, Operator):
         model = self._value(data)
         return Linearization(data, model, self.derivative_at(data, model))
 
-    def push_forward(self, operator: LinearOperator, /) -> PointEstimator:
+    def push_forward(self, operator: LinearOperator, /) -> ComposedPointEstimator:
         """The estimator of ``T m`` rather than of ``m``.
 
         The property operator is composed with this estimator, so the
-        derivative, where there is one, follows by the chain rule.
+        derivative, where there is one, follows by the chain rule, and a
+        ``start=`` passed to the composed estimator's call reaches the
+        search.
 
         Args:
             operator: the property map ``T``, from the model space.
 
         Returns:
             The point estimator of the property.
+
+        Raises:
+            ValueError: if ``T`` does not act on the model space.
         """
-        return _PushedPointEstimator(self, operator)
-
-
-class _PushedPointEstimator(PointEstimator, Operator):
-    """A point estimator composed with a property operator."""
-
-    def __init__(self, base: Minimization, operator: LinearOperator) -> None:
-        if operator.domain != base.property_space:
-            raise ValueError(
-                f"The property operator acts on {operator.domain!r}, not on "
-                f"the estimator's space {base.property_space!r}."
-            )
-        super().__init__(base.data_space, operator.codomain)
-        self._base = base
-        self._operator = operator
-
-    @property
-    def data_space(self) -> HilbertSpace:
-        """Where the data live."""
-        return self.domain
-
-    @property
-    def property_space(self) -> HilbertSpace:
-        """The property operator's codomain."""
-        return self.codomain
-
-    @property
-    def has_derivative(self) -> bool:
-        """Whatever the estimator underneath has."""
-        return self._base.has_derivative
-
-    def __call__(self, data: Any, /, *, start: Any = None) -> Any:
-        return self._operator(self._base(data, start=start))
-
-    def _value(self, data: Any) -> Any:
-        return self._operator(self._base(data))
-
-    def _linearize(self, data: Any) -> Linearization:
-        inner = self._base.at(data)
-        return Linearization(
-            data, self._operator(inner.value), self._operator @ inner.derivative
-        )
-
-    def push_forward(self, operator: LinearOperator, /) -> PointEstimator:
-        """The property of the property: the operators compose."""
-        return _PushedPointEstimator(self._base, operator @ self._operator)
+        return ComposedPointEstimator(self, operator)
 
 
 # --------------------------------------------------------------------- #

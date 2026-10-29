@@ -558,7 +558,7 @@ class TestInvariantDistancePreconditioner:
         # heat kernel at this length needs for the distance formula to be
         # the operator itself; a coarser sphere makes it an approximation.
         points = space.random_points(150, rng=np.random.default_rng(11))
-        forward = space.point_evaluation_operator(points, dense=True)
+        forward = space.point_evaluation_operator(points, route="dense")
         prior = space.heat_measure(0.14, pointwise_std=1.0)
         error = GaussianMeasure.from_standard_deviation(forward.codomain, 0.05)
         normal = NormalOperator(forward, prior, error=error, formalism="data_space")
@@ -1001,7 +1001,7 @@ class TestTheSharedSolve:
     ):
         """``estimator.push_forward(T)(data)`` solves the normal equations
         again for data already inverted; ``posterior.push_forward(T)`` is the
-        identical measure for nothing. Measured on example 21: 57.8 ms against
+        identical measure for nothing. Measured on example 24: 57.8 ms against
         0.2 ms, means agreeing to every printed digit."""
         estimator, counter, space = inversion
         model = estimator.property_space
@@ -1133,3 +1133,32 @@ class TestThePosteriorCovarianceAppliesThePriorTwice:
         assert estimator.covariance.matrix(form="components") == pytest.approx(
             expected, abs=1e-10
         )
+
+
+class TestTheDistancePreconditionerNeedsAPriorMeasure:
+    """It reads the covariance function of the prior measure, which a
+    Tikhonov or damped member does not have; those are refused by name, not
+    left to an ``AttributeError`` on ``prior``."""
+
+    def test_a_member_without_a_measure_is_refused_by_name(self):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.numerics.normal import DampedNormalOperator
+        from pygeoinf2.numerics.preconditioners import InvariantDistancePreconditioner
+        from pygeoinf2.numerics.tikhonov import TikhonovNormalOperator
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(16, 2.0, 0.1)
+        points = space.random_points(30, rng=np.random.default_rng(4))
+        forward = space.point_evaluation_operator(points)
+        prior = space.heat_measure(0.3, pointwise_std=1.0)
+        error = GaussianMeasure.from_standard_deviations(
+            forward.codomain, np.linspace(0.05, 0.1, len(points))
+        )
+        preconditioner = InvariantDistancePreconditioner(space, points, 0.3)
+        members = [
+            TikhonovNormalOperator(forward, 0.1, error=error),
+            DampedNormalOperator(forward, prior.covariance, error.covariance, 0.5),
+        ]
+        for member in members:
+            with pytest.raises(TypeError, match="prior \\*measure\\*"):
+                preconditioner(member)

@@ -175,9 +175,9 @@ script's entry point.
 
 Machine: AMD Ryzen AI 7 PRO 350, Python 3.12, PyMFEM 4.8.0.1. Seed 2026.
 
-**A and C.** The Hilbert-space form passes `check_space` to 1.0e-15, its
+**A and C.** The Hilbert-space form passes `check_space` to 3.1e-15, its
 inner product agrees with the matrix form's to every printed digit, the
-convection form's adjoint passes `check_operator` to 1.3e-14, and MFEM's
+convection form's adjoint passes `check_operator` to 4.5e-14, and MFEM's
 inverse of the Laplacian returns its input to 8.0e-11. On the same data the
 two forms' posterior means differ by 1.2e-9 relative and their estimates of
 the total source over the central square by 1.4e-11: two arrangements, one
@@ -195,23 +195,23 @@ the narrowest, and that is overconfidence, not information: a coarse space
 cannot represent the sources it is therefore sure do not exist.
 
 **B.** The interval's 65 quadratic degrees of freedom pass the axioms and the
-coordinate checks to 2.5e-15; the load vector of a window function peaks at
+coordinate checks to 6.1e-15; the load vector of a window function peaks at
 0.021 where its representer peaks at 1.00, the difference a mass solve
 makes; the Galerkin operator's adjoint holds to 1.3e-14; conjugate gradients
 on it agree with a direct solve to 2.0e-14 in 99 iterations.
 
 **D, the ladder.** The box is `H^2` on a 64 by 64 grid, its Gram weights
-running from 1 to 4.1e4. Each MFEM solve takes 48 iterations at the default
+running from 1 to 4.1e4. Each MFEM solve takes 47 iterations at the default
 tolerance of 1e-14. The adjoint defects `check_operator` measured, with probe
 fields drawn from E's prior:
 
 | piece | adjoint defect |
 |---|---|
-| the load, box to MFEM's loads | 9.5e-18 |
+| the load, box to MFEM's loads | 3.6e-15 |
 | MFEM's solve | 2.0e-14 (and symmetric to 8.5e-14) |
 | the evaluation, MFEM's coefficients to the box | 2.1e-15 |
-| the whole operator | 2.2e-10 |
-| the plain transpose, Gram factors left out | 0.14, refused |
+| the whole operator | 8.5e-10 |
+| the plain transpose, Gram factors left out | 0.15, refused |
 
 The two transfers are exact transposes and hold to rounding; the solve and
 the whole hold to the solve's tolerance, which the whole amplifies through
@@ -221,8 +221,8 @@ sweep shows:
 
 | MFEM tolerance | 1e-6 | 1e-9 | 1e-12 | 1e-14 |
 |---|---|---|---|---|
-| adjoint defect | 1.4e-2 | 3.8e-5 | 2.9e-8 | 1.9e-10 |
-| iterations a solve | 19 | 30 | 40 | 47 |
+| adjoint defect | 3.5e-2 | 6.5e-5 | 9.8e-8 | 1.9e-10 |
+| iterations a solve | 19 | 29 | 40 | 46 |
 
 Under refinement the operator approaches the exact multiplier
 `1 / (1 + s^2 |k|^2)`, and the adjoint the continuum promises (the solve is
@@ -232,9 +232,9 @@ does, while the true adjoint holds at every mesh:
 | elements a side | dofs | against the multiplier, grid | in `H^2` | true adjoint | operator as its own adjoint |
 |---|---|---|---|---|---|
 | 24 | 2304 | 2.3e-3 | 9.9e-2 | 1.6e-12 | 1.5 |
-| 48 | 9216 | 3.1e-4 | 7.8e-3 | 2.9e-10 | 0.45 |
+| 48 | 9216 | 3.1e-4 | 7.8e-3 | 2.8e-9 | 0.45 |
 | 96 | 36864 | 1.8e-6 | 3.9e-5 | 2.9e-10 | 1.8e-3 |
-| 64, aligned with the grid | 16384 | 1.2e-5 | 1.9e-4 | 2.8e-10 | 1.5e-11 |
+| 64, aligned with the grid | 16384 | 1.2e-5 | 1.9e-4 | 1.7e-8 | 1.5e-11 |
 
 The last row is why no other mesh here lines up with the box's grid. When the
 grid spacing is a whole number of element widths, the mesh is invariant under
@@ -256,7 +256,7 @@ reaching modes the elements cannot carry.
 
 - The minimum-norm estimate, smallest in the prior's norm: a damping of
   7.1 meets the discrepancy principle (chi-squared 658 against the critical
-  658), 1227 solves, 18 s. Its two propagated standard deviations in the
+  658), 1226 solves, 18 s. Its two propagated standard deviations in the
   gap, 0.142, say nothing of its bias there, which only the truth reveals.
 - The posterior: pointwise standard deviation 0.07 at the center of the
   observed disc and 0.65 in the gap, against the prior's 1; the posterior
@@ -264,7 +264,7 @@ reaching modes the elements cannot carry.
   and 97 more for 48 samples, 17 s.
 - The feasible set under the prior's 95% ball, `||f|| <= r` in `H^2`'s
   own norm with `r = 1.94`, in which the truth lies at 0.67 of the
-  boundary's gauge `(||f|| / r)^2`, and the noise's ball: 1374 solves,
+  boundary's gauge `(||f|| / r)^2`, and the noise's ball: 1370 solves,
   22 s; the true averages lie in the polytope of the four half-spaces. A
   set bound admits far more than the Gaussian posterior, and the gap's
   bracket is six and a half times the observed disc's: the ball alone
@@ -302,10 +302,11 @@ reaching modes the elements cannot carry.
   grid. The ball is a convenience, one constraint set among those the
   physics might suggest; any other convex set with a support function
   serves the same estimator.
-- **The solve's traits are checked as symmetry alone.** It is positive
-  definite too, but a positive-definite claim implies invertibility, which
-  `check_traits` verifies on a coordinate space by forming the whole matrix,
-  one MFEM solve per degree of freedom.
+- **The solve's claims are checked on probes.** It claims to be
+  self-adjoint and positive definite, and `check_traits` tests both on
+  probe vectors; the invertibility that positive definiteness implies is
+  taken on trust, since verifying it would form the whole matrix, one MFEM
+  solve per degree of freedom.
 - **What PyMFEM 4.8.0.1 needs worked around**, all in `src/matrix_space.py`
   and `src/hilbert_space.py` and each explained where it is done: reading an
   unfinalized matrix's CSR arrays segfaults, so it is refused; the CSR

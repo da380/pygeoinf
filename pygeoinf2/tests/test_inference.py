@@ -308,8 +308,15 @@ class TestBayesian:
         from numpy.random import default_rng
 
         estimator = LinearGaussianInversion(problem, prior)
-        first = estimator._centered_sample(default_rng(11))
-        second = estimator._centered_sample(default_rng(11))
+        model, data_space = problem.model_space, problem.data_space
+
+        def fluctuation(data):
+            posterior = estimator(data)
+            draw = posterior.sample(rng=default_rng(11))
+            return model.subtract(draw, posterior.expectation)
+
+        first = fluctuation(data_space.random(rng=rng))
+        second = fluctuation(data_space.random(rng=rng))
         assert np.allclose(first, second)
 
     def test_the_sampler_is_not_double_counting_the_mean(self, problem, prior, rng):
@@ -318,10 +325,17 @@ class TestBayesian:
         ``GaussianMeasure`` adds the expectation to whatever the callable
         returns, so a sampler that already includes it lands at twice the mean.
         """
-        estimator = LinearGaussianInversion(problem, prior)
+        posterior = LinearGaussianInversion(problem, prior)(
+            problem.data_space.random(rng=rng)
+        )
         model = problem.model_space
-        centered = [estimator._centered_sample(rng) for _ in range(2000)]
-        assert np.allclose(model.to_components(model.mean(centered)), 0.0, atol=0.2)
+        centered = [
+            model.subtract(draw, posterior.expectation)
+            for draw in posterior.samples(2000, rng=rng)
+        ]
+        assert np.allclose(
+            model.to_components(model.sample_expectation(centered)), 0.0, atol=0.2
+        )
 
     def test_the_posterior_can_be_sampled(self, problem, prior, rng):
         """Randomize-then-optimize, whose mean must be the posterior mean."""
@@ -329,7 +343,7 @@ class TestBayesian:
         posterior = LinearGaussianInversion(problem, prior)(data)
         assert posterior.can_sample
         draws = [posterior.sample(rng=rng) for _ in range(3000)]
-        mean = problem.model_space.mean(draws)
+        mean = problem.model_space.sample_expectation(draws)
         assert np.allclose(
             problem.model_space.to_components(mean),
             problem.model_space.to_components(posterior.expectation),
@@ -382,7 +396,7 @@ class TestPointEstimators:
 
     def test_the_resolution_operator_is_available(self, problem):
         estimator = LeastSquares(problem, damping=1e-2)
-        resolution = estimator.resolution
+        resolution = estimator.resolution()
         assert resolution.domain == problem.model_space
         assert resolution.codomain == problem.model_space
 
@@ -427,7 +441,7 @@ class TestPointEstimators:
         )
         assert np.allclose(
             model.to_components(estimator.bias(truth)),
-            model.to_components(model.subtract(estimator.resolution(truth), truth)),
+            model.to_components(model.subtract(estimator.resolution()(truth), truth)),
         )
         assert not hasattr(estimator, "as_measure")
 
@@ -473,7 +487,7 @@ class TestPointEstimators:
         estimator = LinearPointEstimator(
             B, forward_operator=problem.forward_operator, property_operator=T
         )
-        assert estimator.resolution.codomain == property_space
+        assert estimator.resolution().codomain == property_space
         assert estimator.bias(problem.model_space.zero()) == pytest.approx(0.0)
 
 
@@ -492,7 +506,9 @@ class TestEvidence:
             ),
             cov=covariance.matrix(form="components"),
         ).logpdf(problem.data_space.to_components(data))
-        assert estimator.log_evidence(data) == pytest.approx(reference)
+        evidence = estimator.log_evidence(data)
+        assert evidence.value == pytest.approx(reference)
+        assert evidence.standard_error == 0.0
 
     def test_the_two_terms_answer_different_questions(self, problem, prior, rng):
         """Misfit and volume, separately: whether the data are surprising, and
@@ -501,7 +517,7 @@ class TestEvidence:
         data = problem.data_space.random(rng=rng)
         mahalanobis, volume = estimator.evidence_terms(data)
         assert mahalanobis > 0.0
-        assert np.isfinite(volume)
+        assert np.isfinite(volume.value)
 
     def test_a_wilder_prior_is_penalized_on_data_it_did_not_need(self, problem, rng):
         """The whole point of an evidence: fitting is not the same as
@@ -510,9 +526,10 @@ class TestEvidence:
         tight = GaussianMeasure.from_standard_deviation(model, 0.5)
         loose = GaussianMeasure.from_standard_deviation(model, 50.0)
         small = problem.synthetic_data(model.scale(0.1, model.random(rng=rng)), rng=rng)
-        assert LinearGaussianInversion(problem, tight).log_evidence(
-            small
-        ) > LinearGaussianInversion(problem, loose).log_evidence(small)
+        assert (
+            LinearGaussianInversion(problem, tight).log_evidence(small).value
+            > LinearGaussianInversion(problem, loose).log_evidence(small).value
+        )
 
 
 class TestConstrainedLeastSquares:
@@ -577,6 +594,48 @@ class TestConstrainedLeastSquares:
         assert isinstance(estimator, LinearPointEstimator)
         assert estimator.subspace is subspace
 
+    def test_the_bias_is_the_average_error_on_an_affine_subspace(
+        self, problem, constrained, rng
+    ):
+        """On a subspace that misses the origin the estimate has a constant
+        part, ``(I - P B A) c``, which the bias must carry: it is the error
+        on data at their expectation, not ``(P B A - I) m``."""
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        _, subspace = constrained
+        model = problem.model_space
+        estimator = ConstrainedLeastSquares(
+            problem, subspace, damping=0.5, solver=CholeskySolver()
+        )
+        truth = model.add(
+            subspace.translation, subspace.projector(model.random(rng=rng))
+        )
+        expected = model.subtract(estimator(problem.forward_operator(truth)), truth)
+        assert model.norm(
+            model.subtract(estimator.bias(truth), expected)
+        ) < 1e-10 * model.norm(expected)
+
+    def test_it_reaches_its_problem_and_rebuilds_at_another_damping(
+        self, problem, constrained, rng
+    ):
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        _, subspace = constrained
+        estimator = ConstrainedLeastSquares(
+            problem, subspace, damping=0.5, solver=CholeskySolver()
+        )
+        assert estimator.forward_problem is problem
+        moved = estimator.with_damping(2.0)
+        assert moved.damping == 2.0
+        data = problem.data_space.random(rng=rng)
+        direct = ConstrainedLeastSquares(
+            problem, subspace, damping=2.0, solver=CholeskySolver()
+        )(data)
+        model = problem.model_space
+        assert model.norm(model.subtract(moved(data), direct)) < 1e-12 * model.norm(
+            direct
+        )
+
     def test_a_subspace_of_the_wrong_space_is_refused(self, problem, rng):
         from pygeoinf2.geometry.subspaces import AffineSubspace, OrthogonalProjector
         from pygeoinf2.inference import ConstrainedLeastSquares
@@ -636,9 +695,9 @@ class TestEvidenceWithoutAssembling:
         problem, prior = gaussian
         data = problem.data_space.random(rng=rng)
         values = {
-            name: LinearGaussianInversion(problem, prior, formalism=name).log_evidence(
-                data, method="dense"
-            )
+            name: LinearGaussianInversion(problem, prior, formalism=name)
+            .log_evidence(data, method="dense")
+            .value
             for name in ("data_space", "model_space")
         }
         assert values["model_space"] == pytest.approx(values["data_space"], rel=1e-9)
@@ -903,7 +962,7 @@ class TestJointInversionEndToEnd:
             np.concatenate([np.asarray(part) for part in data])
         )
 
-        assert np.isfinite(inversion.log_evidence(stacked))
+        assert np.isfinite(inversion.log_evidence(stacked).value)
 
         summary = LinearOperator.from_matrix(
             joint.model_space,
@@ -1274,3 +1333,183 @@ class TestAStrictSolverIsSurfaced:
         data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
         with pytest.raises((ConvergenceError, ValueError), match="did not converge"):
             MinimumNorm(problem, solver=self.hopeless())(data)
+
+
+class TestANoiseExpectationIsRemoved:
+    """A data error with a nonzero expectation is removed before the data
+    are used: each linear estimator built on ``N(mu, R)`` and given
+    ``A m + mu`` answers as its twin built on ``N(0, R)`` and given ``A m``.
+    Dense Gram matrices on both spaces, so the expectation meets a metric
+    on its way through every adjoint and precision."""
+
+    @pytest.fixture
+    def twins(self, rng):
+        from pygeoinf2.geometry.subspaces import AffineSubspace
+
+        from .conftest import spd_matrix
+
+        model = make_dense_metric_space(6)
+        data_space = make_dense_metric_space(8)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(8, 6)), form="components"
+        )
+        covariance = 0.01 * spd_matrix(rng, 8)
+        expectation = 0.1 * rng.normal(size=8)
+        biased = GaussianMeasure.from_covariance_matrix(
+            data_space, covariance, form="galerkin", expectation=expectation
+        )
+        centered = GaussianMeasure.from_covariance_matrix(
+            data_space, covariance, form="galerkin"
+        )
+        prior = GaussianMeasure.from_covariance_matrix(
+            model, spd_matrix(rng, 6), form="galerkin", expectation=rng.normal(size=6)
+        )
+        constraint = AffineSubspace.from_linear_equation(
+            LinearOperator.from_matrix(
+                model, EuclideanSpace(1), rng.normal(size=(1, 6)), form="components"
+            ),
+            np.array([0.3]),
+        )
+        truth = model.add(
+            constraint.translation, constraint.projector(model.random(rng=rng))
+        )
+        clean = forward(truth)
+        return (
+            (
+                LinearForwardProblem(forward, error=biased),
+                data_space.add(clean, biased.expectation),
+            ),
+            (LinearForwardProblem(forward, error=centered), clean),
+            prior,
+            constraint,
+        )
+
+    @staticmethod
+    def estimate(name, problem, data, prior, constraint):
+        from pygeoinf2.inference import (
+            BackusGilbert,
+            ConstrainedLeastSquares,
+            ConstrainedMinimumNorm,
+            LowRankGaussianPosterior,
+        )
+
+        chol = CholeskySolver()
+        model = problem.model_space
+        build = {
+            "least_squares": lambda: LeastSquares(problem, damping=0.1, solver=chol),
+            "least_squares_in_the_model_space": lambda: LeastSquares(
+                problem, damping=0.1, solver=chol, formalism="model_space"
+            ),
+            "minimum_norm": lambda: MinimumNorm(problem, solver=chol, rtol=1e-12),
+            "constrained_least_squares": lambda: ConstrainedLeastSquares(
+                problem, constraint, damping=0.1, solver=chol
+            ),
+            "constrained_minimum_norm": lambda: ConstrainedMinimumNorm(
+                problem, constraint, solver=chol, rtol=1e-12
+            ),
+            "backus_gilbert": lambda: BackusGilbert(
+                problem, LinearOperator.identity(model), alpha=0.1, solver=chol
+            ),
+        }
+        if name in build:
+            return build[name]()(data)
+        if name == "posterior":
+            return LinearGaussianInversion(problem, prior, solver=chol)(
+                data
+            ).expectation
+        return LowRankGaussianPosterior.from_linear_problem(
+            problem, prior, data, rank=6, rng=np.random.default_rng(1)
+        ).expectation
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "least_squares",
+            "least_squares_in_the_model_space",
+            "minimum_norm",
+            "constrained_least_squares",
+            "constrained_minimum_norm",
+            "backus_gilbert",
+            "posterior",
+            "low_rank_posterior",
+        ],
+    )
+    def test_it_answers_as_its_zero_mean_twin(self, twins, name):
+        (biased, shifted), (centered, clean), prior, constraint = twins
+        model = biased.model_space
+        with_mean = self.estimate(name, biased, shifted, prior, constraint)
+        without = self.estimate(name, centered, clean, prior, constraint)
+        assert model.norm(model.subtract(with_mean, without)) < 1e-12 * model.norm(
+            without
+        )
+
+    @pytest.mark.parametrize("name", ["least_squares", "backus_gilbert"])
+    def test_the_bias_is_the_resolution_less_the_truth(self, twins, name, rng):
+        """With the expectation removed the average error is ``(B A - I) m``."""
+        from pygeoinf2.inference import BackusGilbert
+
+        (biased, _), _, _, _ = twins
+        model = biased.model_space
+        estimator = (
+            LeastSquares(biased, damping=0.1, solver=CholeskySolver())
+            if name == "least_squares"
+            else BackusGilbert(
+                biased,
+                LinearOperator.identity(model),
+                alpha=0.1,
+                solver=CholeskySolver(),
+            )
+        )
+        truth = model.random(rng=rng)
+        expected = model.subtract(estimator.resolution()(truth), truth)
+        assert model.norm(
+            model.subtract(estimator.bias(truth), expected)
+        ) < 1e-10 * model.norm(expected)
+
+
+class TestExactDataHaveNoDensity:
+    """Exact data condition the prior onto the models that fit them, which is
+    singular with respect to the prior: there is no likelihood, no potential
+    and no density, and nothing pretends there is."""
+
+    def test_the_potential_is_refused(self, problem, rng):
+        exact = LinearForwardProblem(problem.forward_operator)
+        with pytest.raises(ValueError, match="no likelihood"):
+            exact.potential(problem.data_space.random(rng=rng))
+
+    def test_the_posterior_is_a_plain_gaussian(self, problem, prior, rng):
+        from pygeoinf2.probability.absolutely_continuous import (
+            AbsolutelyContinuousMeasure,
+        )
+
+        exact = LinearForwardProblem(problem.forward_operator)
+        data = exact.forward_operator(prior.sample(rng=rng))
+        posterior = LinearGaussianInversion(exact, prior, solver=CholeskySolver())(data)
+        assert isinstance(posterior, GaussianMeasure)
+        assert not isinstance(posterior, AbsolutelyContinuousMeasure)
+        data_space = problem.data_space
+        fitted = exact.forward_operator(posterior.expectation)
+        assert data_space.norm(data_space.subtract(fitted, data)) < 1e-10 * (
+            data_space.norm(data)
+        )
+
+
+class TestTheConsistencySetIsTheMisfitsSublevelSet:
+    """On a data space that discretizes a function space the misfit is
+    computed, as a potential, and the consistency set is built the same way:
+    its members are the data the chi-squared test passes."""
+
+    def test_on_a_function_space_it_agrees_with_the_test(self, rng):
+        from pygeoinf2.symmetric_space.circle import Sobolev
+
+        space = Sobolev(16, 2.0, 0.2)
+        noise = space.sobolev_measure(2.0, 0.2)
+        problem = LinearForwardProblem(LinearOperator.identity(space), error=noise)
+        truth = space.sobolev_measure(2.0, 0.5).sample(rng=rng)
+        data = problem.synthetic_data(truth, rng=rng)
+        for scale in (1.0, 0.0, 3.0):
+            model = space.scale(scale, truth)
+            consistent = problem.consistency_set(model, level=0.9)
+            assert consistent.contains(data) == problem.chi_squared_test(
+                model, data, level=0.9
+            )

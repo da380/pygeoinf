@@ -848,19 +848,35 @@ class TrustRegionNewton(Optimizer):
         self,
         /,
         *,
-        initial_radius: float = 1.0,
-        max_radius: float = 1e6,
+        initial_radius: float | None = None,
+        max_radius: float | None = None,
         acceptance: float = 0.1,
         **kwargs: Any,
     ) -> None:
         """
         Args:
-            initial_radius: the starting trust-region radius.
-            max_radius: cap on the radius.
+            initial_radius: the starting trust-region radius, a length in the
+                space's norm. Unset, it is the length of the first Cauchy
+                step, ``||g||^3 / (g, H g)``, the minimizer of the quadratic
+                model along the gradient, which carries the problem's own
+                units; where the curvature along the gradient is not
+                positive, ``||x0||``, or one at the origin.
+            max_radius: cap on the radius. Unset, a million times the
+                initial radius.
             acceptance: reject a step whose actual-to-predicted reduction ratio
                 falls below this.
-            **kwargs: passed to :class:`Optimizer`.
+            **kwargs: passed to :class:`Optimizer`, except ``line_search``:
+                a trust region chooses its steps itself.
+
+        Raises:
+            TypeError: if a line search is passed.
         """
+        if "line_search" in kwargs:
+            raise TypeError(
+                "TrustRegionNewton takes no line search: the trust region "
+                "sets the length of every step. Use NewtonCG for a line-search "
+                "Newton method."
+            )
         self._initial_radius = initial_radius
         self._max_radius = max_radius
         self._acceptance = acceptance
@@ -883,6 +899,24 @@ class TrustRegionNewton(Optimizer):
             raise ValueError("TrustRegionNewton needs a functional with a Hessian.")
         return super().minimize(functional, x0)
 
+    @staticmethod
+    def _cauchy_length(space: Any, model: Any, gradient_norm: float, x0: Any) -> float:
+        """The length of the minimizer of the quadratic model along ``-g``.
+
+        ``||g||^3 / (g, H g)``: one Hessian application, and a length in the
+        problem's own units. Where the curvature along the gradient is not
+        positive the model has no minimizer along it, and the size of the
+        start stands in, or one at the origin.
+        """
+        if gradient_norm > 0.0:
+            curvature = space.inner_product(
+                model.gradient, model.hessian(model.gradient)
+            )
+            if curvature > 0.0 and np.isfinite(curvature):
+                return float(gradient_norm**3 / curvature)
+        size = space.norm(x0)
+        return float(size) if size > 0.0 else 1.0
+
     def _minimize(self, functional: Functional, x0: Any) -> OptimizationResult:
         stops: list[str] = []
         result = self._run(functional, x0, stops)
@@ -897,8 +931,17 @@ class TrustRegionNewton(Optimizer):
         gradient_norm = space.norm(model.gradient)
         tolerance = self._tolerance(gradient_norm)
         radius = self._initial_radius
+        if radius is None:
+            radius = self._cauchy_length(space, model, gradient_norm, x)
+        max_radius = 1e6 * radius if self._max_radius is None else self._max_radius
+        # The region has collapsed once it is below rounding against the
+        # problem's lengths: its starting radius and the iterate's own size.
+        start = radius
         history = [model.value]
         evaluations = 1
+
+        def collapsing() -> bool:
+            return radius < 1e-14 * max(start, space.norm(x))
 
         def collapsed(iteration: int) -> OptimizationResult:
             # The region shrank below what a step can represent, so no
@@ -952,7 +995,7 @@ class TrustRegionNewton(Optimizer):
             )
             if predicted <= 0.0:
                 radius *= 0.25
-                if radius < 1e-14:
+                if collapsing():
                     return collapsed(iteration)
                 continue
 
@@ -964,13 +1007,13 @@ class TrustRegionNewton(Optimizer):
                 # the model was wrong there, so shrink and try again.
                 evaluations += 1
                 radius *= 0.25
-                if radius < 1e-14:
+                if collapsing():
                     return collapsed(iteration)
                 continue
             evaluations += 1
             if not np.isfinite(trial_value):
                 radius *= 0.25
-                if radius < 1e-14:
+                if collapsing():
                     return collapsed(iteration)
                 continue
             ratio = (model.value - trial_value) / predicted
@@ -978,7 +1021,7 @@ class TrustRegionNewton(Optimizer):
             if ratio < 0.25:
                 radius *= 0.25
             elif ratio > 0.75 and abs(space.norm(step) - radius) < 1e-8 * radius:
-                radius = min(2.0 * radius, self._max_radius)
+                radius = min(2.0 * radius, max_radius)
 
             if ratio > self._acceptance:
                 try:
@@ -1014,7 +1057,7 @@ class TrustRegionNewton(Optimizer):
                         history,
                     )
 
-            if radius < 1e-14:
+            if collapsing():
                 return collapsed(iteration)
 
         return OptimizationResult(

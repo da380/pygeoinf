@@ -337,3 +337,17 @@ class TestLayered:
         assert list(drawn) == [True, False]
         with pytest.raises(TypeError, match="balls"):
             plotting.plot_section(profiles, profiles.random(rng=rng))
+
+
+class TestANetworkOfPolylines:
+    def test_the_receiver_is_the_last_node(self):
+        """A traced ray in a disk is a polyline; its receiver is where it
+        ends, not its second node."""
+        from pygeoinf2 import disk as disk_module
+
+        space = disk_module.Lebesgue(4, length_scale=0.3)
+        ray = [(1.0, 0.0), (0.8, 20.0), (0.7, 45.0), (0.8, 70.0), (1.0, 90.0)]
+        _, artists = plotting.plot_network(space, [ray])
+        assert np.allclose(artists["receivers"].get_offsets(), [[0.0, 1.0]], atol=1e-12)
+        assert np.allclose(artists["sources"].get_offsets(), [[1.0, 0.0]], atol=1e-12)
+        pyplot.close("all")

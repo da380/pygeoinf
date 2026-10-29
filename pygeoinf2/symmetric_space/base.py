@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Callable, Hashable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Hashable, Literal, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -40,7 +40,11 @@ from ..algebra.spaces import (
     HilbertModule,
     HilbertSpace,
 )
-from ..probability.gaussian import GaussianMeasure
+from ..probability.gaussian import (
+    GaussianMeasure,
+    _is_constant,
+    _refuse_identity_covariance,
+)
 from ..traits import Traits
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -837,6 +841,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         expectation: V | None = None,
         pointwise_std: float | None = None,
         norm_std: float | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian whose covariance is diagonal in the spectral basis.
 
@@ -844,6 +849,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         taken in components: ``sqrt(s / g)`` times a standard normal, followed
         by one synthesis. The ``1/sqrt(g)`` is the metric's, coming from white
         noise, whose components are ``N(0, G^-1)``.
+
+        The variances are the covariance operator's eigenvalues in this
+        space's own metric, so a constant spectrum is a multiple of the
+        identity, which is not trace class on a function space and is
+        refused without *unsafe*. Whether any other spectrum is trace class
+        in the limit cannot be judged from a truncation and is the caller's
+        to ensure: it must decay faster than the eigenvalues grow,
+        :meth:`sobolev_measure` above half the dimension being the safe
+        choice.
 
         ``pointwise_std`` rescales the whole spectrum so that
         :meth:`pointwise_variance` comes out as its square, leaving the shape
@@ -859,16 +873,24 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             pointwise_std: rescale so the pointwise standard deviation is
                 this. Mutually exclusive with *norm_std*.
             norm_std: rescale so the *norm's* standard deviation is this.
+            unsafe: accept a constant spectrum, for a test that means it.
 
         Returns:
             The measure.
 
         Raises:
-            ValueError: for negative variances, the wrong number of them, or
+            ValueError: for negative variances, the wrong number of them,
                 both calibrations at once -- which is a contradiction rather
-                than an over-specification.
+                than an over-specification -- or a constant spectrum without
+                *unsafe*.
         """
         variances = self._resolve_variances(spectral_variances)
+        _refuse_identity_covariance(
+            self,
+            "A constant spectrum, a multiple of the identity covariance,",
+            unsafe=unsafe,
+            spectrum=variances,
+        )
         if pointwise_std is not None and norm_std is not None:
             raise ValueError(
                 "Give pointwise_std or norm_std, not both: they scale the same "
@@ -915,6 +937,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             expectation=expectation,
             covariance_factor=factor,
             precision=precision,
+            unsafe=unsafe,
         )
 
     def sobolev_measure(
@@ -968,6 +991,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             expectation=expectation,
             pointwise_std=pointwise_std,
             norm_std=norm_std,
+            unsafe=unsafe,
         )
 
     def heat_measure(
@@ -979,11 +1003,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         expectation: V | None = None,
         pointwise_std: float | None = None,
         norm_std: float | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         r"""A Gaussian prior with a heat-kernel covariance.
 
         The covariance is ``amplitude^2 exp(-length_scale^2 Delta)``. See
         :meth:`heat_symbol` on why the parameter is a length and not a time.
+        At a length scale of zero it is the identity covariance, which is not
+        trace class on a function space and is refused without *unsafe*.
 
         Args:
             length_scale: the correlation length, in the units of the domain.
@@ -991,19 +1018,22 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             expectation: the mean. Zero by default.
             pointwise_std: rescale so the pointwise standard deviation is this.
             norm_std: rescale so the expected squared norm matches this.
+            unsafe: accept a zero length scale, for a test that means it.
 
         Returns:
             The measure.
 
         Raises:
-            ValueError: if the length scale is negative, or if both
-                *pointwise_std* and *norm_std* are given.
+            ValueError: if the length scale is negative, or zero without
+                *unsafe*, or if both *pointwise_std* and *norm_std* are
+                given.
         """
         return self.invariant_measure(
             amplitude**2 * self.heat_symbol(length_scale),
             expectation=expectation,
             pointwise_std=pointwise_std,
             norm_std=norm_std,
+            unsafe=unsafe,
         )
 
     def correlated_measure(
@@ -1013,6 +1043,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         *,
         expectation: Sequence[V] | None = None,
         labels: Sequence[str] | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """Several fields on this domain, correlated scale by scale.
 
@@ -1034,20 +1065,29 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         non-trivial metric demands is carried by the white noise rather than
         written out here, as for :meth:`invariant_measure`.
 
+        Each field's marginal is an invariant measure, so a field whose
+        variances ``Sigma(k)[i, i]`` are the same at every mode has the
+        identity covariance, which is not trace class on a function space
+        and is refused without *unsafe*; that the marginal spectra decay
+        fast enough otherwise is the caller's to ensure.
+
         Args:
             spectral_cross_covariances: shape ``(dim, n, n)``; slice ``k`` is
                 the covariance of the ``n`` fields' ``k``-th coefficients, and
                 must be symmetric and positive semidefinite.
             expectation: one field per component. Defaults to zero.
             labels: names for the summands, for readability.
+            unsafe: accept a field with a constant spectrum, for a test that
+                means it.
 
         Returns:
             The measure on the direct sum.
 
         Raises:
             ValueError: for the wrong shape, a slice that is not symmetric,
-                or one that is not positive semidefinite -- which for a pair
-                of fields means a correlation outside ``[-1, 1]``.
+                one that is not positive semidefinite -- which for a pair
+                of fields means a correlation outside ``[-1, 1]`` -- or a
+                field with a constant spectrum without *unsafe*.
         """
         from ..algebra.direct_sum import DirectSum
 
@@ -1076,6 +1116,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 "|correlation| <= 1."
             )
         values = np.clip(values, 0.0, None)
+        for field in range(count):
+            _refuse_identity_covariance(
+                self,
+                f"Field {field}'s constant spectrum, a multiple of the "
+                "identity covariance,",
+                unsafe=unsafe,
+                spectrum=sigma[:, field, field],
+            )
         # The symmetric square root, so that L L == Sigma and the factor is
         # its own adjoint block for block.
         roots = (vectors * np.sqrt(values)[:, None, :]) @ np.swapaxes(vectors, -1, -2)
@@ -1112,6 +1160,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             covariance_factor=factor,
             precision=precision,
             sample=sample,
+            unsafe=unsafe,
         )
 
     def correlated_measure_from_correlations(
@@ -1122,6 +1171,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         *,
         expectation: Sequence[V] | None = None,
         labels: Sequence[str] | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """The same, from marginal spectra and a correlation matrix.
 
@@ -1135,13 +1185,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             correlations: ``(n, n)`` or ``(dim, n, n)``, with unit diagonal.
             expectation: one field per component. Defaults to zero.
             labels: names for the summands.
+            unsafe: accept a constant marginal spectrum, for a test that
+                means it; see :meth:`correlated_measure`.
 
         Returns:
             The measure on the direct sum.
 
         Raises:
-            ValueError: for the wrong number of correlation matrices, or a
-                correlation matrix without a unit diagonal.
+            ValueError: for the wrong number of correlation matrices, a
+                correlation matrix without a unit diagonal, or a constant
+                marginal spectrum without *unsafe*.
         """
         spectra = np.stack(
             [self._resolve_variances(variance) for variance in variances]
@@ -1159,7 +1212,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             raise ValueError("A correlation matrix has a unit diagonal.")
         deviations = np.sqrt(spectra).T
         sigma = matrix * deviations[:, :, None] * deviations[:, None, :]
-        return self.correlated_measure(sigma, expectation=expectation, labels=labels)
+        return self.correlated_measure(
+            sigma, expectation=expectation, labels=labels, unsafe=unsafe
+        )
 
     def spectral_correlations(
         self, measure: GaussianMeasure, /, *, first: int = 0, second: int = 1
@@ -1203,6 +1258,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         /,
         *,
         expectation: V | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian with a prescribed ``L2`` power *per degree*.
 
@@ -1219,20 +1275,25 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         One caution comes with the convenience: an ``L2`` spectrum specifies
         a trace-class measure on ``H^s`` in the limit only if it decays
-        faster than the Sobolev symbol. On a truncation everything runs; the
-        dimension-free interpretation is the caller's to check.
+        faster than the Sobolev symbol. A flat power, the same at every
+        degree, or the same per component (white noise in ``L2``) never
+        does, and on a function space either is refused without *unsafe*;
+        on a truncation everything else runs, and the dimension-free
+        interpretation is the caller's to check.
 
         Args:
             power: total ``L2`` variance at each degree, indexed from zero,
                 or a callable applied to the array of degrees.
             expectation: the mean. Defaults to zero.
+            unsafe: accept a flat power, for a test that means it.
 
         Returns:
             The measure.
 
         Raises:
             ValueError: if an array of powers is too short for the degrees
-                present.
+                present, or for a flat power on a function space without
+                *unsafe*.
         """
         degrees = self.degrees
         if callable(power):
@@ -1248,11 +1309,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # The multiplicity of each component's degree, tabulated once rather
         # than counted per component, which would be O(dim^2).
         counts = np.bincount(degrees)[degrees]
+        # The power at each degree present, and the L2 variance per component.
+        powers = np.bincount(degrees, weights=per_degree / counts)[np.unique(degrees)]
+        _refuse_identity_covariance(
+            self,
+            "A flat power",
+            unsafe=unsafe,
+            white=_is_constant(powers) or _is_constant(per_degree / counts),
+        )
         # A draw's coefficient variance is eigenvalue / gram, so carrying the
         # gram here is what makes the observed L2 spectrum the given power on
         # a space of any order. On a Lebesgue space it is ones.
         return self.invariant_measure(
-            per_degree / counts * self.gram_diagonal(), expectation=expectation
+            per_degree / counts * self.gram_diagonal(),
+            expectation=expectation,
+            unsafe=unsafe,
         )
 
     def _spectral_variances(self, measure: GaussianMeasure, /) -> np.ndarray | None:
@@ -1856,7 +1927,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         points: Sequence[Any],
         /,
         *,
-        dense: bool = False,
+        route: Literal["auto", "dense", "local"] = "auto",
         unsafe: bool = False,
         eps: float | None = None,
         nthreads: int | None = None,
@@ -1864,13 +1935,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
-        Matrix-free by default: nothing of size ``len(points) x dim`` is
-        formed, so this is usable at the scale real acquisition geometries
-        reach.
+        Two routes, which agree to the transform's accuracy. ``"local"`` is
+        matrix-free: nothing of size ``len(points) x dim`` is held, and an
+        application is the geometry's evaluation at scattered points, by a
+        non-uniform transform where one is available, so it is usable at the
+        scale real acquisition geometries reach. ``"dense"`` assembles the
+        derivative matrix instead, which is worth it whenever the operator
+        will be applied many times and the matrix fits. ``"auto"``, the
+        default, is the local route: here the matrix costs ``dim`` basis
+        evaluations per point to form and memory in proportion, and nothing
+        is gained by holding it unless the caller says so. (The
+        spectral-element spaces take the same keyword, where ``"auto"`` holds
+        the matrix while it fits 256 MB, their two routes costing about the
+        same per application.)
 
-        ``dense=True`` assembles the derivative matrix instead, which is worth
-        it whenever the operator will be applied many times and the matrix
-        fits. It is a separate argument rather than a call to
+        The dense route is a choice here rather than a call to
         :meth:`~pygeoinf2.algebra.operators.LinearOperator.assembled` because
         the rows are known in closed form — they are :meth:`basis_matrix` —
         while ``assembled`` would recover them by applying the adjoint once per
@@ -1884,7 +1963,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Args:
             points: where to evaluate.
-            dense: assemble the derivative matrix.
+            route: ``"auto"``, ``"dense"`` or ``"local"``.
             unsafe: build it even on a space too rough to admit it.
             eps: accuracy for the non-uniform FFT, where one is used. Defaults
                 to the geometry's own, which is not the same on all of them.
@@ -1893,18 +1972,23 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 oversubscribe inside an outer parallel loop. Both are ignored
                 on the direct route.
             n_jobs: workers for the dense assembly, which is one basis
-                evaluation per point. Ignored on the matrix-free route, whose
+                evaluation per point. Ignored on the local route, whose
                 application is one transform. Serial by default.
 
         Returns:
             The operator.
 
         Raises:
-            ValueError: if no points are given, or if the Sobolev order is at
-                or below half the spatial dimension and *unsafe* is not set.
+            ValueError: if no points are given, the route is none of the
+                three, or the Sobolev order is at or below half the spatial
+                dimension and *unsafe* is not set.
         """
         from ..algebra.spaces import EuclideanSpace
 
+        if route not in ("auto", "dense", "local"):
+            raise ValueError(
+                f"route must be 'auto', 'dense' or 'local', got {route!r}."
+            )
         if not len(tuple(points)):
             raise ValueError("At least one point is needed.")
         # Converted once here rather than once per application: the conversion
@@ -1914,7 +1998,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         self._require_point_evaluation("A point evaluation operator", unsafe=unsafe)
         codomain = EuclideanSpace(len(points))
 
-        if dense:
+        if route == "dense":
             return LinearOperator.from_matrix(
                 self,
                 codomain,
@@ -2450,8 +2534,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 For a slowness that varies along the ray for reasons other than
                 the field being solved for. A *background* that varies with
                 position is a composition with a multiplication operator
-                instead; ray tracing, where the path itself depends on the
-                field, is out of scope.
+                instead; where the path itself depends on the field, the
+                nonlinear :meth:`ray_travel_time_operator` traces it.
             dense: assemble the matrix rather than composing operators.
             eps: accuracy for the non-uniform FFT behind the point
                 evaluations, where one is used. Ignored on the direct route
@@ -2611,6 +2695,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         max_iterations: int = 50,
         eps: float | None = None,
         nthreads: int | None = None,
+        unsafe: bool = False,
     ) -> Any:
         """Travel times along the rays of a velocity ``c₀ exp(m)``: a nonlinear operator.
 
@@ -2659,12 +2744,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             eps: accuracy for the non-uniform transforms behind the
                 evaluations, where used.
             nthreads: threads for them.
+            unsafe: build it even on a space too rough for its derivative,
+                a path integral, to be bounded; see
+                :meth:`_require_path_evaluation`.
 
         Returns:
             The operator, from this space to ``EuclideanSpace(len(paths))``.
 
         Raises:
-            ValueError: if no paths are given, or the method is unknown.
+            ValueError: if no paths are given, the method is unknown, or the
+                order is at or below ``(d - 1) / 2`` and *unsafe* is not set.
             NotImplementedError: on a geometry without a ray tracer.
         """
         from .rays import ray_travel_time_operator
@@ -2680,6 +2769,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             max_iterations=max_iterations,
             eps=eps,
             nthreads=nthreads,
+            unsafe=unsafe,
         )
 
     def geodesic_ball_average_operator(
@@ -2813,10 +2903,11 @@ class SpectralBlockLinearOperator(BlockLinearOperator):
     """
 
     def __new__(
-        cls, space: HilbertSpace, slices: np.ndarray, /
+        cls, space: HilbertSpace | None = None, slices: np.ndarray | None = None, /
     ) -> "SpectralBlockLinearOperator":
         # BlockOperator.__new__ dispatches on a grid of blocks; this class is
-        # built from an array and is always linear.
+        # built from an array and is always linear. The arguments are
+        # optional only so that unpickling can call this.
         return object.__new__(cls)
 
     def __init__(self, space: HilbertSpace, slices: np.ndarray, /) -> None:

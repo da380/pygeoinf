@@ -186,12 +186,14 @@ within a length or so of either end.
 
 **What was checked.** `check_operator` on all four, `check_traits` on the
 covariance and the precision, both claimed self-adjoint and positive
-definite, and `check_measure` on 20 000 samples, which compares their
-second moments with the declared covariance (tutorial 5). The four hold
-their adjoints to between `4e-13` and `1.3e-11` at the full scale; the
-precision returns a draw through the covariance to `3.5e-10` and the
-precision factor through the factor to `1.4e-12`, printed beside the
-ladder, since a wrong precision passes `check_operator` on its own.
+definite, and `check_measure`, which checks on a few probes that the
+precision inverts the covariance and that each factor squares to its
+operator, then compares the moments of 20 000 samples with the declared
+ones (tutorial 5). The four hold their adjoints to between `4e-13` and
+`1.3e-11` at the full scale; the precision returns a draw through the
+covariance to `3.5e-10` and the precision factor through the factor to
+`1.4e-12`, printed beside the ladder, since a wrong precision passes
+`check_operator` on its own.
 
 The noise is `GaussianMeasure.from_standard_deviation(codomain, 0.1)` on the
 Euclidean data space, where an isotropic measure is what it should be. On
@@ -225,10 +227,10 @@ them.
 
 ## 5. The estimators
 
-**The point** (part B, `point.py`). Tutorial 8's minimum-norm model under
-the discrepancy principle, with size measured in the prior's norm: the
-problem is parameterized by the prior's factor, `u = L w`, so that `|w|` is
-the prior's norm of `u`:
+**The point** (part B, `point.py`). Tutorial 6's minimum-norm model under
+the discrepancy principle, with size measured in the prior's norm
+(example 23): the problem is parameterized by the prior's factor,
+`u = L w`, so that `|w|` is the prior's norm of `u`:
 
 ```python
 factor = problem.prior.covariance_factor
@@ -261,7 +263,7 @@ bias = np.asarray(pushed.bias(whiten(problem.truth)))
 ```
 
 **The measure** (part C, `bayesian.py`). `LinearGaussianInversion(forward,
-prior, solver=SpectralFamilySolver())(data)` is the posterior (tutorial 6);
+prior, solver=SpectralFamilySolver())(data)` is the posterior (tutorial 7);
 `posterior.expectation` its mean and `posterior.samples(3, rng=rng)` three
 draws, each a `cppvec.Vector`. The space has no pointwise product, so
 `sample_pointwise_std` is not available on it; the pointwise standard
@@ -277,7 +279,7 @@ for the prior and for the posterior. `posterior.affine_map(problem.averages)`
 is the Gaussian on the two averages, drawn against the prior's by
 `plotting.plot_densities(posterior, prior=prior, ...)`.
 
-**The set** (part D, `sets.py`). Tutorial 7's feasible property set, the
+**The set** (part D, `sets.py`). Tutorial 8's feasible property set, the
 noise hardened to its 95% ball and the prior to two constraint sets, each
 calibrated by it, by one call:
 
@@ -287,7 +289,7 @@ return prior.ambient_ball(
     level=level,
     operator=operator,
     inverse=inverse,
-    method="spectral",
+    method="randomized",
     rank=prior.domain.dim,
     rng=rng,
 )
@@ -307,10 +309,13 @@ no limit, its radius a chi-squared quantile on as many degrees of freedom as
 there are nodes, and the library refuses it on a function space. The rank
 is the full dimension, because weights falling as `k^-2` leave a tail a
 truncated spectrum drops: at 1000 elements the leading 50 eigenvalues give a
-squared radius of 3.685, the leading 100 give 3.736, and all of them 3.779.
-The weighted chi-square is inverted by Imhof's integral, which
-`ambient_ball` chooses for a spectrum a few modes dominate, in under a
-second.
+squared radius of 3.684, the leading 100 give 3.735, and all of them 3.779.
+The weighted chi-square is inverted by Imhof's integral, in under a second,
+on the weights divided by the largest of them, so that the radius is the
+same whatever the units of the prior. At the full rank the decomposition
+holds every eigenvalue, and `hardened` silences the library's warning that
+compares their sum with a 32-draw estimate of the trace, which can then only
+report the estimate's scatter.
 
 *The ball in `L^2`*, with an operator. The `L^2` inner product of two
 functions of the space is `x^T M y`; as a bilinear form on `H^1` it is the
@@ -362,12 +367,11 @@ return (
   and the traits to `9.4e-14` and `1.3e-12`.
 
 The weights of the `L^2` ball's radius are the eigenvalues of `B C`, which
-`ambient_ball` takes on the spectral route as those of `L* B L`, self-adjoint
+`ambient_ball` takes on the randomized route as those of `L* B L`, self-adjoint
 on the space, through the prior's factor `L`. They fall as `k^-4`, so the
 leading 50 already give the squared radius, 2.529, to four figures; the app
 takes the full rank for both sets alike. The ellipsoid carries its precision
-`B / r^2` and its covariance, not `r`, so `radius_of` reads the radius as
-the ratio of `(B u, u)` to `(P u, u)` along any vector.
+`B / r^2`, its covariance `r^2 B^-1` and the radius itself, `prior_set.radius`.
 
 ```python
 feasible = BackusGilbertParker(

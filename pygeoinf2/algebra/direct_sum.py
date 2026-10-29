@@ -30,6 +30,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..traits import Traits, close
+from .linearization import Linearization
 from .operators import LinearOperator, Operator
 from .spaces import CoordinateSpace, HilbertSpace
 
@@ -518,9 +519,19 @@ class BlockOperator(Operator):
     joint model itself.
     """
 
-    def __new__(cls, blocks: Sequence[Sequence[Operator]]) -> BlockOperator:
-        if cls is BlockOperator and all(
-            isinstance(operator, LinearOperator) for row in blocks for operator in row
+    def __new__(
+        cls, blocks: Sequence[Sequence[Operator]] | None = None
+    ) -> BlockOperator:
+        # ``blocks`` is optional only so that unpickling, which creates the
+        # instance bare and restores its state afterwards, can call this.
+        if (
+            cls is BlockOperator
+            and blocks is not None
+            and all(
+                isinstance(operator, LinearOperator)
+                for row in blocks
+                for operator in row
+            )
         ):
             return object.__new__(BlockLinearOperator)
         return object.__new__(cls)
@@ -575,12 +586,35 @@ class BlockOperator(Operator):
             ]
         )
 
+    def _linearize(self, x: tuple) -> Linearization:
+        # One ``at()`` per block, which yields its value and its derivative
+        # together: a block that is a solve is solved once, not twice.
+        models = [
+            [None if _is_zero_block(op) else op.at(x[j]) for j, op in enumerate(row)]
+            for row in self._blocks
+        ]
+        value = tuple(
+            _accumulate(codomain, (m.value for m in row if m is not None))
+            for codomain, row in zip(self._codomains, models)
+        )
+        derivative = BlockLinearOperator(
+            [
+                [op if m is None else m.derivative for op, m in zip(row, found)]
+                for row, found in zip(self._blocks, models)
+            ]
+        )
+        return Linearization(x, value, derivative)
+
     def __repr__(self) -> str:
         return f"BlockOperator({self.row_dim}x{self.col_dim})"
 
 
 class BlockLinearOperator(BlockOperator, LinearOperator):
     """A block operator whose every block is linear."""
+
+    # A linear operator is its own derivative, everywhere.
+    _derivative = LinearOperator._derivative
+    _linearize = LinearOperator._linearize
 
     def __init__(self, blocks: Sequence[Sequence[LinearOperator]]) -> None:
         self._blocks = tuple(tuple(row) for row in blocks)
@@ -643,9 +677,12 @@ class ColumnOperator(Operator):
     ``DirectSum([X])`` rather than ``X``.
     """
 
-    def __new__(cls, operators: Sequence[Operator]) -> ColumnOperator:
-        if cls is ColumnOperator and all(
-            isinstance(operator, LinearOperator) for operator in operators
+    def __new__(cls, operators: Sequence[Operator] | None = None) -> ColumnOperator:
+        # ``operators`` is optional only so that unpickling can call this.
+        if (
+            cls is ColumnOperator
+            and operators is not None
+            and all(isinstance(operator, LinearOperator) for operator in operators)
         ):
             return object.__new__(ColumnLinearOperator)
         return object.__new__(cls)
@@ -682,12 +719,26 @@ class ColumnOperator(Operator):
             [operator.derivative(x) for operator in self._operators]
         )
 
+    def _linearize(self, x: object) -> Linearization:
+        # One ``at()`` per block; see BlockOperator._linearize.
+        models = [operator.at(x) for operator in self._operators]
+        return Linearization(
+            x,
+            tuple(model.value for model in models),
+            ColumnLinearOperator([model.derivative for model in models]),
+        )
+
 
 class ColumnLinearOperator(ColumnOperator, LinearOperator):
     """A column operator whose every block is linear."""
 
+    _derivative = LinearOperator._derivative
+    _linearize = LinearOperator._linearize
+
     def __init__(self, operators: Sequence[LinearOperator]) -> None:
         self._operators = tuple(operators)
+        if not self._operators:
+            raise ValueError("A column operator needs at least one block.")
         domain = self._operators[0].domain
         for i, operator in enumerate(self._operators):
             if operator.domain != domain:
@@ -717,9 +768,12 @@ class ColumnLinearOperator(ColumnOperator, LinearOperator):
 class RowOperator(Operator):
     """``(x_1, ..., x_n) -> F_1(x_1) + ... + F_n(x_n)``, from a direct sum."""
 
-    def __new__(cls, operators: Sequence[Operator]) -> RowOperator:
-        if cls is RowOperator and all(
-            isinstance(operator, LinearOperator) for operator in operators
+    def __new__(cls, operators: Sequence[Operator] | None = None) -> RowOperator:
+        # ``operators`` is optional only so that unpickling can call this.
+        if (
+            cls is RowOperator
+            and operators is not None
+            and all(isinstance(operator, LinearOperator) for operator in operators)
         ):
             return object.__new__(RowLinearOperator)
         return object.__new__(cls)
@@ -764,12 +818,34 @@ class RowOperator(Operator):
             [operator.derivative(xi) for operator, xi in zip(self._operators, x)]
         )
 
+    def _linearize(self, x: tuple) -> Linearization:
+        # One ``at()`` per block; see BlockOperator._linearize.
+        models = [
+            None if _is_zero_block(operator) else operator.at(xi)
+            for operator, xi in zip(self._operators, x)
+        ]
+        value = _accumulate(
+            self.codomain, (model.value for model in models if model is not None)
+        )
+        derivative = RowLinearOperator(
+            [
+                operator if model is None else model.derivative
+                for operator, model in zip(self._operators, models)
+            ]
+        )
+        return Linearization(x, value, derivative)
+
 
 class RowLinearOperator(RowOperator, LinearOperator):
     """A row operator whose every block is linear."""
 
+    _derivative = LinearOperator._derivative
+    _linearize = LinearOperator._linearize
+
     def __init__(self, operators: Sequence[LinearOperator]) -> None:
         self._operators = tuple(operators)
+        if not self._operators:
+            raise ValueError("A row operator needs at least one block.")
         codomain = self._operators[0].codomain
         for i, operator in enumerate(self._operators):
             if operator.codomain != codomain:
@@ -810,10 +886,13 @@ class BlockDiagonalOperator(Operator):
     """``(x_i) -> (F_i(x_i))``, acting on each summand independently."""
 
     def __new__(
-        cls, operators: Sequence[Operator], /, **_: Any
+        cls, operators: Sequence[Operator] | None = None, /, **_: Any
     ) -> BlockDiagonalOperator:
-        if cls is BlockDiagonalOperator and all(
-            isinstance(operator, LinearOperator) for operator in operators
+        # ``operators`` is optional only so that unpickling can call this.
+        if (
+            cls is BlockDiagonalOperator
+            and operators is not None
+            and all(isinstance(operator, LinearOperator) for operator in operators)
         ):
             return object.__new__(BlockDiagonalLinearOperator)
         return object.__new__(cls)
@@ -855,6 +934,19 @@ class BlockDiagonalOperator(Operator):
             codomain=self.codomain,
         )
 
+    def _linearize(self, x: tuple) -> Linearization:
+        # One ``at()`` per block; see BlockOperator._linearize.
+        models = [operator.at(xi) for operator, xi in zip(self._operators, x)]
+        return Linearization(
+            x,
+            tuple(model.value for model in models),
+            BlockDiagonalLinearOperator(
+                [model.derivative for model in models],
+                domain=self.domain,
+                codomain=self.codomain,
+            ),
+        )
+
 
 class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
     """A block diagonal operator whose every block is linear.
@@ -863,6 +955,9 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
     whole is self-adjoint iff every block is, positive definite iff every block
     is, and so on.
     """
+
+    _derivative = LinearOperator._derivative
+    _linearize = LinearOperator._linearize
 
     def __init__(
         self,
@@ -886,6 +981,8 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
                 blocks' own.
         """
         self._operators = tuple(operators)
+        if not self._operators:
+            raise ValueError("A block diagonal operator needs at least one block.")
         traits = self._operators[0].traits
         for operator in self._operators[1:]:
             traits = traits & operator.traits

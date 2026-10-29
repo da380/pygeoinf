@@ -12,6 +12,14 @@ characteristic function numerically — and is the default. The Lugannani-Rice
 saddlepoint approximation is much faster and is available by name; a
 moment-matched chi-square is the cheap approximation to fall back on. Equal
 weights are an ordinary chi-square and are computed as one.
+
+**The answer does not depend on the units of the weights.** The distribution
+scales exactly with them -- ``sum (s w_i) Z_i^2 == s sum w_i Z_i^2`` -- so
+both functions divide the weights and the threshold by the largest weight on
+entry and multiply a quantile back on the way out. Every tolerance, floor
+and cap below therefore acts on weights whose largest is one, and a
+covariance in units that put its eigenvalues at ``1e-12`` gets the same
+quantile, in its own units, as one whose eigenvalues are of order one.
 """
 
 from __future__ import annotations
@@ -58,6 +66,11 @@ def _brentq() -> "Any":
 
 
 def _validate(weights: np.ndarray) -> np.ndarray:
+    """The positive weights, refusing a set that defines no distribution.
+
+    Raises:
+        ValueError: for no weights, a negative one, or none positive.
+    """
     values = np.asarray(weights, dtype=float).ravel()
     if values.size == 0:
         raise ValueError("At least one weight is needed.")
@@ -67,6 +80,44 @@ def _validate(weights: np.ndarray) -> np.ndarray:
     if live.size == 0:
         raise ValueError("At least one weight must be positive.")
     return live
+
+
+def _normalized(weights: np.ndarray) -> tuple[np.ndarray, float]:
+    """The positive weights divided by the largest, and the largest.
+
+    The weighted chi-square scales exactly with its weights, so working on
+    weights whose largest is one loses nothing and makes every threshold in
+    this module relative to the weights' own scale.
+
+    Raises:
+        ValueError: as :func:`_validate`.
+    """
+    live = _validate(weights)
+    scale = float(np.max(live))
+    return live / scale, scale
+
+
+def _common_weight(live: np.ndarray, tolerance: float) -> float | None:
+    """The common value of weights that are equal for the purpose, or ``None``.
+
+    Weights whose spread is at most ``sqrt(tolerance)`` of the largest are
+    taken as equal, at their mean. The distribution depends on the weights
+    symmetrically, so moving them to their mean changes it only at second
+    order in their spread: the ordinary chi-square at the mean is then exact
+    to about ``tolerance``, with no quadrature at all.
+
+    Args:
+        live: positive weights.
+        tolerance: the accuracy asked of the distribution function.
+
+    Returns:
+        The mean weight, or ``None`` when the weights differ by more.
+    """
+    largest = float(np.max(live))
+    spread = largest - float(np.min(live))
+    if spread <= np.sqrt(max(tolerance, 0.0)) * largest:
+        return float(np.mean(live))
+    return None
 
 
 def _validate_method(method: str) -> None:
@@ -115,15 +166,24 @@ def _imhof(weights: np.ndarray, value: float, /, *, tolerance: float) -> float:
     would -- which is why the truncation is found by doubling rather than from
     the smallest weight alone. The step is set to at least 32 points per
     oscillation, then halved until the integral settles.
+
+    The weights and the threshold are divided by the largest weight first.
+    The probability is unchanged by that, and the floors on the step and the
+    truncation, the cap on the grid and the floor under the convergence
+    test are then all relative to the weights' own scale.
     """
     live = weights[weights > 0.0]
     if live.size == 0:
         return 1.0 if value >= 0.0 else 0.0
+    largest = float(np.max(live))
+    live = live / largest
+    value = value / largest
 
     # Far enough out that the remaining tail is below the tolerance, and at
-    # least far enough to resolve the oscillation.
+    # least far enough to resolve the oscillation. The doubling starts at
+    # four over the largest weight, which is four after the normalization.
     target = np.log(1.0 / (np.pi * max(tolerance, 1e-300)))
-    truncation = max(4.0 / float(np.max(live)), 1.0)
+    truncation = 4.0
     for _ in range(80):
         log_modulus = 0.25 * float(np.sum(np.log1p((live * truncation) ** 2)))
         if np.log(max(truncation, 1e-300)) + log_modulus >= target:
@@ -139,7 +199,7 @@ def _imhof(weights: np.ndarray, value: float, /, *, tolerance: float) -> float:
     for _ in range(6):
         count = min(int(truncation / step) + 1, limit)
         grid = np.linspace(step, count * step, count)
-        values = _imhof_integrand(grid, weights, value)
+        values = _imhof_integrand(grid, live, value)
         integral = step * (0.5 * (origin + values[-1]) + float(np.sum(values[:-1])))
         if previous is not None and abs(integral - previous) <= tolerance * max(
             abs(integral), 1e-12
@@ -233,9 +293,13 @@ def weighted_chi2_cdf(
 ) -> float:
     """``P(sum_i w_i Z_i^2 <= value)`` for independent standard normals.
 
+    The weights and *value* are divided by the largest weight before
+    anything else, so the answer is the same in any units: the
+    distribution scales exactly with its weights.
+
     Args:
         weights: the coefficients, non-negative and not all zero.
-        value: the threshold.
+        value: the threshold, in the units of the weights.
         method: ``"imhof"`` inverts the characteristic function and is exact to
             ``tolerance``; ``"saddlepoint"`` is the Lugannani-Rice
             approximation, a few sums and a scalar root find, whose relative
@@ -244,7 +308,10 @@ def weighted_chi2_cdf(
             w^2``; ``"matched"`` fits a chi-square on two cumulants and is
             fast and rough; ``"monte_carlo"`` samples. ``"auto"`` takes
             Imhof, falling back to the matched form if the integral misbehaves.
-        tolerance: for Imhof.
+        tolerance: the absolute accuracy asked of the probability, for
+            Imhof. Weights within ``sqrt(tolerance)`` of each other, relative
+            to the largest, are computed as an ordinary chi-square at their
+            mean, which is exact to about this tolerance.
         samples: for Monte Carlo.
         rng: for Monte Carlo.
 
@@ -257,15 +324,17 @@ def weighted_chi2_cdf(
             not a distribution this can invert.
     """
     _validate_method(method)
-    live = _validate(weights)
+    live, scale = _normalized(weights)
     if value <= 0.0:
         return 0.0
+    value = value / scale
     # Equal weights are an ordinary chi-square, exactly -- and that is the
     # commonest case, since a Mahalanobis form has all its weights one. It is
-    # also the case Imhof handles worst: with one or two terms the integrand
-    # decays slowest and the quadrature is only good to about 1e-3 in the tail.
-    if np.allclose(live, live[0]):
-        return float(_chi2().cdf(value / live[0], live.size))
+    # also the case Imhof handles worst: with a single term the integrand
+    # decays slowest and the quadrature is only good to about 1e-7.
+    common = _common_weight(live, tolerance)
+    if common is not None:
+        return float(_chi2().cdf(value / common, live.size))
     if method == "matched":
         return _matched(live, value)
     if method == "saddlepoint":
@@ -301,6 +370,10 @@ def weighted_chi2_quantile(
     approximation — which is close enough to bracket and never close enough to
     trust on its own.
 
+    The weights are divided by the largest before anything else and the
+    quantile multiplied back, so the quantile is the same in any units: the
+    root find's tolerances are relative to the weights' own scale.
+
     Args:
         weights: the coefficients ``w_i``.
         probability: the quantile wanted, in ``(0, 1)``.
@@ -309,12 +382,13 @@ def weighted_chi2_quantile(
             find on a noisy CDF, which would not converge: brentq on a
             function that returns a different value each call has no root to
             find.
-        tolerance: the accuracy asked of the CDF at each probe.
+        tolerance: the accuracy asked of the CDF at each probe, as for
+            :func:`weighted_chi2_cdf`.
         samples: draws for ``method="monte_carlo"``.
         rng: the generator for those draws.
 
     Returns:
-        The quantile.
+        The quantile, in the units of the weights.
 
     Raises:
         ValueError: for a probability outside ``(0, 1)``, an unknown method,
@@ -323,9 +397,43 @@ def weighted_chi2_quantile(
     if not 0.0 < probability < 1.0:
         raise ValueError(f"A probability lies in (0, 1), got {probability}.")
     _validate_method(method)
-    live = _validate(weights)
-    if np.allclose(live, live[0]):
-        return float(live[0] * _chi2().ppf(probability, live.size))
+    live, scale = _normalized(weights)
+    return scale * _normalized_quantile(
+        live,
+        probability,
+        method=method,
+        tolerance=tolerance,
+        samples=samples,
+        rng=rng,
+    )
+
+
+def _normalized_quantile(
+    live: np.ndarray,
+    probability: float,
+    /,
+    *,
+    method: str,
+    tolerance: float,
+    samples: int,
+    rng: Generator | None,
+) -> float:
+    """The quantile for positive weights whose largest is one.
+
+    Args:
+        live: the weights, normalized.
+        probability: the quantile wanted.
+        method: as for :func:`weighted_chi2_quantile`.
+        tolerance: likewise.
+        samples: likewise.
+        rng: likewise.
+
+    Returns:
+        The quantile, in the units of the normalized weights.
+    """
+    common = _common_weight(live, tolerance)
+    if common is not None:
+        return float(common * _chi2().ppf(probability, live.size))
 
     if method == "monte_carlo":
         generator = default_rng() if rng is None else rng

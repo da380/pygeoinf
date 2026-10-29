@@ -38,6 +38,7 @@ from ..geometry.feasible import (
 from ..geometry.sets import SublevelSet
 from ..numerics.solvers import LinearSolver
 from ..probability.base import ProbabilityMeasure
+from ..probability.gaussian import GaussianMeasure
 from .estimators import LinearPointEstimator, SetEstimator
 from .problem import ForwardProblem, LinearForwardProblem
 
@@ -46,48 +47,18 @@ __all__ = [
     "BackusGilbertParker",
     "FeasiblePropertySet",
     "LinearizedFeasiblePropertySet",
-    "harden_error",
 ]
-
-
-def harden_error(problem: ForwardProblem, /, *, level: float) -> Ball:
-    """The problem's error as a ball, hardening a measure if need be.
-
-    The bridge from a probabilistic error to a set-theoretic one: the
-    smallest ball about the mean carrying probability *level*, which is
-    :meth:`~pygeoinf2.probability.GaussianMeasure.ambient_ball`.
-
-    The radius is a quantile of ``sum_i lambda_i Z_i^2``, with ``lambda_i``
-    the covariance's eigenvalues, in the *space's* norm.
-
-    Args:
-        problem: the forward problem, whose error may be a measure or a set.
-        level: the probability the ball is to carry.
-
-    Returns:
-        A ball in the data space. Radius zero when the problem has no error,
-        which is the error-free case saying "exactly this".
-
-    Raises:
-        TypeError: if the error is a convex set that is not a ball.
-    """
-    if not problem.has_error:
-        return Ball(problem.data_space, radius=0.0)
-    if isinstance(problem.error, Ball):
-        return problem.error
-    if isinstance(problem.error, ConvexSet):
-        raise TypeError(
-            "The problem's error is a convex set that is not a ball, so it "
-            "cannot be hardened to one; BackusGilbertParker takes any convex "
-            "set as its confidence set."
-        )
-    return problem.error_measure.ambient_ball(level=level)
 
 
 def _confidence_set(
     problem: ForwardProblem, noise: Any, level: float
 ) -> ConvexSet | SublevelSet | None:
-    """The set the data error lies in: as given, from the problem, or None for exact data."""
+    """The set the data error lies in: as given, from the problem, or None for exact data.
+
+    A measure is hardened to its ambient ball at *level*: the smallest ball
+    about its expectation, in the data space's norm, carrying that
+    probability.
+    """
     if noise is not None:
         if not isinstance(noise, (ConvexSet, SublevelSet)):
             raise TypeError(
@@ -239,8 +210,13 @@ class BackusGilbertParker(SetEstimator):
     operator ``T``; out comes the convex set of property values of every
     model that lies in the constraint set and fits the data to within the
     confidence set. The confidence set is taken from the problem when not
-    given: its own set if it has one, the credible ball at ``level`` if its
-    error is a measure, and exact data if it has no error at all.
+    given: its own set if it has one, the ambient ball at ``level`` if its
+    error is a measure -- the smallest ball about the expectation, in the
+    data space's norm, carrying that probability -- and exact data if it has
+    no error at all. The ambient ball is not the credible ellipsoid whose
+    misfit threshold :class:`~pygeoinf2.inference.point.MinimumNorm` fits
+    to, so the smallest model fitting the data differs between the two;
+    ``noise=error.credible_set(level)`` makes them the same.
 
     The support side of the answer is coordinate-free on every space; the
     membership side forms matrices of the property's dimension and needs a
@@ -466,9 +442,11 @@ class BackusGilbert(LinearPointEstimator):
     models the kernels have to resolve (the identity by default, so the
     model space's own norm), ``R`` is the data error's covariance, and
     ``α`` is the knob. A small ``α`` buys resolution with noise; a large
-    one the reverse. The estimate is affine in the data, with
-    :attr:`resolution` and :meth:`propagated_covariance` from the base class
-    as its error budget and :attr:`unresolved`, ``T − X A``, as what it
+    one the reverse. When the data error is a measure with a nonzero
+    expectation ``mu_e`` the estimate is ``X (d − mu_e)``, so that the
+    noise it passes has mean zero. The estimate is affine in the data, with
+    :meth:`resolution` and :meth:`propagated_covariance` from the base class
+    as its error budget and :meth:`unresolved`, ``T − X A``, as what it
     cannot see.
 
     What it does not state is a bound on the unresolved part, because no
@@ -552,14 +530,28 @@ class BackusGilbert(LinearPointEstimator):
         error_covariance: LinearOperator | None,
         alpha: float,
     ) -> None:
+        error = (
+            problem.error
+            if problem.has_error and isinstance(problem.error, ProbabilityMeasure)
+            else None
+        )
+        translation = None
+        if error is not None and not (
+            isinstance(error, GaussianMeasure) and error.has_zero_expectation
+        ):
+            expectation = error.expectation
+            space = operator.codomain
+
+            def translation() -> Any:
+                # -X mu_e, one solve, made on first use.
+                return space.negative(operator(expectation))
+
         super().__init__(
             operator,
+            translation=translation,
+            lazy=True,
             forward_operator=problem.forward_operator,
-            error=(
-                problem.error
-                if problem.has_error and isinstance(problem.error, ProbabilityMeasure)
-                else None
-            ),
+            error=error,
             property_operator=property_operator,
         )
         self._problem = problem
@@ -587,15 +579,17 @@ class BackusGilbert(LinearPointEstimator):
         """The trade-off between resolution and noise."""
         return self._alpha
 
-    @property
     def unresolved(self) -> LinearOperator:
         """``T − X A``: what the estimate cannot see.
 
         The complement of the resolution, and the operator whose reach over
         a constraint set is the first part of a certified width. An
         estimate is only as good as this is small.
+
+        Returns:
+            The operator from the model space to the property space.
         """
-        return self.property_operator - self.resolution
+        return self.property_operator - self.resolution()
 
     def push_forward(self, operator: LinearOperator, /) -> "BackusGilbert":
         """The same kernels for a further property ``operator @ T``: ``operator @ X``."""

@@ -94,7 +94,8 @@ class Subset(ABC):
         its center, an ellipsoid its Mahalanobis form, a half-space its linear
         form, an intersection the largest of its parts' excesses, a sublevel
         set the functional it was built from, and a feasible property set
-        the minimum norm of a model with that property.
+        the prior's level function at the smallest model with that property
+        that fits the data.
 
         Raises:
             NotImplementedError: for a set without one; see

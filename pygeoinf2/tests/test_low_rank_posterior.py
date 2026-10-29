@@ -48,6 +48,56 @@ class TestAgainstTheFullPosterior:
             full.log_normalizer.value, rel=1e-8
         )
 
+    def test_below_full_rank_the_mean_omits_the_dropped_update(self, rng):
+        """At rank 2 of 6 the dropped eigenvalues are in the hundreds, and an
+        update left unshrunk there would be hundreds of times the posterior
+        mean; kept in the retained directions only, it is the posterior's
+        update projected in the prior's Cameron-Martin norm."""
+        space, prior, problem, data = linear_setting(rng)
+        full = LinearGaussianInversion(problem, prior)(data)
+        low = LowRankGaussianPosterior.from_linear_problem(
+            problem, prior, data, rank=2, rng=rng
+        )
+        assert low.eigenvalues.min() > 100.0
+        assert space.norm(low.expectation) < 2.0 * space.norm(full.expectation)
+
+        def prior_norm(model):
+            return space.inner_product(prior.precision(model), model)
+
+        assert prior_norm(low.expectation) <= prior_norm(full.expectation) * (
+            1.0 + 1e-8
+        )
+
+    def test_a_noise_expectation_is_removed(self, rng):
+        space, prior, problem, data = linear_setting(rng)
+        noise = problem.error_measure
+        offset = noise.domain.from_components(np.linspace(-0.2, 0.3, noise.domain.dim))
+        biased = LinearForwardProblem(
+            problem.forward_operator,
+            error=GaussianMeasure.from_standard_deviation(
+                noise.domain, 0.05, expectation=offset
+            ),
+        )
+        shifted = noise.domain.add(data, offset)
+        full = LinearGaussianInversion(biased, prior)(shifted)
+        low = LowRankGaussianPosterior.from_linear_problem(
+            biased, prior, shifted, rank=6, rng=rng
+        )
+        assert space.norm(space.subtract(low.expectation, full.expectation)) < 1e-8 * (
+            space.norm(full.expectation)
+        )
+        assert low.log_normalizer.value == pytest.approx(
+            full.log_normalizer.value, rel=1e-8
+        )
+
+    def test_the_modes_do_not_depend_on_the_job_count(self, rng):
+        space, prior, problem, data = linear_setting(rng)
+        low = LowRankGaussianPosterior.from_linear_problem(
+            problem, prior, data, rank=3, rng=rng
+        )
+        for one, other in zip(low.modes(), low.modes(n_jobs=2)):
+            assert space.norm(space.subtract(one, other)) < 1e-12 * space.norm(one)
+
     def test_below_full_rank_it_sits_between_prior_and_posterior(self, rng):
         space, prior, problem, data = linear_setting(rng)
         full = LinearGaussianInversion(problem, prior)(data)

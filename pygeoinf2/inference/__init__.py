@@ -22,6 +22,7 @@ from ..numerics.preconditioners import (
     InvariantDistancePreconditioner,
     LocalizedPreconditioner,
     NormalDiagonalPreconditioner,
+    WoodburyPreconditioner,
     gaspari_cohn,
 )
 from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator
@@ -85,6 +86,7 @@ __all__ = [
     "NormalDiagonalPreconditioner",
     "LocalizedPreconditioner",
     "InvariantDistancePreconditioner",
+    "WoodburyPreconditioner",
     "gaspari_cohn",
     "ConstrainedLeastSquares",
     "ConstrainedMinimumNorm",

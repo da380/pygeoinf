@@ -398,26 +398,40 @@ class TestAProductMeasureLivesOnTheLayeredSpace:
         assert len(std) == len(space.layers)
 
 
-class TestCorrelatedLayers:
-    def test_a_correlation_ties_the_layers_and_keeps_the_space(self, rng):
-        from pygeoinf2.testing import check_measure
+class TestALayeredPriorCrossesProcesses:
+    """Process-parallel draws pickle the measure, whose factor is a block
+    diagonal operator on the layered space."""
 
-        space = interval.Layered([-1.0, 0.0, 1.0], 12, order=2.0, length_scale=0.3)
-        rho = np.array([[1.0, 0.8], [0.8, 1.0]])
-        tied = space.sobolev_measure(2.0, amplitude=1.0, correlation=rho)
-        free = space.sobolev_measure(2.0, amplitude=1.0)
-        assert tied.domain is space
-        assert type(tied.covariance.domain) is type(space)
-        check_measure(tied, rng=rng)
-        x = space.random(rng=rng)
-        lower = space.layers[0]
-        assert lower.norm(
-            lower.subtract(
-                tied.covariance((x[0], space.layers[1].zero()))[0],
-                free.covariance((x[0], space.layers[1].zero()))[0],
-            )
-        ) < 1e-10 * lower.norm(x[0])
-        draws = tied.samples(400, rng=rng)
-        lows = np.array([space.layers[0].to_components(d[0])[0] for d in draws])
-        highs = np.array([space.layers[1].to_components(d[1])[0] for d in draws])
-        assert np.corrcoef(lows, highs)[0, 1] > 0.5
+    def _space(self):
+        return interval.Layered([0.0, 0.5, 1.0], 8, order=1.0, length_scale=0.2)
+
+    def test_the_measure_round_trips(self, rng):
+        import pickle
+
+        measure = self._space().sobolev_measure(1.0)
+        copy = pickle.loads(pickle.dumps(measure))
+        x = measure.domain.random(rng=rng)
+        assert np.allclose(
+            measure.domain.to_components(copy.covariance(x)),
+            measure.domain.to_components(measure.covariance(x)),
+        )
+
+    def test_it_samples_in_worker_processes(self):
+        measure = self._space().sobolev_measure(1.0)
+        draws = measure.samples(4, rng=np.random.default_rng(0), n_jobs=2)
+        assert len(draws) == 4
+
+    def test_a_posterior_from_it_samples_in_worker_processes(self, rng):
+        from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
+        from pygeoinf2.probability import GaussianMeasure
+
+        space = self._space()
+        prior = space.sobolev_measure(1.0, pointwise_std=1.0)
+        forward = space.point_evaluation_operator([(0.25,), (0.75,)])
+        noise = GaussianMeasure.from_standard_deviation(forward.codomain, 0.1)
+        problem = LinearForwardProblem(forward, error=noise)
+        posterior = LinearGaussianInversion(problem, prior)(
+            forward(prior.sample(rng=rng))
+        )
+        draws = posterior.samples(4, rng=np.random.default_rng(0), n_jobs=2)
+        assert len(draws) == 4

@@ -1106,3 +1106,14 @@ class TestTheIntegralReadsThroughTheComponents:
             rng=rng,
             measure=space.sobolev_measure(2.0),
         )
+
+
+class TestTheMeshDoesNotDependOnTheUnit:
+    @pytest.mark.parametrize("unit", [1.0e-3, 7.3, 3480.0, 6371.0])
+    @pytest.mark.parametrize("length_scale", [0.3, 0.15])
+    def test_the_same_geometry_in_other_units(self, unit, length_scale):
+        """A disk of radius one and one of radius ``unit``, with the length
+        scale scaled alike, have the same mesh and so the same basis."""
+        here = Lebesgue(4, radius=1.0, length_scale=length_scale)
+        there = Lebesgue(4, radius=unit, length_scale=length_scale * unit)
+        assert there.grid_shape == here.grid_shape

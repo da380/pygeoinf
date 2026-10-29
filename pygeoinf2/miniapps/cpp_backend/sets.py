@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import pathlib
 import time
+import warnings
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -52,30 +53,24 @@ def hardened(
     randomized eigendecomposition to the full dimension: they decay too
     slowly for a truncated spectrum to give it. In ``L^2`` the form's
     inverse goes with it, so that the ellipsoid has a covariance and so a
-    support function.
+    support function, and the ellipsoid carries the radius.
     """
     operator, inverse = l2_form(prior.domain) if l2 else (None, None)
-    return prior.ambient_ball(
-        level=level,
-        operator=operator,
-        inverse=inverse,
-        method="spectral",
-        rank=prior.domain.dim,
-        rng=rng,
-    )
-
-
-def radius_of(prior_set: Any, form: Any, u: Any, /) -> float:
-    """The radius of a ball about zero in the norm of ``form``: the ratio of
-    ``(B u, u)`` to ``(P u, u)``, with ``P`` its precision ``B / r^2``,
-    along any vector."""
-    space = prior_set.domain
-    return float(
-        np.sqrt(
-            space.inner_product(form(u), u)
-            / space.inner_product(prior_set.precision(u), u)
+    with warnings.catch_warnings():
+        # At the full rank the decomposition holds every eigenvalue, so the
+        # library's comparison of their sum with a 32-draw trace estimate
+        # can only report the estimate's own scatter.
+        warnings.filterwarnings(
+            "ignore", message="The .* eigenvalues kept carry", category=UserWarning
         )
-    )
+        return prior.ambient_ball(
+            level=level,
+            operator=operator,
+            inverse=inverse,
+            method="randomized",
+            rank=prior.domain.dim,
+            rng=rng,
+        )
 
 
 def bounds_alone(
@@ -164,7 +159,7 @@ def set_answer(
         t0 = time.perf_counter()
         prior_set = hardened(prior, scale.level, rng, l2=l2)
         hardening = time.perf_counter() - t0
-        radius = radius_of(prior_set, form, truth) if l2 else prior_set.radius
+        radius = prior_set.radius
         gauge = space.inner_product(prior_set.precision(truth), truth)
         t0 = time.perf_counter()
         answer = feasible_brackets(problem, prior_set, noise_ball)

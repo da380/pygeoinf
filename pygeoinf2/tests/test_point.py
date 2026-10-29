@@ -553,8 +553,94 @@ class TestLeastSquares:
         assert len(seen) > 1
 
 
+class TestConstructionAppliesNothing:
+    """Building a least-squares estimator applies neither the forward operator
+    nor its adjoint: with a direct solver an application is the
+    factorization, and an estimator built to be reduced or swept should not
+    pay for it. The offset a noise expectation needs is formed on first use."""
+
+    @staticmethod
+    def counted(rng):
+        model = make_dense_metric_space(12)
+        data_space = EuclideanSpace(8)
+        matrix = rng.normal(size=(8, 12))
+        counts = {"forward": 0, "adjoint": 0}
+
+        def forward(x):
+            counts["forward"] += 1
+            return matrix @ model.to_components(x)
+
+        def adjoint(y):
+            counts["adjoint"] += 1
+            return model.solve_gram(matrix.T @ y)
+
+        return (
+            LinearOperator.from_callables(model, data_space, forward, adjoint=adjoint),
+            counts,
+        )
+
+    @pytest.mark.parametrize("mean", [False, True])
+    def test_with_a_direct_solver(self, rng, mean):
+        operator, counts = self.counted(rng)
+        data_space = operator.codomain
+        error = GaussianMeasure.from_standard_deviation(
+            data_space,
+            0.1,
+            expectation=data_space.random(rng=rng) if mean else None,
+        )
+        problem = LinearForwardProblem(operator, error=error)
+        estimator = LeastSquares(problem, damping=1.0, solver=CholeskySolver())
+        estimator.with_damping(2.0)
+        assert counts == {"forward": 0, "adjoint": 0}
+        observed = data_space.random(rng=rng)
+        expected = estimator.operator(data_space.subtract(observed, error.expectation))
+        model = problem.model_space
+        assert model.norm(model.subtract(estimator(observed), expected)) < 1e-10 * (
+            model.norm(expected)
+        )
+
+
 class TestMinimumNorm:
     """A damping found rather than chosen, and the derivative that follows."""
+
+    def test_it_is_the_feasible_sets_fitting_model(self, setup, rng):
+        """The smallest model whose misfit meets the chi-squared threshold is
+        the feasible set's fitting model under a ball prior wide enough not
+        to bind, with the credible ellipsoid at the same level as its
+        confidence set."""
+        problem = setup
+        model = problem.model_space
+        observed = problem.synthetic_data(
+            model.scale(0.5, model.random(rng=rng)), rng=rng
+        )
+        smallest = MinimumNorm(problem, solver=CholeskySolver(), rtol=1e-10)(observed)
+        feasible = BackusGilbertParker(
+            problem,
+            LinearOperator.identity(model),
+            Ball(model, radius=100.0),
+            noise=problem.error_measure.credible_set(level=0.95),
+        )(observed)
+        fitting = feasible.fitting_model()
+        assert model.norm(model.subtract(fitting, smallest)) < 1e-6 * model.norm(
+            smallest
+        )
+
+    def test_an_estimator_at_a_damping_rebuilds_at_another(self, setup, rng):
+        """The fixed-damping estimator is served by the family's member at
+        its own damping, and a rebuild at another damping, or on a
+        parameterized problem, must not keep answering at the first one."""
+        problem = setup
+        model = problem.model_space
+        observed = problem.data_space.random(rng=rng)
+        at_one = MinimumNorm(problem, solver=CholeskySolver()).estimator_at(1.0)
+        fresh = LeastSquares(problem, damping=5.0, solver=CholeskySolver())(observed)
+        moved = at_one.with_damping(5.0)(observed)
+        assert model.norm(model.subtract(moved, fresh)) < 1e-10 * model.norm(fresh)
+        identity = LinearOperator.identity(model)
+        reparameterized = at_one.parameterized(identity).with_damping(5.0)(observed)
+        assert model.norm(model.subtract(reparameterized, fresh)) < 1e-10 * (
+            model.norm(fresh)
+        )
 
     def test_it_is_a_point_estimator_and_an_operator(self, setup):
         estimator = MinimumNorm(setup)
@@ -591,7 +677,7 @@ class TestMinimumNorm:
         assert model.norm(
             model.subtract(found(observed), estimator(observed))
         ) == pytest.approx(0.0, abs=1e-6 * model.norm(estimator(observed)))
-        assert found.resolution.domain == model
+        assert found.resolution().domain == model
         assert found.propagated_covariance().domain == model
 
     def test_for_data_does_not_assemble_the_family_again(self, setup, rng):
@@ -1106,6 +1192,60 @@ class TestConstrained:
         assert model.norm(model.subtract(difference, exact)) == pytest.approx(
             0.0, abs=1e-4 * model.norm(exact)
         )
+
+    def test_the_settings_survive_every_rebuild(self, setup, constraint):
+        method = ConstrainedMinimumNorm(
+            setup,
+            constraint,
+            level=0.9,
+            max_iterations=7,
+            rtol=1e-2,
+            atol=1e-9,
+            minimum_damping=1e-8,
+        )
+        rebuilt = [
+            method.parameterized(LinearOperator.identity(setup.model_space)),
+            method.data_reduced(LinearOperator.identity(setup.data_space)),
+            method.with_solver(CholeskySolver()),
+            method.with_formalism("model_space"),
+        ]
+        for other in [method, *rebuilt]:
+            inner = other.reduced
+            assert other.level == 0.9
+            assert (inner._max_iterations, inner._rtol) == (7, 1e-2)
+            assert (inner._atol, inner._minimum_damping) == (1e-9, 1e-8)
+        assert method.with_level(0.5).level == 0.5
+
+    def test_for_data_gives_the_affine_estimator_with_its_budget(
+        self, setup, constraint, rng
+    ):
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        observed = self.fittable(setup, constraint, rng)
+        method = ConstrainedMinimumNorm(
+            setup, constraint, solver=CholeskySolver(), rtol=1e-12
+        )
+        fitted = method.for_data(observed)
+        assert isinstance(fitted, ConstrainedLeastSquares)
+        model = setup.model_space
+        expected = method(observed)
+        assert model.norm(model.subtract(fitted(observed), expected)) < 1e-10 * (
+            model.norm(expected)
+        )
+        assert fitted.damping == pytest.approx(
+            method.search(observed).argument, rel=1e-12
+        )
+        assert fitted.propagated_covariance().domain == model
+        same = method.estimator_at(fitted.damping)
+        assert model.norm(model.subtract(same(observed), expected)) < 1e-10 * (
+            model.norm(expected)
+        )
+        # The member solver answers at the found damping only.
+        elsewhere = fitted.with_damping(3.0)(observed)
+        fresh = ConstrainedLeastSquares(
+            setup, constraint, damping=3.0, solver=CholeskySolver()
+        )(observed)
+        assert model.norm(model.subtract(elsewhere, fresh)) < 1e-10 * model.norm(fresh)
 
     def test_a_geometric_subspace_has_no_constraint_value(self, setup, rng):
         model = setup.model_space

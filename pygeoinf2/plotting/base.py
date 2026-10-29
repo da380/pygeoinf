@@ -217,10 +217,12 @@ def plot_network(
 
     Args:
         space: the space the paths lie in.
-        paths: ``(start, end)`` pairs of points.
+        paths: ``(start, end)`` pairs of points, or polylines, sequences
+            of points from the source to the receiver, where the geometry
+            draws them (a traced ray in a disk).
         ax: axes to draw on. A new figure is made if omitted.
         sources: mark the distinct start points.
-        receivers: mark the distinct end points.
+        receivers: mark the distinct end points, each path's last.
         source_kwargs: styling for the sources, over the defaults.
         receiver_kwargs: styling for the receivers, over the defaults.
         **kwargs: passed to :func:`plot_paths`.
@@ -242,7 +244,7 @@ def plot_network(
         style = dict(marker="o", color="red", size=50.0, edgecolors="white", zorder=6)
         style.update(receiver_kwargs or {})
         _, artists["receivers"] = plot_points(
-            space, _distinct(p[1] for p in paths), ax=ax, **style
+            space, _distinct(p[-1] for p in paths), ax=ax, **style
         )
     return ax, artists
 

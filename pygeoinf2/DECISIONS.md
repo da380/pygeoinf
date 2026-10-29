@@ -3480,6 +3480,217 @@ default element length is lengthened by a part in `10^9` (`axis.py`), which
 keeps the mesh the one exact arithmetic gives; the sign normalization is
 for the planetmodel 1.4 update after the launch.
 
+**D-200. The 2.0 review and its decisions** (2026-10-29, David). Seven
+Opus reviewers read the layers against the principles (algebra with the
+checks and the parallel module, numerics, probability, inference,
+geometry, the concrete spaces with plotting, and the examples and
+tutorials), each with a reproduction per claim; 28 distinct Must-fix
+findings, 96 Should, 71 Could, the fourteen with the widest reach
+reproduced by Claude as well. Five decisions settled the contested points:
+(1) the identity covariance on a function space is refused on every
+route, in its literal forms, with `unsafe=True` the escape, and the two
+tutorials that taught it are re-posed; D-168's whitened identity prior is
+superseded by D-190; (2) the chi-squared potential keeps its internal
+bypass (a misfit is a potential, and infinite-dimensional data spaces are
+not a concern of the library), and the model-space formalism's docstrings
+say it is for explicitly finite-dimensional problems and low-dimensional
+surrogates, where its evidence is a direct determinant; (3) matrix-free
+point evaluation is `route="auto" | "dense" | "local"` on both space
+families, the symmetric-space names leave the top level for their own
+package, and `HilbertSpace.mean` is `sample_expectation`; (4) the
+model-space S-procedure is the default outer ellipsoid, the data-space
+form stays behind `formalism=` with its regime documented, and both check
+themselves against support values before returning; (5) the examples are
+renumbered without gaps in the brief's order with four added, the
+tutorial course goes point, measure, set, and point estimators are
+presented once as what they are: exposed because wanted, tools within the
+methods that carry uncertainty, with nothing about optimal regularization
+parameters in this library. Six fix packages followed, D-201 to D-206,
+each built by an agent with a failing-then-passing test per item; what
+each skipped for want of a decision is in CURRENT_STATE §7.
+
+**D-201. Measures: centered samplers, a sound correlated precision, no
+silent symmetrization, the identity gate everywhere** (2026-10-29, fix
+package A). A supplied sampler returns the centered fluctuation and the
+measure adds its expectation: the affine image, the sum and the product
+of a sampler-only Gaussian (a posterior, a conditioned measure, most sums)
+drew about twice their mean after a translation, a push-forward or a sum,
+with the reported expectation right. The correlated product's whitening
+uses a factor's precision factor only when one probe confirms it inverts
+the covariance factor, otherwise `L* P`, otherwise the product has no
+precision; `check_measure` now holds `P C u == u`, `L L* u == C u` and
+`Li* Li u == P u` before drawing, and takes `atol=`. `from_covariance_matrix`
+refuses an asymmetry above `1e-8` relative with a message naming the
+likely wrong `form=`, and symmetrizes only below it. One helper refuses the
+literal identity on a function space at every constructor and spectral
+route, each with `unsafe=`, and `from_standard_deviation` raises
+`ValueError` like the rest. Also: `marginal` keeps factors, block
+precisions and samplers; a diagonal covariance given to the constructor
+gets its factor and precision; `kl_divergence(method="diagonal")` and
+`ambient_ball(method="randomized")` replace two meanings of `"spectral"`;
+`log_normalizing_constant` is exact or refused, with `dense_limit=` and
+`n_jobs=`; the default `hilbert_schmidt_norm` refuses without coordinates
+rather than estimating; `AbsolutelyContinuousMeasure.can_sample` is
+false; `-mu` works. Tutorial 9 on `sobolev_measure(1.0, 0.2,
+pointwise_std=0.8)` with Newton-CG preconditioned by the prior covariance
+(10 iterations against about 160 for L-BFGS, whose evaluation failures
+now carry the failure-protocol section); tutorial 13 without the
+whitening, and honest that L-BFGS does not converge at its cap and ends
+further from the truth than straight rays.
+
+**D-202. Numerics: every tolerance relative to a scale the problem
+supplies** (2026-10-29, fix package B). The weighted chi-square divides
+its weights by the largest on entry and Imhof does the same, so
+`ambient_ball` is the same ball in any units (it covered 0.2% of draws at
+deviations of `3e-5`). The Lanczos calculus starts its buffer at eight
+columns and doubles it, and judges breakdown against the running largest
+coefficient with no floor. GMRES and MINRES declare convergence on the
+true residual, GMRES right-preconditioned, both detecting a closed Krylov
+space and solving its singular triangle by least squares. Chambolle-Pock
+sets its steps per solve from the operator's, the data's and the
+constraint's norms and stops on relative feasibility and relative
+stationarity together, `SaddlePointResult.stationarity` public. The bundle
+method's gap is relative to the objective's scale, a one-cut model below
+tolerance resets the weight rather than stopping, and its clamps and its
+simplex solver are relative. The Woodbury preconditioner's default inner
+CG is `rtol=1e-10` (revising D-47's `1e-3`, which failed a
+four-dimensional data space); `misfit_search` starts at `max(1, 10 floor)`
+so a floor above one is allowed; the Jacobi, normal-diagonal, column and
+sparse-approximation floors are relative to the largest entry; the
+invariant-distance preconditioner refuses Tikhonov and damped members by
+name and takes `n_jobs`; family caches keep two members; `n_jobs` reaches
+every probe site, with `DirectSolver.n_jobs` readable; trust-region radii
+start at the Cauchy length with relative cap and collapse.
+
+**D-203. Feasible sets: the model-space ellipsoid, a flat set refused,
+emptiness by certificate** (2026-10-29, fix package C). `SProcedure`
+defaults to the model-space formalism; both formalisms build the
+ellipsoid from an eigendecomposition of its shape, refuse a flat or
+indefinite one, and check it against `Primal`'s attained support along
+the longest and shortest axes both ways, inflating a shortfall within
+`1e-6` of the half-width and raising above it, so the claim of a check is
+true (the data-space route raises on the slack, overdetermined cases where
+it cancels). A flat closed-form set, whose kernel spans fewer dimensions
+than the property, refuses `ellipsoid`, `project` and the closed form's
+`outer_ellipsoid` by name, with inclusion and the level gradient sharing
+one pseudo-inverse, and a zero budget is a single point. A zero-radius
+noise ball's center is folded into the data for every algorithm and kept
+by `push_forward`. `outside()` tests `pairing > h + rtol max(|h|, |q||x|)`
+in both the set and the convex layers. The dual reports the prior's own
+level, catches only its private unboundedness, and declares emptiness
+only with a certificate, a ray `r` with `(r, d) + h_prior(-A* r) +
+h_noise(-r) < 0`, never by a threshold; every level comparison is `level +
+rtol max(|level|, 1)`. Also: `n_jobs=` on `outer_ellipsoid`, `inner_hull`,
+`extent` and `outside`; the algorithms exported from `geometry`;
+`Ellipsoid` probing its covariance; `Polytope & non-polytope` an
+intersection; membership tolerances without a floor; `extent` using
+`via=` for its membership tests only; the quadratic tier's level function
+with a gradient; unbounded priors refused by name in the data-space
+formalism; `Primal` and `SProcedure` deciding emptiness and the fallback
+fitting model in their own formalism with their own solver, so a
+semidefinite prior now has a default outer ellipsoid; `support_sweep(
+n_jobs=)` keeping the workers' results; the kernel solve shared between a
+direction and its opposite; cache keys treating `-0.0` as `0.0`.
+
+**D-204. Estimators: the noise expectation everywhere, the Laplace
+curvature as asked, the low-rank mean in the kept directions, exact data
+without a density** (2026-10-29, fix package D). The low-rank posterior's
+linear constructor, `ConstrainedLeastSquares` and `BackusGilbert` remove
+the error's expectation as the other linear estimators do (eight
+estimators now agree with their zero-mean twins to `1e-12`). The low-rank
+mean is `m_0 + L V diag(1/(1 + lambda)) V* L* A* R^-1 (d - A m_0 - mu_e)`:
+the update only in the retained directions, each shrunk, exact at full
+rank and bounded below it, where the earlier form kept the prior in the
+dropped directions and was 150 to 320 times too large at rank 2 of 6.
+`LaplaceApproximation` inverts half the exact Hessian when the MAP carries
+one and the Gauss-Newton normal operator otherwise, `from_problem` taking
+`gauss_newton=`; on the `rank=` route with the exact Hessian, negative
+eigenvalues are clipped at zero and the docstring says so;
+`linearized_normal` keeps meaning the Gauss-Newton operator, which the
+structure-aware preconditioners read. `potential()` refuses a problem
+with no error measure and `LinearGaussianInversion` returns a plain
+Gaussian for exact data. `resolution()` and `unresolved()` are methods
+like `propagated_covariance()`. `bias()` is `B(A m + mu_e) + t - T m`,
+right for an estimator with a constant part (it was 100 times off on a
+subspace missing the origin). Found on the way: `MinimumNorm.estimator_at`
+and `for_data` kept the family's member solver for the old damping, so
+every rebuild answered at it (9% wrong). Also: `ConstrainedMinimumNorm`
+keeps its settings and has `MinimumNorm`'s surface; `LeastSquares` does
+not solve at construction; `Minimization.push_forward` returns a public
+`ComposedPointEstimator`; `log_evidence` and the mixture's return an
+`Estimate`; `harden_error` is deleted; the mixture takes `n_jobs=` with
+its generator split per component so parallel matches serial; the
+full-rank Laplace Gaussian samples on the Gauss-Newton route and always
+carries the Laplace evidence; `consistency_set` passes `unsafe=True` as
+the potential does and both say the error measure must be trace class
+for a limit to exist.
+
+**D-205. Mechanics: picklable block operators, `route=`, scoped
+symmetric-space names, `sample_expectation`, honest boxes and rays**
+(2026-10-29, fix package E). The block, column, row and block-diagonal
+operators and the spectral block operator take an optional first argument
+in `__new__`, so they unpickle and every `n_jobs=` loop over a product,
+layered or correlated measure, or a posterior from one, runs in processes.
+`parallel_map(threads=)` is gone. `AffineOperator` and
+`LinearPointEstimator` take `lazy=` to say a callable translation is a
+deferred value, instead of guessing. `HilbertSpace.mean` is
+`sample_expectation`. Matrix-free point evaluation is `route=` on both
+families. `Box`, `Interval`, `Lebesgue`, `PeriodicBox` and `Sobolev` are
+no longer top-level names, and `ShellTransform` is not public. A bounded
+box, line or plane refuses points outside its domain, and its path and
+ball quadrature no longer wrap nodes modulo the period (which put nodes
+outside the domain, undone only by the enclosure's own wrap); a ball that
+leaves the domain is refused. The ray travel-time operator takes the
+order guard its derivative applies and keys its memo of traced rays on the
+model's component values, not object identity. The checks: `check_operator`
+compares a supplied `components_action` and `apply_block` with the
+operator's own action; `check_traits` ranks only a stored dense array or
+reads a known scaling; `check_hessian` is public; `atol=` on
+`check_traits`, `check_projection` and `check_affine`. Cost: `D + I` stays
+diagonal; a sparse factor stays sparse through a composition's diagonal
+(`_known_sparse`); the Galerkin diagonal is read on a diagonal metric;
+sums and scalings of functionals reuse their parts' Hessians; nonlinear
+block operators call `at()` once per block and a linear one's derivative
+is itself; exact cap averages are matrix-free unless `dense=True`. The
+sphere's key includes `extend`; a box's reference point is a grid node
+inside the domain, degree transfer refuses a different domain; the ball
+and disk meshes no longer depend on the unit of length through one shared
+helper, which changes the default mesh at radius one (45 nodes rather
+than 49 at a length scale of 0.3) and with it seeded results there.
+`plot_set` takes `n_jobs=` and honors `color=` on polytopes;
+`plot_network` marks the receiver; `moments`, `plot_densities` and
+`plot_corner` take `n_jobs=`.
+
+**D-206. The examples renumbered and completed, the tutorial course
+point, measure, set; and the correlated product tied to one latent
+space** (2026-10-29, fix package F, and Claude on its finding). Thirty-six
+examples without gaps: four new (`07_no_coordinates`,
+`15_correlated_product`, `23_point_estimates`, `25_low_rank_posterior`)
+and a fifth, `33_disk`, since the disk had none; `13_convex` merged into
+`16_sets`; `22_forward_problem` rewritten on the estimators;
+`30_feasible_set` cut to `ambient_ball` in both forms against the
+prior-alone bound; `31_nonlinear_map` with `LaplaceApproximation(rank=)`.
+The point-estimates example opens with the library's view of them. The
+tutorials run 6 regularization (which now introduces the forward problem),
+7 posterior, 8 properties, and 14 goes point, measure, set throughout;
+every check in the examples prints its report and probes with a measure
+on a function space; tutorial 12's refinement study probes with a smooth
+measure and its defect falls monotonically on nine seeds; the prose that
+contradicted its output (tutorial 8's bias, tutorial 13's L-BFGS,
+examples 11 and 27) now says what runs; `make_notebooks.BRANCH` and the
+badges carry a placeholder the release fills, tied by a test. The
+walkthroughs cite example 23 for the prior's-norm pattern. **The
+correlated product**: pairing the modes of different layers by index
+tied them with arbitrary signs, since the spectral bases' eigenvector
+signs are not normalized (D-199), so a positive correlation gave layer
+masses correlated `+0.78`, `-0.77` and `-0.70`. `from_product(
+correlation=)` now requires every factor's latent space to be one space,
+where a mode of one factor is the same mode of another, and refuses
+otherwise by name; `Layered.sobolev_measure(correlation=)` is withdrawn
+until the planetmodel update normalizes the signs, when mode-for-mode
+pairing across layers of one geometry can be given a meaning. D-196 is
+amended accordingly.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

@@ -23,7 +23,12 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
-from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace
+from ..algebra.spaces import (
+    CoordinateSpace,
+    EuclideanSpace,
+    HilbertSpace,
+    resolve_rng,
+)
 from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -36,6 +41,94 @@ __all__ = ["GaussianMeasure"]
 
 
 _REQUIRED = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+
+
+def _is_constant(values: Any, /) -> bool:
+    """True for a non-empty array of equal, not all zero, entries.
+
+    Equal to round-off: the spread is compared with the largest magnitude.
+    """
+    values = np.asarray(values, dtype=float).ravel()
+    if values.size == 0:
+        return False
+    largest = float(np.max(np.abs(values)))
+    return largest > 0.0 and float(np.ptp(values)) <= 1e-12 * largest
+
+
+def _is_scaled_identity(operator: LinearOperator, /) -> bool:
+    """True when the operator is known, without applying it, to be ``c I``.
+
+    The identity itself, a scalar multiple of it, and any endomorphism whose
+    known scaling of components is constant, a diagonal operator with equal
+    eigenvalues among them: a constant scaling of components is ``c I``
+    whatever the metric.
+    """
+    from ..algebra.nodes import _Scaled
+
+    if operator.domain != operator.codomain:
+        return False
+    if operator.is_identity:
+        return True
+    if isinstance(operator, _Scaled):
+        return operator.alpha != 0.0 and _is_scaled_identity(operator.base)
+    scaling = operator._known_scaling()
+    return scaling is not None and _is_constant(scaling)
+
+
+def _refuse_identity_covariance(
+    domain: HilbertSpace,
+    what: str,
+    /,
+    *,
+    unsafe: bool,
+    spectrum: Any = None,
+    operators: Sequence[LinearOperator | None] = (),
+    white: bool = False,
+) -> None:
+    """Refuse the literal identity covariance on a function space.
+
+    On a space that discretizes a function space (``is_function_space``) a
+    covariance must be trace class for the measure to have draws in the
+    space, and the identity is not: its "measure" is white noise, which the
+    truncation only hides. A general spectrum cannot be judged from a
+    truncation, but the literal identity can, cheaply, and that is what is
+    refused here: a constant spectrum, or a covariance, factor, precision or
+    precision factor known to be a multiple of the identity. Every other
+    trace-class condition is the caller's.
+
+    Args:
+        domain: the space the measure lives on.
+        what: the offending input, named for the message.
+        unsafe: build it anyway, for a test that means it.
+        spectrum: a covariance spectrum, or a per-component deviation, that
+            is refused when constant.
+        operators: operators that are refused when a multiple of the
+            identity; ``None`` entries are skipped.
+        white: refuse outright, the caller having decided it.
+
+    Raises:
+        ValueError: on a function space without *unsafe*, when the input is
+            the identity in one of these forms.
+    """
+    if unsafe or not domain.is_function_space:
+        return
+    if not white and spectrum is not None:
+        white = _is_constant(spectrum)
+    if not white:
+        white = any(
+            operator is not None and _is_scaled_identity(operator)
+            for operator in operators
+        )
+    if white:
+        raise ValueError(
+            f"{what} is not trace class on {type(domain).__name__}, which "
+            "discretizes a function space, so it defines no Gaussian measure "
+            "there: its draws are not functions of the space, and the "
+            "truncation only hides it. Use a covariance that decays, such as "
+            "a Sobolev measure of order above half the spatial dimension "
+            "(space.sobolev_measure), or pass unsafe=True for a test that "
+            "means it."
+        )
 
 
 def _semidefinite_factors(
@@ -162,67 +255,83 @@ def _latent_mixing(
 ) -> LinearOperator:
     """``(xi_j) -> (sum_j S_ij xi_j)_i`` on the direct sum of latent spaces.
 
-    The latent spaces must correspond mode for mode: all the same space, when
-    the sum is taken in it directly, or all coordinate spaces of one
-    dimension with a diagonal metric, when it is taken on standardized
-    components, ``sqrt(g_k) c_k``, which are what white noise makes
-    standard normal there. With a symmetric ``S`` the operator is
-    self-adjoint in either case.
+    The latent spaces must all be the same space, so that a mode of one is
+    the same mode of another and the sum is taken in it directly. With a
+    symmetric ``S`` the operator is self-adjoint.
 
     Raises:
-        ValueError: if the latent spaces correspond in neither way.
+        ValueError: if the latent spaces differ.
     """
     from ..algebra.direct_sum import DirectSum
 
     latents = list(latents)
     count = len(latents)
     first = latents[0]
+    if not all(space == first for space in latents):
+        raise ValueError(
+            "A correlated product ties its factors' latent white noises mode "
+            "for mode, which needs every factor's covariance factor to have "
+            "the same domain; these differ: "
+            + ", ".join(repr(space) for space in latents)
+            + ". Fields on one space can be correlated this way; fields on "
+            "different spaces have no modes in common to tie."
+        )
     domain = DirectSum(latents)
-    if all(space == first for space in latents):
 
-        def apply(xi: tuple) -> tuple:
-            out = []
-            for i in range(count):
-                total = first.zero()
-                for j in range(count):
-                    if matrix[i, j] != 0.0:
-                        total = first.axpy(matrix[i, j], xi[j], total)
-                out.append(total)
-            return tuple(out)
-
-    else:
-        if (
-            not all(
-                isinstance(space, CoordinateSpace) and space.has_diagonal_metric
-                for space in latents
-            )
-            or len({space.dim for space in latents}) != 1
-        ):
-            raise ValueError(
-                "The factors' latent spaces must correspond mode for mode: "
-                "all the same space, or all coordinate spaces of one "
-                "dimension with a diagonal metric. These are "
-                + ", ".join(repr(space) for space in latents)
-                + "."
-            )
-        weights = [np.sqrt(space.gram_diagonal()) for space in latents]
-
-        def apply(xi: tuple) -> tuple:
-            standardized = [
-                weights[j] * latents[j].to_components(xi[j]) for j in range(count)
-            ]
-            out = []
-            for i in range(count):
-                total = np.zeros(first.dim)
-                for j in range(count):
-                    if matrix[i, j] != 0.0:
-                        total += matrix[i, j] * standardized[j]
-                out.append(latents[i].from_components(total / weights[i]))
-            return tuple(out)
+    def apply(xi: tuple) -> tuple:
+        out = []
+        for i in range(count):
+            total = first.zero()
+            for j in range(count):
+                if matrix[i, j] != 0.0:
+                    total = first.axpy(matrix[i, j], xi[j], total)
+            out.append(total)
+        return tuple(out)
 
     return LinearOperator.from_callables(
         domain, domain, apply, adjoint=apply, traits=Traits.SELF_ADJOINT
     )
+
+
+def _latent_whitening(measure: "GaussianMeasure", /) -> LinearOperator | None:
+    """``L^-1``, from the space back to the covariance factor's latent space.
+
+    A precision factor is fixed only up to a unitary on the left: ``Li* Li
+    == C^-1`` holds for ``U Li`` as well as for ``Li``, so ``Li`` is the
+    inverse of the covariance factor ``L`` only when ``Li L`` is the identity
+    on the latent space, which nothing guarantees (``-1.0 * mu`` keeps ``Li``
+    and negates ``L``). ``L* P``, the factor's adjoint after the precision,
+    is ``L^-1`` whenever ``L`` is invertible, whatever root the precision
+    came from. One probe on the latent space decides: the precision factor
+    when it inverts ``L``, else ``L* P`` when that does, else ``None`` (the
+    factor is not invertible, or there is no precision).
+
+    Args:
+        measure: a measure with a covariance factor.
+
+    Returns:
+        An operator ``W`` from the space to the factor's domain with ``W L``
+        the identity there, or ``None``.
+    """
+    factor = measure.covariance_factor
+    latent = factor.domain
+    candidates = []
+    if measure.precision_factor is not None:
+        candidates.append(measure.precision_factor)
+    if measure.precision is not None:
+        candidates.append(factor.adjoint @ measure.precision)
+    if not candidates:
+        return None
+    probe = latent.random(rng=np.random.default_rng(0))
+    image = factor(probe)
+    scale = latent.norm(probe)
+    for candidate in candidates:
+        if candidate.codomain != latent:
+            continue
+        error = latent.norm(latent.subtract(candidate(image), probe))
+        if error <= 1e-6 * scale:
+            return candidate
+    return None
 
 
 class GaussianMeasure[X](ProbabilityMeasure[X]):
@@ -239,8 +348,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         precision: LinearOperator[X, X] | None = None,
         precision_factor: LinearOperator | None = None,
         sample: Callable[[Generator | None], X] | None = None,
+        unsafe: bool = False,
     ) -> None:
         """
+        On a space that discretizes a function space (``is_function_space``)
+        a covariance, factor, precision or precision factor that is a
+        multiple of the identity is refused: the identity is not trace class
+        there, so it defines no Gaussian measure on the space. That the
+        covariance is trace class in any other case is the caller's to
+        ensure; a Sobolev measure of order above half the spatial dimension
+        is.
+
         Args:
             domain: the space the measure lives on.
             expectation: the mean. Defaults to zero.
@@ -252,9 +370,27 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 ``precision_factor`` when not given.
             precision_factor: ``Li`` with ``C^-1 == Li* Li``.
             sample: an explicit sampler, for a measure whose factor is not
-                available in closed form.
+                available in closed form. It takes a generator (or ``None``)
+                and returns the **centered** fluctuation ``x - m``, a draw of
+                the zero-mean measure with this covariance: :meth:`sample`
+                adds the expectation to whatever it returns.
+            unsafe: accept a multiple of the identity on a function space,
+                for a test that means it.
+
+        Raises:
+            ValueError: if nothing describes the covariance, an operator is
+                not on the domain or does not claim self-adjointness and
+                positive semidefiniteness, the covariance factor does not map
+                into the domain, or an operator is a multiple of the identity
+                on a function space without *unsafe*.
         """
         super().__init__(domain)
+        _refuse_identity_covariance(
+            domain,
+            "A multiple of the identity covariance",
+            unsafe=unsafe,
+            operators=(covariance, covariance_factor, precision, precision_factor),
+        )
 
         if (
             covariance_factor is None
@@ -263,6 +399,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         ):
             # The identity is its own factor, so a white measure samples.
             covariance_factor = covariance
+        elif (
+            covariance is not None
+            and covariance_factor is None
+            and precision is None
+            and precision_factor is None
+            and isinstance(covariance.domain, CoordinateSpace)
+            and covariance.domain.has_diagonal_metric
+        ):
+            # A covariance diagonal in components hands back its square root
+            # and, when its spectrum is positive, its inverse: the measure
+            # then samples and has a density, as the algebra's would.
+            covariance_factor, precision = self._diagonal_inverse(covariance)
         if covariance is None and covariance_factor is not None:
             # L L* -- self-adjoint and positive semidefinite by the palindrome
             # rule, and positive definite when L is invertible. Nothing needs
@@ -343,18 +491,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             The measure, carrying both a factor and a precision factor.
 
         Raises:
-            TypeError: on a function space without *unsafe*.
-            ValueError: for a non-positive or non-scalar deviation. Use
-                from_standard_deviations for one per component.
+            ValueError: for a non-positive or non-scalar deviation (use
+                from_standard_deviations for one per component), or on a
+                function space without *unsafe*.
         """
-        if domain.is_function_space and not unsafe:
-            raise TypeError(
-                f"An identity covariance on {domain!r} is not a Gaussian "
-                "measure on it: the identity is not trace class on a function "
-                "space and its draws are not functions of the space. Use a "
-                "Sobolev measure of order above half the spatial dimension "
-                "(space.sobolev_measure), or unsafe=True for a test."
-            )
+        _refuse_identity_covariance(
+            domain,
+            "An isotropic covariance, a multiple of the identity,",
+            unsafe=unsafe,
+            white=True,
+        )
         if np.ndim(standard_deviation) != 0:
             raise ValueError(
                 "from_standard_deviation takes one number, for an isotropic "
@@ -370,6 +516,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation=expectation,
             covariance_factor=factor,
             precision_factor=inverse,
+            unsafe=True,
         )
 
     @classmethod
@@ -380,6 +527,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         /,
         *,
         expectation: X | None = None,
+        unsafe: bool = False,
     ) -> GaussianMeasure[X]:
         """A measure with a different standard deviation along each basis vector.
 
@@ -400,17 +548,25 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         :meth:`from_covariance_matrix`, or build an isotropic measure with
         :meth:`from_standard_deviation` and rescale it.
 
+        On a space that discretizes a function space (``is_function_space``)
+        equal deviations are refused, being the identity covariance, which
+        is not trace class there; that any other choice is trace class is
+        the caller's to ensure.
+
         Args:
             domain: the space the measure lives on.
             standard_deviations: one positive number per dimension.
             expectation: the mean. Defaults to zero.
+            unsafe: accept equal deviations on a function space, for a test
+                that means it.
 
         Returns:
             The measure with that diagonal covariance.
 
         Raises:
             ValueError: if the array is the wrong length or has an entry that
-                is not positive, or if the space's metric is not diagonal.
+                is not positive, if the space's metric is not diagonal, or
+                for equal deviations on a function space without *unsafe*.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
 
@@ -431,11 +587,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
         if np.any(values <= 0.0):
             raise ValueError("Every standard deviation must be positive.")
+        _refuse_identity_covariance(
+            domain,
+            "Equal standard deviations, a multiple of the identity covariance,",
+            unsafe=unsafe,
+            spectrum=values,
+        )
         return cls(
             domain,
             expectation=expectation,
             covariance_factor=DiagonalLinearOperator(domain, values),
             precision_factor=DiagonalLinearOperator(domain, 1.0 / values),
+            unsafe=True,
         )
 
     @classmethod
@@ -462,7 +625,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         n = len(samples)
         if n < 2:
             raise ValueError("At least two samples are needed for a covariance.")
-        mean = domain.mean(samples)
+        mean = domain.sample_expectation(samples)
         deviations = [domain.subtract(x, mean) for x in samples]
         scale = 1.0 / np.sqrt(n - 1)
 
@@ -480,7 +643,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         factor = LinearOperator.from_callables(
             coefficients, domain, factor_value, adjoint=factor_adjoint
         )
-        return cls(domain, expectation=mean, covariance_factor=factor)
+        return cls(domain, expectation=mean, covariance_factor=factor, unsafe=True)
 
     @classmethod
     def from_product(
@@ -504,7 +667,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The precision matters beyond the density: a Woodbury preconditioner
         built from a product prior inverts it through the precision when
         there is one, and by conjugate gradients at every application when
-        there is not.
+        there is not. The precision factor is block diagonal likewise,
+        whenever every factor has one.
 
         **Correlated.** Each factor draws as ``L_i xi_i`` from its covariance
         factor and white noise ``xi_i`` on the factor's domain, its latent
@@ -515,11 +679,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         unchanged (``R_ii == 1``) and the cross-covariance of summands ``i``
         and ``j`` is ``R_ij L_i L_j*``. The covariance factor is the block
         diagonal of the ``L_i`` composed with the mixing, matrix-free, and
-        the precision factor is the mixing's inverse composed with the
-        factors' precision factors when every factor has one and ``R`` is
-        positive definite. The latent spaces must correspond mode for mode:
-        all the same space, or all coordinate spaces of one dimension with a
-        diagonal metric, where the mixing acts on standardized components.
+        the precision factor is the mixing's inverse composed with the block
+        diagonal of the ``L_i^-1``, when ``R`` is positive definite and every
+        factor has a precision and an invertible ``L_i``. Each ``L_i^-1`` is
+        the factor's precision factor when a probe confirms it inverts
+        ``L_i``, and ``L_i* P_i`` otherwise, a precision factor being fixed
+        only up to a unitary. The factors' latent spaces must be one space,
+        so that a mode of one factor is the same mode of another: fields on
+        one space can be tied this way, and fields on different spaces, whose
+        bases have no modes in common, cannot.
         Fields on one symmetric space whose correlation varies with scale are
         :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.correlated_measure`'s
         business; this is the constant correlation, on any summands.
@@ -545,7 +713,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 summands are not the factors' domains, or, for a correlated
                 product, if the correlation is not a symmetric positive
                 semidefinite matrix of unit diagonal, some factor has no
-                covariance factor, or the latent spaces do not correspond.
+                covariance factor, or the latent spaces differ.
         """
         from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
 
@@ -594,13 +762,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         else:
             raise ValueError("Every factor needs a covariance or a covariance factor.")
 
+        # The precision and its factor are block diagonal whenever every
+        # factor has one, each independently of the other.
         precision = None
         precision_factor = None
         if all(m.precision is not None for m in measures):
             precision = BlockDiagonalLinearOperator(
                 [m.precision for m in measures], domain=domain, codomain=domain
             )
-        elif all(m.precision_factor is not None for m in measures):
+        if all(m.precision_factor is not None for m in measures):
             blocks = [m.precision_factor for m in measures]
             seated = DirectSum([b.codomain for b in blocks]) == domain
             precision_factor = BlockDiagonalLinearOperator(
@@ -611,8 +781,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if factor is None and all(m.can_sample for m in measures):
 
             def sample(rng, _measures=measures):
-                return tuple(m.sample(rng=rng) for m in _measures)
+                return tuple(m._fluctuation(rng) for m in _measures)
 
+        # Each factor was gated when it was built; their product is not
+        # judged again.
         return cls(
             domain,
             expectation=tuple(m.expectation for m in measures),
@@ -621,6 +793,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             precision=precision,
             precision_factor=precision_factor,
             sample=sample,
+            unsafe=True,
         )
 
     @classmethod
@@ -685,9 +858,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             @ mixing
         )
         precision_factor = None
-        if definite and all(m.precision_factor is not None for m in measures):
+        whitening = [_latent_whitening(m) for m in measures] if definite else [None]
+        if all(w is not None for w in whitening):
             inverse_root = (vectors / np.sqrt(values)) @ vectors.T
-            whitening = [m.precision_factor for m in measures]
             seated = DirectSum([w.codomain for w in whitening]) == domain
             precision_factor = _latent_mixing(latents, inverse_root) @ (
                 BlockDiagonalLinearOperator(
@@ -699,6 +872,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation=tuple(m.expectation for m in measures),
             covariance_factor=factor,
             precision_factor=precision_factor,
+            unsafe=True,
         )
 
     @classmethod
@@ -711,6 +885,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         form: Literal["galerkin", "components"],
         expectation: X | None = None,
         rtol: float = 1e-10,
+        unsafe: bool = False,
     ) -> GaussianMeasure[X]:
         """From an explicit covariance matrix.
 
@@ -718,6 +893,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         (``G C_c``) or ``"components"`` (``C_c``, with ``c_{Cx} == C_c c_x``).
         The Galerkin form is the natural one for a covariance: it is
         self-adjoint, so that is the representation in which it is symmetric.
+        A Galerkin matrix that is not symmetric to round-off (``||M - M^T||``
+        above ``1e-8 ||M||``) is refused rather than symmetrized: it is what
+        the wrong *form* gives, a symmetric component matrix on a space whose
+        metric is not the identity being the common case, and symmetrizing
+        would build a different covariance from the one meant. Below that
+        threshold the matrix is symmetrized against round-off.
 
         A covariance is required to be positive *semi*definite, so a Cholesky
         factorization alone is not enough: it refuses every singular
@@ -739,6 +920,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         pseudo-inverse in the precision slot would answer those three methods
         with a finite number that is not the thing they name.
 
+        On a space that discretizes a function space (``is_function_space``)
+        a multiple of the identity (a component matrix ``c I``) is refused,
+        the identity not being trace class there; that any other covariance
+        is trace class is the caller's to ensure.
+
         Cost is cubic in ``domain.dim`` and the result holds two dense
         matrices (three when a precision is attached, the Gram matrix being
         the third).
@@ -753,13 +939,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation: the mean. Zero if omitted.
             rtol: how negative an eigenvalue may be, relative to the largest in
                 magnitude, before the matrix is refused rather than clipped.
+            unsafe: accept a multiple of the identity on a function space,
+                for a test that means it.
 
         Returns:
             The measure.
 
         Raises:
-            ValueError: for an unknown form, a wrongly shaped matrix, or one
-                not symmetric positive semidefinite in that representation.
+            ValueError: for an unknown form, a wrongly shaped matrix, one not
+                symmetric positive semidefinite in that representation, or a
+                multiple of the identity on a function space without
+                *unsafe*.
         """
         require_coordinates(domain)
         matrix = np.asarray(matrix, dtype=float)
@@ -776,7 +966,39 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         elif form != "galerkin":
             raise ValueError(f"Unknown form {form!r}.")
 
+        asymmetry = float(np.linalg.norm(matrix - matrix.T))
+        size = float(np.linalg.norm(matrix))
+        if asymmetry > 1e-8 * size:
+            if form == "components":
+                hint = (
+                    "its Galerkin matrix G C_c is not symmetric, so it is not "
+                    "the component matrix of a self-adjoint operator. A "
+                    "symmetric array on a space whose metric is not the "
+                    "identity is usually the Galerkin form: pass "
+                    "form='galerkin'."
+                )
+            else:
+                hint = (
+                    "a covariance's Galerkin matrix is symmetric. If this is "
+                    "the component matrix C_c, pass form='components'."
+                )
+            raise ValueError(
+                f"The covariance matrix given with form={form!r} is not "
+                f"symmetric (asymmetry {asymmetry:.3e} against a size of "
+                f"{size:.3e}): {hint}"
+            )
         symmetric = 0.5 * (matrix + matrix.T)
+        if domain.is_function_space and not unsafe:
+            gram = domain.gram_matrix()
+            multiple = float(np.trace(symmetric)) / float(np.trace(gram))
+            _refuse_identity_covariance(
+                domain,
+                "A multiple of the identity covariance",
+                unsafe=unsafe,
+                white=multiple > 0.0
+                and float(np.linalg.norm(symmetric - multiple * gram))
+                <= 1e-10 * float(np.linalg.norm(symmetric)),
+            )
         root, inverse_root = _semidefinite_factors(symmetric, rtol=rtol)
 
         # from_matrix(E, X, R, form="galerkin") has component matrix G^-1 R, and
@@ -812,6 +1034,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             covariance_factor=factor,
             precision=precision,
             precision_factor=precision_factor,
+            unsafe=True,
         )
 
     # ----------------------------------------------------------------- #
@@ -890,6 +1113,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self._expectation is None:
             return value
         return self._domain.add(value, self._expectation)
+
+    def _fluctuation(self, rng: Generator | None) -> X:
+        """One centered draw, ``x - m``: what a derived sampler hands on.
+
+        A measure built by the algebra from this one is given a sampler
+        that returns its own centered fluctuation, its :meth:`sample` adding
+        its own expectation; so the fluctuation is taken here, through
+        :meth:`sample`, which a subclass may override.
+        """
+        draw = self.sample(rng=rng)
+        if self._expectation is None:
+            return draw
+        return self._domain.subtract(draw, self._expectation)
 
     def _draw_through_factor(self, rng: Generator | None) -> X:
         """``L xi`` for white noise ``xi``, in one transform when ``L`` is diagonal.
@@ -992,12 +1228,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         component matrix, and otherwise probes the diagonal of ``C C`` one
         basis vector at a time: two applications per column and linear
         memory. The dense matrix, ``N^2`` memory for a number that needs
-        ``N``, is formed only when asked for by name.
+        ``N``, is formed only when asked for by name. A space without
+        coordinates has no exact route, and ``"auto"`` refuses there rather
+        than return an estimate as though it were exact.
 
-        ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``. The
-        estimator is a trace of ``C^2``, so its relative error is worse than a
-        trace of ``C``: ask for more probes here than for
-        :meth:`nuclear_norm`, or pass *rtol* and let it decide.
+        ``"stochastic"`` is a Hutchinson estimate of ``tr(C C)``, taken only
+        when asked for by name. The estimator is a trace of ``C^2``, so its
+        relative error is worse than a trace of ``C``: ask for more probes
+        here than for :meth:`nuclear_norm`, or pass *rtol* and let it decide.
 
         Args:
             method: ``"auto"`` or ``"diagonal"`` is the exact matrix-free
@@ -1007,13 +1245,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             rtol: draw further blocks of probes until the standard error is
                 this fraction of the estimate.
             rng: the generator for the probes.
-            n_jobs: workers for the probes, or for the diagonal probe.
+            n_jobs: workers for the probes, for the diagonal probe, or for
+                the dense assembly.
 
         Returns:
             The norm.
 
         Raises:
             ValueError: for an unknown method, or a measure with no covariance.
+            TypeError: for an exact route on a space without coordinates.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
@@ -1036,7 +1276,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # tr(C* C) is basis-independent, so it comes from the *component*
         # matrix. The Galerkin one is G C_c, whose trace is a different number.
         if method == "dense":
-            matrix = covariance.matrix(form="components")
+            matrix = covariance.matrix(form="components", n_jobs=n_jobs)
             return float(np.sqrt(np.sum(matrix * matrix.T)))
         slices = self._spectral_slices()
         if slices is not None:
@@ -1046,12 +1286,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if known is not None:
             return float(np.sqrt(np.sum(known * known.T)))
         space = self._domain
-        if not isinstance(space, CoordinateSpace):
-            if method == "auto":
-                return self.hilbert_schmidt_norm(
-                    method="stochastic", samples=samples, rng=rng, n_jobs=n_jobs
-                )
-            require_coordinates(space)
+        require_coordinates(space)
         # The diagonal of C C, one basis vector at a time: (C C)_ii is the
         # i-th component of C(C(e_i)). Two applications per column and one
         # vector of memory.
@@ -1106,13 +1341,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             samples: probes for the stochastic route.
             rtol: target relative standard error for the stochastic route.
             rng: the generator for the probes.
-            n_jobs: workers for the probes, or for the diagonal probe.
+            n_jobs: workers for the probes, for the diagonal probe, or for
+                the dense assembly.
 
         Returns:
             The norm.
 
         Raises:
             ValueError: for an unknown method, or a measure with no covariance.
+            TypeError: for an exact route on a space without coordinates.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
@@ -1128,7 +1365,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # trace -- and a trace is the component matrix's, not the Galerkin
         # matrix's, which carries an extra factor of the metric.
         if method == "dense":
-            return float(np.trace(covariance.matrix(form="components")))
+            return float(np.trace(covariance.matrix(form="components", n_jobs=n_jobs)))
         slices = self._spectral_slices()
         if slices is not None:
             return float(np.einsum("kii->", slices))
@@ -1152,9 +1389,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         ``covariance is None`` is a legal state — a measure may be described by
         its precision alone, which is the natural description of a posterior —
-        but almost nothing can be done with it, and what came back was a
-        ``TypeError`` from an arithmetic operation on ``None`` several frames
-        down. This says which method wanted what, and what to do about it.
+        but almost nothing can be done with it, and without this the failure
+        would be a ``TypeError`` from an arithmetic operation on ``None``
+        several frames down. This says which method wanted what, and what to
+        do about it.
 
         Args:
             what: the operation, named for the message.
@@ -1174,9 +1412,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
         return self._covariance
 
-    def _symmetric_matrix(self) -> np.ndarray:
-        """The covariance's Galerkin matrix, symmetrized against round-off."""
-        matrix = self._require_covariance("This route").matrix(form="galerkin")
+    def _symmetric_matrix(self, *, n_jobs: int | None = None) -> np.ndarray:
+        """The covariance's Galerkin matrix, symmetrized against round-off.
+
+        Args:
+            n_jobs: workers for the assembly, one application per column.
+        """
+        matrix = self._require_covariance("This route").matrix(
+            form="galerkin", n_jobs=n_jobs
+        )
         return 0.5 * (matrix + matrix.T)
 
     def kl_divergence(
@@ -1201,7 +1445,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             other: the measure to compare against.
-            method: ``"dense"``, ``"spectral"``, ``"stochastic"``, or
+            method: ``"dense"``, ``"diagonal"``, ``"stochastic"``, or
                 ``"auto"``. ``"auto"`` refuses rather than going stochastic
                 silently -- an estimate reported as a bare number is the one
                 way this quantity misleads.
@@ -1259,10 +1503,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             2 D == tr(C_o^-1 C_s) + (m_o - m_s, C_o^-1 (m_o - m_s))
                    - dim + log det C_o - log det C_s
 
+        On a space that discretizes a function space the divergence has a
+        limit under refinement only when the two measures are equivalent, a
+        posterior against its prior being the common case. Between measures
+        that are mutually singular in the limit, two Sobolev priors of
+        different amplitude say, it grows without bound with the truncation,
+        and the number computed here is the truncation's.
+
         Three routes, and they differ only in how the trace and the two
         determinants are reached.
 
-        ``"spectral"``
+        ``"diagonal"``
             Both covariances diagonal in the space's own basis, so everything
             is a sum over the spectrum: ``O(dim)``, exact, and no factorization
             at all. Every invariant measure on a symmetric space is of this
@@ -1284,8 +1535,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             other: the reference measure. The divergence is not symmetric.
-            method: ``"auto"``, ``"spectral"``, ``"dense"`` or ``"stochastic"``.
-                ``"auto"`` takes the spectral route when both covariances are
+            method: ``"auto"``, ``"diagonal"``, ``"dense"`` or ``"stochastic"``.
+                ``"auto"`` takes the diagonal route when both covariances are
                 diagonal, then the dense one when the space has coordinates and
                 is no larger than *dense_limit*, and raises otherwise rather
                 than reaching for the stochastic route unasked.
@@ -1325,9 +1576,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         if other.domain != self._domain:
             raise ValueError("Both measures must live on the same space.")
-        if method not in ("auto", "spectral", "dense", "stochastic"):
+        if method not in ("auto", "diagonal", "dense", "stochastic"):
             raise ValueError(
-                f"The method is 'auto', 'spectral', 'dense' or 'stochastic', "
+                f"The method is 'auto', 'diagonal', 'dense' or 'stochastic', "
                 f"got {method!r}."
             )
         dimension = self._domain.dim
@@ -1336,14 +1587,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         mine = self._diagonal_eigenvalues()
         theirs = other._diagonal_eigenvalues()
         spectral = mine is not None and theirs is not None
-        if method == "spectral" and not spectral:
+        if method == "diagonal" and not spectral:
             raise ValueError(
-                "The spectral route needs both covariances diagonal in the "
+                "The diagonal route needs both covariances diagonal in the "
                 "space's own basis, and at least one of these is not."
             )
         if method == "auto":
             if spectral:
-                method = "spectral"
+                method = "diagonal"
             elif isinstance(self._domain, CoordinateSpace) and dimension <= dense_limit:
                 method = "dense"
             else:
@@ -1358,7 +1609,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     "which is the exact O(dim) route."
                 )
 
-        if method == "spectral":
+        if method == "diagonal":
             if np.any(theirs <= 0.0):
                 raise ValueError(
                     "The reference measure is singular, so the divergence from "
@@ -1366,7 +1617,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 )
             # From the spectrum, not from other._weighted_squared: that falls
             # back to a dense solve whenever the reference has no precision,
-            # so the "exact O(dim) route" quietly became an O(n^3) one. The
+            # which would make this O(dim) route an O(n^3) one. The
             # eigenvalues are already in hand, and the operator is diagonal in
             # the space's own basis, so (C^-1 v, v) == (c/lambda) . (G c).
             components = self._domain.to_components(shift)
@@ -1380,8 +1631,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return Estimate(0.5 * (trace + quadratic - dimension + logs), 0.0, 0)
 
         if method == "dense":
-            mine_matrix = self._symmetric_matrix()
-            theirs_matrix = other._symmetric_matrix()
+            mine_matrix = self._symmetric_matrix(n_jobs=n_jobs)
+            theirs_matrix = other._symmetric_matrix(n_jobs=n_jobs)
             sign_mine, log_mine = np.linalg.slogdet(mine_matrix)
             sign_theirs, log_theirs = np.linalg.slogdet(theirs_matrix)
             if sign_mine <= 0 or sign_theirs <= 0:
@@ -1568,7 +1819,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.low_rank_surrogate`.
 
         Args:
-            rank: how many eigenpairs to keep.
+            rank: how many eigenpairs to keep; chosen adaptively by the
+                randomized routine when omitted.
             rng: the generator for the probes.
             **kwargs: passed to the randomized routine.
 
@@ -1598,6 +1850,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             self._domain,
             expectation=self._expectation,
             covariance_factor=factorized.factor,
+            unsafe=True,
         )
 
     def with_dense_covariance(
@@ -1645,7 +1898,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # one product instead of two, and a matrix the operator algebra can
         # read straight off.
         factored = GaussianMeasure.from_covariance_matrix(
-            self._domain, symmetric, form="galerkin", expectation=self._expectation
+            self._domain,
+            symmetric,
+            form="galerkin",
+            expectation=self._expectation,
+            unsafe=True,
         )
         dense = LinearOperator.from_matrix(
             self._domain,
@@ -1783,7 +2040,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         product, so it needs a domain that is a module. The general answer
         on any space; on a symmetric space with an invariant measure,
         :meth:`~pygeoinf2.symmetric_space.SymmetricSpace.pointwise_variance`
-        is the exact one and costs no draws.
+        is the exact one and costs no draws. The draws are summed a block at
+        a time, so memory holds a block of fields, not every draw.
 
         Args:
             samples: how many draws.
@@ -1807,11 +2065,24 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
         if samples < 1:
             raise ValueError("At least one draw is needed.")
+        from ..parallel import parallel_map, resolve_jobs
+
         center = self.expectation
+
+        def square(stream: Generator) -> X:
+            deviation = space.subtract(self.sample(rng=stream), center)
+            return space.multiply(deviation, deviation)
+
+        # The streams are those samples() would use, so the draws are the
+        # same; a block of them is squared, summed and dropped at a time.
+        streams = resolve_rng(rng).spawn(samples)
+        block = 16 * resolve_jobs(n_jobs)
         total = space.zero()
-        for draw in self.samples(samples, rng=rng, n_jobs=n_jobs):
-            deviation = space.subtract(draw, center)
-            total = space.axpy(1.0, space.multiply(deviation, deviation), total)
+        for start in range(0, samples, block):
+            for squared in parallel_map(
+                square, streams[start : start + block], n_jobs=n_jobs
+            ):
+                total = space.axpy(1.0, squared, total)
         return space.scale(1.0 / samples, total)
 
     def sample_pointwise_std(
@@ -1856,14 +2127,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         gives the ellipsoid the distribution's own shape, this gives a ball in
         the *space's* norm, or, given an *operator*, in the norm that operator
         defines. The credible set and the ball coincide only for an isotropic
-        measure, and the ball is always the larger.
+        measure; otherwise neither contains the other, though the ball has
+        the larger volume.
 
         It is worth having because a norm bound is what a set-theoretic prior
         is, so this is the bridge from a Gaussian belief to one, done in the
-        geometry the constraint will be used in. It is also what
-        :func:`~pygeoinf2.inference.backus.harden_error` calls on every Backus
-        route whose error is a Gaussian, which is why the route taken here
-        matters. On a space discretizing a function space the ball converges
+        geometry the constraint will be used in. It is also how
+        :class:`~pygeoinf2.inference.backus.BackusGilbertParker` hardens a
+        Gaussian error measure, which is why the route taken here matters. On a space discretizing a function space the ball converges
         under refinement, the squared norm of a draw having a finite
         expectation whenever the covariance is trace class, which is what the
         credible set lacks there.
@@ -1897,7 +2168,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             whose eigenvalues are the operator's; with an operator, the
             eigenvalues of ``C^(1/2) B C^(1/2)`` from the matrices. Exact,
             ``O(dim^3)``, and it holds dense matrices.
-        ``"spectral"``
+        ``"randomized"``
             A randomized eigendecomposition truncated to *rank*, of the
             covariance, or of ``L* B L`` through the covariance factor. The
             dropped tail is positive, so the radius comes out **too small**:
@@ -1917,9 +2188,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 covariance and so its support function; it must claim the
                 same traits, and one probe checks that it inverts the
                 operator. Ignored without an operator.
-            method: ``"auto"``, ``"diagonal"``, ``"dense"``, ``"spectral"`` or
-                ``"sampling"``. ``"auto"`` reads a diagonal spectrum if there
-                is one, then goes dense if the space has coordinates and is no
+            method: ``"auto"``, ``"diagonal"``, ``"dense"``, ``"randomized"``
+                or ``"sampling"``. ``"auto"`` reads a diagonal spectrum if
+                there is one, then goes dense if the space has coordinates and is no
                 larger than *dense_limit*, then samples if the measure can be
                 sampled, then takes the randomized spectrum if a *rank* was
                 given, and otherwise says which of those to supply.
@@ -1944,6 +2215,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         """
         from ..geometry.convex import Ball, Ellipsoid
 
+        if not 0.0 < level < 1.0:
+            raise ValueError(f"A level lies in (0, 1), got {level}.")
         if operator is not None:
             required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
             if operator.domain != self._domain or operator.codomain != self._domain:
@@ -2020,7 +2293,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             elif self.can_sample:
                 method = "sampling"
             elif rank is not None:
-                method = "spectral"
+                method = "randomized"
             else:
                 raise ValueError(
                     f"No affordable route to an ambient ball on a space of "
@@ -2039,21 +2312,21 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     "from; supply a covariance factor or a sample callable."
                 )
             center = self.expectation
-            draws = self.samples(samples, rng=rng, n_jobs=n_jobs)
-            if operator is None:
-                squared = [
-                    self._domain.squared_norm(self._domain.subtract(x, center))
-                    for x in draws
-                ]
-            else:
-                squared = []
-                for x in draws:
-                    offset = self._domain.subtract(x, center)
-                    squared.append(self._domain.inner_product(operator(offset), offset))
-            return finish(float(np.quantile(np.asarray(squared), level)))
+            space = self._domain
+
+            # Reduced to one number where each draw is made, so the draws are
+            # never held together.
+            def squared(x: X, _operator=operator) -> float:
+                offset = space.subtract(x, center)
+                if _operator is None:
+                    return float(space.squared_norm(offset))
+                return float(space.inner_product(_operator(offset), offset))
+
+            values = self._map_draws(squared, samples, rng=rng, n_jobs=n_jobs)
+            return finish(float(np.quantile(np.asarray(values), level)))
 
         covariance = self._require_covariance("An ambient ball")
-        if method == "spectral":
+        if method == "randomized":
             from ..numerics.randomized import random_eig
 
             if operator is None:
@@ -2062,7 +2335,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 factor = self.covariance_factor
                 if factor is None:
                     raise ValueError(
-                        "The spectral route with an operator needs a covariance "
+                        "The randomized route with an operator needs a covariance "
                         "factor, to form L* B L."
                     )
                 target = (factor.adjoint @ operator @ factor).with_traits(
@@ -2100,7 +2373,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # They are the generalized eigenvalues of the symmetric pair
         # (C_gal, G), which is both cheaper and better conditioned than a
         # non-symmetric decomposition of C_c.
-        galerkin = covariance.matrix(form="galerkin")
+        galerkin = covariance.matrix(form="galerkin", n_jobs=n_jobs)
         galerkin = 0.5 * (galerkin + galerkin.T)
         gram = self._domain.gram_matrix()
         if operator is None:
@@ -2113,7 +2386,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         root = (vectors * np.sqrt(np.clip(values, 0.0, None))) @ vectors.T
         from scipy.linalg import solve
 
-        inner = solve(gram, operator.matrix(form="galerkin"), assume_a="pos")
+        inner = solve(
+            gram, operator.matrix(form="galerkin", n_jobs=n_jobs), assume_a="pos"
+        )
         inner = solve(gram, inner.T, assume_a="pos").T
         symmetric = root @ inner @ root
         spectrum = eigh(0.5 * (symmetric + symmetric.T), eigvals_only=True)
@@ -2176,7 +2451,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         For anything scipy already does — a density, a rank correlation, a
         statistical test. It is the *component* representation, so it is a
         statement about coefficients rather than about fields, and a metric
-        that is not the identity does not travel with it.
+        that is not the identity does not travel with it. On a space that
+        discretizes a function space its density is the truncation's, which
+        is why :meth:`log_density` refuses there without ``unsafe=True``;
+        this carries no such gate, and its density depends on the
+        discretization in the same way.
 
         Args:
             n_jobs: workers for assembling the covariance matrix, one
@@ -2305,6 +2584,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 _Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE
             ),
             sample=sample,
+            unsafe=True,
         )
 
     def _require_direct_sum(self, what: str, /) -> "DirectSum":
@@ -2323,9 +2603,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         The joint measure a coupled problem builds is rarely the one it wants
         to look at: the interesting question is usually about one field. This
-        is the pushforward under the projection, so it costs nothing and stays
-        exact -- the alternative was slicing the covariance's component matrix,
-        which is a dense ``dim x dim`` assembly to read one block off.
+        is the pushforward under the projection ``P``, so it costs nothing and
+        stays exact: no component matrix is sliced, which would be a dense
+        ``dim x dim`` assembly to read one block off.
+
+        What the joint measure can do, the marginal can too. Its factor is
+        the cheapest available square root of its covariance: a diagonal
+        block's own, the block of a block-diagonal factor (an independent
+        product), or ``P L`` from the joint factor ``L``, a factor from the
+        joint latent space. Its precision is the block of a block-diagonal
+        precision or precision factor, which is the marginal's exactly
+        because the summands are then independent; a general marginal
+        precision is a Schur complement, and is not formed. A joint measure
+        that samples through a callable gives a marginal that samples its
+        projected draws.
 
         Args:
             key: which summand, by position or by label.
@@ -2337,51 +2628,70 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             ValueError: if this measure is not on a direct sum.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
+        from ..algebra.direct_sum import BlockDiagonalLinearOperator
 
         domain = self._require_direct_sum("A marginal")
+        projection = domain.projection(key)
         covariance = self._covariance
         if covariance is None:
-            return self.push_forward(domain.projection(key))
+            return self.push_forward(projection)
 
+        index = domain.index(key)
         block = self._block_of(covariance, domain, key, key)
         expectation = (
             None
             if self.has_zero_expectation
             else domain.component(self._expectation, key)
         )
-        # A diagonal block carries its own factor -- the square root of its
-        # eigenvalues -- so the marginal can still be sampled. Two conditions,
-        # not one.
-        #
-        # The general route cannot supply a factor at all: if C == L L*, the
-        # (i, i) block of C is a sum over the whole i-th row of L, not
-        # L_ii L_ii*.
-        #
-        # And a diagonal square root is a square root only when the summand's
-        # metric is diagonal. ``L`` with component matrix ``diag(r)`` has
-        # adjoint ``G^-1 diag(r) G``, so ``L L*`` has component matrix
-        # ``diag(r) G^-1 diag(r) G``, which is ``diag(r^2)`` exactly when the
-        # two commute -- that is, when ``G`` is itself diagonal. Without this
-        # test the marginal comes back with a factor that does not match its
-        # covariance, and it is the *sampler* that is wrong, silently.
+        # A diagonal block carries its own factor, the square root of its
+        # eigenvalues, which draws in one transform. It is a square root only
+        # when the summand's metric is diagonal: ``L`` with component matrix
+        # ``diag(r)`` has adjoint ``G^-1 diag(r) G``, so ``L L*`` has
+        # component matrix ``diag(r) G^-1 diag(r) G``, which is ``diag(r^2)``
+        # exactly when the two commute, that is when ``G`` is itself
+        # diagonal.
         factor = None
+        precision = None
+        precision_factor = None
         if (
             isinstance(block, DiagonalLinearOperator)
             and block.domain.has_diagonal_metric
         ):
             factor = block.sqrt
-        # And under the same condition the precision is the reciprocal
-        # spectrum, when every variance is positive, so the marginal has a
-        # density.
-        precision = None
-        if factor is not None and np.all(block.eigenvalues > 0.0):
-            precision = DiagonalLinearOperator(block.domain, 1.0 / block.eigenvalues)
+            # And the precision is then the reciprocal spectrum, when every
+            # variance is positive, so the marginal has a density.
+            if np.all(block.eigenvalues > 0.0):
+                precision = DiagonalLinearOperator(
+                    block.domain, 1.0 / block.eigenvalues
+                )
+        elif isinstance(self._covariance_factor, BlockDiagonalLinearOperator):
+            factor = self._covariance_factor.operators[index]
+        elif self._covariance_factor is not None:
+            # (P L)(P L)* == P C P*, the block: a factor from the joint latent
+            # space, which is all a draw needs.
+            factor = projection @ self._covariance_factor
+
+        if precision is None:
+            if isinstance(self._precision, BlockDiagonalLinearOperator):
+                precision = self._precision.operators[index]
+            if isinstance(self._precision_factor, BlockDiagonalLinearOperator):
+                precision_factor = self._precision_factor.operators[index]
+
+        sample = None
+        if factor is None and self.can_sample:
+
+            def sample(rng: Generator | None, _projection=projection) -> Any:
+                return _projection(self._fluctuation(rng))
+
         return GaussianMeasure(
             block.domain,
             covariance=block,
             covariance_factor=factor,
             precision=precision,
+            precision_factor=precision_factor,
             expectation=expectation,
+            sample=sample,
+            unsafe=True,
         )
 
     def cross_covariance(
@@ -2478,7 +2788,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         deviation = self._deviation(x)
         return self._domain.inner_product(self._precision(deviation), deviation)
 
-    def log_normalizing_constant(self, *, unsafe: bool = False) -> float:
+    def log_normalizing_constant(
+        self,
+        *,
+        unsafe: bool = False,
+        dense_limit: int = 4000,
+        n_jobs: int | None = None,
+    ) -> float:
         """``-(n/2) log(2 pi) - (1/2) log det C``, the constant in the density.
 
         The piece :meth:`log_density` leaves out. It depends on the covariance,
@@ -2492,10 +2808,21 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         is what makes the density a density with respect to the space's own
         volume measure.
 
+        **Exact, or refused.** A diagonal covariance gives the determinant
+        from its spectrum, in ``O(dim)``. Otherwise the covariance's matrix is
+        assembled, ``dim`` applications, and factorized, on a space with
+        coordinates of dimension at most *dense_limit*. Beyond that only a
+        stochastic log-determinant is left, and a constant that is a random
+        number would make every density and mixture weight built on it differ
+        from one evaluation to the next, so it is refused rather than taken.
+
         Args:
             unsafe: proceed even when the domain discretises a function
                 space (``domain.is_function_space``), where the constant
                 diverges with the dimension.
+            dense_limit: the largest dimension at which the matrix is formed
+                and factorized.
+            n_jobs: workers for assembling the matrix.
 
         Returns:
             The additive constant, in nats.
@@ -2504,15 +2831,25 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             NotImplementedError: if the measure has no covariance, so there is
                 no determinant to take.
             ValueError: on a domain that discretises a function space, unless
-                ``unsafe=True``.
+                ``unsafe=True``; or when the covariance is not diagonal and
+                the space has no coordinates or exceeds *dense_limit*.
         """
         _require_density(self._domain, "A normalizing constant", unsafe=unsafe)
         if self._log_normalization is None:
-            self._log_normalization = self._compute_log_normalization()
+            self._log_normalization = self._compute_log_normalization(
+                dense_limit=dense_limit, n_jobs=n_jobs
+            )
         return self._log_normalization
 
-    def _compute_log_normalization(self) -> float:
-        """The constant, exactly for a diagonal covariance and otherwise not."""
+    def _compute_log_normalization(
+        self, *, dense_limit: int, n_jobs: int | None
+    ) -> float:
+        """The constant, from the spectrum or from the factorized matrix.
+
+        Args:
+            dense_limit: the largest dimension at which to factorize.
+            n_jobs: workers for assembling the matrix.
+        """
         from ..numerics.functional_calculus import log_determinant
 
         gaussian = -0.5 * self._domain.dim * float(np.log(2.0 * np.pi))
@@ -2528,10 +2865,30 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 "This measure has no covariance, so no normalizing constant. "
                 "Supply covariance or covariance_factor."
             )
+        if (
+            not isinstance(self._domain, CoordinateSpace)
+            or self._domain.dim > dense_limit
+        ):
+            raise ValueError(
+                f"The normalizing constant has no exact route on "
+                f"{type(self._domain).__name__} of dimension {self._domain.dim}: "
+                f"the covariance is not diagonal, and its matrix is formed only "
+                f"on a space with coordinates of dimension at most dense_limit "
+                f"({dense_limit}). A stochastic log-determinant would make the "
+                f"constant, and every density and mixture weight built on it, "
+                f"a random number. Raise dense_limit if the space can afford "
+                f"the matrix, or use log_determinant on the covariance directly "
+                f"for an estimate with its error bar."
+            )
+        # The dense route refuses a matrix that turns out singular, so the
+        # claim only lets the factorization be attempted.
         definite = self._covariance.with_traits(
             Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
         )
-        return gaussian - 0.5 * log_determinant(definite).value
+        return (
+            gaussian
+            - 0.5 * log_determinant(definite, method="dense", n_jobs=n_jobs).value
+        )
 
     def log_density(self, x: X, *, unsafe: bool = False) -> float:
         """The log density up to an additive constant.
@@ -2591,7 +2948,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
     @property
     def has_log_density(self) -> bool:
-        """True when a precision is available, so a density can be evaluated."""
+        """True when a precision is available, so a density can be evaluated.
+
+        On a space that discretizes a function space :meth:`log_density`
+        still refuses without ``unsafe=True``; this says only that the
+        measure has what the density needs.
+        """
         return self._precision is not None
 
     @property
@@ -2620,7 +2982,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Every algebraic operation goes through here, so the precision and its
         factor are passed through: an operation that preserves them (a
         translation, an invertible diagonal map, a scaling) keeps the density
-        and everything built on the precision.
+        and everything built on the precision. The measure operated on was
+        gated when it was built, so the result is not judged again.
         """
         return GaussianMeasure(
             domain,
@@ -2630,6 +2993,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             precision=precision,
             precision_factor=precision_factor,
             sample=sample,
+            unsafe=True,
         )
 
     @staticmethod
@@ -2643,13 +3007,26 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *traits* that are never deduced on a space whose metric is not
         diagonal. The functional calculus of a diagonalizable operator does not
         depend on the metric, so the eigenvalues are the honest thing to gate
-        on.
+        on. Any operator on a coordinate space with a diagonal metric that
+        knows its scaling of components, a multiple of the identity among
+        them, is read the same way.
         """
         from ..algebra.diagonal import DiagonalLinearOperator
+        from ..algebra.direct_sum import DirectSum
 
-        if not isinstance(covariance, DiagonalLinearOperator):
+        if isinstance(covariance, DiagonalLinearOperator):
+            values = np.asarray(covariance.eigenvalues, dtype=float)
+        elif (
+            covariance is not None
+            and covariance.domain == covariance.codomain
+            and isinstance(covariance.domain, CoordinateSpace)
+            and not isinstance(covariance.domain, DirectSum)
+            and covariance.domain.has_diagonal_metric
+            and covariance._known_scaling() is not None
+        ):
+            values = np.asarray(covariance._known_scaling(), dtype=float)
+        else:
             return None, None
-        values = np.asarray(covariance.eigenvalues, dtype=float)
         if np.any(values < 0.0):
             return None, None
         space = covariance.domain
@@ -2692,17 +3069,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
                 congruence_traits(self._covariance.traits, outer_invertible=False)
             )
-        # With no factor to map there is still a sampler: push each draw
-        # through the operator. Losing samplability under a linear map would
-        # be a gratuitous restriction.
+        # With no factor to map there is still a sampler: push each centered
+        # draw through the operator, the image's expectation being added by
+        # its own sample(). Losing samplability under a linear map would be a
+        # gratuitous restriction.
         sample = None
         if factor is None and self.can_sample:
 
-            def sample(rng, _operator=operator, _translation=translation):
-                mapped = _operator(self.sample(rng=rng))
-                if _translation is None:
-                    return mapped
-                return codomain.add(mapped, _translation)
+            def sample(rng, _operator=operator):
+                return _operator(self._fluctuation(rng))
 
         precision, precision_factor = self._mapped_precision(operator)
         if (
@@ -2766,12 +3141,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return None
 
         # The sum of two covariances has no factor in general, but the sum of
-        # two samplable measures is samplable: draw from each and add.
+        # two samplable measures is samplable: add a centered draw of each.
         sample = None
         if self.can_sample and other.can_sample:
 
             def sample(rng, _other=other):
-                return self._domain.add(self.sample(rng=rng), _other.sample(rng=rng))
+                return self._domain.add(
+                    self._fluctuation(rng), _other._fluctuation(rng)
+                )
 
         # Two diagonal covariances add to a diagonal one, and a diagonal
         # covariance hands back its own factor and precision. That turns the
@@ -2826,6 +3203,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if covariance is None and factor is None and precision is None:
             # Scaling a precision-only measure by zero.
             return None
+        # A measure that samples through a callable keeps doing so, scaled.
+        sample = None
+        if factor is None and self.can_sample:
+
+            def sample(rng, _alpha=alpha):
+                return self._domain.scale(_alpha, self._fluctuation(rng))
+
         return self._rebuild(
             self._domain,
             expectation=self._domain.scale(alpha, self.expectation),
@@ -2833,6 +3217,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             covariance_factor=factor,
             precision=precision,
             precision_factor=precision_factor,
+            sample=sample,
         )
 
     def __repr__(self) -> str:

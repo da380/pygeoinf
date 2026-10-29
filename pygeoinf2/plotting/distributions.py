@@ -42,6 +42,7 @@ def moments(
     *,
     samples: int = 20000,
     rng: Any = None,
+    n_jobs: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """The mean and covariance of a measure's components, and its draws.
 
@@ -54,6 +55,8 @@ def moments(
         measure: a Gaussian measure, or any measure that can be sampled.
         samples: draws to take, when sampling is the route.
         rng: the generator for those draws.
+        n_jobs: workers for the draws, or for the covariance's assembly when
+            the measure is Gaussian. Serial by default.
 
     Returns:
         ``(mean, covariance, draws)`` in components, with ``draws`` None when
@@ -66,7 +69,7 @@ def moments(
     from ..probability.gaussian import GaussianMeasure
 
     if isinstance(measure, GaussianMeasure) and measure.covariance is not None:
-        frozen = measure.as_multivariate_normal()
+        frozen = measure.as_multivariate_normal(n_jobs=n_jobs)
         return np.atleast_1d(frozen.mean), np.atleast_2d(frozen.cov), None
 
     if not measure.can_sample:
@@ -78,7 +81,10 @@ def moments(
         )
     space = measure.domain
     draws = np.array(
-        [space.to_components(measure.sample(rng=rng)) for _ in range(samples)]
+        [
+            space.to_components(draw)
+            for draw in measure.samples(samples, rng=rng, n_jobs=n_jobs)
+        ]
     )
     return draws.mean(axis=0), np.atleast_2d(np.cov(draws.T)), draws
 
@@ -319,6 +325,7 @@ def plot_densities(
     fill: bool = False,
     samples: int = 20000,
     rng: Any = None,
+    n_jobs: int | None = None,
     density: str = "binned",
     xlabel: str = "property value",
     title: str | None = None,
@@ -341,6 +348,8 @@ def plot_densities(
         fill: shade under the curves.
         samples: draws to take when the measure has no covariance to read.
         rng: the generator for those draws.
+        n_jobs: workers for the draws, or a Gaussian's covariance assembly;
+            see :func:`moments`. Serial by default.
         density: how a *sampled* measure's marginal is estimated: ``"binned"``,
             the default, by histogram and one convolution with the kernel
             Scott's rule gives; ``"kde"`` by evaluating
@@ -375,7 +384,9 @@ def plot_densities(
     def summarize(measures: Sequence[Any]) -> list[tuple[float, float, Any]]:
         summary = []
         for one in measures:
-            mean, covariance, draws = moments(one, samples=samples, rng=rng)
+            mean, covariance, draws = moments(
+                one, samples=samples, rng=rng, n_jobs=n_jobs
+            )
             if not 0 <= index < mean.size:
                 raise IndexError(
                     f"Component {index} is out of range for a measure on "
@@ -513,6 +524,7 @@ def plot_corner(
     color: str = "darkblue",
     samples: int = 20000,
     rng: Any = None,
+    n_jobs: int | None = None,
     density: str = "binned",
     title: str | None = None,
     legend: bool = True,
@@ -542,6 +554,8 @@ def plot_corner(
         color: the unfilled case's line color, and the mean marker's.
         samples: draws to take when the measure has no covariance to read.
         rng: the generator for those draws.
+        n_jobs: workers for the draws, or a Gaussian's covariance assembly;
+            see :func:`moments`. Serial by default.
         density: how a *sampled* measure's density is estimated, which is what
             the panels of a non-Gaussian corner plot are drawn from.
             ``"binned"``, the default, bins the draws onto the panel's own grid
@@ -573,7 +587,9 @@ def plot_corner(
 
     exact = _exact_density(density)
 
-    mean, covariance, draws = moments(posterior, samples=samples, rng=rng)
+    mean, covariance, draws = moments(
+        posterior, samples=samples, rng=rng, n_jobs=n_jobs
+    )
     size = mean.size
     if size < 2:
         raise ValueError(
@@ -590,7 +606,7 @@ def plot_corner(
     prior_summary = None
     if prior is not None:
         prior_mean, prior_covariance, prior_draws = moments(
-            prior, samples=samples, rng=rng
+            prior, samples=samples, rng=rng, n_jobs=n_jobs
         )
         prior_summary = (
             prior_mean,

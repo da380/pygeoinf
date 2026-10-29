@@ -30,7 +30,6 @@ from pygeoinf2.inference import (
     LinearizedFeasiblePropertySet,
     LinearPointEstimator,
 )
-from pygeoinf2.inference.backus import harden_error
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.symmetric_space.plane import Sobolev as PlaneSobolev
 from pygeoinf2.traits import Traits
@@ -564,8 +563,8 @@ class TestBackusGilbert:
         assert np.allclose(estimator(data), estimator.operator(data))
         x = model.random(rng=rng)
         assert np.allclose(
-            estimator.unresolved(x),
-            space.subtract(target(x), estimator.resolution(x)),
+            estimator.unresolved()(x),
+            space.subtract(target(x), estimator.resolution()(x)),
         )
         # The budget from the base: the propagated covariance is X R X*.
         propagated = estimator.propagated_covariance()
@@ -578,7 +577,7 @@ class TestBackusGilbert:
             model.to_components(estimator.covariance(x)), model.to_components(x)
         )
         assert np.allclose(
-            estimator.bias(truth), estimator.unresolved(model.scale(-1.0, truth))
+            estimator.bias(truth), estimator.unresolved()(model.scale(-1.0, truth))
         )
 
     def test_the_same_kernels_certify_a_set_through_the_route(self, setting):
@@ -594,7 +593,7 @@ class TestBackusGilbert:
             certified = feasible.support(q, via=route)
             assert certified == pytest.approx(
                 space.inner_product(q, estimator(data))
-                + 3.0 * model.norm(estimator.unresolved.adjoint(q))
+                + 3.0 * model.norm(estimator.unresolved().adjoint(q))
                 + 0.1 * forward.codomain.norm(estimator.operator.adjoint(q))
             )
             assert certified == pytest.approx(
@@ -620,7 +619,7 @@ class TestBackusGilbert:
         assert exact.error_covariance is None
         # Without a noise penalty the kernels reproduce T on the range of A*.
         pulled = forward.adjoint(data_space.random(rng=rng))
-        assert np.allclose(exact.resolution(pulled), target(pulled), atol=1e-8)
+        assert np.allclose(exact.resolution()(pulled), target(pulled), atol=1e-8)
         with pytest.raises(ValueError, match="data error measure"):
             from_ball.propagated_covariance()
         fat = Ball(data_space, radius=0.2) + Ball(data_space, radius=0.1)
@@ -653,8 +652,44 @@ class TestBackusGilbert:
         assert np.allclose(pushed(data), summary(estimator(data)))
         q = EuclideanSpace(1).basis_vector(0)
         assert np.allclose(
-            pushed.unresolved.adjoint(q),
-            estimator.unresolved.adjoint(summary.adjoint(q)),
+            pushed.unresolved().adjoint(q),
+            estimator.unresolved().adjoint(summary.adjoint(q)),
+        )
+
+    def test_a_noise_expectation_is_removed_and_pushed_forward(self, setting, rng):
+        """``X (d - mu_e)``: the estimate on ``A m + mu_e`` is the estimate
+        on ``A m`` without the expectation, and a pushed estimator keeps the
+        offset."""
+        model, forward, target, truth, data = setting
+        data_space = forward.codomain
+        offset = data_space.random(rng=rng)
+        biased = BackusGilbert(
+            LinearForwardProblem(
+                forward,
+                error=GaussianMeasure.from_standard_deviation(
+                    data_space, 0.3, expectation=offset
+                ),
+            ),
+            target,
+            alpha=0.5,
+        )
+        centered = BackusGilbert(
+            LinearForwardProblem(
+                forward, error=GaussianMeasure.from_standard_deviation(data_space, 0.3)
+            ),
+            target,
+            alpha=0.5,
+        )
+        shifted = data_space.add(data, offset)
+        assert np.allclose(biased(shifted), centered(data), atol=1e-8)
+        summary = LinearOperator.from_matrix(
+            target.codomain,
+            EuclideanSpace(1),
+            np.ones((1, target.codomain.dim)),
+            form="components",
+        )
+        assert np.allclose(
+            biased.push_forward(summary)(shifted), summary(centered(data)), atol=1e-8
         )
 
 
@@ -1066,10 +1101,13 @@ class TestTheLevelSide:
                 ellipsoid_level = with_ellipsoid(data).inclusion_level(value)
                 assert ellipsoid_level >= ball_level * (1.0 - 1e-5)
             # With more data than the kernel of T has dimensions the exact
-            # set is flat, and the limit is checked at points of it: its
-            # centre and two of its extreme points.
+            # set is flat, and refuses an ellipsoid; the limit is checked at
+            # points of it: its center, the fitting model's property, and two
+            # of its extreme points.
+            with pytest.raises(ValueError, match="flat"):
+                exact(data).ellipsoid
             gap = 0.0
-            for value in [exact(data).ellipsoid.center] + [
+            for value in [target(exact(data).fitting_model())] + [
                 target(exact(data).extremal_model(target.codomain.basis_vector(i)))
                 for i in range(2)
             ]:
@@ -1778,13 +1816,20 @@ class TestInclusionWithErrors:
 
 
 class TestHardeningTheError:
-    """The bridge from a Gaussian error to the ball the certificate needs."""
+    """The bridge from a Gaussian error to the confidence set the feasible
+    set needs, made by the estimator itself and by nothing public beside it."""
 
-    def test_no_error_measure_gives_the_degenerate_ball(self, setting):
-        model, forward, _, _, data = setting
-        ball = harden_error(LinearForwardProblem(forward), level=0.95)
-        assert ball.radius == 0.0
-        assert ball.contains(forward.codomain.zero())
+    def test_there_is_no_separate_hardening_function(self):
+        import pygeoinf2.inference.backus as backus
+
+        assert not hasattr(backus, "harden_error")
+
+    def test_no_error_measure_means_exact_data(self, setting):
+        model, forward, target, _, _ = setting
+        estimator = BackusGilbertParker(
+            LinearForwardProblem(forward), target, Ball(model, radius=10.0)
+        )
+        assert estimator.noise is None
 
     @pytest.mark.parametrize("build", [lambda: EuclideanSpace(4), make_weighted_space])
     def test_the_ball_carries_the_probability_it_claims(self, build, rng):
@@ -1804,7 +1849,14 @@ class TestHardeningTheError:
         problem = LinearForwardProblem(forward, error=error)
 
         level = 0.9
-        ball = harden_error(problem, level=level)
+        model = forward.domain
+        ball = BackusGilbertParker(
+            problem,
+            LinearOperator.identity(model),
+            Ball(model, radius=10.0),
+            level=level,
+        ).noise
+        assert isinstance(ball, Ball)
         draws = error.samples(20000, rng=rng)
         covered = np.mean([ball.contains(draw) for draw in draws])
         assert covered == pytest.approx(level, abs=0.02)

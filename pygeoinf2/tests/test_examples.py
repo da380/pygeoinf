@@ -27,23 +27,24 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 27
+    assert len(example_scripts()) >= 36
 
 
 # Examples that need an optional dependency, and the module that provides it,
 # or the modules where there are several.
 OPTIONAL = {
-    "19_observation": "pyshtools",
-    "20_flexure": "cartopy",
-    "21_tomography": "cartopy",
-    "22_coupled_fields": "cartopy",
-    "23_feasible_set": "cartopy",
-    "24_preconditioning": "pyshtools",
-    "25_distributions": "pyshtools",
-    "30_varying_length_scale": "planetmodel",
-    "31_mantle": ("planetmodel", "pyshtools", "cartopy"),
-    "32_density_profile": "planetmodel",
-    "33_layered_planet": "planetmodel",
+    "20_observation": "pyshtools",
+    "21_flexure": "cartopy",
+    "24_tomography": "cartopy",
+    "26_distributions": "pyshtools",
+    "27_coupled_fields": "cartopy",
+    "28_preconditioning": "pyshtools",
+    "30_feasible_set": "cartopy",
+    "32_varying_length_scale": "planetmodel",
+    "33_disk": "planetmodel",
+    "34_mantle": ("planetmodel", "pyshtools", "cartopy"),
+    "35_density_profile": "planetmodel",
+    "36_layered_planet": "planetmodel",
 }
 
 
@@ -51,10 +52,10 @@ OPTIONAL = {
 # first use, and a test suite that reaches the network is a test suite that
 # fails for reasons unconnected to the code.
 NEEDS_COASTLINES = {
-    "20_flexure",
-    "21_tomography",
-    "22_coupled_fields",
-    "23_feasible_set",
+    "21_flexure",
+    "24_tomography",
+    "27_coupled_fields",
+    "30_feasible_set",
 }
 
 
@@ -63,8 +64,8 @@ NEEDS_COASTLINES = {
 # make them demonstrate something else, so they are marked slow instead and run
 # occasionally rather than on every invocation.
 SLOW = {
-    "22_coupled_fields",
-    "24_preconditioning",
+    "27_coupled_fields",
+    "28_preconditioning",
 }
 
 
@@ -107,3 +108,21 @@ def test_every_example_is_listed_in_the_readme():
         if script.stem.split("_", 1)[1] not in readme
     ]
     assert not missing, f"not mentioned in the README: {missing}"
+
+
+def test_the_readme_lists_the_optional_dependencies():
+    """The README's table of optional dependencies is this file's ``OPTIONAL``,
+    module by module, so that what it tells a reader to install is what the
+    examples actually need."""
+    import re
+
+    readme = (EXAMPLES / "README.md").read_text(encoding="utf-8")
+    listed = {
+        module: {int(n) for n in numbers.split(",")}
+        for module, numbers in re.findall(r"^\| `(\w+)` \| ([\d, ]+) \|$", readme, re.M)
+    }
+    needed: dict[str, set[int]] = {}
+    for stem, modules in OPTIONAL.items():
+        for module in (modules,) if isinstance(modules, str) else modules:
+            needed.setdefault(module, set()).add(int(stem[:2]))
+    assert listed == needed

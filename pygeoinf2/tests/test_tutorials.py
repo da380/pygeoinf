@@ -39,7 +39,7 @@ OPTIONAL: dict[str, str | tuple[str, ...]] = {
 # Whole-notebook runs that take a minute or more at their own scale; they
 # belong to the slow set, which the scheduled CI job runs, and not to the
 # run every push waits for.
-SLOW: set[str] = {"07_properties", "13_ray_tomography", "14_one_problem_three_answers"}
+SLOW: set[str] = {"13_ray_tomography", "14_one_problem_three_answers"}
 
 
 def _parametrized() -> list:
@@ -73,13 +73,8 @@ def test_every_tutorial_is_listed_in_the_readme():
     assert not missing, f"not mentioned in the README: {missing}"
 
 
-def test_the_notebooks_are_current():
-    """Each tutorial has a notebook generated from it, and it is up to date.
-
-    The notebooks are what Colab opens, so a stale one teaches an older
-    tutorial than the script the suite ran. ``make_notebooks.py`` regenerates
-    them.
-    """
+def _make_notebooks():
+    """The notebook generator, loaded from its script."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -87,8 +82,32 @@ def test_the_notebooks_are_current():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    changes = module.stale()
+    return module
+
+
+def test_the_notebooks_are_current():
+    """Each tutorial has a notebook generated from it, and it is up to date.
+
+    The notebooks are what Colab opens, so a stale one teaches an older
+    tutorial than the script the suite ran. ``make_notebooks.py`` regenerates
+    them.
+    """
+    changes = _make_notebooks().stale()
     assert not changes, (
         "the notebooks are stale; run pygeoinf2/tutorials/make_notebooks.py: "
         + ", ".join(changes)
     )
+
+
+def test_the_badges_open_the_generated_notebooks():
+    """Each Colab badge opens its own tutorial's notebook, on the branch the
+    notebooks install the library from, so the two cannot drift apart."""
+    branch = _make_notebooks().BRANCH
+    readme = (TUTORIALS / "README.md").read_text(encoding="utf-8")
+    missing = [
+        script.name
+        for script in tutorial_scripts()
+        if f"/blob/{branch}/pygeoinf2/tutorials/notebooks/{script.stem}.ipynb)"
+        not in readme
+    ]
+    assert not missing, f"no badge opening the generated notebook: {missing}"

@@ -296,8 +296,9 @@ bias.
 **The measure** (`measure_answer`). `LinearGaussianInversion` gives
 the posterior; `posterior.push_forward(properties)` the Gaussian on the
 three properties, exactly; `inversion.log_evidence(data)` the evidence of
-tutorial 6, whose difference between the tight and the wide prior is part
-C's Bayes factor. The bands on the profile are the covariance pushed through
+tutorial 7, an `Estimate` whose `value` is exact here, the data space being
+assembled, and whose difference between the tight and the wide prior is
+part C's Bayes factor. The bands on the profile are the covariance pushed through
 point evaluation at radii inside each layer, never on an interface
 (`pointwise_std` in `src/common.py`). Figures `*_measure.png` set the bands of prior and
 posterior side by side and the property marginals in a corner plot,

@@ -84,10 +84,11 @@ def _probe_range(
     White noise by default; from *measure* when one is given, which finds the
     range of the operator composed with the measure's covariance factor -- on
     a forward operator with a prior, the range the prior lets the data see,
-    which white noise finds badly. The probes are drawn in order from *rng*
-    and applied
-    as one block, so a matrix-backed operator does one product and a parallel
-    run gives the same numbers as a serial one.
+    which white noise finds badly. The measure's expectation is taken off
+    each draw, so a prior with a nonzero mean spends no direction on its
+    image. The probes are drawn in order from *rng* and applied as one block,
+    so a matrix-backed operator does one product and a parallel run gives
+    the same numbers as a serial one.
 
     Raises:
         ValueError: if the measure lives on another space.
@@ -101,7 +102,10 @@ def _probe_range(
                 f"The probe measure lives on {measure.domain!r}, and the operator's "
                 f"domain is {domain!r}."
             )
-        probes = [measure.sample(rng=rng) for _ in range(count)]
+        expectation = measure.expectation
+        probes = [
+            domain.subtract(measure.sample(rng=rng), expectation) for _ in range(count)
+        ]
     return operator.apply_block(probes, n_jobs=n_jobs)
 
 

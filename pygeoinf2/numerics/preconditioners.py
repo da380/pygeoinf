@@ -33,7 +33,7 @@ from ..algebra.spaces import (
     OrthonormalSpace,
 )
 from ..traits import Traits
-from .normal import FactoredNormalOperator
+from .normal import FactoredNormalOperator, NormalOperator
 from .randomized import random_diagonal, random_eig
 from .solvers import (
     BoundFamily,
@@ -73,6 +73,34 @@ class IdentityPreconditioner(LinearSolver):
         return InverseOperator(operator, self, solve_fn, traits=Traits.NONE)
 
 
+# Diagonal entries at or below this fraction of the largest are treated as
+# zero by the thresholds that compare entries with a diagonal.
+_RELATIVE_FLOOR = 1e-14
+
+
+def _safe_diagonal(diagonal: np.ndarray, floor: float) -> np.ndarray:
+    """A diagonal fit to divide by, whatever its units.
+
+    Entries at or below *floor* times the largest magnitude are replaced by
+    that largest magnitude, so a preconditioner built from the result holds
+    those components at the scale of the rest. A zero diagonal becomes ones,
+    there being no scale to take.
+
+    Args:
+        diagonal: the entries.
+        floor: the fraction of the largest magnitude below which an entry
+            is not used.
+
+    Returns:
+        The entries to divide by.
+    """
+    magnitudes = np.abs(diagonal)
+    largest = float(magnitudes.max(initial=0.0))
+    if largest == 0.0:
+        return np.ones_like(diagonal, dtype=float)
+    return np.where(magnitudes > floor * largest, diagonal, largest)
+
+
 class JacobiPreconditioner(LinearSolver):
     """Inverts the diagonal of the Galerkin matrix.
 
@@ -104,8 +132,11 @@ class JacobiPreconditioner(LinearSolver):
     ) -> None:
         """
         Args:
-            floor: entries smaller than this in magnitude are left alone
-                rather than inverted.
+            floor: relative to the diagonal's largest magnitude. Entries at
+                or below this fraction of it are not inverted but replaced by
+                that largest magnitude, so the preconditioner holds those
+                components at the scale of the rest instead of amplifying
+                them; the test is the same whatever the operator's units.
             samples: estimate the diagonal from this many random probes
                 instead of reading it exactly. **Exact costs one operator
                 application per component** on an operator that has to be
@@ -158,8 +189,7 @@ class JacobiPreconditioner(LinearSolver):
                 rng=self._rng,
                 n_jobs=self._n_jobs,
             )
-        safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
-        inverse_diagonal = 1.0 / safe
+        inverse_diagonal = 1.0 / _safe_diagonal(diagonal, self._floor)
 
         def solve_fn(y, x0):
             cy = codomain.apply_gram(codomain.to_components(y))
@@ -285,7 +315,7 @@ class SpectralPreconditioner(FamilySolver):
         Args:
             base: the undamped part, self-adjoint; what is deflated.
             shift: what the multiplier scales; applied once to each resolved
-                mode.
+                mode, the modes shared among ``n_jobs`` workers.
 
         Returns:
             The prepared family.
@@ -302,11 +332,12 @@ class SpectralPreconditioner(FamilySolver):
         factor, values = self._deflate(base)
         space = base.domain
         modes = factor.domain
+        resolved = factor.apply_block(
+            [modes.basis_vector(i) for i in range(modes.dim)], n_jobs=self._n_jobs
+        )
+        images = shift.apply_block(resolved, n_jobs=self._n_jobs)
         forms = np.array(
-            [
-                space.inner_product(mode, shift(mode))
-                for mode in (factor(modes.basis_vector(i)) for i in range(modes.dim))
-            ]
+            [space.inner_product(mode, image) for mode, image in zip(resolved, images)]
         )
         return _SpectralFamilyPreconditioner(
             self, factor, values, forms, self._floor(values)
@@ -635,8 +666,9 @@ def _column_rows(
     """
     magnitudes = np.abs(column)
     reference = magnitudes[index]
-    if reference < 1e-14:
-        reference = magnitudes.max(initial=0.0)
+    largest = magnitudes.max(initial=0.0)
+    if reference <= _RELATIVE_FLOOR * largest:
+        reference = largest
     kept = np.flatnonzero(magnitudes >= threshold * reference)
     return _capped_rows(magnitudes, kept, index, cap)
 
@@ -716,7 +748,7 @@ def sparse_approximation(
             raise ValueError(
                 f"The diagonal has shape {diagonal.shape}; expected ({dimension},)."
             )
-        scale = np.sqrt(np.where(np.abs(diagonal) < 1e-14, 1.0, np.abs(diagonal)))
+        scale = np.sqrt(np.abs(_safe_diagonal(diagonal, _RELATIVE_FLOOR)))
 
     def keep(column: np.ndarray, index: int) -> np.ndarray:
         if criterion == "column":
@@ -941,11 +973,12 @@ class WoodburyPreconditioner(FamilySolver):
     with ``prior_inverse`` the identity too.
 
     Note:
-        With an inexact inner solve the result is no longer exactly symmetric,
-        and ordinary conjugate gradients relies on a symmetric preconditioner.
-        Use :class:`~pygeoinf2.numerics.solvers.FlexibleCGSolver` when the
-        inner solver is itself iterative, or tighten the inner tolerance until
-        the asymmetry is below the outer one.
+        With an inexact inner solve the result is symmetric only to the inner
+        tolerance, and ordinary conjugate gradients relies on a symmetric
+        preconditioner. The default inner solve is tight enough for the
+        default outer tolerance; with a looser inner solver of your own, use
+        :class:`~pygeoinf2.numerics.solvers.FlexibleCGSolver`, or keep the
+        inner tolerance below the outer one.
     """
 
     requires: ClassVar[Traits] = Traits.NONE
@@ -971,13 +1004,17 @@ class WoodburyPreconditioner(FamilySolver):
             prior_covariance: the prior covariance ``Q`` on the model space.
             noise_covariance: the data error covariance ``R``.
             solver: inverts the inner operator. This is the one that should be
-                cheap: it defaults to conjugate gradients at ``rtol=1e-3``,
-                at most 200 iterations and ``strict=False``, which assumes the
-                inner operator is
-                positive definite, as both are. Loose because a preconditioner
-                is an approximation and inner precision does not show in the
-                answer; not strict because a strict inner solver raises on
-                slow convergence and takes the outer solve down with it.
+                cheap: it defaults to conjugate gradients at ``rtol=1e-10``
+                and ``strict=False``, which assumes the inner operator is
+                positive definite, as both are. Tight because the result
+                claims self-adjointness and ordinary conjugate gradients
+                needs that claim to hold to below its own tolerance, ``1e-8``
+                by default: an inner solve at ``1e-3`` breaks it by a quarter
+                on a four-dimensional data space, and the outer solve then
+                need not converge at all. Not strict because a strict inner
+                solver raises on slow convergence and takes the outer solve
+                down with it. A direct solver is the usual choice where the
+                inner operator is small enough to factorize.
             prior_solver: inverts ``Q``, for the data form only. Defaults to
                 *solver*. Ignored when *prior_inverse* is given.
             noise_solver: inverts ``R``, for the data form only. Defaults to
@@ -1112,12 +1149,13 @@ class WoodburyPreconditioner(FamilySolver):
     def _inner_solver(self) -> LinearSolver:
         if self._solver is not None:
             return self._solver
-        # Loose, and not strict. A preconditioner is an approximation, so an
-        # inner solve to 1e-8 is precision spent where it does not show, and a
-        # *strict* inner solver turns a slow inner convergence into an
+        # Tight, and not strict. The forms claim self-adjointness, and
+        # ordinary conjugate gradients relies on the claim to below the outer
+        # tolerance, so the inner one sits beneath the default outer 1e-8; a
+        # *strict* inner solver would turn a slow inner convergence into an
         # exception that aborts the whole outer solve -- a preconditioner
         # failing should cost iterations, never the answer.
-        return CGSolver(rtol=1e-3, max_iterations=200, strict=False)
+        return CGSolver(rtol=1e-10, strict=False)
 
     def _resolve(
         self,
@@ -1314,6 +1352,11 @@ class WoodburyPreconditioner(FamilySolver):
         return self._approximate_inverse(operator, approximate)
 
 
+# How many Woodbury forms a family keeps: the one in hand and the one before
+# it, which is all a root find comes back to.
+_KEPT_FORMS = 2
+
+
 class _WoodburyFamily(BoundFamily):
     """The Woodbury form at each multiplier, the surrogate's inverses resolved once."""
 
@@ -1322,7 +1365,11 @@ class _WoodburyFamily(BoundFamily):
         self._prior_inverse: LinearOperator | None = None
         self._noise_inverse: LinearOperator | None = None
         self._kernel: LinearOperator | None = None
+        # The most recent forms only: each may hold an inner factorization,
+        # and a sweep keeping one per multiplier would grow by that much per
+        # probe.
         self._forms: dict[tuple[bool, float], LinearOperator] = {}
+        self._smallest: dict[bool, float] = {}
 
     def at(self, multiplier: float, member: LinearOperator, /) -> InverseOperator:
         """The Woodbury form of the member at one multiplier.
@@ -1336,10 +1383,15 @@ class _WoodburyFamily(BoundFamily):
         preconditioner = self._preconditioner
         model = preconditioner._is_model_form(member)
         if multiplier <= 0.0:
-            positive = [t for same, t in self._forms if same == model and t > 0.0]
-            multiplier = min(positive) if positive else 1.0
+            multiplier = self._smallest.get(model, 1.0)
+        else:
+            self._smallest[model] = min(
+                self._smallest.get(model, multiplier), multiplier
+            )
         key = (model, float(multiplier))
         if key not in self._forms:
+            while len(self._forms) >= _KEPT_FORMS:
+                self._forms.pop(next(iter(self._forms)))
             if model:
                 self._forms[key] = preconditioner.model_form(multiplier=multiplier)
             else:
@@ -1580,9 +1632,13 @@ class NormalDiagonalPreconditioner(FamilySolver):
             blocks: a partition of the data indices. Every index must appear
                 exactly once; a partial cover is refused rather than silently
                 left at zero. None means one block per index, which is exact.
-            floor: diagonal entries at or below this are left uninverted.
+            floor: relative to the diagonal's largest magnitude; entries at
+                or below this fraction of it are replaced by that largest
+                magnitude rather than inverted, whatever the units.
             n_jobs: workers for the probes, one adjoint application and one
-                prior application per block. Serial by default.
+                prior application per block, and for the diagonals of the
+                error covariance and of a family's shift where those must be
+                probed. Serial by default.
         """
         self._blocks = None if blocks is None else [list(b) for b in blocks]
         self._floor = floor
@@ -1613,7 +1669,9 @@ class NormalDiagonalPreconditioner(FamilySolver):
             diagonal = (
                 diagonal
                 + normal.scale
-                * (error_covariance.diagonals(offsets=(0,), form="galerkin")[0])
+                * error_covariance.diagonals(
+                    offsets=(0,), form="galerkin", n_jobs=self._n_jobs
+                )[0]
             )
         return self._inverse_of(operator, normal.data_space, diagonal)
 
@@ -1628,7 +1686,9 @@ class NormalDiagonalPreconditioner(FamilySolver):
         require_coordinates(data_space, data_space)
         dimension = data_space.dim
         if normal.scale <= 0.0:
-            return normal.diagonals(offsets=(0,), form="galerkin")[0]
+            return normal.diagonals(offsets=(0,), form="galerkin", n_jobs=self._n_jobs)[
+                0
+            ]
 
         blocks = self._partition(dimension)
         diagonal = np.zeros(dimension)
@@ -1643,8 +1703,7 @@ class NormalDiagonalPreconditioner(FamilySolver):
     def _inverse_of(
         self, operator: LinearOperator, data_space: HilbertSpace, diagonal: np.ndarray
     ) -> InverseOperator:
-        safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
-        inverse_diagonal = 1.0 / safe
+        inverse_diagonal = 1.0 / _safe_diagonal(diagonal, self._floor)
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:
             weighted = data_space.apply_gram(data_space.to_components(y))
@@ -1670,7 +1729,8 @@ class NormalDiagonalPreconditioner(FamilySolver):
         """
         require_coordinates(shift.domain, shift.codomain)
         return _NormalDiagonalFamily(
-            self, shift.diagonals(offsets=(0,), form="galerkin")[0]
+            self,
+            shift.diagonals(offsets=(0,), form="galerkin", n_jobs=self._n_jobs)[0],
         )
 
 
@@ -2015,6 +2075,7 @@ class InvariantDistancePreconditioner(LinearSolver):
         /,
         *,
         taper: bool = True,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -2027,6 +2088,8 @@ class InvariantDistancePreconditioner(LinearSolver):
             taper: multiply by a Gaspari-Cohn function of support
                 ``max_distance`` before truncating. Keep this on unless you
                 have checked the result is positive definite without it.
+            n_jobs: workers for the error covariance's diagonal, where it
+                must be probed. Serial by default.
         """
         if max_distance < 0.0:
             raise ValueError(f"The distance must be non-negative, got {max_distance}.")
@@ -2034,9 +2097,19 @@ class InvariantDistancePreconditioner(LinearSolver):
         self._points = list(points)
         self._max_distance = float(max_distance)
         self._taper = taper
+        self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         normal = _require_normal(operator, type(self).__name__)
+        if not isinstance(normal, NormalOperator):
+            raise TypeError(
+                f"{type(self).__name__} reads the covariance function of the "
+                f"prior *measure*, which only a NormalOperator built from a "
+                f"Gaussian prior carries; a {type(normal).__name__} holds a "
+                f"covariance operator and no measure. Use "
+                f"NormalDiagonalPreconditioner or LocalizedPreconditioner for "
+                f"it, which read the factors."
+            )
         data_space = normal.data_space
         require_coordinates(data_space, data_space)
         dimension = data_space.dim
@@ -2050,7 +2123,9 @@ class InvariantDistancePreconditioner(LinearSolver):
         noise = (
             np.zeros(dimension)
             if error_covariance is None
-            else error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
+            else error_covariance.diagonals(
+                offsets=(0,), form="galerkin", n_jobs=self._n_jobs
+            )[0]
         )
         # The table ``k(d_ij)`` is the covariance of the data *components*, so
         # it is neither the operator's component matrix nor its Galerkin one:
@@ -2111,7 +2186,3 @@ class InvariantDistancePreconditioner(LinearSolver):
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
-
-
-# The former spelling, kept only until ``inference/__init__.py`` imports the
-# new one; not exported.

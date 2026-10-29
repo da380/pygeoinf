@@ -33,7 +33,6 @@ __all__ = [
     "OrthonormalSpace",
     "EuclideanSpace",
     "Reals",
-    "default_rng",
     "resolve_rng",
     "REORTHOGONALIZATION_THRESHOLD",
 ]
@@ -205,22 +204,22 @@ class HilbertSpace[V](ABC):
         """The norm sqrt((x, x))."""
         return float(np.sqrt(self.squared_norm(x)))
 
-    def mean(self, vectors: Sequence[V]) -> V:
-        """The sample mean of a sequence of vectors.
+    def sample_expectation(self, vectors: Sequence[V]) -> V:
+        """The sample expectation of a sequence of vectors: their average.
 
         Args:
             vectors: at least one vector.
 
         Returns:
-            Their mean.
+            Their average.
 
         Raises:
-            ValueError: if the sequence is empty, there being no mean of
+            ValueError: if the sequence is empty, there being no average of
                 nothing rather than a zero.
         """
         n = len(vectors)
         if n == 0:
-            raise ValueError("Cannot take the mean of an empty sequence.")
+            raise ValueError("Cannot take the sample expectation of an empty sequence.")
         result = self.zero()
         for x in vectors:
             result = self.axpy(1.0 / n, x, result)
@@ -860,12 +859,14 @@ class HilbertModule[V](HilbertSpace[V], ABC):
     def multiplication_operator(self, f: V, /) -> "LinearOperator[V, V]":
         """The operator ``u -> f u``.
 
-        **No self-adjointness is claimed here.** Multiplication is self-adjoint
-        with respect to the ``L2`` inner product, and a space that weights its
-        modes — a Sobolev space — has a different one. A subclass that knows
-        its inner product is the ``L2`` one should override and say so; see
-        :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.multiplication_operator`,
-        which lifts the ``L2`` operator through its metric instead.
+        **No self-adjointness is claimed here, and no adjoint is supplied.**
+        Multiplication is self-adjoint with respect to the ``L2`` inner
+        product, and a space that weights its modes — a Sobolev space — has a
+        different one, so this default gives the action alone and the adjoint
+        is refused when asked for. A subclass that knows its inner product
+        overrides it: one whose inner product is the ``L2`` one says so, and
+        :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.multiplication_operator`
+        lifts the ``L2`` operator through its metric.
         """
         from .operators import LinearOperator
 
@@ -1138,6 +1139,19 @@ class _MassWeightedModule[V](MassWeightedSpace[V], HilbertModule[V]):
     def sqrt(self, x: V) -> V:
         """Pointwise square root, the base's."""
         return self._base.sqrt(x)
+
+    def multiplication_operator(self, f: V, /) -> "LinearOperator[V, V]":
+        """The operator ``u -> f u``, with the base's adjoint lifted.
+
+        The action is the base's; the adjoint in this inner product is
+        ``M^-1 A* M`` with ``A*`` the base operator's own, formed by
+        :meth:`~pygeoinf2.algebra.operators.LinearOperator.from_formal_adjoint`.
+        """
+        from .operators import LinearOperator
+
+        return LinearOperator.from_formal_adjoint(
+            self, self, self._base.multiplication_operator(f)
+        )
 
 
 class _CoordinateMassWeightedModule[V](

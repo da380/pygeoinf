@@ -803,3 +803,64 @@ class TestDeflatedDiagonal:
             measure, points, rank=4, samples=300, rng=rng
         )
         assert np.allclose(estimate, exact, rtol=0.25)
+
+
+class TestTheDiagonalFloorsAreRelative:
+    """The floors are relative to the largest entry. Absolute, at
+    ``1e-14``, every entry of an operator in small units would fall under
+    them, Jacobi would be the identity at the wrong scale, and CG would go
+    from five iterations to four hundred, unconverged."""
+
+    @staticmethod
+    def operator(space, rng, scale):
+        n = space.dim
+        root = rng.standard_normal((n, n)) / np.sqrt(n)
+        diagonal = np.logspace(0.0, 6.0, n)
+        matrix = np.sqrt(diagonal)[:, None] * (root @ root.T + np.identity(n))
+        matrix = matrix * np.sqrt(diagonal)[None, :]
+        return LinearOperator.from_matrix(
+            space,
+            space,
+            scale * matrix,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    def test_jacobi_takes_the_same_iterations_at_every_scale(self, rng):
+        from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
+
+        space = make_dense_metric_space(100)
+        b = space.random(rng=rng)
+        counts = []
+        for scale in (1.0, 1e-16, 1e16):
+            operator = self.operator(space, np.random.default_rng(3), scale)
+            result = CGSolver(rtol=1e-8, preconditioner=JacobiPreconditioner())(
+                operator
+            ).solve(b)
+            assert result.converged
+            counts.append(result.iterations)
+        assert counts[1] == counts[0] and counts[2] == counts[0]
+
+    def test_a_zero_entry_is_held_at_the_scale_of_the_rest(self):
+        from pygeoinf2.numerics.preconditioners import _safe_diagonal
+
+        for scale in (1.0, 1e-20, 1e20):
+            diagonal = scale * np.array([4.0, 0.0, 2.0, 1e-16])
+            safe = _safe_diagonal(diagonal, 1e-14)
+            assert safe == pytest.approx(scale * np.array([4.0, 4.0, 2.0, 4.0]))
+
+    def test_the_sparse_pattern_does_not_depend_on_the_units(self, rng):
+        from pygeoinf2.numerics.preconditioners import sparse_approximation
+
+        space = make_dense_metric_space(30)
+        patterns = []
+        for scale in (1.0, 1e-18):
+            operator = self.operator(space, np.random.default_rng(5), scale)
+            for criterion in ("correlation", "column"):
+                sparse = sparse_approximation(
+                    operator, threshold=0.05, criterion=criterion
+                )
+                matrix = sparse.matrix(form="galerkin")
+                patterns.append((criterion, np.abs(matrix) > 0.0))
+        for (name, unit), (_, small) in zip(patterns[:2], patterns[2:]):
+            assert np.array_equal(unit, small), name

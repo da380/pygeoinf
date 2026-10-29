@@ -35,7 +35,7 @@ def wide_answers(problem: Problem, /, *, outdir: pathlib.Path) -> dict:
     )
     tight = LinearGaussianInversion(problem.problem, problem.prior(scale.tight_std))
     result["log_bayes_factor"] = (
-        tight.log_evidence(problem.data) - result["measure"]["log_evidence"]
+        tight.log_evidence(problem.data).value - result["measure"]["log_evidence"]
     )
     print(
         f"the data prefer the tight prior to the wide one by "

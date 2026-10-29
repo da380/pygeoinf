@@ -148,11 +148,18 @@ def noisy_problem(problem: Problem, factor: float, /) -> LinearForwardProblem:
 
 
 def inversion(
-    forward: LinearForwardProblem, prior: GaussianMixture, /
+    forward: LinearForwardProblem,
+    prior: GaussianMixture,
+    /,
+    *,
+    n_jobs: int | None = None,
 ) -> LinearGaussianMixtureInversion:
     """The mixture's posterior, each component's normal operator inverted
-    by a Cholesky factorization in the data space."""
-    return LinearGaussianMixtureInversion(forward, prior, solver=CholeskySolver())
+    by a Cholesky factorization in the data space, the components on
+    ``n_jobs`` workers."""
+    return LinearGaussianMixtureInversion(
+        forward, prior, solver=CholeskySolver(), n_jobs=n_jobs
+    )
 
 
 def effective_number(weights: np.ndarray, /) -> float:
@@ -182,7 +189,7 @@ def noise_sweep(
     predictions = [problem.forward(c.expectation) for c in prior.components]
     for row, factor in enumerate(NOISE_FACTORS):
         forward = noisy_problem(problem, factor)
-        mixture = inversion(forward, prior)
+        mixture = inversion(forward, prior, n_jobs=problem.scale.n_jobs)
         for column in range(redraws):
             weights[row, column] = mixture.weights(
                 forward.synthetic_data(truth, rng=rng)
@@ -244,7 +251,7 @@ def mixture_answer(
     )
 
     t0 = time.perf_counter()
-    estimator = inversion(problem.problem, prior)
+    estimator = inversion(problem.problem, prior, n_jobs=scale.n_jobs)
     terms = estimator.log_evidence_terms(data)
     weights = estimator.weights(data)
     posterior = estimator(data)

@@ -399,7 +399,7 @@ class TestTheL2Ball:
         plain = LinearOperator.from_callables(space, space, form, adjoint=form)
         with pytest.raises(ValueError, match="claim"):
             small["prior"].ambient_ball(
-                level=0.95, operator=plain, method="spectral", rank=space.dim
+                level=0.95, operator=plain, method="randomized", rank=space.dim
             )
 
     @pytest.mark.parametrize("l2", [False, True])
@@ -422,13 +422,16 @@ class TestTheL2Ball:
         weights = np.linalg.eigvalsh(root.T @ sigma @ root)
         expected = np.sqrt(weighted_chi2_quantile(weights, 0.95, method="imhof"))
         prior_set = app["sets"].hardened(prior, 0.95, rng, l2=l2)
-        form, _ = backend.l2_form(space)
-        radius = (
-            app["sets"].radius_of(prior_set, form, small["truth"])
-            if l2
-            else prior_set.radius
-        )
-        assert radius == pytest.approx(expected, rel=1e-8)
+        assert prior_set.radius == pytest.approx(expected, rel=1e-8)
+        if l2:
+            # The precision is the form over the radius squared, along any
+            # vector.
+            form, _ = backend.l2_form(space)
+            u = small["truth"]
+            ratio = space.inner_product(form(u), u) / space.inner_product(
+                prior_set.precision(u), u
+            )
+            assert np.sqrt(ratio) == pytest.approx(prior_set.radius, rel=1e-10)
 
     def test_at_length_zero_it_is_the_ball(self, app, rng):
         backend = app["space"]

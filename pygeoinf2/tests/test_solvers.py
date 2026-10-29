@@ -29,7 +29,7 @@ from .conftest import (
     make_weighted_space,
 )
 from .doubles import NoCoordinatesError, StrictSpace
-from .conftest import nonsymmetric
+from .conftest import nonsymmetric, spd_operator
 from .conftest import positive_definite
 
 N = 12
@@ -842,10 +842,10 @@ class TestSolutionTracking:
 
         A, b = square_problem
         solves = []
-        real = np.linalg.solve
+        real = solvers._triangular_weights
         monkeypatch.setattr(
-            solvers.np.linalg,
-            "solve",
+            solvers,
+            "_triangular_weights",
             lambda *a, **k: (solves.append(1), real(*a, **k))[1],
         )
         GMRESSolver(rtol=1e-10, restart=5, callback=ProgressCallback())(A).solve(b)
@@ -1177,10 +1177,13 @@ class TestSquareMeansTheSameSpace:
 
 
 class TestWoodburyInnerDefault:
-    """A strict inner solver aborts the outer solve, and inner precision does
-    not show in the answer: a preconditioner is an approximation."""
+    """A strict inner solver aborts the outer solve, so the default is
+    forgiving; and the forms claim self-adjointness, which ordinary CG relies
+    on to below its own tolerance, so the default is tight. At ``1e-3`` the
+    claim fails by a quarter, and CG with the preconditioner need not
+    converge where CG alone takes four steps."""
 
-    def test_the_default_inner_solver_is_loose_and_forgiving(self):
+    def test_the_default_inner_solver_is_tight_and_forgiving(self):
         from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
 
         space = EuclideanSpace(6)
@@ -1189,7 +1192,37 @@ class TestWoodburyInnerDefault:
 
         inner = preconditioner._inner_solver()
         assert not inner._strict
-        assert inner._rtol >= 1e-4
+        assert inner.rtol <= 1e-10
+
+    def test_the_default_composes_with_ordinary_cg(self, rng):
+        from pygeoinf2.numerics import NormalOperator
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        from .conftest import spd_matrix
+
+        model = make_dense_metric_space(12)
+        data = make_weighted_space()
+        forward = LinearOperator.from_matrix(
+            model, data, rng.standard_normal((data.dim, model.dim)), form="components"
+        )
+        prior = GaussianMeasure.from_covariance_matrix(
+            model, 0.1 * spd_matrix(rng, model.dim), form="galerkin"
+        )
+        weights = data.gram_diagonal()
+        deviations = np.array([0.1, 0.2, 0.3, 0.4])
+        error = GaussianMeasure.from_covariance_matrix(
+            data, np.diag(weights * deviations**2 * weights), form="galerkin"
+        )
+        normal = NormalOperator(forward, prior, error=error)
+        preconditioner = WoodburyPreconditioner.from_normal(normal)(normal)
+        check_traits(preconditioner, rng=rng, rtol=1e-6)
+        b = data.random(rng=rng)
+        plain = CGSolver(rtol=1e-10)(normal).solve(b)
+        result = CGSolver(rtol=1e-10, preconditioner=preconditioner)(normal).solve(b)
+        assert result.converged and result.iterations <= plain.iterations
+        true = data.norm(data.subtract(b, normal(result.solution)))
+        assert true <= 1e-9 * data.norm(b)
 
 
 class TestSparsePreconditionerTraits:
@@ -1772,3 +1805,256 @@ class TestARootFindSaysWhyItStopped:
         result = monotone_root(evaluate, 0.5, initial=1.0)
         assert result.breakdown is None
         assert result.exhausted is not None
+
+
+class TestASingularOperatorWhoseKrylovSpaceClosesIsNotConverged:
+    """On a mask, a projector or a diagonal with a zero the Krylov space
+    closes in exact arithmetic. With a right-hand side outside the range the
+    recurrences report a residual near ``1e-16`` while the true residual is
+    of order one, so convergence is declared on the true residual."""
+
+    @staticmethod
+    def _mask():
+        space = make_weighted_space()
+        values = np.array([1.0, 1.0, 0.0, 0.0])
+        operator = LinearOperator.from_callables(
+            space,
+            space,
+            lambda x: values * x,
+            adjoint=lambda x: values * x,
+            traits=Traits.SELF_ADJOINT,
+        )
+        return space, operator, values
+
+    @staticmethod
+    def _indefinite():
+        space = make_weighted_space()
+        values = np.array([1.0, -2.0, 0.0, 3.0])
+        operator = LinearOperator.from_callables(
+            space,
+            space,
+            lambda x: values * x,
+            adjoint=lambda x: values * x,
+            traits=Traits.SELF_ADJOINT,
+        )
+        return space, operator, values
+
+    @pytest.mark.parametrize("solver", [GMRESSolver, MinResSolver])
+    @pytest.mark.parametrize("build", ["_mask", "_indefinite"])
+    def test_an_inconsistent_system_raises(self, solver, build):
+        space, operator, _ = getattr(self, build)()
+        b = np.array([1.0, 2.0, 3.0, 1.0])
+        with pytest.raises(ConvergenceError):
+            solver(rtol=1e-10)(operator).solve(b)
+
+    @pytest.mark.parametrize("solver", [GMRESSolver, MinResSolver])
+    @pytest.mark.parametrize("build", ["_mask", "_indefinite"])
+    def test_the_residual_it_reports_is_the_true_one(self, solver, build):
+        space, operator, values = getattr(self, build)()
+        b = np.array([1.0, 2.0, 3.0, 1.0])
+        with pytest.warns(RuntimeWarning, match="did not converge"):
+            result = solver(rtol=1e-10, strict=False)(operator).solve(b)
+        assert not result.converged
+        true = space.norm(space.subtract(b, operator(result.solution)))
+        assert result.residual_norm == pytest.approx(true, rel=1e-10)
+        # No better than the least-squares minimum, the part of b off the range.
+        floor = space.norm(np.where(values == 0.0, b, 0.0))
+        assert true >= floor * (1.0 - 1e-10)
+
+    @pytest.mark.parametrize("solver", [GMRESSolver, MinResSolver])
+    @pytest.mark.parametrize("build", ["_mask", "_indefinite"])
+    def test_a_consistent_system_on_the_same_operator_still_converges(
+        self, solver, build
+    ):
+        space, operator, values = getattr(self, build)()
+        b = np.where(values == 0.0, 0.0, np.array([1.0, 2.0, 3.0, 1.0]))
+        result = solver(rtol=1e-10)(operator).solve(b)
+        assert result.converged
+        true = space.norm(space.subtract(b, operator(result.solution)))
+        assert true <= 1e-10 * space.norm(b)
+
+
+class TestGMRESStopsOnTheTrueResidual:
+    """Preconditioned from the left, GMRES would measure ``||P r||``, and a
+    badly scaled preconditioner would stop it after one step at a true
+    relative residual of 1.9. From the right, the residual it minimizes is
+    ``b - A x`` itself, which is what ``rtol`` describes."""
+
+    def test_a_badly_scaled_preconditioner_does_not_fake_convergence(self, rng):
+        n = 50
+        space = make_dense_metric_space(n)
+        matrix = rng.standard_normal((n, n)) + 8.0 * np.identity(n)
+        operator = LinearOperator.from_matrix(space, space, matrix, form="components")
+        scaling = np.diag([1e-4] * (n // 2) + [1e4] * (n - n // 2))
+        preconditioner = LinearOperator.from_matrix(
+            space, space, scaling @ np.linalg.inv(matrix), form="components"
+        )
+        b = space.random(rng=rng)
+        result = GMRESSolver(rtol=1e-8, preconditioner=preconditioner)(operator).solve(
+            b
+        )
+        true = space.norm(space.subtract(b, operator(result.solution)))
+        assert result.converged
+        assert true <= 1e-8 * space.norm(b)
+        assert result.residual_norm == pytest.approx(true, rel=1e-6, abs=1e-14)
+
+
+class TestADampingFloorAboveOne:
+    """A damping has the units of the operator, so a floor of ten is
+    ordinary, and the search starts above it: a start at one would lie below
+    the floor and the root find would refuse it."""
+
+    @pytest.fixture
+    def problem(self, rng):
+        from pygeoinf2.inference import LinearForwardProblem
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        model = make_dense_metric_space(20)
+        data = EuclideanSpace(10)
+        forward = LinearOperator.from_matrix(
+            model, data, 100.0 * rng.standard_normal((10, 20)), form="components"
+        )
+        error = GaussianMeasure.from_standard_deviations(
+            data, np.linspace(0.5, 1.5, 10)
+        )
+        return LinearForwardProblem(forward, error=error)
+
+    def test_the_search_starts_above_the_floor(self, problem, rng):
+        from pygeoinf2.numerics.tikhonov import TikhonovFamily, misfit_search
+
+        family = TikhonovFamily(problem.forward_operator, error=problem.error_measure)
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        target = problem.critical_chi_squared(level=0.95)
+
+        def search(**kwargs):
+            return misfit_search(
+                family,
+                family.right_hand_side(data),
+                lambda model: problem.chi_squared(model, data),
+                target,
+                rtol=1e-10,
+                **kwargs,
+            )
+
+        free = search()
+        assert free.converged and free.argument > 100.0
+        floored = search(minimum_damping=10.0)
+        assert floored.converged
+        assert floored.argument == pytest.approx(free.argument, rel=1e-6)
+
+    def test_the_minimum_norm_estimator_takes_the_floor(self, problem, rng):
+        from pygeoinf2.inference import MinimumNorm
+
+        data = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+        free = MinimumNorm(problem)(data)
+        floored = MinimumNorm(problem, minimum_damping=10.0)(data)
+        space = problem.model_space
+        assert space.norm(space.subtract(floored, free)) <= 1e-5 * space.norm(free)
+
+
+class TestAFamilySweepKeepsOnlyRecentMembers:
+    """A member assembled as a dense matrix, or a Woodbury form holding its
+    inner factorization, kept for every multiplier a sweep visits would grow
+    memory by a matrix per probe, while only the last member is used
+    again."""
+
+    def test_the_damped_solves_keep_two_members(self, rng):
+        space = make_dense_metric_space(20)
+        matrix, solves = TestDampedSolvesExtractsItsMatricesOnce.family(
+            space, CholeskySolver()
+        )
+        vector = space.random(rng=rng)
+        gram = space.gram_matrix()
+        for multiplier in np.logspace(-2, 3, 12):
+            solution = solves.solve(float(multiplier), vector).solution
+            expected = np.linalg.solve(
+                matrix + multiplier * gram, gram @ space.to_components(vector)
+            )
+            assert solution == pytest.approx(expected, rel=1e-9)
+            assert len(solves._cache) <= 2
+
+    def test_the_woodbury_family_keeps_two_forms(self, rng):
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        model = make_dense_metric_space(8)
+        data = make_weighted_space()
+        forward = LinearOperator.from_matrix(
+            model, data, rng.standard_normal((data.dim, model.dim)), form="components"
+        )
+        prior = LinearOperator.from_matrix(
+            model,
+            model,
+            model.gram_matrix()
+            @ np.diag(np.linspace(0.5, 2.0, model.dim))
+            @ model.gram_matrix(),
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        noise = LinearOperator.from_matrix(
+            data,
+            data,
+            np.diag(data.gram_diagonal() * np.array([0.1, 0.2, 0.3, 0.4])),
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        preconditioner = WoodburyPreconditioner(
+            forward, prior, noise, solver=CholeskySolver()
+        )
+        base = forward @ prior @ forward.adjoint
+        family = preconditioner.for_family(base, noise)
+        for multiplier in (0.5, 0.1, 2.0, 7.0, 0.3, 4.0, 9.0, 1.5):
+            member = (base + multiplier * noise).with_traits(
+                Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            )
+            inverse = family.at(multiplier, member)
+            y = data.random(rng=rng)
+            x = inverse(y)
+            assert data.norm(data.subtract(member(x), y)) < 1e-9 * data.norm(y)
+            assert len(family._forms) <= 2
+        # Zero is answered at the smallest positive multiplier seen.
+        family.at(0.0, base.with_traits(Traits.SELF_ADJOINT))
+        assert (False, 0.1) in family._forms
+
+
+class TestAPreconditionerOnTheWrongSpaces:
+    """A ready-made preconditioner is checked against the operator before
+    any solve: one on another space of the same dimension would otherwise be
+    taken silently, and one of another dimension fail deep in the
+    arithmetic."""
+
+    @pytest.mark.parametrize("solver", [CGSolver, GMRESSolver, MinResSolver])
+    def test_it_is_refused_by_name(self, solver, rng):
+        space = make_weighted_space()
+        operator = spd_operator(space, rng)
+        other = EuclideanSpace(space.dim)
+        bigger = EuclideanSpace(space.dim + 1)
+        for wrong in (other, bigger):
+            preconditioner = LinearOperator.identity(wrong)
+            with pytest.raises(ValueError, match="maps"):
+                solver(preconditioner=preconditioner)(operator)
+
+    def test_the_right_spaces_are_accepted(self, rng):
+        space = make_weighted_space()
+        operator = spd_operator(space, rng)
+        b = space.random(rng=rng)
+        result = CGSolver(preconditioner=LinearOperator.identity(space))(
+            operator
+        ).solve(b)
+        assert result.converged
+
+
+class TestDampedSolvesTakesItsOptionsByName:
+    """The options are keyword-only and the sweep's own state is not an
+    argument at all."""
+
+    def test_an_option_given_by_position_is_refused(self):
+        from pygeoinf2.numerics import DampedSolves
+
+        space = EuclideanSpace(3)
+        identity = LinearOperator.identity(space)
+        with pytest.raises(TypeError):
+            DampedSolves(identity, identity, CholeskySolver(), None)
+        with pytest.raises(TypeError):
+            DampedSolves(identity, identity, CholeskySolver(), _cache={})
+        solves = DampedSolves(identity, identity, CholeskySolver(), refresh=5.0)
+        assert solves.refresh == 5.0

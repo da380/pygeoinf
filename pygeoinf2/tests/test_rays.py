@@ -306,3 +306,35 @@ class TestRefusals:
         space = sphere()
         with pytest.raises(ValueError, match="At least one path"):
             space.ray_travel_time_operator([], C0)
+
+    def test_a_space_too_rough_for_a_path_integral_is_refused(self):
+        """The derivative is a path integral, which is not bounded at or
+        below order ``(d - 1) / 2``."""
+        from pygeoinf2.symmetric_space.torus import Lebesgue
+
+        space = Lebesgue((16, 16))
+        paths = [((1.0, 1.0), (4.0, 2.0))]
+        with pytest.raises(ValueError, match="above 0.5"):
+            space.ray_travel_time_operator(paths, C0)
+        operator = space.ray_travel_time_operator(paths, C0, unsafe=True)
+        assert np.isfinite(operator(space.zero())).all()
+
+
+class TestAModelUpdatedInPlace:
+    def test_the_linearization_follows_the_values_not_the_object(self, rng):
+        """``axpy`` changes a vector in place; the rays traced for the old
+        values must not be returned for the new ones."""
+        space = PlaneSobolev((24, 24), 2.0, 0.25, bounds=[(0.0, 2.0), (0.0, 2.0)])
+        paths = [((0.2, 0.3), (1.8, 1.5)), ((0.3, 1.7), (1.6, 0.2))]
+        operator = space.ray_travel_time_operator(paths, 1.0, count=12)
+        model = space.zero()
+        operator.at(model)
+        bump = space.project_function(
+            lambda p: 0.3 * np.exp(-((p[0] - 1.0) ** 2 + (p[1] - 1.0) ** 2) / 0.1)
+        )
+        space.axpy(1.0, bump, model)
+        updated = operator.at(model)
+        fresh = operator.at(space.copy(model))
+        assert np.allclose(updated.value, operator(model), rtol=1e-10)
+        assert np.allclose(updated.value, fresh.value, rtol=1e-10)
+        assert np.allclose(updated.derivative(bump), fresh.derivative(bump), rtol=1e-10)

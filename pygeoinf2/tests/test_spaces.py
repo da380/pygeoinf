@@ -235,15 +235,18 @@ class TestDerivedOperations:
         with pytest.raises(ValueError, match="linearly dependent"):
             space.gram_schmidt([x, space.scale(2.0, x)])
 
-    def test_mean(self, rng):
+    def test_sample_expectation(self, rng):
         space = make_weighted_space()
         vectors = [space.random(rng=rng) for _ in range(5)]
         expected = np.mean([space.to_components(v) for v in vectors], axis=0)
-        assert np.allclose(space.to_components(space.mean(vectors)), expected)
+        assert np.allclose(
+            space.to_components(space.sample_expectation(vectors)), expected
+        )
+        assert not hasattr(space, "mean")
 
-    def test_mean_of_nothing_is_an_error(self):
+    def test_sample_expectation_of_nothing_is_an_error(self):
         with pytest.raises(ValueError, match="empty"):
-            EuclideanSpace(3).mean([])
+            EuclideanSpace(3).sample_expectation([])
 
     def test_basis_vector_bounds(self):
         with pytest.raises(IndexError):
@@ -640,3 +643,25 @@ class TestOrthogonalizationOnADenseMetric:
         q, kept = space.orthonormalize_columns(dependent, rtol=1e-10)
         assert kept == [0, 1, 2]
         assert q.shape == (5, 3)
+
+
+class TestAMassWeightedModuleMultiplies:
+    def test_the_multiplication_operator_has_the_lifted_adjoint(self, rng):
+        """The base's multiplication operator carries an adjoint in the base's
+        inner product, and the mass-weighted one is ``M^-1 A* M``."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+        from pygeoinf2.symmetric_space import circle
+        from pygeoinf2.testing import check_operator
+
+        base = circle.Sobolev(16, 1.5, 0.2)
+        mass = DiagonalLinearOperator(base, rng.uniform(1.0, 2.0, base.dim))
+        space = MassWeightedSpace(base, mass)
+        f = base.project_function(lambda t: 1.0 + 0.5 * np.cos(t))
+        operator = space.multiplication_operator(f)
+        u = space.random(rng=rng)
+        assert np.allclose(
+            space.to_components(operator(u)),
+            space.to_components(base.multiplication_operator(f)(u)),
+        )
+        check_operator(operator, rng=rng, rtol=1e-8)

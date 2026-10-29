@@ -6,7 +6,7 @@
 # that are smooth inside and jump between. The library's answer is the same
 # each time: put the unknowns in one space — a **direct sum**, whose vectors
 # are tuples — and build the operators and the prior on it from their parts.
-# Nothing downstream changes: the inversion of tutorial 6 runs as it is.
+# Nothing downstream changes: the inversion of tutorial 7 runs as it is.
 #
 # Three cases, in rising order of structure. The last needs `planetmodel`
 # (`poetry install --extras planetmodel`).
@@ -25,8 +25,8 @@ from pygeoinf2 import (
     LinearOperator,
     RowLinearOperator,
     plotting,
+    product,
 )
-from pygeoinf2.probability import product
 from pygeoinf2.symmetric_space.circle import Sobolev
 
 rng = np.random.default_rng(10)
@@ -34,7 +34,7 @@ rng = np.random.default_rng(10)
 # %% [markdown]
 # ## 1. A field and a number
 #
-# Tutorial 6's ring of thirty temperature sensors — but now every sensor
+# Tutorial 7's ring of thirty temperature sensors — but now every sensor
 # shares an unknown calibration offset $b$. The data are $A m + b\,\mathbf 1$:
 # the field's arc averages, plus the same offset on each. Two unknowns of
 # different kinds, a function and a scalar, in one model space.
@@ -125,17 +125,19 @@ print(f"posterior correlation of the ring average with the offset: {correlation:
 #
 # Next, temperature and salinity around the ring, correlated with each
 # other — warm water tends to be salty. The joint prior lives on the direct
-# sum of two copies of the space. On a symmetric space such a prior can be
-# written scale by scale: here each field has the heat spectrum, calibrated
-# to unit pointwise variance, and the two are correlated with coefficient
-# 0.8 at every scale.
+# sum of two copies of the space. Each field gets a heat measure of unit
+# pointwise variance, and `from_product` ties the two through their latent
+# white noise with a correlation of 0.8: each marginal is its own measure,
+# unchanged, and the cross-covariance is 0.8 times the product of the two
+# factors (example 15). A correlation that varies with scale — coarse
+# structure more alike than fine — is `correlated_measure` on a symmetric
+# space, which takes a covariance matrix for every mode.
 
 # %%
-spectrum = X.heat_symbol(0.3)
-spectrum = spectrum / X.pointwise_variance(spectrum)
-joint = X.correlated_measure_from_correlations(
-    [spectrum, spectrum],
-    np.array([[1.0, 0.8], [0.8, 1.0]]),
+field = X.heat_measure(0.3, pointwise_std=1.0)
+joint = GaussianMeasure.from_product(
+    [field, field],
+    correlation=np.array([[1.0, 0.8], [0.8, 1.0]]),
     labels=("temperature", "salinity"),
 )
 
@@ -280,7 +282,7 @@ left.set_ylabel("slowness")
 # %% [markdown]
 # The borehole pins the sediment; the travel time and the reflection
 # constrain the bedrock only through their totals, so its band stays wide
-# away from the interface. Example 33 is the same construction for a planet,
+# away from the interface. Example 36 is the same construction for a planet,
 # with mass and moment of inertia as the integrals; tutorial 11 turns to the
 # spaces each layer is built from.
 

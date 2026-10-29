@@ -26,7 +26,12 @@ from typing import Callable
 import numpy as np
 from numpy.random import Generator
 
-from .algebra.operators import Functional, LinearOperator, Operator
+from .algebra.operators import (
+    Functional,
+    LinearOperator,
+    MatrixLinearOperator,
+    Operator,
+)
 from .algebra.spaces import CoordinateSpace, HilbertSpace, resolve_rng
 from .geometry.convex import ConvexSet
 from .probability.base import ProbabilityMeasure
@@ -43,6 +48,7 @@ __all__ = [
     "check_derivative",
     "check_gradient",
     "check_second_derivative",
+    "check_hessian",
     "check_measure",
     "check_projection",
     "check_convexity",
@@ -136,6 +142,25 @@ def _assert_close(
     """
     residual = space.norm(space.subtract(a, b))
     scale = max(space.norm(a), space.norm(b))
+    _record(record, axiom, residual / scale if scale > 0.0 else residual)
+    if residual > atol + rtol * scale:
+        _fail(axiom, f"residual {residual:g} against scale {scale:g}")
+
+
+def _assert_arrays_close(
+    a: np.ndarray,
+    b: np.ndarray,
+    axiom: str,
+    *,
+    rtol: float,
+    atol: float,
+    record: dict[str, float] | None = None,
+) -> None:
+    """Assert two component arrays agree, relative to the larger of their
+    Euclidean norms, with ``atol`` as an absolute floor."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    residual = float(np.linalg.norm(a - b))
+    scale = max(float(np.linalg.norm(a)), float(np.linalg.norm(b)))
     _record(record, axiom, residual / scale if scale > 0.0 else residual)
     if residual > atol + rtol * scale:
         _fail(axiom, f"residual {residual:g} against scale {scale:g}")
@@ -349,7 +374,11 @@ def check_space(
     total = space.zero()
     for s in samples:
         total = space.axpy(0.25, s, total)
-    close(space.mean(samples), total, "mean is the average of its arguments")
+    close(
+        space.sample_expectation(samples),
+        total,
+        "sample_expectation is the average of its arguments",
+    )
     return CheckReport("check_space", defects)
 
 
@@ -396,18 +425,29 @@ def check_coordinates(
         return CheckReport("check_coordinates", defects)
 
     gram = space.gram_matrix()
-    if not np.allclose(gram, gram.T, rtol=1e-10, atol=1e-12):
-        _fail(
-            "the Gram matrix is symmetric", f"asymmetry {np.abs(gram - gram.T).max():g}"
-        )
+    _assert_arrays_close(
+        gram,
+        gram.T,
+        "the Gram matrix is symmetric",
+        rtol=rtol,
+        atol=atol,
+        record=defects,
+    )
     eigenvalues = np.linalg.eigvalsh(gram)
     if eigenvalues.min() <= 0.0:
         _fail(
             "the Gram matrix is positive definite",
             f"least eigenvalue {eigenvalues.min():g}",
         )
-    if space.is_orthonormal and not np.allclose(gram, np.identity(space.dim)):
-        _fail("an orthonormal basis has an identity Gram matrix", "it does not")
+    if space.is_orthonormal:
+        _assert_arrays_close(
+            gram,
+            np.identity(space.dim),
+            "an orthonormal basis has an identity Gram matrix",
+            rtol=rtol,
+            atol=atol,
+            record=defects,
+        )
 
     for _ in range(trials):
         x, y = _draw(space, rng, measure), _draw(space, rng, measure)
@@ -427,13 +467,30 @@ def check_coordinates(
             atol=atol,
             record=defects,
         )
-        if not np.allclose(space.to_components(space.from_components(cx)), cx):
-            _fail("components round-trip", "to_components(from_components(c)) != c")
-
-        if not np.allclose(space.to_components(space.add(x, y)), cx + cy):
-            _fail("the coordinate map is additive", "to_components(x + y) != c_x + c_y")
-        if not np.allclose(space.to_components(space.scale(a, x)), a * cx):
-            _fail("the coordinate map is homogeneous", "to_components(a x) != a c_x")
+        _assert_arrays_close(
+            space.to_components(space.from_components(cx)),
+            cx,
+            "components round-trip",
+            rtol=rtol,
+            atol=atol,
+            record=defects,
+        )
+        _assert_arrays_close(
+            space.to_components(space.add(x, y)),
+            cx + cy,
+            "the coordinate map is additive",
+            rtol=rtol,
+            atol=atol,
+            record=defects,
+        )
+        _assert_arrays_close(
+            space.to_components(space.scale(a, x)),
+            a * cx,
+            "the coordinate map is homogeneous",
+            rtol=rtol,
+            atol=atol,
+            record=defects,
+        )
 
         _assert_scalar(
             space.inner_product(x, y),
@@ -442,15 +499,22 @@ def check_coordinates(
             rtol=rtol,
             record=defects,
         )
-        if not np.allclose(space.apply_gram(cx), gram @ cx):
-            _fail("apply_gram agrees with the Gram matrix", "they differ")
-        if not np.allclose(
+        _assert_arrays_close(
+            space.apply_gram(cx),
+            gram @ cx,
+            "apply_gram agrees with the Gram matrix",
+            rtol=rtol,
+            atol=atol,
+            record=defects,
+        )
+        _assert_arrays_close(
             space.solve_gram(space.apply_gram(cx)),
             cx,
+            "solve_gram inverts apply_gram",
             rtol=max(rtol, 1e-8),
-            atol=max(atol, 1e-10),
-        ):
-            _fail("solve_gram inverts apply_gram", "the round trip does not return c")
+            atol=atol,
+            record=defects,
+        )
 
         nested = check_representer(space, cx, rng=rng, measure=measure, rtol=rtol)
         for axiom, defect in nested.defects.items():
@@ -460,8 +524,14 @@ def check_coordinates(
         e = space.basis_vector(i)
         expected = np.zeros(space.dim)
         expected[i] = 1.0
-        if not np.allclose(space.to_components(e), expected):
-            _fail("basis_vector has the expected components", f"index {i}")
+        _assert_arrays_close(
+            space.to_components(e),
+            expected,
+            "basis_vector has the expected components",
+            rtol=rtol,
+            atol=atol,
+            record=defects,
+        )
     return CheckReport("check_coordinates", defects)
 
 
@@ -619,11 +689,20 @@ def check_operator(
     rtol: float = 1e-9,
     atol: float = 0.0,
 ) -> CheckReport:
-    """Check linearity and the defining property of the adjoint.
+    """Check linearity, the defining property of the adjoint, and that every
+    shortcut the operator offers agrees with its action.
 
     The adjoint identity ``(A x, y)_Y == (x, A* y)_X`` is the one that catches
     a mass matrix applied in the wrong place, which is the most common way for
     a hand-written adjoint to be subtly wrong on a non-orthonormal space.
+
+    The shortcuts are the action on component arrays, when the operator has
+    one (:meth:`~pygeoinf2.algebra.operators.LinearOperator.components_action`
+    and its adjoint's), and a block application that overrides the
+    one-at-a-time default. A product or a sum uses them in place of the
+    action whenever its neighbors have them too, so one that disagrees
+    would pass every other identity here and give a different answer inside
+    any product.
 
     One ``rtol`` covers both identities, deliberately: an operator that is a
     solve is linear, and adjoint, only to its inner tolerance, so the two
@@ -637,12 +716,14 @@ def check_operator(
         measure: a measure on the domain to draw the probe vectors from, in
             place of its ``random`` method; see the module docstring.
         trials: how many pairs to check the adjoint identity on.
-        rtol: the agreement required, for linearity and the adjoint alike.
-        atol: an absolute allowance on the linearity residual, for operators
-            whose output is zero to rounding.
+        rtol: the agreement required, for linearity, the adjoint and the
+            shortcuts alike.
+        atol: an absolute allowance added to every comparison, for
+            operators whose output is zero to rounding.
 
     Returns:
-        The report, carrying the worst linearity and adjoint defects.
+        The report, carrying the worst linearity and adjoint defects, and
+        those of the shortcuts the operator has.
 
     Raises:
         AssertionError: naming the axiom that failed.
@@ -680,8 +761,10 @@ def check_operator(
     if adjoint.adjoint is not operator:
         _fail("the adjoint is an involution", "A.adjoint.adjoint is not A")
 
+    probes = []
     for _ in range(trials):
         x, y = _draw(domain, rng, measure), codomain.random(rng=rng)
+        probes.append((x, y))
         ax, ay = operator(x), adjoint(y)
         _assert_scalar(
             codomain.inner_product(ax, y),
@@ -695,7 +778,74 @@ def check_operator(
             ),
             record=defects,
         )
+
+    _check_shortcuts(operator, probes, rtol, atol, defects)
     return CheckReport("check_operator", defects)
+
+
+def _check_shortcuts(
+    operator: LinearOperator,
+    probes: list[tuple[object, object]],
+    rtol: float,
+    atol: float,
+    defects: dict[str, float],
+) -> None:
+    """Compare the components actions and an overridden block application
+    with the operator's own action and its adjoint's, on the probe pairs
+    the adjoint identity was checked on, so that no further draw is made."""
+    domain, codomain = operator.domain, operator.codomain
+    on_arrays = isinstance(domain, CoordinateSpace) and isinstance(
+        codomain, CoordinateSpace
+    )
+    action = operator.components_action() if on_arrays else None
+    adjoint_action = operator.components_adjoint_action() if on_arrays else None
+    for x, y in probes if action or adjoint_action else ():
+        if action is not None:
+            _assert_close(
+                codomain,
+                codomain.from_components(action(domain.to_components(x))),
+                operator(x),
+                "the components action agrees with the action",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
+        if adjoint_action is not None:
+            _assert_close(
+                domain,
+                domain.from_components(adjoint_action(codomain.to_components(y))),
+                operator.adjoint(y),
+                "the adjoint's components action agrees with the adjoint",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
+
+    cls = type(operator)
+    xs = [x for x, _ in probes[:2]]
+    ys = [y for _, y in probes[:2]]
+    if cls.apply_block is not LinearOperator.apply_block:
+        for image, x in zip(operator.apply_block(xs), xs):
+            _assert_close(
+                codomain,
+                image,
+                operator(x),
+                "the block application agrees with single applications",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
+    if cls._adjoint_apply_block is not LinearOperator._adjoint_apply_block:
+        for image, y in zip(operator._adjoint_apply_block(ys), ys):
+            _assert_close(
+                domain,
+                image,
+                operator.adjoint(y),
+                "the adjoint's block application agrees with single applications",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
 
 
 def check_traits(
@@ -706,12 +856,23 @@ def check_traits(
     measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     rtol: float = 1e-9,
+    atol: float = 0.0,
 ) -> CheckReport:
-    """Verify every trait the operator *claims*.
+    """Verify the traits the operator *claims*.
 
     Traits are assertions by whoever built the operator; nothing enforces them
     at construction. This is the safety net. Only claimed traits are checked —
     an absent trait is not a claim that the property fails.
+
+    Each claim is tested on probe vectors, except ``INVERTIBLE``, which no
+    probe can confirm. It is verified where that is cheap and otherwise left
+    unverified: an operator that scales components is invertible exactly
+    when no scaling is zero, and one built from a dense array is ranked by
+    a decomposition of that array. A sparse array, a product of stored
+    factors or an operator that is applied rather than stored would cost a
+    dense matrix or as many applications as the dimension, and every
+    covariance claims invertibility through positive definiteness, so
+    there the claim is taken on trust.
 
     Args:
         operator: the operator whose claims are to be checked.
@@ -720,6 +881,7 @@ def check_traits(
             place of its ``random`` method; see the module docstring.
         trials: how many vectors to test each claim on.
         rtol: the agreement required of each claimed identity.
+        atol: an absolute allowance added to every comparison.
 
     Returns:
         The report, carrying the worst defect of each claimed trait.
@@ -750,6 +912,7 @@ def check_traits(
                 domain.inner_product(x, ay),
                 "the claimed SELF_ADJOINT operator is symmetric",
                 rtol=rtol,
+                atol=atol,
                 bound=max(
                     codomain.norm(ax) * domain.norm(y),
                     domain.norm(x) * codomain.norm(ay),
@@ -760,7 +923,7 @@ def check_traits(
         if claims(Traits.POSITIVE_SEMIDEFINITE):
             ax = operator(x)
             quadratic = domain.inner_product(ax, x)
-            if quadratic < -rtol * domain.norm(ax) * domain.norm(x):
+            if quadratic < -(atol + rtol * domain.norm(ax) * domain.norm(x)):
                 _fail(
                     "the claimed POSITIVE_SEMIDEFINITE operator is non-negative",
                     f"(A x, x) == {quadratic:g}",
@@ -780,6 +943,7 @@ def check_traits(
                 domain.squared_norm(x),
                 "the claimed ISOMETRY preserves the norm",
                 rtol=rtol,
+                atol=atol,
                 record=defects,
             )
 
@@ -791,6 +955,7 @@ def check_traits(
                 image,
                 "the claimed IDEMPOTENT operator satisfies A A == A",
                 rtol=max(rtol, 1e-10),
+                atol=atol,
                 record=defects,
             )
 
@@ -803,13 +968,19 @@ def check_traits(
                 "a claimed INVERTIBLE operator is square",
                 f"{domain.dim} != {codomain.dim}",
             )
-        # Full rank is verified only where the matrix is already stored.
-        # Extracting it from an operator that is applied, not stored, would
-        # cost as many applications as the dimension, and a positive
-        # definite claim implies this one, so every covariance would pay.
-        matrix = operator._known_matrix("components")
-        if matrix is not None:
-            rank = np.linalg.matrix_rank(matrix)
+        # Only where it is cheap; see the docstring.
+        scaling = operator._known_scaling()
+        if scaling is not None:
+            zeros = int(np.count_nonzero(np.asarray(scaling) == 0.0))
+            if zeros:
+                _fail(
+                    "the claimed INVERTIBLE operator has full rank",
+                    f"{zeros} of its {domain.dim} scalings are zero",
+                )
+        elif isinstance(operator, MatrixLinearOperator) and isinstance(
+            operator.stored_matrix, np.ndarray
+        ):
+            rank = np.linalg.matrix_rank(operator.stored_matrix)
             if rank < domain.dim:
                 _fail(
                     "the claimed INVERTIBLE operator has full rank",
@@ -1032,6 +1203,97 @@ def check_second_derivative(
     return CheckReport("check_second_derivative", defects)
 
 
+def check_hessian(
+    functional: Functional,
+    point: object,
+    /,
+    *,
+    rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
+    step: float = 1e-5,
+    trials: int = 3,
+    rtol: float = 1e-4,
+    atol: float = 0.0,
+) -> CheckReport:
+    """Check a functional's Hessian against differences of its gradient.
+
+    ``H d`` is compared with the central difference of the gradient along
+    ``d``, and the Hessian is checked self-adjoint, ``(H d, e) == (d, H e)``,
+    in the space's own inner product. The quadratic model ``at(point)``
+    must carry the Hessian too, since a Newton method reads it there.
+
+    Args:
+        functional: the functional to check.
+        point: where to check it.
+        rng: the generator for the probe directions.
+        measure: a measure on the domain to draw the probe vectors from, in
+            place of its ``random`` method; see the module docstring.
+        step: the finite-difference step; see :func:`check_derivative`.
+        trials: how many directions to check.
+        rtol: the agreement required. Looser than for a gradient, the
+            differencing being of an already-differenced quantity; the
+            symmetry is held to it too.
+        atol: an absolute allowance; see :func:`check_derivative`.
+
+    Returns:
+        The report, carrying the worst finite-difference and symmetry
+        defects.
+
+    Raises:
+        AssertionError: if the functional carries no Hessian, its quadratic
+            model does not, or the Hessian disagrees with the differences or
+            is not self-adjoint.
+    """
+    rng = resolve_rng(rng)
+    defects: dict[str, float] = {}
+    if not functional.has_hessian:
+        _fail(
+            "the functional carries a Hessian", f"{type(functional).__name__} does not"
+        )
+    if functional.at(point).hessian is None:
+        _fail(
+            "the quadratic model carries the Hessian",
+            "at() returned a model without one, although has_hessian is True",
+        )
+
+    domain = functional.domain
+    hessian = functional.hessian(point)
+    for _ in range(trials):
+        d = _draw(domain, rng, measure)
+        d = domain.scale(1.0 / max(domain.norm(d), 1e-30), d)
+        e = _draw(domain, rng, measure)
+        e = domain.scale(1.0 / max(domain.norm(e), 1e-30), e)
+
+        forward = functional.gradient(domain.axpy(step, d, domain.copy(point)))
+        backward = functional.gradient(domain.axpy(-step, d, domain.copy(point)))
+        numerical = domain.scale(1.0 / (2.0 * step), domain.subtract(forward, backward))
+        hd = hessian(d)
+        residual = domain.norm(domain.subtract(numerical, hd))
+        scale = max(domain.norm(numerical), domain.norm(hd))
+        _record(
+            defects,
+            "the Hessian agrees with differences of the gradient",
+            residual / scale if scale > 0.0 else residual,
+        )
+        if residual > atol + rtol * scale:
+            _fail(
+                "the Hessian agrees with differences of the gradient",
+                f"residual {residual:g} against scale {scale:g}",
+            )
+
+        he = hessian(e)
+        _assert_scalar(
+            domain.inner_product(hd, e),
+            domain.inner_product(d, he),
+            "the Hessian is self-adjoint",
+            rtol=rtol,
+            atol=atol,
+            bound=max(domain.norm(hd), domain.norm(he)),
+            record=defects,
+        )
+    return CheckReport("check_hessian", defects)
+
+
 # --------------------------------------------------------------------- #
 #                               Measures                                #
 # --------------------------------------------------------------------- #
@@ -1044,6 +1306,7 @@ def check_measure(
     rng: Generator | None = None,
     samples: int = 20000,
     rtol: float = 0.08,
+    atol: float = 0.0,
     directions: int = 3,
 ) -> CheckReport:
     """Check that a measure's samples match the moments it declares.
@@ -1051,6 +1314,13 @@ def check_measure(
     Compares the sample mean against ``expectation`` and the sample second
     moments against ``covariance``, along a few probe directions. A moment the
     measure does not claim is not checked: ``None`` is not a failure.
+
+    The operators a measure carries beside its covariance are checked against
+    it on the same probes, before any draw: the precision must invert the
+    covariance (``P C u == u``), the covariance factor must square to it
+    (``L L* u == C u``), and the precision factor to the precision (``Li*
+    Li u == P u``). A wrong precision changes no draw, so only this catches
+    it.
 
     The tolerances are statistical, not fixed fractions. The sample covariance
     estimator has standard error of order ``sqrt(C_ii C_jj / n)``, so an
@@ -1063,15 +1333,21 @@ def check_measure(
         measure: the measure to check.
         rng: the generator. Seed it, as for :func:`check_white_noise`.
         samples: how many draws to take.
-        rtol: the agreement required, scaling with the sample count.
+        rtol: the agreement required, relative: of the sample moments with
+            the declared ones, a statistical bound that scales with the
+            sample count, and of the operator identities, which are exact
+            algebra and are held to the same bound.
+        atol: an absolute allowance added to every comparison.
         directions: how many probe directions to compare moments along.
 
     Returns:
-        The report: the mean's worst deviation in standard errors, and the
-        covariance's worst deviation as the fraction ``rtol`` bounds.
+        The report: the mean's worst deviation in standard errors, the
+        covariance's worst deviation as the fraction ``rtol`` bounds, and the
+        worst relative defect of each operator identity checked.
 
     Raises:
-        AssertionError: if a declared moment disagrees with the samples.
+        AssertionError: if a declared moment disagrees with the samples, or
+            the precision or a factor disagrees with the covariance.
     """
     rng = resolve_rng(rng)
     defects: dict[str, float] = {}
@@ -1083,6 +1359,42 @@ def check_measure(
         probes = [space.basis_vector(i) for i in range(min(space.dim, directions))]
     else:
         probes = [space.random(rng=rng) for _ in range(min(space.dim, directions))]
+
+    covariance = measure.covariance
+    precision = getattr(measure, "precision", None)
+    covariance_factor = getattr(measure, "covariance_factor", None)
+    precision_factor = getattr(measure, "precision_factor", None)
+    for u in probes:
+        if covariance is not None and precision is not None:
+            _assert_close(
+                space,
+                precision(covariance(u)),
+                u,
+                "the precision inverts the covariance",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
+        if covariance is not None and covariance_factor is not None:
+            _assert_close(
+                space,
+                covariance_factor(covariance_factor.adjoint(u)),
+                covariance(u),
+                "the covariance factor squares to the covariance",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
+        if precision is not None and precision_factor is not None:
+            _assert_close(
+                space,
+                precision_factor.adjoint(precision_factor(u)),
+                precision(u),
+                "the precision factor squares to the precision",
+                rtol=rtol,
+                atol=atol,
+                record=defects,
+            )
 
     draws = measure.samples(samples, rng=rng)
     projections = np.array([[space.inner_product(x, u) for u in probes] for x in draws])
@@ -1100,7 +1412,7 @@ def check_measure(
                 "the sample mean matches the declared expectation",
                 abs(observed - expected) / standard_error,
             )
-            allowance = 6.0 * spread[i] / np.sqrt(samples) + 1e-12
+            allowance = atol + 6.0 * spread[i] / np.sqrt(samples) + 1e-12
             if abs(observed - expected) > allowance:
                 _fail(
                     "the sample mean matches the declared expectation",
@@ -1108,10 +1420,9 @@ def check_measure(
                     f"(m, u_{i}) == {expected:g}, beyond {allowance:g}",
                 )
 
-    if not measure.has_covariance:
+    if covariance is None:
         return CheckReport("check_measure", defects)
 
-    covariance = measure.covariance
     centered = projections - projections.mean(axis=0, keepdims=True)
     empirical = centered.T @ centered / (samples - 1)
     diagonal = [space.inner_product(covariance(u), u) for u in probes]
@@ -1125,7 +1436,7 @@ def check_measure(
                 "the sample covariance matches the declared covariance",
                 abs(empirical[i, j] - expected) / max(scale, 1e-12),
             )
-            allowance = rtol * max(scale, 1e-12)
+            allowance = atol + rtol * max(scale, 1e-12)
             if abs(empirical[i, j] - expected) > allowance:
                 _fail(
                     "the sample covariance matches the declared covariance",
@@ -1144,6 +1455,7 @@ def check_projection(
     trials: int = 5,
     probes: int = 30,
     rtol: float = 1e-8,
+    atol: float = 0.0,
 ) -> CheckReport:
     """Check that a convex set's projection really is the metric projection.
 
@@ -1173,6 +1485,7 @@ def check_projection(
             nearby point is compared only when it is a member at ``1e-9``,
             so that a point just outside the set cannot be mistaken for a
             closer one inside it.
+        atol: an absolute allowance on the idempotency identity.
 
     Returns:
         The report, carrying the worst idempotency defect.
@@ -1198,6 +1511,7 @@ def check_projection(
             projected,
             "the projection is idempotent",
             rtol=rtol,
+            atol=atol,
             record=defects,
         )
 
@@ -1283,6 +1597,7 @@ def check_affine(
     measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     rtol: float = 1e-8,
+    atol: float = 0.0,
 ) -> CheckReport:
     """Check that an affine operator is what it claims, ``x -> A x + b``.
 
@@ -1302,6 +1617,8 @@ def check_affine(
             place of its ``random`` method; see the module docstring.
         trials: how many random points and combinations to test.
         rtol: the allowance, relative to the size of what is compared.
+        atol: an absolute allowance added to every comparison, here and in
+            the nested :func:`check_operator`.
 
     Returns:
         The report, carrying the affine identities' worst defects and the
@@ -1328,6 +1645,7 @@ def check_affine(
         operator.translation,
         "applying the operator to zero recovers the translation",
         rtol=rtol,
+        atol=atol,
         record=defects,
     )
     for _ in range(trials):
@@ -1341,6 +1659,7 @@ def check_affine(
             expected,
             "the operator preserves affine combinations",
             rtol=rtol,
+            atol=atol,
             record=defects,
         )
         direction = _draw(domain, rng, measure)
@@ -1350,9 +1669,12 @@ def check_affine(
             linear(direction),
             "the derivative is the linear part",
             rtol=rtol,
+            atol=atol,
             record=defects,
         )
-    nested = check_operator(linear, rng=rng, measure=measure, trials=trials, rtol=rtol)
+    nested = check_operator(
+        linear, rng=rng, measure=measure, trials=trials, rtol=rtol, atol=atol
+    )
     for axiom, defect in nested.defects.items():
         _record(defects, axiom, defect)
     return CheckReport("check_affine", defects)

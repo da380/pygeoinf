@@ -122,7 +122,7 @@ Two scales. `--quick` is angular order 16, a length scale of 0.2 and 25 rays,
 and runs parts A to E in about five seconds; it is what the test suite runs.
 The full scale is angular order 96 in the mantle and 53 in the core (4688
 coefficients), 275 rays of 301 nodes each and the length scale above, and
-runs parts A to E in about 22 s. The ball, part F, is the same toy at both
+runs parts A to E in about 24 s. The ball, part F, is the same toy at both
 and takes about 7 s. Part G has its own two sizes, 19 rays at angular order
 16 and 32 rays at order 32, and takes about 20 s and 40 s. A full run of
 every part takes about 70 s, a quick one about 35 s. All are seeded.
@@ -231,9 +231,9 @@ slowness, the forward operator returns the reference travel times to 3e-5.
 
 ## The answers at the full scale
 
-The forward operator's rows are assembled ray by ray in 2.0 s, from 82 775
+The forward operator's rows are assembled ray by ray in 2.2 s, from 82 775
 node evaluations; the library's adjoint check, with probes drawn from the
-prior, finds a defect of 2.2e-15. The truth's travel-time perturbations
+prior, holds the adjoint identity to 1.8e-15. The truth's travel-time perturbations
 have a standard deviation of 0.56 against noise of 0.05. Machine: AMD Ryzen
 AI 7 PRO 350 (16 cpus), Python 3.12, numpy 2.4.
 
@@ -252,17 +252,17 @@ AI 7 PRO 350 (16 cpus), Python 3.12, numpy 2.4.
   poorly covered one, smeared along the few rays that pass. In the core the
   estimate is zero, the noise it propagates is zero, and its whole error is
   bias, which nothing in the point answer reveals.
-- **C** (3 s): one factorization of the 275-square normal operator
+- **C** (5 s): one factorization of the 275-square normal operator
   gives the posterior mean in a fiftieth of a second; it fits the data
   to a chi-squared of 190 on 275.
   The pointwise standard deviation, from the prior's 1.0, is 0.11 in the
   mantle under the stations, 0.12 in the middle of the well-covered box, 0.45
   in the middle of the poorly covered one and 1.001 in the core, exactly; 256
-  posterior samples, 1.3 s, give the map to 4%. The core's mean has the
+  posterior samples, 3.1 s, give the map to 4%. The core's mean has the
   prior's own posterior, center zero and standard deviation 0.496.
 - **D** (7 s): the prior's 95% ball is `||m|| <= r` in the space's own
   `H^2` norm with `r = 4.59`, which the truth lies in at 0.98 of the
-  boundary's gauge `(||m|| / r)^2`; the six supports take 6 s. A set bound
+  boundary's gauge `(||m|| / r)^2`; the six supports take 7 s. A set bound
   admits far more than the Gaussian posterior: the brackets are many times
   the posterior intervals, widest where the data say least. The ball alone
   admits ±8.74 for a box's mean and ±4.03 for the core's, the radius times
@@ -273,7 +273,7 @@ AI 7 PRO 350 (16 cpus), Python 3.12, numpy 2.4.
   core mean's representer as the ball holds, the model the support
   search's inner end attains. The truth lies in every bracket and in the
   polytope they bound.
-- **E** (6 s): the plume is found at its candidate, with a posterior weight
+- **E** (7 s): the plume is found at its candidate, with a posterior weight
   of 0.990 against the prior's 0.2; see
   [a plume among candidates](#a-plume-among-candidates) below.
 - **F** (7 s): in the ball, 174 rays of 121 nodes on a layered ball of 984
@@ -344,7 +344,7 @@ place, which only a prior that has one can return, and their odds move with
 the data, as the sweep below shows, which a covariance fixed in advance
 cannot.
 
-**The answer** (the whole part in 6 s; a factorization of the 275-square
+**The answer** (the whole part in 7 s; a factorization of the 275-square
 normal operator for each component). A conduit is crossed by every ray
 that passes over its angle, and its travel-time perturbations have a
 standard deviation of 0.184, nearly four times the noise of 0.05; the
@@ -455,8 +455,8 @@ limit: the medium the rays are shot through has none, being the mantle
 continued below its base, and the derivative would read the core's layer
 there; the two hundredths are a margin. The deepest reference ray turns at
 0.64, the truth's at 0.61, and the deepest of all the rays the part traces,
-one in the derivative check's largest step from a draw, at 0.59 (0.588 at
-the quick size).
+one in the derivative check's largest step, at 0.59 (0.588 at the quick
+size).
 
 **The derivative** against central differences, in one direction drawn from
 the prior and scaled to unit norm in `H^2` (the truth measures 22.5), at the
@@ -466,44 +466,46 @@ the residual relative to the derivative:
 
 | step | reference | draw 1 | draw 2 |
 |---|---|---|---|
-| 20 | 1.9e-3 | 1.6e-3 | 1.4e-3 |
-| 10 | 4.9e-4 | 4.1e-4 | 3.5e-4 |
-| 5 | 1.2e-4 | 1.0e-4 | 9.2e-5 |
-| 1 | 5.8e-6 | 6.8e-5 | 3.6e-5 |
-| 0.1 | 3.7e-6 | 6.5e-5 | 3.7e-5 |
+| 20 | 1.9e-3 | 1.6e-3 | 1.6e-3 |
+| 10 | 4.7e-4 | 4.1e-4 | 4.0e-4 |
+| 5 | 1.2e-4 | 1.0e-4 | 1.0e-4 |
+| 1 | 5.7e-6 | 4.6e-5 | 3.1e-5 |
+| 0.1 | 4.3e-6 | 2.5e-4 | 1.9e-4 |
 
 The truncation falls as the square of the step, close to a fourfold drop at
-each halving, down to a floor of 4e-6 at the reference model and 4e-5 to
-7e-5 at the draws. The floor is the integrator's: at the quick size, halving
-the integrator's step lowers it at every point, by factors of three to four
-(from 6.4e-7 to 1.7e-7 at the reference model). The integrated time is a
+each halving, down to a floor of 4e-6 at the reference model and 3e-5 to
+5e-5 at the draws. At the draws the smallest step rises above that floor
+again, to 2e-4: an error of the computed map that does not shrink with the
+step, divided by a step that does. The floor is the integrator's: at the
+quick size, halving the integrator's step lowers it at every point, by
+factors of three to four (from 6.4e-7 to 1.7e-7 at the reference model). The integrated time is a
 sum of the slowness at the Runge-Kutta stages, which lie off the path, and
 its derivative differs from the path integral along the path by about that
 much.
 
 **The bending** in the truth: the travel-time perturbations have a standard
 deviation of 2.56; along the bent rays they are shorter than the linear
-prediction on every ray, as Fermat's principle requires, by 0.057 rms and by
-0.197 at most, about the noise of 0.05 and four times it. The rays move by
-a median of 0.009 and at most 0.029, and their deepest points by up to
-0.029.
+prediction on every ray, as Fermat's principle requires, by 0.063 rms and by
+0.200 at most, about the noise of 0.05 and four times it. The rays move by
+a median of 0.008 and at most 0.031, and their deepest points by up to
+0.031.
 
 **The answers** (40 s, 31 of them the derivative check): the linear posterior
-mean, on the reference rays, fits the data to a chi-squared of 3.8 on 32 as
-it believes, and to 24.1 along its own bent rays. The MAP model, by Newton-CG
+mean, on the reference rays, fits the data to a chi-squared of 2.3 on 32 as
+it believes, and to 23.0 along its own bent rays. The MAP model, by Newton-CG
 on the Gauss-Newton Hessian `2 (P + J* R^-1 J)` from the prior's mean with
 the prior covariance as the preconditioner, takes 7 iterations, 8 ray
 tracings and 6 s; the operator's second derivative is never needed, the
 Gauss-Newton Hessian being the derivative's own normal operator. It fits the
-data to 3.9 along its own rays, and differs from the linear mean by 3.8% of
-it, in the upper mantle under the stations. It comes no closer to the truth.
-The mean over the well-covered box moves from +0.195 to +0.178, against the
-truth's -0.149, and over the poorly covered box from -1.957 to -1.798,
-against -0.894: both moves are small beside the linear posterior's standard
-deviations of those means, 0.51 and 2.41. The error over the mantle, 0.597
-of the truth's norm, and under the stations, 0.243, become 0.601 and 0.246:
-they are what no ray resolves, and fitting the data with the right physics
-does not reduce them.
+data to 2.3 along its own rays, and differs from the linear mean by 3.4% of
+it, in the upper mantle under the stations. It comes barely closer to the
+truth. The mean over the well-covered box moves from +0.254 to +0.240,
+against the truth's -0.208, and over the poorly covered box from -1.743 to
+-1.561, against -0.901: both moves are small beside the linear posterior's
+standard deviations of those means, 0.51 and 2.41. The error over the
+mantle, 0.521 of the truth's norm, and under the stations, 0.311, become
+0.515 and 0.300: they are what no ray resolves, and fitting the data with
+the right physics reduces them by a few per cent.
 
 ## What the app shows
 
@@ -526,7 +528,7 @@ does not reduce them.
   direct, and the methods that sweep a damped family pay a factorization per
   member and nothing else. The loops that could run in parallel are run
   serially: worker processes cost more than they save at this size, 256
-  posterior samples taking 1.1 s serially and 3.9 s on eight processes.
+  posterior samples taking 3.0 s serially and 5.5 s on eight processes.
 - The prior is a Sobolev measure of order 2 on each layer, and the point
   answers measure size by its norm, so that least squares at a damping of
   one is the posterior mean. The set answer hardens it to the ball of the
@@ -555,8 +557,8 @@ does not reduce them.
   other parts rebuilt on the current rays. With a perturbation of 5% the
   bending moves the travel times by about the noise on average and four
   times it at most; the linear answer is then inconsistent with its own
-  physics, a chi-squared of 24 on 32 data along its own rays where it
-  believes 4, and the MAP model repairs that, changing the model by 3.8%
-  where the rays bend. Consistency is not accuracy: the MAP model comes no
-  closer to the truth, its error being, like the linear answer's, what the
-  rays do not resolve.
+  physics, a chi-squared of 23 on 32 data along its own rays where it
+  believes 2, and the MAP model repairs that, changing the model by 3.4%
+  where the rays bend. Consistency is not accuracy: the MAP model comes
+  barely closer to the truth, its error being, like the linear answer's,
+  what the rays do not resolve.

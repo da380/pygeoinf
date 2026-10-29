@@ -250,7 +250,7 @@ class TestMomentsMatchSamples:
         draws = source.samples(4000, rng=rng)
         mu = GaussianMeasure.from_samples(X, draws)
 
-        assert X.norm(X.subtract(mu.expectation, X.mean(draws))) < 1e-10
+        assert X.norm(X.subtract(mu.expectation, X.sample_expectation(draws))) < 1e-10
         for i in range(X.dim):
             u = X.basis_vector(i)
             empirical = np.mean(
@@ -962,7 +962,7 @@ class TestTheAmbientBall:
         dense = mu.ambient_ball(level=0.9, method="dense")
         assert dense.radius == pytest.approx(expected, rel=1e-8)
         spectral = mu.ambient_ball(
-            level=0.9, method="spectral", rank=20, rng=np.random.default_rng(1)
+            level=0.9, method="randomized", rank=20, rng=np.random.default_rng(1)
         )
         assert spectral.radius == pytest.approx(expected, rel=1e-6)
         sampled = mu.ambient_ball(
@@ -977,7 +977,7 @@ class TestTheAmbientBall:
         mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20), form="galerkin")
         full = mu.ambient_ball(level=0.9, method="dense").radius
         truncated = mu.ambient_ball(
-            level=0.9, method="spectral", rank=5, rng=np.random.default_rng(1)
+            level=0.9, method="randomized", rank=5, rng=np.random.default_rng(1)
         ).radius
         assert truncated < full
 
@@ -1004,7 +1004,7 @@ class TestTheAmbientBall:
         with pytest.raises(ValueError, match="No affordable route"):
             mu.ambient_ball(level=0.9)
         # ...and it is affordable once told how
-        assert mu.ambient_ball(level=0.9, method="spectral", rank=8).radius > 0.0
+        assert mu.ambient_ball(level=0.9, method="randomized", rank=8).radius > 0.0
 
     def test_a_long_spectrum_takes_the_matched_quantile(self):
         """Imhof's inversion sums over every weight at every quadrature point:
@@ -1104,7 +1104,8 @@ class TestPrecisionOnlyMeasures:
         from pygeoinf2.symmetric_space import Sobolev
 
         space = Sobolev((16,), 2.0, 0.3)
-        measure = GaussianMeasure(space, precision=LinearOperator.identity(space))
+        precision = space.sobolev_measure(1.0, 0.3).precision
+        measure = GaussianMeasure(space, precision=precision)
         with pytest.raises(ValueError, match="two-point covariance needs"):
             measure.two_point_covariance(0.5)
 
@@ -1734,7 +1735,7 @@ class TestTheIdentityRefusalKeysOnTheMarker:
                 return True
 
         space = Discretization(5)
-        with pytest.raises(TypeError, match="not trace class"):
+        with pytest.raises(ValueError, match="not trace class"):
             GaussianMeasure.from_standard_deviation(space, 1.0)
         GaussianMeasure.from_standard_deviation(space, 1.0, unsafe=True)
 
@@ -1744,7 +1745,7 @@ class TestATruncatedSpectrumWarns:
         X = make_dense_metric_space(20)
         mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20), form="galerkin")
         with pytest.warns(UserWarning, match="of the trace"):
-            mu.ambient_ball(level=0.9, method="spectral", rank=3, rng=rng)
+            mu.ambient_ball(level=0.9, method="randomized", rank=3, rng=rng)
 
 
 class TestACorrelatedProduct:
@@ -1804,22 +1805,17 @@ class TestACorrelatedProduct:
         second = np.array([d[1][0] / 2.0 for d in draws])
         assert np.corrcoef(first, second)[0, 1] == pytest.approx(0.9, abs=0.05)
 
-    def test_latents_with_a_diagonal_metric_correspond_by_components(self, rng):
-        """Two different spaces of one dimension, each with a diagonal
-        metric: the marginals are still the factors."""
+    def test_factors_on_different_spaces_are_refused(self):
+        """Modes of different spaces have nothing in common to tie: a
+        correlation between them is refused by name."""
         from pygeoinf2.symmetric_space.circle import Sobolev
-        from pygeoinf2.testing import check_measure
 
         A, B = Sobolev(16, 2.0, 0.2), Sobolev(16, 1.5, 0.4)
         a, b = A.sobolev_measure(2.0, 0.2), B.sobolev_measure(2.0, 0.4)
-        joint = GaussianMeasure.from_product(
-            [a, b], correlation=np.array([[1.0, 0.5], [0.5, 1.0]])
-        )
-        check_measure(joint, rng=rng)
-        x = A.random(rng=rng)
-        assert A.norm(
-            A.subtract(joint.covariance((x, B.zero()))[0], a.covariance(x))
-        ) < 1e-10 * A.norm(a.covariance(x))
+        with pytest.raises(ValueError, match="same domain"):
+            GaussianMeasure.from_product(
+                [a, b], correlation=np.array([[1.0, 0.5], [0.5, 1.0]])
+            )
 
     def test_what_is_refused(self):
         X, a, b = self.factors()
@@ -1835,5 +1831,401 @@ class TestACorrelatedProduct:
             GaussianMeasure.from_product([a, b], correlation=np.eye(3))
         Y = EuclideanSpace(3)
         c = GaussianMeasure.from_standard_deviation(Y, 1.0)
-        with pytest.raises(ValueError, match="correspond mode for mode"):
+        with pytest.raises(ValueError, match="same domain"):
             GaussianMeasure.from_product([a, c], correlation=np.eye(2))
+
+
+def _sampler_only(rng):
+    """A measure with a nonzero mean that samples through a callable: the
+    conditioning of a prior on a dense metric, which has no covariance
+    factor. Returned with the prior and the space."""
+    X = make_dense_metric_space(3)
+    line = EuclideanSpace(1)
+    prior = GaussianMeasure.from_covariance_matrix(
+        X,
+        spd(rng, 3),
+        form="galerkin",
+        expectation=X.from_components(np.array([10.0, -4.0, 3.0])),
+    )
+    reading = LinearOperator.from_matrix(
+        X, line, np.array([[0.0, 0.0, 1.0]]), form="components"
+    )
+    noise = GaussianMeasure.from_standard_deviation(line, 0.1)
+    posterior = prior.condition(reading, np.array([5.0]), noise=noise)
+    return X, prior, posterior
+
+
+class TestDerivedSamplersDrawAboutTheirOwnMean:
+    """A measure that samples through a callable hands the algebra its centered
+    fluctuation, and every measure built from it draws about its own
+    expectation, not about that plus the source's. Only the draws show it:
+    the expectations are right either way."""
+
+    OPERATIONS = ["translate", "push_forward", "sum", "product", "scale", "marginal"]
+
+    @staticmethod
+    def derived(operation, X, prior, posterior):
+        if operation == "translate":
+            return posterior.translate(X.from_components(np.array([1.0, 2.0, -3.0])))
+        if operation == "push_forward":
+            matrix = np.array([[1.0, 2.0, 0.0], [0.0, -1.0, 3.0]])
+            B = LinearOperator.from_matrix(
+                X, EuclideanSpace(2), matrix, form="components"
+            )
+            return B @ posterior
+        if operation == "sum":
+            return posterior + prior
+        if operation == "product":
+            return GaussianMeasure.from_product([posterior, prior])
+        if operation == "scale":
+            return 2.0 * posterior
+        return GaussianMeasure.from_product([posterior, prior]).marginal(0)
+
+    @pytest.mark.parametrize("operation", OPERATIONS)
+    def test_the_draws_have_the_declared_moments(self, operation, rng):
+        X, prior, posterior = _sampler_only(rng)
+        assert posterior.covariance_factor is None and posterior.can_sample
+        measure = self.derived(operation, X, prior, posterior)
+        assert measure.can_sample
+        check_measure(measure, rng=rng, samples=6000)
+
+    @pytest.mark.parametrize("operation", OPERATIONS)
+    def test_the_sample_mean_is_the_expectation(self, operation, rng):
+        X, prior, posterior = _sampler_only(rng)
+        measure = self.derived(operation, X, prior, posterior)
+        space = measure.domain
+        drawn = measure.sample_expectation(4000, rng=rng)
+        distance = space.norm(space.subtract(drawn, measure.expectation))
+        assert distance < 0.05 * space.norm(measure.expectation)
+
+    @staticmethod
+    def point_problem(rng):
+        from pygeoinf2.inference.problem import LinearForwardProblem
+        from pygeoinf2.symmetric_space.circle import Sobolev
+
+        X = Sobolev(32, 1.0, 0.3)
+        A = X.point_evaluation_operator([np.array([t]) for t in (0.5, 1.5, 3.0, 4.5)])
+        noise = GaussianMeasure.from_standard_deviation(A.codomain, 0.1)
+        mean = X.scale(3.0, X.sobolev_measure(2.0, 0.3).sample(rng=rng))
+        prior = X.sobolev_measure(2.0, 0.3, expectation=mean)
+        return X, A, LinearForwardProblem(A, error=noise), prior
+
+    def test_the_joint_measure_of_a_posterior(self, rng):
+        from pygeoinf2.inference.gaussian import LinearGaussianInversion
+
+        X, A, problem, prior = self.point_problem(rng)
+        posterior = LinearGaussianInversion(problem, prior)(np.full(4, 2.0))
+        joint = problem.joint_measure(posterior)
+        data = A.codomain
+        predicted = A(posterior.expectation)
+        assert data.to_components(joint.expectation[1]) == pytest.approx(
+            data.to_components(predicted)
+        )
+        drawn = joint.sample_expectation(3000, rng=rng)[1]
+        assert np.max(np.abs(drawn - predicted)) < 0.05 * np.max(np.abs(predicted))
+        check_measure(joint, rng=rng, samples=3000, rtol=0.15)
+
+    def test_the_data_measure_of_a_prior_with_a_mean(self, rng):
+        X, A, problem, prior = self.point_problem(rng)
+        measure = problem.data_measure_from_model_measure(prior)
+        predicted = A(prior.expectation)
+        drawn = measure.sample_expectation(4000, rng=rng)
+        spread = np.sqrt(np.max(np.diag(measure.covariance.matrix(form="components"))))
+        assert np.max(np.abs(drawn - predicted)) < 6.0 * spread / np.sqrt(4000)
+        check_measure(measure, rng=rng, samples=6000)
+
+
+class TestTheCorrelatedPrecisionWhateverTheRoot:
+    """A precision factor is fixed only up to a unitary on the left, so the
+    correlated product cannot take each factor's for the inverse of its
+    covariance factor: ``-1.0 * a`` keeps ``a``'s and negates its covariance
+    factor, and a hand-built pair may carry any rotation of the inverse."""
+
+    @staticmethod
+    def rotated(X, rng):
+        """A Cholesky factor of a Galerkin matrix with a rotated inverse root."""
+        galerkin = spd(rng, X.dim)
+        root = np.linalg.cholesky(galerkin)
+        rotation, _ = np.linalg.qr(rng.standard_normal((X.dim, X.dim)))
+        latent = EuclideanSpace(X.dim)
+        factor = LinearOperator.from_matrix(latent, X, root, form="galerkin")
+        inverse = LinearOperator.from_matrix(
+            X,
+            latent,
+            rotation @ np.linalg.solve(root, X.gram_matrix()),
+            form="components",
+        )
+        return GaussianMeasure(X, covariance_factor=factor, precision_factor=inverse)
+
+    @pytest.mark.parametrize("case", ["negated", "rotated"])
+    def test_the_precision_inverts_the_covariance(self, case, rng):
+        X = make_dense_metric_space(3)
+        a = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        b = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        first = -1.0 * a if case == "negated" else self.rotated(X, rng)
+        check_measure(first, rng=rng, samples=2000)
+        joint = GaussianMeasure.from_product(
+            [first, b], correlation=np.array([[1.0, 0.6], [0.6, 1.0]])
+        )
+        assert joint.precision is not None
+        space = joint.domain
+        for _ in range(3):
+            v = space.random(rng=rng)
+            back = joint.precision(joint.covariance(v))
+            assert space.norm(space.subtract(back, v)) < 1e-10 * space.norm(v)
+        check_measure(joint, rng=rng, samples=4000)
+
+    def test_a_factor_that_is_not_invertible_gets_no_precision(self, rng):
+        """A factor with more latent directions than the space has a right
+        inverse but no inverse; the product then has no precision rather
+        than a wrong one."""
+        X = EuclideanSpace(3)
+        wide = LinearOperator.from_matrix(
+            EuclideanSpace(3),
+            X,
+            np.array([[1.0, 0.5, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+            form="components",
+        )
+        a = GaussianMeasure(X, covariance_factor=wide)
+        b = GaussianMeasure.from_standard_deviation(X, 1.0)
+        joint = GaussianMeasure.from_product(
+            [a, b], correlation=np.array([[1.0, 0.3], [0.3, 1.0]])
+        )
+        assert joint.precision is None
+        assert (
+            GaussianMeasure.from_product(
+                [b, b], correlation=np.array([[1.0, 0.3], [0.3, 1.0]])
+            ).precision
+            is not None
+        )
+
+
+class TestTheCheckSeesThePrecision:
+    """A wrong precision changes no draw, so ``check_measure`` compares the
+    operators a measure carries with its covariance before drawing."""
+
+    def test_a_precision_that_does_not_invert_the_covariance_fails(self, rng):
+        X = make_dense_metric_space(3)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        report = check_measure(mu, rng=rng, samples=2000)
+        assert "the precision inverts the covariance" in report.defects
+        wrong = GaussianMeasure(
+            X, covariance_factor=mu.covariance_factor, precision=2.0 * mu.precision
+        )
+        with pytest.raises(AssertionError, match="precision inverts the covariance"):
+            check_measure(wrong, rng=rng, samples=2000)
+
+    def test_a_factor_that_does_not_square_to_the_covariance_fails(self, rng):
+        X = make_dense_metric_space(3)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        nu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        mixed = GaussianMeasure(
+            X, covariance=mu.covariance, covariance_factor=nu.covariance_factor
+        )
+        with pytest.raises(AssertionError, match="factor squares to the covariance"):
+            check_measure(mixed, rng=rng, samples=2000)
+
+    def test_a_precision_factor_that_does_not_square_to_the_precision_fails(self, rng):
+        X = make_dense_metric_space(3)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        mixed = GaussianMeasure(
+            X,
+            covariance_factor=mu.covariance_factor,
+            precision=mu.precision,
+            precision_factor=2.0 * mu.precision_factor,
+        )
+        with pytest.raises(AssertionError, match="precision factor squares"):
+            check_measure(mixed, rng=rng, samples=2000)
+
+    def test_atol_is_an_absolute_allowance(self, rng):
+        X = make_dense_metric_space(3)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        wrong = GaussianMeasure(
+            X,
+            covariance_factor=mu.covariance_factor,
+            precision=1.2 * mu.precision,
+        )
+        check_measure(wrong, rng=rng, samples=2000, rtol=0.08, atol=10.0)
+
+
+class TestACovarianceMatrixIsNotSymmetrizedIntoAnotherOne:
+    """The representation mistake ``form=`` exists to catch is refused, not
+    symmetrized into a different covariance."""
+
+    def test_a_symmetric_component_matrix_on_a_weighted_space_is_refused(self, rng):
+        W = make_weighted_space()
+        with pytest.raises(ValueError, match="form='galerkin'"):
+            GaussianMeasure.from_covariance_matrix(
+                W, spd(rng, W.dim), form="components"
+            )
+
+    def test_a_non_symmetric_galerkin_matrix_is_refused(self, rng):
+        W = make_weighted_space()
+        skewed = spd(rng, W.dim) + 3.0 * np.triu(np.ones((W.dim, W.dim)), 1)
+        with pytest.raises(ValueError, match="form='components'"):
+            GaussianMeasure.from_covariance_matrix(W, skewed, form="galerkin")
+
+    def test_round_off_is_symmetrized(self, rng):
+        X = make_dense_metric_space(4)
+        galerkin = spd(rng, 4)
+        noisy = galerkin + 1e-13 * rng.standard_normal((4, 4))
+        mu = GaussianMeasure.from_covariance_matrix(X, noisy, form="galerkin")
+        assert mu.covariance.matrix(form="galerkin") == pytest.approx(
+            0.5 * (noisy + noisy.T)
+        )
+
+
+class TestMarginalsKeepWhatTheJointHas:
+    """A marginal draws whenever the joint does, and has a precision whenever
+    the joint's is block diagonal."""
+
+    def test_an_independent_product_of_invariant_measures(self, rng):
+        from pygeoinf2.symmetric_space.circle import Sobolev
+
+        A, B = Sobolev(16, 1.0, 0.3), Sobolev(12, 2.0, 0.2)
+        first, second = A.sobolev_measure(1.0, 0.3), B.sobolev_measure(2.0, 0.2)
+        joint = GaussianMeasure.from_product([first, second])
+        marginal = joint.marginal(1)
+        assert marginal.can_sample and marginal.precision is not None
+        check_measure(marginal, rng=rng, samples=4000)
+        x = B.random(rng=rng)
+        assert B.norm(
+            B.subtract(marginal.covariance(x), second.covariance(x))
+        ) < 1e-12 * B.norm(second.covariance(x))
+
+    def test_a_correlated_product(self, rng):
+        X = make_dense_metric_space(3)
+        a = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        b = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        joint = GaussianMeasure.from_product(
+            [a, b], correlation=np.array([[1.0, 0.5], [0.5, 1.0]])
+        )
+        marginal = joint.marginal(0)
+        assert marginal.can_sample
+        check_measure(marginal, rng=rng, samples=4000)
+
+    def test_a_layered_prior(self, rng):
+        from pygeoinf2.interval import Layered
+
+        space = Layered([0.0, 0.5, 1.0], 12, order=1.0, length_scale=0.2)
+        prior = space.sobolev_measure(1.5)
+        marginal = prior.marginal(0)
+        assert marginal.can_sample and marginal.precision is not None
+        check_measure(marginal, rng=rng, samples=3000, rtol=0.2)
+
+    def test_a_product_keeps_its_precision_factor(self, rng):
+        X = make_dense_metric_space(3)
+        a = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        b = GaussianMeasure.from_covariance_matrix(X, spd(rng, 3), form="galerkin")
+        joint = GaussianMeasure.from_product([a, b])
+        assert joint.precision is not None and joint.precision_factor is not None
+        check_measure(joint, rng=rng, samples=3000)
+        marginal = joint.marginal(1)
+        assert marginal.precision is not None
+        assert marginal.precision_factor is not None
+        check_measure(marginal, rng=rng, samples=3000)
+
+
+class TestSmallerShouldFixes:
+    def test_a_density_cannot_be_sampled_and_says_so(self, rng):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.probability import AbsolutelyContinuousMeasure
+
+        X = EuclideanSpace(3)
+        reference = GaussianMeasure.from_standard_deviation(X, 1.0)
+        measure = AbsolutelyContinuousMeasure(
+            reference, Functional.from_callables(X, lambda x: 0.0)
+        )
+        assert not measure.can_sample
+        assert not (2.0 * measure).can_sample
+        A = LinearOperator.from_matrix(X, X, np.eye(3), form="components")
+        assert not measure.push_forward(A).can_sample
+
+    def test_a_diagonal_covariance_brings_its_factor_and_precision(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        for X in (EuclideanSpace(3), make_weighted_space()):
+            values = np.linspace(1.0, 2.0, X.dim)
+            for covariance in (
+                DiagonalLinearOperator(X, values),
+                0.25 * LinearOperator.identity(X),
+            ):
+                mu = GaussianMeasure(X, covariance=covariance)
+                assert mu.can_sample and mu.precision is not None
+                check_measure(mu, rng=rng, samples=4000)
+
+    def test_a_hilbert_schmidt_norm_without_coordinates_is_not_guessed(self, rng):
+        X = OpaqueSpace(np.array([1.0, 4.0, 9.0]))
+        mu = GaussianMeasure.from_standard_deviation(X, 1.4)
+        with pytest.raises(TypeError):
+            mu.hilbert_schmidt_norm()
+        assert mu.hilbert_schmidt_norm(method="stochastic", rng=rng) > 0.0
+
+    def test_the_normalizing_constant_is_exact_or_refused(self, rng):
+        X = make_dense_metric_space(5)
+        galerkin = spd(rng, 5)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
+        components = np.linalg.solve(X.gram_matrix(), galerkin)
+        expected = -2.5 * np.log(2.0 * np.pi) - 0.5 * np.linalg.slogdet(components)[1]
+        assert mu.log_normalizing_constant() == pytest.approx(expected, rel=1e-12)
+        again = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
+        with pytest.raises(ValueError, match="dense_limit"):
+            again.log_normalizing_constant(dense_limit=4)
+        opaque = OpaqueSpace(np.array([1.0, 4.0, 9.0]))
+        with pytest.raises(ValueError, match="no exact route"):
+            GaussianMeasure.from_standard_deviation(
+                opaque, 1.0
+            ).log_normalizing_constant()
+
+    def test_one_name_per_route(self, rng):
+        X = EuclideanSpace(4)
+        a = GaussianMeasure.from_standard_deviations(X, np.linspace(1.0, 2.0, 4))
+        b = GaussianMeasure.from_standard_deviations(X, np.linspace(2.0, 1.0, 4))
+        exact = a.kl_divergence(b, method="dense")
+        assert a.kl_divergence(b, method="diagonal") == pytest.approx(exact)
+        with pytest.raises(ValueError, match="'diagonal'"):
+            a.kl_divergence(b, method="spectral")
+        assert a.ambient_ball(level=0.9, method="randomized", rank=4).radius > 0.0
+        with pytest.raises(ValueError, match="Unknown method"):
+            a.ambient_ball(level=0.9, method="spectral", rank=4)
+
+    def test_the_sampling_routes_never_hold_the_draws(self, rng, monkeypatch):
+        X = make_dense_metric_space(4)
+        mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 4), form="galerkin")
+        draws = mu.samples(500, rng=np.random.default_rng(3))
+        squared = [X.squared_norm(X.subtract(x, mu.expectation)) for x in draws]
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("the draws were materialized")
+
+        monkeypatch.setattr(mu, "samples", refuse)
+        ball = mu.ambient_ball(
+            level=0.9, method="sampling", samples=500, rng=np.random.default_rng(3)
+        )
+        assert ball.radius == pytest.approx(np.sqrt(np.quantile(squared, 0.9)))
+
+    def test_the_sampled_pointwise_variance_streams_the_same_draws(self, rng):
+        from pygeoinf2.symmetric_space.circle import Sobolev
+
+        X = Sobolev(16, 1.0, 0.3)
+        mu = X.sobolev_measure(1.0, 0.3)
+        draws = mu.samples(40, rng=np.random.default_rng(4))
+        expected = np.mean([x * x for x in draws], axis=0)
+        variance = mu.sample_pointwise_variance(40, rng=np.random.default_rng(4))
+        assert variance == pytest.approx(expected)
+
+    def test_a_level_is_validated_before_any_draw(self):
+        mu = GaussianMeasure.from_standard_deviation(EuclideanSpace(3), 1.0)
+        for level in (0.0, 1.0, 1.5):
+            with pytest.raises(ValueError, match="level"):
+                mu.ambient_ball(level=level, method="sampling")
+
+    def test_a_measure_can_be_negated(self, rng):
+        X = make_weighted_space()
+        mu = GaussianMeasure.from_standard_deviation(
+            X, 1.0, expectation=X.from_components(np.array([1.0, 2.0, 3.0, 4.0]))
+        )
+        negated = -mu
+        assert X.to_components(negated.expectation) == pytest.approx(
+            -X.to_components(mu.expectation)
+        )

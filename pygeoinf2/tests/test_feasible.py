@@ -918,10 +918,12 @@ class TestTheSplitting:
             # value may sit above the outer bound by that order.
             assert split.value >= split.inner - 10 * tolerance * (1 + abs(primal.value))
             assert split.value == pytest.approx(primal.value, rel=1e-4)
-            assert noise.contains(
-                forward.codomain.subtract(data, forward(split.extremal_model)),
-                rtol=1e-6,
+            # Feasible to the tolerance relative to the data's size, so the
+            # misfit may pass the noise radius by that much.
+            misfit = forward.codomain.norm(
+                forward.codomain.subtract(data, forward(split.extremal_model))
             )
+            assert misfit <= 0.1 + 10 * tolerance * forward.codomain.norm(data)
 
 
 class TestDistanceAndTheGeneralSearch:
@@ -995,7 +997,8 @@ class TestTheOuterEllipsoid:
             for a in np.linspace(0.0, np.pi, 7)
         ]:
             assert h(q) >= feasible.support(q) - 1e-9
-        other = feasible.outer_ellipsoid_result(via=SProcedure(formalism="model_space"))
+        assert result.algorithm == "s_procedure" and "checked" in result.message
+        other = feasible.outer_ellipsoid_result(via=SProcedure(formalism="data_space"))
         assert other.weight == pytest.approx(result.weight, rel=1e-6)
         assert np.allclose(
             target.codomain.to_components(other.ellipsoid.center),
@@ -1236,3 +1239,491 @@ class TestMoreDataThanModel:
         )
         assert feasible.is_empty(via=Search(formalism="data_space"))
         assert feasible.is_empty(via=Search(formalism="model_space"))
+
+
+# --------------------------------------------------------------------- #
+#                Edge cases of the sets, and what they answer            #
+# --------------------------------------------------------------------- #
+
+
+def problem_on(rng, *, model_dim, data_dim, property_dim):
+    """A dense model metric, a weighted data space, random ``A`` and ``T``, a truth of norm two."""
+    model = make_dense_metric_space(model_dim)
+    data = WeightedSpace(np.linspace(0.5, 2.0, data_dim))
+    property_space = EuclideanSpace(property_dim)
+    forward = LinearOperator.from_matrix(
+        model, data, rng.normal(size=(data_dim, model_dim)), form="galerkin"
+    )
+    target = LinearOperator.from_matrix(
+        model,
+        property_space,
+        rng.normal(size=(property_dim, model_dim)),
+        form="galerkin",
+    )
+    raw = model.random(rng=rng)
+    truth = model.scale(2.0 / model.norm(raw), raw)
+    return model, data, property_space, forward, target, truth
+
+
+def circle(space, count):
+    return [
+        space.from_components(np.array([np.cos(a), np.sin(a)]))
+        for a in np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
+    ]
+
+
+class TestTheOuterEllipsoidIsChecked:
+    """Twice as many data as model coefficients and a prior from binding to
+    slack: the default ellipsoid reaches every attained support value, and
+    the data-space formalism, whose shape cancels there, either does too or
+    refuses."""
+
+    @pytest.mark.parametrize("radius", [3.0, 10.0, 30.0])
+    def test_it_never_falls_below_an_attained_support(self, radius):
+        from pygeoinf2.geometry.feasible import Primal, SProcedure
+
+        rng = np.random.default_rng(81)
+        model, data, prop, forward, target, truth = problem_on(
+            rng, model_dim=20, data_dim=40, property_dim=2
+        )
+        observed = data.add(
+            forward(truth), data.scale(0.5 / np.sqrt(40), data.random(rng=rng))
+        )
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=radius),
+            observed,
+            noise=Ball(data, radius=1.0),
+        )
+        qs = circle(prop, 8)
+        attained = [
+            feasible.support_bracket(q, via=Primal(formalism="model_space"))[0]
+            for q in qs
+        ]
+
+        def reaches(ellipsoid):
+            h = ellipsoid.support_function()
+            return all(
+                h(q) >= inner - 1e-9 * abs(inner) for q, inner in zip(qs, attained)
+            )
+
+        result = feasible.outer_ellipsoid_result()
+        assert result.algorithm == "s_procedure" and "checked" in result.message
+        assert reaches(result.ellipsoid)
+        try:
+            by_data = feasible.outer_ellipsoid(via=SProcedure(formalism="data_space"))
+        except ValueError as error:
+            assert "model_space" in str(error)
+        else:
+            assert reaches(by_data)
+
+
+class TestAFlatSet:
+    """Exact data with fewer kernel dimensions than the property: the set is
+    a segment, which has support values, membership and a level function,
+    and no ellipsoid, projection or outer ellipsoid."""
+
+    def test_it_refuses_what_needs_an_inverse_and_answers_the_rest(self, rng):
+        model, data, prop, forward, target, truth = problem_on(
+            rng, model_dim=4, data_dim=3, property_dim=2
+        )
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=4.0), forward(truth)
+        )
+        assert feasible.form == "closed_form" and not feasible.has_projection
+        for refused in (
+            lambda: feasible.ellipsoid,
+            lambda: feasible.project(prop.zero()),
+            lambda: feasible.outer_ellipsoid(),
+        ):
+            with pytest.raises(ValueError, match="flat"):
+                refused()
+        # The segment's two ends are the contact points of a direction.
+        q = prop.basis_vector(0)
+        first = feasible.support_maximizer(q)
+        second = feasible.support_maximizer(prop.negative(q))
+        along = prop.subtract(first, second)
+        middle = prop.add(second, prop.scale(0.5, along))
+        assert feasible.contains(target(truth)) and feasible.contains(middle)
+        normal = prop.from_components(np.array([-along[1], along[0]]))
+        off = prop.axpy(1e-3 / prop.norm(normal), normal, prop.copy(middle))
+        assert not feasible.contains(off)
+        # The level's gradient along the segment, against its difference.
+        point = prop.add(second, prop.scale(0.3, along))
+        unit = prop.scale(1.0 / prop.norm(along), along)
+        step = 1e-4 * prop.norm(along)
+        slope = (
+            feasible.inclusion_level(prop.axpy(step, unit, prop.copy(point)))
+            - feasible.inclusion_level(prop.axpy(-step, unit, prop.copy(point)))
+        ) / (2.0 * step)
+        gradient = feasible.level_function().gradient(point)
+        assert prop.inner_product(gradient, unit) == pytest.approx(slope, rel=1e-6)
+
+    def test_a_zero_budget_is_a_single_point(self):
+        model, data, prop = EuclideanSpace(3), EuclideanSpace(1), EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data, np.array([[1.0, 0.0, 0.0]]), form="components"
+        )
+        target = LinearOperator.from_matrix(
+            model, prop, np.array([[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]]), form="components"
+        )
+        # The smallest model fitting the datum is e0, of norm one: it uses
+        # the whole of the unit ball's budget, and the set is the point T e0.
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=1.0), np.array([1.0])
+        )
+        point = target(np.array([1.0, 0.0, 0.0]))
+        with pytest.raises(ValueError, match="single point"):
+            feasible.ellipsoid
+        assert feasible.contains(point)
+        assert np.allclose(feasible.project(np.array([5.0, -5.0])), point)
+        for q in directions(prop):
+            assert feasible.support(q) == pytest.approx(prop.inner_product(q, point))
+
+
+class TestAPointNoiseSetOffTheOrigin:
+    def test_its_center_is_an_offset_in_the_data(self, setting, rng):
+        model, forward, target, truth, data = setting
+        data_space = forward.codomain
+        offset = data_space.scale(0.5, data_space.random(rng=rng))
+        prior = Ball(model, radius=3.0)
+        with_point = FeasiblePropertySet(
+            forward,
+            target,
+            prior,
+            data_space.add(data, offset),
+            noise=Ball(data_space, radius=0.0, center=offset),
+        )
+        shifted = FeasiblePropertySet(forward, target, prior, data)
+        assert with_point.form == "closed_form" and with_point.noise is None
+        for q in directions(target.codomain):
+            assert with_point.support(q) == pytest.approx(shifted.support(q), rel=1e-10)
+            for route in ("dual", "linear_certificate"):
+                assert with_point.support(q, via=route) == pytest.approx(
+                    shifted.support(q, via=route), rel=1e-6
+                )
+        assert np.allclose(with_point.ellipsoid.center, shifted.ellipsoid.center)
+        assert with_point.contains(target(truth))
+        first = LinearOperator.from_matrix(
+            target.codomain,
+            EuclideanSpace(1),
+            np.array([[1.0, 0.0]]),
+            form="components",
+        )
+        q = EuclideanSpace(1).basis_vector(0)
+        assert with_point.push_forward(first).support(q) == pytest.approx(
+            shifted.push_forward(first).support(q), rel=1e-10
+        )
+
+
+class TestOutsideWhateverTheSign:
+    def test_a_contact_point_is_never_proved_outside(self, setting):
+        model, forward, target, truth, data = setting
+        far = model.scale(-20.0, truth)
+        feasible = FeasiblePropertySet(
+            forward, target, Ball(model, radius=3.0, center=far), forward(far)
+        )
+        qs = directions(target.codomain)
+        assert min(feasible.support(q) for q in qs) < 0.0
+        for q in qs:
+            contact = feasible.support_maximizer(q)
+            assert feasible.contains(contact)
+            assert not feasible.outside(contact, [q])
+            beyond = target.codomain.axpy(1e-3, q, target.codomain.copy(contact))
+            assert feasible.outside(beyond, [q])
+
+
+def shifted_ball(space, shift, *, radius=1.0):
+    """The ball written as ``{ ||m||^2 - shift <= radius^2 - shift }``."""
+    from pygeoinf2.algebra.operators import Functional
+    from pygeoinf2.geometry import SublevelSet
+
+    return SublevelSet(
+        Functional.from_callables(
+            space,
+            lambda m: space.squared_norm(m) - shift,
+            gradient=lambda m: space.scale(2.0, m),
+        ),
+        level=radius**2 - shift,
+    )
+
+
+class TestTheDualsEmptiness:
+    def test_a_prior_written_with_a_negative_level_is_not_empty(self, setting):
+        model, forward, target, truth, data = setting
+        small = model.scale(0.3 / model.norm(truth), truth)
+        noise = oracle_of(Ball(forward.codomain, radius=0.1))
+        for shift in (0.0, 2.0):
+            feasible = FeasiblePropertySet(
+                forward, target, shifted_ball(model, shift), forward(small), noise=noise
+            )
+            assert feasible.algorithms["feasibility"] == ("dual",)
+            assert feasible.level == 1.0 - shift
+            assert not feasible.is_empty()
+            assert feasible.feasibility_result().level == feasible.level
+            with pytest.raises(NotImplementedError, match="exhibiting"):
+                feasible.fitting_model()
+
+    def test_a_noise_set_written_with_a_negative_level_fits_the_same(self, setting):
+        model, forward, target, truth, data = setting
+        prior = quartic_ball(model, 3.0)
+        levels = []
+        for shift in (0.0, 2.0):
+            noise = shifted_ball(forward.codomain, shift, radius=0.1)
+            feasible = FeasiblePropertySet(forward, target, prior, data, noise=noise)
+            assert feasible.algorithms["feasibility"][0] == "search"
+            result = feasible.feasibility_result()
+            assert np.isfinite(result.level) and not feasible.is_empty()
+            levels.append(result.level)
+        assert levels[1] == pytest.approx(levels[0], rel=1e-6)
+
+    def test_a_failing_support_function_is_raised_not_read_as_empty(self, setting):
+        model, forward, target, truth, data = setting
+
+        def broken(q):
+            raise ValueError("the oracle failed")
+
+        prior = ConvexSet.from_support_function(model, broken, maximizer=broken)
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            prior,
+            data,
+            noise=oracle_of(Ball(forward.codomain, radius=0.1)),
+        )
+        assert feasible.algorithms["feasibility"] == ("dual",)
+        with pytest.raises(ValueError, match="the oracle failed"):
+            feasible.is_empty()
+
+    @pytest.mark.parametrize("units", [1.0, 1e7])
+    def test_a_short_budget_is_not_converged_whatever_the_units(self, rng, units):
+        from pygeoinf2.geometry.feasible import Dual
+
+        model, data, prop, forward, target, truth = problem_on(
+            rng, model_dim=6, data_dim=3, property_dim=2
+        )
+        center = model.scale(-units, truth)
+        prior = Ball(model, radius=0.05 * units, center=center)
+        noise = Ball(data, radius=0.01 * units)
+        feasible = FeasiblePropertySet(
+            forward, target, prior, forward(center), noise=noise
+        )
+        # The direction in which the property is most negative.
+        image = target(center)
+        q = prop.scale(-1.0 / prop.norm(image), image)
+        short = Dual(max_iterations=3)
+        result = feasible.support_result(q, via=short)
+        assert result.value < -0.1 * units and not result.converged
+        assert result.value >= feasible.support(q) - 1e-9 * units
+        assert not feasible.is_empty(via=short)
+        # An empty set is still found empty, by a certificate, at any scale.
+        far = FeasiblePropertySet(
+            forward, target, prior, data.scale(50.0, forward(center)), noise=noise
+        )
+        assert far.is_empty(via="dual") and far.is_empty()
+
+
+class TestADegeneratePrior:
+    """A semidefinite ellipsoid prior whose flat direction the data see: the
+    model-space formalism answers, the data-space one refuses by name."""
+
+    def test_the_model_space_answers_and_the_data_space_names_it(self, rng):
+        from pygeoinf2.geometry import Ellipsoid
+        from pygeoinf2.geometry.feasible import Primal, Search
+
+        model, data, prop, forward, target, truth = problem_on(
+            rng, model_dim=5, data_dim=3, property_dim=1
+        )
+        gram = model.gram_matrix()
+        flat = rng.normal(size=5)
+        semidefinite = gram - np.outer(gram @ flat, gram @ flat) / (flat @ gram @ flat)
+        precision = LinearOperator.from_matrix(
+            model,
+            model,
+            semidefinite / 9.0,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        prior = Ellipsoid(model, precision)
+        assert not prior.is_bounded
+        noise = Ball(data, radius=0.2)
+        observed = data.add(forward(truth), data.scale(0.01, data.random(rng=rng)))
+        feasible = FeasiblePropertySet(forward, target, prior, observed, noise=noise)
+        q = prop.basis_vector(0)
+        with pytest.raises(ValueError, match="model_space"):
+            feasible.is_empty()
+        with pytest.raises(ValueError, match="model_space"):
+            feasible.support(q)
+        assert not feasible.is_empty(via=Search(formalism="model_space"))
+        primal = Primal(formalism="model_space")
+        inner, outer = feasible.support_bracket(q, via=primal)
+        assert inner <= outer + 1e-12 and outer - inner <= 1e-4 * abs(outer)
+        extremal = feasible.extremal_model(q, via=primal)
+        assert prior.contains(extremal, rtol=1e-6)
+        assert noise.contains(data.subtract(observed, forward(extremal)), rtol=1e-6)
+        # The default outer ellipsoid is in the model space too.
+        ellipsoid = feasible.outer_ellipsoid()
+        assert ellipsoid.support_function()(q) >= inner
+
+
+class TestSweepsAndWorkers:
+    @pytest.fixture
+    def balls(self, setting):
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        return feasible, target, truth, data
+
+    def test_a_parallel_sweep_is_kept_by_the_set(self, balls):
+        feasible, target, truth, data = balls
+        qs = circle(target.codomain, 6)
+        sweep = feasible.support_sweep(qs, n_jobs=2)
+        for q, result in zip(qs, sweep.results):
+            assert feasible.support_result(q) is result
+
+    def test_a_direction_and_its_opposite_share_the_kernel_solve(
+        self, balls, monkeypatch
+    ):
+        from pygeoinf2.geometry.feasible import Primal, _QuadraticFamily
+
+        feasible, target, truth, data = balls
+        space = feasible.forward_operator.codomain
+        cold = []
+        original = _QuadraticFamily.solve
+
+        def recording(self, multiplier, right_hand_side, /, *, x0=None):
+            if x0 is None:
+                cold.append((multiplier, space.to_components(right_hand_side)))
+            return original(self, multiplier, right_hand_side, x0=x0)
+
+        monkeypatch.setattr(_QuadraticFamily, "solve", recording)
+        primal = Primal(formalism="data_space")
+        for q in directions(target.codomain):
+            feasible.support(q, via=primal)
+        for i, (multiplier, rhs) in enumerate(cold):
+            for earlier, previous in cold[:i]:
+                assert not (
+                    earlier == multiplier and np.allclose(previous, -rhs, rtol=1e-14)
+                )
+
+    def test_the_probes_take_workers_and_agree_with_the_serial_ones(self, balls):
+        feasible, target, truth, data = balls
+        prop = target.codomain
+        qs = circle(prop, 8)
+        q = prop.basis_vector(0)
+        parallel = feasible.with_data(data)
+        assert parallel.extent(q, max_iterations=20, n_jobs=2) == pytest.approx(
+            feasible.extent(q, max_iterations=20), rel=1e-9
+        )
+        serial_hull = feasible.inner_hull(qs)
+        parallel_hull = parallel.inner_hull(qs, n_jobs=2)
+        # Each worker warm-starts its own root finds, so the contact points
+        # agree to the primal's accuracy rather than to rounding.
+        serial_points = [prop.to_components(feasible.support_maximizer(p)) for p in qs]
+        parallel_points = [
+            prop.to_components(parallel.support_maximizer(p)) for p in qs
+        ]
+        assert np.allclose(parallel_points, serial_points, rtol=1e-3, atol=1e-3)
+        for point in parallel_points:
+            assert parallel_hull.contains(point, rtol=1e-6)
+        for point in serial_points:
+            assert serial_hull.contains(point, rtol=1e-6)
+        values = [prop.scale(s, target(truth)) for s in (0.0, 0.5, 1.0, 3.0)]
+        admitted = feasible.with_data(data).inner_hull(
+            values + qs, source="admitted", n_jobs=2
+        )
+        assert admitted.contains(target(truth), rtol=1e-6)
+        ellipsoid = parallel.outer_ellipsoid(n_jobs=2)
+        assert np.allclose(
+            prop.to_components(ellipsoid.center),
+            prop.to_components(feasible.outer_ellipsoid().center),
+        )
+        far = prop.scale(10.0, prop.from_components(np.array([1.0, 1.0])))
+        assert parallel.outside(far, qs, n_jobs=2) and feasible.outside(far, qs)
+
+
+class TestTheLevelSideOnQuadraticSets:
+    def test_the_level_function_has_the_searchs_gradient(self, setting):
+        from pygeoinf2.geometry.feasible import Search
+
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        assert feasible.form == "quadratic"
+        assert feasible.level_function().has_derivative
+        assert feasible.has_smooth_level_function
+        tight = Search(rtol=1e-12)
+        prop = target.codomain
+        point = target(truth)
+        result = feasible.inclusion_result(point, via=tight)
+        # The data constraint binds, so both terms of the gradient count.
+        assert result.multiplier > 0.0
+        gradient = tight.level_gradient(feasible, point)
+        step = 1e-4 * prop.norm(point)
+        for u in (prop.basis_vector(0), prop.basis_vector(1)):
+            slope = (
+                feasible.inclusion_level(
+                    prop.axpy(step, u, prop.copy(point)), via=tight
+                )
+                - feasible.inclusion_level(
+                    prop.axpy(-step, u, prop.copy(point)), via=tight
+                )
+            ) / (2.0 * step)
+            assert prop.inner_product(gradient, u) == pytest.approx(slope, rel=1e-4)
+
+    def test_via_reaches_only_the_probe_it_answers(self, setting):
+        model, forward, target, truth, data = setting
+        feasible = FeasiblePropertySet(
+            forward,
+            target,
+            Ball(model, radius=3.0),
+            data,
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        # One property, so that the distance's projection is a line search.
+        first = LinearOperator.from_matrix(
+            target.codomain,
+            EuclideanSpace(1),
+            np.array([[1.0, 0.0]]),
+            form="components",
+        )
+        line = feasible.push_forward(first)
+        q = line.domain.basis_vector(0)
+        by_distance = line.extent(q, max_iterations=4, via="distance")
+        assert by_distance == pytest.approx(line.extent(q, max_iterations=4), rel=1e-6)
+        with pytest.raises(NotImplementedError, match="exhibiting"):
+            feasible.fitting_model(via="dual")
+
+
+def test_the_algorithms_are_exported_with_the_set():
+    import pygeoinf2.geometry as geometry
+    import pygeoinf2.geometry.feasible as feasible
+
+    for name in (
+        "Algorithm",
+        "ClosedForm",
+        "Distance",
+        "Dual",
+        "EllipsoidResult",
+        "InclusionResult",
+        "LinearCertificate",
+        "Primal",
+        "SProcedure",
+        "Search",
+        "Splitting",
+        "SupportResult",
+        "SweepResult",
+    ):
+        assert name in feasible.__all__ and name in geometry.__all__, name
+        assert getattr(geometry, name) is getattr(feasible, name)

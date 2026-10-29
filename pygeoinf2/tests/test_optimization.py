@@ -1249,3 +1249,28 @@ class TestThePrecisionFloor:
         assert secant > 0.0
         assert secant >= along * 0.99
         assert LBFGS._curvature(space, plain.at(x), plain.at(x).gradient, 1.0) is None
+
+
+class TestTheTrustRegionTakesItsLengthsFromTheProblem:
+    """The radii come from the problem. Absolute -- a starting radius of
+    one, a cap of a million and a collapse below ``1e-14`` -- a quadratic
+    whose minimizer is ``2e8`` from the start would take 243 iterations
+    where Newton takes one."""
+
+    @pytest.mark.parametrize("scale", [1.0, 1e4, 1e8, 1e-8])
+    def test_a_quadratic_takes_one_step_at_every_distance(self, scale):
+        from pygeoinf2.numerics.convex import SquaredDistance
+
+        space = make_dense_metric_space(5)
+        center = space.scale(scale, np.ones(5))
+        result = TrustRegionNewton().minimize(
+            SquaredDistance(space, center=center), space.zero()
+        )
+        assert result.converged
+        assert result.iterations <= 2
+        error = space.norm(space.subtract(result.minimizer, center))
+        assert error <= 1e-10 * space.norm(center)
+
+    def test_a_line_search_is_refused(self):
+        with pytest.raises(TypeError, match="no line search"):
+            TrustRegionNewton(line_search=ArmijoLineSearch())

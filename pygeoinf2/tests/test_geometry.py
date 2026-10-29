@@ -1681,7 +1681,7 @@ class TestSurfaces:
         draws = [surface.sample(rng=rng) for _ in range(300)]
         assert all(surface.contains(draw) for draw in draws)
         # white noise, not `random`: only the former is isotropic in a metric
-        assert X.norm(X.mean(draws)) < 0.3 * surface.radius
+        assert X.norm(X.sample_expectation(draws)) < 0.3 * surface.radius
 
     def test_an_ellipsoid_surface_recognizes_its_own_points(self, rng):
         from pygeoinf2.geometry.convex import EllipsoidSurface
@@ -1694,3 +1694,121 @@ class TestSurfaces:
         x = X.random(rng=rng)
         assert surface.contains(X.scale(1.0 / X.norm(x), x))
         assert not surface.contains(X.scale(2.0 / X.norm(x), x))
+
+
+class TestScaleFreeMembership:
+    """A membership tolerance relative to the set's own size means the same
+    whatever the units: a point outside by the set's whole scale is outside
+    at a scale of ``1e-9`` as at one."""
+
+    @pytest.mark.parametrize("scale", [1.0, 1e-9, 1e9])
+    def test_a_point_outside_by_the_sets_scale_is_outside(self, scale):
+        space = make_dense_metric_space(2)
+        normal = space.basis_vector(0)
+        size = space.squared_norm(normal)
+        # (normal, x) == 2 s against a bound of s, and half that inside.
+        far = space.scale(2.0 * scale / size, normal)
+        near = space.scale(0.5 * scale / size, normal)
+        half = HalfSpace(space, normal, offset=scale)
+        plane = Hyperplane(space, normal, offset=scale)
+        slab = Polytope(
+            space,
+            [half, HalfSpace(space, space.negative(normal), offset=scale)],
+            outer=True,
+        )
+        for subset in (half, plane, slab):
+            assert not subset.contains(far)
+        assert half.contains(near) and slab.contains(near)
+        assert plane.contains(space.scale(scale / size, normal))
+        line = LinearSubspace.from_basis(space, [normal])
+        off = space.scale(scale, space.basis_vector(1))
+        assert not line.contains(off)
+        assert line.contains(space.scale(scale, normal))
+
+
+class TestSupportOnlySets:
+    def test_outside_is_a_proof_whatever_the_sign_of_the_support(self):
+        space = EuclideanSpace(2)
+        ball = Ball(space, radius=1.0, center=np.array([-10.0, 0.0]))
+        oracle = ConvexSet.from_support_function(
+            space, ball.support_function(), maximizer=ball.support_maximizer
+        )
+        for q in (np.array([1.0, 0.0]), np.array([-1.0, 0.0]), np.array([0.6, 0.8])):
+            contact = ball.support_maximizer(q)
+            assert ball.contains(contact)
+            assert not oracle.outside(contact, [q])
+            assert oracle.outside(contact + 1e-3 * q, [q])
+        assert not oracle.outside(np.array([-9.0, 0.0]), [np.array([1.0, 0.0])])
+
+
+class TestPolytopeIntersection:
+    def test_a_polytope_intersects_any_convex_set(self):
+        from pygeoinf2.geometry import ConvexIntersection
+
+        space = EuclideanSpace(2)
+        slab = Polytope(
+            space, [HalfSpace(space, np.array([1.0, 0.0]), offset=0.5)], outer=True
+        )
+        for other in (
+            Ball(space, radius=1.0),
+            HalfSpace(space, np.array([0.0, 1.0])),
+        ):
+            both = slab & other
+            assert isinstance(both, ConvexIntersection)
+            assert both.contains(np.array([0.2, -0.5]))
+            assert not both.contains(np.array([0.8, -0.1]))
+        inner = Polytope(
+            space, [HalfSpace(space, np.array([0.0, 1.0]), offset=1.0)], outer=False
+        )
+        with pytest.raises(ValueError, match="outer and an inner"):
+            slab & inner
+
+
+class TestTheEllipsoidsOperators:
+    @staticmethod
+    def pair(space, rng):
+        from .conftest import spd_matrix
+
+        galerkin = spd_matrix(rng, space.dim)
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        precision = LinearOperator.from_matrix(
+            space, space, galerkin, form="galerkin", traits=traits
+        )
+        components = np.linalg.solve(space.gram_matrix(), galerkin)
+        covariance = LinearOperator.from_matrix(
+            space, space, np.linalg.inv(components), form="components", traits=traits
+        )
+        return precision, covariance
+
+    def test_a_covariance_must_be_the_precisions_inverse(self, rng):
+        space = make_dense_metric_space(3)
+        precision, covariance = self.pair(space, rng)
+        ellipsoid = Ellipsoid(space, precision, covariance=covariance)
+        moved = ellipsoid.translate(space.basis_vector(0))
+        assert moved.covariance is covariance
+        with pytest.raises(ValueError, match="operator on"):
+            Ellipsoid(
+                space, precision, covariance=LinearOperator.identity(EuclideanSpace(3))
+            )
+        with pytest.raises(ValueError, match="inverse"):
+            Ellipsoid(space, precision, covariance=covariance * 4.0)
+
+    def test_a_semidefinite_hessian_claims_only_semidefiniteness(self, rng):
+        space = make_dense_metric_space(4)
+        gram = space.gram_matrix()
+        flat = np.array([1.0, 0.0, 0.0, 0.0])
+        matrix = gram - np.outer(gram @ flat, gram @ flat) / (flat @ gram @ flat)
+        precision = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        cylinder = Ellipsoid(space, precision)
+        hessian = cylinder.level_function().hessian(space.zero())
+        assert not Traits.POSITIVE_DEFINITE & hessian.traits
+        check_traits(hessian, rng=rng)
+        bounded, _ = self.pair(space, rng)
+        hessian = Ellipsoid(space, bounded).level_function().hessian(space.zero())
+        assert Traits.POSITIVE_DEFINITE & hessian.traits
