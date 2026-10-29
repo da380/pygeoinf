@@ -409,6 +409,18 @@ Recorded rather than settled, so nobody has to rediscover them.
   - *Correlated layers*: `from_product(correlation=)` ties factors on one
     latent space only (D-206); a layered correlation waits for sign-
     normalized spectral bases from the planetmodel update.
+  - *From the apps' re-measurement (D-207)*: `ambient_ball(method=
+    "randomized", rank=dim)` can warn that the kept eigenvalues carry a
+    fraction of the trace although every eigenvalue is kept, since it
+    compares with a 32-probe estimate whose scatter is about 25% when a
+    few modes dominate (6 of 20 seeds on a 64-point circle); skip the
+    check at full rank and allow for the estimate's standard error. A
+    product measure's `L L*` is two block-diagonal applications not folded
+    block by block, so on a layered spectral-element space a covariance
+    application costs two transform round trips and a draw two syntheses
+    and an analysis instead of one synthesis (256 prior draws 0.24 s
+    against 0.61 s; posterior draws 1.12 s against 3.06 s). A process
+    `support_sweep` leaves the parent's application counters empty.
 - **The public documentation is still v1's.** `README.md`, the Sphinx tree
   under `docs/` and the notebooks under `tutorials/` describe `pygeoinf`,
   not this package. Pointing them at 2.0 was deferred to the rename.
@@ -513,15 +525,11 @@ planetmodel 1.3.2.
 4. DONE (D-199). The planet-density app's unit scheme; David judged
    part D's weaker contrast better as it is.
 
-Then the review: the public surface against the principles, one agent per
-layer with findings verified; the examples, whether everything the core
-needs is there and the order makes sense, their aim being to illustrate
-the core functionality briefly (David, 2026-10-29); every package's
-`__init__.py` doing only what it should, re-exports and nothing else,
-with no module code (David, 2026-10-29; `ball`, `disk` and `interval`
-were split as D-197, and the rest were already clean); naming and
-consistency; nothing marked
-provisional ("a niche library whose userbase is largely its developers").
+DONE 2026-10-29 (D-200 to D-207): the review, seven layers by seven
+reviewers, five decisions, seven fix packages, 28 Must-fix items fixed,
+most Should items fixed, the rest listed above in §7 as left open. Its
+working files are under `review/` (findings per layer, `SUMMARY.md` with
+the decisions, `briefs/`) until tidying deletes them.
 The external asks are out of the review: the student has seen the updates
 and is happy, and sl3dpp's list is not a concern now.
 

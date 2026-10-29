@@ -3691,6 +3691,31 @@ until the planetmodel update normalizes the signs, when mode-for-mode
 pairing across layers of one geometry can be given a meaning. D-196 is
 amended accordingly.
 
+**D-207. The mini-apps after the review** (2026-10-29, fix package G).
+Every README number re-measured at full scale and every override at
+quick; every slow test passing. The answers did not move except in the
+tomography app's bent-ray part, whose layered disk's radial mesh changed
+with D-205's unit-independent mesh (49/57 radii, was 53/61), so its truth
+and the numbers derived from it moved, and the README's "comes no closer"
+became "barely closer". What the library now offers replaced hand-built
+pieces: the C++ app reads the ellipsoid's `radius`; the MFEM app's
+self-adjoint-only wrapper around its solve is gone, `check_traits`
+testing both claims without a matrix; the point-data app's serial first
+direction (there so threads could share factorizations) is gone, part E
+running whole in 115 s on six worker processes, and its printout says the
+parent's tally cannot see the workers' applications; the tomography app's
+re-seating of its layered prior factor is gone, `sobolev_prior` returning
+`space.sobolev_measure(...)` directly, at a sampling cost of two to three
+times until the product's `L L*` is folded block by block (§7); its
+mixture takes `n_jobs=`, and its resolution bumps use the constant
+extension, which the fit extension leaked into the padding. The waveform
+app evaluated `LaplaceApproximation(rank=)` and did not adopt it (rank
+100 overstates the box standard deviations by 30 to 40% at full scale;
+matching the solves to 2% at quick scale takes twice the app's rank at
+520 applications against 345), and the walkthrough says why; its README
+had stale check and override numbers from before the review, now the
+measured ones. The MPI test passes with PETSc's `mpicxx`.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling
