@@ -1481,11 +1481,15 @@ class TestGeneralSets:
         assert not feasible.is_empty()
         for q in directions(target.codomain):
             assert feasible.support(q) == pytest.approx(reference.support(q), rel=1e-4)
+            # The extremal model comes out of the inner L-BFGS solve at the
+            # root multiplier, and its norm and misfit are accurate to that
+            # solve rather than to the root search: a looser margin than the
+            # support's, which the search does control.
             extremal = feasible.extremal_model(q)
-            assert model.norm(extremal) <= 3.0 * (1.0 + 1e-4)
+            assert model.norm(extremal) <= 3.0 * (1.0 + 1e-3)
             assert forward.codomain.norm(
                 forward.codomain.subtract(data, forward(extremal))
-            ) <= 0.15 * (1.0 + 1e-4)
+            ) <= 0.15 * (1.0 + 1e-3)
         q = target.codomain.basis_vector(0)
         lower, upper = feasible.extent(q)
         assert lower < upper
