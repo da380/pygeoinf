@@ -52,6 +52,7 @@ from ..probability.gaussian import GaussianMeasure
 from ._points import LocalEvaluation
 from .axis import AxisSpace
 from .base import SpectralElementSpace, _evaluation_route, _local_operator
+from ..traits import Traits
 
 __all__ = ["Layered"]
 
@@ -611,8 +612,15 @@ class Layered(CoordinateDirectSum, HilbertModule):
         matrix = self.basis_matrix(points, side="above") - self.basis_matrix(
             points, side="below"
         )
+        # Onto: the jumps at distinct interfaces are independent functionals,
+        # each layer's basis being free to take any value at its ends. So an
+        # exact conditioning on the jumps is well posed and says so.
         return LinearOperator.from_matrix(
-            self, EuclideanSpace(len(points)), matrix, form="galerkin"
+            self,
+            EuclideanSpace(len(points)),
+            matrix,
+            form="galerkin",
+            traits=Traits.SURJECTIVE,
         )
 
     # ----------------------------------------------------------------- #

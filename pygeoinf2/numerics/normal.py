@@ -687,10 +687,20 @@ class NormalOperator(FactoredNormalOperator):
             return inverse
         identity = LinearOperator.identity(self.prior_covariance.domain)
         # A Schur complement, so positive semidefinite -- a posterior
-        # covariance always is. The trait algebra cannot see that through a
-        # difference, so the claim is made where the reason is known.
+        # covariance always is -- and ``(Q^-1 + A* R^-1 A)^-1``, so definite
+        # whenever the prior and the error covariances both are. The trait
+        # algebra cannot see either through a difference, so the claim is
+        # made where the reason is known.
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        error = self.error_covariance
+        if (
+            error is not None
+            and Traits.POSITIVE_DEFINITE in self.prior_covariance.traits
+            and Traits.POSITIVE_DEFINITE in error.traits
+        ):
+            traits |= Traits.POSITIVE_DEFINITE
         return ((identity - gain @ self._forward) @ self.prior_covariance).with_traits(
-            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+            traits
         )
 
     def right_hand_side(self, residual: Any, /) -> Any:

@@ -17,6 +17,7 @@ import pytest
 
 from pygeoinf2.symmetric_space import box as box_module
 from pygeoinf2.symmetric_space import circle, line, plane, torus
+from pygeoinf2.traits import Traits
 
 
 def build_geometries():
@@ -360,7 +361,11 @@ class TestTwoPointQuantitiesInClosedForm:
         _, space = geometry
         prior = space.sobolev_measure(2.0, 0.3)
         points = space.random_points(3, rng=rng)
-        operator = space.point_evaluation_operator(points)
+        # Three distinct points: onto, which an exact conditioning needs
+        # and which is the caller's to claim.
+        operator = space.point_evaluation_operator(points).with_traits(
+            Traits.SURJECTIVE
+        )
         posterior = prior.condition(operator, np.zeros(3))
         assert space._spectral_variances(prior) is not None
         assert space._spectral_variances(posterior) is None

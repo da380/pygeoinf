@@ -390,7 +390,9 @@ print(
     f"Newton: {search.iterations} iterations, gradient norm"
     f" {search.gradient_norm:.1e}, converged: {search.converged}"
 )
-occam = Occam(ray_problem, start=mode, gtol=1e-4, max_iterations=6).solve(ray_data)
+# rtol is relative to the size of the terms that cancel at a stationary
+# point of the augmented Lagrangian, so it means the same in any units.
+occam = Occam(ray_problem, start=mode, rtol=1e-4, max_iterations=6).solve(ray_data)
 print(f"{'':12s} {'average':>8} {'misfit':>8} {'norm':>7}")
 for name, model in (("MAP mode", mode), ("Occam", occam.minimizer)):
     print(

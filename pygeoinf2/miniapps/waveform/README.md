@@ -379,7 +379,7 @@ middle 1.6 km of the top 0.6 km, and its relative error over that middle is
 0.51.
 
 **D.** Occam at 95%: five outer iterations of the augmented
-Lagrangian, thirteen Newton iterations on the Gauss-Newton Hessian, 30 s; the
+Lagrangian, twenty-one Newton iterations on the Gauss-Newton Hessian, 44 s; the
 constraint met to 3 × 10⁻⁶ of the critical value, its multiplier 0.072.
 Occam's norm is the space's `H²`, the MAP's the prior's.
 

@@ -80,7 +80,7 @@ print("  its tangent space is the kernel:", type(solutions.tangent).__name__)
 print()
 
 # --- and so a linear constraint is just another indicator ----------------
-result = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+result = ProximalGradient(max_iterations=2000, rtol=1e-14).minimize(
     SquaredDistance(X, center=X.random(rng=rng)),
     X.random(rng=rng),
     nonsmooth=solutions.indicator(),

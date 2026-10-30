@@ -724,16 +724,16 @@ class _Composition[X, Y](LinearOperator[X, Y]):
             if not LinearOperator.adjoints_are_linked(factors[i], factors[n - 1 - i]):
                 return Traits.NONE
 
-        outer_invertible = all(
-            Traits.INVERTIBLE & factors[i].traits == Traits.INVERTIBLE
+        outer_surjective = all(
+            Traits.SURJECTIVE & factors[i].traits == Traits.SURJECTIVE
             for i in range(n // 2)
         )
         if n % 2 == 0:
-            return gramian_traits(invertible=outer_invertible)
+            return gramian_traits(surjective=outer_surjective)
         middle = factors[n // 2]
         if not LinearOperator.adjoints_are_linked(middle, middle):
             return Traits.NONE
-        return congruence_traits(middle.traits, outer_invertible=outer_invertible)
+        return congruence_traits(middle.traits, outer_surjective=outer_surjective)
 
     @property
     def factors(self) -> tuple[LinearOperator, ...]:

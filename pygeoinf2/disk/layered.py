@@ -9,6 +9,7 @@ import numpy as np
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import EuclideanSpace
 from ..spectral_element import layered as _layered
+from ..traits import Traits
 
 from .space import Disk
 
@@ -104,6 +105,13 @@ class Layered(_layered.Layered):
         matrix = self.basis_matrix(points, side="above") - self.basis_matrix(
             points, side="below"
         )
+        # Onto: the jumps at distinct interfaces and directions are
+        # independent functionals, so an exact conditioning on them is well
+        # posed and says so.
         return LinearOperator.from_matrix(
-            self, EuclideanSpace(len(points)), matrix, form="galerkin"
+            self,
+            EuclideanSpace(len(points)),
+            matrix,
+            form="galerkin",
+            traits=Traits.SURJECTIVE,
         )

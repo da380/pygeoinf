@@ -109,7 +109,7 @@ smooth = SquaredDistance(X, center=center)
 
 # min ||x - c||^2/2 + w ||x||: the answer is the shrinkage of c, in closed form.
 penalty = NormFunctional(X, weight=0.3)
-shrunk = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+shrunk = ProximalGradient(max_iterations=2000, rtol=1e-14).minimize(
     smooth, X.random(rng=rng), nonsmooth=penalty
 )
 print(f"min ||x - c||^2/2 + 0.3 ||x||: {shrunk.iterations} iterations of FISTA")
@@ -120,7 +120,7 @@ print(
 
 # A hard constraint costs one argument: the set's indicator, whose prox is the
 # projection.
-constrained = ProximalGradient(max_iterations=2000, gtol=1e-14).minimize(
+constrained = ProximalGradient(max_iterations=2000, rtol=1e-14).minimize(
     smooth, X.random(rng=rng), nonsmooth=Ball(X, radius=0.25).indicator()
 )
 print("min ||x - c||^2/2 subject to ||x|| <= 0.25")

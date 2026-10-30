@@ -697,11 +697,14 @@ class SubgradientDescent(Optimizer):
         best_point, best_value = space.copy(x), value
         history = [best_value]
         evaluations = 1
+        tolerance: float | None = None
 
         for iteration in range(1, self._max_iterations + 1):
             subgradient = functional.subgradient(x)
             norm = space.norm(subgradient)
-            if norm <= self._gtol:
+            if tolerance is None:
+                tolerance = self._tolerance(norm)
+            if norm <= tolerance:
                 return OptimizationResult(
                     best_point,
                     best_value,
@@ -734,6 +737,11 @@ class SubgradientDescent(Optimizer):
             "iteration limit reached",
             history,
         )
+
+
+_PROBE_FRACTION = 1e-6
+"""How far, as a fraction of the start's own length, the proximal gradient
+probes for its first Lipschitz estimate."""
 
 
 class ProximalGradient(Optimizer):
@@ -826,6 +834,7 @@ class ProximalGradient(Optimizer):
         step = self._step if self._step is not None else self._initial_step(smooth, x)
         history = [total(x)]
         evaluations = 1
+        tolerance: float | None = None
 
         for iteration in range(1, self._max_iterations + 1):
             model = smooth.at(y)
@@ -847,7 +856,12 @@ class ProximalGradient(Optimizer):
                     history,
                 )
 
-            progress = space.norm(space.subtract(candidate, x)) / max(step, 1e-300)
+            # The gradient mapping's norm, ``||x - x+|| / t``: the gradient's
+            # stand-in for a problem with a non-smooth part, and judged as a
+            # gradient is, relative to its size at the start.
+            progress = space.norm(space.subtract(candidate, x)) / step
+            if tolerance is None:
+                tolerance = self._tolerance(progress)
             previous_x, x = x, candidate
 
             if self._accelerated:
@@ -862,7 +876,7 @@ class ProximalGradient(Optimizer):
                 y = space.copy(x)
 
             history.append(total(x))
-            if progress <= self._gtol:
+            if progress <= tolerance:
                 return OptimizationResult(
                     x,
                     history[-1],
@@ -892,13 +906,23 @@ class ProximalGradient(Optimizer):
         Since the step only ever decreases afterwards, starting from a
         reasonable estimate rather than from one matters: an initial step far
         below the stable one is never recovered.
+
+        The probe is along the gradient, a millionth of the start's own
+        length away, so the estimate is the local one in any units. At the
+        zero vector there is no length in hand and the probe is the unit
+        gradient step, the first trial every optimizer here makes; a
+        secant over it is exact on a quadratic, and the backtracking takes
+        care of the rest.
         """
         space = smooth.domain
         gradient = smooth.gradient(x)
         norm = space.norm(gradient)
         if norm == 0.0:
             return 1.0
-        offset = space.scale(1e-6 / norm, gradient)
+        length = space.norm(x)
+        offset = space.scale(
+            _PROBE_FRACTION * length / norm if length > 0.0 else 1.0, gradient
+        )
         nearby = space.axpy(1.0, offset, space.copy(x))
         change = space.norm(space.subtract(smooth.gradient(nearby), gradient))
         lipschitz = change / space.norm(offset)
@@ -983,13 +1007,17 @@ class ProximalPoint(Optimizer):
         space = functional.domain
         x = space.copy(x0)
         history = [functional(x)]
+        tolerance: float | None = None
 
         for iteration in range(1, self._max_iterations + 1):
             nxt = functional.prox(x, self._step)
             movement = space.norm(space.subtract(nxt, x))
+            if tolerance is None:
+                # The first move is the scale the stop is relative to.
+                tolerance = self._tolerance(movement)
             x = nxt
             history.append(functional(x))
-            if movement <= self._gtol:
+            if movement <= tolerance:
                 return OptimizationResult(
                     x,
                     history[-1],

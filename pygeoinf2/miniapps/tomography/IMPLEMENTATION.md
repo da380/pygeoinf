@@ -273,7 +273,7 @@ they save (README).
 
 Part G's MAP model is the only iterative solve: `NewtonCG` on the
 Gauss-Newton Hessian, preconditioned by the prior covariance so that the
-inner solves see only the data's spectrum (tutorial 14); 7 iterations and 8
+inner solves see only the data's spectrum (tutorial 14); 6 iterations and 7
 ray tracings at the full size.
 
 ## 5. The estimators

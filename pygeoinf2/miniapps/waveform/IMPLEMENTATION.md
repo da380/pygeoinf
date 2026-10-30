@@ -219,7 +219,7 @@ Occam's Newton-CG has no preconditioner: its objective's quadratic term is
 the space's own norm, whose Hessian is the identity, so the inner solves
 already see `I` plus the data's term. The prior covariance there would
 precondition the wrong operator: at the quick scale Occam then ran out its
-ten outer iterations, 55 Newton iterations against 17, without converging.
+ten outer iterations, 59 Newton iterations against 24, without converging.
 
 The Laplace covariance on the box means (part E) is four solves with the
 normal operator at the mode, `P + J* R^-1 J`, whose prior precision spans

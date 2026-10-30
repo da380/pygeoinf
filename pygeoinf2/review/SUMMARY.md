@@ -180,3 +180,18 @@ were reproduced by the reviewer with the code in its file.
    not generally interesting in themselves; there will be no "optimal
    regularization parameter" or the like in this library. The new
    point-estimates example says so.
+
+## Decisions taken with David (2026-10-30)
+
+6. **Optimizers stop on relative tolerances.** The gradient tolerance
+   relative to the gradient at the start with the absolute one kept as a
+   user-settable floor, the precision floor relative to `|f|` at the
+   start, and the Armijo minimum step, the slope-ratio clip and the
+   proximal gradient's probe length made relative likewise; the nonlinear
+   apps and tutorials re-measured.
+7. **Definiteness is propagated, not stamped.** A push-forward `T C T*`
+   of a definite covariance claims definiteness when `T` is surjective
+   (an operator claiming invertibility or surjectivity); `credible_set`
+   and `condition` then refuse a merely semidefinite covariance by name
+   instead of claiming it. Tutorial 6's push-forwards pass through their
+   surjective property operators.

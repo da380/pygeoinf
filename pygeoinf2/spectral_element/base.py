@@ -896,7 +896,12 @@ class SpectralElementSpace(
                 "A measure with zero pointwise variance somewhere cannot be "
                 "scaled to a given standard deviation."
             )
-        scaling = self.multiplication_operator(target / np.sqrt(raw))
+        # Positive everywhere, so invertible; with the diagonal's own
+        # invertibility the factor is, and the covariance it builds is
+        # definite rather than merely semidefinite.
+        scaling = self.multiplication_operator(target / np.sqrt(raw)).with_traits(
+            Traits.INVERTIBLE
+        )
         return GaussianMeasure(
             self,
             expectation=expectation,

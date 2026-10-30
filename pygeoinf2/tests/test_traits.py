@@ -154,35 +154,35 @@ class TestInverse:
 
 class TestStructuralPatterns:
     def test_gramian_is_semidefinite(self):
-        t = gramian_traits(invertible=False)
+        t = gramian_traits(surjective=False)
         assert has(t, T.SELF_ADJOINT) and has(t, T.POSITIVE_SEMIDEFINITE)
         assert not has(t, T.POSITIVE_DEFINITE)
 
     def test_gramian_of_an_invertible_factor_is_definite(self):
-        assert has(gramian_traits(invertible=True), T.POSITIVE_DEFINITE)
+        assert has(gramian_traits(surjective=True), T.POSITIVE_DEFINITE)
 
     def test_congruence_preserves_semidefiniteness(self):
         """The covariance pushforward A Q A*."""
-        t = congruence_traits(T.POSITIVE_SEMIDEFINITE, outer_invertible=False)
+        t = congruence_traits(T.POSITIVE_SEMIDEFINITE, outer_surjective=False)
         assert has(t, T.POSITIVE_SEMIDEFINITE)
 
     def test_congruence_needs_an_invertible_flank_for_definiteness(self):
         assert not has(
-            congruence_traits(T.POSITIVE_DEFINITE, outer_invertible=False),
+            congruence_traits(T.POSITIVE_DEFINITE, outer_surjective=False),
             T.POSITIVE_DEFINITE,
         )
         assert has(
-            congruence_traits(T.POSITIVE_DEFINITE, outer_invertible=True),
+            congruence_traits(T.POSITIVE_DEFINITE, outer_surjective=True),
             T.POSITIVE_DEFINITE,
         )
 
     def test_congruence_of_an_unstructured_operator_gives_nothing(self):
-        assert congruence_traits(T.NONE, outer_invertible=True) == T.NONE
+        assert congruence_traits(T.NONE, outer_surjective=True) == T.NONE
 
 
 def test_bayesian_normal_operator_is_recognized():
     """A Q A* + R, the operator CG is asked to invert throughout the library."""
-    pushforward = congruence_traits(T.POSITIVE_SEMIDEFINITE, outer_invertible=False)
+    pushforward = congruence_traits(T.POSITIVE_SEMIDEFINITE, outer_surjective=False)
     noise = close(T.POSITIVE_DEFINITE)
     normal = sum_traits(pushforward, noise)
     assert has(normal, T.SELF_ADJOINT)

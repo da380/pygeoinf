@@ -3716,6 +3716,113 @@ matching the solves to 2% at quick scale takes twice the app's rank at
 had stale check and override numbers from before the review, now the
 measured ones. The MPI test passes with PETSc's `mpicxx`.
 
+**D-208. Optimizers stop on relative tolerances** (2026-10-30, David). The
+review's one disease in numerics (D-202) reached the smooth optimizers,
+the line searches, the convex methods and the augmented Lagrangian, all
+of which stopped on numbers in the problem's units. `Optimizer` takes
+`rtol=1e-8`, the gradient tolerance relative to the gradient at the
+start, and `gtol=0.0`, an absolute floor under it for a start already
+close to the answer; the test is `||g|| <= max(rtol ||g0||, gtol)`. The
+precision floor that turns a failed line search near the minimizer into
+convergence is `sqrt(eps * scale * L)` with `scale` the larger of `|f|`
+at the point and at the start and no absolute term. Newton-CG and the
+trust region set their forcing from `sqrt(||g|| / ||g0||)`. The first
+trial step along a gradient direction is `|f| / ||g||^2`, Polyak's step
+with a target of zero, the one guess the value and the gradient can make
+with the right units, and one when the value is zero; the slope-ratio
+heuristic clips the dimensionless ratio of slopes, not the step. Armijo's
+`min_step` and Wolfe's `max_step` are multiples of the first trial step;
+the Wolfe bracketing extrapolates by a secant on the slope, exact on a
+quadratic, at most tenfold a move (a thousandfold sent L-BFGS on an
+exponential forward into overflow), and its sectioning moves an
+interpolant that lands inside the margin to the margin instead of
+bisecting, so a minimizer many decades inside the bracket is reached in a
+decade a step. The proximal gradient and the proximal point stop relative
+to their first move, the proximal gradient's Lipschitz probe is a
+millionth of the start's length, and `SubgradientDescent` judges its
+subgradient relative to the first.
+
+The augmented Lagrangian's inner tolerances are relative to the size of
+the terms that cancel at a stationary point of the augmented Lagrangian:
+the objective's gradient and each multiplier, as the update is about to
+set it, times its constraint's gradient. The gradient at the start is not
+that scale, being dominated by the penalty on whatever the start
+violates; so the first inner solve is relative to its own start, and
+because the scale is read where an inner solve ends, a solve that
+stopped on its gradient tolerance short of it is continued from its own
+end (at most eight times). The scale is kept as the largest seen, so a
+start that is already the answer is judged against the problem it solved
+and not against rounding. Without the refinement a first solve a
+hundredfold down from a penalty-dominated start left a multiplier
+estimate that was noise, the outer loop then moved it by one penalty
+unit a step, and the stopping test, which does not check complementary
+slackness, declared an overfit model converged. The arguments are
+`initial_rtol`, `rtol_reduction`, `rtol` and the floor `gtol`;
+`initial_gtol` and `gtol_reduction` are gone, and `ConstrainedMinimization`
+and `Occam` take `rtol=` and `gtol=` the same way. The violation
+`tolerance` stays in the constraints' units, which the caller chose.
+
+The ray tracer refuses, with `EvaluationError`, a slowness model whose
+bent rays leave the finite plane; the transform behind the evaluation
+segfaulted on them, which a far trial step of a line search had found.
+
+Tests: `TestOptimizersDoNotDependOnUnits` (five methods on a dense
+metric at scales `1e-12`, `1` and `1e12`, the Newton methods step for
+step the same; the step heuristics; the line-search limits), the
+precision floor at `1e-12` and `1e12`, and the convex methods' tests
+through `rtol`. Callers that passed `gtol=` as their working tolerance
+pass `rtol=`: examples 16 and 17, and `Occam` in tutorial 14 (`1e-4`) and
+the waveform app (`1e-5`, the loosest that reproduces the printed
+digits). Re-measured: the Newton counts fell everywhere with the relative
+forcing (tutorial 9's MAP 10 to 8, tutorial 13's 14 to 11, tutorial 14's
+14 to 12, the tomography app's bent-ray MAP 7 to 6 iterations); L-BFGS
+counts moved by a few either way (tutorial 3's on-space 40/43/48/46 to
+34/47/44/44 at four grids, its by-components 175/275/891/3481 to
+170/282/885/3481); tutorial 9's L-BFGS no longer overshoots into the
+range where its forward fails, its first step being sized by the value,
+so the tutorial shows the refusal protocol and points at example 12 for
+a run that meets it. Occam costs more: the waveform app's full-scale
+Occam takes 21 Newton iterations and 44 s where it took 13 and 30 s, its
+table unchanged, and its preconditioned-against-plain comparison reads
+59 against 24 iterations. The planet-density app is unchanged step for
+step.
+
+**D-209. Definiteness is propagated, not stamped** (2026-10-30, David).
+`Traits.SURJECTIVE`: the operator maps onto its codomain, so its adjoint
+has a trivial kernel; implied by `INVERTIBLE`, kept by a nonzero scaling
+and by composition of two, not carried to the adjoint (injectivity has
+no trait), checked by `check_traits` where cheap (a codomain no larger
+than the domain; the rank of a stored dense array). It is what a
+congruence `S A S*` needs of `S` to keep `A`'s definiteness, so
+`congruence_traits(outer_surjective=)` and `gramian_traits(surjective=)`
+replace the invertibility flags, the palindrome rule reads the trait off
+the outer factors, and a push-forward `T C T*` of a definite covariance
+claims definiteness when `T` claims `SURJECTIVE`; a diagonal block of a
+covariance on a direct sum, a congruence by a projection, keeps
+definiteness outright. Where definiteness is earned it is now said:
+`from_covariance_matrix`'s factor claims invertibility when its inverse
+root exists, a spectral-element measure's pointwise rescaling claims it
+(the multiplier is positive everywhere), the layered spaces' jump
+operators and the disk's claim `SURJECTIVE` (jumps at distinct
+interfaces are independent), a noisy conditioning of a definite measure
+by definite noise is definite, and the linear posterior covariance
+`(I - K A) Q` claims definiteness when the prior's and the error's do.
+
+`credible_set` and `condition` no longer claim it for the caller.
+`credible_set` without a precision refuses a covariance that does not
+claim `POSITIVE_DEFINITE` under an iterative solver, naming the three
+ways out (a `SURJECTIVE` push-forward, `with_traits`, a direct solver);
+under a direct solver the factorization is the proof, Cholesky failing
+on a singular matrix. `condition` refuses `A C A* + R` that is not known
+to be invertible: an exact constraint needs a definite covariance and an
+operator claiming `SURJECTIVE`, a noisy one a definite noise covariance.
+Tutorial 7's property operator claims `SURJECTIVE`, and its credible sets
+on the plane take `CholeskySolver()`, the heat prior's spectrum
+underflowing at high wavenumber so that the prior itself claims only
+semidefiniteness. Tests: the trait algebra, `check_traits`, push-forward
+and conditioning through claimed and unclaimed operators, and the
+refusals by name.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

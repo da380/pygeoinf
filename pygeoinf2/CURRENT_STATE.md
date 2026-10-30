@@ -371,23 +371,19 @@ Recorded rather than settled, so nobody has to rediscover them.
     `parameterized(covariance_factor)` becomes a knob: the Tikhonov family
     would carry a model-space weighting and `MinimumNorm`'s derivative be
     re-derived.
-  - *`credible_set` and `condition` on exact data claim positive
-    definiteness for the user*: refusing breaks tutorial 7, whose property
-    prior and posterior are push-forwards claiming semidefiniteness; the
-    right fix is trait propagation through a push-forward with a trivial
-    kernel. Gates on `as_multivariate_normal` and `kl_divergence` on a
+  - Gates on `as_multivariate_normal` and `kl_divergence` on a
     function space: docstrings only for now.
   - *Degenerate (semidefinite) priors* still go through `_covariance_of`
     in the model-space primal and the splitting route, the one route that
     answers them; which cached pieces of a feasible structure may cross a
     process boundary is unruled; appending a half-space to a polytope
     (outer or inner bound) is undecided.
-  - *`Optimizer`'s `gtol=1e-8` is absolute* and `_precision_limited` is
-    floored with `1 + |f|`; every smooth optimizer and the MAP, Laplace
-    and nonlinear least-squares routes inherit it; the Armijo `min_step`,
-    the slope-ratio clip and the proximal gradient's probe length are
-    absolute too; Clarabel's absolute tolerances still apply to the bundle
-    subproblem at tiny scales (conservative, costs iterations only).
+  - *Clarabel's absolute tolerances* still apply to the bundle subproblem
+    at tiny scales (conservative, costs iterations only). The first trial
+    step along a gradient direction is `|f| / ||g||^2`, Polyak's step with
+    a target of zero, and one when the value at the start is zero: the one
+    guess with the right units, corrected by the Wolfe search's secant
+    extrapolation and clipped sectioning by as many decades as it takes.
   - *`Ball.contains` at radius zero* has no tolerance, so a zero-radius
     ball rejects its own center after rounding; `InclusionResult.multiplier`
     means opposite things on the quadratic and general searches.
@@ -455,7 +451,7 @@ full function-space MCMC (the hooks exist), and the v2 documentation set.
 The plan settled with David on 2026-10-24, reviewed issue by issue. Three
 inputs informed it beyond the code: the sampling brief
 (`docs/sampling_brief.pdf`, the student's proposed function-space MCMC API;
-its reasoning document `sampling.tex` is to be obtained), the sl3dpp request
+sampling is post-release), the sl3dpp request
 list (`~/dev/sl3dpp/docs/dev/pygeoinf-integration.md` §8), and a survey of
 planetmodel 1.3.2.
 
@@ -502,15 +498,12 @@ planetmodel 1.3.2.
   space, bending or shooting, with its derivative and Hessian action;
   tutorial 13 is its showcase and the tomography mini-app's nonlinear half
   is to be written on it.
-- planetmodel maintenance, half done: the pin is `planetmodel>=1.3`, the
+- DONE, as far as the release needs: the pin is `planetmodel>=1.3`, the
   stale `[harmonics]` extra is gone, the venv and lock are on 1.3.2 (whose
   grids carry a `kind` that the transform now checks by name), and
-  `test_ball.py` no longer needs pyshtools. Still to do: the
-  planetmodel 1.4 release, then the pin to `>=1.4` and the deletion of
-  `spectral_element/_transform.py`. The migration itself is built and tested:
-  `planetmodel.harmonics.ShellTransform` sits uncommitted in that repo (on
-  its `main`; its rules want the commit on `develop`), same names, with the
-  version bump left for the release branch as its convention requires.
+  `test_ball.py` no longer needs pyshtools. The planetmodel 1.4 release,
+  the pin to `>=1.4` and the deletion of `spectral_element/_transform.py`
+  are post-release (below); 2.0 ships the transform of its own.
 
 **Pre-review actions, in order (settled with David 2026-10-29):**
 
@@ -572,7 +565,13 @@ rewritten against the new name, after the rename, not before.
 platform it installs on; version 2.0.0; readthedocs flips at the tag with
 v1's docs kept under a version selector.
 
-**Post-release tracks:** the student's sampling package (the brief's order
+**Post-release tracks:** the planetmodel 1.4 release, then the pin to
+`>=1.4` and the deletion of `spectral_element/_transform.py` (the
+migration is built and tested: `planetmodel.harmonics.ShellTransform` sits
+uncommitted in that repo on its `main`, where its rules want it on
+`develop`, same names, the version bump left for its release branch) and
+the sign-normalized spectral bases that come with it (§7); the student's
+sampling package (the brief's order
 of work, starting with the marker-gated methods already done pre-release
 and `from_product(correlation=)`); the sl3dpp items (the data-space route
 and low-rank posterior above, then blocks with a size hint, process-safety

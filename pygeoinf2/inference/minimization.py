@@ -651,7 +651,8 @@ class ConstrainedMinimization(Minimization):
         penalty_growth: float = 10.0,
         reduction: float = 0.25,
         tolerance: float = 1e-6,
-        gtol: float = 1e-8,
+        rtol: float = 1e-8,
+        gtol: float = 0.0,
         max_iterations: int = 30,
     ) -> None:
         """
@@ -673,9 +674,12 @@ class ConstrainedMinimization(Minimization):
             reduction: the factor the violation must fall by for the penalty
                 to stay put.
             tolerance: the constraint violation at which the search may
-                stop.
-            gtol: the gradient tolerance of the augmented Lagrangian the
-                final inner solve must meet.
+                stop, in the constraints' units.
+            rtol: the gradient tolerance of the augmented Lagrangian the
+                final inner solve must meet, relative to its gradient at
+                the start.
+            gtol: an absolute floor under the inner gradient tolerances, in
+                the model space's norm; zero by default.
             max_iterations: the budget of outer iterations; the inner
                 budget is the optimizer's own.
         """
@@ -688,6 +692,7 @@ class ConstrainedMinimization(Minimization):
         self._penalty_growth = penalty_growth
         self._reduction = reduction
         self._tolerance = tolerance
+        self._rtol = rtol
         self._gtol = gtol
         self._max_iterations = max_iterations
 
@@ -735,6 +740,7 @@ class ConstrainedMinimization(Minimization):
             penalty_growth=self._penalty_growth,
             reduction=self._reduction,
             tolerance=self._tolerance,
+            rtol=self._rtol,
             gtol=self._gtol,
             max_iterations=self._max_iterations,
         )
@@ -792,7 +798,8 @@ class Occam(ConstrainedMinimization):
         penalty_growth: float = 10.0,
         reduction: float = 0.25,
         tolerance: float = 1e-4,
-        gtol: float = 1e-8,
+        rtol: float = 1e-8,
+        gtol: float = 0.0,
         max_iterations: int = 30,
         gauss_newton: bool = False,
     ) -> None:
@@ -817,8 +824,11 @@ class Occam(ConstrainedMinimization):
                 misfit units would be unreachable for a forward operator
                 evaluated iteratively, whose misfit is itself noisy at its
                 solver's tolerance.
-            gtol: the gradient tolerance of the augmented Lagrangian the
-                final inner solve must meet.
+            rtol: the gradient tolerance of the augmented Lagrangian the
+                final inner solve must meet, relative to its gradient at
+                the start.
+            gtol: an absolute floor under the inner gradient tolerances, in
+                the model space's norm; zero by default.
             max_iterations: the budget of outer iterations.
             gauss_newton: carry the Gauss-Newton Hessian of the misfit,
                 ``2 J* R^-1 J``, in the constraint whether or not the
@@ -855,6 +865,7 @@ class Occam(ConstrainedMinimization):
             penalty_growth=penalty_growth,
             reduction=reduction,
             tolerance=tolerance,
+            rtol=rtol,
             gtol=gtol,
             max_iterations=max_iterations,
         )

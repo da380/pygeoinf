@@ -403,6 +403,15 @@ class _Slowness:
     def values(self, vectors: np.ndarray) -> np.ndarray:
         """The slowness at embedded points, shaped like the points without their last axis."""
         flat = vectors.reshape(-1, vectors.shape[-1])
+        if not np.all(np.isfinite(flat)):
+            # A slowness model far outside the range the bending can follow
+            # sends ray points to infinity; the transform behind the
+            # evaluation does not survive them, and the optimizer that asked
+            # treats a refusal as a step too far.
+            raise EvaluationError(
+                "The bent rays left the finite plane: the slowness model is "
+                "outside the range the ray tracer can follow."
+            )
         m = self.chart.space.evaluate(
             self.model, self.chart.evaluation_points(flat), **self.kwargs
         )

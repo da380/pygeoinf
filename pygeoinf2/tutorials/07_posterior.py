@@ -18,6 +18,7 @@ from pygeoinf2 import (
     GaussianMeasure,
     LinearForwardProblem,
     LinearGaussianInversion,
+    Traits,
     plotting,
 )
 from pygeoinf2.symmetric_space.circle import Sobolev
@@ -163,13 +164,24 @@ for length in (0.05, 0.1, 0.2, 0.3, 0.5, 1.0):
 # Push the posterior forward through the property operator — exactly, a
 # Gaussian on $\mathbb{R}^2$ — and *harden* it into a set: the ellipse
 # holding 95 per cent of its probability.
+#
+# An ellipsoid needs a precision, so the pushed covariance has to be
+# invertible, and the library does not assume that: a push-forward keeps a
+# definiteness claim only through an operator claiming to be onto (the
+# trait `SURJECTIVE`, which two averages over different arcs earn), and
+# the heat prior cannot make the claim in the first place, its spectrum
+# underflowing to zero at high wavenumber. On $\mathbb{R}^2$ the honest
+# route is the direct one: `CholeskySolver` factorizes the covariance, and
+# a factorization that succeeds is the proof of definiteness.
 
 # %%
-T = X.geodesic_ball_average_operator([np.array([1.0]), np.array([1.6])], 0.3)
+T = X.geodesic_ball_average_operator(
+    [np.array([1.0]), np.array([1.6])], 0.3
+).with_traits(Traits.SURJECTIVE)
 property_posterior = posterior.push_forward(T)
 property_prior = prior.push_forward(T)
-region = property_posterior.credible_set(level=0.95)
-before = property_prior.credible_set(level=0.95)
+region = property_posterior.credible_set(level=0.95, solver=CholeskySolver())
+before = property_prior.credible_set(level=0.95, solver=CholeskySolver())
 print("the credible set is an", type(region).__name__, "on", region.domain)
 print("the truth's averages lie inside it:", region.contains(T(truth)))
 

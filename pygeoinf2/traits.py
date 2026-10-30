@@ -40,6 +40,12 @@ class Traits(Flag):
     POSITIVE_SEMIDEFINITE = auto()
     POSITIVE_DEFINITE = auto()
     INVERTIBLE = auto()
+    SURJECTIVE = auto()
+    """The operator maps onto its codomain: its adjoint has a trivial
+    kernel. Implied by invertibility; what a congruence ``S A S*`` needs of
+    ``S`` to keep ``A``'s definiteness, and what an exact linear constraint
+    needs of its operator for ``A C A*`` to be invertible. Not carried to
+    the adjoint, whose property (injectivity) has no trait."""
     ISOMETRY = auto()
     UNITARY = auto()
     IDEMPOTENT = auto()
@@ -53,6 +59,7 @@ _T = Traits
 _IMPLICATIONS: list[tuple[Traits, Traits]] = [
     (_T.POSITIVE_DEFINITE, _T.POSITIVE_SEMIDEFINITE | _T.INVERTIBLE | _T.SELF_ADJOINT),
     (_T.POSITIVE_SEMIDEFINITE, _T.SELF_ADJOINT),
+    (_T.INVERTIBLE, _T.SURJECTIVE),
     (_T.UNITARY, _T.ISOMETRY | _T.INVERTIBLE),
     (_T.IDEMPOTENT | _T.SELF_ADJOINT, _T.POSITIVE_SEMIDEFINITE),
     (_T.POSITIVE_SEMIDEFINITE | _T.INVERTIBLE, _T.POSITIVE_DEFINITE),
@@ -111,7 +118,7 @@ def scale_traits(traits: Traits, alpha: float, *, square: bool) -> Traits:
         # on a square space; it is singular either way.
         return close(_T.SELF_ADJOINT | _T.POSITIVE_SEMIDEFINITE) if square else _T.NONE
 
-    result = traits & (_T.SELF_ADJOINT | _T.INVERTIBLE)
+    result = traits & (_T.SELF_ADJOINT | _T.INVERTIBLE | _T.SURJECTIVE)
     if alpha > 0.0:
         result |= traits & (_T.POSITIVE_SEMIDEFINITE | _T.POSITIVE_DEFINITE)
     if abs(alpha) == 1.0:
@@ -166,6 +173,8 @@ def compose_traits(a: Traits, b: Traits, *, square: bool) -> Traits:
         result |= _T.UNITARY
     if square and _has(a, _T.INVERTIBLE) and _has(b, _T.INVERTIBLE):
         result |= _T.INVERTIBLE
+    if _has(a, _T.SURJECTIVE) and _has(b, _T.SURJECTIVE):
+        result |= _T.SURJECTIVE
     return close(result)
 
 
@@ -180,7 +189,7 @@ def inverse_traits(traits: Traits) -> Traits:
     return close((traits & keep) | _T.INVERTIBLE)
 
 
-def congruence_traits(inner: Traits, *, outer_invertible: bool) -> Traits:
+def congruence_traits(inner: Traits, *, outer_surjective: bool) -> Traits:
     """Traits of ``S @ A @ S.adjoint`` given the traits of ``A``.
 
     A congruence preserves self-adjointness and semidefiniteness whatever
@@ -189,9 +198,11 @@ def congruence_traits(inner: Traits, *, outer_invertible: bool) -> Traits:
 
     Args:
         inner: what ``A`` claims.
-        outer_invertible: whether ``S`` is invertible. Definiteness survives
-            only then -- a singular ``S`` can send a positive definite ``A``
-            to something merely semidefinite, by collapsing a direction.
+        outer_surjective: whether ``S`` maps onto its codomain. Definiteness
+            survives exactly then: ``(y, S A S* y) == (S* y, A S* y)`` is
+            positive for every nonzero ``y`` when ``S*`` has a trivial
+            kernel, and an ``S`` that is not onto has a ``y`` that ``S*``
+            sends to zero.
 
     Returns:
         What the congruence may claim.
@@ -202,12 +213,12 @@ def congruence_traits(inner: Traits, *, outer_invertible: bool) -> Traits:
         result |= _T.SELF_ADJOINT
     if _has(inner, _T.POSITIVE_SEMIDEFINITE):
         result |= _T.POSITIVE_SEMIDEFINITE
-        if outer_invertible and _has(inner, _T.POSITIVE_DEFINITE):
+        if outer_surjective and _has(inner, _T.POSITIVE_DEFINITE):
             result |= _T.POSITIVE_DEFINITE
     return close(result)
 
 
-def gramian_traits(*, invertible: bool) -> Traits:
+def gramian_traits(*, surjective: bool) -> Traits:
     """Traits of ``L @ L.adjoint``, which is positive semidefinite always.
 
     The trait half of the rule for adjoint-palindromic compositions, and the
@@ -215,13 +226,13 @@ def gramian_traits(*, invertible: bool) -> Traits:
     claim from the caller.
 
     Args:
-        invertible: whether ``L`` has full rank. Positive *definiteness*
-            needs it; semidefiniteness does not.
+        surjective: whether ``L`` maps onto its codomain. Positive
+            *definiteness* needs exactly that; semidefiniteness does not.
 
     Returns:
         What the product may claim.
     """
     result = _T.SELF_ADJOINT | _T.POSITIVE_SEMIDEFINITE
-    if invertible:
+    if surjective:
         result |= _T.POSITIVE_DEFINITE
     return close(result)

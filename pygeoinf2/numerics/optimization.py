@@ -106,17 +106,18 @@ class Optimizer(ABC):
         self,
         /,
         *,
-        gtol: float = 1e-8,
-        rtol: float = 1e-10,
+        rtol: float = 1e-8,
+        gtol: float = 0.0,
         ftol: float = 1e-12,
         max_iterations: int = 500,
         line_search: LineSearch | None = None,
     ) -> None:
         """
         Args:
-            gtol: absolute tolerance on ``||grad f||`` in the space's norm.
-            rtol: tolerance relative to the initial gradient norm. The test is
-                ``||g|| <= max(gtol, rtol * ||g0||)``.
+            rtol: tolerance on ``||grad f||`` relative to its value at the
+                start, in the space's norm. The test is
+                ``||g|| <= max(rtol * ||g0||, gtol)``, so it means the same
+                thing whatever the units of the objective or the model.
 
                 The default is tighter than a line-search method can always
                 reach in double precision. Such a method then finishes in one
@@ -124,6 +125,10 @@ class Optimizer(ABC):
                 stops decreasing (*ftol*), or no step is found with the
                 gradient already as small as the arithmetic allows (the
                 message says "no further decrease is representable").
+            gtol: an absolute floor under the gradient tolerance, in the
+                space's norm; zero by default. A start that is already close
+                to the minimizer makes a relative tolerance severe, and a
+                floor in the problem's own units is the way to ease it.
             ftol: stop when one iteration decreases the value by no more than
                 ``ftol * |f|``. The criterion that says "no further progress",
                 which a gradient test alone cannot: near a minimizer the
@@ -189,8 +194,9 @@ class Optimizer(ABC):
         tolerances named here move.
 
         Args:
-            gtol: the absolute gradient tolerance, if it is to change.
-            rtol: the relative one, if it is to change.
+            gtol: the absolute floor under the gradient tolerance, if it is
+                to change.
+            rtol: the relative gradient tolerance, if it is to change.
             ftol: the value tolerance, if it is to change.
 
         Returns:
@@ -214,8 +220,23 @@ class Optimizer(ABC):
     def _tolerance(self, initial_gradient_norm: float) -> float:
         return max(self._gtol, self._rtol * initial_gradient_norm)
 
+    @staticmethod
+    def _value_scale(value: float, initial_value: float) -> float:
+        """The size of the objective, for judging rounding in its value.
+
+        The larger of ``|f|`` at the point and at the start: a value that
+        heads to zero at the minimizer is still computed from terms of the
+        size it had at the start, and rounds at that size.
+        """
+        return max(abs(value), abs(initial_value))
+
     def _precision_limited(
-        self, value: float, gradient_norm: float, *, curvature: float | None = None
+        self,
+        value: float,
+        gradient_norm: float,
+        *,
+        scale: float,
+        curvature: float | None = None,
     ) -> bool:
         """Whether the gradient is as small as double precision allows here.
 
@@ -223,30 +244,32 @@ class Optimizer(ABC):
         value. Near a minimizer that is not a defect: the decrease a step can
         make, about ``||g||^2 / (2 L)`` for a curvature ``L`` along the
         direction, eventually falls below the rounding error in the value
-        itself, which is ``eps * |f|`` rather than ``eps``. Past that point
+        itself, which is ``eps`` times the objective's size. Past that point
         the search is comparing noise, so a failure with the gradient already
         at that scale is success at the accuracy the arithmetic allows, and
         saying "line search failed" instead reports a wrong answer about a
         right one.
 
-        The floor is therefore ``sqrt(eps (1 + |f|) L)``, times a margin of
+        The floor is therefore ``sqrt(eps * scale * L)``, times a margin of
         four for the search's own inefficiency: on a quadratic the methods
         here stop between one and four times the bare floor, and a verdict
         that turned on which side of it the last failed step landed would
-        change with the platform's arithmetic. Without a curvature estimate
-        ``L`` is taken as ``1 + |f|``, which is right when the objective and
-        its curvature share one scale and loose when the objective carries a
-        large constant.
+        change with the platform's arithmetic. Every factor is a size the
+        problem supplies, so the verdict is the same in any units. Without a
+        curvature estimate ``L`` is taken as the objective's scale, which is
+        right when the objective and its curvature share one scale and loose
+        when the objective carries a large constant.
 
         Args:
             value: ``f`` at the point.
             gradient_norm: ``||g||`` there, in the space's norm.
+            scale: the objective's size, from :meth:`_value_scale`.
             curvature: an estimate of ``L``; see :meth:`_curvature`.
         """
         if curvature is None or not np.isfinite(curvature) or curvature <= 0.0:
-            curvature = 1.0 + abs(value)
+            curvature = scale
         eps = float(np.finfo(float).eps)
-        floor = _PRECISION_MARGIN * float(np.sqrt(eps * (1.0 + abs(value)) * curvature))
+        floor = _PRECISION_MARGIN * float(np.sqrt(eps * scale * curvature))
         return gradient_norm <= floor
 
     @staticmethod
@@ -286,10 +309,13 @@ class Optimizer(ABC):
         evaluations: int,
         history: list[float],
         *,
+        scale: float,
         curvature: float | None = None,
     ) -> OptimizationResult:
         """The outcome when no step improved the value."""
-        limited = self._precision_limited(value, gradient_norm, curvature=curvature)
+        limited = self._precision_limited(
+            value, gradient_norm, scale=scale, curvature=curvature
+        )
         return OptimizationResult(
             x,
             value,
@@ -350,6 +376,7 @@ class _DescentMethod(Optimizer):
         gradient = model.gradient
         gradient_norm = space.norm(gradient)
         tolerance = self._tolerance(gradient_norm)
+        initial_value = model.value
 
         history = [model.value]
         evaluations = 1
@@ -375,10 +402,12 @@ class _DescentMethod(Optimizer):
             slope = space.inner_product(gradient, direction)
             if slope >= 0.0:
                 # A non-descent direction means the accumulated curvature
-                # information has gone bad; steepest descent always works.
+                # information has gone bad; steepest descent always works,
+                # and starts afresh, as at the first iteration.
                 direction = space.negative(gradient)
                 slope = -(gradient_norm**2)
                 state = self._initial_state(space)
+                previous = None
 
             search = self._line_search(
                 functional,
@@ -386,7 +415,9 @@ class _DescentMethod(Optimizer):
                 direction,
                 value=model.value,
                 slope=slope,
-                initial_step=self._initial_step(previous, slope),
+                initial_step=self._initial_step(
+                    previous, slope, model.value, gradient_norm
+                ),
             )
             evaluations += search.evaluations
             if not search.converged:
@@ -397,6 +428,7 @@ class _DescentMethod(Optimizer):
                     iteration,
                     evaluations,
                     history,
+                    scale=self._value_scale(model.value, initial_value),
                     curvature=self._curvature(
                         space,
                         model,
@@ -476,14 +508,29 @@ class _DescentMethod(Optimizer):
         return None
 
     def _initial_step(
-        self, previous: tuple[float, float] | None, slope: float
+        self,
+        previous: tuple[float, float] | None,
+        slope: float,
+        value: float,
+        gradient_norm: float,
     ) -> float:
         """The first step the line search should try.
 
         A unit step by default, which is what a Newton or quasi-Newton method
         wants: its direction already carries the scale, and trying anything
-        else throws that information away.
+        else throws that information away. Before any step has been taken
+        the direction is the negative gradient, which carries no scale, and
+        the step is :func:`_gradient_step`.
+
+        Args:
+            previous: the step and the slope of the last accepted search,
+                ``None`` before the first and after a restart.
+            slope: ``(g, p)`` along the new direction.
+            value: ``f`` at the point.
+            gradient_norm: ``||g||`` there.
         """
+        if previous is None:
+            return _gradient_step(value, gradient_norm)
         return 1.0
 
     @abstractmethod
@@ -495,12 +542,54 @@ class _DescentMethod(Optimizer):
         return state
 
 
-def _slope_ratio_step(previous: tuple[float, float] | None, slope: float) -> float:
-    """Nocedal and Wright's initial-step heuristic for a scale-free direction."""
-    if previous is None or slope == 0.0:
+_SLOPE_RATIO_CLIP = 1e8
+"""How far, either way, one slope-ratio step may move from the last step."""
+
+
+def _gradient_step(value: float, gradient_norm: float) -> float:
+    """The first trial step along a negative gradient.
+
+    ``|f| / ||g||^2``: the step at which the linear model of ``f`` reaches
+    zero, Polyak's rule with a target of zero. A gradient direction carries
+    no scale of its own, and this is the one step the value and the gradient
+    at the point can make that has the right units: scaling the objective by
+    ``s`` scales it by ``1 / s``, as the natural step scales. It is an order
+    of magnitude, not an answer, and the line search takes it from there;
+    one when the value or the gradient is zero, there being nothing else to
+    go on.
+    """
+    if (
+        value == 0.0
+        or gradient_norm == 0.0
+        or not np.isfinite(value)
+        or not np.isfinite(gradient_norm)
+    ):
         return 1.0
+    return float(abs(value) / gradient_norm**2)
+
+
+def _slope_ratio_step(
+    previous: tuple[float, float] | None,
+    slope: float,
+    value: float,
+    gradient_norm: float,
+) -> float:
+    """Nocedal and Wright's initial-step heuristic for a scale-free direction.
+
+    The last step, scaled by the ratio of the last slope to the new one, so
+    that the first-order change along the new direction matches the one
+    achieved along the last. The ratio is dimensionless and is clipped to
+    ``[1 / _SLOPE_RATIO_CLIP, _SLOPE_RATIO_CLIP]``, so the step is always a
+    multiple of the last one and never an absolute number. Before the first
+    step, :func:`_gradient_step`.
+    """
+    if previous is None:
+        return _gradient_step(value, gradient_norm)
     previous_step, previous_slope = previous
-    return float(np.clip(previous_step * previous_slope / slope, 1e-12, 1e8))
+    if slope == 0.0:
+        return previous_step
+    ratio = np.clip(previous_slope / slope, 1.0 / _SLOPE_RATIO_CLIP, _SLOPE_RATIO_CLIP)
+    return float(previous_step * ratio)
 
 
 class SteepestDescent(_DescentMethod):
@@ -525,7 +614,11 @@ class SteepestDescent(_DescentMethod):
         return StrongWolfeLineSearch()
 
     def _initial_step(
-        self, previous: tuple[float, float] | None, slope: float
+        self,
+        previous: tuple[float, float] | None,
+        slope: float,
+        value: float,
+        gradient_norm: float,
     ) -> float:
         """The slope-ratio heuristic.
 
@@ -533,7 +626,7 @@ class SteepestDescent(_DescentMethod):
         step is the only information available: match the first-order change
         along the new direction to the change achieved along the last one.
         """
-        return _slope_ratio_step(previous, slope)
+        return _slope_ratio_step(previous, slope, value, gradient_norm)
 
 
 class NonlinearCG(_DescentMethod):
@@ -569,10 +662,14 @@ class NonlinearCG(_DescentMethod):
         return None
 
     def _initial_step(
-        self, previous: tuple[float, float] | None, slope: float
+        self,
+        previous: tuple[float, float] | None,
+        slope: float,
+        value: float,
+        gradient_norm: float,
     ) -> float:
         """As for steepest descent: a CG direction carries no natural scale."""
-        return _slope_ratio_step(previous, slope)
+        return _slope_ratio_step(previous, slope, value, gradient_norm)
 
     def _direction(self, space: Any, gradient: Any, state: Any) -> tuple[Any, Any]:
         if state is None:
@@ -688,9 +785,10 @@ class NewtonCG(Optimizer):
         """
         Args:
             forcing: the inexact-Newton forcing term. The inner solve stops
-                once the residual falls below ``min(forcing, sqrt(||g||))``
-                times the gradient norm, so early iterations are cheap and
-                later ones accurate.
+                once the residual falls below
+                ``min(forcing, sqrt(||g|| / ||g0||))`` times the gradient
+                norm, ``g0`` the gradient at the start, so early iterations
+                are cheap and later ones accurate, in any units.
             max_cg_iterations: cap on the inner iteration. ``None`` means the
                 larger of the dimension and ten.
             preconditioner: an approximation to the inverse Hessian for the
@@ -739,6 +837,8 @@ class NewtonCG(Optimizer):
         model = functional.at(x)
         gradient_norm = space.norm(model.gradient)
         tolerance = self._tolerance(gradient_norm)
+        initial_value = model.value
+        initial_gradient_norm = gradient_norm
         history = [model.value]
         evaluations = 1
 
@@ -758,7 +858,7 @@ class NewtonCG(Optimizer):
             direction, reason = truncated_cg(
                 model.hessian,
                 space.negative(model.gradient),
-                rtol=min(self._forcing, np.sqrt(gradient_norm)),
+                rtol=_forcing(self._forcing, gradient_norm, initial_gradient_norm),
                 max_iterations=self._max_cg_iterations,
                 preconditioner=self._preconditioner,
             )
@@ -785,6 +885,7 @@ class NewtonCG(Optimizer):
                     iteration,
                     evaluations,
                     history,
+                    scale=self._value_scale(model.value, initial_value),
                     curvature=self._curvature(
                         space, model, model.gradient, gradient_norm
                     ),
@@ -930,6 +1031,8 @@ class TrustRegionNewton(Optimizer):
         model = functional.at(x)
         gradient_norm = space.norm(model.gradient)
         tolerance = self._tolerance(gradient_norm)
+        initial_value = model.value
+        initial_gradient_norm = gradient_norm
         radius = self._initial_radius
         if radius is None:
             radius = self._cauchy_length(space, model, gradient_norm, x)
@@ -951,6 +1054,7 @@ class TrustRegionNewton(Optimizer):
             limited = gradient_norm <= tolerance or self._precision_limited(
                 model.value,
                 gradient_norm,
+                scale=self._value_scale(model.value, initial_value),
                 curvature=self._curvature(space, model, model.gradient, gradient_norm),
             )
             return OptimizationResult(
@@ -985,7 +1089,7 @@ class TrustRegionNewton(Optimizer):
             step, reason = truncated_cg(
                 model.hessian,
                 space.negative(model.gradient),
-                rtol=min(0.1, np.sqrt(gradient_norm)),
+                rtol=_forcing(0.1, gradient_norm, initial_gradient_norm),
                 radius=radius,
             )
             stops.append(reason)
@@ -1072,6 +1176,18 @@ class TrustRegionNewton(Optimizer):
             else "iteration limit reached",
             history,
         )
+
+
+def _forcing(cap: float, gradient_norm: float, initial_gradient_norm: float) -> float:
+    """The inexact-Newton forcing term, ``min(cap, sqrt(||g|| / ||g0||))``.
+
+    Loose while the gradient is still of its starting size and tightening
+    as it falls, which gives superlinear convergence; relative to the start,
+    so that the schedule is the same in any units.
+    """
+    if initial_gradient_norm <= 0.0:
+        return cap
+    return float(min(cap, np.sqrt(gradient_norm / initial_gradient_norm)))
 
 
 def truncated_cg(
@@ -1278,6 +1394,12 @@ class AugmentedLagrangianResult(OptimizationResult):
         )
 
 
+_MAX_REFINEMENTS = 8
+"""How many times one augmented-Lagrangian inner solve may be continued
+from its own end to meet a tolerance that its end revealed to be tighter;
+see :class:`AugmentedLagrangian`."""
+
+
 class AugmentedLagrangian(Optimizer):
     """Minimize ``f(x)`` subject to ``c_i(x) == 0`` and ``g_j(x) <= 0``.
 
@@ -1296,7 +1418,19 @@ class AugmentedLagrangian(Optimizer):
     when the constraint violation did not fall by the factor asked of it.
     The inner solve's gradient tolerance starts loose and tightens as the
     multipliers settle, so early outer iterations, whose minimizers will be
-    discarded, are not solved to an accuracy nobody will use.
+    discarded, are not solved to an accuracy nobody will use. Every inner
+    gradient tolerance is relative to the size of the terms that cancel at
+    a stationary point of the augmented Lagrangian: the objective's gradient
+    and each multiplier, as the update is about to set it, times its
+    constraint's gradient. That is the scale the gradient is a residual of,
+    and it is the same in any units; the gradient at the very start is not,
+    being dominated by the penalty on whatever the start violates. Because
+    the scale is read where the inner solve ends, a solve that stopped on
+    its gradient tolerance short of it is continued from where it stopped
+    until it meets it; the scale is kept as the largest seen, so a start
+    that is already the answer is judged against the problem it solved
+    rather than against rounding. The violation tolerance is in the
+    constraints' own units, which the caller chose when writing them.
 
     The constraints belong to the method rather than to :meth:`minimize`, so
     that the contract every optimizer shares, ``minimize(functional, x0)``,
@@ -1322,16 +1456,17 @@ class AugmentedLagrangian(Optimizer):
         penalty_growth: float = 10.0,
         reduction: float = 0.25,
         tolerance: float = 1e-6,
-        initial_gtol: float = 1e-2,
-        gtol_reduction: float = 0.1,
-        gtol: float = 1e-8,
+        initial_rtol: float = 1e-2,
+        rtol_reduction: float = 0.1,
+        rtol: float = 1e-8,
+        gtol: float = 0.0,
         max_iterations: int = 30,
     ) -> None:
         """
         Args:
             optimizer: the unconstrained method for the inner solves. Its own
                 iteration budget bounds each inner solve; its gradient
-                tolerance is overridden by the schedule described below. It
+                tolerances are overridden by the schedule described below. It
                 needs whatever the augmented Lagrangian can supply: a Newton
                 method is usable when the objective and every constraint
                 carry a Hessian.
@@ -1349,15 +1484,19 @@ class AugmentedLagrangian(Optimizer):
             reduction: the factor the violation must fall by, outer iteration
                 to outer iteration, for the penalty to stay put.
             tolerance: the constraint violation at which the method may stop:
-                ``max |c_i|`` and ``max(g_j, 0)`` are both at most this.
-            initial_gtol: the gradient tolerance of the first inner solve.
-            gtol_reduction: the factor the inner gradient tolerance shrinks
+                ``max |c_i|`` and ``max(g_j, 0)`` are both at most this, in
+                the constraints' units.
+            initial_rtol: the gradient tolerance of the first inner solve,
+                relative to the scale described above.
+            rtol_reduction: the factor the inner gradient tolerance shrinks
                 by after an outer iteration that reduced the violation
-                enough, down to *gtol*.
-            gtol: the gradient tolerance of the augmented Lagrangian the
-                final inner solve must meet. With the multipliers converged
+                enough, down to *rtol*.
+            rtol: the gradient tolerance the final inner solve must meet,
+                relative to the same scale. With the multipliers converged
                 this is the norm of the Lagrangian's gradient, the
                 first-order optimality residual.
+            gtol: an absolute floor under every inner gradient tolerance, in
+                the space's norm; zero by default.
             max_iterations: the budget of outer iterations.
 
         Raises:
@@ -1365,7 +1504,7 @@ class AugmentedLagrangian(Optimizer):
                 constraints do not all share one domain, or if a parameter
                 is outside its range.
         """
-        super().__init__(gtol=gtol, max_iterations=max_iterations)
+        super().__init__(rtol=rtol, gtol=gtol, max_iterations=max_iterations)
         constraints = tuple(equalities) + tuple(inequalities)
         for constraint in constraints:
             if not isinstance(constraint, Functional) or not constraint.has_derivative:
@@ -1381,10 +1520,10 @@ class AugmentedLagrangian(Optimizer):
             raise ValueError(f"The penalty growth exceeds one, got {penalty_growth}.")
         if not 0.0 < reduction < 1.0:
             raise ValueError(f"The reduction factor lies in (0, 1), got {reduction}.")
-        if not 0.0 < gtol_reduction < 1.0:
+        if not 0.0 < rtol_reduction < 1.0:
             raise ValueError(
                 f"The gradient tolerance reduction lies in (0, 1), got "
-                f"{gtol_reduction}."
+                f"{rtol_reduction}."
             )
         self._optimizer = optimizer
         self._equalities = tuple(equalities)
@@ -1392,9 +1531,9 @@ class AugmentedLagrangian(Optimizer):
         self._penalty = float(penalty)
         self._penalty_growth = float(penalty_growth)
         self._reduction = float(reduction)
-        self._tolerance = float(tolerance)
-        self._initial_gtol = float(initial_gtol)
-        self._gtol_reduction = float(gtol_reduction)
+        self._violation_tolerance = float(tolerance)
+        self._initial_rtol = float(initial_rtol)
+        self._rtol_reduction = float(rtol_reduction)
 
     @property
     def optimizer(self) -> Optimizer:
@@ -1550,13 +1689,38 @@ class AugmentedLagrangian(Optimizer):
         lam = np.zeros(len(self._equalities))
         mu = np.zeros(len(self._inequalities))
         rho = self._penalty
-        omega = max(self._initial_gtol, self._gtol)
+        omega = max(self._initial_rtol, self._rtol)
         previous_violation = np.inf
         iterations = 0
         evaluations = 0
         history: list[float] = []
         inner = None
         violation = np.inf
+
+        def stationarity_scale(point: Any, lam_hat: Any, mu_hat: Any) -> float:
+            """The size of the terms that cancel at a stationary point of
+            the augmented Lagrangian at ``point``, with the multipliers as
+            the update will set them; see the class docstring."""
+            nonlocal evaluations
+            terms = [space.norm(functional.gradient(point))]
+            terms += [
+                abs(multiplier) * space.norm(constraint.gradient(point))
+                for multiplier, constraint in zip(lam_hat, self._equalities)
+                if multiplier != 0.0
+            ]
+            terms += [
+                multiplier * space.norm(constraint.gradient(point))
+                for multiplier, constraint in zip(mu_hat, self._inequalities)
+                if multiplier > 0.0
+            ]
+            evaluations += len(terms)
+            return max(terms)
+
+        # The scale the inner tolerances are relative to. The objective's
+        # gradient at the start seeds it, and is zero when the start is the
+        # objective's own minimizer; then the first solve is relative to
+        # its own start, there being nothing else to go on.
+        reference = stationarity_scale(x, lam, mu)
 
         def finish(
             converged: bool, message: str, outer: int
@@ -1582,37 +1746,61 @@ class AugmentedLagrangian(Optimizer):
             augmented = self.augmented(
                 functional, multipliers=lam, inequality_multipliers=mu, penalty=rho
             )
-            inner = self._optimizer.with_tolerance(gtol=omega, rtol=0.0).minimize(
-                augmented, x
-            )
-            x = inner.minimizer
-            iterations += inner.iterations
-            evaluations += inner.evaluations
-            history.extend(inner.history)
-            if inner.failure is not None:
-                violation = self._violation(x)
-                return finish(
-                    False, "an inner solve could not evaluate the functional", outer
-                )
+            met = False
+            for _ in range(_MAX_REFINEMENTS):
+                inner = (
+                    self._optimizer.with_tolerance(
+                        gtol=max(self._gtol, omega * reference), rtol=0.0
+                    )
+                    if reference > 0.0
+                    else self._optimizer.with_tolerance(rtol=omega, gtol=self._gtol)
+                ).minimize(augmented, x)
+                x = inner.minimizer
+                iterations += inner.iterations
+                evaluations += inner.evaluations
+                history.extend(inner.history)
+                if inner.failure is not None:
+                    violation = self._violation(x)
+                    return finish(
+                        False, "an inner solve could not evaluate the functional", outer
+                    )
 
-            equality_values = np.array([c(x) for c in self._equalities])
-            inequality_values = np.array([g(x) for g in self._inequalities])
-            evaluations += len(equality_values) + len(inequality_values)
+                equality_values = np.array([c(x) for c in self._equalities])
+                inequality_values = np.array([g(x) for g in self._inequalities])
+                evaluations += len(equality_values) + len(inequality_values)
+                lam_hat = lam + rho * equality_values
+                mu_hat = np.maximum(0.0, mu + rho * inequality_values)
+                reference = max(reference, stationarity_scale(x, lam_hat, mu_hat))
+                met = inner.gradient_norm <= max(self._gtol, omega * reference)
+                if met or not inner.converged or inner.iterations == 0:
+                    # Met; or no further progress is to be had here: the
+                    # search failed, the value stopped moving, or the
+                    # arithmetic is exhausted. The outer loop decides.
+                    break
+                if "gradient tolerance" not in inner.message:
+                    break
+
             violation = max(
                 [0.0]
                 + [abs(v) for v in equality_values]
                 + [max(v, 0.0) for v in inequality_values]
             )
-            lam = lam + rho * equality_values
-            mu = np.maximum(0.0, mu + rho * inequality_values)
+            lam, mu = lam_hat, mu_hat
 
-            if violation <= self._tolerance and omega <= self._gtol and inner.converged:
+            if (
+                violation <= self._violation_tolerance
+                and omega <= self._rtol
+                and inner.converged
+                and (met or "gradient tolerance" not in inner.message)
+            ):
                 return finish(
                     True, "constraints satisfied and gradient tolerance reached", outer
                 )
 
-            if violation <= max(self._tolerance, self._reduction * previous_violation):
-                omega = max(self._gtol, omega * self._gtol_reduction)
+            if violation <= max(
+                self._violation_tolerance, self._reduction * previous_violation
+            ):
+                omega = max(self._rtol, omega * self._rtol_reduction)
             else:
                 rho *= self._penalty_growth
             previous_violation = violation

@@ -32,7 +32,7 @@ from ..algebra.operators import (
 from ..algebra.spaces import HilbertSpace
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
-from ..traits import congruence_traits
+from ..traits import Traits, congruence_traits
 
 __all__ = [
     "Estimator",
@@ -572,13 +572,16 @@ class GaussianEstimator(MeasureEstimator):
                 return operator(_sample(rng))
 
         # A congruence T C T* preserves self-adjointness and semidefiniteness,
-        # and that is claimed here rather than left to the composition node.
-        # The node infers it only when its flattened factor list reads as a
-        # product F ... F* with the adjoints mirrored about the middle; a
-        # covariance written ``(I - K A) Q`` contributes two factors, and the
-        # mirror image is lost.
+        # and definiteness when T is onto; that is claimed here rather than
+        # left to the composition node. The node infers it only when its
+        # flattened factor list reads as a product F ... F* with the adjoints
+        # mirrored about the middle; a covariance written ``(I - K A) Q``
+        # contributes two factors, and the mirror image is lost.
         covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
-            congruence_traits(self._covariance.traits, outer_invertible=False)
+            congruence_traits(
+                self._covariance.traits,
+                outer_surjective=Traits.SURJECTIVE in operator.traits,
+            )
         )
         return GaussianEstimator(
             operator @ self._expectation_operator, covariance, centered_sample=pushed

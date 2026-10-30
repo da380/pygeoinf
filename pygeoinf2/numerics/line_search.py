@@ -28,6 +28,14 @@ __all__ = [
     "StrongWolfeLineSearch",
 ]
 
+_MAX_GROWTH = 10.0
+"""The most a bracketing step may grow by in one move of the Wolfe search.
+
+The secant is exact on a quadratic and a guess elsewhere; a step that lands
+a decade beyond the last one is still read against slopes measured near
+it, where a thousandfold jump along an exponential forward is an overflow.
+Twelve such moves span the twelve decades a first trial can be short by."""
+
 
 @dataclass(frozen=True)
 class LineSearchResult:
@@ -107,7 +115,9 @@ class ArmijoLineSearch(LineSearch):
             decrease: the Armijo constant ``c1``.
             contraction: the factor each failed step is multiplied by.
             max_backtracks: give up after this many contractions.
-            min_step: give up once the step falls below this.
+            min_step: give up once the step falls below this fraction of the
+                first trial step. Relative, because the step's units are the
+                direction's, which the caller chose.
         """
         self._decrease = decrease
         self._contraction = contraction
@@ -127,6 +137,7 @@ class ArmijoLineSearch(LineSearch):
     ) -> LineSearchResult:
         space = functional.domain
         step = initial_step
+        floor = self._min_step * initial_step
         evaluation = 0
         for evaluation in range(1, self._max_backtracks + 1):
             trial = space.axpy(step, direction, space.copy(point))
@@ -143,7 +154,7 @@ class ArmijoLineSearch(LineSearch):
             ):
                 return LineSearchResult(step, trial, trial_value, evaluation, True)
             step *= self._contraction
-            if step < self._min_step:
+            if step < floor:
                 break
         # The evaluations actually spent, which a stop on ``min_step`` leaves
         # below ``max_backtracks``.
@@ -166,7 +177,7 @@ class StrongWolfeLineSearch(LineSearch):
         decrease: float = 1e-4,
         curvature: float = 0.9,
         max_iterations: int = 30,
-        max_step: float = 1e8,
+        max_step: float = 1e16,
     ) -> None:
         """
         Args:
@@ -174,7 +185,12 @@ class StrongWolfeLineSearch(LineSearch):
             curvature: the Wolfe constant ``c2``. Must exceed ``decrease``;
                 0.9 suits quasi-Newton methods and 0.1 suits nonlinear CG.
             max_iterations: cap on both the bracketing and sectioning phases.
-            max_step: cap on the step during bracketing.
+            max_step: cap on the step during bracketing, as a multiple of the
+                first trial step. Relative, because the step's units are the
+                direction's, which the caller chose; and large, because the
+                first trial along a gradient direction is a guess that the
+                bracketing phase is there to correct, by as many decades as
+                it takes (see :meth:`_extrapolate`).
         """
         if not 0.0 < decrease < curvature < 1.0:
             raise ValueError("Require 0 < decrease < curvature < 1.")
@@ -211,6 +227,7 @@ class StrongWolfeLineSearch(LineSearch):
 
         previous_step, previous_value, previous_slope = 0.0, value, slope
         step = initial_step
+        cap = self._max_step * initial_step
 
         for iteration in range(1, self._max_iterations + 1):
             # A trial the functional cannot evaluate, or evaluates to a
@@ -269,8 +286,8 @@ class StrongWolfeLineSearch(LineSearch):
                 trial_value,
                 trial_slope,
             )
-            step = min(2.0 * step, self._max_step)
-            if step >= self._max_step:
+            step = min(self._extrapolate(step, trial_slope, slope), cap)
+            if step >= cap:
                 break
 
         trial = space.axpy(step, direction, space.copy(point))
@@ -279,6 +296,26 @@ class StrongWolfeLineSearch(LineSearch):
         except EvaluationError:
             return LineSearchResult(0.0, point, value, counter[0], False)
         return LineSearchResult(step, trial, final_value, counter[0], False)
+
+    @staticmethod
+    def _extrapolate(step: float, step_slope: float, slope: float) -> float:
+        """The next bracketing trial, beyond a step that was not far enough.
+
+        The secant through the slopes at zero and at ``step`` puts the
+        minimizer at ``-slope / (step_slope - slope)`` times the step, which
+        is exact when the function along the line is quadratic; so a first
+        trial that was too short by many decades is corrected in one move,
+        where doubling would need a step per factor of two. The growth is
+        clipped to between two and ``_MAX_GROWTH``: at least two so the
+        bracket widens, at most tenfold a step so the trial cannot leave
+        the region the slopes were read in by more than a decade. A slope
+        that has not grown gives no estimate, and the step doubles.
+        """
+        change = step_slope - slope
+        growth = 2.0
+        if change > 0.0 and slope < 0.0:
+            growth = min(max(-slope / change, 2.0), _MAX_GROWTH)
+        return growth * step
 
     def _zoom(
         self,
@@ -303,11 +340,14 @@ class StrongWolfeLineSearch(LineSearch):
         the most recently discarded point, accepted when it lies at least a
         fifth of the bracket from either end; failing that, the minimizer of
         the quadratic through the two ends and the slope at ``low``, accepted
-        at least a tenth of the bracket from either end; failing both,
-        bisection. An interpolant's minimizer close to an end is not to be
-        trusted (Nocedal and Wright §3.5). On a quadratic model the
-        interpolant is exact, so interpolation finds in one or two steps what
-        bisection approaches only linearly.
+        at least a tenth of the bracket from either end. An interpolant's
+        minimizer closer to an end than that is not to be trusted (Nocedal
+        and Wright §3.5), and the trial is moved to the margin on that side:
+        the bracket then shrinks by a factor of five or ten a step towards a
+        minimizer that lies many decades inside it, where bisection would
+        gain one factor of two a step. With no interpolant at all, bisection.
+        On a quadratic model the interpolant is exact, so interpolation finds
+        in one or two steps what bisection approaches only linearly.
         """
         rec_step: float | None = None
         rec_value = 0.0
@@ -375,8 +415,8 @@ class StrongWolfeLineSearch(LineSearch):
                 return step
         step = _quadratic_minimizer(low, low_value, low_slope, high, high_value)
         margin = 0.1 * width
-        if step is not None and lower + margin <= step <= upper - margin:
-            return step
+        if step is not None:
+            return float(min(max(step, lower + margin), upper - margin))
         return 0.5 * (low + high)
 
 

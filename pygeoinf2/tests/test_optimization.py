@@ -1190,7 +1190,7 @@ class TestThePrecisionFloor:
         )
         return functional, offset
 
-    @pytest.mark.parametrize("scale", [1.0, 1e4])
+    @pytest.mark.parametrize("scale", [1.0, 1e4, 1e-12, 1e12])
     @pytest.mark.parametrize(
         "method", [LBFGS, NonlinearCG, SteepestDescent], ids=lambda m: m.__name__
     )
@@ -1203,7 +1203,12 @@ class TestThePrecisionFloor:
             functional, space.zero()
         )
         assert result.converged, result
-        assert "double precision" in result.message
+        # At the rounding floor a step may also be accepted with exactly no
+        # decrease, which the value test reports; either way the method
+        # stopped because no further progress was representable.
+        assert "double precision" in result.message or (
+            "value tolerance" in result.message
+        ), result
         assert space.to_components(result.minimizer) == pytest.approx(
             offset, rel=1e-6, abs=1e-6
         )
@@ -1212,13 +1217,27 @@ class TestThePrecisionFloor:
         optimizer = LBFGS()
         # A gradient of 1e-3 on an objective near a million with unit
         # curvature is nowhere near the floor, which is about 6e-5 ...
-        assert not optimizer._precision_limited(1e6, 1e-3, curvature=1.0)
-        assert optimizer._precision_limited(1e6, 1e-5, curvature=1.0)
+        assert not optimizer._precision_limited(1e6, 1e-3, scale=1e6, curvature=1.0)
+        assert optimizer._precision_limited(1e6, 1e-5, scale=1e6, curvature=1.0)
         # ... and a curvature of a million raises it a thousandfold.
-        assert optimizer._precision_limited(1e6, 1e-2, curvature=1e6)
+        assert optimizer._precision_limited(1e6, 1e-2, scale=1e6, curvature=1e6)
         # Without an estimate the curvature is taken as the value's scale.
-        assert optimizer._precision_limited(1e6, 1e-2)
-        assert not optimizer._precision_limited(1e6, 1e-1)
+        assert optimizer._precision_limited(1e6, 1e-2, scale=1e6)
+        assert not optimizer._precision_limited(1e6, 1e-1, scale=1e6)
+
+    def test_the_floor_has_no_absolute_term(self):
+        """An objective of size 1e-12 with curvature 1e-12 has a gradient
+        floor near 1e-19; a floor with ``1 + |f|`` in it would be 6e-8 and
+        would call every point of that objective converged."""
+        optimizer = LBFGS()
+        assert not optimizer._precision_limited(
+            5e-12, 3e-12, scale=5e-12, curvature=1e-12
+        )
+        assert optimizer._precision_limited(5e-12, 1e-20, scale=5e-12, curvature=1e-12)
+        # The scale is the larger of the value here and at the start, so a
+        # value that has reached zero is still judged at the start's size.
+        assert optimizer._value_scale(0.0, 7.0) == 7.0
+        assert optimizer._value_scale(-9.0, 7.0) == 9.0
 
     def test_the_curvature_is_read_off_the_hessian_or_the_last_step(self, rng):
         space = make_dense_metric_space(5)
@@ -1274,3 +1293,122 @@ class TestTheTrustRegionTakesItsLengthsFromTheProblem:
     def test_a_line_search_is_refused(self):
         with pytest.raises(TypeError, match="no line search"):
             TrustRegionNewton(line_search=ArmijoLineSearch())
+
+
+class TestOptimizersDoNotDependOnUnits:
+    """The same problem in other units is the same problem.
+
+    Every stop is relative to a size the problem supplies: the gradient at
+    the start, the value at the start, the first trial step. An objective
+    scaled by ``1e-12`` therefore runs to the same answer as the unscaled
+    one, where a gradient tolerance of ``1e-8`` in absolute terms declared
+    it converged before taking a step, and a scaled by ``1e12`` runs where
+    that tolerance could never be met.
+    """
+
+    SCALES = [1e-12, 1.0, 1e12]
+
+    @staticmethod
+    def problem(space, rng, scale):
+        matrix = spd_matrix(rng, space.dim)
+        offset = rng.normal(size=space.dim)
+        plain = quadratic(space, matrix, offset)
+        scaled = Functional.from_callables(
+            space,
+            lambda x: scale * plain(x),
+            derivative=lambda x: plain.at(x).derivative.scaled(scale)
+            if hasattr(plain.at(x).derivative, "scaled")
+            else scale * plain.at(x).derivative,
+            hessian=lambda x: scale * plain.hessian(x),
+        )
+        return scaled, offset
+
+    @pytest.mark.parametrize(
+        "method", FIRST_ORDER + SECOND_ORDER, ids=lambda m: m.__name__
+    )
+    def test_the_answer_and_the_verdict_are_the_same_in_any_units(self, method, rng):
+        space = make_dense_metric_space(8)
+        seed = rng.integers(2**31)
+        iterations = {}
+        for scale in self.SCALES:
+            functional, offset = self.problem(space, np.random.default_rng(seed), scale)
+            result = method(max_iterations=3000).minimize(functional, space.zero())
+            assert result.converged, (scale, result)
+            assert result.iterations > 0, (scale, result)
+            assert space.to_components(result.minimizer) == pytest.approx(
+                offset, rel=1e-6, abs=1e-6
+            ), scale
+            iterations[scale] = result.iterations
+        if method in SECOND_ORDER:
+            # A Newton direction carries the scale, and the forcing term is
+            # relative, so the path is the same step for step.
+            assert len(set(iterations.values())) == 1, iterations
+
+    def test_an_absolute_floor_is_still_available(self, rng):
+        space = make_dense_metric_space(5)
+        functional, _ = self.problem(space, rng, 1.0)
+        result = NewtonCG(gtol=1e300).minimize(functional, space.random(rng=rng))
+        assert result.converged and result.iterations == 0
+
+    def test_the_first_step_along_a_gradient_follows_the_objective(self):
+        from pygeoinf2.numerics.optimization import _gradient_step
+
+        assert _gradient_step(2.0, 4.0) == pytest.approx(2.0 / 16.0)
+        assert _gradient_step(2e-12, 4e-12) == pytest.approx(1e12 * 2.0 / 16.0)
+        assert _gradient_step(0.0, 4.0) == 1.0
+        assert _gradient_step(2.0, 0.0) == 1.0
+
+    def test_the_slope_ratio_step_is_a_multiple_of_the_last(self):
+        from pygeoinf2.numerics.optimization import _slope_ratio_step
+
+        assert _slope_ratio_step((1e-9, -2.0), -1.0, 1.0, 1.0) == pytest.approx(2e-9)
+        assert _slope_ratio_step((1e9, -2.0), -1.0, 1.0, 1.0) == pytest.approx(2e9)
+        # A slope that has vanished keeps the last step; a vast ratio is
+        # clipped to a multiple, never to an absolute number.
+        assert _slope_ratio_step((1e-9, -2.0), 0.0, 1.0, 1.0) == 1e-9
+        assert _slope_ratio_step((1e-9, -1.0), -1e-30, 1.0, 1.0) == pytest.approx(1e-1)
+
+    def test_the_line_search_limits_are_relative_to_the_first_trial(self, rng):
+        space = EuclideanSpace(3)
+        functional = quadratic(space, np.identity(3), np.zeros(3))
+        point = np.ones(3)
+        ascent = np.ones(3)
+        # Armijo along an ascent direction stops on ``min_step``: the same
+        # number of contractions whatever the first trial step.
+        counts = set()
+        for initial in (1.0, 1e-9, 1e9):
+            result = ArmijoLineSearch(max_backtracks=200, min_step=1e-3)(
+                functional,
+                point,
+                ascent,
+                value=functional(point),
+                slope=-1.0,
+                initial_step=initial,
+            )
+            assert not result.converged
+            counts.add(result.evaluations)
+        assert len(counts) == 1, counts
+        # Wolfe's cap: the minimizer along -x from x is at step one. From a
+        # first trial of 1/8 with a cap of four times it the bracketing
+        # stops at 1/2, short of the minimizer; a cap of sixteen times
+        # reaches it. The tight curvature constant is so that 1/8 itself,
+        # where the slope has fallen by an eighth, is not accepted.
+        descent = -point
+        short = StrongWolfeLineSearch(max_step=4.0, curvature=0.1)(
+            functional,
+            point,
+            descent,
+            value=functional(point),
+            slope=float(np.dot(functional.at(point).gradient, descent)),
+            initial_step=0.125,
+        )
+        assert not short.converged
+        long = StrongWolfeLineSearch(max_step=16.0, curvature=0.1)(
+            functional,
+            point,
+            descent,
+            value=functional(point),
+            slope=float(np.dot(functional.at(point).gradient, descent)),
+            initial_step=0.125,
+        )
+        assert long.converged and long.step == pytest.approx(1.0)

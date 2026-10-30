@@ -164,8 +164,9 @@ print(f"rms error of the MAP log-concentration: {rms_error:.2f} (prior: 0.8)")
 
 # %% [markdown]
 # The preconditioned Newton steps never left the range the code can
-# evaluate. L-BFGS, the default, has no curvature to go on at first, and
-# run on the same problem it does overshoot.
+# evaluate. L-BFGS, the default, has no curvature to go on at first: its
+# first trial step along the gradient is sized from the value and the
+# gradient alone, and the line search takes it from there.
 
 # %%
 for key in calls:
@@ -180,15 +181,15 @@ agreement = X.norm(X.subtract(by_lbfgs.minimizer, mode)) / X.norm(mode)
 print(f"the two modes agree to {agreement:.1e}")
 
 # %% [markdown]
-# Some of its trial models could not be evaluated: early in the search a
-# step overshot into the range where the code fails. Each failure was
-# treated as a step too far — the line search backed off and tried a
-# shorter one — and the search carried on to the same mode. Had the failure
-# come where there was nowhere to retreat to, the optimiser would have
-# returned its last good state with the failure recorded in
-# `result.failure`, rather than losing the run to an exception. Any *other*
-# exception still propagates: a bug is not something to step around.
-# (Example 12 shows both cases.)
+# It reaches the same mode, at many more forward runs, and on this problem
+# none of its trial models fell out of range either. When one does — a
+# step that lands where the code fails — the line search treats the
+# `EvaluationError` as a step too far, backs off and tries a shorter one,
+# and the search carries on. Had the failure come where there was nowhere
+# to retreat to, the optimiser would have returned its last good state
+# with the failure recorded in `result.failure`, rather than losing the run
+# to an exception. Any *other* exception still propagates: a bug is not
+# something to step around. Example 12 constructs both cases deliberately.
 
 # %%
 print("recorded failure:", by_lbfgs.failure)

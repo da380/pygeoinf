@@ -494,8 +494,8 @@ a median of 0.008 and at most 0.031, and their deepest points by up to
 mean, on the reference rays, fits the data to a chi-squared of 2.3 on 32 as
 it believes, and to 23.0 along its own bent rays. The MAP model, by Newton-CG
 on the Gauss-Newton Hessian `2 (P + J* R^-1 J)` from the prior's mean with
-the prior covariance as the preconditioner, takes 7 iterations, 8 ray
-tracings and 6 s; the operator's second derivative is never needed, the
+the prior covariance as the preconditioner, takes 6 iterations, 7 ray
+tracings and 5 s; the operator's second derivative is never needed, the
 Gauss-Newton Hessian being the derivative's own normal operator. It fits the
 data to 2.3 along its own rays, and differs from the linear mean by 3.4% of
 it, in the upper mantle under the stations. It comes barely closer to the

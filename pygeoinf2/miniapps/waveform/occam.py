@@ -51,7 +51,9 @@ def occam_answer(state: Setup, mode: np.ndarray, /, *, outdir: pathlib.Path) -> 
         start=mode,
         max_iterations=scale.occam_iterations,
         tolerance=1e-4,
-        gtol=1e-5,
+        # relative to the terms that cancel at a stationary point of the
+        # augmented Lagrangian; see AugmentedLagrangian
+        rtol=1e-5,
     )
     watch = Stopwatch(wave.calls)
     result = estimator.solve(state.data)

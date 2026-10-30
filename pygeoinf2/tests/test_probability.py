@@ -1207,8 +1207,14 @@ class TestConditioning:
             "dense": lambda: make_dense_metric_space(5),
         }[request.param]()
         constraint = EuclideanSpace(2)
+        # Two independent rows: onto its codomain, which an exact
+        # conditioning needs and which is the caller's to claim.
         operator = LinearOperator.from_matrix(
-            space, constraint, rng.normal(size=(2, space.dim)), form="components"
+            space,
+            constraint,
+            rng.normal(size=(2, space.dim)),
+            form="components",
+            traits=Traits.SURJECTIVE,
         )
         return space, operator, GaussianMeasure.from_standard_deviation(space, 1.2)
 

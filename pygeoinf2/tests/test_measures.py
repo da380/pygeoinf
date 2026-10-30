@@ -294,8 +294,14 @@ class TestHardening:
             root = rng.normal(size=(space.dim, space.dim)) + 2.0 * np.identity(
                 space.dim
             )
+            # The factor is nonsingular, and says so: that is what makes
+            # L L* definite and the credible ellipsoid exist.
             factor = LinearOperator.from_matrix(
-                EuclideanSpace(space.dim), space, root, form="components"
+                EuclideanSpace(space.dim),
+                space,
+                root,
+                form="components",
+                traits=Traits.INVERTIBLE,
             )
             measure = GaussianMeasure(space, covariance_factor=factor)
             assert measure.precision is None
@@ -390,7 +396,11 @@ class TestConditioning:
             space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
         )
         operator = LinearOperator.from_matrix(
-            space, EuclideanSpace(2), rng.normal(size=(2, space.dim)), form="galerkin"
+            space,
+            EuclideanSpace(2),
+            rng.normal(size=(2, space.dim)),
+            form="galerkin",
+            traits=Traits.SURJECTIVE,
         )
         value = np.array([0.5, -1.0])
         assert np.allclose(
@@ -434,7 +444,11 @@ class TestConditioning:
             space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
         )
         operator = LinearOperator.from_matrix(
-            space, EuclideanSpace(2), rng.normal(size=(2, space.dim)), form="galerkin"
+            space,
+            EuclideanSpace(2),
+            rng.normal(size=(2, space.dim)),
+            form="galerkin",
+            traits=Traits.SURJECTIVE,
         )
         conditioned = measure.condition(operator, np.array([0.5, -1.0]))
         assert conditioned.nuclear_norm() < measure.nuclear_norm()

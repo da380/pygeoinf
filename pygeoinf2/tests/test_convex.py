@@ -237,7 +237,7 @@ class TestProximalGradient:
         smooth = SquaredDistance(space, center=center)
         penalty = NormFunctional(space, weight=0.3)
 
-        result = ProximalGradient(max_iterations=2000, gtol=1e-10).minimize(
+        result = ProximalGradient(max_iterations=2000, rtol=1e-10).minimize(
             smooth, space.random(rng=rng), nonsmooth=penalty
         )
         assert result.converged
@@ -275,7 +275,7 @@ class TestProximalGradient:
     def test_a_ball_constraint_is_respected(self, space, rng):
         smooth = SquaredDistance(space, center=space.random(rng=rng))
         constraint = BallIndicator(space, radius=0.2)
-        result = ProximalGradient(max_iterations=2000, gtol=1e-10).minimize(
+        result = ProximalGradient(max_iterations=2000, rtol=1e-10).minimize(
             smooth, space.random(rng=rng), nonsmooth=constraint
         )
         assert space.norm(result.minimizer) <= 0.2 * (1.0 + 1e-8)
@@ -283,7 +283,7 @@ class TestProximalGradient:
     def test_it_works_with_no_nonsmooth_part(self, space, rng):
         center = space.random(rng=rng)
         smooth = SquaredDistance(space, center=center)
-        result = ProximalGradient(max_iterations=500, gtol=1e-10).minimize(
+        result = ProximalGradient(max_iterations=500, rtol=1e-10).minimize(
             smooth, space.random(rng=rng)
         )
         assert space.norm(space.subtract(result.minimizer, center)) < 1e-8
@@ -344,7 +344,7 @@ class TestProximalPoint:
     def test_it_converges_on_a_squared_distance(self, space, rng):
         center = space.random(rng=rng)
         f = SquaredDistance(space, center=center)
-        result = ProximalPoint(step=1.0, max_iterations=500, gtol=1e-10).minimize(
+        result = ProximalPoint(step=1.0, max_iterations=500, rtol=1e-10).minimize(
             f, space.random(rng=rng)
         )
         assert space.norm(space.subtract(result.minimizer, center)) < 1e-8
@@ -352,10 +352,10 @@ class TestProximalPoint:
     def test_a_larger_step_converges_in_fewer_iterations(self, space, rng):
         f = SquaredDistance(space, center=space.random(rng=rng))
         start = space.random(rng=rng)
-        slow = ProximalPoint(step=0.1, max_iterations=2000, gtol=1e-10).minimize(
+        slow = ProximalPoint(step=0.1, max_iterations=2000, rtol=1e-10).minimize(
             f, start
         )
-        fast = ProximalPoint(step=10.0, max_iterations=2000, gtol=1e-10).minimize(
+        fast = ProximalPoint(step=10.0, max_iterations=2000, rtol=1e-10).minimize(
             f, start
         )
         assert fast.iterations < slow.iterations
@@ -397,7 +397,7 @@ class TestCoordinateFreedom:
         center = opaque.random(rng=rng)
         smooth = SquaredDistance(opaque, center=center)
         penalty = NormFunctional(opaque, weight=0.2)
-        result = ProximalGradient(max_iterations=1000, gtol=1e-10).minimize(
+        result = ProximalGradient(max_iterations=1000, rtol=1e-10).minimize(
             smooth, opaque.random(rng=rng), nonsmooth=penalty
         )
         expected = penalty.prox(center, 1.0)

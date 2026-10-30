@@ -1004,7 +1004,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # from_matrix(E, X, R, form="galerkin") has component matrix G^-1 R, and
         # (G^-1 R)(G^-1 R)* has Galerkin matrix R R^T == the covariance.
         coefficients = EuclideanSpace(domain.dim)
-        factor = LinearOperator.from_matrix(coefficients, domain, root, form="galerkin")
+        # The factorization returns an inverse root only for a covariance
+        # that is numerically nonsingular; the factor then claims
+        # invertibility and the covariance it builds, R R*, definiteness.
+        factor = LinearOperator.from_matrix(
+            coefficients,
+            domain,
+            root,
+            form="galerkin",
+            traits=Traits.NONE if inverse_root is None else Traits.INVERTIBLE,
+        )
 
         precision = None
         precision_factor = None
@@ -1968,6 +1977,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         covariance once on a space small enough to hold it; that is the dense
         route, and it is taken only by name.
 
+        The inverse exists only for a definite covariance, and the measure
+        must know that: a covariance claiming only semidefiniteness (a
+        push-forward through an operator not claiming ``SURJECTIVE``, a
+        spectrum that underflows, a covariance from too few samples) is
+        refused rather than claimed definite on the caller's behalf. With a
+        direct solver the factorization itself is the proof -- Cholesky fails
+        on a singular matrix -- so there the claim is not needed; on a space
+        of a handful of properties that is the natural route.
+
         Args:
             level: the probability the region carries, in ``(0, 1)``.
             solver: how to invert the covariance when the measure has no
@@ -1981,11 +1999,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             The credible ellipsoid.
 
         Raises:
-            ValueError: for a level outside ``(0, 1)``, a measure with
-                neither a precision nor a covariance, or a domain that
-                discretises a function space unless ``unsafe=True``: the
-                chi-squared threshold grows with the dimension, so the set
-                is an artefact of the truncation.
+            ValueError: for a level outside ``(0, 1)``; a measure with
+                neither a precision nor a covariance; a covariance that does
+                not claim positive definiteness under an iterative solver,
+                a singular measure having no credible ellipsoid in the whole
+                space (a push-forward keeps the claim when its operator
+                claims ``SURJECTIVE``; a direct solver proves it by
+                factorizing; ``with_traits`` attaches it where the caller
+                knows better); or a domain that discretises a function space
+                unless ``unsafe=True``: the chi-squared threshold grows with
+                the dimension, so the set is an artefact of the truncation.
         """
         _require_density(self._domain, "A credible set", unsafe=unsafe)
         from scipy.stats import chi2
@@ -2012,12 +2035,26 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # a solver, is an operator in the space's own metric by
             # construction. A dense inverse of the Galerkin matrix would not
             # be without two corrections by G.
-            from ..numerics.solvers import resolve_solver
+            from ..numerics.solvers import DirectSolver, resolve_solver
 
-            definite = self._require_covariance("A credible set").with_traits(
-                Traits.POSITIVE_DEFINITE
-            )
-            precision = resolve_solver(solver, definite)(definite) * (1.0 / threshold)
+            definite = self._require_covariance("A credible set")
+            resolved = resolve_solver(solver, definite)
+            if Traits.POSITIVE_DEFINITE not in definite.traits:
+                if not isinstance(resolved, DirectSolver):
+                    raise ValueError(
+                        "A credible set needs a covariance that claims "
+                        "POSITIVE_DEFINITE, and this one claims only "
+                        f"{definite.traits!s}: a singular measure has no "
+                        "credible ellipsoid in the whole space. A push-forward "
+                        "keeps the claim when its operator claims SURJECTIVE; a "
+                        "direct solver (solver=CholeskySolver()) proves it by "
+                        "factorizing, on a space small enough to hold the "
+                        "matrix; where the covariance is known to be definite, "
+                        "attach the trait with with_traits(Traits.POSITIVE_DEFINITE)."
+                    )
+                # The factorization is the proof: it fails on a singular matrix.
+                definite = definite.with_traits(Traits.POSITIVE_DEFINITE)
+            precision = resolved(definite) * (1.0 / threshold)
         return Ellipsoid(
             self.domain,
             precision,
@@ -2529,18 +2566,44 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             The conditioned measure.
 
         Raises:
-            ValueError: if this measure has no covariance operator.
+            ValueError: if this measure has no covariance operator, or if
+                ``A C A* + R`` is not known to be invertible: that needs the
+                covariance to claim positive definiteness and, for an exact
+                constraint, the operator to claim ``SURJECTIVE``, or else a
+                noise covariance claiming positive definiteness. A constraint
+                operator with dependent rows has no exact conditioning;
+                drop the dependent rows, or claim the trait where it is
+                known to hold.
         """
         from ..numerics.solvers import resolve_solver
         from ..traits import Traits as _Traits
+        from ..traits import congruence_traits as _congruence
 
         covariance = self._require_covariance("Conditioning")
         codomain = operator.codomain
 
-        normal = operator @ covariance @ operator.adjoint
+        normal = (operator @ covariance @ operator.adjoint).with_traits(
+            _congruence(
+                covariance.traits,
+                outer_surjective=_Traits.SURJECTIVE in operator.traits,
+            )
+        )
         if noise is not None:
             normal = normal + noise.covariance
-        normal = normal.with_traits(_Traits.SELF_ADJOINT | _Traits.POSITIVE_DEFINITE)
+        if _Traits.POSITIVE_DEFINITE not in normal.traits:
+            raise ValueError(
+                "Conditioning needs A C A* + R to be invertible, and it is not "
+                f"known to be: the covariance claims {covariance.traits!s} and "
+                f"the operator {operator.traits!s}"
+                + (
+                    "."
+                    if noise is None
+                    else f", and the noise covariance {noise.covariance.traits!s}."
+                )
+                + " An exact constraint needs a POSITIVE_DEFINITE covariance and "
+                "an operator claiming SURJECTIVE (with_traits attaches it); a "
+                "noisy one needs a POSITIVE_DEFINITE noise covariance."
+            )
         inverse = resolve_solver(solver, normal)(normal)
         cross = covariance @ operator.adjoint
 
@@ -2577,12 +2640,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     residual = codomain.subtract(residual, disturbance)
                 return self._domain.add(drawn, gain(residual))
 
+        # (C^-1 + A* R^-1 A)^-1 when both inverses exist: definite exactly
+        # when the covariance and the noise are, and only semidefinite under
+        # an exact constraint, which collapses the constrained directions.
+        traits = _Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE
+        if (
+            noise is not None
+            and _Traits.POSITIVE_DEFINITE in covariance.traits
+            and _Traits.POSITIVE_DEFINITE in noise.covariance.traits
+        ):
+            traits |= _Traits.POSITIVE_DEFINITE
         return GaussianMeasure(
             self._domain,
             expectation=self._domain.add(self.expectation, shift),
-            covariance=updated.with_traits(
-                _Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE
-            ),
+            covariance=updated.with_traits(traits),
             sample=sample,
             unsafe=True,
         )
@@ -2743,15 +2814,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         block = domain.projection(first) @ operator @ domain.projection(second).adjoint
         if left != right:
             return block
-        # A diagonal block is a congruence of the operator, and inherits its
-        # traits -- stated here as push_forward states them, because the
-        # palindrome rule cannot see it: the composition flattens the
-        # operator into its own factors, and a covariance whose traits were
-        # claimed rather than derived (a posterior's) loses them on the way.
-        # Without this the marginal of a posterior on a direct sum would claim
-        # nothing, and the measure constructor would refuse it.
+        # A diagonal block is a congruence of the operator by a projection
+        # onto a summand, which is onto, so it inherits the operator's traits
+        # whole, definiteness included -- stated here as push_forward states
+        # them, because the palindrome rule cannot see it: the composition
+        # flattens the operator into its own factors, and a covariance whose
+        # traits were claimed rather than derived (a posterior's) loses them
+        # on the way. Without this the marginal of a posterior on a direct
+        # sum would claim nothing, and the measure constructor would refuse it.
         return block.with_traits(
-            congruence_traits(operator.traits, outer_invertible=False)
+            congruence_traits(operator.traits, outer_surjective=True)
         )
 
     def mahalanobis_squared(self, x: X, *, unsafe: bool = False) -> float:
@@ -3066,8 +3138,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # composition: the palindrome is visible to the trait algebra only
             # when the covariance is a single factor, and a covariance written
             # as a product -- ``(I - K A) Q``, the posterior's -- is not.
+            # Definiteness comes through when the operator claims to be onto.
             covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
-                congruence_traits(self._covariance.traits, outer_invertible=False)
+                congruence_traits(
+                    self._covariance.traits,
+                    outer_surjective=Traits.SURJECTIVE in operator.traits,
+                )
             )
         # With no factor to map there is still a sampler: push each centered
         # draw through the operator, the image's expectation being added by

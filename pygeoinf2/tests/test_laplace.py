@@ -133,8 +133,12 @@ class TestOnANonlinearProblem:
         found = estimator.solve(data)
 
         assert found.converged
-        gradient = estimator.objective(data).gradient(found.minimizer)
-        assert forward.domain.norm(gradient) < 1e-4
+        objective = estimator.objective(data)
+        gradient = objective.gradient(found.minimizer)
+        at_start = objective.gradient(forward.domain.zero())
+        # Judged against the gradient where the search began, as the
+        # optimizer judges itself: the objective's units are the data's.
+        assert forward.domain.norm(gradient) <= 1e-7 * forward.domain.norm(at_start)
 
     def test_it_is_a_point_estimator(self, nonlinear_setting):
         forward, prior, error, truth, data = nonlinear_setting

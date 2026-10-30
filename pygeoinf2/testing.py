@@ -864,15 +864,17 @@ def check_traits(
     at construction. This is the safety net. Only claimed traits are checked —
     an absent trait is not a claim that the property fails.
 
-    Each claim is tested on probe vectors, except ``INVERTIBLE``, which no
-    probe can confirm. It is verified where that is cheap and otherwise left
-    unverified: an operator that scales components is invertible exactly
-    when no scaling is zero, and one built from a dense array is ranked by
-    a decomposition of that array. A sparse array, a product of stored
-    factors or an operator that is applied rather than stored would cost a
-    dense matrix or as many applications as the dimension, and every
-    covariance claims invertibility through positive definiteness, so
-    there the claim is taken on trust.
+    Each claim is tested on probe vectors, except ``INVERTIBLE`` and
+    ``SURJECTIVE``, which no probe can confirm. They are verified where that
+    is cheap and otherwise left unverified: an operator that scales
+    components is invertible exactly when no scaling is zero, and one built
+    from a dense array is ranked by a decomposition of that array (full
+    rank for invertibility, rank equal to the codomain's dimension for
+    surjectivity). A sparse array, a product of stored factors or an
+    operator that is applied rather than stored would cost a dense matrix
+    or as many applications as the dimension, and every covariance claims
+    invertibility through positive definiteness, so there the claim is
+    taken on trust.
 
     Args:
         operator: the operator whose claims are to be checked.
@@ -985,6 +987,23 @@ def check_traits(
                 _fail(
                     "the claimed INVERTIBLE operator has full rank",
                     f"rank {rank} of {domain.dim}",
+                )
+    if claims(Traits.SURJECTIVE):
+        if codomain.dim > domain.dim:
+            _fail(
+                "a claimed SURJECTIVE operator has a codomain no larger than "
+                "its domain",
+                f"{codomain.dim} > {domain.dim}",
+            )
+        elif isinstance(operator, MatrixLinearOperator) and isinstance(
+            operator.stored_matrix, np.ndarray
+        ):
+            rank = np.linalg.matrix_rank(operator.stored_matrix)
+            if rank < codomain.dim:
+                _fail(
+                    "the claimed SURJECTIVE operator has rank equal to its "
+                    "codomain's dimension",
+                    f"rank {rank} of {codomain.dim}",
                 )
     return CheckReport("check_traits", defects)
 
