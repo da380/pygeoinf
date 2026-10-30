@@ -70,7 +70,7 @@ jobs:
       run: poetry install --with dev --all-extras
 
     - name: Test with pytest
-      run: poetry run pytest --cov=pygeoinf --cov=pygeoinf2
+      run: poetry run pytest --cov=pygeoinf2
 
     - name: Build package
       run: poetry build
