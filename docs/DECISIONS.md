@@ -3823,6 +3823,37 @@ semidefiniteness. Tests: the trait algebra, `check_traits`, push-forward
 and conditioning through claimed and unclaimed operators, and the
 refusals by name.
 
+**D-210. The Fourier spaces' inner product is the grid's quadrature, and a
+Nyquist mode keeps its function across grids** (2026-10-30, David). On an
+even axis the cosine at the Nyquist wavenumber is a fixed point of
+conjugation, stored once by the real FFT, and the grid cannot tell its
+square from a constant: the trapezoid sum gives it squared norm `V` where
+the continuous `L2` norm of `cos(k.r)` is `V/2`. v1 chose the continuous
+norm for that mode (its #164, Dan Heathcote, on `main`). v2 keeps the
+grid's: the
+components are orthonormal for the quadrature the grid defines, a
+pointwise product of two grid functions is then exactly self-adjoint, and
+the module structure that the nonlinear forwards, the mass-weighted
+spaces and the support projections lean on is exact. Under the continuous
+norm a multiplication by a sharp mask fails its adjoint check by a fifth
+to a third, there being no dealiasing on the grid, which is the fact that
+decides it; point values are right under either convention, the amplitude
+and the component scale cancelling. The one place the two conventions
+meet is `degree_transfer_operator`: a Nyquist mode of one grid is the
+cosine member of a conjugate pair on a finer one, with coefficient
+`a sqrt(V/2)` for `a sqrt(V)`, and copying the coefficient scaled the
+function by `sqrt(2)`. The transfer now carries the ratio of the two mode
+measures (`_mode_measure`, which documents the convention), so a Nyquist
+cosine prolonged or restricted is the same function, and the adjoint,
+derived through the metrics, follows. In practice the convention is
+invisible: a prior that is trace class on the space has put next to no
+power at the Nyquist wavenumber by the time the grid resolves it, so the
+factor of two there shows only in tests built to see it. Tests:
+`tests/test_fourier_spaces.py::TestNyquistModes` (the convention stated,
+a masked multiplication self-adjoint, point values by both routes, the
+transfer exact on the circle and a torus corner mode with its adjoint
+checked).
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

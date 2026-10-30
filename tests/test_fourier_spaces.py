@@ -77,6 +77,54 @@ class TestCoordinateMap:
             Lebesgue((4, 4)).basis_at(np.array([0.1]))
 
 
+class TestNyquistModes:
+    """The inner product is the grid's quadrature: a pointwise product is
+    exactly self-adjoint, and the cosine at the Nyquist wavenumber of an
+    even axis, which the grid cannot tell from its square's alias, counts
+    with squared norm ``V`` rather than the continuous ``V/2``. Where that
+    mode is carried to a grid on which it is a conjugate pair, the function
+    is kept and not its coefficient."""
+
+    def test_the_convention_is_the_grid_quadrature(self):
+        space = Lebesgue((16,))
+        theta = space.grid_axes[0]
+        assert space.squared_norm(np.cos(8.0 * theta)) == pytest.approx(2.0 * np.pi)
+        assert space.squared_norm(np.cos(3.0 * theta)) == pytest.approx(np.pi)
+        mask = (theta < np.pi).astype(float)
+        check_operator(
+            space.multiplication_operator(mask), rng=np.random.default_rng(3)
+        )
+
+    @pytest.mark.parametrize("route", ["dense", "local"])
+    def test_point_values_of_a_nyquist_cosine(self, route):
+        space = Lebesgue((16,))
+        field = np.cos(8.0 * space.grid_axes[0])
+        operator = space.point_evaluation_operator(
+            [np.array([0.3]), np.array([2.0])], unsafe=True, route=route
+        )
+        assert np.allclose(operator(field), np.cos(8.0 * np.array([0.3, 2.0])))
+
+    def test_a_nyquist_cosine_transfers_exactly_between_grids(self, rng):
+        coarse, fine = Lebesgue((16,)), Lebesgue((32,))
+        theta, fine_theta = coarse.grid_axes[0], fine.grid_axes[0]
+        up = coarse.degree_transfer_operator(fine)
+        down = fine.degree_transfer_operator(coarse)
+        assert np.allclose(up(np.cos(8.0 * theta)), np.cos(8.0 * fine_theta))
+        assert np.allclose(
+            down(np.cos(8.0 * fine_theta) + np.cos(3.0 * fine_theta)),
+            np.cos(8.0 * theta) + np.cos(3.0 * theta),
+        )
+        check_operator(up, rng=rng)
+        check_operator(down, rng=rng)
+        torus, finer = Lebesgue((8, 6)), Lebesgue((16, 12))
+        x, y = np.meshgrid(*torus.grid_axes, indexing="ij")
+        xf, yf = np.meshgrid(*finer.grid_axes, indexing="ij")
+        assert np.allclose(
+            torus.degree_transfer_operator(finer)(np.cos(4.0 * x + 3.0 * y)),
+            np.cos(4.0 * xf + 3.0 * yf),
+        )
+
+
 class TestSpaceAxioms:
     @pytest.mark.parametrize("shape", [(8,), (6, 4), (4, 4, 4)])
     def test_lebesgue(self, shape, rng):

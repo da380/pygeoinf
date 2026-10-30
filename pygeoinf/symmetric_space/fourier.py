@@ -359,6 +359,26 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         """
         return float(np.sqrt(self._volume) / self._packing.size)
 
+    @cached_property
+    def _mode_measure(self) -> np.ndarray:
+        """Per component, the squared norm of the grid function ``cos(k.r)``
+        (or ``sin``) a unit coefficient divides by, as a fraction of the
+        volume: one for a fixed point of conjugation, a half for a member of
+        a conjugate pair.
+
+        The inner product is the grid's quadrature, exact for every product
+        of two modes except at the Nyquist wavenumber of an even axis, where
+        ``cos^2`` aliases onto a constant: that cosine, stored once by the
+        real FFT, counts with squared norm ``V`` on this grid where its
+        continuous norm is ``V/2``. The convention is the grid's, so that a
+        pointwise product of two grid functions is exactly self-adjoint and
+        the module structure every nonlinear forward leans on is exact; the
+        one place the two conventions meet, the transfer of a Nyquist mode to
+        a grid where it is a pair, carries their ratio.
+        """
+        count = self._packing.fixed_indices.size
+        return np.concatenate([np.ones(count), np.full(self._packing.dim - count, 0.5)])
+
     def to_components(self, x: np.ndarray) -> np.ndarray:
         """Spectral coefficients of a field, orthonormal in L2."""
         transform = rfftn(np.asarray(x, dtype=float), s=self._shape).ravel()
@@ -998,16 +1018,23 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         shared = [(here[label], there[label]) for label in here if label in there]
         keep = np.array([a for a, _ in shared], dtype=int)
         place = np.array([b for _, b in shared], dtype=int)
+        # A mode at the Nyquist wavenumber of one grid is a conjugate pair on
+        # a finer one, and the same cosine ``a cos(k.r)`` has coefficient
+        # ``a sqrt(V)`` as a fixed point of conjugation and ``a sqrt(V/2)`` as
+        # the cosine member of a pair (see ``_component_scale``). Copying the
+        # coefficient would scale the function by ``sqrt(2)``; the ratio of
+        # the two conventions is carried instead, so the function is kept.
+        scale = np.sqrt(target._mode_measure[place] / self._mode_measure[keep])
 
         def value(x: np.ndarray) -> np.ndarray:
             components = np.zeros(target.dim)
-            components[place] = self.to_components(x)[keep]
+            components[place] = scale * self.to_components(x)[keep]
             return target.from_components(components)
 
         def derivative_components(y: np.ndarray) -> np.ndarray:
             pulled = target.apply_gram(target.to_components(y))
             total = np.zeros(self.dim)
-            total[keep] = pulled[place]
+            total[keep] = scale * pulled[place]
             return total
 
         return LinearOperator.from_derivative_callables(
