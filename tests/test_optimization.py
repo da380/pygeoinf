@@ -941,8 +941,11 @@ class TestAugmentedLagrangian:
         normal = space.random(rng=rng)
         objective = self.squared_distance(space, center)
         constraint = self.hyperplane(space, normal, 1.0)
+        # The violation tolerance bounds how far the answer sits off the
+        # plane, and so the error in its value; the tests below on the value
+        # and the multiplier ask for what that tolerance promises.
         method = AugmentedLagrangian(
-            inner(gtol=1e-10), equalities=[constraint], tolerance=1e-8, gtol=1e-8
+            inner(rtol=1e-10), equalities=[constraint], tolerance=1e-10, rtol=1e-10
         )
         result = method.minimize(objective, space.zero())
 
@@ -956,7 +959,7 @@ class TestAugmentedLagrangian:
         assert result.converged, result.message
         assert result.minimizer == pytest.approx(expected, abs=1e-6)
         assert result.multipliers[0] == pytest.approx(2.0 * excess, abs=1e-6)
-        assert result.violation <= 1e-8
+        assert result.violation <= 1e-10
         assert result.inequality_multipliers.size == 0
         assert result.value == pytest.approx(objective(expected), abs=1e-9)
         assert result.outer_iterations >= 1

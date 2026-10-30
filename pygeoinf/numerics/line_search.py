@@ -426,10 +426,16 @@ def _quadratic_minimizer(
     """Minimizer of the quadratic through ``(a, fa)`` with slope ``fpa`` and
     ``(b, fb)``, or None where it has none."""
     db = b - a
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        curvature = (fb - fa - fpa * db) / (db * db)
-        step = a - fpa / (2.0 * curvature)
-    return float(step) if np.isfinite(step) and curvature > 0.0 else None
+    if db == 0.0:
+        return None
+    curvature = (fb - fa - fpa * db) / (db * db)
+    if not np.isfinite(curvature) or curvature <= 0.0:
+        # Linear or concave along the line, to rounding: no minimizer, and a
+        # plain Python division by a zero curvature would raise rather than
+        # return the infinity ``errstate`` lets a numpy one pass.
+        return None
+    step = a - fpa / (2.0 * curvature)
+    return float(step) if np.isfinite(step) else None
 
 
 def _cubic_minimizer(
