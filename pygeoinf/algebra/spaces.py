@@ -373,7 +373,7 @@ class ArrayVectorMixin:
         return y
 
     def scale_inplace(self, a: float, x: np.ndarray) -> np.ndarray:
-        """x *= a, in place."""
+        """``x *= a``, in place."""
         x *= a
         return x
 

@@ -900,7 +900,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         would build a different covariance from the one meant. Below that
         threshold the matrix is symmetrized against round-off.
 
-        A covariance is required to be positive *semi*definite, so a Cholesky
+        A covariance is required to be positive semidefinite, not definite, so a Cholesky
         factorization alone is not enough: it refuses every singular
         covariance -- a measure supported on a subspace, an empirical
         covariance from fewer samples than dimensions, a pushforward through a

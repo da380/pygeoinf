@@ -33,7 +33,7 @@ MARKER = "# %%"
 
 # The branch of the repository the Colab cell installs from, and the README's
 # badges open the notebooks on.
-BRANCH = "<release-branch>"
+BRANCH = "main"
 
 INSTALL = """\
 # Generated from tutorials/{name}.

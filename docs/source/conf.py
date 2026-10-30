@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath("../.."))
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "pygeoinf"
-copyright = "2025, David Al-Attar, Dan Heathcote, Adrian Mag"
+copyright = "2025-2026, David Al-Attar, Dan Heathcote, Adrian Mag"
 author = "David Al-Attar, Dan Heathcote, Adrian Mag"
 
 # -- General configuration ---------------------------------------------------
@@ -71,9 +71,21 @@ _REPO_ROOT = os.path.abspath(os.path.join(_SOURCE_DIR, "..", ".."))
 
 
 def _run_apidoc(_app):
-    """Regenerate the per-module .rst stubs before the build reads them."""
+    """Regenerate the per-module .rst stubs before the build reads them.
+
+    Stubs left by an earlier build of a different tree are removed first:
+    Sphinx builds every ``.rst`` it finds, and a stub for a module that no
+    longer exists is an import error in the log and a dead page.
+    """
+    import glob
+
     from sphinx.ext.apidoc import main
 
+    for stale in glob.glob(os.path.join(_SOURCE_DIR, "pygeoinf*.rst")) + [
+        os.path.join(_SOURCE_DIR, "modules.rst")
+    ]:
+        if os.path.exists(stale):
+            os.remove(stale)
     main(
         [
             "--force",
@@ -82,9 +94,6 @@ def _run_apidoc(_app):
             "--output-dir",
             _SOURCE_DIR,
             os.path.join(_REPO_ROOT, "pygeoinf"),
-            # Excluded: data_assimilation is not ready to be part of the
-            # public API reference. Remove this line to publish it.
-            os.path.join(_REPO_ROOT, "pygeoinf", "data_assimilation"),
         ]
     )
 

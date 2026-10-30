@@ -1,93 +1,61 @@
-.. pygeoinf documentation master file, created by
-   sphinx-quickstart on Fri Aug 15 14:06:35 2025.
-
-pygeoinf: A Python Library for Geophysical Inference
-=====================================================
-
-**pygeoinf** is a Python library for solving geophysical inference and inverse problems in a coordinate-free, abstract framework. It leverages the mathematics of Hilbert spaces to provide a robust and flexible foundation for Bayesian and optimisation-based inference.
-
-Overview
+pygeoinf
 ========
 
-The core philosophy of `pygeoinf` is to separate the abstract mathematical structure of an inverse problem from its concrete numerical implementation. Instead of manipulating NumPy arrays directly, you work with high-level objects like `HilbertSpace`, `LinearOperator`, and `GaussianMeasure`. This allows you to write code that is more readable, less error-prone, and closer to the underlying mathematics.
+Inference and inverse problems on Hilbert spaces, linear and nonlinear,
+written without coordinates. A model is a vector in a space with an inner
+product the problem chooses; a forward operator maps between such spaces,
+linear with its adjoint or nonlinear with its derivative and, where the
+code supplies one, its second derivative; a prior is a Gaussian measure on
+the model space; and the answer to an inverse problem comes in one of
+three kinds, each the same thing whatever the discretization:
 
-The library is built on a few key concepts:
+* **a point**: a least-squares, minimum-norm, maximum a posteriori or
+  Backus-Gilbert estimate for a linear problem, and the maximum a
+  posteriori model or Occam's inversion for a nonlinear one, found by
+  Newton or quasi-Newton methods that work in the space's own metric;
+* **a measure**: the posterior, exactly for a linear problem and as a
+  Laplace approximation at the mode otherwise, to be drawn from, pushed
+  forward to a property, compared by its evidence, or hardened into a
+  credible region;
+* **a set**: the models consistent with bounded errors and a bounded
+  prior, and the range of any property over them, with no probability
+  assumed at all; linearized about a model when the forward operator is
+  nonlinear.
 
-* **`HilbertSpace`**: The foundational class. It represents a vector space with an inner product, but it abstracts away the specific representation of vectors (e.g., NumPy arrays, `pyshtools` grids).
-* **`LinearOperator`**: Represents linear mappings between Hilbert spaces. These are the workhorses of the library, supporting composition, adjoints, and matrix representations.
-* **`GaussianMeasure`**: Generalizes the multivariate normal distribution to abstract Hilbert spaces, providing a way to define priors and noise models.
-* **`ForwardProblem`**: Encapsulates the mathematical model `d = A(u) + e`, linking the unknown model `u` to the observed data `d`.
-* **Inversion Classes**: High-level classes like `LinearBayesianInversion` and `LinearLeastSquaresInversion` provide ready-to-use algorithms for solving the inverse problem.
- 
-Key Features
-============
+The same code runs on a function on a circle, a sphere, a disk or a ball,
+on a layered planet, on a finite element space, or on a vector type a C++
+code owns, because nothing in it reaches past the space's own arithmetic.
 
-* **Abstract Coordinate-Free Formulation**: Write elegant code that mirrors the mathematics of inverse problems.
-* **Bayesian Inference**: Solve inverse problems in a probabilistic framework to obtain posterior distributions over models.
-* **Optimisation Methods**: Includes Tikhonov-regularized least-squares and minimum-norm solutions.
-* **Probabilistic Modelling**: Define priors and noise models using `GaussianMeasure` objects on abstract spaces.
-* **Randomized Algorithms**: Utilizes randomized SVD and Cholesky decompositions for efficient low-rank approximations of large operators.
-* **Application-Specific Spaces**: Provides concrete `HilbertSpace` implementations for functions on a **line**, **circle**, and the **two-sphere**.
-* **High-Quality Visualisation**: Built-in plotting methods for functions on symmetric spaces, including map projections via `cartopy`.
+Installation
+------------
 
-Tutorials
-=========
+.. code-block:: bash
 
-You can run the interactive tutorials directly in Google Colab to get started with the core concepts of the library.
+   pip install pygeoinf
+   pip install "pygeoinf[sphere,planetmodel]"
 
-.. list-table::
-   :header-rows: 1
-   :widths: 60 40
+Python 3.12 or later. The extras: ``sphere`` for functions on the
+two-sphere, ``planetmodel`` for intervals, radial profiles, disks, balls
+and layered planets, ``plot3d`` for three-dimensional sets, ``osqp`` and
+``clarabel`` for alternative convex backends, and ``mfem`` for the finite
+element mini-app on Linux.
 
-   * - Tutorial Name
-     - Link to Colab
-   * - Tutorial 1 - A first example
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial1.ipynb
-          :alt: Open Tutorial 1 in Colab
-   * - Tutorial 2 - Hilbert spaces
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial2.ipynb
-          :alt: Open Tutorial 2 in Colab
-   * - Tutorial 3 - Dual spaces
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial3.ipynb
-          :alt: Open Tutorial 3 in Colab
-   * - Tutorial 4 - Linear operators
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial4.ipynb
-          :alt: Open Tutorial 4 in Colab
-   * - Tutorial 5 - Linear solvers
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial5.ipynb
-          :alt: Open Tutorial 5 in Colab
-   * - Tutorial 6 - Gaussian measures
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial6.ipynb
-          :alt: Open Tutorial 6 in Colab
-   * - Tutorial 7 - Minimum norm inversions
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial7.ipynb
-          :alt: Open Tutorial 7 in Colab
-   * - Tutorial 8 - Bayesian inversions
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial8.ipynb
-          :alt: Open Tutorial 8 in Colab
-   * - Tutorial 9 - Direct sums
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial9.ipynb
-          :alt: Open Tutorial 9 in Colab
-   * - Tutorial 10 - Symmetric spaces
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/tutorial10.ipynb
-          :alt: Open Tutorial 10 in Colab
+Learning the library
+--------------------
 
+The `tutorials <https://github.com/da380/pygeoinf/tree/main/tutorials>`_
+are an ordered course of fourteen scripts, from a first inversion to
+nonlinear problems, coupled fields and writing a backend; each opens as a
+notebook and runs in Google Colab from its badge. The
+`examples <https://github.com/da380/pygeoinf/tree/main/examples>`_ are
+short scripts, one idea each. The
+`mini-apps <https://github.com/da380/pygeoinf/tree/main/miniapps>`_ are
+six complete inverse problems: a C++ vector backend, finite elements
+through MFEM, the Earth's radial density, a field on the sphere from ocean
+data, ray tomography in a layered planet, and acoustic waveform inversion.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: User Guide
-   :hidden:
-
+The reference below documents every public class and function, with the
+contract each keeps.
 
 .. toctree::
    :maxdepth: 4
@@ -95,6 +63,3 @@ You can run the interactive tutorials directly in Google Colab to get started wi
    :hidden:
 
    modules
-
-
-   

@@ -182,7 +182,7 @@ class OrthogonalProjector(LinearOperator):
         throughout.
 
         **``A`` must have full row rank.** The composition ``A A*`` earns only
-        the trait positive *semi*definite, which is all that is true in
+        the trait positive semidefinite, which is all that is true in
         general: ``A A*`` is definite exactly when ``A`` is surjective. This asserts
         definiteness because the formula needs the inverse to exist, so the
         assertion is a precondition on the caller rather than a deduction. Give
