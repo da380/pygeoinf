@@ -267,9 +267,12 @@ class WaveformOperator:
 
             def shot(s: int) -> np.ndarray:
                 linearized, _ = kernels.born(point, fields[s], direction, keep=True)
-                return kernels.curvature(
-                    point, fields[s], linearized, traces[s], direction
-                )
+                try:
+                    return kernels.curvature(
+                        point, fields[s], linearized, traces[s], direction
+                    )
+                finally:
+                    kernels.release(linearized)
 
             parts = self._map(shot, self._curvature_pool or _SERIAL)
             self.calls["born"] += len(parts)

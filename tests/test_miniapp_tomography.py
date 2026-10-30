@@ -145,10 +145,14 @@ def test_the_two_point_ray_is_the_closed_form(flattened, distance):
     profile, arcs = flattened
     reach = np.radians(distance)
     p, exact = profile.ray_parameter(distance), arcs.ray_parameter(reach)
-    assert p == pytest.approx(exact, rel=1e-10)
-    assert profile.travel_time(p) == pytest.approx(arcs.travel_time(exact), rel=1e-10)
+    assert p == pytest.approx(exact, rel=1e-9)
+    # Near the turning point the integrands divide by r - p v(r), a difference
+    # of nearly equal numbers, so the rounding of the velocity there reaches
+    # the travel time amplified, the most on the shallowest ray: an ulp in v
+    # moves the time at five degrees by up to 1.4e-9.
+    assert profile.travel_time(p) == pytest.approx(arcs.travel_time(exact), rel=1e-8)
     assert profile.turning_radius(p) == pytest.approx(
-        np.exp(-arcs.turning_depth(exact)), rel=1e-10
+        np.exp(-arcs.turning_depth(exact)), rel=1e-9
     )
     # Every node lies on the ray's circle in the flattened medium.
     ray = profile.trace(30.0, 30.0 + distance)
@@ -156,7 +160,7 @@ def test_the_two_point_ray_is_the_closed_form(flattened, distance):
     z = -np.log(ray.nodes[:, 0])
     xc, zc, radius = arcs.circle(exact, reach)
     assert np.abs(np.hypot(x - xc, z - zc) - radius).max() < 1e-9
-    assert ray.travel_time == pytest.approx(arcs.travel_time(exact), rel=1e-10)
+    assert ray.travel_time == pytest.approx(arcs.travel_time(exact), rel=1e-8)
     assert ray.nodes[0] == pytest.approx([1.0, 30.0])
     assert ray.nodes[-1] == pytest.approx([1.0, 30.0 + distance])
 

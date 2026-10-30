@@ -3854,6 +3854,28 @@ a masked multiplication self-adjoint, point values by both routes, the
 transfer exact on the circle and a torus corner mode with its adjoint
 checked).
 
+**D-211. CI runs on pull requests to `main` and on `main`, not on every
+push** (2026-10-30, David: a push to a branch and its pull request ran
+the same suite twice, doubling the time to get a change live).
+`ci.yml` triggers on a push to `main`, a pull request to `main`, the
+weekly schedule and `workflow_dispatch`; a push to any other branch, or
+of a tag, runs nothing, so a branch is tested once, on its pull request.
+A run by hand (`gh workflow run ci.yml --ref <branch>`) runs the fast
+suite and the slow set on any branch; CONTRIBUTING says so. The first
+run of the slow set, by hand on the 2.0.0 tree, found two faults. The
+waveform operator's second-derivative adjoint stored the linearized
+field of each shot for the curvature's backward pass and never released
+it, 30 MB a shot at the quick scale, so parts B to E held 32 GB and the
+Linux runner was killed; it is released once the curvature has read it,
+and the quick parts peak at 0.6 GB. The two-point ray's travel time was
+asserted to `1e-10` where an ulp of the velocity moves it by up to
+`1.4e-9` at five degrees, the integrands dividing by `r - p v(r)` near
+the turning point, so macOS and Windows failed and Linux passed at
+`9.4e-11`; the travel times are held to `1e-8`, seven times what an ulp
+produces, and the ray parameter and turning radius to `1e-9`, ten times
+what four ulps produce. Tests:
+`tests/test_miniapp_waveform.py::TestTheProofs::test_only_the_cached_fields_are_held`.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

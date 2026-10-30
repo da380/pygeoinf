@@ -1,13 +1,17 @@
 name: CI
 
-# Every push, on any branch: the test suite is not run locally by a git hook,
-# so this is where it runs.
+# Pull requests to main, and main itself once they merge: the test suite is
+# not run locally by a git hook, so this is where it runs. A push to any other
+# branch runs nothing, so that a branch is tested once, on its pull request,
+# rather than on every push and again there.
 on:
   push:
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   # The slow set (parity checks and Monte Carlo estimates, worth minutes
-  # rather than seconds) runs weekly on every platform, and on request.
+  # rather than seconds) runs weekly on every platform, and on request, which
+  # runs the fast suite too, on whichever branch is asked for.
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
