@@ -401,7 +401,12 @@ class _Slowness:
         self.kwargs = kwargs
 
     def values(self, vectors: np.ndarray) -> np.ndarray:
-        """The slowness at embedded points, shaped like the points without their last axis."""
+        """The slowness at embedded points, shaped like the points without their last axis.
+
+        Raises:
+            EvaluationError: if any point is not finite, which a slowness
+                model outside the range the bending can follow produces.
+        """
         flat = vectors.reshape(-1, vectors.shape[-1])
         if not np.all(np.isfinite(flat)):
             # A slowness model far outside the range the bending can follow

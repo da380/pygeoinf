@@ -521,8 +521,10 @@ planetmodel 1.3.2.
 DONE 2026-10-29 (D-200 to D-207): the review, seven layers by seven
 reviewers, five decisions, seven fix packages, 28 Must-fix items fixed,
 most Should items fixed, the rest listed above in §7 as left open. Its
-working files are under `review/` (findings per layer, `SUMMARY.md` with
-the decisions, `briefs/`) until tidying deletes them.
+two further decisions, relative optimizer tolerances and definiteness
+propagated through a `SURJECTIVE` trait, are D-208 and D-209
+(2026-10-30). Its working files (findings per layer, the summary with
+the decisions, the briefs) are deleted; git has them at `48f6a68`.
 The external asks are out of the review: the student has seen the updates
 and is happy, and sl3dpp's list is not a concern now.
 
@@ -555,9 +557,11 @@ tutorial *scripts* covering the whole core, fourteen as of
 by `make_notebooks.py` (Colab entry points; the suite checks they are
 current). Mini-apps in the MFEM spirit — each a realistic inverse problem
 end to end, deeper than any one feature — are six, under `miniapps/`
-(D-176 to D-199). The approved list is `EXAMPLES_PLAN.md`, a working document that is
-deleted when the phase completes. `README.md` and the Sphinx tree are
-rewritten against the new name, after the rename, not before.
+(D-176 to D-199). The approved list was `EXAMPLES_PLAN.md`, deleted with
+the phase complete (git has it at `48f6a68`); its post-release items,
+evidence priors, pyslfp and sampling, are in the tracks below.
+`README.md` and the Sphinx tree are rewritten against the new name, after
+the rename, not before.
 
 **Release mechanics, in order:** tag `v1-final`; rename `pygeoinf2/` to
 `pygeoinf/`; delete v1, `compat.py` and its test, `work/`, and v1's root
