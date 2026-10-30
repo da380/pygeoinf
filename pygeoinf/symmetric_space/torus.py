@@ -1,0 +1,162 @@
+"""The two-dimensional torus: a doubly periodic domain.
+
+Each geometry has its own module, so that the space a problem is posed on is
+named by its type. ``Torus`` is a
+:class:`~pygeoinf.symmetric_space.fourier.PeriodicBox` of two axes.
+"""
+
+from __future__ import annotations
+
+from typing import Sequence
+
+import numpy as np
+
+from .fourier import PeriodicBox
+
+__all__ = ["Torus", "Lebesgue", "Sobolev"]
+
+
+class Torus(PeriodicBox):
+    """A field on a two-dimensional torus, expanded in a Fourier series."""
+
+    def __init__(
+        self,
+        shape: Sequence[int],
+        /,
+        *,
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
+        order: float = 0.0,
+        length_scale: float = 1.0,
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each of the two axes.
+            lengths: the period along each axis. ``(2 pi, 2 pi)``, the unit
+                torus, if neither this nor *radii* is given. Points are
+                physical coordinates in these periods, never angles; on the
+                unit torus the two coincide.
+            radii: the radius along each axis, as an alternative to the
+                periods; ``length == 2 pi radius`` on each.
+            order: the Sobolev order. Zero gives the Lebesgue space.
+            length_scale: the length at which the Sobolev weight turns over.
+
+        Raises:
+            ValueError: if the shape is not two-dimensional, if both *lengths*
+                and *radii* are given, or if a radius is not positive.
+        """
+        shape = tuple(int(n) for n in shape)
+        if len(shape) != 2:
+            raise ValueError(f"A torus has two axes, got {len(shape)}.")
+        super().__init__(
+            shape,
+            lengths=_periods(lengths, radii),
+            order=order,
+            length_scale=length_scale,
+        )
+
+    @property
+    def radii(self) -> tuple[float, float]:
+        """The periods over ``2 pi``."""
+        first, second = self.lengths
+        return float(first) / (2.0 * np.pi), float(second) / (2.0 * np.pi)
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Torus":
+        """The same torus with some of its parameters changed.
+
+        Overridden so that ``with_order`` and ``with_shape`` give back a torus
+        as the :class:`Lebesgue` or :class:`Sobolev` subclass its order names,
+        rather than a bare
+        :class:`~pygeoinf.symmetric_space.fourier.PeriodicBox`.
+
+        Args:
+            shape: the new grid, two axes. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, lengths=self._lengths)
+        return Sobolev(shape, order, scale, lengths=self._lengths)
+
+
+class Lebesgue(Torus):
+    """The ``L2`` space on a torus."""
+
+    def __init__(
+        self,
+        shape: Sequence[int],
+        /,
+        *,
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each of the two axes.
+            lengths: the period along each axis; ``2 pi`` each by default.
+            radii: the radii, as an alternative.
+
+        Raises:
+            ValueError: if both are given, or a radius is not positive.
+        """
+        super().__init__(shape, lengths=lengths, radii=radii, order=0.0)
+
+
+class Sobolev(Torus):
+    """The Sobolev space ``H^order`` on a torus."""
+
+    def __init__(
+        self,
+        shape: Sequence[int],
+        order: float,
+        length_scale: float,
+        /,
+        *,
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each of the two axes.
+            order: the Sobolev order.
+            length_scale: the length at which the Sobolev weight turns over.
+            lengths: the period along each axis; ``2 pi`` each by default.
+            radii: the radii, as an alternative.
+
+        Raises:
+            ValueError: if both are given, or a radius is not positive.
+        """
+        super().__init__(
+            shape,
+            lengths=lengths,
+            radii=radii,
+            order=order,
+            length_scale=length_scale,
+        )
+
+
+def _periods(
+    lengths: Sequence[float] | None, radii: Sequence[float] | None, /
+) -> tuple[float, float] | None:
+    """The periods from whichever of the two was given; None for the default."""
+    if lengths is not None and radii is not None:
+        raise ValueError("Give the periods or the radii, not both.")
+    if radii is not None:
+        radii = tuple(float(r) for r in radii)
+        if len(radii) != 2 or any(r <= 0.0 for r in radii):
+            raise ValueError(f"A torus has two positive radii, got {radii}.")
+        return (2.0 * np.pi * radii[0], 2.0 * np.pi * radii[1])
+    return None if lengths is None else (float(lengths[0]), float(lengths[1]))

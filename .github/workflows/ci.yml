@@ -70,7 +70,7 @@ jobs:
       run: poetry install --with dev --all-extras
 
     - name: Test with pytest
-      run: poetry run pytest --cov=pygeoinf2
+      run: poetry run pytest --cov=pygeoinf
 
     - name: Build package
       run: poetry build
@@ -101,4 +101,4 @@ jobs:
       run: poetry install --with dev --all-extras
 
     - name: Run the slow set
-      run: poetry run pytest pygeoinf2 -m slow
+      run: poetry run pytest tests -m slow

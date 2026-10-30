@@ -1,0 +1,471 @@
+"""
+The project's code-practice standard, enforced.
+
+Docstrings, type hints and keyword-only optional arguments are house rules for
+this package. A rule that is not checked drifts, so it is checked here rather
+than recorded in a document nobody re-reads.
+
+Scope is the package itself. The tests are excluded because test functions
+document themselves by their names and pytest fixtures take positional
+arguments by design. The examples are excluded because they are teaching
+material: annotating a three-line helper written to illustrate one idea makes
+the illustration worse, and the examples have their own test, which is that
+they run. The tutorials are excluded for the same reason, and have the same
+test, and so are the mini-apps, which are teaching code like the examples,
+built and run by their own tests.
+"""
+
+import ast
+import pathlib
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+PACKAGE = ROOT / "pygeoinf"
+# The trees the rules cover: the package, and the code written against it.
+CODE_TREES = (
+    PACKAGE,
+    ROOT / "examples",
+    ROOT / "tutorials",
+    ROOT / "miniapps",
+    ROOT / "tests",
+)
+SKIP_DIRS = {"__pycache__"}
+
+
+def source_files() -> list[pathlib.Path]:
+    """Every module in the package."""
+    return sorted(
+        path
+        for path in PACKAGE.rglob("*.py")
+        if not SKIP_DIRS & set(path.relative_to(PACKAGE).parts)
+    )
+
+
+def functions_and_classes(path: pathlib.Path):
+    """Yield ``(node, class_name_or_None)`` for every top-level definition."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node, None
+        elif isinstance(node, ast.ClassDef):
+            yield node, None
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield sub, node.name
+
+
+def label(path: pathlib.Path, node, owner: str | None) -> str:
+    name = f"{owner}.{node.name}" if owner else node.name
+    return f"{path.relative_to(PACKAGE.parent)}:{node.lineno} {name}"
+
+
+def is_public(name: str) -> bool:
+    return not name.startswith("_")
+
+
+def is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def source_line(path, number: int) -> str:
+    """One line of a file, for reading an inline escape comment."""
+    return path.read_text(encoding="utf-8").split("\n")[number - 1]
+
+
+@pytest.mark.parametrize("path", source_files(), ids=lambda p: p.name)
+class TestCodePractice:
+    def test_public_definitions_have_docstrings(self, path):
+        offenders = [
+            label(path, node, owner)
+            for node, owner in functions_and_classes(path)
+            if is_public(node.name) and not ast.get_docstring(node)
+        ]
+        assert not offenders, "missing docstrings:\n  " + "\n  ".join(offenders)
+
+    def test_optional_arguments_are_keyword_only(self, path):
+        """An optional positional argument is a compatibility hazard.
+
+        Once callers pass it positionally, its position is part of the API and
+        no argument can be inserted before it.
+        """
+        offenders = []
+        for node, owner in functions_and_classes(path):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # __init__ is *not* exempt here, unlike the other rules: a
+            # constructor is exactly where a positional argument's position
+            # gets locked into every call site in the wild.
+            if is_dunder(node.name) and node.name != "__init__":
+                continue
+            args = node.args
+            if not args.defaults:
+                continue
+            # An explicit escape, for the case the rule genuinely cannot
+            # accommodate: cooperative multiple inheritance, where a superclass
+            # calls __init__ positionally and a keyword-only argument would
+            # break the chain. It must be written on the def line with a
+            # reason, so it is a decision rather than an oversight.
+            if "noqa: positional" in source_line(path, node.lineno):
+                continue
+            positional = list(args.posonlyargs) + list(args.args)
+            named = [a.arg for a in positional[len(positional) - len(args.defaults) :]]
+            offenders.append(f"{label(path, node, owner)} -> {named}")
+        assert not offenders, "positional optional arguments:\n  " + "\n  ".join(
+            offenders
+        )
+
+    def test_signatures_are_annotated(self, path):
+        offenders = []
+        for node, owner in functions_and_classes(path):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            where = label(path, node, owner)
+            args = node.args
+            for arg in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs):
+                if arg.arg in ("self", "cls"):
+                    continue
+                if arg.annotation is None:
+                    offenders.append(f"{where} (parameter {arg.arg})")
+            if node.returns is None and node.name != "__init__":
+                offenders.append(f"{where} (return)")
+        assert not offenders, "missing annotations:\n  " + "\n  ".join(offenders)
+
+
+CORE_VECTOR_API = frozenset(
+    {
+        "add",
+        "axpy",
+        "copy",
+        "dim",
+        "inner_product",
+        "negative",
+        "norm",
+        "random",
+        "sample_expectation",
+        "scale",
+        "scale_inplace",
+        "squared_norm",
+        "subtract",
+        "white_noise",
+        "zero",
+    }
+)
+
+
+def concrete_spaces() -> list[type]:
+    """Every concrete HilbertSpace subclass the package defines."""
+    import pygeoinf
+    import pygeoinf.symmetric_space
+    from pygeoinf.algebra.spaces import HilbertSpace
+
+    seen: dict[str, type] = {}
+    for module in (pygeoinf, pygeoinf.symmetric_space):
+        for name in dir(module):
+            value = getattr(module, name)
+            if isinstance(value, type) and issubclass(value, HilbertSpace):
+                seen[value.__qualname__] = value
+    return sorted(seen.values(), key=lambda c: c.__qualname__)
+
+
+@pytest.mark.parametrize("space_class", concrete_spaces(), ids=lambda c: c.__name__)
+def test_space_attributes_do_not_shadow_the_vector_api(space_class):
+    """A space's own attributes share a namespace with the whole vector API.
+
+    A ``PeriodicBox`` given a ``scale`` property for its Sobolev length shadows
+    ``HilbertSpace.scale(a, x)``, and every vector operation that routes
+    through it fails with ``'float' object is not callable`` somewhere far from
+    the cause. Cheap to check, and not obvious until it happens.
+    """
+    from pygeoinf.algebra.spaces import HilbertSpace
+
+    offenders = []
+    for name in CORE_VECTOR_API:
+        base = getattr(HilbertSpace, name, None)
+        override = getattr(space_class, name, None)
+        if base is None or override is None or override is base:
+            continue
+        # A method may be overridden by a method; only a value shadowing a
+        # callable, or the reverse, is a mistake.
+        if callable(base) and isinstance(override, property):
+            offenders.append(f"{name}: method shadowed by a property")
+        elif isinstance(base, property) and callable(override):
+            offenders.append(f"{name}: property shadowed by a method")
+    assert not offenders, f"{space_class.__name__} shadows the vector API:\n  " + (
+        "\n  ".join(offenders)
+    )
+
+
+# Parameters whose meaning is fixed across the whole library and documented in
+# one place, so repeating them in every signature is noise rather than
+# information: `rng` is always the generator, `n_jobs` and `backend` are always
+# joblib's, and pygeoinf/parallel.py says so once.
+CONVENTIONAL = {"rng", "n_jobs", "backend"}
+
+
+def relative(path) -> str:
+    """The path within the package, since several files share a bare name.
+
+    Three modules are called ``base.py`` and two ``convex.py``; keying the
+    debt list on the bare name silently merged them.
+    """
+    return str(pathlib.Path(path).resolve().relative_to(ROOT))
+
+
+def documentation_gaps(path) -> list[str]:
+    """Public functions whose docstring omits part of their contract.
+
+    Two things, and deliberately not a blanket "document every parameter":
+
+    * **Raises**, wherever the body raises. What a function refuses is part of
+      its contract and is the one thing a reader cannot guess.
+    * **Args**, for parameters carrying a *choice* -- anything optional or
+      keyword-only. Those are the ones a caller has to understand. A required
+      ``x`` on ``copy(x)``, whose summary already says what it copies, is not.
+
+    The blanket rule was tried first and would have added "Args: x: the
+    vector." to some fifty vector-algebra methods, diluting docstrings that
+    currently explain *why*. This targets what a reader cannot infer.
+    """
+    gaps = []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    # Only what a caller can reach: module-level functions and methods. A
+    # closure defined inside one is an implementation detail, and requiring
+    # its arguments to be documented documents nothing.
+    reachable = []
+    for parent in [tree] + [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+        reachable.extend(
+            n
+            for n in parent.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+    for node in reachable:
+        if node.name.startswith("_"):
+            continue
+        doc = ast.get_docstring(node) or ""
+        if (
+            any(isinstance(n, ast.Raise) and n.exc is not None for n in ast.walk(node))
+            and "Raises:" not in doc
+        ):
+            gaps.append(f"{path.name}:{node.lineno} {node.name} (no Raises)")
+
+        args = node.args
+        choices = [a.arg for a in args.kwonlyargs]
+        positional = list(args.posonlyargs) + list(args.args)
+        if args.defaults:
+            choices += [
+                a.arg for a in positional[len(positional) - len(args.defaults) :]
+            ]
+        choices = [
+            c for c in choices if c not in ("self", "cls") and c not in CONVENTIONAL
+        ]
+        undocumented = (
+            [c for c in choices if f"{c}:" not in doc] if "Args:" in doc else choices
+        )
+        if undocumented:
+            gaps.append(f"{path.name}:{node.lineno} {node.name} -> {undocumented}")
+    return gaps
+
+
+@pytest.mark.parametrize("path", source_files(), ids=lambda p: p.name)
+class TestDocstringsCarryTheContract:
+    """What a function refuses, and what its options mean.
+
+    This was enforced for a while against a shrinking list of
+    files with a recorded number of gaps each, so the standard could bite
+    before the backlog was cleared. The backlog is cleared -- 278 gaps across
+    37 files, taken to zero -- so the list is gone and the rule is simply the
+    rule.
+    """
+
+    def test_the_contract_is_documented(self, path):
+        gaps = documentation_gaps(path)
+        assert not gaps, (
+            f"{path.name} has {len(gaps)} documentation gaps:\n  " + "\n  ".join(gaps)
+        )
+
+
+class TestTheNamespaceHasNoHoles:
+    """A name that exists but cannot be imported from the package is a hole.
+
+    The re-review found four: ``MassWeightedSpace``, ``HilbertModule`` and
+    ``require_module`` reachable only as ``pygeoinf.algebra.spaces.X``, and
+    ``resolve_solver`` only as ``pygeoinf.numerics.solvers.resolve_solver``.
+    The top-level namespace is the interface; a class documented as the
+    reason ``from_formal_adjoint`` exists has to be in it.
+    """
+
+    @staticmethod
+    def modules_with_exports():
+        """Every importable module in the package that declares ``__all__``."""
+        import importlib
+        import pkgutil
+
+        import pygeoinf
+
+        found = []
+        for info in pkgutil.walk_packages(pygeoinf.__path__, prefix="pygeoinf."):
+            if any(part in SKIP_DIRS for part in info.name.split(".")):
+                continue
+            try:
+                module = importlib.import_module(info.name)
+            except ImportError:  # an optional backend that is not installed
+                continue
+            if hasattr(module, "__all__"):
+                found.append(module)
+        return found
+
+    def test_every_exported_name_resolves(self):
+        offenders = [
+            f"{module.__name__}.{name}"
+            for module in self.modules_with_exports()
+            for name in module.__all__
+            if not hasattr(module, name)
+        ]
+        assert not offenders, "names in __all__ that do not exist:\n  " + "\n  ".join(
+            offenders
+        )
+
+    @pytest.mark.parametrize(
+        "package, names",
+        [
+            (
+                "pygeoinf",
+                ["MassWeightedSpace", "HilbertModule", "require_module"],
+            ),
+            (
+                "pygeoinf.algebra",
+                ["MassWeightedSpace", "HilbertModule", "require_module"],
+            ),
+            (
+                "pygeoinf.numerics",
+                ["resolve_solver", "weighted_chi2_cdf", "weighted_chi2_quantile"],
+            ),
+        ],
+    )
+    def test_the_named_holes_are_closed(self, package, names):
+        import importlib
+
+        module = importlib.import_module(package)
+        for name in names:
+            assert hasattr(module, name), f"{package}.{name} is not reachable"
+            assert name in module.__all__, f"{package}.{name} is not in __all__"
+
+
+class TestSpacesAreReachedByGeometry:
+    """A space is named by its geometry's module, ``sphere.Sobolev`` or
+    ``interval.Sobolev``; nothing at the top level stands for one of many
+    geometries that share a name, and nothing provisional is public."""
+
+    @pytest.mark.parametrize(
+        "name", ["Box", "Interval", "Lebesgue", "PeriodicBox", "Sobolev"]
+    )
+    def test_no_space_is_exported_flat(self, name):
+        import pygeoinf
+        from pygeoinf import symmetric_space
+
+        assert not hasattr(pygeoinf, name)
+        assert name not in pygeoinf.__all__
+        assert name in symmetric_space.__all__
+
+    def test_the_shell_transform_is_not_public(self):
+        spectral_element = pytest.importorskip("pygeoinf.spectral_element")
+        assert "ShellTransform" not in spectral_element.__all__
+        assert not hasattr(spectral_element, "ShellTransform")
+
+
+class TestImportCost:
+    """``import pygeoinf`` pays for what it imports.
+
+    At the first review it cost 0.32 s; at the second, 0.43 s, and half of
+    the growth was `scipy.stats` and `scipy.optimize` imported at module
+    scope by two modules that most sessions never call. Both now import them
+    on first use. The quadratic-form module is the one reached through the
+    package's own ``__init__`` -- a session that only builds a space and
+    solves a system would pay for it -- so that is the one pinned here.
+    """
+
+    def test_the_quadratic_form_module_does_not_import_scipy_at_module_scope(self):
+        """Loaded on its own, in a fresh interpreter: neither ``scipy.stats``
+        nor ``scipy.optimize`` may appear. It is loaded alone rather than
+        through the package, so that no other module's imports can satisfy
+        the check for the wrong reason."""
+        import subprocess
+        import sys
+        import textwrap
+
+        module = PACKAGE / "numerics" / "quadratic_forms.py"
+        program = textwrap.dedent(
+            f"""
+            import importlib.util, sys
+            spec = importlib.util.spec_from_file_location("qf", {str(module)!r})
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            heavy = [
+                name
+                for name in ("scipy.stats", "scipy.optimize", "scipy.integrate")
+                if name in sys.modules
+            ]
+            print(",".join(heavy))
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program], capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
+        assert (
+            result.stdout.strip() == ""
+        ), f"imported at module scope: {result.stdout.strip()}"
+
+    def test_the_lazy_helpers_still_return_what_they_promise(self):
+        from pygeoinf.numerics import quadratic_forms
+
+        assert quadratic_forms._chi2().ppf(0.5, 1) > 0.0
+        assert quadratic_forms._brentq()(lambda t: t - 1.0, 0.0, 2.0) == pytest.approx(
+            1.0
+        )
+
+
+class TestNothingCitesADecision:
+    """The decision log is a record of why, not a vocabulary.
+
+    A docstring, comment, message or test that says "D-131" or points at
+    ``DECISIONS.md`` sends the reader to a planning document to learn what
+    the code does; the code has to say it itself. The rule is checked over
+    the package, its examples, tutorials and tests, in every text file but
+    the planning documents themselves.
+    """
+
+    PATTERNS = (r"\bD-\d+\b", r"DECISIONS\.md")
+
+    @staticmethod
+    def text_files():
+        import os
+
+        for path in sorted(p for tree in CODE_TREES for p in tree.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            if path.suffix in (".md", ".pyc", ".png", ".pdf", ".npz", ".npy"):
+                continue
+            if os.path.getsize(path) > 5_000_000:
+                continue
+            yield path
+
+    def test_no_file_cites_a_decision_number(self):
+        import re
+
+        here = pathlib.Path(__file__).resolve()
+        offenders = []
+        for path in self.text_files():
+            if path == here:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for number, line in enumerate(text.split("\n"), start=1):
+                if any(re.search(pattern, line) for pattern in self.PATTERNS):
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{number}: {line.strip()[:80]}"
+                    )
+        assert not offenders, "decision citations:\n  " + "\n  ".join(offenders)

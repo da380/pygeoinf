@@ -31,6 +31,6 @@ docs/source/pygeoinf*.rst
 
 # Mini-app build products, built by running the builds, and what a run
 # writes: figures, saved modes and timings, each app's under its results/.
-pygeoinf2/miniapps/**/*.so
-pygeoinf2/miniapps/**/*.pyd
-pygeoinf2/miniapps/*/results/
+miniapps/**/*.so
+miniapps/**/*.pyd
+miniapps/*/results/

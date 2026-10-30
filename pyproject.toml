@@ -24,8 +24,8 @@ dependencies = [
 # is importable, so nothing in the code refers to it.
 sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0"]
 # Spaces on intervals, radial profiles, annuli and balls in the eigenbasis of
-# an elliptic operator on a spectral-element mesh (pygeoinf2.interval,
-# pygeoinf2.ball and the pygeoinf2.spectral_element core they share):
+# an elliptic operator on a spectral-element mesh (pygeoinf.interval,
+# pygeoinf.ball and the pygeoinf.spectral_element core they share):
 # the numerics are planetmodel.randomfield's. From 1.3 planetmodel's
 # harmonics run on ducc0 as a core dependency, so there is no extra to name
 # and pyshtools no longer arrives through it; drawing a ball's shells as
@@ -36,10 +36,10 @@ osqp = ["osqp>=1.0.0"]
 clarabel = ["clarabel>=0.9.0"]
 # Interactive (Plotly) plotting backend.
 interactive = ["plotly>=5.0.0"]
-# The plotly engine of pygeoinf2's plot_set: three-dimensional sets as figures
+# The plotly engine of pygeoinf's plot_set: three-dimensional sets as figures
 # that can be turned by hand.
 plot3d = ["plotly>=5.18,<7"]
-# PyMFEM, for the MFEM mini-app (pygeoinf2/miniapps/mfem) and its test, which
+# PyMFEM, for the MFEM mini-app (miniapps/mfem) and its test, which
 # skips without it; the library itself does not use it. mfem ships Linux-only
 # wheels and its sdist refuses to build on Windows, so the extra is marked for
 # Linux; elsewhere `--all-extras` installs nothing and the test skips.
@@ -47,15 +47,11 @@ mfem = ["mfem>=4.8.0; sys_platform == 'linux'"]
 
 [tool.poetry]
 packages = [
-    { include = "pygeoinf2" },
+    { include = "pygeoinf" },
 ]
 include = [
-    { path = "pygeoinf2/data/*.csv", format = ["sdist", "wheel"] },
-    { path = "pygeoinf2/py.typed", format = ["sdist", "wheel"] },
-]
-# Tests are run from the repository, not from an installed wheel.
-exclude = [
-    "pygeoinf2/tests",
+    { path = "pygeoinf/data/*.csv", format = ["sdist", "wheel"] },
+    { path = "pygeoinf/py.typed", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry.group.dev]
@@ -101,13 +97,13 @@ exclude = ["work"]
 # Monte Carlo estimate against its own standard error), so they are worth
 # minutes rather than seconds and are worth them occasionally.
 #
-#     pytest pygeoinf2                 the fast suite
-#     pytest pygeoinf2 -m slow         only the expensive ones
-#     pytest pygeoinf2 -m ""           everything
+#     pytest tests                the fast suite
+#     pytest tests -m slow        only the expensive ones
+#     pytest tests -m ""          everything
 #
 # CI runs the fast suite on every push and the slow set on a schedule. The
-# suite caps the BLAS and OpenMP pools at two threads (PYGEOINF2_TEST_THREADS
-# overrides; see pygeoinf2/tests/conftest.py), so a run never swamps the
+# suite caps the BLAS and OpenMP pools at two threads (PYGEOINF_TEST_THREADS
+# overrides; see tests/conftest.py), so a run never swamps the
 # machine and no test depends on the core count.
 addopts = "-m 'not slow'"
 markers = [
