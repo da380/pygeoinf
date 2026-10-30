@@ -1,0 +1,3244 @@
+"""
+Spaces whose basis diagonalizes the Laplacian.
+
+A symmetric space is a coordinate space with a distinguished spectral basis:
+one in which the Laplace-Beltrami operator is diagonal. The space is symmetric;
+the operators that respect its structure are *invariant*, which is why
+:meth:`SymmetricSpace.invariant_operator` keeps that word. Everything that makes
+these spaces pleasant to compute with follows from that single fact, and most
+of it is already general machinery elsewhere in the package:
+
+- an operator that is a function of the Laplacian is a
+  :class:`~pygeoinf.algebra.diagonal.DiagonalLinearOperator`, so it is closed
+  under the algebra and carries an exact functional calculus;
+- a Gaussian measure whose covariance is such an operator has an exact square
+  root, so it can be sampled directly;
+- the factor ``1/sqrt(metric_values)`` that a draw needs on a weighted space
+  is supplied by ``white_noise``, whose components are ``N(0, G^-1)``, so no
+  code here writes it out.
+
+What each concrete space must supply is small: the map between fields and
+spectral components, the Laplacian eigenvalue attached to each component, and
+the value of each basis function at a point.
+"""
+
+from __future__ import annotations
+
+from abc import abstractmethod
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, Callable, Hashable, Literal, Sequence
+
+import numpy as np
+from numpy.random import Generator
+
+from ..algebra.diagonal import DiagonalLinearOperator
+from ..algebra.direct_sum import BlockLinearOperator
+from ..algebra.operators import LinearFunctional, LinearOperator
+from ..algebra.spaces import (
+    CoordinateSpace,
+    DiagonalMetricSpace,
+    HilbertModule,
+    HilbertSpace,
+)
+from ..probability.gaussian import (
+    GaussianMeasure,
+    _is_constant,
+    _refuse_identity_covariance,
+)
+from ..traits import Traits
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..numerics.solvers import IterativeSolver
+
+__all__ = ["PreparedPoints", "SymmetricSpace", "lift_formal_adjoint"]
+
+
+def _require_trace_class(space: Any, order: float, unsafe: bool, /) -> None:
+    """Refuse a Sobolev measure whose covariance is not trace class on the
+    space: order at or below half the dimension its eigenvalues grow in.
+
+    That is the spatial dimension, except for a space of functions of one
+    coordinate inside a higher-dimensional domain (a radial profile), whose
+    eigenvalues grow as on a line; such a space says so through
+    ``_eigenvalue_dimension``.
+    """
+    dimension = getattr(space, "_eigenvalue_dimension", space.spatial_dimension)
+    if order <= 0.5 * dimension and not unsafe:
+        raise ValueError(
+            f"A Sobolev measure of order {order:g} on {space!r} is not a "
+            f"Gaussian measure on it: its eigenvalues grow as in {dimension} "
+            f"dimension(s), so the covariance is trace class only for an order "
+            f"above {0.5 * dimension:g}, and below that the draws are not in "
+            "the space. Raise the order, or pass unsafe=True for a test."
+        )
+
+
+class PreparedPoints:
+    """A set of points, converted once into what a geometry's transforms want.
+
+    An observation operator is built once and applied many times, and the
+    conversion from points to whatever the transform consumes -- colatitudes in
+    radians, angles on a periodic axis, coordinates moved into an enclosing box
+    -- depends only on the points. Doing it once, here, keeps it out of every
+    application, where it can otherwise be a large part of the cost.
+
+    Build one with :meth:`SymmetricSpace.prepare_points` and pass it wherever a
+    sequence of points is taken; it behaves as that sequence, so anything that
+    only counts or iterates them needs to know nothing about it. Passing one
+    back to ``prepare_points`` is free, which is what lets every route accept
+    either without asking which it got.
+
+    Attributes:
+        points: the points themselves, as a tuple.
+        data: whatever the geometry precomputed, or ``None`` where it has
+            nothing to precompute. Its shape is that geometry's business.
+    """
+
+    __slots__ = ("points", "data")
+
+    def __init__(self, points: Sequence[Any], /, *, data: Any = None) -> None:
+        """
+        Args:
+            points: the points.
+            data: the geometry's converted form of them.
+        """
+        self.points = tuple(points)
+        self.data = data
+
+    def __len__(self) -> int:
+        """How many points there are."""
+        return len(self.points)
+
+    def __iter__(self) -> Any:
+        """The points, in order."""
+        return iter(self.points)
+
+    def __getitem__(self, index: Any) -> Any:
+        """One point, or a slice of them.
+
+        Args:
+            index: an index or a slice.
+
+        Returns:
+            The point, or the tuple of points.
+        """
+        return self.points[index]
+
+    def __repr__(self) -> str:
+        return f"PreparedPoints({len(self.points)} points)"
+
+
+class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
+    """A coordinate space whose basis diagonalizes the Laplacian.
+
+    Subclasses supply :meth:`to_components`, :meth:`from_components`,
+    :attr:`laplacian_eigenvalues`, :meth:`basis_at` and ``_key``. Everything
+    below is then available, and none of it needs re-implementing per space.
+
+    Generic in the vector type, because the vectors are not always arrays. A
+    box's are, and it mixes in
+    :class:`~pygeoinf.algebra.spaces.ArrayVectorMixin` to say so; a sphere's
+    are ``pyshtools.SHGrid`` objects, so that a field can be plotted, rotated
+    or expanded by the library that made it. Everything here that touches
+    values pointwise goes through :meth:`grid_values` and
+    :meth:`from_grid_values` rather than assuming an array.
+    """
+
+    def __init__(self, metric_values: np.ndarray, /) -> None:
+        """
+        Args:
+            metric_values: the Gram diagonal in the spectral basis. All ones
+                for a Lebesgue space with an orthonormal basis; the Sobolev
+                symbol for a Sobolev space over the same coordinate map.
+        """
+        super().__init__(metric_values)
+
+    @property
+    def is_function_space(self) -> bool:
+        """True: a symmetric space discretises a space of functions."""
+        return True
+
+    # ----------------------------------------------------------------- #
+    #                         Subclass interface                        #
+    # ----------------------------------------------------------------- #
+
+    @property
+    @abstractmethod
+    def order(self) -> float:
+        """The Sobolev order. Zero means the inner product is the ``L2`` one."""
+
+    @abstractmethod
+    def with_order(self, order: float, /) -> "SymmetricSpace":
+        """The same coordinate map, viewed with a different Sobolev order."""
+
+    @property
+    @abstractmethod
+    def length_scale(self) -> float:
+        """The Sobolev length scale, in the units of the domain.
+
+        Where the Sobolev weight turns over, and the scale the averaging
+        operators resolve their paths at when no node count is given.
+        """
+
+    def _coordinate_key(self) -> Hashable:
+        """Identifies the component map alone, with the metric left out.
+
+        ``_key`` identifies the *space*, so it carries the Sobolev order and
+        length scale; two spaces that differ only there hold the same fields
+        and are not the same space. This is the other half of that key, and
+        subclasses that can separate the two override it. The default is the
+        whole key, which is safe and says "only a space itself".
+        """
+        return self._key()
+
+    def shares_vectors_with(self, other: HilbertSpace, /) -> bool:
+        """True for another symmetric space over the same coordinate map.
+
+        Two spaces differing only in Sobolev order hold the *same* fields —
+        :meth:`with_order` says so — and differ only in how they measure them.
+        Saying it lets a formal-adjoint lift move a vector between them for
+        nothing instead of round-tripping through components, which on a
+        spectral space is two transforms each way.
+        """
+        if self is other:
+            return True
+        if not isinstance(other, SymmetricSpace):
+            return False
+        return self._coordinate_key() == other._coordinate_key()
+
+    @property
+    @abstractmethod
+    def laplacian_eigenvalues(self) -> np.ndarray:
+        """The Laplacian eigenvalue attached to each spectral component.
+
+        Non-negative, and zero exactly on the constant mode.
+        """
+
+    @abstractmethod
+    def basis_at(self, point: Any, /) -> np.ndarray:
+        """The value of each basis function at a point.
+
+        These are the derivative components of the evaluation functional, and
+        so exactly what :meth:`dirac` needs. They are not a representer: the
+        metric is applied once, in the adjoint, when a representer is asked
+        for.
+        """
+
+    # ----------------------------------------------------------------- #
+    #                         Invariant operators                       #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def laplacian(self) -> DiagonalLinearOperator:
+        """The Laplace-Beltrami operator, diagonal by construction."""
+        return DiagonalLinearOperator(self, self.laplacian_eigenvalues)
+
+    def invariant_operator(
+        self,
+        symbol: Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        traits: Traits = Traits.NONE,
+    ) -> DiagonalLinearOperator:
+        """The operator ``f(Laplacian)``, from a function of the eigenvalues.
+
+        Args:
+            symbol: applied to the array of Laplacian eigenvalues.
+            traits: extra claims. Symmetry and definiteness are deduced from
+                the resulting values, so they seldom need supplying.
+
+        Returns:
+            The operator, diagonal in the spectral basis.
+
+        Raises:
+            ValueError: if the symbol does not give one value per component.
+        """
+        values = np.asarray(symbol(self.laplacian_eigenvalues), dtype=float)
+        if values.shape != (self.dim,):
+            raise ValueError(
+                f"The symbol returned shape {values.shape}, expected " f"{(self.dim,)}."
+            )
+        return DiagonalLinearOperator(self, values, traits=traits)
+
+    def spectral_operator(
+        self, values: np.ndarray, /, *, traits: Traits = Traits.NONE
+    ) -> DiagonalLinearOperator:
+        """A diagonal operator from an explicit value per component.
+
+        More general than :meth:`invariant_operator`, whose symbol can only
+        depend on the Laplacian eigenvalue. An operator built here need not be
+        invariant — a band-limiting projection is the obvious case — so nothing
+        is claimed about it beyond what the values themselves imply.
+
+        It takes an array rather than a callable on indices, so a symbol
+        indexed by degree is written ``space.spectral_operator(f(space.degrees))``.
+
+        Args:
+            values: one per component.
+            traits: further claims. Self-adjointness and definiteness are
+                deduced from the values, so they seldom need supplying.
+
+        Returns:
+            The diagonal operator.
+
+        Raises:
+            ValueError: for the wrong number of values.
+        """
+        array = np.asarray(values, dtype=float)
+        if array.shape != (self.dim,):
+            raise ValueError(f"Expected {self.dim} values, got {array.shape}.")
+        return DiagonalLinearOperator(self, array, traits=traits)
+
+    @property
+    @abstractmethod
+    def degrees(self) -> np.ndarray:
+        """The index attached to each component, for a degree-wise symbol.
+
+        On a sphere this is the harmonic degree; on a box, the wavenumber
+        magnitude rounded down. What it is for is writing a symbol that depends
+        on where a component sits rather than on its eigenvalue.
+
+        Returns:
+            One integer degree per component.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it. Abstract on
+                this class, so a space cannot be built without one.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not name a degree per component."
+        )
+
+    def degree_multiplicity(self, degree: int, /) -> int:
+        """How many components share a degree."""
+        return int(np.count_nonzero(self.degrees == degree))
+
+    def spectral_projection_operator(
+        self, /, *, lmin: int = 0, lmax: int | None = None
+    ) -> DiagonalLinearOperator:
+        """The projection onto a band of degrees, *within* this space.
+
+        The companion of a coefficient operator, which maps *out* of the space
+        into a Euclidean one. This stays put: it zeroes everything outside the
+        band and leaves the rest alone, so it is an idempotent self-adjoint
+        projection.
+
+        Args:
+            lmin: the lowest degree to keep.
+            lmax: the highest. The largest present if omitted.
+
+        Returns:
+            The projector, self-adjoint and idempotent.
+        """
+        degrees = self.degrees
+        top = degrees.max() if lmax is None else lmax
+        keep = ((degrees >= lmin) & (degrees <= top)).astype(float)
+        return self.spectral_operator(
+            keep, traits=Traits.SELF_ADJOINT | Traits.IDEMPOTENT
+        )
+
+    def coefficient_operator(
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        lmin: int = 0,
+        components: Any = None,
+    ) -> LinearOperator:
+        """Analysis: a field in, some of its coefficients out.
+
+        The property operator of Al-Attar (2021): estimate finitely many
+        spectral coefficients from a finite set of point values. On a space
+        whose components already *are* those coefficients this is a selection,
+        so it is matrix-free and costs nothing.
+
+        A band of degrees means the same thing on every geometry: on a box the
+        degree of a component is ``floor(|k|)``, so the band is an annulus in
+        wavenumber rather than a range of harmonic degrees.
+
+        Args:
+            lmax: the highest degree to report. The largest present if
+                omitted. Beyond the largest present, the coefficients of the
+                missing degrees are reported as zero: the operator is the
+                one on a space resolved to that degree, composed with the
+                prolongation into it, so two spaces of different resolution
+                can report into one coefficient space.
+            lmin: the lowest.
+            components: instead of a band, the positions of the components
+                to report, in the order they are to come out -- typically
+                from ``component_of`` on a set of labels, which is how a
+                property operator picking named harmonics or wavevectors is
+                written.
+
+        Returns:
+            The operator into a Euclidean space of the selected components.
+
+        Raises:
+            ValueError: for a band with ``lmin`` above ``lmax`` or negative,
+                a position outside the space or repeated, or a band and
+                positions both given.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        if self._beyond(lmin, lmax, components):
+            larger = self._extended_to(int(lmax))
+            return larger.coefficient_operator(
+                lmax=lmax, lmin=lmin
+            ) @ self.degree_transfer_operator(larger)
+
+        selected = self._selection(lmin, lmax, components)
+
+        def value(x: Any) -> np.ndarray:
+            return self.to_components(x)[selected]
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            total = np.zeros(self.dim)
+            total[selected] = np.asarray(y, dtype=float)
+            return total
+
+        return LinearOperator.from_derivative_callables(
+            self, EuclideanSpace(selected.size), value, derivative_components
+        )
+
+    def from_coefficient_operator(
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        lmin: int = 0,
+        components: Any = None,
+    ) -> LinearOperator:
+        """Synthesis: some coefficients in, a field out.
+
+        The companion of :meth:`coefficient_operator`, and *not* its adjoint.
+        The adjoint of analysis carries this space's metric, so on anything but
+        ``L2`` it is not synthesis at all. Each of the two is built from its
+        own value map and its own derivative, and the metric enters only
+        through their adjoints.
+
+        Args:
+            lmax: the highest degree accepted. The largest present if omitted.
+                Beyond it, the coefficients of the missing degrees are
+                accepted and dropped, the counterpart of the zero-padding in
+                :meth:`coefficient_operator`.
+            lmin: the lowest.
+            components: instead of a band, the positions the incoming
+                coefficients go to, as for :meth:`coefficient_operator`.
+
+        Returns:
+            The operator from a Euclidean space of coefficients into this one.
+
+        Raises:
+            ValueError: as for :meth:`coefficient_operator`.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        if self._beyond(lmin, lmax, components):
+            larger = self._extended_to(int(lmax))
+            return larger.degree_transfer_operator(
+                self
+            ) @ larger.from_coefficient_operator(lmax=lmax, lmin=lmin)
+
+        selected = self._selection(lmin, lmax, components)
+
+        def value(c: np.ndarray) -> Any:
+            total = np.zeros(self.dim)
+            total[selected] = np.asarray(c, dtype=float)
+            return self.from_components(total)
+
+        def derivative_components(x: Any) -> np.ndarray:
+            return self.apply_gram(self.to_components(x))[selected]
+
+        return LinearOperator.from_derivative_callables(
+            EuclideanSpace(selected.size), self, value, derivative_components
+        )
+
+    def _beyond(self, lmin: int, lmax: int | None, components: Any, /) -> bool:
+        """Whether a band reaches past the degrees this space holds."""
+        if components is not None or lmax is None:
+            return False
+        if not 0 <= lmin <= int(lmax):
+            raise ValueError(
+                f"Degrees must satisfy 0 <= lmin <= lmax, got lmin={lmin}, "
+                f"lmax={lmax}."
+            )
+        return int(lmax) > int(self.degrees.max())
+
+    def _extended_to(self, lmax: int, /) -> "SymmetricSpace":
+        """The same domain, resolved so that every mode of degree ``lmax`` is present.
+
+        The geometry supplies it: on a sphere ``with_degree(lmax)``, on a box
+        one wavenumber more so the shell is not cut by the Nyquist modes.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not say how to resolve a higher degree."
+        )
+
+    def _degree_eigenvalues(self, degree: int, /) -> np.ndarray:
+        """The Laplacian eigenvalue of every mode of one degree, present or not.
+
+        What :meth:`estimate_truncation_degree` walks over. One entry per component
+        the degree would have on this geometry, whatever this space's own
+        truncation.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not enumerate the modes of a degree."
+        )
+
+    def estimate_truncation_degree(
+        self,
+        symbol: Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: int | None = None,
+    ) -> int:
+        """The degree at which a spectrum has run out, this space's truncation aside.
+
+        Walks the degrees upward, summing the symbol over every mode of each
+        -- the modes the degree *would* have, not the ones this space holds
+        -- and stops when the newest degree adds less than ``rtol`` of the
+        running total. This is how to choose a truncation from a prior before
+        there is a space at that truncation: build one with ``with_degree`` on
+        the answer. :meth:`power_degree` answers a different question, how
+        much of the power *this* space holds lies below a degree, and cannot
+        answer past its own truncation.
+
+        Args:
+            symbol: the spectral variances, as a callable on an array of
+                Laplacian eigenvalues.
+            rtol: the relative increment to stop at.
+            min_degree: a floor on the answer.
+            max_degree: a ceiling, returned if the walk reaches it.
+
+        Returns:
+            The degree.
+
+        Raises:
+            ValueError: for a tolerance outside ``(0, 1)`` or a negative floor.
+            RuntimeError: if the walk passes degree 100000 without stopping.
+        """
+        if not 0.0 < rtol < 1.0:
+            raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
+        if min_degree < 0:
+            raise ValueError(f"The floor must be non-negative, got {min_degree}.")
+        total, degree = 0.0, 0
+        while True:
+            if max_degree is not None and degree >= max_degree:
+                return max(int(max_degree), min_degree)
+            term = float(np.sum(symbol(self._degree_eigenvalues(degree))))
+            total += term
+            relative = term / total if total > 0.0 else 1.0
+            if relative <= rtol:
+                break
+            degree += 1
+            if degree > 100_000:
+                raise RuntimeError(
+                    "No truncation below degree 100000 reaches this tolerance."
+                )
+        return max(degree, min_degree)
+
+    def _selection(self, lmin: int, lmax: int | None, components: Any, /) -> np.ndarray:
+        """The positions a coefficient operator works on: a band, or as given."""
+        if components is None:
+            return self._band(lmin, lmax)
+        if lmin != 0 or lmax is not None:
+            raise ValueError("Give either a band (lmin, lmax) or components, not both.")
+        positions = np.atleast_1d(np.asarray(components, dtype=int)).ravel()
+        if positions.size and (positions.min() < 0 or positions.max() >= self.dim):
+            raise ValueError(f"Component positions must lie in [0, {self.dim}).")
+        if np.unique(positions).size != positions.size:
+            raise ValueError("Component positions must not repeat.")
+        return positions
+
+    def _band(self, lmin: int, lmax: int | None, /) -> np.ndarray:
+        """Which components fall in a band of degrees."""
+        degrees = self.degrees
+        highest = int(degrees.max())
+        top = highest if lmax is None else int(lmax)
+        if not 0 <= lmin <= top <= highest:
+            raise ValueError(
+                f"Degrees must satisfy 0 <= lmin <= lmax <= {highest}, "
+                f"got lmin={lmin}, lmax={top}."
+            )
+        return np.flatnonzero((degrees >= lmin) & (degrees <= top))
+
+    def power_spectrum(self, x: Any, /) -> np.ndarray:
+        """Total power at each degree, indexed from zero.
+
+        The sum of the squared components over each degree. It is a property
+        of the field, so it needs no samples; applied to a measure's draws it
+        gives their sample power spectra.
+
+        A property of the *field*, not of the metric it is being read in:
+        components are the same coefficients whatever the Sobolev order, so
+        this is the ``L2`` spectrum either way. On a sphere of radius ``r`` it
+        is ``4 pi r^2`` times what ``SHCoeffs.spectrum`` reports for the
+        ``4pi``-normalized expansion, that being the difference between
+        pyshtools' normalization and orthonormality in ``L2`` on that sphere.
+
+        It is the counterpart of :meth:`power_measure` on every space: a draw
+        from ``power_measure(p)`` has expected spectrum ``p`` whatever the
+        Sobolev order, because ``power_measure`` carries the metric so that
+        the two meet. A measure built through
+        :meth:`invariant_measure` instead speaks in the covariance
+        operator's own eigenvalues, and there a draw's coefficients have
+        variance ``eigenvalue / gram_diagonal``, so its spectrum comes out
+        divided by the Sobolev symbol -- which this method faithfully
+        reports.
+        """
+        components = self.to_components(x)
+        degrees = self.degrees
+        return np.bincount(
+            degrees, weights=components**2, minlength=int(degrees.max()) + 1
+        )
+
+    def order_inclusion_operator(self, target: "SymmetricSpace", /) -> LinearOperator:
+        """The identity, read from this space into one of a different order.
+
+        The same function, viewed in a different metric. It is *not* the
+        identity operator: its adjoint carries the ratio of the two metrics,
+        which is exactly what makes ``H^s -> H^t`` a bounded inclusion rather
+        than a relabeling.
+
+        Args:
+            target: the space to read into, of the same dimension.
+
+        Returns:
+            The inclusion, whose adjoint carries the ratio of the metrics.
+
+        Raises:
+            ValueError: if the dimensions differ, in which case the two are
+                not the same functions in different metrics.
+        """
+        if target.dim != self.dim:
+            raise ValueError(
+                f"An inclusion needs matching dimensions; {self.dim} against "
+                f"{target.dim}."
+            )
+        return lift_formal_adjoint(LinearOperator.identity(self), self, codomain=target)
+
+    def l2_products_operator(self, fields: Sequence[np.ndarray], /) -> LinearOperator:
+        """Inner products against a set of fields, in the ``L2`` metric.
+
+        ``x -> [(f_i, x)_L2]``. The ``L2`` products specifically, not this
+        space's: the rows are the fields' own components, so the operator means
+        the same thing whatever Sobolev order it is read on.
+
+        Args:
+            fields: the fields to take products against.
+
+        Returns:
+            The operator into a Euclidean space, one component per field.
+
+        Raises:
+            ValueError: if no fields are given.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        fields = tuple(fields)
+        if not fields:
+            raise ValueError("At least one field is needed.")
+        base = self if self.order == 0.0 else self.with_order(0.0)
+        rows = np.stack([base.to_components(field) for field in fields])
+        return LinearOperator.from_matrix(
+            self, EuclideanSpace(len(fields)), rows, form="galerkin"
+        )
+
+    def power_degree(
+        self, symbol: Callable[[np.ndarray], np.ndarray], /, *, tolerance: float = 1e-3
+    ) -> int:
+        """The smallest degree holding all but ``tolerance`` of a spectrum's power.
+
+        Totals the symbol over the modes *this* space holds, degree by
+        degree, and returns the first degree below which all but
+        ``tolerance`` of that total lies. It is capped at this space's own
+        truncation, so it reads off how much of a prior's power a given
+        resolution captures; it cannot say whether a higher resolution is
+        needed. For that question, which walks past the truncation, use
+        :meth:`estimate_truncation_degree`.
+
+        Args:
+            symbol: the spectral variances, as a callable on the Laplacian
+                eigenvalues.
+            tolerance: the fraction of the total power allowed to lie above
+                the returned degree.
+
+        Returns:
+            The smallest degree holding all but *tolerance* of the power.
+
+        Raises:
+            ValueError: for a tolerance outside ``(0, 1)``.
+        """
+        if not 0.0 < tolerance < 1.0:
+            raise ValueError(f"The tolerance lies in (0, 1), got {tolerance}.")
+        power = np.asarray(symbol(self.laplacian_eigenvalues), dtype=float)
+        degrees = self.degrees
+        # Total the power *within* each degree first, then walk up the degrees.
+        # Sorting the components and cumulating those instead left the answer
+        # depending on the order of the ties, which on a box is not a detail:
+        # the components of one degree there have different eigenvalues, so
+        # they carry different power.
+        per_degree = np.bincount(degrees, weights=power)
+        cumulative = np.cumsum(per_degree)
+        total = cumulative[-1]
+        if total <= 0.0:
+            return 0
+        reached = np.searchsorted(cumulative, (1.0 - tolerance) * total)
+        return int(min(reached, per_degree.size - 1))
+
+    def sobolev_symbol(self, order: float, scale: float, /) -> np.ndarray:
+        """``(1 + scale^2 lambda)^order``, the Sobolev weight on each mode.
+
+        The scale is a length: it sets where the weight turns over, and so what
+        "smooth" means. Without it the order alone would be scale-dependent,
+        which is how a Sobolev prior comes to behave differently on a sphere of
+        a different radius.
+
+        Args:
+            order: the Sobolev order.
+            scale: the length at which the weight turns over.
+
+        Returns:
+            One weight per component.
+
+        Raises:
+            ValueError: for a non-positive scale.
+        """
+        if scale <= 0.0:
+            raise ValueError("scale must be positive.")
+        return (1.0 + scale**2 * self.laplacian_eigenvalues) ** order
+
+    def heat_symbol(self, length_scale: float, /) -> np.ndarray:
+        r"""``exp(-length_scale^2 lambda)``, the heat kernel's spectral weight.
+
+        Parameterized by a **length**, not by a diffusion time. The two differ
+        by a square — ``time == length_scale^2`` — and the length is the one a
+        modeler has an opinion about: it is the distance over which the field
+        decorrelates, in the units of the domain, and it sits beside
+        :meth:`sobolev_symbol`'s length scale meaning the same thing. Passing
+        a diffusion time where the length is expected silently changes the
+        correlation length: a time of 0.1 is a length of about 0.32.
+
+        Args:
+            length_scale: the correlation length, non-negative.
+
+        Returns:
+            The spectral weight, one value per component.
+
+        Raises:
+            ValueError: if the length scale is negative.
+        """
+        if length_scale < 0.0:
+            raise ValueError("length_scale must be non-negative.")
+        return np.exp(-(length_scale**2) * self.laplacian_eigenvalues)
+
+    # ----------------------------------------------------------------- #
+    #                         Invariant measures                        #
+    # ----------------------------------------------------------------- #
+
+    @property
+    @abstractmethod
+    def reference_point(self) -> Any:
+        """Any point of the domain. The space is homogeneous, so any will do.
+
+        Used where a quantity is the same at every point of the grid and one
+        place has to be picked to evaluate it — the pointwise variance of an
+        invariant measure being the case that matters. Every geometry here
+        returns a *grid* point, which :meth:`pointwise_variance` relies on.
+
+        Returns:
+            A point of the domain, the same one every time.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not name a reference point."
+        )
+
+    def pointwise_variance(
+        self,
+        spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+    ) -> float:
+        """The variance of ``x(p)`` under the corresponding invariant measure.
+
+        This is the number a modeler actually has an opinion about: nobody
+        knows what spectral amplitude they want, and everybody knows roughly
+        how big the field should be.
+
+        The value is ``(C u, u)`` with ``u`` the representer of evaluation at
+        ``p``, which comes out as ``sum_k s_k phi_k(p)^2 / g_k``. The metric
+        appears because the spectral variances are the covariance *operator's*
+        eigenvalues, while a sample's components carry the ``1/sqrt(g)`` of
+        white noise. Dropping it gives the wrong variance on every Sobolev
+        space, and the error is invisible on a Lebesgue space, where
+        ``g == 1``.
+
+        **Which ``p``, and how far the homogeneity reaches.** It is evaluated
+        at :attr:`reference_point`, and the sum above is the same at *every
+        grid point* of every geometry here: the basis is orthonormal with
+        respect to the grid's own quadrature, so ``sum_k phi_k(p_j)^2`` is the
+        reciprocal of the cell weight, the same at each ``j``. That is the
+        sense in which the discrete measure is homogeneous, and the sense that
+        matters, since the grid is where a field is represented.
+
+        Between grid points it is exact on a sphere and on any box whose axes
+        all have an odd number of points, and it is **not** exact on a box with
+        an even axis. There the highest wavenumber the grid holds has no
+        partner — a Nyquist cosine's sine is invisible on the grid — so the
+        basis, orthonormal on the grid, is not isotropic off it, and the
+        interpolated variance dips between the samples. On a coarse grid with a
+        spectrum that has not decayed by the Nyquist wavenumber the dip is
+        several per cent: a flat spectrum on a ``(6, 4)`` grid gives 12.0 at
+        every grid point and as little as 10.9 between them. It shrinks with
+        the spectrum's own value at the Nyquist wavenumber, so it is negligible
+        exactly when the grid is fine enough to represent the prior in the
+        first place — and where it is not negligible, the grid is the thing to
+        change.
+
+        Args:
+            spectral_variances: one per component, or a callable on the
+                Laplacian eigenvalues.
+
+        Returns:
+            The variance, in the units of the field squared.
+
+        Raises:
+            ValueError: for the wrong number of variances, or a negative one.
+        """
+        variances = self._resolve_variances(spectral_variances)
+        basis = self.basis_at(self.reference_point)
+        return float(np.sum(variances * basis**2 / self.metric_values))
+
+    def _resolve_variances(
+        self,
+        spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+    ) -> np.ndarray:
+        """Validate a spectrum given either directly or as a symbol."""
+        if callable(spectral_variances):
+            variances = np.asarray(
+                spectral_variances(self.laplacian_eigenvalues), dtype=float
+            )
+        else:
+            variances = np.asarray(spectral_variances, dtype=float)
+        if variances.shape != (self.dim,):
+            raise ValueError(
+                f"Got {variances.shape} variances for dimension {self.dim}."
+            )
+        if np.any(variances < 0.0):
+            raise ValueError("Spectral variances must be non-negative.")
+        return variances
+
+    def invariant_measure(
+        self,
+        spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        expectation: V | None = None,
+        pointwise_std: float | None = None,
+        norm_std: float | None = None,
+        unsafe: bool = False,
+    ) -> GaussianMeasure:
+        """A Gaussian whose covariance is diagonal in the spectral basis.
+
+        The factor is the exact square root of the covariance, and the draw is
+        taken in components: ``sqrt(s / g)`` times a standard normal, followed
+        by one synthesis. The ``1/sqrt(g)`` is the metric's, coming from white
+        noise, whose components are ``N(0, G^-1)``.
+
+        The variances are the covariance operator's eigenvalues in this
+        space's own metric, so a constant spectrum is a multiple of the
+        identity, which is not trace class on a function space and is
+        refused without *unsafe*. Whether any other spectrum is trace class
+        in the limit cannot be judged from a truncation and is the caller's
+        to ensure: it must decay faster than the eigenvalues grow,
+        :meth:`sobolev_measure` above half the dimension being the safe
+        choice.
+
+        ``pointwise_std`` rescales the whole spectrum so that
+        :meth:`pointwise_variance` comes out as its square, leaving the shape
+        of the spectrum — and so the correlation length — untouched.
+        ``norm_std`` does the same against ``E||x||^2`` instead, which is the
+        total rather than the local size. They are alternatives; asking for
+        both is a contradiction and is refused.
+
+        Args:
+            spectral_variances: one per component, or a callable on the
+                Laplacian eigenvalues.
+            expectation: the mean. Zero if omitted.
+            pointwise_std: rescale so the pointwise standard deviation is
+                this. Mutually exclusive with *norm_std*.
+            norm_std: rescale so the *norm's* standard deviation is this.
+            unsafe: accept a constant spectrum, for a test that means it.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: for negative variances, the wrong number of them,
+                both calibrations at once -- which is a contradiction rather
+                than an over-specification -- or a constant spectrum without
+                *unsafe*.
+        """
+        variances = self._resolve_variances(spectral_variances)
+        _refuse_identity_covariance(
+            self,
+            "A constant spectrum, a multiple of the identity covariance,",
+            unsafe=unsafe,
+            spectrum=variances,
+        )
+        if pointwise_std is not None and norm_std is not None:
+            raise ValueError(
+                "Give pointwise_std or norm_std, not both: they scale the same "
+                "spectrum to two different targets."
+            )
+        if norm_std is not None:
+            if norm_std <= 0.0:
+                raise ValueError("norm_std must be positive.")
+            # E||x||^2 is the trace of the covariance, which for a diagonal
+            # covariance is the sum of its eigenvalues.
+            current = float(np.sum(variances))
+            if current <= 0.0:
+                raise ValueError("A measure with no variance cannot be scaled.")
+            variances = variances * (norm_std**2 / current)
+        if pointwise_std is not None:
+            if pointwise_std <= 0.0:
+                raise ValueError("pointwise_std must be positive.")
+            current = self.pointwise_variance(variances)
+            if current <= 0.0:
+                raise ValueError(
+                    "A measure with zero pointwise variance cannot be scaled "
+                    "to a given standard deviation."
+                )
+
+            variances = variances * (pointwise_std**2 / current)
+
+        factor = DiagonalLinearOperator(self, np.sqrt(variances))
+        # A precision exists only when every variance is strictly positive; a
+        # measure supported on a subspace has none, and should say so rather
+        # than carry a regularized stand-in.
+        precision = (
+            DiagonalLinearOperator(self, 1.0 / variances)
+            if np.all(variances > 0.0)
+            else None
+        )
+
+        # The draw is one synthesis: `sqrt(s / g) * standard normal` in
+        # components, since white noise's components are `N(0, G^-1)`.
+        # GaussianMeasure takes that short cut itself for any diagonal factor,
+        # so no sampler is registered here, and the short cut survives when
+        # the algebra rebuilds the measure (scaled, summed, conditioned).
+        return GaussianMeasure(
+            self,
+            expectation=expectation,
+            covariance_factor=factor,
+            precision=precision,
+            unsafe=unsafe,
+        )
+
+    def sobolev_measure(
+        self,
+        order: float,
+        scale: float,
+        /,
+        *,
+        amplitude: float = 1.0,
+        expectation: V | None = None,
+        pointwise_std: float | None = None,
+        norm_std: float | None = None,
+        unsafe: bool = False,
+    ) -> GaussianMeasure:
+        """A Gaussian prior whose covariance is a Sobolev symbol.
+
+        The workhorse prior: smoothness set by ``order``, correlation length by
+        ``scale``. Note the symbol enters with a *negative* order, since a
+        covariance must decay with the eigenvalue for the measure to be
+        supported on functions of that smoothness.
+
+        The covariance is trace class on this space, so that this is a
+        Gaussian measure on it with draws in it, exactly when ``order``
+        exceeds half the spatial dimension, whatever the space's own order:
+        a draw then has ``order - d/2`` more derivatives than the space
+        asks. At or below that the "measure" has no draws in the space (at
+        order zero it is the identity covariance, white noise in the space's
+        metric), and it is refused.
+
+        Args:
+            order: the Sobolev order of the *measure*: the covariance is
+                ``(1 + scale^2 lambda)^-order`` in this space's metric.
+            scale: the correlation length.
+            amplitude: an overall scale on the spectrum.
+            expectation: the mean. Zero if omitted.
+            pointwise_std: calibrate by the pointwise standard deviation.
+            norm_std: calibrate by the norm's, mutually exclusive with it.
+            unsafe: build it at an order at or below half the dimension
+                anyway, for a test that means it.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: for an order at or below half the spatial dimension
+                without *unsafe*.
+        """
+        _require_trace_class(self, order, unsafe)
+        return self.invariant_measure(
+            amplitude**2 * self.sobolev_symbol(-order, scale),
+            expectation=expectation,
+            pointwise_std=pointwise_std,
+            norm_std=norm_std,
+            unsafe=unsafe,
+        )
+
+    def heat_measure(
+        self,
+        length_scale: float,
+        /,
+        *,
+        amplitude: float = 1.0,
+        expectation: V | None = None,
+        pointwise_std: float | None = None,
+        norm_std: float | None = None,
+        unsafe: bool = False,
+    ) -> GaussianMeasure:
+        r"""A Gaussian prior with a heat-kernel covariance.
+
+        The covariance is ``amplitude^2 exp(-length_scale^2 Delta)``. See
+        :meth:`heat_symbol` on why the parameter is a length and not a time.
+        At a length scale of zero it is the identity covariance, which is not
+        trace class on a function space and is refused without *unsafe*.
+
+        Args:
+            length_scale: the correlation length, in the units of the domain.
+            amplitude: an overall scaling of the field.
+            expectation: the mean. Zero by default.
+            pointwise_std: rescale so the pointwise standard deviation is this.
+            norm_std: rescale so the expected squared norm matches this.
+            unsafe: accept a zero length scale, for a test that means it.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: if the length scale is negative, or zero without
+                *unsafe*, or if both *pointwise_std* and *norm_std* are
+                given.
+        """
+        return self.invariant_measure(
+            amplitude**2 * self.heat_symbol(length_scale),
+            expectation=expectation,
+            pointwise_std=pointwise_std,
+            norm_std=norm_std,
+            unsafe=unsafe,
+        )
+
+    def correlated_measure(
+        self,
+        spectral_cross_covariances: np.ndarray,
+        /,
+        *,
+        expectation: Sequence[V] | None = None,
+        labels: Sequence[str] | None = None,
+        unsafe: bool = False,
+    ) -> GaussianMeasure:
+        """Several fields on this domain, correlated scale by scale.
+
+        The joint prior a coupled physical problem wants: the fields share a
+        spectral basis, and at each mode their coefficients are drawn from one
+        small covariance matrix rather than independently. That makes the
+        correlation between the fields a function of *scale*, which is what
+        distinguishes it from a single number multiplying two marginals.
+
+        The measure lives on the direct sum of ``n`` copies of this space, and
+        the ``(i, j)`` block of its covariance is diagonal with eigenvalues
+        ``Sigma(k)[i, j]``. Its marginals are the invariant measures with
+        spectral variances ``Sigma(k)[i, i]``.
+
+        **Sampling is an extended Karhunen-Loeve expansion**, and it comes for
+        free: the covariance *factor* is the block operator whose blocks carry
+        the symmetric square roots ``L(k)``, so one draw of white noise on the
+        direct sum, correlated mode by mode, is a sample. The ``1/sqrt(g)`` a
+        non-trivial metric demands is carried by the white noise rather than
+        written out here, as for :meth:`invariant_measure`.
+
+        Each field's marginal is an invariant measure, so a field whose
+        variances ``Sigma(k)[i, i]`` are the same at every mode has the
+        identity covariance, which is not trace class on a function space
+        and is refused without *unsafe*; that the marginal spectra decay
+        fast enough otherwise is the caller's to ensure.
+
+        Args:
+            spectral_cross_covariances: shape ``(dim, n, n)``; slice ``k`` is
+                the covariance of the ``n`` fields' ``k``-th coefficients, and
+                must be symmetric and positive semidefinite.
+            expectation: one field per component. Defaults to zero.
+            labels: names for the summands, for readability.
+            unsafe: accept a field with a constant spectrum, for a test that
+                means it.
+
+        Returns:
+            The measure on the direct sum.
+
+        Raises:
+            ValueError: for the wrong shape, a slice that is not symmetric,
+                one that is not positive semidefinite -- which for a pair
+                of fields means a correlation outside ``[-1, 1]`` -- or a
+                field with a constant spectrum without *unsafe*.
+        """
+        from ..algebra.direct_sum import DirectSum
+
+        sigma = np.asarray(spectral_cross_covariances, dtype=float)
+        if (
+            sigma.ndim != 3
+            or sigma.shape[0] != self.dim
+            or sigma.shape[1] != sigma.shape[2]
+        ):
+            raise ValueError(f"Expected shape ({self.dim}, n, n), got {sigma.shape}.")
+        count = sigma.shape[1]
+
+        scale = float(np.max(np.abs(sigma))) if sigma.size else 0.0
+        tolerance = 1.0e-10 * max(scale, np.finfo(float).tiny)
+        if not np.allclose(sigma, np.swapaxes(sigma, -1, -2), atol=tolerance):
+            raise ValueError("Each cross-covariance slice must be symmetric.")
+        sigma = 0.5 * (sigma + np.swapaxes(sigma, -1, -2))
+
+        values, vectors = np.linalg.eigh(sigma)
+        if values.min(initial=0.0) < -tolerance:
+            worst = int(np.argmin(values.min(axis=1)))
+            raise ValueError(
+                "Each cross-covariance slice must be positive semidefinite; "
+                f"the one at component {worst} has smallest eigenvalue "
+                f"{values.min():.3e}. For a pair of fields that means "
+                "|correlation| <= 1."
+            )
+        values = np.clip(values, 0.0, None)
+        for field in range(count):
+            _refuse_identity_covariance(
+                self,
+                f"Field {field}'s constant spectrum, a multiple of the "
+                "identity covariance,",
+                unsafe=unsafe,
+                spectrum=sigma[:, field, field],
+            )
+        # The symmetric square root, so that L L == Sigma and the factor is
+        # its own adjoint block for block.
+        roots = (vectors * np.sqrt(values)[:, None, :]) @ np.swapaxes(vectors, -1, -2)
+
+        space = DirectSum([self] * count, labels=labels)
+        factor = SpectralBlockLinearOperator(space, roots)
+        covariance = SpectralBlockLinearOperator(space, sigma).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        )
+        # Every slice invertible: the precision is the slice-wise inverse,
+        # which nothing downstream could otherwise recover from the
+        # covariance without a solve per application.
+        precision = None
+        if values.size and values.min() > tolerance:
+            precision = SpectralBlockLinearOperator(
+                space, np.linalg.inv(sigma)
+            ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+            covariance = covariance.with_traits(Traits.POSITIVE_DEFINITE)
+
+        # A draw is the factor on white noise. Drawn in components it is the
+        # slice product on the white-noise components and one synthesis per
+        # field; applying the factor as an operator would take three
+        # transforms per field (synthesize the noise, analyze it, synthesize
+        # the result) where one suffices.
+        action = factor.components_action()
+
+        def sample(rng: Generator | None) -> tuple:
+            return space.from_components(action(space.white_noise_components(rng=rng)))
+
+        return GaussianMeasure(
+            space,
+            expectation=None if expectation is None else tuple(expectation),
+            covariance=covariance,
+            covariance_factor=factor,
+            precision=precision,
+            sample=sample,
+            unsafe=unsafe,
+        )
+
+    def correlated_measure_from_correlations(
+        self,
+        variances: Sequence[np.ndarray],
+        correlations: np.ndarray,
+        /,
+        *,
+        expectation: Sequence[V] | None = None,
+        labels: Sequence[str] | None = None,
+        unsafe: bool = False,
+    ) -> GaussianMeasure:
+        """The same, from marginal spectra and a correlation matrix.
+
+        The parameterization anyone actually has an opinion about: each field's
+        own spectrum, and how strongly they are correlated. The correlation may
+        be a single matrix, applying at every scale, or one per component if it
+        varies with scale.
+
+        Args:
+            variances: one spectral variance array per field.
+            correlations: ``(n, n)`` or ``(dim, n, n)``, with unit diagonal.
+            expectation: one field per component. Defaults to zero.
+            labels: names for the summands.
+            unsafe: accept a constant marginal spectrum, for a test that
+                means it; see :meth:`correlated_measure`.
+
+        Returns:
+            The measure on the direct sum.
+
+        Raises:
+            ValueError: for the wrong number of correlation matrices, a
+                correlation matrix without a unit diagonal, or a constant
+                marginal spectrum without *unsafe*.
+        """
+        spectra = np.stack(
+            [self._resolve_variances(variance) for variance in variances]
+        )
+        count = spectra.shape[0]
+        matrix = np.asarray(correlations, dtype=float)
+        if matrix.shape == (count, count):
+            matrix = np.broadcast_to(matrix, (self.dim, count, count))
+        elif matrix.shape != (self.dim, count, count):
+            raise ValueError(
+                f"Correlations must have shape ({count}, {count}) or "
+                f"({self.dim}, {count}, {count}), got {matrix.shape}."
+            )
+        if not np.allclose(np.diagonal(matrix, axis1=-2, axis2=-1), 1.0):
+            raise ValueError("A correlation matrix has a unit diagonal.")
+        deviations = np.sqrt(spectra).T
+        sigma = matrix * deviations[:, :, None] * deviations[:, None, :]
+        return self.correlated_measure(
+            sigma, expectation=expectation, labels=labels, unsafe=unsafe
+        )
+
+    def spectral_correlations(
+        self, measure: GaussianMeasure, /, *, first: int = 0, second: int = 1
+    ) -> np.ndarray:
+        """How strongly two correlated fields are correlated, mode by mode.
+
+        ``rho_ij(k) = Sigma_ij(k) / sqrt(Sigma_ii(k) Sigma_jj(k))``, which is
+        the thing :meth:`correlated_measure_from_correlations` was given and
+        the thing a reader of the result wants back. Scale-dependent, which is
+        the whole point of the construction: a single number multiplying two
+        marginals cannot say that two fields agree at long wavelengths and not
+        at short ones.
+
+        Zero wherever either marginal has no variance at that mode: there is
+        no correlation to report there, and the ratio is 0/0.
+
+        Args:
+            measure: a measure from :meth:`correlated_measure` or its
+                correlation-parameterized sibling.
+            first: the summand on the left.
+            second: the summand on the right.
+
+        Returns:
+            One correlation per component.
+        """
+        cross = measure.cross_covariance(first, second).eigenvalues
+        left = measure.marginal(first).covariance.eigenvalues
+        right = measure.marginal(second).covariance.eigenvalues
+
+        deviations = np.sqrt(left * right)
+        return np.divide(
+            cross,
+            deviations,
+            out=np.zeros(self.dim),
+            where=deviations > 0.0,
+        )
+
+    def power_measure(
+        self,
+        power: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        expectation: V | None = None,
+        unsafe: bool = False,
+    ) -> GaussianMeasure:
+        """A Gaussian with a prescribed ``L2`` power *per degree*.
+
+        The spectrum a geophysicist actually writes down: how much variance
+        each degree holds in total, rather than how much each component holds.
+        The two differ by the multiplicity, and ``power`` means the **L2
+        spectrum on every space**: a draw's expected
+        :meth:`power_spectrum` is ``power``, whatever the Sobolev order of
+        the space the measure lives on. The same ``power`` therefore means
+        the same random field wherever it is hosted; the host's metric enters
+        only through which fields the space can hold. The metric-native
+        spelling -- eigenvalues of the covariance operator in this space's
+        own inner product -- remains :meth:`invariant_measure`.
+
+        One caution comes with the convenience: an ``L2`` spectrum specifies
+        a trace-class measure on ``H^s`` in the limit only if it decays
+        faster than the Sobolev symbol. A flat power, the same at every
+        degree, or the same per component (white noise in ``L2``) never
+        does, and on a function space either is refused without *unsafe*;
+        on a truncation everything else runs, and the dimension-free
+        interpretation is the caller's to check.
+
+        Args:
+            power: total ``L2`` variance at each degree, indexed from zero,
+                or a callable applied to the array of degrees.
+            expectation: the mean. Defaults to zero.
+            unsafe: accept a flat power, for a test that means it.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: if an array of powers is too short for the degrees
+                present, or for a flat power on a function space without
+                *unsafe*.
+        """
+        degrees = self.degrees
+        if callable(power):
+            per_degree = np.asarray(power(degrees.astype(float)), dtype=float)
+        else:
+            values = np.asarray(power, dtype=float)
+            if values.size <= degrees.max():
+                raise ValueError(
+                    f"Power is needed up to degree {degrees.max()}, got "
+                    f"{values.size} values."
+                )
+            per_degree = values[degrees]
+        # The multiplicity of each component's degree, tabulated once rather
+        # than counted per component, which would be O(dim^2).
+        counts = np.bincount(degrees)[degrees]
+        # The power at each degree present, and the L2 variance per component.
+        powers = np.bincount(degrees, weights=per_degree / counts)[np.unique(degrees)]
+        _refuse_identity_covariance(
+            self,
+            "A flat power",
+            unsafe=unsafe,
+            white=_is_constant(powers) or _is_constant(per_degree / counts),
+        )
+        # A draw's coefficient variance is eigenvalue / gram, so carrying the
+        # gram here is what makes the observed L2 spectrum the given power on
+        # a space of any order. On a Lebesgue space it is ones.
+        return self.invariant_measure(
+            per_degree / counts * self.gram_diagonal(),
+            expectation=expectation,
+            unsafe=unsafe,
+        )
+
+    def _spectral_variances(self, measure: GaussianMeasure, /) -> np.ndarray | None:
+        """A measure's spectral variances, when its covariance is diagonal here.
+
+        The test for "this is an invariant measure on this space", which is
+        what turns a covariance *operator* into a closed form: its eigenvalues
+        are the spectrum, and every two-point quantity is a sum over the basis
+        rather than an application of the operator.
+
+        ``None`` when it is not -- a posterior is not invariant, and the
+        general route stays for it.
+        """
+        covariance = getattr(measure, "covariance", None)
+        if isinstance(covariance, DiagonalLinearOperator) and covariance.domain == self:
+            return np.asarray(covariance.eigenvalues, dtype=float)
+        return None
+
+    def covariance_function(
+        self, measure: GaussianMeasure, distances: np.ndarray, /
+    ) -> np.ndarray:
+        """An invariant measure's covariance as a function of distance.
+
+        Homogeneity is what makes this well defined: the two-point covariance
+        depends on the pair of points only through the distance between them,
+        so one anchor and a walk away from it gives the whole function.
+
+        With a diagonal covariance -- which is what an invariant measure has --
+        there is a closed form and no operator is applied at all:
+
+        .. code-block:: text
+
+            c(p, q) == sum_k s_k phi_k(p) phi_k(q) / g_k
+
+        so this is one row of :meth:`basis_matrix` per distance against a fixed
+        weight vector. The general route, which builds the Dirac's representer,
+        applies the covariance to it and evaluates the result, is taken for a
+        measure that is not invariant.
+
+        **The order guard applies to the closed form too.** A covariance
+        function is a statement about point values, so it is refused on a
+        space too rough for point evaluation, whatever the measure's spectrum
+        would allow.
+
+        Args:
+            measure: the measure. Invariant, for the answer to depend on the
+                distance alone.
+            distances: the separations to evaluate at, as *physical*
+                distances.
+
+        Returns:
+            One covariance per distance.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below half the spatial
+                dimension, so that point values do not exist.
+        """
+        anchor = self.reference_point
+        points = self.walk_from(anchor, distances)
+        variances = self._spectral_variances(measure)
+        if variances is None:
+            field = measure.two_point_covariance(anchor)
+            return self.evaluate(field, points)
+        self._require_point_evaluation("A covariance function", unsafe=False)
+        weights = variances * self.basis_at(anchor) / self.metric_values
+        return self.basis_matrix(points) @ weights
+
+    def pointwise_variance_at(
+        self,
+        measure: GaussianMeasure,
+        points: Sequence[Any],
+        /,
+        *,
+        rank: int = 0,
+        samples: int | None = None,
+        rtol: float | None = None,
+        max_samples: int | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> np.ndarray:
+        """``Var(x(p))`` at given points, for *any* measure on this space.
+
+        The general counterpart of :meth:`pointwise_variance`, which is exact
+        and constant but only for an invariant measure. A posterior is not
+        invariant, and its pointwise variance is the interesting one.
+
+        It is the diagonal of ``E C E*`` with ``E`` evaluation at the points,
+        since ``(C u_i, u_i)`` is the variance at the ``i``-th. Exact by
+        default, at one application of the covariance per point, or in closed
+        form for an invariant measure. Pass ``samples`` or ``rtol`` to
+        estimate it instead, and ``rank`` to deflate first.
+
+        Args:
+            measure: the measure whose variance is wanted.
+            points: where to evaluate it.
+            rank: on the sampled route, how many leading eigenpairs to
+                deflate before estimating. For a covariance with a decaying
+                spectrum this is the difference between a useful estimate and
+                a useless one.
+            rtol: on the sampled route, stop adding probes once the estimate
+                settles to this relative change; ``samples`` is then the first
+                batch, twenty if not given.
+            max_samples: the cap on that.
+            samples: estimate rather than compute exactly. Exact costs one
+                covariance application per point.
+            rng: the generator for those probes.
+            n_jobs: workers: for the points on the exact route, and for the
+                operator applications on the sampling one. Not used where the
+                measure is invariant and the closed form applies, which is
+                vectorized over the points already.
+
+        Returns:
+            One variance per point.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below half the spatial
+                dimension, so that point values do not exist.
+        """
+        if samples is None and rtol is None:
+            variances = self._spectral_variances(measure)
+            if variances is not None:
+                # An invariant measure has a closed form, `sum_k s_k
+                # phi_k(p)^2 / g_k`, so the whole set of points is one basis
+                # matrix against a fixed weight vector rather than several
+                # transforms per point. The order guard is asked for
+                # explicitly, since no Dirac is built on this route; see
+                # covariance_function on why it applies.
+                self._require_point_evaluation("A pointwise variance", unsafe=False)
+                weights = variances / self.metric_values
+                points = tuple(points)
+                # One basis matrix at a time stays a sensible size, as it does
+                # in the sphere's own evaluation.
+                per_chunk = max(1, 4_000_000 // max(self.dim, 1))
+                return np.concatenate(
+                    [
+                        self.basis_matrix(
+                            points[start : start + per_chunk], n_jobs=n_jobs
+                        )
+                        ** 2
+                        @ weights
+                        for start in range(0, len(points), per_chunk)
+                    ]
+                )
+            # One covariance application per point, and the points are
+            # independent: the loop parallelizes even though nothing inside it
+            # does. The evaluation operator below is not needed on this path.
+            from ..parallel import parallel_map
+
+            return np.array(
+                parallel_map(
+                    lambda point: measure.directional_variance(
+                        self.dirac(point).representer
+                    ),
+                    points,
+                    n_jobs=n_jobs,
+                )
+            )
+        evaluation = self.point_evaluation_operator(points)
+        operator = evaluation @ measure.covariance @ evaluation.adjoint
+        from ..numerics.randomized import deflated_diagonal
+
+        return deflated_diagonal(
+            operator,
+            rank=rank,
+            samples=samples if samples is not None else 20,
+            rtol=rtol,
+            max_samples=max_samples,
+            form="components",
+            rng=rng,
+            n_jobs=n_jobs,
+        )
+
+    def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
+        """The points as vectors whose Euclidean distance tracks the geodesic.
+
+        The hook the neighbor search is built on. Returns the coordinates and,
+        for a periodic domain, the box a KD-tree should wrap in. On a sphere the
+        embedding is into R^3 and Euclidean distance is the *chord*, which is a
+        monotone function of the geodesic -- see :meth:`_embedded_radius`.
+
+        Returns:
+            ``(vectors, boxsize)``, with ``boxsize`` None when nothing wraps.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide an embedding, so it has "
+            f"no neighbor search."
+        )
+
+    def _embedded_radius(self, distance: float, /) -> float:
+        """A geodesic radius as a radius in the embedding. Identity by default."""
+        return float(distance)
+
+    def _geodesic_from_embedded(self, lengths: np.ndarray, /) -> np.ndarray:
+        """Embedded distances back to geodesic ones. Identity by default."""
+        return np.asarray(lengths, dtype=float)
+
+    def pairs_within_distance(
+        self,
+        points: Sequence[Any],
+        distance: float,
+        /,
+        *,
+        with_distances: bool = False,
+    ) -> tuple[np.ndarray, ...]:
+        """Index pairs closer together than a given geodesic distance.
+
+        What a localized covariance needs: the sparsity pattern of "these two
+        data see overlapping parts of the model". Returned as two index arrays,
+        ready for ``scipy.sparse``, and with ``with_distances`` a third array
+        of the separations themselves -- which is what an invariant covariance
+        needs, since for one the entry is a function of the distance alone.
+
+        Both orderings of a pair are returned, and so is every diagonal entry:
+        the result is the pattern of a symmetric matrix, not of a triangle.
+
+        The search is a KD-tree over the geometry's embedding, so memory grows
+        with the number of pairs found rather than the square of the number of
+        points. On a periodic domain the tree wraps.
+
+        Args:
+            points: the points.
+            distance: the geodesic separation to search within.
+            with_distances: also return the separations.
+
+        Returns:
+            ``(rows, columns)``, or ``(rows, columns, distances)``.
+        """
+        from scipy.spatial import cKDTree
+
+        vectors, boxsize = self._embedding(points)
+        count = vectors.shape[0]
+        if count == 0:
+            empty = np.zeros(0, dtype=int)
+            return (empty, empty, np.zeros(0)) if with_distances else (empty, empty)
+
+        tree = cKDTree(vectors, boxsize=boxsize)
+        neighbors = tree.query_pairs(
+            self._embedded_radius(distance), output_type="ndarray"
+        )
+        # query_pairs gives each unordered pair once and no diagonal; the
+        # caller wants the symmetric pattern, so both orderings and the
+        # diagonal go back in.
+        diagonal = np.arange(count)
+        if neighbors.size:
+            rows = np.concatenate([neighbors[:, 0], neighbors[:, 1], diagonal])
+            columns = np.concatenate([neighbors[:, 1], neighbors[:, 0], diagonal])
+        else:
+            rows = columns = diagonal
+        if not with_distances:
+            return rows, columns
+        return (
+            rows,
+            columns,
+            self._embedded_separations(vectors[rows], vectors[columns], boxsize),
+        )
+
+    def _embedded_separations(
+        self, first: np.ndarray, second: np.ndarray, boxsize: Any, /
+    ) -> np.ndarray:
+        """Geodesic distances between two arrays of embedded points.
+
+        The wrap has to be taken here as well as in the tree. The tree applies
+        it and finds the right pairs; measuring them with a plain difference
+        afterwards reports the long way round instead, which on a unit circle
+        is an error of up to half the circumference.
+        """
+        offsets = np.asarray(second, dtype=float) - np.asarray(first, dtype=float)
+        if boxsize is not None:
+            lengths = np.asarray(boxsize, dtype=float)
+            offsets = offsets - lengths * np.round(offsets / lengths)
+        return self._geodesic_from_embedded(np.linalg.norm(offsets, axis=-1))
+
+    def cluster_points(
+        self,
+        points: Sequence[Any],
+        /,
+        *,
+        radius: float | None = None,
+        count: int | None = None,
+        method: str = "complete",
+    ) -> list[list[int]]:
+        """Group points into clusters, by hierarchical linkage.
+
+        What a block preconditioner needs: a partition of the data into groups
+        that see overlapping parts of the model.
+
+        Two ways to say how many, and exactly one is required. ``radius`` caps
+        how wide a cluster may be; ``count`` fixes how many there are, which is
+        the mode that sizes preconditioner blocks to a budget. Either way the
+        result does not depend on the order in which the points are given.
+
+        Args:
+            points: the points.
+            radius: the widest a cluster may be, in geodesic distance.
+            count: how many clusters to form.
+            method: the linkage rule, as for
+                :func:`scipy.cluster.hierarchy.linkage`. ``"complete"`` by
+                default, because it is the one that keeps clusters compact.
+
+        Returns:
+            One list of indices per cluster.
+
+        Raises:
+            ValueError: unless exactly one of *radius* and *count* is given, or
+                if *radius* is not positive.
+        """
+        from scipy.cluster.hierarchy import fcluster, linkage
+
+        if (radius is None) == (count is None):
+            raise ValueError("Give exactly one of radius and count.")
+        if radius is not None and radius <= 0.0:
+            raise ValueError(f"The radius must be positive, got {radius}.")
+
+        points = list(points)
+        if not points:
+            return []
+        if len(points) == 1:
+            return [[0]]
+
+        vectors, boxsize = self._embedding(points)
+        first, second = np.triu_indices(len(points), k=1)
+        condensed = self._embedded_separations(vectors[first], vectors[second], boxsize)
+
+        tree = linkage(condensed, method=method)
+        if count is not None:
+            labels = fcluster(tree, t=count, criterion="maxclust")
+        else:
+            labels = fcluster(tree, t=radius, criterion="distance")
+
+        clusters: dict[int, list[int]] = {}
+        for index, label in enumerate(labels):
+            clusters.setdefault(int(label), []).append(index)
+        return [clusters[label] for label in sorted(clusters)]
+
+    def random_points(
+        self, count: int, /, *, rng: Generator | None = None
+    ) -> list[Any]:
+        """Several points drawn uniformly over the domain.
+
+        A loop over :meth:`random_point`.
+
+        Args:
+            count: how many points.
+            rng: the generator.
+
+        Returns:
+            The points.
+
+        Raises:
+            ValueError: if *count* is negative.
+        """
+        if count < 0:
+            raise ValueError("count must be non-negative.")
+        return [self.random_point(rng=rng) for _ in range(count)]
+
+    @abstractmethod
+    def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
+        """Points at given geodesic distances from a point, along one direction.
+
+        Args:
+            point: where to start.
+            distances: how far to walk, as *physical* distances.
+
+        Returns:
+            One point per distance.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement walk_from."
+        )
+
+    @property
+    @abstractmethod
+    def spatial_dimension(self) -> int:
+        """The dimension of the domain the fields live on.
+
+        Not the dimension of the space of fields, which is :attr:`dim`. A
+        sphere's is two.
+
+        Returns:
+            The spatial dimension.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not report a spatial dimension."
+        )
+
+    # ----------------------------------------------------------------- #
+    #                        Point evaluation                           #
+    # ----------------------------------------------------------------- #
+
+    def _require_point_evaluation(
+        self,
+        what: str,
+        /,
+        *,
+        points: Sequence[Any] | None = None,
+        side: str | None = None,
+        unsafe: bool,
+    ) -> None:
+        r"""Refuse point evaluation on a space too rough to admit it.
+
+        Sobolev embedding: point evaluation is a bounded functional on ``H^s``
+        exactly when ``s > d/2``. At or below that the Dirac has no representer
+        in the space, and what the code returns instead is not an approximation
+        to one — it is a grid-scale artifact that shrinks as the truncation
+        rises and has no limit.
+
+        Nothing downstream can detect this. The adjoint of an observation
+        operator built here returns noise, an inversion built on that adjoint
+        returns noise, and every number involved is finite.
+
+        ``unsafe=True`` proceeds anyway, which is worth having: seeing the
+        representer fail to converge as ``lmax`` grows is the clearest
+        demonstration of why the condition is there.
+
+        Args:
+            what: the operation, named for the message.
+            points: where; unused here, where the threshold is the same
+                everywhere, and part of the signature every function space
+                shares with the spectral-element ones.
+            side: likewise, for a layered space's interfaces.
+            unsafe: proceed regardless.
+
+        Raises:
+            ValueError: when the order is too low and *unsafe* is not set.
+        """
+        if unsafe:
+            return
+        threshold = self.spatial_dimension / 2.0
+        if self.order <= threshold:
+            raise ValueError(
+                f"{what} needs a Sobolev order above {threshold:g} on a "
+                f"{self.spatial_dimension}-dimensional domain, and this space "
+                f"has order {self.order:g}. Below that a point evaluation is "
+                f"not a bounded functional: it has no representer, and the "
+                f"one this would return is a grid-scale artifact with no limit "
+                f"as the truncation rises. Raise the order, or pass "
+                f"unsafe=True if you want to see that for yourself."
+            )
+
+    def _require_path_evaluation(self, what: str, /, *, unsafe: bool) -> None:
+        r"""Refuse a path integral on a space too rough to admit it.
+
+        A path is a curve of codimension ``d - 1``, and the trace of an
+        ``H^s`` field on it exists for ``s > (d - 1) / 2``: one half on a
+        surface, a unit weaker than point evaluation's threshold, nothing at
+        all in one dimension, where every ``L2`` function integrates over an
+        interval. Below it the functional has no representer and the
+        quadrature returns a number with no limit as the truncation rises.
+
+        Args:
+            what: the operation, named for the message.
+            unsafe: proceed regardless.
+
+        Raises:
+            ValueError: when the order is at or below the threshold and
+                *unsafe* is not set.
+        """
+        if unsafe or self.spatial_dimension < 2:
+            return
+        threshold = (self.spatial_dimension - 1) / 2.0
+        if self.order <= threshold:
+            raise ValueError(
+                f"{what} needs a Sobolev order above {threshold:g} on a "
+                f"{self.spatial_dimension}-dimensional domain, and this space "
+                f"has order {self.order:g}. At or below that the integral "
+                f"along a curve is not a bounded functional: it has no "
+                f"representer, and the one this would return is a grid-scale "
+                f"artifact with no limit as the truncation rises. Raise the "
+                f"order, or pass unsafe=True if you want to see that for "
+                f"yourself."
+            )
+
+    def dirac(self, point: Any, /, *, unsafe: bool = False) -> LinearFunctional:
+        """The evaluation functional at a point.
+
+        Built from derivative components, so ``dirac(p).representer`` is the
+        Riesz representer and the metric is applied exactly once, inside the
+        adjoint. On a Sobolev space of order above half the spatial dimension
+        the representer is a function in the space. At or below that order,
+        a Lebesgue space included, the Dirac is not bounded and is refused;
+        see :meth:`_require_point_evaluation`.
+
+        Args:
+            point: where to evaluate.
+            unsafe: build it even on a space too rough to admit it.
+
+        Returns:
+            The evaluation functional.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below half the spatial
+                dimension and *unsafe* is not set.
+        """
+        self._require_point_evaluation("A Dirac functional", unsafe=unsafe)
+        return LinearFunctional.from_derivative_components(self, self.basis_at(point))
+
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points in the form this geometry's evaluation routines want.
+
+        Computed once and reused by every application of an operator built on
+        them; see :class:`PreparedPoints`. The base class has nothing to
+        precompute, so this only wraps them. A geometry whose ``evaluate`` or
+        ``accumulate`` converts the points on the way in overrides it and does
+        that conversion here instead.
+
+        Args:
+            points: the points, or an already prepared set of them.
+
+        Returns:
+            The prepared points. Passing one straight back returns it
+            unchanged.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        return PreparedPoints(points)
+
+    def basis_matrix(
+        self, points: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> np.ndarray:
+        """The basis at many points, as a ``(len(points), dim)`` array.
+
+        The rows of an observation operator's derivative matrix. A space whose
+        transform can do this in a batch should override it; the sphere does.
+
+        Args:
+            points: where to evaluate the basis.
+            n_jobs: workers for the points. Serial by default.
+        """
+        from ..parallel import parallel_map
+
+        return np.stack(parallel_map(self.basis_at, list(points), n_jobs=n_jobs))
+
+    def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+        """The field's values at several points.
+
+        The generic route sums the basis at each point, which costs one
+        ``basis_at`` call per point. A space whose transform can evaluate at
+        scattered points directly should override this; the sphere does.
+        """
+        components = self.to_components(x)
+        return np.array(
+            [float(np.dot(self.basis_at(point), components)) for point in points]
+        )
+
+    def evaluate_gradient(
+        self,
+        x: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float | None = None,
+        nthreads: int | None = None,
+    ) -> np.ndarray:
+        """The field's gradient at several points, in the geometry's own frame.
+
+        One row per point, one column per tangent direction, in physical
+        units: on a box the partial derivatives along its axes; on the
+        sphere the southward and eastward components, ``∂_θ f / R`` and
+        ``∂_φ f / (R sin θ)``. What a ray tracer needs, and anything else
+        that follows a field rather than samples it.
+
+        Args:
+            x: a field of this space.
+            points: where to evaluate the gradient.
+            eps: accuracy for the non-uniform transform behind it, where
+                one is used; the geometry's own default if omitted.
+            nthreads: threads for that transform, likewise.
+
+        Returns:
+            An array of shape ``(len(points), spatial_dimension)``.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement evaluate_gradient."
+        )
+
+    def accumulate(self, weights: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+        """The derivative components of ``x -> sum_i y_i x(r_i)``.
+
+        The adjoint of :meth:`evaluate`, and the two must stay in step. The
+        generic route sums the basis at each point; a space whose transform has
+        a scattered-point adjoint should override this, as the periodic box
+        does with a type-1 NUFFT.
+        """
+        total = np.zeros(self.dim)
+        for weight, point in zip(np.asarray(weights, dtype=float), points):
+            if weight != 0.0:
+                total += weight * self.basis_at(point)
+        return total
+
+    def point_evaluation_operator(
+        self,
+        points: Sequence[Any],
+        /,
+        *,
+        route: Literal["auto", "dense", "local"] = "auto",
+        unsafe: bool = False,
+        eps: float | None = None,
+        nthreads: int | None = None,
+        n_jobs: int | None = None,
+    ) -> LinearOperator:
+        """Evaluation at several points, as an operator into a Euclidean space.
+
+        Two routes, which agree to the transform's accuracy. ``"local"`` is
+        matrix-free: nothing of size ``len(points) x dim`` is held, and an
+        application is the geometry's evaluation at scattered points, by a
+        non-uniform transform where one is available, so it is usable at the
+        scale real acquisition geometries reach. ``"dense"`` assembles the
+        derivative matrix instead, which is worth it whenever the operator
+        will be applied many times and the matrix fits. ``"auto"``, the
+        default, is the local route: here the matrix costs ``dim`` basis
+        evaluations per point to form and memory in proportion, and nothing
+        is gained by holding it unless the caller says so. (The
+        spectral-element spaces take the same keyword, where ``"auto"`` holds
+        the matrix while it fits 256 MB, their two routes costing about the
+        same per application.)
+
+        The dense route is a choice here rather than a call to
+        :meth:`~pygeoinf.algebra.operators.LinearOperator.assembled` because
+        the rows are known in closed form — they are :meth:`basis_matrix` —
+        while ``assembled`` would recover them by applying the adjoint once per
+        datum, at a cost quadratic in the data. The adjoint is derived either
+        way, so nothing is duplicated.
+
+        Its adjoint returns a weighted sum of Dirac *representers*, which is
+        what makes an adjoint-based inversion give a function rather than an
+        array of numbers — and why the Sobolev order has to be high enough for
+        those representers to exist. See :meth:`_require_point_evaluation`.
+
+        Args:
+            points: where to evaluate.
+            route: ``"auto"``, ``"dense"`` or ``"local"``.
+            unsafe: build it even on a space too rough to admit it.
+            eps: accuracy for the non-uniform FFT, where one is used. Defaults
+                to the geometry's own, which is not the same on all of them.
+            nthreads: threads for that transform. Defaults to the geometry's
+                own, which is one: finufft's default of every core would
+                oversubscribe inside an outer parallel loop. Both are ignored
+                on the direct route.
+            n_jobs: workers for the dense assembly, which is one basis
+                evaluation per point. Ignored on the local route, whose
+                application is one transform. Serial by default.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if no points are given, the route is none of the
+                three, or the Sobolev order is at or below half the spatial
+                dimension and *unsafe* is not set.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        if route not in ("auto", "dense", "local"):
+            raise ValueError(
+                f"route must be 'auto', 'dense' or 'local', got {route!r}."
+            )
+        if not len(tuple(points)):
+            raise ValueError("At least one point is needed.")
+        # Converted once here rather than once per application: the conversion
+        # depends only on the points, and an observation operator is built once
+        # and applied many times.
+        points = self.prepare_points(points)
+        self._require_point_evaluation("A point evaluation operator", unsafe=unsafe)
+        codomain = EuclideanSpace(len(points))
+
+        if route == "dense":
+            return LinearOperator.from_matrix(
+                self,
+                codomain,
+                self.basis_matrix(points, n_jobs=n_jobs),
+                form="galerkin",
+            )
+        options = self._transform_options(eps, nthreads)
+        return LinearOperator.from_derivative_callables(
+            self,
+            codomain,
+            lambda x: self.evaluate(x, points, **options),
+            lambda y: self.accumulate(y, points, **options),
+        )
+
+    def _transform_options(
+        self, eps: float | None, nthreads: int | None, /
+    ) -> dict[str, Any]:
+        """Whichever transform settings were actually asked for.
+
+        Left out when they are ``None``, so each geometry keeps its own
+        defaults rather than having a common one imposed on it here -- the
+        accuracy a sphere wants is not the accuracy a box wants.
+        """
+        options: dict[str, Any] = {}
+        if eps is not None:
+            options["eps"] = eps
+        if nthreads is not None:
+            options["nthreads"] = nthreads
+        return options
+
+    # ----------------------------------------------------------------- #
+    #                          Pointwise algebra                        #
+    # ----------------------------------------------------------------- #
+
+    def grid_values(self, x: V, /) -> np.ndarray:
+        """The field's values on the grid, as a plain array.
+
+        The seam between a vector and its numbers. Most spaces here *are* their
+        grid arrays and this is the identity, but a sphere's vectors are
+        ``pyshtools.SHGrid`` objects — so that they can be plotted, rotated and
+        expanded by the library that produced them — and the arithmetic done
+        pointwise has to reach past the wrapper.
+
+        Args:
+            x: a vector of this space.
+
+        Returns:
+            The grid values.
+        """
+        return np.asarray(x)
+
+    def from_grid_values(self, values: np.ndarray, /) -> V:
+        """A vector of this space holding the given grid values.
+
+        The inverse of :meth:`grid_values`. Note that it does *not* truncate:
+        the values are taken as they are, and it is :meth:`truncate` that
+        settles them into the span of the basis.
+
+        **The array is copied.** This is the boundary at which an array from
+        somewhere else becomes a vector of this space, and the caller goes on
+        holding their array: aliasing it would let a later ``axpy`` -- which
+        is in-place by contract -- silently rewrite it.
+
+        Args:
+            values: an array of shape :attr:`grid_shape`.
+
+        Returns:
+            A vector of this space, over its own copy of the values.
+        """
+        return self._own_grid_values(np.array(values, dtype=float))
+
+    def _own_grid_values(self, values: np.ndarray, /) -> V:
+        """A vector wrapping an array this space has just allocated.
+
+        :meth:`from_grid_values` without the copy, for the many places that
+        build the array themselves and hand over the only reference to it --
+        a product, a synthesis, a sampled function. Copying those would be
+        pure cost, on paths that run once per transform.
+        """
+        return values
+
+    def truncate(self, x: V, /) -> V:
+        """The vector of this space with the same components as ``x``.
+
+        The identity whenever the grid has exactly as many points as the space
+        has dimensions, which is the case for a periodic box. It is *not* the
+        identity on a sphere: the Driscoll-Healy grid is oversampled, so many
+        grid arrays share a set of components and only one of them is in the
+        span of the basis.
+
+        Kept, and public, because a caller who wants the band-limited
+        representative of a product — to plot it, to hand it to something that
+        assumes the span of the basis, or to compare two grids entry by entry —
+        has to be able to ask for it. :meth:`multiply` does not apply it; see
+        there for why.
+
+        Args:
+            x: a vector, or any grid array of this space's shape.
+
+        Returns:
+            The vector in the span of the basis with the same components.
+        """
+        return self.from_components(self.to_components(x))
+
+    def multiply(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """The pointwise product, left on the grid.
+
+        **Not truncated back into the space.** The product of
+        two band-limited functions is not band-limited, so on an oversampled
+        grid the product has no representative in the span of the basis that is
+        equal to it; truncating picks one, at the cost of an analysis and a
+        synthesis, and *loses* the part of the product the grid could still
+        have carried. Every consumer that leaves the grid analyses anyway —
+        analysis is linear, so it sees the same components either way — and
+        the choice of discretization is the caller's to make, not this method's
+        to make for them.
+
+        A caller who needs the band-limited representative asks for it with
+        :meth:`truncate`.
+
+        Args:
+            x: one factor.
+            y: the other.
+
+        Returns:
+            The product, as a vector of this space holding the grid values of
+            the product.
+        """
+        return self._own_grid_values(self.grid_values(x) * self.grid_values(y))
+
+    def sqrt(self, x: np.ndarray) -> np.ndarray:
+        """The pointwise square root, left on the grid.
+
+        Untruncated for the reason :meth:`multiply` is: the square root of a
+        band-limited function is not band-limited.
+
+        Args:
+            x: a non-negative field.
+
+        Returns:
+            Its pointwise square root, on the grid.
+        """
+        return self._own_grid_values(np.sqrt(self.grid_values(x)))
+
+    def multiplication_operator(self, f: np.ndarray, /) -> LinearOperator:
+        """The operator ``u -> f u``, with the metric handled.
+
+        Multiplication is self-adjoint for the ``L2`` inner product, and a
+        Sobolev space does not have that inner product — so on one, this builds
+        the operator where it *is* self-adjoint and lifts it with
+        :func:`lift_formal_adjoint`. The lifted operator is **not** claimed
+        self-adjoint, because a formally self-adjoint operator is self-adjoint
+        under the new metric only if it commutes with the ratio of the two, and
+        multiplication by a varying field does not.
+
+        **Self-adjointness on ``L2`` holds although :meth:`multiply` leaves
+        the product on the grid.** An analysis on this grid *is* a quadrature
+        — coefficient ``k`` is ``sum_j w_j phi_k(p_j) v_j`` with the grid's
+        own positive weights — so it is the transpose of synthesis with
+        respect to those weights. The form is therefore
+        ``sum_j w_j f_j (S u)_j (S v)_j``, which is symmetric in ``u`` and
+        ``v`` for *any* grid array ``f``, band-limited or not.
+
+        Args:
+            f: the field to multiply by.
+
+        Returns:
+            The operator.
+        """
+        if self.order == 0.0:
+            return LinearOperator.self_adjoint(self, lambda u: self.multiply(f, u))
+        base = self.with_order(0.0)
+        return lift_formal_adjoint(base.multiplication_operator(f), self)
+
+    # ----------------------------------------------------------------- #
+    #                              Curvature                            #
+    # ----------------------------------------------------------------- #
+
+    @property
+    @abstractmethod
+    def gaussian_curvature(self) -> float:
+        """The Gaussian curvature of the domain, constant by homogeneity.
+
+        Returns:
+            The curvature: ``1 / radius^2`` on a sphere, zero on a box.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not state its Gaussian curvature."
+        )
+
+    def gradient_dot_product(self, f: np.ndarray, g: np.ndarray, /) -> np.ndarray:
+        """``grad f . grad g``, pointwise, without ever forming a gradient.
+
+        From the product rule for the Laplacian, with ``L == -div grad`` the
+        *positive* Laplacian this package uses throughout:
+
+        .. code-block:: text
+
+            grad f . grad g == (f L(g) + g L(f) - L(f g)) / 2
+
+        Every term is a pointwise product or a diagonal spectral multiply, so
+        this costs four transforms — three analyses for the Laplacians, one
+        synthesis for the last of them — and no differentiation of the grid. It
+        is what makes the variable-coefficient flexure operator writable
+        without a tangent frame.
+
+        The result is left on the grid, as the products it is built from are.
+        Its *components* are the same as if every product were truncated:
+        projection is linear, so projecting each term and adding is projecting
+        the sum, and the one term that is already band-limited — ``L(f g)`` —
+        is unchanged by it. Leaving it on the grid keeps the part of the
+        result the grid can carry and saves two transforms per product.
+
+        **Mind the sign.** With the negative Laplacian the formula gives
+        exactly ``-1`` times the right answer, which ``grad sin . grad cos`` on
+        a circle shows. A constant-coefficient test cannot catch the error:
+        every use of this method is inside a variable-coefficient term, and
+        those vanish identically when the coefficient is constant.
+        """
+        laplacian = self.laplacian
+        result = self.multiply(f, laplacian(g))
+        result = self.add(result, self.multiply(g, laplacian(f)))
+        result = self.subtract(result, laplacian(self.multiply(f, g)))
+        return self.scale(0.5, result)
+
+    # ----------------------------------------------------------------- #
+    #                               Flexure                             #
+    # ----------------------------------------------------------------- #
+
+    def _as_field(self, value: Any, /) -> V:
+        """A scalar as a constant field, or a field unchanged.
+
+        Not ``np.asarray``: on a space whose vectors are not arrays that wraps
+        the field in a zero-dimensional object array, which then survives every
+        arithmetic operation and fails somewhere far away.
+        """
+        if isinstance(value, (int, float, np.floating, np.integer)):
+            return self.project_function(lambda _: float(value))
+        if isinstance(value, np.ndarray) and value.dtype != object:
+            return self.from_grid_values(value)
+        return value
+
+    def flexural_operator(
+        self,
+        rigidity: np.ndarray | float,
+        poisson_ratio: np.ndarray | float,
+        buoyancy: np.ndarray | float,
+        /,
+    ) -> LinearOperator:
+        r"""The variable-coefficient flexure operator for a floating plate.
+
+        The covariant fourth-order operator on a surface of Gaussian curvature
+        ``K``, with ``D_eff == D (1 - nu)``:
+
+        .. code-block:: text
+
+            Op(w) = L(D L w)                        principal bending
+                  - L(D_eff) L w                    rigidity-gradient coupling
+                  + tr(Hess D_eff  Hess w)          twist coupling
+                  + 2 K grad D_eff . grad w         curvature commutator
+                  - K D_eff L w                     covariant softening
+                  + rho_g w                         hydrostatic restoring force
+
+        The two middle terms are produced together, coordinate-free, by
+        subtracting a Bochner block built from :meth:`gradient_dot_product`;
+        neither a Hessian nor a tangent frame is ever formed.
+
+        Self-adjoint with respect to the ``L2`` inner product. On a Sobolev
+        space it is built where that is true and lifted, as
+        :meth:`multiplication_operator` is.
+
+        Args:
+            rigidity: the flexural rigidity ``D``, a field or a constant.
+            poisson_ratio: ``nu``, a field or a constant.
+            buoyancy: the restoring coefficient ``rho_g``, a field or a
+                constant.
+        """
+        if self.order != 0.0:
+            base = self.with_order(0.0)
+            return lift_formal_adjoint(
+                base.flexural_operator(rigidity, poisson_ratio, buoyancy), self
+            )
+
+        laplacian = self.laplacian
+        rigidity_field = self._as_field(rigidity)
+        effective = self.multiply(
+            rigidity_field,
+            self.subtract(self._as_field(1.0), self._as_field(poisson_ratio)),
+        )
+        laplacian_effective = laplacian(effective)
+        return _FlexureOperator(
+            self,
+            rigidity=self.grid_values(rigidity_field),
+            effective=self.grid_values(effective),
+            laplacian_effective=self.grid_values(laplacian_effective),
+            bilaplacian_effective=self.grid_values(laplacian(laplacian_effective)),
+            buoyancy=self.grid_values(self._as_field(buoyancy)),
+        )
+
+    def inverse_flexural_operator(
+        self,
+        rigidity: np.ndarray | float,
+        poisson_ratio: np.ndarray | float,
+        buoyancy: np.ndarray | float,
+        /,
+        *,
+        baseline_rigidity: float | None = None,
+        baseline_buoyancy: float | None = None,
+        solver: "IterativeSolver | None" = None,
+    ) -> LinearOperator:
+        r"""The inverse of :meth:`flexural_operator`.
+
+        With constant coefficients the operator is invariant, so its inverse is
+        exact and diagonal — the symbol is
+        ``1 / (D lambda^2 - K D_eff lambda + rho_g)``. With varying
+        coefficients that same symbol, built from the spatial averages, is an
+        excellent preconditioner, and the solve is a preconditioned CG.
+
+        Args:
+            baseline_rigidity: the constant rigidity used for the
+                preconditioner. Defaults to the spatial average.
+            baseline_buoyancy: likewise for the restoring coefficient.
+            solver: the iterative solver. Defaults to ``CGSolver()``. The
+                constant-coefficient preconditioner is attached only if the
+                solver has none of its own.
+
+        Returns:
+            The inverse operator.
+
+        Raises:
+            TypeError: for a direct solver. The flexure operator is applied
+                matrix-free, so there is nothing to factorize.
+        """
+        constant = all(
+            isinstance(value, (int, float, np.floating, np.integer))
+            for value in (rigidity, poisson_ratio, buoyancy)
+        )
+        if self.order != 0.0 and not constant:
+            # The operator is self-adjoint and positive definite in L2, and
+            # that is where CG must run: lifted to a Sobolev space it keeps
+            # its action but is no longer its own adjoint, so the claim CG
+            # needs would be false there. Inverting in L2 and lifting the
+            # inverse gives the inverse of the lifted operator, since the lift
+            # preserves actions and commutes with inversion.
+            base = self.with_order(0.0)
+            return lift_formal_adjoint(
+                base.inverse_flexural_operator(
+                    rigidity,
+                    poisson_ratio,
+                    buoyancy,
+                    baseline_rigidity=baseline_rigidity,
+                    baseline_buoyancy=baseline_buoyancy,
+                    solver=solver,
+                ),
+                self,
+            )
+        curvature = self.gaussian_curvature
+
+        def symbol(D: float, nu: float, rho: float):
+            effective = D * (1.0 - nu)
+            return lambda eigenvalue: 1.0 / (
+                D * eigenvalue**2 - curvature * effective * eigenvalue + rho
+            )
+
+        if constant:
+            return self.invariant_operator(
+                symbol(float(rigidity), float(poisson_ratio), float(buoyancy))
+            )
+
+        def average(value: np.ndarray | float) -> float:
+            if isinstance(value, (int, float, np.floating, np.integer)):
+                return float(value)
+            one = self._as_field(1.0)
+            return float(self.inner_product(value, one) / self.squared_norm(one))
+
+        preconditioner = self.invariant_operator(
+            symbol(
+                average(rigidity) if baseline_rigidity is None else baseline_rigidity,
+                average(poisson_ratio),
+                average(buoyancy) if baseline_buoyancy is None else baseline_buoyancy,
+            )
+        )
+
+        from ..numerics.solvers import CGSolver, IterativeSolver
+
+        if solver is None:
+            solver = CGSolver()
+        if not isinstance(solver, IterativeSolver):
+            raise TypeError(
+                "A varying-coefficient flexure operator is inverted "
+                f"iteratively; {type(solver).__name__} is not an "
+                "IterativeSolver."
+            )
+        # CG needs the operator to be positive definite, and the flexure
+        # operator is -- its quadratic form is the plate's bending plus
+        # restoring energy -- provided D > 0 and rho_g > 0. That is a claim
+        # about the *arguments*, so it is made here, by the routine choosing to
+        # use CG, rather than by the operator itself. With an unphysical
+        # rigidity CG will fail loudly instead of silently converging to
+        # nothing.
+        operator = self.flexural_operator(
+            rigidity, poisson_ratio, buoyancy
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        # Only if the caller did not bring their own -- they know something
+        # this routine does not. Checked explicitly, because
+        # with_preconditioner refuses to replace an existing one.
+        if preconditioner is not None and solver.preconditioner is None:
+            solver = solver.with_preconditioner(preconditioner)
+        return solver(operator)
+
+    # ----------------------------------------------------------------- #
+    #                              Geodesics                            #
+    # ----------------------------------------------------------------- #
+
+    @abstractmethod
+    def geodesic_distance(self, start: Any, end: Any, /) -> float:
+        """The distance between two points along a shortest path.
+
+        Args:
+            start: one point.
+            end: the other.
+
+        Returns:
+            The *physical* distance, not an angle.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement geodesic_distance."
+        )
+
+    @abstractmethod
+    def geodesic_quadrature(
+        self, start: Any, end: Any, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating along the geodesic between two points.
+
+        The weights carry the arc-length element, so they sum to the distance
+        between the endpoints and integrating the constant one gives that
+        distance.
+
+        Args:
+            start: one endpoint.
+            end: the other.
+            count: how many quadrature nodes to place.
+
+        Returns:
+            The nodes and weights, which sum to the distance between the
+            endpoints.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement geodesic_quadrature."
+        )
+
+    @abstractmethod
+    def geodesic_ball_quadrature(
+        self, center: Any, radius: float, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating over a geodesic ball.
+
+        The weights carry the area element, so they sum to the ball's measure.
+
+        Args:
+            center: the ball's center.
+            radius: its *physical* radius.
+            count: how many nodes to place.
+
+        Returns:
+            The nodes and their weights.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement geodesic_ball_quadrature."
+        )
+
+    # ----------------------------------------------------------------- #
+    #                         Averaging operators                       #
+    # ----------------------------------------------------------------- #
+
+    def _path_nodes(self, start: Any, end: Any, count: int | None) -> tuple:
+        """Quadrature nodes and weights along one geodesic.
+
+        With ``count`` unset the node count comes from the arc length and the
+        space's own length scale: two nodes per length scale, and at least
+        two. A fixed count is under-resolved for a long path on a short-scale
+        space and wasteful for the reverse, and the field's length scale is
+        exactly the thing that settles it.
+        """
+        if count is None:
+            arc = self.geodesic_distance(start, end)
+            count = max(2, int(np.ceil(2.0 * arc / self.length_scale)))
+        return self.geodesic_quadrature(start, end, count=count)
+
+    def path_integral_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        /,
+        *,
+        count: int | None = None,
+        weight: Callable[[Any], float] | None = None,
+        dense: bool = False,
+        eps: float | None = None,
+        nthreads: int | None = None,
+        unsafe: bool = False,
+        n_jobs: int | None = None,
+    ) -> LinearOperator:
+        """Line integrals along a set of geodesic paths.
+
+        The tomographic forward map: a travel time is an integral along a ray,
+        not an average over one. :meth:`path_average_operator` is the
+        normalized variant.
+
+        Built as ``W E``: point evaluation at the pooled quadrature nodes, then
+        a sparse matrix of weights. Writing it that way means the adjoint is
+        derived by the algebra rather than written out, which is where the
+        metric is usually dropped.
+
+        Args:
+            paths: ``(start, end)`` pairs.
+            count: quadrature nodes per path. Chosen from the arc length and
+                the space's length scale when omitted -- see
+                :meth:`_path_nodes`.
+            weight: an optional weight along the path, called with each node.
+                For a slowness that varies along the ray for reasons other than
+                the field being solved for. A *background* that varies with
+                position is a composition with a multiplication operator
+                instead; where the path itself depends on the field, the
+                nonlinear :meth:`ray_travel_time_operator` traces it.
+            dense: assemble the matrix rather than composing operators.
+            eps: accuracy for the non-uniform FFT behind the point
+                evaluations, where one is used. Ignored on the direct route
+                and when the operator is assembled densely.
+            nthreads: threads for that transform; see
+                :meth:`point_evaluation_operator`.
+            unsafe: build it even on a space too rough to admit it; see
+                :meth:`_require_path_evaluation`.
+            n_jobs: workers for the dense assembly, one basis evaluation per
+                quadrature node. Serial by default.
+
+        Returns:
+            The operator, from this space into a Euclidean space of one entry
+            per path.
+
+        Raises:
+            ValueError: if no paths are given, or if the order is at or below
+                ``(d - 1) / 2`` and *unsafe* is not set.
+        """
+        return self._path_operator(
+            paths,
+            count=count,
+            weight=weight,
+            dense=dense,
+            normalize=False,
+            eps=eps,
+            nthreads=nthreads,
+            unsafe=unsafe,
+            n_jobs=n_jobs,
+        )
+
+    def path_average_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        /,
+        *,
+        count: int | None = None,
+        weight: Callable[[Any], float] | None = None,
+        dense: bool = False,
+        eps: float | None = None,
+        nthreads: int | None = None,
+        unsafe: bool = False,
+        n_jobs: int | None = None,
+    ) -> LinearOperator:
+        """Averages along a set of geodesic paths.
+
+        :meth:`path_integral_operator` divided by each path's length. Use that
+        one for a travel time; this one when the quantity of interest is a mean
+        property of the material along the ray, independent of how far it goes.
+
+        Args:
+            paths: ``(start, end)`` pairs.
+            count: quadrature nodes per path, as for
+                :meth:`path_integral_operator`.
+            weight: an optional weight along the path, likewise.
+            dense: assemble the matrix rather than composing operators.
+            eps: accuracy for the non-uniform FFT behind the point
+                evaluations.
+            nthreads: threads for that transform.
+            unsafe: build it even on a space too rough to admit it; see
+                :meth:`_require_path_evaluation`.
+            n_jobs: workers for the dense assembly. Serial by default.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if no paths are given, if a path has zero length and
+                so no average, or if the order is at or below ``(d - 1) / 2``
+                and *unsafe* is not set.
+        """
+        return self._path_operator(
+            paths,
+            count=count,
+            weight=weight,
+            dense=dense,
+            normalize=True,
+            eps=eps,
+            nthreads=nthreads,
+            unsafe=unsafe,
+            n_jobs=n_jobs,
+        )
+
+    def _path_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        /,
+        *,
+        count: int | None,
+        weight: Callable[[Any], float] | None,
+        dense: bool,
+        normalize: bool,
+        eps: float | None = None,
+        nthreads: int | None = None,
+        unsafe: bool = False,
+        n_jobs: int | None = None,
+    ) -> LinearOperator:
+        """The integral or the average, which differ only by a scaling."""
+        self._require_path_evaluation(
+            "A path average" if normalize else "A path integral", unsafe=unsafe
+        )
+        paths = tuple(paths)
+        if not paths:
+            raise ValueError("At least one path is needed.")
+
+        nodes: list[Any] = []
+        rows, columns, values = [], [], []
+        for index, (start, end) in enumerate(paths):
+            path_nodes, path_weights = self._path_nodes(start, end, count)
+            path_weights = np.asarray(path_weights, dtype=float)
+            if normalize:
+                total = float(np.sum(path_weights))
+                if total <= 0.0:
+                    raise ValueError(
+                        f"Path {index} has zero length, so it has no average."
+                    )
+                path_weights = path_weights / total
+            if weight is not None:
+                path_weights = path_weights * np.array(
+                    [float(weight(node)) for node in path_nodes]
+                )
+            offset = len(nodes)
+            nodes.extend(path_nodes)
+            rows.extend([index] * len(path_nodes))
+            columns.extend(range(offset, offset + len(path_nodes)))
+            values.extend(path_weights.tolist())
+
+        sparse = _weight_matrix(len(paths), len(nodes), rows, columns, values)
+        if dense:
+            from ..algebra.spaces import EuclideanSpace
+
+            # The weights stay sparse: the matrix is the sparse weights times
+            # the basis at the pooled nodes, and the (paths, nodes) weight
+            # array, one entry per node, is never densified.
+            matrix = sparse @ self.basis_matrix(nodes, n_jobs=n_jobs)
+            return LinearOperator.from_matrix(
+                self, EuclideanSpace(len(paths)), matrix, form="galerkin"
+            )
+        # unsafe on the *point* guard: the quadrature samples points but the
+        # functional does not, and its own, weaker condition -- order above
+        # (d - 1) / 2, since a path has measure zero but codimension one less
+        # than a point -- was checked by _require_path_evaluation above.
+        return _weight_operator(sparse) @ self.point_evaluation_operator(
+            nodes, unsafe=True, eps=eps, nthreads=nthreads
+        )
+
+    def ray_travel_time_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        reference_velocity: float,
+        /,
+        *,
+        count: int | None = None,
+        nodes_per_segment: int = 4,
+        method: str = "bending",
+        tolerance: float = 1.0e-8,
+        max_iterations: int = 50,
+        eps: float | None = None,
+        nthreads: int | None = None,
+        unsafe: bool = False,
+    ) -> Any:
+        """Travel times along the rays of a velocity ``c₀ exp(m)``: a nonlinear operator.
+
+        The model ``m`` is a field of this space and the velocity is
+        ``reference_velocity`` times ``exp(m)``, positive whatever ``m`` is,
+        with ``m == 0`` the constant background whose rays are the geodesics.
+        Each datum is the integral of the slowness ``exp(−m) / c₀`` along the
+        ray between a source and a receiver, the ray being the path through
+        the field that makes that integral stationary.
+
+        The ray is found by bending by default: the geodesic's nodes are
+        moved across the path by a damped Newton method on the discrete
+        travel time, every path at once, with the field evaluated at all
+        nodes in one transform per step. ``method="shooting"`` integrates
+        the ray equation from the source instead and solves for the take-off
+        angle by a root find on the miss at the receiver. Both find the ray
+        continuously connected to the geodesic, which is not provably the
+        first arrival where several rays connect a pair. A trace that does
+        not converge raises ``EvaluationError``, which an optimizer treats
+        as a step too far.
+
+        The derivative in the model is Fermat's principle: the path integral
+        of ``−exp(−m) / c₀`` along the traced ray, so the operator's
+        ``at(m)`` traces once and returns the value and a derivative whose
+        adjoint is the one the linear path operators carry. At ``m == 0`` it
+        is :meth:`path_integral_operator` scaled by ``−1 / c₀``, to the
+        quadrature. The second derivative is available too, as
+        ``second_derivative(m, δm₁)``: the ray's own response to ``δm₁``
+        enters it, through the reduced Hessian of the discrete travel time
+        for bending and through the tangent linear system along the ray
+        for shooting, so an exact Newton step can be built on it. The
+        returned operator also carries ``trace_rays(m)``, the traced rays
+        as lists of points, for drawing.
+
+        Args:
+            paths: ``(source, receiver)`` pairs.
+            reference_velocity: ``c₀``.
+            count: nodes along each ray, as for :meth:`path_integral_operator`;
+                from the length scale if omitted.
+            nodes_per_segment: Gauss-Legendre nodes between consecutive ray
+                nodes, where the slowness is integrated.
+            method: ``"bending"`` or ``"shooting"``.
+            tolerance: on the ray's position, relative to the path's length.
+            max_iterations: the budget of Newton steps, or of root-find
+                iterations.
+            eps: accuracy for the non-uniform transforms behind the
+                evaluations, where used.
+            nthreads: threads for them.
+            unsafe: build it even on a space too rough for its derivative,
+                a path integral, to be bounded; see
+                :meth:`_require_path_evaluation`.
+
+        Returns:
+            The operator, from this space to ``EuclideanSpace(len(paths))``.
+
+        Raises:
+            ValueError: if no paths are given, the method is unknown, or the
+                order is at or below ``(d - 1) / 2`` and *unsafe* is not set.
+            NotImplementedError: on a geometry without a ray tracer.
+        """
+        from .rays import ray_travel_time_operator
+
+        return ray_travel_time_operator(
+            self,
+            paths,
+            reference_velocity,
+            count=count,
+            nodes_per_segment=nodes_per_segment,
+            method=method,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+            eps=eps,
+            nthreads=nthreads,
+            unsafe=unsafe,
+        )
+
+    def geodesic_ball_average_operator(
+        self,
+        centers: Sequence[Any],
+        radius: float,
+        /,
+        *,
+        count: int = 100,
+        normalize: bool = True,
+        dense: bool = False,
+        n_jobs: int | None = None,
+    ) -> LinearOperator:
+        """Averages, or integrals, over geodesic balls of a common radius.
+
+        The property operator of an inference problem: a handful of local
+        averages, which is what a set of data can actually constrain. Same
+        ``W E`` construction as :meth:`path_average_operator`.
+
+        Args:
+            centers: the ball centers.
+            radius: the *physical* ball radius.
+            count: quadrature nodes per ball.
+            normalize: divide by the ball's measure, giving an average rather
+                than an integral.
+            dense: assemble the derivative matrix rather than staying
+                matrix-free.
+            n_jobs: workers for the dense assembly. Serial by default.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: for a non-positive radius or count, or no centers.
+        """
+        centers = tuple(centers)
+        if not centers:
+            raise ValueError("At least one center is needed.")
+
+        nodes: list[Any] = []
+        rows, columns, values = [], [], []
+        for index, center in enumerate(centers):
+            ball_nodes, ball_weights = self.geodesic_ball_quadrature(
+                center, radius, count=count
+            )
+            if normalize:
+                total = float(np.sum(ball_weights))
+                if total <= 0.0:
+                    raise ValueError(f"Ball {index} has zero measure.")
+                ball_weights = ball_weights / total
+            offset = len(nodes)
+            nodes.extend(ball_nodes)
+            rows.extend([index] * len(ball_nodes))
+            columns.extend(range(offset, offset + len(ball_nodes)))
+            values.extend(np.asarray(ball_weights, dtype=float).tolist())
+
+        sparse = _weight_matrix(len(centers), len(nodes), rows, columns, values)
+        if dense:
+            from ..algebra.spaces import EuclideanSpace
+
+            # Sparse, for the reason given in _path_operator.
+            matrix = sparse @ self.basis_matrix(nodes, n_jobs=n_jobs)
+            return LinearOperator.from_matrix(
+                self, EuclideanSpace(len(centers)), matrix, form="galerkin"
+            )
+        # unsafe: the *quadrature* samples points, but the functional it
+        # computes is an average over a set of positive measure, which is
+        # bounded on L2 and has a perfectly good representer there.
+        return _weight_operator(sparse) @ self.point_evaluation_operator(
+            nodes, unsafe=True
+        )
+
+    @abstractmethod
+    def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
+        """The field obtained by sampling a function on the space's grid.
+
+        Sampling, not projection in the ``L2`` sense: the result interpolates
+        the function at the grid points rather than minimizing a residual.
+
+        Args:
+            function: called with one point of the domain at a time.
+
+        Returns:
+            The field.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement project_function."
+        )
+
+    @abstractmethod
+    def random_point(self, *, rng: Generator | None = None) -> Any:
+        """A point drawn uniformly from the domain.
+
+        Uniformly with respect to the domain's own measure, so on a sphere the
+        latitudes are not uniform.
+
+        Args:
+            rng: the generator.
+
+        Returns:
+            A point.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement random_point."
+        )
+
+
+class SpectralBlockLinearOperator(BlockLinearOperator):
+    """A block operator on ``n`` copies of one space, diagonal in the spectrum.
+
+    Block ``(i, j)`` is the diagonal operator with spectrum ``slices[:, i, j]``,
+    so the whole thing is one small ``n x n`` matrix per spectral mode --
+    which is what a correlated measure on several fields is. It is a
+    :class:`~pygeoinf.algebra.direct_sum.BlockLinearOperator`, so a
+    marginal or a cross-covariance is still read off a block; but it is
+    applied as a whole: every field is analyzed once, the slices act on the
+    ``(dim, n)`` array of components, and every field is synthesized once,
+    where a grid of blocks would cost ``n^2`` analyses and ``n^2 + n``
+    syntheses per application. It also exposes its action on component
+    arrays, so compositions and Krylov loops can apply it without converting
+    through fields, as with a diagonal operator.
+
+    The adjoint is the transposed slices, which is right because every copy
+    carries the same diagonal metric.
+    """
+
+    def __new__(
+        cls, space: HilbertSpace | None = None, slices: np.ndarray | None = None, /
+    ) -> "SpectralBlockLinearOperator":
+        # BlockOperator.__new__ dispatches on a grid of blocks; this class is
+        # built from an array and is always linear. The arguments are
+        # optional only so that unpickling can call this.
+        return object.__new__(cls)
+
+    def __init__(self, space: HilbertSpace, slices: np.ndarray, /) -> None:
+        """
+        Args:
+            space: a direct sum of ``n`` copies of one coordinate space with
+                a diagonal metric.
+            slices: an array of shape ``(dim, n, n)``.
+
+        Raises:
+            ValueError: if the space is not such a direct sum, or the array
+                has the wrong shape.
+        """
+        from ..algebra.direct_sum import DirectSum
+
+        if not isinstance(space, DirectSum) or not space.subspaces:
+            raise ValueError("A spectral block operator lives on a direct sum.")
+        base = space.subspaces[0]
+        if any(other != base for other in space.subspaces[1:]):
+            raise ValueError("Every summand must be the same space.")
+        if not isinstance(base, CoordinateSpace) or not base.has_diagonal_metric:
+            raise ValueError("The summand must have coordinates and a diagonal metric.")
+        count = len(space.subspaces)
+        array = np.ascontiguousarray(np.asarray(slices, dtype=float))
+        if array.shape != (base.dim, count, count):
+            raise ValueError(
+                f"Expected slices of shape ({base.dim}, {count}, {count}), got "
+                f"{array.shape}."
+            )
+        self._slices = array
+        self._base = base
+        self._count = count
+        super().__init__(
+            [
+                [
+                    DiagonalLinearOperator(base, np.ascontiguousarray(array[:, i, j]))
+                    for j in range(count)
+                ]
+                for i in range(count)
+            ]
+        )
+        # The grid's spaces are equal to *space* but built afresh; keep the
+        # caller's, with its labels.
+        self._domain = space
+        self._codomain = space
+
+    @property
+    def slices(self) -> np.ndarray:
+        """The ``(dim, n, n)`` array, one matrix per spectral mode."""
+        return self._slices
+
+    def _apply_slices(self, columns: np.ndarray, transposed: bool) -> np.ndarray:
+        subscripts = "kji,kj->ki" if transposed else "kij,kj->ki"
+        return np.einsum(subscripts, self._slices, columns)
+
+    def _stack(self, x: tuple) -> np.ndarray:
+        return self._base.components_of(x)
+
+    def _value(self, x: tuple) -> tuple:
+        return tuple(self._base.vectors_from(self._apply_slices(self._stack(x), False)))
+
+    def _adjoint_value(self, y: tuple) -> tuple:
+        return tuple(self._base.vectors_from(self._apply_slices(self._stack(y), True)))
+
+    def _make_adjoint(self) -> LinearOperator:
+        result = SpectralBlockLinearOperator(
+            self.domain, np.ascontiguousarray(np.swapaxes(self._slices, -1, -2))
+        )
+        result._link_adjoint(self)
+        return result
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        dim, count = self._base.dim, self._count
+
+        def action(c: np.ndarray) -> np.ndarray:
+            columns = np.asarray(c, dtype=float).reshape(count, dim).T
+            return self._apply_slices(columns, False).T.ravel()
+
+        return action
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        dim, count = self._base.dim, self._count
+
+        def action(c: np.ndarray) -> np.ndarray:
+            columns = np.asarray(c, dtype=float).reshape(count, dim).T
+            return self._apply_slices(columns, True).T.ravel()
+
+        return action
+
+    def apply_block(
+        self, vectors: Sequence[tuple], /, *, n_jobs: int | None = None
+    ) -> list[tuple]:
+        """Every field of every vector analyzed once, then one product.
+
+        Args:
+            vectors: tuples with one field per summand.
+            n_jobs: accepted for the protocol and unused.
+
+        Returns:
+            The images, in order.
+        """
+        return [self._value(x) for x in vectors]
+
+    def __repr__(self) -> str:
+        return f"SpectralBlockLinearOperator({self._count} fields on {self._base!r})"
+
+
+class _FlexureOperator(LinearOperator):
+    """The variable-coefficient flexure operator on an ``L2`` space.
+
+    The expression in :meth:`SymmetricSpace.flexural_operator` is a sum of
+    pointwise products of the field with the coefficient fields, some of
+    them under one Laplacian and one under two. Applied term by term, every
+    Laplacian would re-analyze what was just synthesized. Analysis is
+    linear, so the products under a common multiplier can be summed on the
+    grid and analyzed once. Written out, with ``L`` the positive Laplacian,
+    ``K`` the curvature, ``D`` the rigidity, ``E == D (1 - nu)``, ``rho`` the
+    buoyancy and ``w`` the field:
+
+    .. code-block:: text
+
+        Op(w) == G0 + L(G1) + L^2(G2)
+
+        G0 == rho w - (LE)(Lw)/2 + (L^2 E) w/4 + E (L^2 w)/4
+              - K E (Lw)/2 + K (LE) w/2
+        G1 == D (Lw) - E (Lw)/2 - (LE) w/2 - K E w/2
+        G2 == E w/4
+
+    which is what the Bochner block, the rigidity-gradient coupling and the
+    covariant softening collapse to. Seven transforms per application from
+    a field -- three syntheses for ``w``, ``Lw``, ``L^2 w``, three analyses
+    for the ``G``s, one synthesis for the result -- and six from
+    components, which is what a Krylov loop asks for. The components agree
+    with the term-by-term form to rounding: the products are the same grid
+    arrays and analysis is linear.
+
+    Self-adjoint in ``L2``; the Sobolev version is this operator lifted.
+    """
+
+    def __init__(
+        self,
+        space: "SymmetricSpace",
+        /,
+        *,
+        rigidity: np.ndarray,
+        effective: np.ndarray,
+        laplacian_effective: np.ndarray,
+        bilaplacian_effective: np.ndarray,
+        buoyancy: np.ndarray,
+    ) -> None:
+        super().__init__(space, space, traits=Traits.SELF_ADJOINT)
+        self._space = space
+        self._eigenvalues = np.asarray(space.laplacian_eigenvalues, dtype=float)
+        self._curvature = float(space.gaussian_curvature)
+        self._rigidity = np.asarray(rigidity, dtype=float)
+        self._effective = np.asarray(effective, dtype=float)
+        self._laplacian_effective = np.asarray(laplacian_effective, dtype=float)
+        self._bilaplacian_effective = np.asarray(bilaplacian_effective, dtype=float)
+        self._buoyancy = np.asarray(buoyancy, dtype=float)
+
+    def _analyze(self, grid: np.ndarray) -> np.ndarray:
+        # The no-copy wrap is safe here: every array handed in is one
+        # _action has just built from products of its own synthesized grids,
+        # and nothing else holds a reference to it.
+        space = self._space
+        return space.to_components(space._own_grid_values(grid))
+
+    def _synthesize(self, components: np.ndarray) -> np.ndarray:
+        space = self._space
+        return space.grid_values(space.from_components(components))
+
+    def _action(self, components: np.ndarray) -> np.ndarray:
+        lam, K = self._eigenvalues, self._curvature
+        D, E = self._rigidity, self._effective
+        LE, L2E, rho = (
+            self._laplacian_effective,
+            self._bilaplacian_effective,
+            self._buoyancy,
+        )
+        w = self._synthesize(components)
+        Lw = self._synthesize(lam * components)
+        L2w = self._synthesize(lam**2 * components)
+        G0 = rho * w - 0.5 * LE * Lw + 0.25 * L2E * w + 0.25 * E * L2w
+        if K != 0.0:
+            G0 = G0 - 0.5 * K * E * Lw + 0.5 * K * LE * w
+        G1 = D * Lw - 0.5 * E * Lw - 0.5 * LE * w
+        if K != 0.0:
+            G1 = G1 - 0.5 * K * E * w
+        G2 = 0.25 * E * w
+        return self._analyze(G0) + lam * self._analyze(G1) + lam**2 * self._analyze(G2)
+
+    def _value(self, x: Any) -> Any:
+        space = self._space
+        return space.from_components(self._action(space.to_components(x)))
+
+    def _adjoint_value(self, y: Any) -> Any:
+        return self._value(y)
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._action
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._action
+
+    def __repr__(self) -> str:
+        return f"FlexureOperator({self._space!r})"
+
+
+def _distribute(total: int, weights: np.ndarray) -> np.ndarray:
+    """Split a budget of points across rings in proportion to their weights.
+
+    Every ring gets at least one point, and the total is exact, so a rule built
+    from this integrates the constant one to the right answer regardless of how
+    the rounding falls.
+    """
+    if total <= 0:
+        raise ValueError("The point budget must be positive.")
+    rings = np.asarray(weights, dtype=float).size
+    counts = np.ones(rings, dtype=int)
+    remaining = total - rings
+    if remaining <= 0:
+        return counts
+
+    positive = np.clip(np.asarray(weights, dtype=float), 0.0, None)
+    if not np.any(positive > 0.0):
+        counts[:remaining] += 1
+        return counts
+
+    scaled = remaining * positive / positive.sum()
+    increments = np.floor(scaled).astype(int)
+    counts += increments
+    leftover = remaining - int(increments.sum())
+    if leftover > 0:
+        order = np.argsort(-(scaled - increments))
+        counts[order[:leftover]] += 1
+    return counts
+
+
+@lru_cache(maxsize=64)
+def _gauss_legendre(count: int) -> tuple[np.ndarray, np.ndarray]:
+    """Gauss-Legendre abscissae and weights, computed once per count.
+
+    Every path and every ball asks for the same few counts, and
+    ``np.polynomial.legendre.leggauss`` solves an eigenproblem each time.
+    Returned read-only, since the arrays are shared.
+    """
+    abscissae, weights = np.polynomial.legendre.leggauss(count)
+    abscissae.flags.writeable = False
+    weights.flags.writeable = False
+    return abscissae, weights
+
+
+def _weight_matrix(
+    rows: int,
+    columns: int,
+    row_indices: Sequence[int],
+    column_indices: Sequence[int],
+    values: Sequence[float],
+) -> Any:
+    """The sparse quadrature weights of a ``W E`` factorization, as a CSR."""
+    from scipy.sparse import coo_matrix
+
+    return coo_matrix(
+        (np.asarray(values, dtype=float), (row_indices, column_indices)),
+        shape=(rows, columns),
+    ).tocsr()
+
+
+def _weight_operator(matrix: Any, /) -> LinearOperator:
+    """A sparse matrix between Euclidean spaces, as a linear operator.
+
+    Both spaces are orthonormal, so the adjoint *is* the transpose and there is
+    no metric to get wrong. That is the only place in this module where that is
+    true, and it is why the ``W E`` factorization is worth having: all the
+    metric lives in ``E``, which is built from derivative components.
+    """
+    from ..algebra.spaces import EuclideanSpace
+
+    rows, columns = matrix.shape
+    transpose = matrix.T.tocsr()
+    return LinearOperator.from_callables(
+        EuclideanSpace(columns),
+        EuclideanSpace(rows),
+        lambda v: matrix @ v,
+        adjoint=lambda y: transpose @ y,
+    )
+
+
+def lift_formal_adjoint(
+    operator: LinearOperator,
+    domain: SymmetricSpace,
+    /,
+    *,
+    codomain: SymmetricSpace | None = None,
+    traits: Traits = Traits.NONE,
+) -> LinearOperator:
+    """Reuse an operator defined on one metric under another.
+
+    The idiom this exists for: derive an operator's action and its adjoint on
+    the Lebesgue space, where both are easy, then use it on a Sobolev space
+    over the same coordinate map.
+
+    This is :meth:`LinearOperator.from_formal_adjoint` with the arguments in
+    the order the symmetric-space code reads best, and with both sides required
+    to be symmetric spaces. The general form handles direct sums, Euclidean
+    sides and mass-weighted spaces too; use it directly for those.
+
+    No self-adjointness is claimed: a formally self-adjoint operator is
+    self-adjoint under the new metric only if it commutes with the ratio of the
+    two, which for a general operator it does not. Claim it explicitly through
+    ``traits`` when it holds, and verify with ``testing.check_traits``.
+
+    Args:
+        operator: the operator on the base spaces, with a working adjoint.
+        domain: the space to present the operator's domain as.
+        codomain: likewise for the codomain; defaults to ``domain``.
+        traits: claims about the lifted operator.
+
+    Returns:
+        The same action, with an adjoint taken in the new metrics.
+
+    Raises:
+        ValueError: if the dimensions do not match.
+    """
+    return LinearOperator.from_formal_adjoint(
+        domain,
+        domain if codomain is None else codomain,
+        operator,
+        traits=traits,
+    )

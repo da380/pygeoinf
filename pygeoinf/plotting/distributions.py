@@ -1,0 +1,825 @@
+"""
+Drawing a measure on a low-dimensional space: marginals and corner plots.
+
+The end of the estimator chain. An inversion on a function space produces a
+posterior nobody can look at; :meth:`push_forward` turns it into a measure on a
+handful of properties, and this draws *that* — which is what makes the property
+space the thing worth asking about rather than a convenience.
+
+Two entry points, :func:`plot_densities` and :func:`plot_corner`, and both
+take either kind of measure:
+
+* a :class:`~pygeoinf.probability.gaussian.GaussianMeasure` with a covariance
+  is drawn exactly, from its mean and covariance;
+* any measure that can be *sampled* is drawn from draws instead -- histograms
+  and kernel density in place of curves and ellipses. That covers the posterior
+  of a non-linear problem, and a randomize-then-optimize posterior sampler,
+  neither of which has a covariance to hand.
+
+**Components, not fields.** Everything here is about the components of a
+vector, so the covariance that matters is the covariance *of the components*,
+``G^-1 C_gal G^-1`` -- not the covariance operator's component matrix, which is
+a different thing on a space whose basis is not orthonormal.
+:meth:`~pygeoinf.probability.gaussian.GaussianMeasure.as_multivariate_normal`
+already computes it, so this asks for that rather than doing it again.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+import numpy as np
+
+__all__ = ["plot_densities", "plot_corner", "moments"]
+
+_PRIOR_COLORS = ("green", "orange", "purple", "brown", "olive", "teal")
+_POSTERIOR_COLORS = ("tab:blue", "tab:red", "darkgreen", "tab:orange", "purple")
+
+
+def moments(
+    measure: Any,
+    /,
+    *,
+    samples: int = 20000,
+    rng: Any = None,
+    n_jobs: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """The mean and covariance of a measure's components, and its draws.
+
+    Exactly for a Gaussian, and from *samples* draws for anything that can be
+    sampled. The draws come back too, because a non-Gaussian measure should be
+    drawn as what it is rather than as the Gaussian with the same first two
+    moments — the moments alone would hide precisely what makes it interesting.
+
+    Args:
+        measure: a Gaussian measure, or any measure that can be sampled.
+        samples: draws to take, when sampling is the route.
+        rng: the generator for those draws.
+        n_jobs: workers for the draws, or for the covariance's assembly when
+            the measure is Gaussian. Serial by default.
+
+    Returns:
+        ``(mean, covariance, draws)`` in components, with ``draws`` None when
+        the measure was Gaussian and nothing had to be sampled.
+
+    Raises:
+        TypeError: for a measure that can be neither read exactly nor
+            sampled, there being nothing to plot.
+    """
+    from ..probability.gaussian import GaussianMeasure
+
+    if isinstance(measure, GaussianMeasure) and measure.covariance is not None:
+        frozen = measure.as_multivariate_normal(n_jobs=n_jobs)
+        return np.atleast_1d(frozen.mean), np.atleast_2d(frozen.cov), None
+
+    if not measure.can_sample:
+        raise TypeError(
+            f"{type(measure).__name__} is neither a Gaussian measure with a "
+            f"covariance nor something that can be sampled, so there is "
+            f"nothing to draw. Supply a covariance, a covariance factor, or a "
+            f"sampler."
+        )
+    space = measure.domain
+    draws = np.array(
+        [
+            space.to_components(draw)
+            for draw in measure.samples(samples, rng=rng, n_jobs=n_jobs)
+        ]
+    )
+    return draws.mean(axis=0), np.atleast_2d(np.cov(draws.T)), draws
+
+
+def _span(
+    mean: np.ndarray,
+    deviation: np.ndarray,
+    truth: np.ndarray | None,
+    width: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Axis limits wide enough for the distribution *and* the truth.
+
+    A truth marker outside the frame is worse than no marker: it says the fit
+    is good by not being visible. So the window opens until it is in, with a
+    little room to spare.
+    """
+    reach = np.full_like(deviation, width, dtype=float)
+    if truth is not None:
+        live = deviation > 0.0
+        zed = np.zeros_like(reach)
+        zed[live] = np.abs(truth[live] - mean[live]) / deviation[live]
+        reach = np.maximum(reach, 1.05 * zed)
+    return mean - reach * deviation, mean + reach * deviation
+
+
+def _grid(
+    limits: tuple[float, float],
+    mean: float,
+    deviation: float,
+    width: float,
+    *,
+    points: int = 2000,
+) -> np.ndarray:
+    """Points spanning the shared window, concentrated on one curve's own.
+
+    A single grid over the union of every curve's window resolves the widest
+    and aliases the rest. With a prior a thousand times wider than its
+    posterior -- the case the twin axis exists for -- a uniform 2000 points
+    would put several posterior standard deviations between samples and miss
+    the posterior peak. Raising the count cannot fix it: the ratio, not the
+    absolute width, is what defeats a shared grid.
+
+    So each curve gets the shared span for its extent and a fine grid over its
+    own ``width`` standard deviations either side for its shape, which is
+    where all of its mass is. That is ``points / (2 width)`` points per
+    standard deviation regardless of the ratio, about 160 at the defaults of
+    :func:`plot_densities`.
+    """
+    low, high = limits
+    coarse = np.linspace(low, high, points)
+    if deviation <= 0.0:
+        return coarse
+    own_low = max(low, mean - width * deviation)
+    own_high = min(high, mean + width * deviation)
+    if own_high <= own_low:
+        return coarse
+    fine = np.linspace(own_low, own_high, points)
+    return np.unique(np.concatenate([coarse, fine]))
+
+
+def _bandwidth(draws: np.ndarray, /) -> np.ndarray:
+    """Scott's rule, as ``scipy.stats.gaussian_kde`` applies it.
+
+    The kernel is the data covariance scaled by ``n ** (-2 / (d + 4))``, so
+    this returns that covariance -- the same kernel the exact route uses, which
+    is what lets the binned route be an approximation of *it* rather than of
+    something else with a similar name.
+
+    Args:
+        draws: the sample, ``(n,)`` or ``(n, d)``.
+
+    Returns:
+        The kernel covariance: a scalar variance in one dimension, a ``(d, d)``
+        matrix otherwise.
+    """
+    draws = np.atleast_2d(np.asarray(draws, dtype=float).T)
+    count, dimension = draws.shape[1], draws.shape[0]
+    factor = float(count) ** (-2.0 / (dimension + 4.0))
+    covariance = np.atleast_2d(np.cov(draws))
+    return factor * (covariance[0, 0] if dimension == 1 else covariance)
+
+
+def _binned_density(draws: np.ndarray, values: np.ndarray, /) -> np.ndarray:
+    """A kernel density estimate by histogram and convolution.
+
+    ``gaussian_kde`` evaluates a kernel at every draw for every point asked
+    for: 20 000 draws over a 160 x 160 panel is 5e8 kernels. Binning the
+    draws onto the grid first and convolving once with the same kernel gives
+    the same estimate to within the bin width, and the convolution is over
+    the grid rather than over the draws.
+
+    Args:
+        draws: the sample, one value per draw.
+        values: where the density is wanted. Uniformly spaced.
+
+    Returns:
+        The density at those points.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    spacing = float(values[1] - values[0])
+    deviation = float(np.sqrt(_bandwidth(draws)))
+    # Bins beyond the window, so that draws just outside it still contribute
+    # their tail to the edge of the picture, as the exact estimate would.
+    pad = int(np.ceil(4.0 * deviation / spacing))
+    edges = (
+        values[0]
+        - spacing / 2.0
+        + spacing * np.arange(-pad, values.size + pad + 1, dtype=float)
+    )
+    counts, _ = np.histogram(draws, bins=edges)
+    density = gaussian_filter1d(
+        counts / (draws.size * spacing), deviation / spacing, mode="constant"
+    )
+    return density[pad : pad + values.size]
+
+
+def _binned_density_2d(
+    draws: np.ndarray, horizontal: np.ndarray, vertical: np.ndarray, /
+) -> np.ndarray:
+    """The two-dimensional counterpart, on the mesh the contours use.
+
+    The kernel is anisotropic -- it is the data covariance, scaled -- so this
+    convolves with that kernel rather than with an axis-aligned filter, which
+    would misplace the contours of a correlated cloud. The full kernel costs
+    the same.
+
+    Args:
+        draws: the sample, ``(n, 2)``, in ``(horizontal, vertical)`` order.
+        horizontal: the mesh's first coordinate, uniformly spaced.
+        vertical: its second, uniformly spaced.
+
+    Returns:
+        The density, indexed ``[vertical, horizontal]`` as ``meshgrid`` leaves
+        it.
+    """
+    from scipy.signal import fftconvolve
+
+    spacing = np.array(
+        [horizontal[1] - horizontal[0], vertical[1] - vertical[0]], dtype=float
+    )
+    covariance = _bandwidth(draws) / np.outer(spacing, spacing)
+    radius = int(np.ceil(4.0 * np.sqrt(max(covariance[0, 0], covariance[1, 1]))))
+    offsets = np.arange(-radius, radius + 1)
+    first, second = np.meshgrid(offsets, offsets, indexing="ij")
+    inverse = np.linalg.inv(covariance)
+    kernel = np.exp(
+        -0.5
+        * (
+            inverse[0, 0] * first**2
+            + 2.0 * inverse[0, 1] * first * second
+            + inverse[1, 1] * second**2
+        )
+    )
+    kernel /= kernel.sum()
+
+    def padded(axis: np.ndarray, step: float) -> np.ndarray:
+        return step * np.arange(-radius, axis.size + radius + 1) + (
+            axis[0] - step / 2.0
+        )
+
+    counts, _, _ = np.histogram2d(
+        draws[:, 0],
+        draws[:, 1],
+        bins=(padded(horizontal, spacing[0]), padded(vertical, spacing[1])),
+    )
+    smoothed = fftconvolve(counts, kernel, mode="same")
+    interior = smoothed[
+        radius : radius + horizontal.size, radius : radius + vertical.size
+    ]
+    return interior.T / (draws.shape[0] * spacing[0] * spacing[1])
+
+
+def _exact_density(choice: str, /) -> bool:
+    """Whether the caller asked for the exact kernel estimate.
+
+    Args:
+        choice: ``"binned"`` or ``"kde"``.
+
+    Returns:
+        True for ``"kde"``.
+
+    Raises:
+        ValueError: for anything else. A misspelling would otherwise silently
+            select the default and the picture would look right.
+    """
+    if choice not in ("binned", "kde"):
+        raise ValueError(f"density must be 'binned' or 'kde', got {choice!r}.")
+    return choice == "kde"
+
+
+def _density(
+    axis: Any,
+    limits: tuple[float, float],
+    mean: float,
+    deviation: float,
+    draws: np.ndarray | None,
+    *,
+    color: str,
+    label: str | None,
+    style: str,
+    fill: bool,
+    width: float,
+    points: int = 2000,
+    exact: bool = False,
+) -> None:
+    """One marginal, exactly or from draws, on a grid that resolves it."""
+    values = _grid(limits, mean, deviation, width, points=points)
+    if draws is None:
+        from scipy.stats import norm
+
+        density = norm.pdf(values, loc=mean, scale=deviation)
+    elif exact:
+        from scipy.stats import gaussian_kde
+
+        density = gaussian_kde(draws)(values)
+    else:
+        # _grid is deliberately not uniform, so the estimate is made on a
+        # uniform one and read off it.
+        uniform = np.linspace(values[0], values[-1], max(values.size, 512))
+        density = np.interp(values, uniform, _binned_density(draws, uniform))
+    axis.plot(values, density, color=color, lw=2, linestyle=style, label=label)
+    if fill:
+        axis.fill_between(values, density, color=color, alpha=0.15)
+
+
+def plot_densities(
+    posterior: Any,
+    /,
+    *,
+    prior: Any = None,
+    truth: float | None = None,
+    index: int = 0,
+    ax: Any = None,
+    labels: Sequence[str] | None = None,
+    prior_labels: Sequence[str] | None = None,
+    width: float = 6.0,
+    fill: bool = False,
+    samples: int = 20000,
+    rng: Any = None,
+    n_jobs: int | None = None,
+    density: str = "binned",
+    xlabel: str = "property value",
+    title: str | None = None,
+) -> Any:
+    """One component's marginal, for one or several measures.
+
+    Priors go on a second y-axis, because a prior is usually far wider than
+    the posterior it is being compared with and sharing an axis makes the
+    posterior a spike -- the comparison worth seeing is of *shape and
+    position*, not of height.
+
+    Args:
+        posterior: a measure, or several.
+        prior: a measure, or several, drawn dotted on a right-hand axis.
+        truth: a value to mark with a vertical line.
+        index: which component to draw, for measures on more than one.
+        ax: axes to draw on. The current axes if omitted.
+        labels, prior_labels: legend entries. Means are used if omitted.
+        width: half-width of the window, in standard deviations.
+        fill: shade under the curves.
+        samples: draws to take when the measure has no covariance to read.
+        rng: the generator for those draws.
+        n_jobs: workers for the draws, or a Gaussian's covariance assembly;
+            see :func:`moments`. Serial by default.
+        density: how a *sampled* measure's marginal is estimated: ``"binned"``,
+            the default, by histogram and one convolution with the kernel
+            Scott's rule gives; ``"kde"`` by evaluating
+            ``scipy.stats.gaussian_kde`` at every point of the grid. They agree
+            to within 0.1% of the peak on a marginal, and the first is some
+            three orders of magnitude cheaper. See :func:`plot_corner`.
+        xlabel: label for the shared x-axis.
+        title: a title for the axes.
+
+    Returns:
+        The axes drawn on, or ``(posterior_axes, prior_axes)`` when priors were
+        given and a second axis was made.
+
+    Raises:
+        IndexError: if *index* is outside the measure's dimension.
+        TypeError: if a measure can be neither read exactly nor sampled.
+        ValueError: if *density* is neither ``"binned"`` nor ``"kde"``, or
+            every measure has zero variance in the component.
+    """
+    import matplotlib.pyplot as plt
+
+    exact = _exact_density(density)
+    posteriors = (
+        list(posterior) if isinstance(posterior, (list, tuple)) else [posterior]
+    )
+    priors = (
+        []
+        if prior is None
+        else (list(prior) if isinstance(prior, (list, tuple)) else [prior])
+    )
+
+    def summarize(measures: Sequence[Any]) -> list[tuple[float, float, Any]]:
+        summary = []
+        for one in measures:
+            mean, covariance, draws = moments(
+                one, samples=samples, rng=rng, n_jobs=n_jobs
+            )
+            if not 0 <= index < mean.size:
+                raise IndexError(
+                    f"Component {index} is out of range for a measure on "
+                    f"{mean.size} components."
+                )
+            summary.append(
+                (
+                    float(mean[index]),
+                    float(np.sqrt(covariance[index, index])),
+                    None if draws is None else draws[:, index],
+                )
+            )
+        return summary
+
+    posterior_summary = summarize(posteriors)
+    prior_summary = summarize(priors)
+    every = posterior_summary + prior_summary
+    live = [(m, s) for m, s, _ in every if s > 0.0]
+    if not live:
+        raise ValueError("Every measure given has zero variance in this component.")
+
+    means = np.array([m for m, _ in live])
+    deviations = np.array([s for _, s in live])
+    truths = None if truth is None else np.full(means.shape, float(truth))
+    lower, upper = _span(means, deviations, truths, width)
+    # One window spanning every curve and the truth. Each curve is then drawn
+    # on a grid refined over its own few standard deviations (see _grid), so a
+    # posterior much sharper than its prior -- the case the twin axis exists
+    # for -- is still resolved.
+    limits = (float(lower.min()), float(upper.max()))
+
+    axis = plt.gca() if ax is None else ax
+    axis.set_xlabel(xlabel)
+    axis.grid(True, linestyle="--", alpha=0.5)
+
+    prior_axis = None
+    if prior_summary:
+        prior_axis = axis.twinx()
+        prior_axis.set_ylabel("prior density", color=_PRIOR_COLORS[0])
+        prior_axis.tick_params(axis="y", labelcolor=_PRIOR_COLORS[0])
+        for position, (mean, deviation, draws) in enumerate(prior_summary):
+            label = (
+                prior_labels[position]
+                if prior_labels is not None and position < len(prior_labels)
+                else f"prior (mean {mean:.4g})"
+            )
+            _density(
+                prior_axis,
+                limits,
+                mean,
+                deviation,
+                draws,
+                color=_PRIOR_COLORS[position % len(_PRIOR_COLORS)],
+                label=label,
+                style=":",
+                fill=fill,
+                width=width,
+                exact=exact,
+            )
+
+    axis.set_ylabel("posterior density")
+    for position, (mean, deviation, draws) in enumerate(posterior_summary):
+        label = (
+            labels[position]
+            if labels is not None and position < len(labels)
+            else f"posterior (mean {mean:.4g})"
+        )
+        _density(
+            axis,
+            limits,
+            mean,
+            deviation,
+            draws,
+            color=_POSTERIOR_COLORS[position % len(_POSTERIOR_COLORS)],
+            label=label,
+            style="-",
+            fill=fill,
+            width=width,
+            exact=exact,
+        )
+
+    if truth is not None:
+        axis.axvline(truth, color="black", lw=1.5, linestyle="--", label="truth")
+
+    handles, texts = axis.get_legend_handles_labels()
+    if prior_axis is not None:
+        extra, extra_texts = prior_axis.get_legend_handles_labels()
+        handles, texts = handles + extra, texts + extra_texts
+    axis.legend(handles, texts, loc="upper right", fontsize="small")
+    if title is not None:
+        axis.set_title(title)
+    return axis if prior_axis is None else (axis, prior_axis)
+
+
+def _contour_levels(
+    mean: np.ndarray, covariance: np.ndarray, truth: np.ndarray | None, sigmas: int
+) -> np.ndarray:
+    """Sigma levels, opened up until the truth is inside one of them.
+
+    Otherwise a truth that lies outside every drawn contour is indistinguishable
+    from one that lies just outside the last, and the picture reads as a worse
+    fit than it is -- or a better one.
+    """
+    reach = sigmas
+    if truth is not None:
+        deviation = np.sqrt(np.diag(covariance))
+        live = deviation > 0.0
+        if covariance.shape[0] > 1:
+            for i in range(covariance.shape[0]):
+                for j in range(i):
+                    block = covariance[np.ix_([j, i], [j, i])] + 1e-12 * np.identity(2)
+                    offset = np.array([truth[j] - mean[j], truth[i] - mean[i]])
+                    reach = max(
+                        reach,
+                        float(np.sqrt(offset @ np.linalg.solve(block, offset))),
+                    )
+        elif np.any(live):
+            reach = max(reach, float(np.abs(truth[0] - mean[0]) / deviation[0]))
+    return np.arange(1, min(15, int(np.ceil(reach))) + 1, dtype=float)
+
+
+def plot_corner(
+    posterior: Any,
+    /,
+    *,
+    prior: Any = None,
+    truth: Any = None,
+    labels: Sequence[str] | None = None,
+    axes: Any = None,
+    figsize: tuple[float, float] | None = None,
+    sigmas: int = 3,
+    width: float = 3.75,
+    fill: bool = False,
+    colormap: str = "Blues",
+    color: str = "darkblue",
+    samples: int = 20000,
+    rng: Any = None,
+    n_jobs: int | None = None,
+    density: str = "binned",
+    title: str | None = None,
+    legend: bool = True,
+    posterior_label: str = "posterior",
+    prior_label: str = "prior",
+    truth_label: str = "truth",
+) -> Any:
+    """The joint distribution of a measure's components, panel by panel.
+
+    Marginals on the diagonal, pairwise contours below it, and nothing above
+    -- which is the point of the shape: a corner plot shows every pair once,
+    and the empty half is what tells you so.
+
+    Args:
+        posterior: a Gaussian measure, or any measure that can be sampled.
+        prior: an optional measure, drawn dotted on the diagonal for
+            comparison. Its width is usually what the posterior is to be read
+            against.
+        truth: the true values, marked on every panel.
+        labels: one per component. ``x[i]`` if omitted.
+        axes: an ``N x N`` array of axes to draw on. Made if omitted.
+        figsize: size of the figure made, when *axes* is not given.
+        sigmas: how many contours to draw, before opening up for the truth.
+        width: half-width of each panel, in standard deviations.
+        fill: shade the contours rather than drawing them as lines.
+        colormap: the filled case's color map.
+        color: the unfilled case's line color, and the mean marker's.
+        samples: draws to take when the measure has no covariance to read.
+        rng: the generator for those draws.
+        n_jobs: workers for the draws, or a Gaussian's covariance assembly;
+            see :func:`moments`. Serial by default.
+        density: how a *sampled* measure's density is estimated, which is what
+            the panels of a non-Gaussian corner plot are drawn from.
+            ``"binned"``, the default, bins the draws onto the panel's own grid
+            and convolves once with the kernel Scott's rule gives -- the same
+            kernel ``"kde"`` uses, evaluated some three orders of magnitude
+            faster. The cost is the binning: on a strongly correlated cloud
+            the density is within 1.5% of the peak and the contour levels
+            within 0.7%. ``"kde"`` evaluates
+            ``scipy.stats.gaussian_kde`` at every grid point, which is exact
+            and is what to use if a level matters to three digits.
+        title: a title for the figure.
+        legend: draw a key in the empty upper triangle, which is otherwise
+            wasted space -- and without it the dotted prior, the solid
+            posterior and the starred truth are three unlabeled marks.
+        posterior_label: what the key calls the posterior.
+        prior_label: what it calls the prior.
+        truth_label: what it calls the truth.
+
+    Returns:
+        The ``N x N`` array of axes.
+
+    Raises:
+        ValueError: if the measure has fewer than two components -- a corner
+            plot of one is a marginal, and :func:`plot_densities` draws that;
+            or if *density* is neither ``"binned"`` nor ``"kde"``.
+    """
+    import matplotlib.pyplot as plt
+    from scipy.stats import chi2
+
+    exact = _exact_density(density)
+
+    mean, covariance, draws = moments(
+        posterior, samples=samples, rng=rng, n_jobs=n_jobs
+    )
+    size = mean.size
+    if size < 2:
+        raise ValueError(
+            f"A corner plot needs at least two components; this measure has "
+            f"{size}. Use plot_densities for one."
+        )
+    deviation = np.sqrt(np.clip(np.diag(covariance), 0.0, None))
+    truth_values = None if truth is None else np.atleast_1d(np.asarray(truth, float))
+    if truth_values is not None and truth_values.size != size:
+        raise ValueError(f"{truth_values.size} true values for {size} components.")
+    if labels is None:
+        labels = [f"x[{index}]" for index in range(size)]
+
+    prior_summary = None
+    if prior is not None:
+        prior_mean, prior_covariance, prior_draws = moments(
+            prior, samples=samples, rng=rng, n_jobs=n_jobs
+        )
+        prior_summary = (
+            prior_mean,
+            np.sqrt(np.clip(np.diag(prior_covariance), 0.0, None)),
+            prior_draws,
+        )
+
+    if axes is None:
+        if figsize is None:
+            figsize = (2.6 * size, 2.6 * size)
+        _, axes = plt.subplots(size, size, figsize=figsize, squeeze=False)
+    axes = np.asarray(axes)
+
+    lower, upper = _span(mean, deviation, truth_values, width)
+    levels = _contour_levels(mean, covariance, truth_values, sigmas)
+
+    for row in range(size):
+        for column in range(size):
+            axis = axes[row, column]
+            if column > row:
+                axis.set_axis_off()
+                continue
+
+            if row == column:
+                panel = (float(lower[row]), float(upper[row]))
+                _density(
+                    axis,
+                    panel,
+                    mean[row],
+                    deviation[row],
+                    None if draws is None else draws[:, row],
+                    color=color,
+                    label=None,
+                    style="-",
+                    fill=fill,
+                    width=width,
+                    points=500,
+                    exact=exact,
+                )
+                if prior_summary is not None:
+                    prior_mean, prior_deviation, prior_draws = prior_summary
+                    if prior_deviation[row] > 0.0:
+                        twin = axis.twinx()
+                        twin.set_yticks([])
+                        _density(
+                            twin,
+                            panel,
+                            prior_mean[row],
+                            prior_deviation[row],
+                            None if prior_draws is None else prior_draws[:, row],
+                            color=_PRIOR_COLORS[0],
+                            label=None,
+                            style=":",
+                            fill=False,
+                            width=width,
+                            points=500,
+                            exact=exact,
+                        )
+                axis.set_yticks([])
+                if truth_values is not None:
+                    axis.axvline(truth_values[row], color="black", lw=1.2, ls="--")
+                axis.set_xlim(lower[row], upper[row])
+            else:
+                horizontal = np.linspace(lower[column], upper[column], 160)
+                vertical = np.linspace(lower[row], upper[row], 160)
+                mesh_x, mesh_y = np.meshgrid(horizontal, vertical)
+                if draws is None:
+                    block = covariance[np.ix_([column, row], [column, row])]
+                    block = block + 1e-15 * np.trace(block) * np.identity(2)
+                    offset = np.stack(
+                        [mesh_x - mean[column], mesh_y - mean[row]], axis=-1
+                    )
+                    inverse = np.linalg.inv(block)
+                    field = np.sqrt(
+                        np.clip(
+                            np.einsum("...i,ij,...j->...", offset, inverse, offset),
+                            0.0,
+                            None,
+                        )
+                    )
+                    contour_levels = levels
+                else:
+                    pair = draws[:, [column, row]]
+                    if exact:
+                        from scipy.stats import gaussian_kde
+
+                        density = gaussian_kde(pair.T)(
+                            np.vstack([mesh_x.ravel(), mesh_y.ravel()])
+                        ).reshape(mesh_x.shape)
+                    else:
+                        density = _binned_density_2d(pair, horizontal, vertical)
+                    # Levels chosen so each encloses the same probability the
+                    # corresponding sigma contour would, which is what makes a
+                    # sampled panel readable beside a Gaussian one.
+                    order = np.sort(density.ravel())[::-1]
+                    mass = np.cumsum(order) / order.sum()
+                    wanted = chi2.cdf(levels**2, df=2)
+                    contour_levels = np.array(
+                        [order[np.searchsorted(mass, m)] for m in wanted]
+                    )
+                    field = density
+                    contour_levels = np.sort(contour_levels)
+                if fill:
+                    # The fill shows *density*, in both branches. `field` is a
+                    # Mahalanobis distance in the Gaussian one, which grows
+                    # away from the mean: filling it directly would paint the
+                    # Gaussian panels darkest where the measure is least
+                    # likely, and the sampled panels darkest where it is most.
+                    if draws is None:
+                        shading = np.exp(-0.5 * field**2)
+                        edges = np.sort(np.exp(-0.5 * np.asarray(levels) ** 2))
+                    else:
+                        shading = field
+                        edges = np.sort(contour_levels)
+                    peak = float(shading.max())
+                    if edges.size and peak > edges[-1]:
+                        edges = np.concatenate([edges, [peak]])
+                        axis.contourf(
+                            mesh_x, mesh_y, shading, levels=edges, cmap=colormap
+                        )
+                    else:
+                        axis.contourf(
+                            mesh_x,
+                            mesh_y,
+                            shading,
+                            levels=len(levels),
+                            cmap=colormap,
+                        )
+                else:
+                    axis.contour(
+                        mesh_x,
+                        mesh_y,
+                        field,
+                        levels=contour_levels,
+                        colors=color,
+                        linewidths=1.0,
+                    )
+                axis.plot(mean[column], mean[row], "o", color=color, ms=3)
+                if truth_values is not None:
+                    axis.plot(
+                        truth_values[column],
+                        truth_values[row],
+                        "*",
+                        color="black",
+                        ms=10,
+                    )
+                axis.set_xlim(lower[column], upper[column])
+                axis.set_ylim(lower[row], upper[row])
+
+            if row == size - 1:
+                axis.set_xlabel(labels[column])
+            else:
+                axis.set_xticklabels([])
+            if column == 0 and row > 0:
+                axis.set_ylabel(labels[row])
+            elif column > 0:
+                axis.set_yticklabels([])
+
+    if legend and size > 1:
+        # The upper triangle is empty by construction, so the key costs no
+        # space. The top-right panel is the furthest from the data.
+        _corner_legend(
+            axes[0, size - 1],
+            color=color,
+            with_prior=prior_summary is not None,
+            with_truth=truth_values is not None,
+            posterior_label=posterior_label,
+            prior_label=prior_label,
+            truth_label=truth_label,
+        )
+
+    if title is not None:
+        figure = axes[0, 0].get_figure()
+        figure.suptitle(title)
+
+    return axes
+
+
+def _corner_legend(
+    axis: Any,
+    /,
+    *,
+    color: str,
+    with_prior: bool,
+    with_truth: bool,
+    posterior_label: str,
+    prior_label: str,
+    truth_label: str,
+) -> None:
+    """A key drawn in one of the corner plot's empty panels.
+
+    The handles are made rather than collected: the panels draw densities and
+    contours in several calls each, so gathering real artists would give a
+    legend of whichever happened to be labeled.
+    """
+    from matplotlib.lines import Line2D
+
+    handles = [Line2D([], [], color=color, ls="-", label=posterior_label)]
+    if with_prior:
+        handles.append(
+            Line2D([], [], color=_PRIOR_COLORS[0], ls=":", label=prior_label)
+        )
+    if with_truth:
+        handles.append(
+            Line2D(
+                [],
+                [],
+                color="black",
+                ls="none",
+                marker="*",
+                ms=10,
+                label=truth_label,
+            )
+        )
+    axis.set_axis_off()
+    axis.legend(handles=handles, loc="center", frameon=False)

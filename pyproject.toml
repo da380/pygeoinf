@@ -20,16 +20,39 @@ dependencies = [
 
 [project.optional-dependencies]
 # Function spaces on the two-sphere: spherical harmonics plus geospatial plotting.
-sphere = ["pyshtools>=4.14.1", "Cartopy>=0.25.0", "shapely>=2.0.0"]
+# ducc0 is the fast transform backend; pyshtools selects it by default when it
+# is importable, so nothing in the code refers to it.
+sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0"]
+# Spaces on intervals, radial profiles, annuli and balls in the eigenbasis of
+# an elliptic operator on a spectral-element mesh (pygeoinf.interval,
+# pygeoinf.ball and the pygeoinf.spectral_element core they share):
+# the numerics are planetmodel.randomfield's. From 1.3 planetmodel's
+# harmonics run on ducc0 as a core dependency, so there is no extra to name
+# and pyshtools no longer arrives through it; drawing a ball's shells as
+# maps still goes through the sphere renderer, which is the sphere extra.
+planetmodel = ["planetmodel>=1.3"]
 # Alternative QP backends for the convex-analysis solvers.
 osqp = ["osqp>=1.0.0"]
 clarabel = ["clarabel>=0.9.0"]
 # Interactive (Plotly) plotting backend.
 interactive = ["plotly>=5.0.0"]
+# The plotly engine of pygeoinf's plot_set: three-dimensional sets as figures
+# that can be turned by hand.
+plot3d = ["plotly>=5.18,<7"]
+# PyMFEM, for the MFEM mini-app (miniapps/mfem) and its test, which
+# skips without it; the library itself does not use it. mfem ships Linux-only
+# wheels and its sdist refuses to build on Windows, so the extra is marked for
+# Linux; elsewhere `--all-extras` installs nothing and the test skips.
+mfem = ["mfem>=4.8.0; sys_platform == 'linux'"]
 
 [tool.poetry]
-packages = [{ include = "pygeoinf" }]
-include = [{ path = "pygeoinf/data/*.csv", format = ["sdist", "wheel"] }]
+packages = [
+    { include = "pygeoinf" },
+]
+include = [
+    { path = "pygeoinf/data/*.csv", format = ["sdist", "wheel"] },
+    { path = "pygeoinf/py.typed", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.group.dev]
 optional = true
@@ -40,9 +63,18 @@ pytest-cov = "^6.2.1"
 snakeviz = "^2.2.2"
 jupyter = "^1.1.1"
 furo = "^2025.7.19"
-sphinx = "<8.2"
-nbsphinx = "^0.9.7"
+# Lower bound: the apidoc template in docs/apidoc_templates is named
+# package.rst.jinja, which is the name Sphinx looks for from 7.4 onwards
+# (it was package.rst_t before).
+sphinx = ">=7.4"
+# Keep in step with the `rev` of the ruff hook in .pre-commit-config.yaml, so
+# that the hook and `poetry run ruff` format identically.
 ruff = "^0.5.5"
+pre-commit = "^4.6.2"
+# Strips outputs and normalises cell ids in the tutorial notebooks. Driven by
+# pre-commit; listed here so it can also be run by hand on a single notebook.
+nbstripout = "^0.9.1"
+nanobind = ">=2.4"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]
@@ -54,25 +86,26 @@ build-backend = "poetry.core.masonry.api"
 exclude = ["work"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tutorials use a Colab bootstrap pattern: setup_env() is loaded via exec() before
-# imports, making F821 (undefined setup_env) and E402 (imports after exec) false
-# positives. F401 is suppressed because notebook cells share scope across execution.
-"tutorials/*.ipynb" = ["E402", "F821", "F401", "F541", "E731"]
+# In a "tests/" directory, ignore the lambda assignment warning (E731) and
+# the ambiguous-name warning (E741).
+"**/tests/*" = ["E731", "E741"]
 
-# For any file in the "tests/" directory, ignore the lambda assignment warning (E731).
-"tests/*" = ["E731", "E741"]
-
-# test_subsets.py has matplotlib imports mid-file due to backend setup (matplotlib.use("Agg"))
-"tests/test_subsets.py" = ["E731", "E741", "E402"]
-
-# convex_optimisation.py uses `l` as the standard QP lower-bound parameter name (OSQP convention)
-"pygeoinf/convex_optimisation.py" = ["E741"]
-
-# For the sphere.py file, where 'l' is a common variable name for spherical
-# harmonic degree, ignore the ambiguous variable name warning (E741).
-"pygeoinf/symmetric_space/sphere.py" = ["E741"]
-"pygeoinf/symmetric_space/sh_tools.py" = ["E741"]
-"pygeoinf/symmetric_space/wigner.py" = ["E741"]
-"pygeoinf/symmetric_space_new/sphere.py" = ["E741"]
-"pygeoinf/symmetric_space_new/sh_tools.py" = ["E741"]
-"pygeoinf/rough_work/*" = ["E741"]
+[tool.pytest.ini_options]
+# The default run excludes `slow`. Those tests are not less important — several
+# are the parity checks the design record leans on — but they are the ones
+# whose cost is the *point* (an iteration count on a badly-scaled problem, a
+# Monte Carlo estimate against its own standard error), so they are worth
+# minutes rather than seconds and are worth them occasionally.
+#
+#     pytest tests                the fast suite
+#     pytest tests -m slow        only the expensive ones
+#     pytest tests -m ""          everything
+#
+# CI runs the fast suite on every push and the slow set on a schedule. The
+# suite caps the BLAS and OpenMP pools at two threads (PYGEOINF_TEST_THREADS
+# overrides; see tests/conftest.py), so a run never swamps the
+# machine and no test depends on the core count.
+addopts = "-m 'not slow'"
+markers = [
+    "slow: takes tens of seconds or more; excluded from the default run",
+]

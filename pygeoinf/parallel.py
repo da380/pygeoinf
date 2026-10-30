@@ -1,73 +1,188 @@
-"""
-A collection of helper functions for parallel computation using Joblib.
+"""Running independent work in parallel, *around* operators.
 
-These functions are designed to be top-level to ensure they can be
-"pickled" (serialized) and sent to worker processes by libraries like
-multiprocessing or its wrapper, Joblib.
+Parallelism belongs at the embarrassingly parallel loops that surround an
+operator, never inside its action. Drawing a thousand samples is a thousand
+independent applications of one factor; applying that factor once is not
+something this can help with, and an operator's own arithmetic takes no
+``parallel=`` flag.
+
+So the loops that take an ``n_jobs`` are the ones whose iterations are
+genuinely independent and each expensive:
+
+* drawing samples from a measure, where each draw may be a solve;
+* filling in a matrix column by column, and everything built on that --
+  assembling an operator, extracting its diagonals, forming a dense covariance;
+* the probes of a randomized estimator;
+* pointwise variance at a list of points;
+* the support values of a feasible set in many directions.
+
+``joblib`` does the work. It is a required dependency. With ``n_jobs`` unset
+the loop is a list comprehension and joblib is never touched.
+
+**Which regime a problem is in decides whether to ask for this at all.**
+
+* *NumPy-bound* work -- dense matrices, Euclidean spaces, anything whose cost
+  is a BLAS call -- gains nothing from processes: the serial loop with BLAS
+  threading is as fast as any parallel run of it. Leave ``n_jobs`` unset.
+* *Transform-bound* work -- a sphere, a box with finufft -- gains from
+  processes, and *only* processes: the ``pyshtools`` transforms crash the
+  interpreter when called from two Python threads at once, whatever the
+  OpenMP settings, so a threading backend must not be used there.
+* *An operator that is itself parallel* -- MPI, a threaded PDE solver --
+  cannot be shipped to worker processes at all. Leave ``n_jobs`` unset and
+  parallelize across the scheduler instead: ``SeedSequence(seed).spawn(N)[k]``
+  gives job ``k`` an independent, reproducible stream, and every sampling
+  routine here takes an explicit ``rng``.
+
+**Threads inside the workers.** Each worker is given one OpenMP/BLAS thread.
+joblib's own default is ``cores // n_jobs``, which for the small transforms
+this library does is a net loss and, for the ``pyshtools`` transforms, the
+same oversubscription the ``nthreads=1`` default on the NUFFT avoids. A
+variable already exported in the environment (``OMP_NUM_THREADS`` and its
+BLAS siblings, set before Python starts) is respected by joblib and wins over
+this.
+
+**Steering from outside.** Everything here goes through
+``joblib.Parallel`` with only ``n_jobs`` set, so a ``joblib.parallel_config``
+context around the call decides the rest::
+
+    with joblib.parallel_config(backend="loky", inner_max_num_threads=2):
+        measure.samples(1000, rng=rng, n_jobs=8)
+
+That is where a threading backend, a dask or ray cluster, or a different
+thread budget is chosen; when a context is set it is respected entirely and
+the one-thread default above is not applied. There is no ``backend``
+argument on the loops themselves: the obvious alternative to processes,
+``"threading"``, crashes on a sphere and is never faster than BLAS threading
+where it is safe.
+
+**Nesting.** A loop that finds itself already inside a worker runs serially.
+joblib would otherwise turn the inner request into *threads* inside that
+worker, silently -- which on a sphere is the crash above, and elsewhere is
+oversubscription. So ``n_jobs`` can be forwarded freely from one loop to
+another without ever producing threads.
+
+**What a process backend asks of you.** The work has to be picklable. Bound
+methods of ordinary objects are, and so are closures over them, which is why
+the loops here can pass small lambdas; a function defined in ``__main__`` is
+serialized *by value* and drags its module globals with it, so one that has a
+Fortran extension in scope fails with ``cannot pickle 'fortran' object``; keep
+such workers as top-level functions in an importable module. Large
+arrays reached through the closure -- a dense forward operator inside a
+posterior -- are written once to shared memory by joblib and mapped by every
+worker, not copied per task.
+
+**Seeding.** Every sampling loop here spawns one generator per item from the
+caller's ``rng`` *whether or not it runs in parallel*, so a result is a
+function of the seed alone and does not change with ``n_jobs``.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Union
-import numpy as np
-from joblib import Parallel, delayed
 
-if TYPE_CHECKING:
-    from scipy.sparse.linalg import LinearOperator as ScipyLinOp
+from typing import Any, Callable, Iterable, Sequence
 
-    MatrixLike = Union[np.ndarray, ScipyLinOp]
+__all__ = ["parallel_map", "resolve_jobs"]
 
 
-def parallel_mat_mat(A: MatrixLike, B: np.ndarray, n_jobs: int = -1) -> np.ndarray:
-    """
-    Computes the matrix product A @ B in parallel by applying A to each column of B.
-
-    This is particularly useful when A is a LinearOperator whose action is
-    computationally expensive.
+def resolve_jobs(n_jobs: int | None) -> int:
+    """How many workers to use, given what the caller asked for.
 
     Args:
-        A: The matrix or LinearOperator to apply.
-        B: The matrix whose columns will be operated on.
-        n_jobs: The number of CPU cores to use. -1 means all available.
+        n_jobs: the caller's request. ``None`` or ``1`` means serial; ``-1``
+            means every core this process may use -- joblib's count, which
+            respects a CPU affinity mask or a container limit where
+            ``os.cpu_count`` reports the whole machine.
 
     Returns:
-        The result of the matrix product A @ B as a dense NumPy array.
+        The number of workers, with ``1`` meaning "run it here".
+
+    Raises:
+        ValueError: if *n_jobs* is zero or below minus one.
     """
-    columns = Parallel(n_jobs=n_jobs)(
-        delayed(A.__matmul__)(B[:, i]) for i in range(B.shape[1])
-    )
-    return np.column_stack(columns)
+    if n_jobs is None:
+        return 1
+    n_jobs = int(n_jobs)
+    if n_jobs == 0 or n_jobs < -1:
+        raise ValueError(
+            f"n_jobs is a positive count, or -1 for all cores; got {n_jobs}."
+        )
+    if n_jobs == -1:
+        from joblib import cpu_count
+
+        return max(int(cpu_count()), 1)
+    return n_jobs
 
 
-def parallel_compute_dense_matrix_from_scipy_op(
-    scipy_op: "ScipyLinOp", n_jobs: int = -1
-) -> np.ndarray:
+def _inside_a_worker() -> bool:
+    """Whether this code is already running under a joblib worker."""
+    from joblib.parallel import get_active_backend
+
+    backend, _ = get_active_backend()
+    return bool(getattr(backend, "nesting_level", 0))
+
+
+def _context_is_set() -> bool:
+    """Whether a ``joblib.parallel_config`` context has chosen a backend.
+
+    joblib keeps the active context on a thread-local it does not export,
+    so this reads two of its internals. Should a release rename them the
+    read fails and the answer is False: the library's own default -- the
+    process backend with one thread per worker -- is then applied whether
+    or not a context is active, which is a degraded answer and not a
+    crash. The current spelling is pinned by a test.
     """
-    Computes the dense matrix representation of a scipy.LinearOperator in parallel.
+    try:
+        from joblib.parallel import _backend, default_parallel_config
 
-    It builds the matrix column by column by applying the operator to each
-    basis vector.
+        config = getattr(_backend, "config", None)
+        if config is None:
+            return False
+        return config.get("backend") is not default_parallel_config["backend"]
+    except (ImportError, AttributeError, KeyError, TypeError):
+        return False
+
+
+def parallel_map(
+    function: Callable[[Any], Any],
+    items: Iterable[Any],
+    /,
+    *,
+    n_jobs: int | None = None,
+) -> list[Any]:
+    """``[function(item) for item in items]``, possibly in parallel.
+
+    Serial with one job, with fewer than two items, or when already inside a
+    worker (see the module docstring on nesting); joblib is not imported on
+    the serial path. Otherwise ``joblib.Parallel`` with the process backend
+    and one thread per worker, unless a ``joblib.parallel_config`` context is
+    active, in which case that context decides.
 
     Args:
-        scipy_op: The SciPy LinearOperator wrapper for the matrix action.
-        n_jobs: The number of CPU cores to use. -1 means all available.
+        function: called once per item. Must be picklable under a process
+            backend.
+        items: the work.
+        n_jobs: workers. Serial by default.
 
     Returns:
-        The dense matrix as a NumPy array.
+        The results, in the order of *items*.
     """
-    codomain_dim, domain_dim = scipy_op.shape
-    columns = Parallel(n_jobs=n_jobs)(
-        delayed(_worker_compute_scipy_op_col)(scipy_op, j, domain_dim)
-        for j in range(domain_dim)
-    )
-    return np.column_stack(columns)
+    workers = resolve_jobs(n_jobs)
+    materialized: Sequence[Any] = list(items)
+    if workers == 1 or len(materialized) < 2 or _inside_a_worker():
+        return [function(item) for item in materialized]
 
+    from joblib import Parallel, delayed, parallel_config
 
-def _worker_compute_scipy_op_col(
-    scipy_op: "ScipyLinOp", j: int, domain_dim: int
-) -> np.ndarray:
-    """
-    (Internal worker) Computes a single column of a SciPy LinearOperator's matrix.
-    """
-    cx = np.zeros(domain_dim)
-    cx[j] = 1.0
-    return scipy_op @ cx
+    def run() -> list[Any]:
+        return list(
+            Parallel(n_jobs=workers)(delayed(function)(item) for item in materialized)
+        )
+
+    if _context_is_set():
+        return run()
+    # The context form, not the ``Parallel(inner_max_num_threads=)`` keyword:
+    # in joblib 1.5 the keyword is accepted and then ignored by the reusable
+    # executor, and the workers keep joblib's cores // n_jobs. Pinned by a
+    # test that reads the workers' environment.
+    with parallel_config(backend="loky", inner_max_num_threads=1):
+        return run()

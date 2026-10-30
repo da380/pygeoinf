@@ -2,15 +2,21 @@ __pycache__
 .ipynb_checkpoints
 *~
 dist/*
-poetry.lock
-*.png
+# Scratch figures only. work/correlated.py writes its PNGs into whatever
+# directory it is run from, which is normally the repository root; the anchor
+# keeps that noise out without hiding deliberate figures such as
+# work/figures/, which were only ever tracked because tracking beats
+# .gitignore.
+/*.png
+/work/*.png
 
 # Python bytecode
 __pycache__/
 *.pyc
 
-# Pytest cache
+# Linter and test caches
 .pytest_cache/
+.ruff_cache/
 
 # Coverage reports
 .coverage
@@ -19,6 +25,12 @@ htmlcov/
 
 # Sphinx documentation build output
 docs/build/
+# ...including the API stubs, which conf.py regenerates on every build.
+docs/source/modules.rst
+docs/source/pygeoinf*.rst
 
-
-
+# Mini-app build products, built by running the builds, and what a run
+# writes: figures, saved modes and timings, each app's under its results/.
+miniapps/**/*.so
+miniapps/**/*.pyd
+miniapps/*/results/

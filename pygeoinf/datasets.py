@@ -1,253 +1,259 @@
-"""
-pygeoinf/datasets.py
+"""The shipped data tables, and the explicit downloads that refresh them.
 
-Provides access to built-in datasets for testing, benchmarking,
-and visualization across the pygeoinf package.
+Two small catalogues ship with the package, a Global Seismograph Network
+station list and a USGS earthquake catalogue, so the worked examples have a
+real acquisition geometry. The sphere's :meth:`~pygeoinf.symmetric_space.sphere.Sphere.stations`
+and :meth:`~pygeoinf.symmetric_space.sphere.Sphere.earthquakes` read them
+through :func:`read_table`, which takes a copy in the user's cache directory
+before the bundled one, so a refreshed catalogue takes effect without any
+other change.
+
+The refresh is explicit. :func:`download_gsn_stations` and
+:func:`download_usgs_earthquakes` fetch from the IRIS and USGS web services
+and write into :func:`cache_directory`, never into the package, which may
+sit in a read-only tree. Nothing else here touches the network, and nothing
+fetches on a caller's behalf: asking for more events than the table holds
+is refused with the download named, rather than answered with a fetch the
+caller did not ask for.
+
+The cache directory is ``PYGEOINF_CACHE_DIR`` when set, otherwise
+``$XDG_CACHE_HOME/pygeoinf`` or ``~/.cache/pygeoinf`` on Unix and
+``%LOCALAPPDATA%\\pygeoinf\\Cache`` on Windows, resolved at each call so a
+test can point it elsewhere.
 """
 
-import os
+from __future__ import annotations
+
 import csv
-import random
-import urllib.request
+import os
 import urllib.parse
-from typing import List, Tuple, Union
+import urllib.request
+from pathlib import Path
+from typing import Any, Sequence
 
-# Import the centralized paths
-from .config import CACHEDIR, DATADIR
+import numpy as np
 
-# Name of the station file, resolved through _data_path/_cache_path below.
-_GSN_FILENAME = "gsn_stations.csv"
+__all__ = [
+    "GSN_STATIONS",
+    "USGS_EVENTS",
+    "cache_directory",
+    "table_path",
+    "read_table",
+    "download_gsn_stations",
+    "download_usgs_earthquakes",
+]
+
+GSN_STATIONS = "gsn_stations.csv"
+"""The station table: ``Station, Latitude, Longitude``."""
+
+USGS_EVENTS = "usgs_event_cache.csv"
+"""The earthquake table, in the USGS query's CSV format."""
+
+_IRIS_STATIONS = "https://service.iris.edu/fdsnws/station/1/query"
+_USGS_EVENTS = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 
 
-def _cache_path(filename: str) -> str:
-    """Return the writable cache location for ``filename``."""
-    return os.path.join(CACHEDIR, filename)
+def cache_directory() -> Path:
+    """The writable directory downloads go to.
 
-
-def _data_path(filename: str) -> Union[str, None]:
+    Returns:
+        ``PYGEOINF_CACHE_DIR`` if set; otherwise the platform's user cache
+        location with ``pygeoinf`` appended. Not created here.
     """
-    Locate a dataset, preferring a freshly downloaded copy over the bundled one.
+    override = os.environ.get("PYGEOINF_CACHE_DIR")
+    if override:
+        return Path(override).expanduser()
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(
+            Path("~/AppData/Local").expanduser()
+        )
+        return Path(base) / "pygeoinf" / "Cache"
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path("~/.cache").expanduser())
+    return Path(base) / "pygeoinf"
 
-    Returns the path to the cached copy if one exists, otherwise the path to the
-    copy bundled with the package, otherwise None if neither is present.
+
+def table_path(name: str, /) -> Path | None:
+    """Where a table is read from: the cached copy, else the bundled one.
+
+    Args:
+        name: the file name, such as :data:`GSN_STATIONS`.
+
+    Returns:
+        The path, or ``None`` if neither copy exists.
     """
-    cached = _cache_path(filename)
-    if os.path.exists(cached):
+    from importlib.resources import files
+
+    cached = cache_directory() / name
+    if cached.exists():
         return cached
-
-    bundled = os.path.join(DATADIR, filename)
-    if os.path.exists(bundled):
-        return bundled
-
+    bundled = files("pygeoinf.data") / name
+    if bundled.is_file():
+        return Path(str(bundled))
     return None
 
 
-def download_gsn_stations(force: bool = False) -> None:
-    """
-    Fetches the Global Seismograph Network (GSN) stations from the IRIS
-    FDSN API and saves them to a CSV file in the user's cache directory.
-    """
-    if _data_path(_GSN_FILENAME) is not None and not force:
-        return
-
-    print("pygeoinf: Local dataset missing. Fetching station data from IRIS...")
-
-    # Downloads always go to the writable cache, never to the packaged DATADIR.
-    csv_path = _cache_path(_GSN_FILENAME)
-    os.makedirs(CACHEDIR, exist_ok=True)
-
-    url = "http://service.iris.edu/fdsnws/station/1/query"
-    params = {"network": "IU,II", "level": "station", "format": "text"}
-
-    full_url = f"{url}?{urllib.parse.urlencode(params)}"
-    stations = []
-
-    try:
-        with urllib.request.urlopen(full_url, timeout=10) as response:
-            lines = response.read().decode("utf-8").strip().split("\n")
-
-            for line in lines[1:]:
-                parts = line.split("|")
-                if len(parts) >= 4:
-                    stations.append([parts[1], float(parts[2]), float(parts[3])])
-
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Station", "Latitude", "Longitude"])
-            writer.writerows(stations)
-
-        print(f"pygeoinf: Successfully saved {len(stations)} stations to {csv_path}")
-
-    except Exception as e:
-        raise RuntimeError(f"Failed to download GSN stations from IRIS. Error: {e}")
-
-
-def load_gsn_stations(
-    n_stations: int = None, include_names: bool = False
-) -> Union[List[Tuple[float, float]], List[Tuple[str, float, float]]]:
-    """
-    Loads a representative global set of seismic stations from the GSN.
-
-    The station list ships with the package. If it is missing, this function
-    will attempt to download it from IRIS into the user's cache directory.
+def read_table(name: str, /) -> dict[str, np.ndarray]:
+    """Read a table into arrays keyed by column, numeric where every entry parses.
 
     Args:
-        n_stations: If provided, returns a random subsample of this size.
-                    If greater than the total available stations, returns all.
-        include_names: If True, returns (Name, Latitude, Longitude).
-                       If False, returns pure (Latitude, Longitude) tuples.
+        name: the file name.
 
     Returns:
-        A list of station tuples in degrees.
+        One array per column: floats where the column is numeric, objects
+        otherwise.
+
+    Raises:
+        FileNotFoundError: if neither a cached nor a bundled copy exists.
+        ValueError: if the table has no rows.
     """
-    csv_path = _data_path(_GSN_FILENAME)
+    path = table_path(name)
+    if path is None:
+        raise FileNotFoundError(
+            f"No table {name!r} is cached or bundled; download_gsn_stations() and "
+            "download_usgs_earthquakes() write one."
+        )
+    rows = list(csv.DictReader(path.read_text(encoding="utf-8").splitlines()))
+    if not rows:
+        raise ValueError(f"{name} is empty.")
+    table: dict[str, np.ndarray] = {}
+    for column in rows[0]:
+        values = [row[column] for row in rows]
+        try:
+            table[column] = np.array([float(value) for value in values])
+        except ValueError:
+            table[column] = np.array(values, dtype=object)
+    return table
 
-    if csv_path is None:
-        download_gsn_stations()
-        csv_path = _cache_path(_GSN_FILENAME)
 
-    stations = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            lat = float(row["Latitude"])
-            lon = float(row["Longitude"])
-            if include_names:
-                stations.append((row["Station"], lat, lon))
-            else:
-                stations.append((lat, lon))
+def _fetch(url: str, params: dict[str, Any], /, *, timeout: float) -> str:
+    """One GET, decoded. The only place the network is touched, so a test
+    replaces this and nothing else."""
+    full = f"{url}?{urllib.parse.urlencode(params)}"
+    with urllib.request.urlopen(full, timeout=timeout) as response:
+        return response.read().decode("utf-8")
 
-    # Sub-sample if requested and mathematically valid
-    if n_stations is not None and n_stations < len(stations):
-        return random.sample(stations, n_stations)
 
-    return stations
+def _cache_file(name: str) -> Path:
+    directory = cache_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / name
+
+
+def download_gsn_stations(*, force: bool = False, timeout: float = 10.0) -> Path:
+    """Fetch the Global Seismograph Network station list from IRIS into the cache.
+
+    Networks ``IU`` and ``II``, written as ``Station, Latitude, Longitude``
+    under :data:`GSN_STATIONS`, which is then what
+    :meth:`~pygeoinf.symmetric_space.sphere.Sphere.stations` reads.
+
+    Args:
+        force: fetch again even if a cached copy exists.
+        timeout: seconds to wait for the service.
+
+    Returns:
+        The path written, or the existing cached copy.
+
+    Raises:
+        RuntimeError: if the fetch fails or returns nothing usable.
+    """
+    target = _cache_file(GSN_STATIONS)
+    if target.exists() and not force:
+        return target
+    params = {"network": "IU,II", "level": "station", "format": "text"}
+    try:
+        text = _fetch(_IRIS_STATIONS, params, timeout=timeout)
+    except Exception as error:
+        raise RuntimeError(
+            f"Fetching the GSN stations from IRIS failed: {error}"
+        ) from error
+    stations: list[Sequence[Any]] = []
+    for line in text.strip().splitlines()[1:]:
+        parts = line.split("|")
+        if len(parts) >= 4:
+            stations.append([parts[1].strip(), float(parts[2]), float(parts[3])])
+    if not stations:
+        raise RuntimeError("IRIS returned no stations.")
+    with target.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Station", "Latitude", "Longitude"])
+        writer.writerows(stations)
+    return target
 
 
 def download_usgs_earthquakes(
-    min_magnitude: float = 5.0,
-    start_time: str = None,
-    end_time: str = None,
-    min_depth: float = None,
-    max_depth: float = None,
-    bbox: Tuple[float, float, float, float] = None,
+    *,
+    minimum_magnitude: float | None = 5.0,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    minimum_depth: float | None = None,
+    maximum_depth: float | None = None,
+    bounding_box: Sequence[float] | None = None,
     limit: int = 2000,
     force: bool = False,
-    filename: str = "usgs_events_filtered.csv",
-) -> None:
+    filename: str = USGS_EVENTS,
+    timeout: float = 20.0,
+) -> Path:
+    """Fetch a filtered earthquake catalogue from the USGS into the cache.
+
+    Written in the service's own CSV format. Under the default *filename* it
+    is what :meth:`~pygeoinf.symmetric_space.sphere.Sphere.earthquakes`
+    reads from then on; under another name, ``earthquakes`` keeps reading the
+    table it read before.
+
+    Args:
+        minimum_magnitude: the smallest magnitude to include.
+        start_time: the earliest event, as an ISO date or datetime.
+        end_time: the latest.
+        minimum_depth: the shallowest, in kilometres.
+        maximum_depth: the deepest.
+        bounding_box: ``(min_latitude, max_latitude, min_longitude,
+            max_longitude)`` in degrees.
+        limit: at most this many events, the most recent first.
+        force: fetch again even if the file exists.
+        filename: the name to write under in the cache.
+        timeout: seconds to wait for the service.
+
+    Returns:
+        The path written, or the existing cached copy.
+
+    Raises:
+        ValueError: for a non-positive limit or a bounding box of the wrong
+            length.
+        RuntimeError: if the fetch fails or returns no events.
     """
-    Fetches a filtered catalog of earthquakes from the USGS API and saves it
-    to a CSV in the user's cache directory.
-    """
-    if _data_path(filename) is not None and not force:
-        return
-
-    print(f"pygeoinf: Fetching up to {limit} earthquakes from USGS...")
-
-    # Downloads always go to the writable cache, never to the packaged DATADIR.
-    csv_path = _cache_path(filename)
-    os.makedirs(CACHEDIR, exist_ok=True)
-
-    params = {"format": "csv", "limit": limit, "orderby": "time"}
-
-    if min_magnitude is not None:
-        params["minmagnitude"] = min_magnitude
+    if limit < 1:
+        raise ValueError(f"The limit must be positive, got {limit}.")
+    if bounding_box is not None and len(bounding_box) != 4:
+        raise ValueError(
+            "A bounding box is (min_latitude, max_latitude, min_longitude, max_longitude)."
+        )
+    target = _cache_file(filename)
+    if target.exists() and not force:
+        return target
+    params: dict[str, Any] = {"format": "csv", "limit": int(limit), "orderby": "time"}
+    if minimum_magnitude is not None:
+        params["minmagnitude"] = minimum_magnitude
     if start_time is not None:
         params["starttime"] = start_time
     if end_time is not None:
         params["endtime"] = end_time
-    if min_depth is not None:
-        params["mindepth"] = min_depth
-    if max_depth is not None:
-        params["maxdepth"] = max_depth
-    if bbox is not None:
-        params["minlatitude"] = bbox[0]
-        params["maxlatitude"] = bbox[1]
-        params["minlongitude"] = bbox[2]
-        params["maxlongitude"] = bbox[3]
-
-    url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
-    full_url = f"{url}?{urllib.parse.urlencode(params)}"
-
+    if minimum_depth is not None:
+        params["mindepth"] = minimum_depth
+    if maximum_depth is not None:
+        params["maxdepth"] = maximum_depth
+    if bounding_box is not None:
+        params["minlatitude"], params["maxlatitude"] = bounding_box[0], bounding_box[1]
+        params["minlongitude"], params["maxlongitude"] = (
+            bounding_box[2],
+            bounding_box[3],
+        )
     try:
-        with urllib.request.urlopen(full_url, timeout=20) as response:
-            data = response.read().decode("utf-8")
-
-        with open(csv_path, "w", encoding="utf-8") as f:
-            f.write(data)
-
-        num_events = len(data.strip().split("\n")) - 1
-        print(f"pygeoinf: Successfully saved {num_events} events to {csv_path}")
-
-    except Exception as e:
-        raise RuntimeError(f"Failed to download USGS events. Error: {e}")
-
-
-def sample_earthquakes(
-    n_events: int, min_magnitude: float = 5.0
-) -> List[Tuple[float, float, float]]:
-    """
-    Returns a random subsample of real earthquake locations.
-
-    If the local cache does not contain enough events to satisfy the request,
-    it automatically fetches a larger catalog from the USGS to rebuild the cache.
-
-    Args:
-        n_events: The exact number of earthquake locations to return.
-        min_magnitude: The minimum magnitude to use if a new download is required.
-
-    Returns:
-        A list of tuples: (Latitude, Longitude, Depth_in_km).
-    """
-    cache_filename = "usgs_event_cache.csv"
-    cache_path = _data_path(cache_filename)
-
-    events = []
-
-    # 1. Try loading from the existing cache
-    if cache_path is not None:
-        with open(cache_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                events.append(
-                    (
-                        float(row["latitude"]),
-                        float(row["longitude"]),
-                        float(row["depth"]),
-                    )
-                )
-
-    # 2. Check if the cache is large enough
-    if len(events) >= n_events:
-        # Use random.sample to grab unique items without replacement
-        return random.sample(events, n_events)
-
-    # 3. Cache is too small (or doesn't exist). Download a new one!
-    # Smart fetching: Always download at least 2000, or the requested amount + a 20% buffer.
-    # This prevents hitting the FDSN API repeatedly if the user slowly increases n_events.
-    fetch_limit = max(2000, int(n_events * 1.2))
-    print(
-        f"pygeoinf: Local cache only has {len(events)} events. Fetching {fetch_limit} to build a robust cache..."
-    )
-
-    download_usgs_earthquakes(
-        min_magnitude=min_magnitude,
-        limit=fetch_limit,
-        filename=cache_filename,
-        force=True,  # Overwrite the old, insufficient cache
-    )
-
-    # 4. Reload the newly downloaded cache
-    cache_path = _cache_path(cache_filename)
-    events = []
-    with open(cache_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            events.append(
-                (float(row["latitude"]), float(row["longitude"]), float(row["depth"]))
-            )
-
-    # 5. Return the exact sample size requested
-    # If the API returned fewer events than requested (e.g., asked for 100,000 Mag 9.0s),
-    # we just return whatever we actually managed to get.
-    return random.sample(events, min(n_events, len(events)))
+        text = _fetch(_USGS_EVENTS, params, timeout=timeout)
+    except Exception as error:
+        raise RuntimeError(
+            f"Fetching the earthquakes from the USGS failed: {error}"
+        ) from error
+    if len(text.strip().splitlines()) < 2:
+        raise RuntimeError("The USGS returned no events for these filters.")
+    target.write_text(text, encoding="utf-8")
+    return target

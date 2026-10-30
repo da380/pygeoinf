@@ -1,70 +1,360 @@
 """
-Provides concrete implementations of function spaces on the two-sphere (S²).
+Fields on a two-sphere, through spherical harmonics.
 
-This module uses the abstract framework from the symmetric space module to create
-fully-featured `Lebesgue` (L²) and `Sobolev` (Hˢ) Hilbert spaces for functions
-defined on the surface of a sphere.
+The one space in the family that is genuinely its own implementation: the
+harmonic transform is not an FFT and there is no way to obtain it from the
+periodic box. Everything downstream of the transform is shared, though — the
+Laplacian is diagonal, invariant operators are
+:class:`~pygeoinf.algebra.diagonal.DiagonalLinearOperator`, and invariant
+measures come from :class:`~pygeoinf.symmetric_space.base.SymmetricSpace` — so
+what is written here is the transform, the spectrum and the geometry, and
+nothing else.
 
-It utilizes the `pyshtools` library for highly efficient and accurate spherical
-harmonic transforms. Following a compositional design, this module first
-defines a base `Lebesgue` space and then constructs the `Sobolev` space as a
-`MassWeightedHilbertSpace` over it. The module also includes powerful plotting
-utilities built on `cartopy` for professional-quality geospatial visualization.
+Requires ``pyshtools``, which is an optional dependency. The import is deferred
+to construction so that importing this module costs nothing when the sphere is
+not used.
+
+Conventions, all pinned by test rather than assumed: coefficients are
+orthonormal (``norm=4`` in pyshtools' low-level interface) with the
+Condon-Shortley phase *excluded* (pyshtools spells that ``csphase=1``), the
+grid is Driscoll-Healy by default or Gauss-Legendre on request, and **a point
+is a ``(latitude, longitude)`` pair in degrees**.
+
+That last is the convention of every station catalogue, every earthquake
+catalogue and pyshtools itself. The trigonometry inside is done in
+colatitude and radians, and each method converts at its own boundary;
+:meth:`Sphere.to_colatitude_radians` and :meth:`Sphere.to_latitude_degrees`
+are the conversion, public because anyone working below the boundary needs
+it.
+
+An *angle* on the sphere is likewise in degrees — the half-angle of a cap, for
+instance. A *distance* is in the units of :attr:`Sphere.radius`, and every
+argument that takes one says so.
 """
 
 from __future__ import annotations
-from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING, Union
 
-from functools import cached_property
+from functools import cached_property, lru_cache
+from typing import Any, Callable, Hashable, Sequence
 
-import math
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
+from numpy.random import Generator
 
-from joblib import Parallel, delayed, effective_n_jobs
+from ..algebra.operators import LinearFunctional, LinearOperator
+from ..algebra.spaces import resolve_rng
+from .base import PreparedPoints, SymmetricSpace, _distribute, _gauss_legendre
 
-from scipy.spatial import cKDTree
-from scipy import sparse
+__all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
-try:
-    import pyshtools as sh
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import cartopy.io.shapereader as shpreader
-    from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
-    from cartopy.mpl.geoaxes import GeoAxes
-    import shapely.geometry as sgeom
-    from shapely.prepared import prep
-except ImportError:
-    raise ImportError(
-        "pyshtools, cartopy and shapely are required for the sphere module. "
-        "Please install them with 'pip install pygeoinf[sphere]'"
-    ) from None
+# pyshtools' low-level normalization code for orthonormal harmonics.
+_ORTHONORMAL = 4
+# One basis matrix at a time is held in memory; this bounds its entry count,
+# so a chunk is about 30 MB whatever the truncation.
+_CHUNK_ENTRIES = 4_000_000
 
+# When the transform route wins. Its cost is fixed in the number of points --
+# one analysis, one FFT, one NUFFT -- while the direct sum costs one basis
+# evaluation per point per component, so the crossover is a threshold on both.
+# With single-threaded NUFFTs (see Sphere.evaluate) the transform wins from
+# about 200 points once the dimension is a few hundred. Below dim 256 the two
+# are within a millisecond of each other either way, so the dimension
+# threshold avoids paying the fixed cost for nothing.
+_TRANSFORM_MIN_POINTS = 200
+_TRANSFORM_MIN_DIM = 256
 
-from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.linear_forms import LinearForm
-from pygeoinf.linear_operators import LinearOperator
-
-from pygeoinf.datasets import load_gsn_stations
-
-
-from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
+# pyshtools spells "leave the Condon-Shortley phase out" as csphase=1.
+_NO_CONDON_SHORTLEY = 1
 
 
-if TYPE_CHECKING:
-    from cartopy.crs import Projection
-    from pyshtools import SHGrid
+# Grid weights, keyed on what they actually depend on: the truncation, the
+# longitude sampling and the radius -- but not the Sobolev order, which is the
+# whole point, since with_order is what makes new spaces in a hot loop. A plain
+# dict rather than an lru_cache because the value is computed from an instance.
+_QUADRATURES: dict[tuple, np.ndarray] = {}
+
+# The south pole row weights, on the same key and for the same reason: they
+# are built from the quadrature and from Legendre values, neither of which
+# knows the Sobolev order.
+_SOUTH_POLE_KERNELS: dict[tuple, np.ndarray] = {}
+
+_GRIDS = ("DH", "GLQ")
 
 
-class Lebesgue(AbstractSymmetricLebesgueSpace):
+class _Grid:
+    """The sampling grid behind a sphere: shape, angles, transforms, weights.
+
+    Two kinds, and everything that depends on which one is here so that the
+    space asks rather than assumes:
+
+    * ``"DH"``, Driscoll-Healy: ``2 (lmax + 1)`` equispaced colatitude rows
+      from the north pole, ``sampling`` times as many longitude columns, the
+      transforms ``SHExpandDH``/``MakeGridDH``, row weights calibrated
+      against the transform by the space, a north-pole row of zero weight,
+      and the double Fourier sphere for the fast point evaluation.
+    * ``"GLQ"``, Gauss-Legendre: ``lmax + 1`` rows at the Legendre zeros,
+      ``2 lmax + 1`` columns, the transforms ``SHExpandGLQ``/``MakeGridGLQ``,
+      row weights in closed form and exact to degree ``2 lmax``, no pole row,
+      and no double Fourier sphere -- the fast point evaluation goes through
+      a Driscoll-Healy sibling of the same truncation.
+
+    ``extend`` adds the wrap column at 360 degrees on both, and the
+    south-pole row on Driscoll-Healy only, as pyshtools does.
     """
-    Implementation of the Lebesgue space L² on a sphere.
 
-    This class represents square-integrable functions on a sphere. A function is
-    represented by its values on an evenly spaced grid. The co-ordinate basis for
-    the space is through spherical harmonic expansions.
+    def __init__(self, kind: str, lmax: int, sampling: int) -> None:
+        self.kind = kind
+        self.lmax = int(lmax)
+        self.sampling = int(sampling)
+        if kind == "DH":
+            self.rows = 2 * (self.lmax + 1)
+            self.columns = self.sampling * self.rows
+            self.core_colatitudes = np.arange(self.rows) * np.pi / self.rows
+            self.has_pole_row = True
+            self._zeros: np.ndarray | None = None
+            self._weights: np.ndarray | None = None
+        else:
+            from pyshtools.expand import SHGLQ
+
+            zeros, weights = SHGLQ(self.lmax)
+            self.rows = self.lmax + 1
+            self.columns = 2 * self.lmax + 1
+            self.core_colatitudes = np.arccos(np.clip(np.asarray(zeros), -1.0, 1.0))
+            self.has_pole_row = False
+            self._zeros = np.asarray(zeros)
+            self._weights = np.asarray(weights)
+        self.core_longitudes = np.arange(self.columns) * 2.0 * np.pi / self.columns
+        for array in (self.core_colatitudes, self.core_longitudes):
+            array.flags.writeable = False
+
+    @property
+    def core_shape(self) -> tuple[int, int]:
+        """The grid the transforms and the quadrature act on."""
+        return (self.rows, self.columns)
+
+    def shape(self, extend: bool, /) -> tuple[int, int]:
+        """A field's shape: the core, plus the wrap column and, on
+        Driscoll-Healy, the south-pole row when extended."""
+        if not extend:
+            return self.core_shape
+        return (self.rows + (1 if self.has_pole_row else 0), self.columns + 1)
+
+    def colatitudes(self, extend: bool, /) -> np.ndarray:
+        """The row colatitudes in radians, with the south pole when extended and present."""
+        if extend and self.has_pole_row:
+            return np.append(self.core_colatitudes, np.pi)
+        return self.core_colatitudes
+
+    def longitudes(self, extend: bool, /) -> np.ndarray:
+        """The column longitudes in radians, with the wrap at 360 degrees when extended."""
+        if extend:
+            return np.append(self.core_longitudes, 2.0 * np.pi)
+        return self.core_longitudes
+
+    def analysis(self, field: np.ndarray, /) -> np.ndarray:
+        """Core grid values to the ``(2, lmax + 1, lmax + 1)`` coefficients."""
+        if self.kind == "DH":
+            from pyshtools.expand import SHExpandDH
+
+            return SHExpandDH(
+                field,
+                norm=_ORTHONORMAL,
+                sampling=self.sampling,
+                csphase=_NO_CONDON_SHORTLEY,
+                lmax_calc=self.lmax,
+            )
+        from pyshtools.expand import SHExpandGLQ
+
+        return SHExpandGLQ(
+            field,
+            self._weights,
+            self._zeros,
+            norm=_ORTHONORMAL,
+            csphase=_NO_CONDON_SHORTLEY,
+            lmax_calc=self.lmax,
+        )
+
+    def synthesis(self, coefficients: np.ndarray, extend: bool, /) -> np.ndarray:
+        """Coefficients to grid values, extended or not."""
+        if self.kind == "DH":
+            from pyshtools.expand import MakeGridDH
+
+            return MakeGridDH(
+                coefficients,
+                norm=_ORTHONORMAL,
+                sampling=self.sampling,
+                csphase=_NO_CONDON_SHORTLEY,
+                lmax=self.lmax,
+                extend=extend,
+            )
+        from pyshtools.expand import MakeGridGLQ
+
+        return MakeGridGLQ(
+            coefficients,
+            self._zeros,
+            lmax=self.lmax,
+            norm=_ORTHONORMAL,
+            csphase=_NO_CONDON_SHORTLEY,
+            extend=extend,
+        )
+
+    def row_weights(self, radius: float, /) -> np.ndarray | None:
+        """The quadrature's row weights in closed form, where the grid has
+        them: Gauss-Legendre's ``w_j`` times the longitude spacing times the
+        area scale. ``None`` on Driscoll-Healy, whose weights the space
+        calibrates against the transform."""
+        if self._weights is None:
+            return None
+        return self._weights * (2.0 * np.pi / self.columns) * radius**2
+
+
+@lru_cache(maxsize=32)
+def _grid_for(kind: str, lmax: int, sampling: int) -> _Grid:
+    """One grid object per ``(kind, lmax, sampling)``, shared by every space on it."""
+    return _Grid(kind, lmax, sampling)
+
+
+@lru_cache(maxsize=8)
+def _packing_for(lmax: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The component ordering for a truncation, built once per ``lmax``.
+
+    Module-level rather than per instance because a space is cheap to make and
+    these are not: ``with_order`` and ``with_degree`` both produce new spaces
+    over the same harmonics, and a `multiplication_operator` makes one on every
+    call.
+
+    Returned read-only, since the whole point is that callers share it.
+    """
+    degrees = np.repeat(np.arange(lmax + 1), 2 * np.arange(lmax + 1) + 1)
+    # Within a degree: cosines for m = 0..l, then sines for m = 1..l.
+    position = np.arange(degrees.size) - degrees**2
+    cosine = position <= degrees
+    parts = np.where(cosine, 0, 1)
+    orders = np.where(cosine, position, position - degrees)
+
+    tables = (parts, degrees, orders)
+    for table in tables:
+        table.flags.writeable = False
+    return tables
+
+
+@lru_cache(maxsize=8)
+def _complex_layout_for(
+    lmax: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """How the packed real components map onto complex coefficients in ``m``-major order.
+
+    ducc0 and healpy store ``a_lm`` for ``m >= 0`` with ``m`` outermost and
+    ``l`` running from ``m`` to ``lmax``. For real orthonormal harmonics
+    without the Condon-Shortley phase, ``a_l0`` is the cosine coefficient and
+    ``a_lm == (-1)^m (c_lm - i s_lm) / sqrt(2)`` for ``m > 0``, with ``c`` and
+    ``s`` the cosine and sine coefficients; verified against pyshtools' own
+    point evaluation. Returned as the component index feeding each complex
+    entry's real part and imaginary part (``-1`` where there is none), the
+    sign and scale to apply, and ``sqrt(l (l + 1))``, the factor that turns
+    the field's coefficients into those of its gradient as a spin-1 field.
+    """
+    parts, degrees, orders = _packing_for(lmax)
+    cosine = np.full((lmax + 1, lmax + 1), -1, dtype=int)
+    sine = np.full((lmax + 1, lmax + 1), -1, dtype=int)
+    index = np.arange(parts.size)
+    cosine[degrees[parts == 0], orders[parts == 0]] = index[parts == 0]
+    sine[degrees[parts == 1], orders[parts == 1]] = index[parts == 1]
+    ms = np.concatenate([np.full(lmax + 1 - m, m) for m in range(lmax + 1)])
+    ls = np.concatenate([np.arange(m, lmax + 1) for m in range(lmax + 1)])
+    real = cosine[ls, ms]
+    imaginary = sine[ls, ms]
+    scale = np.where(ms == 0, 1.0, ((-1.0) ** ms) / np.sqrt(2.0))
+    gradient = np.sqrt(ls * (ls + 1.0))
+    tables = (real, imaginary, scale, gradient)
+    for table in tables:
+        table.flags.writeable = False
+    return tables
+
+
+@lru_cache(maxsize=8)
+def _legendre_indices_for(lmax: int) -> np.ndarray:
+    """Where each component sits in pyshtools' packed Legendre array.
+
+    ``PlmIndex(l, m)`` is ``l (l + 1) / 2 + m``, verified against pyshtools
+    itself, and computed here for every component at once rather than by a
+    call per component.
+    """
+    _, degrees, orders = _packing_for(lmax)
+    indices = degrees * (degrees + 1) // 2 + orders
+    indices.flags.writeable = False
+    return indices
+
+
+@lru_cache(maxsize=4)
+def _land_test(resolution: str) -> Callable[[float, float], bool]:
+    """``(latitude, longitude) -> on land``, from the Natural Earth coastlines.
+
+    Loaded once per resolution and shared by the mask and the point sampler:
+    the shapefile read and the polygon union are the cost, and the prepared
+    geometry makes each test cheap. Longitudes are wrapped to ``[-180, 180)``
+    before the test, which is the convention the polygons use.
+
+    Raises:
+        ImportError: without cartopy and shapely, which come with the
+            ``sphere`` extra.
+    """
+    try:
+        import shapely.geometry as geometry
+        from cartopy.io import shapereader
+        from shapely.prepared import prep
+    except ImportError as error:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "The coastlines need cartopy and shapely, which come with the "
+            "'sphere' extra."
+        ) from error
+    reader = shapereader.Reader(
+        shapereader.natural_earth(
+            resolution=resolution, category="physical", name="land"
+        )
+    )
+    land = prep(geometry.MultiPolygon(list(reader.geometries())))
+
+    def on_land(latitude: float, longitude: float) -> bool:
+        wrapped = (longitude + 180.0) % 360.0 - 180.0
+        return bool(land.contains(geometry.Point(wrapped, latitude)))
+
+    return on_land
+
+
+def _require_pyshtools() -> object:
+    """Import pyshtools, with a message that says what to install."""
+    try:
+        import pyshtools
+    except ImportError as error:  # pragma: no cover - depends on the install
+        raise ImportError(
+            "Spherical harmonic spaces need pyshtools, which is an optional "
+            "dependency. Install it with the 'sphere' extra."
+        ) from error
+    return pyshtools
+
+
+class Sphere(SymmetricSpace[Any]):
+    """A field on a sphere, expanded in spherical harmonics.
+
+    Vectors are ``pyshtools.SHGrid`` objects on the space's grid, not bare
+    arrays: a field can plot, rotate and expand itself through pyshtools, and
+    it is the type a caller with an existing pyshtools workflow already holds.
+    The values are reachable as ``x.data``, or through
+    :meth:`~pygeoinf.symmetric_space.base.SymmetricSpace.grid_values`.
+
+    Components are the real harmonic coefficients, scaled so that the Lebesgue
+    basis is orthonormal on a sphere of the given radius.
+
+    The grid is Driscoll-Healy by default, ``n == 2 (lmax + 1)`` rows and
+    ``sampling * n`` columns, ``sampling`` defaulting to 1, the square grid
+    that is pyshtools' default and halves the memory of every field against
+    the rectangular one. ``grid="GLQ"`` gives the Gauss-Legendre grid instead,
+    ``lmax + 1`` rows at the Legendre zeros and ``2 lmax + 1`` columns: fewer
+    points for the same truncation, a quadrature exact to degree ``2 lmax``
+    in closed form, and no pole row. The two hold the same components, so a
+    field moves from one to the other through them; but the fields differ in
+    shape, so the spaces differ and an operator of one does not take the
+    other's vectors. The same holds for ``sampling`` and ``extend``.
     """
 
     def __init__(
@@ -72,2144 +362,2240 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         lmax: int,
         /,
         *,
-        radius: float = 1,
-        grid: str = "DH",
-        extend: bool = True,
-    ):
-        """
-        Args:
-            lmax: Maximum degree for the expansions.
-            radius: Radius of the sphere. Defaults to 1.
-            grid: pyshtools grid type. Defaults to "DH"
-            extend: If true longitudes wrap fully. Defaults to True.
-        """
-
-        if lmax < 0:
-            raise ValueError("lmax must be non-negative")
-
-        self._lmax: int = lmax
-        self._radius: float = radius
-
-        if grid == "DH2":
-            self._grid = "DH"
-            self._sampling = 2
-        else:
-            self._grid = grid
-            self._sampling = 1
-
-        self._extend: bool = extend
-
-        # SH coefficient options fixed internally
-        self._normalization: str = "ortho"
-        self._csphase: int = 1
-
-        AbstractSymmetricLebesgueSpace.__init__(self, 2, lmax, (lmax + 1) ** 2)
-
-    @classmethod
-    def from_covariance(
-        cls,
-        covariance_function: Callable[[float], float],
-        /,
-        *,
         radius: float = 1.0,
+        order: float = 0.0,
+        length_scale: float = 1.0,
+        sampling: int = 1,
+        extend: bool = False,
         grid: str = "DH",
-        extend: bool = True,
-        rtol: float = 1e-6,
-        min_degree: int = 0,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-    ) -> Lebesgue:
+    ) -> None:
         """
-        Creates an instance of the L² space with a spherical harmonic truncation degree (`lmax`)
-        automatically chosen to capture the expected energy of functions drawn from
-        a specified prior measure.
-
-        This factory method calculates the expected squared norm (energy) of a random field
-        whose spectral variances are defined by the provided `covariance_function`. It iteratively
-        adds higher spherical harmonic degrees until the relative contribution of the next degree
-        drops below the specified relative tolerance.
-
         Args:
-            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The pyshtools spatial grid format to use. Defaults to "DH".
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
-            max_degree: An optional safety ceiling for the truncation degree. If convergence
-                is not reached by this degree, the search terminates and returns this value.
-            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
-
-        Returns:
-            Lebesgue: A fully instantiated L² space on the sphere with the optimal `lmax`.
+            lmax: the maximum spherical harmonic degree.
+            radius: the sphere's radius, which sets both the area element and
+                the Laplacian's eigenvalues.
+            order: the Sobolev order. Zero gives the Lebesgue space.
+            length_scale: the length at which the Sobolev weight turns over.
+                Named in full because ``scale`` is the vector-scaling
+                operation.
+            sampling: grid columns per row, 1 or 2. One gives the square
+                Driscoll-Healy grid, which is pyshtools' default and this
+                one; two doubles the longitude resolution, and the memory.
+                Both represent the same functions exactly -- the transforms
+                cost the same and the components are identical -- but the
+                fields differ in shape, so the spaces differ; see the class
+                docstring.
+            extend: whether a field's grid carries the wrap column at 360
+                degrees and the south-pole row, as pyshtools' ``extend=True``
+                grids do. Off by default. The two extras carry no quadrature
+                weight and are not seen by the transforms; they are there for
+                plotting and interchange, where a closed grid is what is
+                wanted. Same components, but fields of another shape and so
+                another space, as with ``sampling``. On a Gauss-Legendre grid
+                only the wrap column is added, there being no pole row to
+                add.
+            grid: ``"DH"`` for Driscoll-Healy, ``"GLQ"`` for Gauss-Legendre.
+                See the class docstring. ``sampling`` applies to the first
+                only.
 
         Raises:
-            RuntimeError: If the energy sequence fails to converge within 100,000 iterations
-                and no `max_degree` is specified.
+            ValueError: if lmax is negative, the radius or length scale is not
+                positive, the sampling is not 1 or 2, the grid is not one of
+                the two, or a sampling of 2 is asked of a Gauss-Legendre grid.
         """
-        dummy_space = cls(max(1, min_degree), radius=radius, grid=grid, extend=extend)
+        if lmax < 0:
+            raise ValueError("lmax must be non-negative.")
+        if radius <= 0.0:
+            raise ValueError("radius must be positive.")
+        if length_scale <= 0.0:
+            raise ValueError("length_scale must be positive.")
+        if sampling not in (1, 2):
+            raise ValueError(f"sampling is 1 or 2, got {sampling}.")
+        if grid not in _GRIDS:
+            raise ValueError(f"The grid is 'DH' or 'GLQ', got {grid!r}.")
+        if grid == "GLQ" and sampling != 1:
+            raise ValueError(
+                "A Gauss-Legendre grid has 2 lmax + 1 columns; sampling applies "
+                "to the Driscoll-Healy grid only."
+            )
+        _require_pyshtools()
 
-        optimal_degree = dummy_space.estimate_truncation_degree(
-            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
+        self._lmax = int(lmax)
+        self._radius = float(radius)
+        self._order = float(order)
+        self._length_scale = float(length_scale)
+        self._sampling = int(sampling)
+        self._extend = bool(extend)
+        self._grid = _grid_for(grid, self._lmax, self._sampling)
+
+        degrees = self._degree_of_component
+        eigenvalues = degrees * (degrees + 1.0) / self._radius**2
+        self._laplacian_eigenvalues = eigenvalues
+        metric = (
+            np.ones(eigenvalues.size)
+            if order == 0.0
+            else (1.0 + self._length_scale**2 * eigenvalues) ** self._order
         )
+        super().__init__(metric)
 
-        if power_of_two:
-            n = int(np.log2(optimal_degree))
-            optimal_degree = 2 ** (n + 1)
-
-        return cls(optimal_degree, radius=radius, grid=grid, extend=extend)
-
-    @classmethod
-    def from_heat_kernel_prior(
-        cls,
-        kernel_scale: float,
-        /,
-        *,
-        radius: float = 1.0,
-        grid: str = "DH",
-        extend: bool = True,
-        rtol: float = 1e-6,
-        min_degree: int = 0,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-    ) -> Lebesgue:
-        """
-        Creates an instance of the L² space on the sphere, tuned to the expected
-        energy of a Heat Kernel prior measure.
-
-        Args:
-            kernel_scale: The length-scale parameter of the heat kernel covariance.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The pyshtools spatial grid format to use. Defaults to "DH".
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
-        """
-        return cls.from_covariance(
-            cls.heat_kernel(kernel_scale),
-            radius=radius,
-            grid=grid,
-            extend=extend,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-        )
-
-    @classmethod
-    def from_sobolev_kernel_prior(
-        cls,
-        kernel_order: float,
-        kernel_scale: float,
-        /,
-        *,
-        radius: float = 1.0,
-        grid: str = "DH",
-        extend: bool = True,
-        rtol: float = 1e-6,
-        min_degree: int = 0,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-    ) -> Lebesgue:
-        """
-        Creates an instance of the L² space on the sphere, tuned to the expected
-        energy of a Sobolev-type prior measure.
-
-        Args:
-            kernel_order: The smoothness order of the Sobolev prior measure.
-            kernel_scale: The length-scale parameter of the Sobolev prior measure.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The pyshtools spatial grid format to use. Defaults to "DH".
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
-        """
-        return cls.from_covariance(
-            cls.sobolev_kernel(kernel_order, kernel_scale),
-            radius=radius,
-            grid=grid,
-            extend=extend,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-        )
-
-    # ------------------------------------------------------ #
-    #                       Properties                       #
-    # ------------------------------------------------------ #
+    # ----------------------------------------------------------------- #
+    #                              Structure                            #
+    # ----------------------------------------------------------------- #
 
     @property
     def lmax(self) -> int:
-        """The maximum spherical harmonic truncation degree."""
+        """The maximum harmonic degree."""
         return self._lmax
 
     @property
     def radius(self) -> float:
-        """The radius of the sphere."""
+        """The sphere's radius."""
         return self._radius
 
     @property
-    def grid(self) -> str:
-        """The `pyshtools` grid type used for spatial representations."""
-        return self._grid
+    def order(self) -> float:
+        """The Sobolev order. Zero for a Lebesgue space."""
+        return self._order
 
     @property
-    def sampling(self) -> int:
-        """The sampling factor used for spatial representations."""
-        return self._sampling
+    def length_scale(self) -> float:
+        """The Sobolev length scale."""
+        return self._length_scale
+
+    @property
+    def grid_shape(self) -> tuple[int, int]:
+        """The shape of a field's values: latitudes by longitudes.
+
+        One row and one column more than the transform's grid when the space
+        is extended; see :attr:`extend`.
+        """
+        return self._grid.shape(self._extend)
+
+    @property
+    def _core_shape(self) -> tuple[int, int]:
+        """The grid the transforms and the quadrature act on."""
+        return self._grid.core_shape
+
+    @property
+    def grid(self) -> str:
+        """``"DH"`` or ``"GLQ"``: which sampling grid the fields live on."""
+        return self._grid.kind
 
     @property
     def extend(self) -> bool:
-        """True if the spatial grid includes both 0 and 360-degree longitudes."""
+        """Whether fields carry the wrap column and the south-pole row."""
         return self._extend
 
     @property
-    def normalization(self) -> str:
-        """The spherical harmonic normalization convention used ('ortho')."""
-        return self._normalization
+    def sampling(self) -> int:
+        """Grid columns per row: 1 for the square grid, 2 for the wide one."""
+        return self._sampling
 
     @property
-    def csphase(self) -> int:
-        """The Condon-Shortley phase convention used (1)."""
-        return self._csphase
+    def area(self) -> float:
+        """The sphere's surface area."""
+        return 4.0 * np.pi * self._radius**2
 
     @property
-    def grid_type(self) -> str:
+    def degrees(self) -> np.ndarray:
+        """The harmonic degree of each component."""
+        return self._packing[1]
+
+    @property
+    def orders(self) -> np.ndarray:
+        """The signed harmonic order of each component.
+
+        Non-negative for a cosine coefficient and negative for a sine one, so
+        that ``(degrees[i], orders[i])`` labels component ``i`` uniquely, in
+        the convention pyshtools uses. With :attr:`degrees` this is
+        the packing made public: a symbol depending on the order is written
+        against the two arrays and handed to ``spectral_operator``, and the
+        label of a component is read off them. :meth:`component_of` goes
+        the other way.
         """
-        Returns the pyshtools grid type.
+        parts, _, orders = self._packing
+        return np.where(parts == 0, orders, -orders)
+
+    def component_of(self, degree: Any, order: Any, /) -> Any:
+        """The position of the component with a given degree and signed order.
+
+        Vectorized: scalars give an integer, arrays give an array, so a whole
+        set of labels is placed at once.
+
+        Args:
+            degree: ``l``, at most ``lmax``.
+            order: ``m``, with ``|m| <= l``; negative for a sine coefficient.
+
+        Returns:
+            The index into the components.
+
+        Raises:
+            ValueError: for a label the space does not hold.
         """
-        return self.grid if self._sampling == 1 else "DH2"
+        degree = np.asarray(degree, dtype=int)
+        order = np.asarray(order, dtype=int)
+        if (
+            np.any(degree < 0)
+            or np.any(degree > self._lmax)
+            or np.any(np.abs(order) > degree)
+        ):
+            raise ValueError(
+                f"A label needs 0 <= |m| <= l <= {self._lmax}; got l = {degree}, "
+                f"m = {order}."
+            )
+        position = np.where(order >= 0, degree**2 + order, degree**2 + degree - order)
+        return int(position) if position.ndim == 0 else position
+
+    @property
+    def spatial_dimension(self) -> int:
+        """Two: a sphere is a two-dimensional surface."""
+        return 2
 
     @property
     def gaussian_curvature(self) -> float:
-        return 1.0 / (self.radius**2)
+        """``1 / radius^2``, constant over the sphere."""
+        return 1.0 / self._radius**2
 
-    # ------------------------------------------------------ #
-    #                    Public methods                      #
-    # ------------------------------------------------------ #
+    @property
+    def laplacian_eigenvalues(self) -> np.ndarray:
+        """``l (l + 1) / radius^2`` for each component."""
+        return self._laplacian_eigenvalues
 
-    def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
-        """
-        Returns an element of the space by projecting a given function.
-
-        Args:
-            f: A function that takes a point `(lat, lon)` and returns a value.
-        """
-        u = sh.SHGrid.from_zeros(
-            self.lmax, grid=self.grid, extend=self.extend, sampling=self._sampling
+    def _key(self) -> Hashable:
+        return (
+            self._lmax,
+            self._radius,
+            self._order,
+            # The length scale enters the metric only above order zero.
+            self._length_scale if self._order != 0.0 else None,
+            self._sampling,
+            self._extend,
+            self._grid.kind,
         )
-        for j, lon in enumerate(u.lons()):
-            for i, lat in enumerate(u.lats()):
-                u.data[i, j] = f((lat, lon))
 
-        return u
+    def _coordinate_key(self) -> Hashable:
+        """The grid, which the order and length scale do not touch.
 
-    def to_coefficients(self, u: sh.SHGrid) -> sh.SHCoeffs:
-        """Maps a function vector to its spherical harmonic coefficients."""
-        return u.expand(normalization=self.normalization, csphase=self.csphase)
-
-    def from_coefficients(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
-        """Maps spherical harmonic coefficients to a function vector."""
-        grid = self.grid if self._sampling == 1 else "DH2"
-        return ulm.expand(grid=grid, extend=self.extend)
-
-    def sample_power_measure(
-        self,
-        measure,
-        n_samples,
-        /,
-        *,
-        lmin=None,
-        lmax=None,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ):
+        Tagged by geometry rather than by ``type(self)``: ``Lebesgue`` and
+        ``Sobolev`` are thin subclasses over the same grid, and keying on the
+        concrete class would say two views of one field were different fields.
         """
-        Takes in a Gaussian measure on the space, draws n_samples from
-        and returns samples for the spherical harmonic power at degrees in
-        the indicated range.
-        """
+        return (
+            "sphere",
+            self._lmax,
+            self._radius,
+            self._sampling,
+            self._extend,
+            self._grid.kind,
+        )
 
-        lmin = 0 if lmin is None else lmin
-        lmax = self.lmax if lmax is None else min(self.lmax, lmax)
+    def __repr__(self) -> str:
+        kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
+        grid = ", extended" if self._extend else ""
+        if self._grid.kind != "DH":
+            grid = f", {self._grid.kind}" + grid
+        return f"Sphere(lmax={self._lmax}, radius={self._radius}, {kind}{grid})"
 
-        samples = measure.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
-
-        powers = []
-        for u in samples:
-            ulm = self.to_coefficients(u)
-            powers.append(ulm.spectrum(lmax=lmax, convention="power")[lmin:])
-
-        return powers
-
-    @staticmethod
-    def iris_stations(*, n_stations: int = None, include_names: bool = False):
-        """
-        Convenience method to retrieve a globally distributed set of
-        Global Seismograph Network (GSN) stations from IRIS.
-
-        Args:
-            n_stations: The number of random stations to return. If None,
-                        returns the entire available network (~177 stations).
-            include_names: If True, returns (Name, Latitude, Longitude).
-                           If False, returns (Latitude, Longitude) tuples.
-
-        Returns:
-            A list of tuples representing the station coordinates in degrees.
-        """
-        from pygeoinf.datasets import load_gsn_stations
-
-        return load_gsn_stations(n_stations=n_stations, include_names=include_names)
-
-    @staticmethod
-    def random_earthquakes(n_points: int, min_magnitude: float = 5.0):
-        """
-        Returns a random sample of real, sensible earthquake locations.
-
-        This provides a highly clustered, non-uniform spatial distribution
-        along tectonic boundaries, perfect for testing robust spatial operators.
-
-        Args:
-            n_points: The exact number of locations to return.
-            min_magnitude: The minimum magnitude threshold for the catalog.
-
-        Returns:
-            A list of (Latitude, Longitude) tuples in degrees.
-        """
-        from pygeoinf.datasets import sample_earthquakes
-
-        # The FDSN API returns (lat, lon, depth). We strip the depth
-        # since we are operating on the 2D surface of the sphere.
-        events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
-        return [(lat, lon) for lat, lon, depth in events]
-
-    # ------------------------------------------------------ #
-    #           Methods for SymmetricHilbertSpace            #
-    # ------------------------------------------------------ #
-
-    def index_to_integer(self, k: Tuple[int, int]) -> int:
-        l, m = k
-        if abs(m) > l or l < 0:
-            raise ValueError("Invalid spherical harmonic: |m| must be <= l, and l >= 0")
-
-        # Pure Python is much faster for scalars
-        return l**2 + m if m >= 0 else l**2 + l + abs(m)
-
-    def integer_to_index(self, i: int) -> Tuple[int, int]:
-        if i < 0:
-            raise ValueError("Index cannot be negative.")
-
-        # math.isqrt is vastly faster than np.floor(np.sqrt(i))
-        l = math.isqrt(i)
-        r = i - l**2
-        m = r if r <= l else l - r
-
-        return l, m
-
-    def laplacian_eigenvalue(self, k: Tuple[int, int]) -> float:
-        """
-        Returns the (l.m)-th eigenvalue of the Laplacian.
-
-        Args:
-            k = (l,m): The index of the eigenvalue to return.
-        """
-        l = k[0]
-        return l * (l + 1) / self.radius**2
-
-    def laplacian_eigenvector_squared_norm(self, k: Tuple[int, int]) -> float:
-        return self.radius**2
+    # ----------------------------------------------------------------- #
+    #                          Component packing                        #
+    # ----------------------------------------------------------------- #
 
     @cached_property
-    def _ylm_index_maps(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _packing(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """The flat ordering of the ``(2, lmax+1, lmax+1)`` coefficient array.
+
+        Degree by degree: the cosine coefficients for ``m`` from zero to ``l``,
+        then the sine coefficients for ``m`` from one to ``l``. That is
+        ``2l + 1`` per degree and ``(lmax + 1)^2`` in all, which is the
+        dimension of the space. Shared across instances, as it depends only on
+        ``lmax``.
         """
-        Gather indices mapping the packed associated-Legendre array (index
-        l(l+1)/2 + m) and the order tables onto the SHVector component
-        ordering (l^2 + m for m >= 0, l^2 + l + |m| for m < 0). Built once.
+        return _packing_for(self._lmax)
+
+    @cached_property
+    def _azimuthal(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Which components take a cosine, which a sine, and at which order."""
+        parts, _, orders = self._packing
+        cosine = np.flatnonzero(parts == 0)
+        sine = np.flatnonzero(parts == 1)
+        return cosine, sine, orders[cosine], orders[sine]
+
+    @cached_property
+    def _legendre_indices(self) -> np.ndarray:
+        """Where each component sits in pyshtools' packed Legendre array.
+
+        Depends only on ``lmax``, so it is shared between every space of that
+        truncation rather than rebuilt per instance, ``with_order`` and
+        ``with_degree`` being frequent sources of new spaces.
         """
-        lmax = self.lmax
-        dim = (lmax + 1) ** 2
-        pidx = np.empty(dim, dtype=np.intp)
-        midx = np.empty(dim, dtype=np.intp)
-        is_cos = np.empty(dim, dtype=bool)
-        for l in range(lmax + 1):
-            base = l * (l + 1) // 2
-            m = np.arange(l + 1)
-            pidx[l * l : l * l + l + 1] = base + m
-            midx[l * l : l * l + l + 1] = m
-            is_cos[l * l : l * l + l + 1] = True
-            pidx[l * l + l + 1 : (l + 1) ** 2] = base + m[1:]
-            midx[l * l + l + 1 : (l + 1) ** 2] = m[1:]
-            is_cos[l * l + l + 1 : (l + 1) ** 2] = False
-        return pidx, midx, is_cos
+        return _legendre_indices_for(self._lmax)
 
-    def laplacian_eigenvectors_at_point(self, point: tuple[float, float]) -> np.ndarray:
-        """
-        Values of all basis functions at a point, assembled from a single
-        Fortran Legendre call plus vectorized trigonometric factors. The
-        space fixes normalization='ortho'; if that is ever relaxed, dispatch
-        on it here (PlmON / PlmBar / PlmSchmidt for ortho / 4pi / schmidt).
-        """
-        latitude, longitude = point
-        pidx, midx, is_cos = self._ylm_index_maps
-        z = np.sin(np.deg2rad(latitude))  # cos(colatitude)
-        p = sh.legendre.PlmON(self.lmax, z, csphase=self.csphase)
-        m_phi = np.arange(self.lmax + 1) * np.deg2rad(longitude)
-        trig = np.where(is_cos, np.cos(m_phi)[midx], np.sin(m_phi)[midx])
-        return p[pidx] * trig
+    @property
+    def _degree_of_component(self) -> np.ndarray:
+        """The harmonic degree attached to each component."""
+        return self._packing[1].astype(float)
 
-    def random_point(self) -> Tuple[float, float]:
-        """Returns a random point as `[latitude, longitude]`."""
-        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
-        longitude = np.random.uniform(0.0, 360.0)
-        return (latitude, longitude)
+    # ----------------------------------------------------------------- #
+    #                        Vectors, which are grids                   #
+    # ----------------------------------------------------------------- #
 
-    def geodesic_distance(
-        self, p1: Tuple[float, float], p2: Tuple[float, float]
-    ) -> float:
-        """Returns the great-circle distance between two points on the sphere."""
-        v1, v2 = self._to_vector(*p1), self._to_vector(*p2)
-        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
-        omega = np.arccos(dot_product)
-        return float(self.radius * omega)
-
-    def geodesic_quadrature(
-        self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
-    ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
-        """Generates Gauss-Legendre quadrature points and weights along a great-circle arc."""
-
-        arc_length = self.geodesic_distance(p1, p2)
-        omega = arc_length / self.radius
-
-        if omega < 1e-10:
-            return [p1] * n_points, np.zeros(n_points)
-
-        if np.abs(omega - np.pi) < 1e-10:
-            raise ValueError(
-                "Points are antipodal; the great circle path is not unique."
-            )
-
-        v1, v2 = self._to_vector(*p1), self._to_vector(*p2)
-        x, w = np.polynomial.legendre.leggauss(n_points)
-
-        t_vals = (x + 1) / 2.0
-        scaled_weights = w * (arc_length / 2.0)
-
-        sin_omega = np.sin(omega)
-        points = []
-
-        for t in t_vals:
-            coeff1 = np.sin((1 - t) * omega) / sin_omega
-            coeff2 = np.sin(t * omega) / sin_omega
-            v_interp = coeff1 * v1 + coeff2 * v2
-            points.append(self._to_latlon(v_interp))
-
-        return points, scaled_weights
-
-    def geodesic_ball_quadrature(
-        self, center: Tuple[float, float], radius: float, n_points: int
-    ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
-        r"""Return a deterministic quadrature rule for a spherical cap.
-
-        The rule uses Gauss-Legendre nodes in the polar variable
-        $u = \cos(\gamma)$ and a uniform trapezoidal rule in azimuth on each
-        radial ring. The weights include the sphere area element, so their sum
-        equals the physical cap area.
-        """
-        if n_points <= 0:
-            raise ValueError("Geodesic-ball quadrature requires at least one point.")
-        if radius < 0.0 or radius > np.pi * self.radius:
-            raise ValueError(
-                "Geodesic-ball radius on the sphere must lie in [0, pi * radius]."
-            )
-        if radius <= 0.0:
-            return [center] * n_points, np.zeros(n_points)
-
-        angular_radius = radius / self.radius
-        cos_alpha = np.cos(angular_radius)
-        n_radial = min(n_points, max(1, int(np.sqrt(n_points))))
-        radial_nodes, radial_weights = np.polynomial.legendre.leggauss(n_radial)
-        interval_half_width = 0.5 * (1.0 - cos_alpha)
-        u_nodes = interval_half_width * (radial_nodes + 1.0) + cos_alpha
-        u_weights = interval_half_width * radial_weights
-        ring_radii = np.sqrt(np.clip(1.0 - u_nodes**2, 0.0, None))
-        ring_counts = self._distribute_ring_point_counts(n_points, ring_radii)
-
-        center_vector = self._to_vector(*center)
-        tangent_1, tangent_2 = self._tangent_frame(center_vector)
-
-        points: List[Tuple[float, float]] = []
-        weights: List[float] = []
-
-        for u_value, u_weight, ring_radius, ring_count in zip(
-            u_nodes, u_weights, ring_radii, ring_counts
-        ):
-            azimuths = 2.0 * np.pi * np.arange(ring_count, dtype=float) / ring_count
-            ring_vectors = u_value * center_vector[None, :] + ring_radius * (
-                np.cos(azimuths)[:, None] * tangent_1[None, :]
-                + np.sin(azimuths)[:, None] * tangent_2[None, :]
-            )
-            ring_vectors /= np.linalg.norm(ring_vectors, axis=1, keepdims=True)
-            points.extend(self._to_latlon(vec) for vec in ring_vectors)
-            point_weight = self.radius**2 * (2.0 * np.pi * u_weight / ring_count)
-            weights.extend([point_weight] * ring_count)
-
-        return points, np.asarray(weights)
-
-    def spherical_cap_integral(
-        self,
-        center: Tuple[float, float],
-        angular_radius: float,
-        /,
-        *,
-        normalize: bool = False,
-    ) -> LinearForm:
-        r"""Return the exact spherical-cap integral functional.
-
-        The returned form represents
-        $\int_C u(x)\,dS(x)$, where ``C`` is the spherical cap centered at
-        ``center`` with angular radius ``angular_radius``. If ``normalize`` is
-        true, the returned form represents the cap average
-        $|C|^{-1}\int_C u(x)\,dS(x)$.
-
-        The implementation uses ``pyshtools.SHCoeffs.from_cap`` to compute the
-        spherical-harmonic coefficients of the cap indicator exactly in the
-        truncated basis. The pyshtools cap is normalized to global average one,
-        so it is rescaled to either the physical cap indicator or normalized
-        cap average.
+    def grid_values(self, x: Any, /) -> np.ndarray:
+        """The field's values, reaching past the ``SHGrid`` wrapper.
 
         Args:
-            center: ``(latitude, longitude)`` cap center in degrees.
-            angular_radius: Cap radius in radians on the unit sphere.
-            normalize: If true, return the cap average instead of the raw
-                surface integral.
+            x: a field of this space.
+
+        Returns:
+            The grid values, of shape :attr:`grid_shape`. Not a copy: this is
+            the grid's own array.
+
+        A bare array is accepted too, and returned as it is. That is a
+        deliberate kindness at the boundary — grid values arrive from all
+        sorts of places — and not an invitation to treat the two as
+        interchangeable: :meth:`from_components` and everything downstream of
+        it produce ``SHGrid``.
         """
-        if angular_radius < 0.0 or angular_radius > np.pi:
-            raise ValueError("Spherical cap angular radius must lie in [0, pi].")
+        if isinstance(x, np.ndarray):
+            return np.asarray(x, dtype=float)
+        return np.asarray(x.data, dtype=float)
 
-        cap_area_unit_sphere = 2.0 * np.pi * (1.0 - np.cos(angular_radius))
-        if cap_area_unit_sphere <= 0.0:
-            if normalize:
-                raise ValueError("Cannot normalize a zero-area spherical cap.")
-            return LinearForm(self, components=np.zeros(self.dim))
+    def _core_values(self, x: Any, /) -> np.ndarray:
+        """The values on the transform's grid, checked for shape.
 
-        cap_coefficients = sh.SHCoeffs.from_cap(
-            np.degrees(angular_radius),
-            self.lmax,
-            clat=center[0],
-            clon=center[1],
-            normalization=self.normalization,
-            csphase=self.csphase,
-            kind="real",
-            degrees=True,
-        )
-        components = self._coefficient_to_component(cap_coefficients)
+        On an extended space this drops the wrap column and the pole row,
+        which the transforms never see; on a plain one it is
+        :meth:`grid_values`. A view, not a copy.
 
-        if normalize:
-            components = components / (4.0 * np.pi)
-        else:
-            components = (
-                components * self.radius**2 * cap_area_unit_sphere / (4.0 * np.pi)
+        Raises:
+            ValueError: if the field is not this sphere's shape.
+        """
+        values = self.grid_values(x)
+        if values.shape != self.grid_shape:
+            raise ValueError(
+                f"A field has shape {self.grid_shape}, got {values.shape}."
             )
+        if self._extend:
+            rows, columns = self._core_shape
+            return values[:rows, :columns]
+        return values
 
-        return LinearForm(self, components=components)
+    def _field_from_core(self, core: np.ndarray, /) -> Any:
+        """A field from values on the transform's grid, padded if extended.
 
-    def spherical_cap_average(
-        self, center: Tuple[float, float], angular_radius: float, /
-    ) -> LinearForm:
-        r"""Return the exact average functional over a spherical cap."""
-        return self.spherical_cap_integral(
-            center,
-            angular_radius,
-            normalize=True,
-        )
-
-    def geodesic_ball_integral(
-        self,
-        center: Tuple[float, float],
-        radius: float,
-        /,
-        *,
-        n_points: Optional[int] = None,
-        normalize: bool = False,
-    ) -> LinearForm:
-        r"""Return the exact integral over a geodesic ball on the sphere.
-
-        The geodesic radius is given in the same physical units as
-        ``geodesic_distance``. On a sphere this corresponds to a spherical cap
-        with angular radius ``radius / self.radius``.
+        The wrap column repeats the first; the pole row is the pole value
+        the quadrature implies, from :attr:`_south_pole_kernel`.
         """
-        if n_points is not None:
-            return super().geodesic_ball_integral(
-                center,
-                radius,
-                n_points=n_points,
-                normalize=normalize,
-            )
+        if not self._extend:
+            return self._own_grid_values(core)
+        rows, columns = self._core_shape
+        padded = np.empty(self.grid_shape)
+        padded[:rows, :columns] = core
+        padded[:rows, columns] = core[:, 0]
+        if self._grid.has_pole_row:
+            padded[rows, :] = float(self._south_pole_kernel @ core.mean(axis=1))
+        return self._own_grid_values(padded)
 
-        angular_radius = radius / self.radius
-        return self.spherical_cap_integral(
-            center,
-            angular_radius,
-            normalize=normalize,
-        )
+    def from_grid_values(self, values: np.ndarray, /) -> Any:
+        """A field holding the given values.
 
-    def pairs_within_distance(
-        self, points: List[Tuple[float, float]], max_distance: float
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # 1. Convert all (lat, lon) points to 3D Cartesian vectors
-        vecs = (
-            np.array([self._to_vector(lat, lon) for lat, lon in points]) * self.radius
-        )
+        Args:
+            values: an array of shape :attr:`grid_shape`.
 
-        # 2. Build the K-D Tree
-        tree = cKDTree(vecs)
+        Returns:
+            An ``SHGrid`` over a copy of those values -- the caller's array is
+            not adopted, and a later in-place operation on the field does not
+            reach back into it.
 
-        # 3. Map geodesic max distance to Euclidean chord distance
-        # d_chord = 2 * R * sin(d_geodesic / (2R))
-        max_chord = 2.0 * self.radius * np.sin(max_distance / (2.0 * self.radius))
-
-        # 4. Query the tree (returns a sparse DOK matrix)
-        dok = tree.sparse_distance_matrix(tree, max_chord)
-        coo = dok.tocoo()
-
-        # 5. Convert chord distances back to geodesic distances
-        # d_geodesic = 2 * R * arcsin(d_chord / (2R))
-        ratio = np.clip(coo.data / (2.0 * self.radius), -1.0, 1.0)
-        geo_dists = 2.0 * self.radius * np.arcsin(ratio)
-
-        # Note: sparse_distance_matrix explicitly drops zero-distance pairs (the diagonal!)
-        # We must manually inject the diagonal back in for distance = 0.0
-        n = len(points)
-        rows = np.concatenate([coo.row, np.arange(n)])
-        cols = np.concatenate([coo.col, np.arange(n)])
-        final_dists = np.concatenate([geo_dists, np.zeros(n)])
-
-        return rows, cols, final_dists
-
-    def with_degree(self, degree: int) -> Lebesgue:
-        return Lebesgue(degree, radius=self.radius, grid=self.grid, extend=self.extend)
-
-    def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
+        Raises:
+            ValueError: if the shape is wrong.
         """
-        Returns the transfer operator from this space to one with a different degree.
+        return self._own_grid_values(np.array(values, dtype=float))
 
-        This operator leverages the hierarchical nature of the 1D SH vector to
-        efficiently truncate or zero-pad the coefficients.
+    def _own_grid_values(self, values: np.ndarray, /) -> Any:
+        """An ``SHGrid`` over an array this space has just allocated.
+
+        Wraps with ``SHGrid.from_array(..., copy=False)``, which is safe only
+        because the array is one this module made and holds the only
+        reference to. Wrapping a caller's array this way would let ``axpy``
+        write through the field into it, which is why
+        :meth:`from_grid_values` copies first.
         """
-        codomain = self.with_degree(target_degree)
+        from pyshtools import SHGrid
 
-        def mapping(u: sh.SHGrid) -> sh.SHGrid:
-            vec_in = self.to_components(u)
-            target_size = (target_degree + 1) ** 2
+        array = np.asarray(values, dtype=float)
+        if array.shape != self.grid_shape:
+            raise ValueError(f"A field has shape {self.grid_shape}, got {array.shape}.")
+        return SHGrid.from_array(array, grid=self._grid.kind, copy=False)
 
-            if target_size > vec_in.size:
-                vec_out = np.pad(vec_in, (0, target_size - vec_in.size))
-            else:
-                vec_out = vec_in[:target_size]
+    def copy(self, x: Any) -> Any:
+        """An independent copy of the field."""
+        return self._own_grid_values(self.grid_values(x).copy())
 
-            return codomain.from_components(vec_out)
-
-        def adjoint_mapping(v: sh.SHGrid) -> sh.SHGrid:
-            vec_in = codomain.to_components(v)
-            target_size = (self.lmax + 1) ** 2
-
-            if target_size > vec_in.size:
-                vec_out = np.pad(vec_in, (0, target_size - vec_in.size))
-            else:
-                vec_out = vec_in[:target_size]
-
-            return self.from_components(vec_out)
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    def invariant_covariance_function(
-        self, spectral_variances: np.ndarray
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        degree_variances = np.zeros(self.lmax + 1)
-        for l in range(self.lmax + 1):
-            idx = self.index_to_integer((l, 0))
-            degree_variances[l] = spectral_variances[idx]
-
-        # Spherical harmonic addition theorem coefficients:
-        # (2l + 1) / (4 * pi * R^2)
-        coeffs = (
-            degree_variances
-            * (2 * np.arange(self.lmax + 1) + 1)
-            / (4 * np.pi * self.radius**2)
-        )
-
-        def cov_evaluator(distances: np.ndarray) -> np.ndarray:
-            cos_theta = np.cos(distances / self.radius)
-            return np.polynomial.legendre.legval(cos_theta, coeffs)
-
-        return cov_evaluator
-
-    def degree_multiplicity(self, degree: int) -> int:
-        return 2 * degree + 1
-
-    def representative_index(self, degree: int) -> Tuple[int, int]:
-        return (degree, 0)
-
-    # ------------------------------------------------------ #
-    #                 Methods for HilbertSpace               #
-    # ------------------------------------------------------ #
-
-    def to_components(self, u: sh.SHGrid) -> np.ndarray:
-        coeff = self.to_coefficients(u)
-        return self._coefficient_to_component(coeff)
-
-    def from_components(self, c: np.ndarray) -> sh.SHGrid:
-        coeff = self._component_to_coefficients(c)
-        return self.from_coefficients(coeff)
-
-    def ax(self, a: float, x: sh.SHGrid) -> None:
-        """
-        Custom in-place ax implementation for pyshtools objects.
-        x := a*x
-        """
-        x.data *= a
-
-    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
-        """
-        Custom in-place axpy implementation for pyshtools objects.
-        y := a*x + y
-        """
-        y.data += a * x.data
-
-    def __eq__(self, other: object) -> bool:
-        """
-        Checks for mathematical equality with another Sobolev space on a sphere.
-
-        Two spaces are considered equal if they are of the same type and have
-        the same defining parameters (kmax, order, scale, and radius).
-        """
-        if not isinstance(other, Lebesgue):
-            return NotImplemented
-
-        return (
-            self.lmax == other.lmax
-            and self.radius == other.radius
-            and self.grid == other.grid
-            and self.extend == other.extend
-        )
-
-    def is_element(self, x: Any) -> bool:
-        """
-        Checks if an object is a valid element of the space.
-        """
-        if not isinstance(x, sh.SHGrid):
-            return False
-        if not x.lmax == self.lmax:
-            return False
-        if not x.grid == self.grid_type:
-            return False
-        if not x.extend == self.extend:
-            return False
-        return True
-
-    # ------------------------------------------------------ #
-    #                 Methods for HilbertModule              #
-    # ------------------------------------------------------ #
-
-    def vector_multiply(self, x1: sh.SHGrid, x2: sh.SHGrid) -> sh.SHGrid:
-        """
-        Computes the pointwise product of two functions.
-        """
-        return x1 * x2
-
-    def vector_sqrt(self, x: sh.SHGrid) -> sh.SHGrid:
-        """
-        Returns the pointwise square root of a function.
-        """
-        y = x.copy()
-        y.data = np.sqrt(x.data)
+    def axpy(self, a: float, x: Any, y: Any) -> Any:
+        """``y += a x``, in place on the grid's own array."""
+        y.data += a * self.grid_values(x)
         return y
 
-    # ------------------------------------------------------ #
-    #                   Additional methods                   #
-    # ------------------------------------------------------ #
+    def scale_inplace(self, a: float, x: Any) -> Any:
+        """``x *= a``, in place."""
+        x.data *= a
+        return x
 
-    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
-        r"""
-        Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
+    def inner_product(self, x: Any, y: Any) -> float:
+        r"""``(x, y)``, by the grid's own quadrature on a Lebesgue space.
 
-        The operator maps an element of the Hilbert space to a vector in \(\mathbb{R}^k\).
-        The coefficients in the output vector follow the native pyshtools ordering:
-        ordered by degree $l$ (major), and for each degree, the order $m$ is sorted
-        as $0, 1, \dots, l, -1, \dots, -l$.
+        The ``L2`` inner product is an integral, and the grid comes with a
+        quadrature that integrates it exactly. Analysis on this grid *is*
+        that quadrature -- coefficient ``k`` is
+        ``sum_j w_j sum_i phi_k(p_ji) v_ji`` -- so with ``S`` synthesis and
+        ``W`` the cell weights, ``A == S^T W`` and ``A S == I``, whence
+        ``S^T W S == I`` and
 
-        Args:
-            lmax: The maximum spherical harmonic degree to include in the output.
-            lmin: The minimum spherical harmonic degree to include. Defaults to 0.
+        .. code-block:: text
 
-        Returns:
-            A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
-        """
-        vector_size = (lmax + 1) ** 2 - lmin**2
-        codomain = EuclideanSpace(vector_size)
+            (x, y) == (A x) . (A y) == sum_j w_j sum_i x_ji y_ji
 
-        def mapping(u: sh.SHGrid) -> np.ndarray:
-            vec = self.to_components(u)
-            target_size = (lmax + 1) ** 2
+        for fields in the span of the basis, with no transform at all.
 
-            if target_size > vec.size:
-                vec = np.pad(vec, (0, target_size - vec.size))
-            else:
-                vec = vec[:target_size]
+        **Where this and the component route part.** A pointwise product is
+        left on the grid, untruncated, and a grid array outside the span has a
+        projection but no equal in the span. If *both* arguments are such
+        arrays, the quadrature integrates the product of what the grid holds,
+        while the component route integrates the product of the two
+        projections. The quadrature is the more accurate of the two: what the
+        grid holds is not discarded on the way past. With either argument in
+        the span the two agree exactly, which covers every inner product this
+        package takes.
 
-            # Truncate lower degrees if lmin > 0
-            return vec[lmin**2 :] if lmin > 0 else vec
-
-        def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
-            # Pad missing lower degrees if lmin > 0
-            vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
-            target_size = (self.lmax + 1) ** 2
-
-            if target_size > vec.size:
-                vec = np.pad(vec, (0, target_size - vec.size))
-            else:
-                vec = vec[:target_size]
-
-            return self.from_components(vec) / self.radius**2
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
-        r"""
-        Returns a LinearOperator mapping a vector of coefficients to a function.
-
-        The operator maps a vector in \(\mathbb{R}^k\) to an element of the Hilbert space.
-        The input vector must follow the native pyshtools ordering: ordered by
-        degree $l$ (major), and for each degree, the order $m$ is sorted as
-        $0, 1, \dots, l, -1, \dots, -l$.
+        On a Sobolev space there is no such form -- the metric weights the
+        modes and the grid knows nothing of that -- so the base class's
+        component route is used.
 
         Args:
-            lmax: The maximum spherical harmonic degree expected in the input.
-            lmin: The minimum spherical harmonic degree expected. Defaults to 0.
+            x: one field.
+            y: the other.
 
         Returns:
-            A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
+            The inner product.
         """
-        vector_size = (lmax + 1) ** 2 - lmin**2
-        domain = EuclideanSpace(vector_size)
-
-        def mapping(data: np.ndarray) -> sh.SHGrid:
-            # Pad missing lower degrees if lmin > 0
-            vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
-            target_size = (self.lmax + 1) ** 2
-
-            if target_size > vec.size:
-                vec = np.pad(vec, (0, target_size - vec.size))
-            else:
-                vec = vec[:target_size]
-
-            return self.from_components(vec)
-
-        def adjoint_mapping(u: sh.SHGrid) -> np.ndarray:
-            vec = self.to_components(u)
-            target_size = (lmax + 1) ** 2
-
-            if target_size > vec.size:
-                vec = np.pad(vec, (0, target_size - vec.size))
-            else:
-                vec = vec[:target_size]
-
-            # Truncate lower degrees if lmin > 0
-            vec = vec[lmin**2 :] if lmin > 0 else vec
-            return vec * self.radius**2
-
-        return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
-
-    def random_domain_points(
-        self, n: int, /, *, keep_ocean: bool = True, resolution: str = "110m"
-    ) -> List[Tuple[float, float]]:
-        """
-        Generates a list of random points strictly bounded to either the land or the ocean.
-
-        This uses Cartopy's Natural Earth geometries and Shapely's spatial indexing
-        to perform ultra-fast rejection sampling.
-
-        Args:
-            n: The exact number of points to generate.
-            keep_ocean: If True, returns only ocean points. If False, returns only land points.
-            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
-
-        Returns:
-            A list of (latitude, longitude) tuples in degrees.
-        """
-
-        # 1. Fetch and prep the land geometry
-        shpfilename = shpreader.natural_earth(
-            resolution=resolution, category="physical", name="land"
+        if self._order != 0.0:
+            return super().inner_product(x, y)
+        return float(
+            np.einsum(
+                "j,ji,ji->",
+                self._quadrature,
+                self._core_values(x),
+                self._core_values(y),
+            )
         )
-        reader = shpreader.Reader(shpfilename)
-        combined_land = sgeom.MultiPolygon(list(reader.geometries()))
-        prepared_land = prep(combined_land)
 
-        valid_points = []
-
-        # Earth is ~71% ocean and ~29% land. We over-generate our batches
-        # to ensure we hit our target 'n' in as few loop iterations as possible.
-        over_generate_factor = 1.5 if keep_ocean else 3.5
-
-        while len(valid_points) < n:
-            needed = n - len(valid_points)
-            batch_size = max(10, int(needed * over_generate_factor))
-
-            # Generate a raw batch using the standard sphere method
-            batch = self.random_points(batch_size)
-
-            for lat, lon in batch:
-                # Wrap [0, 360] to [-180, 180] strictly for Shapely's geometry bounds
-                wrapped_lon = (lon + 180) % 360 - 180
-                point = sgeom.Point(wrapped_lon, lat)
-
-                is_on_land = prepared_land.contains(point)
-
-                if keep_ocean and not is_on_land:
-                    valid_points.append((lat, lon))
-                elif not keep_ocean and is_on_land:
-                    valid_points.append((lat, lon))
-
-                if len(valid_points) == n:
-                    break
-
-        return valid_points
-
-    def domain_mask(
-        self, /, *, keep_ocean: bool = False, resolution: str = "110m"
-    ) -> "sh.SHGrid":
-        """
-        Generates a spatial mask that equals 1.0 in the specified domain
-        and 0.0 outside of it.
+    def squared_norm(self, x: Any) -> float:
+        """``(x, x)``, by the same quadrature as :meth:`inner_product`.
 
         Args:
-            keep_ocean: If True, the mask is 1.0 on the ocean and 0.0 on land.
-                        If False, the mask is 1.0 on land and 0.0 on the ocean.
-            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+            x: a field.
 
         Returns:
-            An SHGrid object representing the mask.
+            The squared norm.
         """
+        if self._order != 0.0:
+            return super().squared_norm(x)
+        values = self._core_values(x)
+        return float(np.einsum("j,ji,ji->", self._quadrature, values, values))
 
-        # 1. Fetch and prep the land geometry
-        shpfilename = shpreader.natural_earth(
-            resolution=resolution, category="physical", name="land"
-        )
-        reader = shpreader.Reader(shpfilename)
-        combined_land = sgeom.MultiPolygon(list(reader.geometries()))
+    def to_components(self, x: Any) -> np.ndarray:
+        """Harmonic coefficients of a field, orthonormal in ``L2``.
 
-        # 'prep' makes point-in-polygon queries significantly faster
-        prepared_land = prep(combined_land)
+        Args:
+            x: a field, as an ``SHGrid`` or a bare array of grid values.
 
-        # 2. Define the indicator function
-        def mask_func(point: Tuple[float, float]) -> float:
-            lat, lon = point
+        Returns:
+            One coefficient per component.
 
-            # Wrap [0, 360] to [-180, 180] strictly for Shapely's geometry bounds
-            wrapped_lon = (lon + 180) % 360 - 180
-            p = sgeom.Point(wrapped_lon, lat)
+        Raises:
+            ValueError: if the grid is not this sphere's shape.
+        """
+        coefficients = self._grid.analysis(self._core_values(x))
+        parts, degrees, orders = self._packing
+        return self._radius * coefficients[parts, degrees, orders]
 
-            is_on_land = prepared_land.contains(p)
+    def from_components(self, c: np.ndarray) -> Any:
+        """The field with the given harmonic coefficients.
 
-            if keep_ocean:
-                return 0.0 if is_on_land else 1.0
-            else:
-                return 1.0 if is_on_land else 0.0
+        Args:
+            c: one coefficient per component.
 
-        # 3. Project the indicator function onto the space's SHGrid
-        return self.project_function(mask_func)
+        Returns:
+            The field, as an ``SHGrid``.
 
-    # ------------------------------------------------------ #
-    #                      Private methods                   #
-    # ------------------------------------------------------ #
-
-    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
-        """Maps spherical harmonic coefficients to a component vector."""
-        return sh.shio.SHCilmToVector(ulm.coeffs)
-
-    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
-        """Maps a component vector to spherical harmonic coefficients."""
-        coeffs = sh.shio.SHVectorToCilm(c)
-        return sh.SHCoeffs.from_array(
-            coeffs, normalization=self.normalization, csphase=self.csphase
-        )
+        Raises:
+            ValueError: if the component count is not the dimension.
+        """
+        components = np.asarray(c, dtype=float)
+        if components.shape != (self.dim,):
+            raise ValueError(f"Expected {self.dim} components, got {components.shape}.")
+        coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
+        parts, degrees, orders = self._packing
+        coefficients[parts, degrees, orders] = components / self._radius
+        return self._own_grid_values(self._grid.synthesis(coefficients, self._extend))
 
     @staticmethod
-    def _to_vector(lat: float, lon: float) -> np.ndarray:
-        """Converts a latitude/longitude pair (in degrees) to a 3D unit vector."""
-        lat_rad, lon_rad = np.radians(lat), np.radians(lon)
+    def truncation_degree_for(
+        order: float,
+        length_scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        rtol: float = 1.0e-8,
+        power_of_two: bool = False,
+    ) -> int:
+        """The degree at which a Sobolev spectrum has run out.
+
+        For choosing a truncation from the prior rather than by habit, and
+        *before* there is a space to ask -- which is the point of it being
+        static: the answer is what you pass to the constructor.
+
+        The rule: sum the Sobolev weights degree by degree, one term per
+        degree, and stop when the newest term is a fraction ``rtol`` of the
+        running total.
+
+        One term per degree, note, not weighted by the ``2l + 1`` modes a
+        degree holds. :meth:`~pygeoinf.symmetric_space.base.SymmetricSpace.estimate_truncation_degree`
+        answers the weighted question, which is the one about the field's
+        energy, and the two are far apart where the spectrum decays slowly: at
+        order 1.5 and length scale 0.5 this returns 721 and the weighted rule
+        wants 13833. The weighted rule is the honest one for power and this one
+        is the usable one for a grid.
+
+        Args:
+            order: the Sobolev order. Must exceed one -- below that the total
+                power does not converge and no truncation is enough.
+            length_scale: the length at which the weight turns over.
+            radius: the sphere's radius, in the same units.
+            rtol: the relative tolerance to stop at.
+            power_of_two: round up to a power of two, which some transforms
+                prefer.
+
+        Returns:
+            The degree.
+
+        Raises:
+            ValueError: if the order is not above one, or the tolerance is not
+                in ``(0, 1)``.
+            RuntimeError: if it has not converged by degree 10000.
+        """
+        if order <= 1.0:
+            raise ValueError(
+                f"The order must exceed one for the power to converge, got " f"{order}."
+            )
+        if not 0.0 < rtol < 1.0:
+            raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
+        if length_scale <= 0.0 or radius <= 0.0:
+            raise ValueError("The length scale and radius must be positive.")
+
+        scale = (length_scale / radius) ** 2
+        total, degree, relative = 1.0, 0, 1.0
+        while relative > rtol:
+            degree += 1
+            term = (1.0 + scale * degree * (degree + 1)) ** -order
+            total += term
+            relative = term / total
+            if degree > 10000:
+                raise RuntimeError(
+                    "No truncation below degree 10000 reaches this tolerance."
+                )
+
+        if power_of_two:
+            degree = 2 ** (int(np.log2(degree)) + 1)
+        return degree
+
+    def to_coefficients(self, x: Any, /) -> Any:
+        """The field's coefficients as a pyshtools ``SHCoeffs``.
+
+        The counterpart of :meth:`grid_values` for coefficients: components
+        are this library's packed real vector, and this is the object
+        pyshtools' own plotting, rotation and spectrum routines take, which a
+        caller with an existing pyshtools workflow wants rather than the
+        packed vector.
+
+        These are pyshtools' orthonormal coefficients, with no Condon-Shortley
+        phase, on their own scale. The relation to components is a single
+        factor: a component is ``radius`` times the coefficient it comes from,
+        read through the packing, and :meth:`from_coefficients` inverts this
+        exactly.
+
+        Args:
+            x: a field on this sphere.
+
+        Returns:
+            An ``SHCoeffs`` of degree ``lmax``.
+
+        Raises:
+            ValueError: if the grid is not this sphere's shape.
+        """
+        from pyshtools import SHCoeffs
+
+        return SHCoeffs.from_array(
+            self._grid.analysis(self._core_values(x)),
+            normalization="ortho",
+            csphase=_NO_CONDON_SHORTLEY,
+        )
+
+    def from_coefficients(self, coefficients: Any, /) -> Any:
+        """The field with the given ``SHCoeffs``.
+
+        The inverse of :meth:`to_coefficients`. Coefficients above this space's
+        ``lmax`` are dropped and missing ones taken as zero, so a set expanded
+        elsewhere can be read in without matching degrees up first.
+
+        Args:
+            coefficients: an ``SHCoeffs``, or a ``(2, l + 1, l + 1)`` array in
+                pyshtools' orthonormal convention.
+
+        Returns:
+            A field on this sphere.
+
+        Raises:
+            ValueError: if the array is not shaped ``(2, l + 1, l + 1)``.
+        """
+        array = np.asarray(getattr(coefficients, "coeffs", coefficients), dtype=float)
+        if array.ndim != 3 or array.shape[0] != 2 or array.shape[1] != array.shape[2]:
+            raise ValueError(
+                f"Coefficients have shape (2, l + 1, l + 1), got {array.shape}."
+            )
+        padded = np.zeros((2, self._lmax + 1, self._lmax + 1))
+        shared = min(array.shape[1], self._lmax + 1)
+        padded[:, :shared, :shared] = array[:, :shared, :shared]
+        return self.from_components(self._radius * padded[self._packing])
+
+    # ----------------------------------------------------------------- #
+    #                          Points and grids                         #
+    # ----------------------------------------------------------------- #
+
+    @cached_property
+    def colatitudes(self) -> np.ndarray:
+        """The grid colatitudes, in radians, from the pole downwards.
+
+        Ends at the south pole on an extended space.
+        """
+        return self._grid.colatitudes(self._extend)
+
+    @cached_property
+    def longitudes(self) -> np.ndarray:
+        """The grid longitudes, in radians. Ends at 360 degrees on an extended space."""
+        return self._grid.longitudes(self._extend)
+
+    @cached_property
+    def _core_colatitudes(self) -> np.ndarray:
+        """The transform grid's colatitudes, without the pole row."""
+        return self._grid.core_colatitudes
+
+    @cached_property
+    def _core_longitudes(self) -> np.ndarray:
+        """The transform grid's longitudes, without the wrap column."""
+        return self._grid.core_longitudes
+
+    def plotting_grid(self, x: Any, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """A field's values on the transform's grid, with the grid's angles.
+
+        What a map of the field is drawn from: on an extended space the wrap
+        column and the pole row are left out, since they repeat the first
+        column and the pole value, and a plotter closes the seam from the
+        angles itself; on a plain space it is the whole grid.
+
+        Args:
+            x: a field of this space.
+
+        Returns:
+            ``(colatitudes, longitudes, values)``: the colatitudes and
+            longitudes in radians, and the values as a ``(colatitudes,
+            longitudes)`` array, a copy the caller may edit.
+
+        Raises:
+            ValueError: if the field is not this sphere's shape.
+        """
+        return (
+            self._core_colatitudes.copy(),
+            self._core_longitudes.copy(),
+            self._core_values(x).copy(),
+        )
+
+    def basis_at(self, point: Any, /) -> np.ndarray:
+        """The value of each orthonormal harmonic at a point.
+
+        Args:
+            point: a ``(latitude, longitude)`` pair in degrees.
+        """
+        from pyshtools.legendre import PlmON
+
+        position = self._radians(point)
+        colatitude, longitude = float(position[0]), float(position[1])
+
+        legendre = PlmON(self._lmax, np.cos(colatitude), csphase=_NO_CONDON_SHORTLEY)
+        parts, _, orders = self._packing
+        indices = self._legendre_indices
+        angle = orders * longitude
+        harmonics = legendre[indices] * np.where(
+            parts == 0, np.cos(angle), np.sin(angle)
+        )
+        # Components carry a factor of the radius, so the dual basis carries
+        # its reciprocal: the basis functions are orthonormal on this sphere,
+        # not on the unit one.
+        return harmonics / self._radius
+
+    def basis_matrix(
+        self, points: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> np.ndarray:
+        """The basis evaluated at many points, as a ``(len(points), dim)`` array.
+
+        The batched form of :meth:`basis_at`, on which the direct routes of
+        :meth:`evaluate` and :meth:`accumulate` rest. Only the Legendre tables
+        are computed point by point; the indexing and the trigonometry, which
+        dominate a loop over ``basis_at``, are vectorized.
+
+        Rows are ordered as ``points``, columns as the components.
+
+        Args:
+            points: where to evaluate the basis.
+            n_jobs: workers for the Legendre tables, which are the per-point
+                cost; the points are split into one contiguous piece per
+                worker. Serial by default.
+        """
+        from ..parallel import parallel_map, resolve_jobs
+
+        positions = self.prepare_points(points).data
+        colatitudes = positions[:, 0]
+        workers = resolve_jobs(n_jobs)
+        if workers == 1 or colatitudes.size < 2 * workers:
+            result = self._legendre_rows(colatitudes)
+        else:
+            pieces = np.array_split(colatitudes, workers)
+            result = np.vstack(parallel_map(self._legendre_rows, pieces, n_jobs=n_jobs))
+
+        # The azimuthal factor depends only on the order m, of which there are
+        # lmax + 1 values rather than dim. Computing cos(m phi) and sin(m phi)
+        # once per order and gathering is the difference between a few hundred
+        # thousand trigonometric evaluations and tens of millions.
+        degrees = np.arange(self._lmax + 1)
+        angles = positions[:, 1][:, None] * degrees[None, :]
+        cosine, sine = np.cos(angles), np.sin(angles)
+        cosine_columns, sine_columns, cosine_orders, sine_orders = self._azimuthal
+        result[:, cosine_columns] *= cosine[:, cosine_orders]
+        result[:, sine_columns] *= sine[:, sine_orders]
+        return result / self._radius
+
+    def _legendre_rows(self, colatitudes: np.ndarray, /) -> np.ndarray:
+        """The Legendre part of the basis at each colatitude, one row each."""
+        from pyshtools.legendre import PlmON
+
+        indices = self._legendre_indices
+        result = np.empty((colatitudes.size, indices.size))
+        for row, colatitude in enumerate(colatitudes):
+            table = PlmON(self._lmax, np.cos(colatitude), csphase=_NO_CONDON_SHORTLEY)
+            result[row] = table[indices]
+        return result
+
+    def _in_chunks(self, points: Sequence[Any], /) -> Any:
+        """Split points so one basis matrix at a time stays a sensible size.
+
+        The chunks stay prepared, so the conversion is not redone per chunk.
+        """
+        prepared = self.prepare_points(points)
+        per_chunk = max(1, _CHUNK_ENTRIES // max(self.dim, 1))
+        for start in range(0, len(prepared), per_chunk):
+            stop = start + per_chunk
+            yield PreparedPoints(
+                prepared.points[start:stop], data=prepared.data[start:stop]
+            )
+
+    # ----------------------------------------------------------------- #
+    #                    The double Fourier sphere                      #
+    # ----------------------------------------------------------------- #
+
+    @cached_property
+    def _quadrature(self) -> np.ndarray:
+        """The transform's own quadrature weight for each grid row.
+
+        On a Gauss-Legendre grid these are the quadrature's weights in closed
+        form. On Driscoll-Healy the *shape* is Driscoll and Healy's own
+        latitudinal weighting, which is what ``SHExpandDH`` uses, so it is the
+        transform's weighting by construction rather than by coincidence. The
+        *scale* is then fixed by probing the transform on a single row, as
+        :meth:`_quadrature_from_transform` does on every row.
+
+        One probe rather than none, because the scale is not free: the pole
+        correction in :meth:`_synthesis_adjoint` carries no weight of its own,
+        so a common factor on these does not cancel against it. And one rather
+        than a closed-form constant, because that constant is pyshtools'
+        normalization convention, which is exactly the kind of thing this
+        class should not be asserting from memory.
+
+        **The pole row's weight is zero** on Driscoll-Healy, since the grid
+        samples colatitude on ``[0, pi)`` and the quadrature gives the pole no
+        area. Anything sitting there is invisible to the transform and has to
+        be added back by hand.
+        """
+        from pyshtools.utils import DHaj
+
+        # Shared between spaces that would compute the same weights. The
+        # Sobolev order is not among them -- the weights are the transform's,
+        # and the transform does not know the metric -- so with_order(0.0),
+        # which every multiplication_operator call makes, gets them free.
+        key = (self._grid.kind, self._lmax, self._sampling, self._radius)
+        cached = _QUADRATURES.get(key)
+        if cached is not None:
+            return cached
+
+        closed_form = self._grid.row_weights(self._radius)
+        if closed_form is not None:
+            # Gauss-Legendre: the weights are the quadrature's own, exact to
+            # degree 2 lmax, and no calibration is needed.
+            weights = np.array(closed_form)
+            weights.flags.writeable = False
+            _QUADRATURES[key] = weights
+            return weights
+
+        rows, columns = self._core_shape
+        shape = DHaj(rows)
+
+        # Calibrate against the transform itself, on the first row that
+        # carries any weight at all.
+        row = int(np.flatnonzero(shape)[0])
+        indicator = np.zeros(self.grid_shape)
+        indicator[row] = 1.0
+        reference = float(self.basis_at(self.reference_point)[0])
+        measured = self.to_components(indicator)[0] / (columns * reference)
+        weights = shape * (measured / shape[row])
+        weights.flags.writeable = False
+        _QUADRATURES[key] = weights
+        return weights
+
+    def _quadrature_from_transform(self) -> np.ndarray:
+        """The same weights, read off the transform instead of a formula.
+
+        :meth:`to_components` is a quadrature, so ``to_components(e_jk)`` is a
+        row-dependent multiple of ``basis_at(p_jk)`` — verifiably so, the ratio
+        being constant across every component. Reading that multiple off gives
+        the weights from the transform that will be used with them, with no
+        appeal to a convention.
+
+        Kept as the check on :meth:`_quadrature`, not as the way to get them:
+        it costs one full analysis transform per grid row.
+        """
+        rows, columns = self._core_shape
+        # Component zero is the constant mode, so the point is arbitrary.
+        reference = float(self.basis_at(self.reference_point)[0])
+        weights = np.empty(rows)
+        for row in range(rows):
+            indicator = np.zeros(self.grid_shape)
+            indicator[row] = 1.0
+            weights[row] = self.to_components(indicator)[0] / (columns * reference)
+        return weights
+
+    @cached_property
+    def _south_pole_basis(self) -> np.ndarray:
+        """The basis at colatitude ``pi``, which the grid does not sample."""
+        return self.basis_at(np.array([-90.0, 0.0]))
+
+    @cached_property
+    def _south_pole_kernel(self) -> np.ndarray:
+        r"""Row weights taking a field's row means to its value at the south pole.
+
+        The south pole is not a grid row, so :meth:`_double` has to evaluate
+        the field there, and a full analysis to read one number would be
+        wasteful. There is a closed form, and it is a row weighting. Analysis
+        on this grid is a quadrature, so
+
+        .. code-block:: text
+
+            f(pi) == sum_k phi_k(pi) c_k
+                  == sum_j w_j sum_i f_ji sum_k phi_k(pi) phi_k(p_ji)
+
+        and the inner sum kills every order but ``m == 0``: an associated
+        Legendre function of order ``m > 0`` vanishes at the pole. The ``m ==
+        0`` harmonics do not depend on longitude, so what is left of the middle
+        sum is the row's total, and
+
+        .. code-block:: text
+
+            K_j == columns * w_j * sum_l Ybar_l0(pi) Ybar_l0(theta_j) / R^2
+            f(pi) == K . row_means(f)
+
+        The zonal harmonics come from one ``PlmON`` call at ``z == 1``, which
+        is exactly their normalization since ``P_l(1) == 1``, times a Legendre
+        Vandermonde over the grid's cosines -- so the convention is pyshtools'
+        own rather than one asserted here, and no per-row transform is needed.
+
+        Shared between spaces of the same grid, as the quadrature is.
+        """
+        from pyshtools.legendre import PlmON
+
+        key = (self._grid.kind, self._lmax, self._sampling, self._radius)
+        cached = _SOUTH_POLE_KERNELS.get(key)
+        if cached is not None:
+            return cached
+
+        _, columns = self._core_shape
+        degrees = np.arange(self._lmax + 1)
+        # PlmIndex(l, 0), the zonal entries of the packed Legendre array.
+        zonal_indices = degrees * (degrees + 1) // 2
+        # P_l(1) == 1, so this is the normalization of each zonal harmonic.
+        norms = PlmON(self._lmax, 1.0, csphase=_NO_CONDON_SHORTLEY)[zonal_indices]
+        at_pole = norms * (-1.0) ** degrees
+        legendre = np.polynomial.legendre.legvander(
+            np.cos(self._core_colatitudes), self._lmax
+        )
+        rows = (legendre * norms) @ at_pole / self._radius**2
+        kernel = columns * self._quadrature * rows
+        kernel.flags.writeable = False
+        _SOUTH_POLE_KERNELS[key] = kernel
+        return kernel
+
+    def _synthesis_adjoint(self, values: np.ndarray, /) -> np.ndarray:
+        """``sum_jk v_jk phi(p_jk)``: the transpose of synthesis onto the grid.
+
+        Not the analysis, which is the *inverse*. The two differ by the
+        quadrature weights, and by the pole row that the quadrature drops
+        entirely.
+        """
+        weights = self._quadrature
+        live = weights > 0.0
+        scaled = np.zeros(self._core_shape)
+        scaled[live] = values[live] / weights[live, None]
+        total = self.to_components(self._field_from_core(scaled))
+        for row in np.flatnonzero(~live):
+            total = total + values[row].sum() * self.basis_at(
+                np.array([90.0 - np.degrees(float(self._core_colatitudes[row])), 0.0])
+            )
+        return total
+
+    def _double(self, x: Any, /) -> np.ndarray:
+        """The double-Fourier-sphere extension, sampled on a doubled grid.
+
+        ``g(theta, phi) == f(theta, phi)`` on ``[0, pi]`` and
+        ``g(2 pi - theta, phi) == f(theta, phi + pi)`` beyond it. For a
+        band-limited ``f`` the result is a *trigonometric polynomial* on the
+        torus, which is what makes one FFT of it exact.
+
+        Costs no transform: the south pole is the one value the grid does not
+        hold, and :attr:`_south_pole_kernel` reads it off the row means.
+        """
+        rows, columns = self._core_shape
+        field = self._core_values(x)
+        doubled = np.empty((2 * rows, columns))
+        doubled[:rows] = field
+        # theta == pi is the south pole: not a grid row, so it is evaluated.
+        doubled[rows] = float(self._south_pole_kernel @ field.mean(axis=1))
+        doubled[rows + 1 :] = np.roll(field[1:][::-1], columns // 2, axis=1)
+        return doubled
+
+    def _double_adjoint(self, doubled: np.ndarray, /) -> np.ndarray:
+        """The transpose of :meth:`_double`, in components."""
+        rows, columns = self._core_shape
+        folded = np.array(doubled[:rows], dtype=float)
+        folded[1:] += np.roll(doubled[rows + 1 :][::-1], columns // 2, axis=1)
+        return self._synthesis_adjoint(folded) + doubled[rows].sum() * (
+            self._south_pole_basis
+        )
+
+    def _angles(self, points: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
+        """Points as two contiguous arrays of radians, for the NUFFT."""
+        positions = self.prepare_points(points).data
+        return (
+            np.ascontiguousarray(positions[:, 0]),
+            np.ascontiguousarray(positions[:, 1]),
+        )
+
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as ``(colatitude, longitude)`` in radians, converted once.
+
+        The conversion every route here starts with: the non-uniform FFT wants
+        the two angles as contiguous arrays and :meth:`basis_matrix` wants the
+        pair. Preparing a fixed set of points once saves redoing the
+        conversion on every application.
+
+        Args:
+            points: ``(latitude, longitude)`` pairs in degrees, or an already
+                prepared set.
+
+        Returns:
+            The prepared points, carrying the ``(n, 2)`` array of radians.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
+        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        return PreparedPoints(points, data=positions)
+
+    def _use_transform(self, count: int) -> bool:
+        """Whether the transform route is cheaper than summing the basis.
+
+        The transform costs a fixed amount — one analysis, one FFT, one NUFFT —
+        while the direct sum costs one basis evaluation per point per
+        component. So both sides of the crossover matter: a large truncation
+        makes the direct sum expensive per point, and a small one makes the
+        transform's fixed cost not worth paying however many points there are.
+        """
+        try:
+            import finufft  # noqa: F401
+        except ImportError:  # pragma: no cover - depends on the install
+            return False
+        return count >= _TRANSFORM_MIN_POINTS and self.dim >= _TRANSFORM_MIN_DIM
+
+    def evaluate(
+        self,
+        x: Any,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float = 1.0e-10,
+        nthreads: int = 1,
+    ) -> np.ndarray:
+        """Field values at scattered points.
+
+        Above a size threshold this goes through the double Fourier sphere and
+        a type-2 non-uniform FFT, which costs ``O(dim log dim + n)`` against the
+        direct sum's ``O(n dim)``. Below it, the fixed cost of the transforms is
+        not worth paying and the basis is summed directly.
+
+        Args:
+            x: a field of this space.
+            points: ``(latitude, longitude)`` pairs in degrees.
+            eps: the NUFFT's requested accuracy, when it is used.
+            nthreads: threads for the NUFFT. One by default: these transforms
+                are too small to pay for threading, finufft's own default of
+                every core being several times *slower* here, and a call
+                inside a ``joblib`` loop would oversubscribe on top of that.
+                Pass zero for finufft's default.
+        """
+        points = self.prepare_points(points)
+        if not self._use_transform(len(points)):
+            components = self.to_components(x)
+            return np.concatenate(
+                [
+                    self.basis_matrix(chunk) @ components
+                    for chunk in self._in_chunks(points)
+                ]
+            )
+
+        if not self._grid.has_pole_row:
+            # No double Fourier sphere on a Gauss-Legendre grid: the same
+            # components synthesised on the Driscoll-Healy sibling take the
+            # fast route there, one analysis and one synthesis more.
+            sibling = self._driscoll_healy
+            return sibling.evaluate(
+                sibling.from_components(self.to_components(x)),
+                points,
+                eps=eps,
+                nthreads=nthreads,
+            )
+        import finufft
+
+        rows, columns = self._core_shape
+        coefficients = np.fft.fft2(self._double(x)) / (2 * rows * columns)
+        colatitudes, longitudes = self._angles(points)
+        values = finufft.nufft2d2(
+            colatitudes,
+            longitudes,
+            np.ascontiguousarray(np.fft.fftshift(coefficients)),
+            isign=+1,
+            eps=eps,
+            nthreads=nthreads,
+        )
+        return np.ascontiguousarray(np.atleast_1d(values).real)
+
+    def _complex_coefficients(self, x: Any, /) -> np.ndarray:
+        """The field's coefficients as complex ``a_lm`` in ``m``-major order."""
+        real, imaginary, scale, _ = _complex_layout_for(self._lmax)
+        coefficients = self.to_components(x) / self._radius
+        values = coefficients[real].astype(complex)
+        has_sine = imaginary >= 0
+        values[has_sine] -= 1j * coefficients[imaginary[has_sine]]
+        return values * scale
+
+    def evaluate_gradient(
+        self,
+        x: Any,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float | None = None,
+        nthreads: int | None = None,
+    ) -> np.ndarray:
+        """The gradient at scattered points, southward and eastward, by ducc0.
+
+        The gradient of a scalar field is a spin-1 field whose coefficients
+        are the scalar's times ``sqrt(l (l + 1))``, and ducc0 synthesizes a
+        spin-1 field at arbitrary points from those alone: one call for any
+        number of points, threaded, with the angular derivatives
+        ``∂_θ f`` and ``∂_φ f / sin θ`` coming back together. Divided by the
+        radius, they are the physical gradient.
+
+        Args:
+            x: a field on this sphere.
+            points: ``(latitude, longitude)`` pairs in degrees.
+            eps: the synthesis's requested accuracy; ``1e-10`` by default.
+            nthreads: threads for it; one by default.
+
+        Returns:
+            An array of shape ``(len(points), 2)``: the southward component
+            (along increasing colatitude) and the eastward one.
+        """
+        import ducc0
+
+        _, _, _, gradient_scale = _complex_layout_for(self._lmax)
+        alm = (self._complex_coefficients(x) * gradient_scale)[None, :]
+        colatitudes, longitudes = self._angles(points)
+        location = np.column_stack([colatitudes, longitudes])
+        components = ducc0.sht.synthesis_general(
+            alm=alm,
+            spin=1,
+            lmax=self._lmax,
+            loc=np.ascontiguousarray(location),
+            epsilon=1.0e-10 if eps is None else eps,
+            nthreads=1 if nthreads is None else nthreads,
+            mode="GRAD_ONLY",
+        )
+        return np.ascontiguousarray(components.T) / self._radius
+
+    def accumulate(
+        self,
+        weights: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float = 1.0e-10,
+        nthreads: int = 1,
+    ) -> np.ndarray:
+        """The derivative components of ``x -> sum_i y_i x(r_i)``.
+
+        The transpose of :meth:`evaluate`, step for step: a type-1 NUFFT where
+        that used a type-2, the same FFT — the discrete Fourier matrix is
+        symmetric, so it is its own transpose — and then the transposes of the
+        fold and of synthesis onto the grid.
+
+        Args:
+            weights: one per point.
+            points: ``(latitude, longitude)`` pairs in degrees.
+            eps: the NUFFT's accuracy, as in :meth:`evaluate`.
+            nthreads: threads for it, one by default for the reason given
+                there.
+
+        Returns:
+            The derivative components.
+
+        Raises:
+            ValueError: if the weight count does not match the points.
+        """
+        points = self.prepare_points(points)
+        values = np.asarray(weights, dtype=float)
+        if values.size != len(points):
+            raise ValueError(f"Got {values.size} weights for {len(points)} points.")
+
+        if not self._use_transform(len(points)):
+            total = np.zeros(self.dim)
+            offset = 0
+            for chunk in self._in_chunks(points):
+                end = offset + len(chunk)
+                total += self.basis_matrix(chunk).T @ values[offset:end]
+                offset = end
+            return total
+
+        if not self._grid.has_pole_row:
+            # Derivative components are the same on either grid, so the
+            # sibling's answer is this space's.
+            return self._driscoll_healy.accumulate(
+                weights, points, eps=eps, nthreads=nthreads
+            )
+        import finufft
+
+        rows, columns = self._core_shape
+        colatitudes, longitudes = self._angles(points)
+        spectrum = finufft.nufft2d1(
+            colatitudes,
+            longitudes,
+            np.ascontiguousarray(values.astype(complex)),
+            (2 * rows, columns),
+            isign=+1,
+            eps=eps,
+            nthreads=nthreads,
+        )
+        doubled = np.fft.fft2(np.fft.ifftshift(spectrum)) / (2 * rows * columns)
+        return self._double_adjoint(doubled.real)
+
+    def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
+        """Sample a function on the grid.
+
+        The function receives a ``(latitude, longitude)`` pair in degrees.
+        """
+        colatitudes, longitudes = np.meshgrid(
+            self.colatitudes, self.longitudes, indexing="ij"
+        )
+        latitudes = 90.0 - np.degrees(colatitudes.ravel())
+        azimuths = (np.degrees(longitudes.ravel()) + 180.0) % 360.0 - 180.0
+        values = np.array(
+            [
+                float(function(np.array([latitude, azimuth])))
+                for latitude, azimuth in zip(latitudes, azimuths)
+            ]
+        )
+        return self._own_grid_values(values.reshape(self.grid_shape))
+
+    @property
+    def reference_point(self) -> np.ndarray:
+        """The north pole, as ``(latitude, longitude)`` in degrees.
+
+        Any point would do; the sphere is homogeneous.
+        """
+        return np.array([90.0, 0.0])
+
+    def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
+        """A point drawn uniformly over the sphere's area.
+
+        Uniform in ``cos(colatitude)``, not in colatitude: sampling the angle
+        uniformly would crowd the poles, which is the classic way to bias a
+        set of station locations.
+        """
+        generator = resolve_rng(rng)
         return np.array(
             [
-                np.cos(lat_rad) * np.cos(lon_rad),
-                np.cos(lat_rad) * np.sin(lon_rad),
-                np.sin(lat_rad),
+                float(np.degrees(np.arcsin(generator.uniform(-1.0, 1.0)))),
+                float(generator.uniform(-180.0, 180.0)),
+            ]
+        )
+
+    def covariance_function(self, measure: Any, distances: np.ndarray, /) -> np.ndarray:
+        r"""An invariant measure's covariance as a function of distance.
+
+        The addition theorem collapses the sum over the basis to a sum over
+        degrees, whenever the measure's spectrum is *isotropic* -- constant
+        within each degree, which is what "a function of the Laplacian
+        eigenvalue" means and what every measure built here has:
+
+        .. code-block:: text
+
+            sum_m phi_lm(p) phi_lm(q) == (2l + 1) P_l(cos gamma) / (4 pi R^2)
+
+            c(d) == sum_l r_l (2l + 1) P_l(cos(d / R)) / (4 pi R^2),
+            r_l == s_l / g_l
+
+        That is one Legendre series per distance rather than one row of the
+        basis. ``cos`` is even and periodic, so a walk past the pole needs no
+        special case.
+
+        ``invariant_measure`` does not *require* an isotropic spectrum -- it
+        takes one variance per component -- and with an anisotropic one the
+        covariance is not a function of distance alone. So the spectrum is
+        checked rather than assumed, and the base class's exact sum over the
+        basis is used where the check fails.
+
+        Args:
+            measure: the measure.
+            distances: the separations, as *physical* distances.
+
+        Returns:
+            One covariance per distance.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below one, so that point
+                values on a surface do not exist.
+        """
+        variances = self._spectral_variances(measure)
+        if variances is None:
+            return super().covariance_function(measure, distances)
+
+        ratio = variances / self.metric_values
+        degrees = self.degrees
+        counts = np.bincount(degrees)
+        per_degree = np.bincount(degrees, weights=ratio) / counts
+        tolerance = 1.0e-12 * float(np.max(ratio, initial=0.0))
+        if not np.allclose(ratio, per_degree[degrees], rtol=1e-12, atol=tolerance):
+            return super().covariance_function(measure, distances)
+
+        self._require_point_evaluation("A covariance function", unsafe=False)
+        orders = np.arange(per_degree.size, dtype=float)
+        coefficients = (
+            per_degree * (2.0 * orders + 1.0) / (4.0 * np.pi * self._radius**2)
+        )
+        angles = np.asarray(distances, dtype=float) / self._radius
+        return np.polynomial.legendre.legval(np.cos(angles), coefficients)
+
+    def walk_from(self, point: Any, distances: np.ndarray, /) -> list[np.ndarray]:
+        """Points at given distances from a point, along a meridian.
+
+        Any direction would do, the sphere being homogeneous *and* isotropic;
+        a meridian is the one that needs no tangent frame.
+
+        **The walk continues past the pole**: the meridian is reflected to the
+        far side, the colatitude brought back into ``[0, pi]`` and the
+        longitude turned through ``pi``, which is what walking over a pole
+        does. Every returned point is therefore a genuine
+        ``(latitude, longitude)`` pair, which both evaluation routes read as
+        the same point.
+
+        Args:
+            point: where to start, ``(latitude, longitude)`` in degrees.
+            distances: how far to walk, as *physical* distances. Negative
+                distances walk the other way, over the north pole.
+
+        Returns:
+            One ``(latitude, longitude)`` point per distance.
+        """
+        position = self._radians(point)
+        angles = np.asarray(distances, dtype=float) / self._radius
+        colatitudes = (position[0] + angles) % (2.0 * np.pi)
+        # Past a pole the meridian continues down the far side: reflect the
+        # colatitude back into [0, pi] and turn the longitude through pi.
+        beyond = colatitudes > np.pi
+        colatitudes = np.where(beyond, 2.0 * np.pi - colatitudes, colatitudes)
+        longitudes = np.where(beyond, position[1] + np.pi, position[1])
+        return list(
+            self.to_latitude_degrees(np.column_stack([colatitudes, longitudes]))
+        )
+
+    # ----------------------------------------------------------------- #
+    #                              Geometry                             #
+    # ----------------------------------------------------------------- #
+
+    @staticmethod
+    def to_colatitude_radians(points: Any, /) -> np.ndarray:
+        """``(latitude, longitude)`` in degrees to ``(colatitude, longitude)``
+        in radians.
+
+        The public form of the conversion every method here does at its
+        boundary. Points are given in degrees, because that is what a catalogue
+        of stations or earthquakes holds and what pyshtools uses; the
+        trigonometry inside is done in colatitude and radians, because that is
+        what the spherical harmonics are written in.
+
+        Args:
+            points: one ``(latitude, longitude)`` pair or a sequence of them.
+
+        Returns:
+            An ``(n, 2)`` array of ``(colatitude, longitude)`` in radians.
+
+        Raises:
+            ValueError: if a point does not have two coordinates, or a
+                latitude lies outside ``[-90, 90]`` -- which is the usual sign
+                that colatitudes have been passed in by mistake.
+        """
+        positions = np.atleast_2d(np.asarray(points, dtype=float))
+        if positions.shape[-1] != 2:
+            raise ValueError(
+                f"Points are (latitude, longitude) pairs in degrees, got an "
+                f"array of shape {np.shape(points)}."
+            )
+        latitudes = positions[:, 0]
+        # Catches colatitudes, or radians, passed in by mistake. The tolerance
+        # is for a latitude that came back from an arcsine as 90 + 1e-14; a
+        # genuine error is degrees out, not nanodegrees.
+        outside = np.abs(latitudes) > 90.0 + 1.0e-9
+        if np.any(outside):
+            worst = float(latitudes[np.argmax(np.abs(latitudes))])
+            raise ValueError(
+                f"A latitude lies in [-90, 90] degrees, got {worst}. Points "
+                f"are (latitude, longitude) pairs in degrees; this is the "
+                f"usual sign that colatitudes, or radians, have been passed "
+                f"in instead."
+            )
+        return np.column_stack(
+            [
+                np.radians(90.0 - np.clip(latitudes, -90.0, 90.0)),
+                np.radians(positions[:, 1]) % (2.0 * np.pi),
             ]
         )
 
     @staticmethod
-    def _to_latlon(vec: np.ndarray) -> Tuple[float, float]:
-        """Converts a 3D vector back to a latitude/longitude pair (in degrees)."""
-        vec = vec / np.linalg.norm(vec)
-        lat_rad = np.arcsin(vec[2])
-        lon_rad = np.arctan2(vec[1], vec[0])
-        return (np.degrees(lat_rad), np.degrees(lon_rad))
+    def to_latitude_degrees(points: Any, /) -> np.ndarray:
+        """``(colatitude, longitude)`` in radians to ``(latitude, longitude)``
+        in degrees. The inverse of :meth:`to_colatitude_radians`.
+
+        Args:
+            points: one ``(colatitude, longitude)`` pair or a sequence of them.
+
+        Returns:
+            An ``(n, 2)`` array of ``(latitude, longitude)`` in degrees, with
+            longitude in ``[-180, 180)``.
+        """
+        positions = np.atleast_2d(np.asarray(points, dtype=float))
+        return np.column_stack(
+            [
+                90.0 - np.degrees(positions[:, 0]),
+                (np.degrees(positions[:, 1]) + 180.0) % 360.0 - 180.0,
+            ]
+        )
+
+    def _radians(self, point: Any, /) -> np.ndarray:
+        """One point, as ``(colatitude, longitude)`` in radians."""
+        converted = self.to_colatitude_radians(point)
+        if converted.shape != (1, 2):
+            raise ValueError(
+                f"Expected one (latitude, longitude) pair, got "
+                f"{converted.shape[0]}."
+            )
+        return converted[0]
 
     @staticmethod
-    def _tangent_frame(center_vector: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Return an orthonormal basis for the tangent plane at ``center_vector``."""
-        if abs(center_vector[2]) < 0.9:
-            reference = np.array([0.0, 0.0, 1.0])
-        else:
-            reference = np.array([1.0, 0.0, 0.0])
-
-        tangent_1 = np.cross(reference, center_vector)
-        tangent_1 /= np.linalg.norm(tangent_1)
-        tangent_2 = np.cross(center_vector, tangent_1)
-        tangent_2 /= np.linalg.norm(tangent_2)
-        return tangent_1, tangent_2
+    def _to_vector(point: Any) -> np.ndarray:
+        """A ``(latitude, longitude)`` pair in degrees as a unit vector."""
+        colatitude, longitude = Sphere.to_colatitude_radians(point)[0]
+        sine = np.sin(colatitude)
+        return np.array(
+            [
+                sine * np.cos(longitude),
+                sine * np.sin(longitude),
+                np.cos(colatitude),
+            ]
+        )
 
     @staticmethod
-    def _distribute_ring_point_counts(
-        total_points: int, ring_weights: np.ndarray
+    def _to_point(vector: np.ndarray) -> np.ndarray:
+        """A unit vector as a ``(latitude, longitude)`` pair in degrees."""
+        return Sphere._to_points(np.atleast_2d(np.asarray(vector, dtype=float)))[0]
+
+    @staticmethod
+    def _to_points(vectors: np.ndarray, /) -> np.ndarray:
+        """Many vectors as ``(latitude, longitude)`` pairs in degrees.
+
+        The batched form of :meth:`_to_point`, so that a quadrature rule can
+        be built without a Python loop over its nodes.
+
+        Args:
+            vectors: an ``(n, 3)`` array. Need not be normalized.
+
+        Returns:
+            An ``(n, 2)`` array of points.
+        """
+        array = np.asarray(vectors, dtype=float)
+        unit = array / np.linalg.norm(array, axis=-1, keepdims=True)
+        return Sphere.to_latitude_degrees(
+            np.column_stack(
+                [
+                    np.arccos(np.clip(unit[:, 2], -1.0, 1.0)),
+                    np.arctan2(unit[:, 1], unit[:, 0]) % (2.0 * np.pi),
+                ]
+            )
+        )
+
+    @staticmethod
+    def _tangent_frame(center: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """An orthonormal basis for the tangent plane at a unit vector."""
+        reference = (
+            np.array([0.0, 0.0, 1.0])
+            if abs(center[2]) < 0.9
+            else np.array([1.0, 0.0, 0.0])
+        )
+        first = np.cross(reference, center)
+        first /= np.linalg.norm(first)
+        second = np.cross(center, first)
+        return first, second / np.linalg.norm(second)
+
+    def geodesic_distance(self, start: Any, end: Any, /) -> float:
+        """Great-circle distance, in the same units as :attr:`radius`.
+
+        Computed as ``atan2(|u x v|, u . v)`` rather than ``acos(u . v)``.
+        The two agree in exact arithmetic; in floating point the arccosine
+        loses about half its digits for nearby points, because the cosine is
+        flat there. At a separation of ``1e-6`` radians its relative error is
+        around ``4e-5``, and it does not return exactly zero for a point
+        against itself. Nearby points are the case a localized covariance is
+        entirely about.
+        """
+        first, second = self._to_vector(start), self._to_vector(end)
+        angle = np.arctan2(
+            np.linalg.norm(np.cross(first, second)), np.dot(first, second)
+        )
+        return float(self._radius * angle)
+
+    def geodesic_quadrature(
+        self, start: Any, end: Any, /, *, count: int
+    ) -> tuple[list[np.ndarray], np.ndarray]:
+        """Gauss-Legendre nodes and weights along a great-circle arc.
+
+        Weights carry the arc-length element and so sum to the distance between
+        the endpoints. Antipodal endpoints are rejected rather than resolved:
+        the great circle through them is not unique, and picking one silently
+        would be a wrong answer rather than a missing one.
+
+        Args:
+            start: one endpoint, ``(latitude, longitude)`` in degrees.
+            end: the other.
+            count: how many Gauss-Legendre nodes to place along the arc.
+
+        Returns:
+            The nodes and their weights, which sum to the arc length.
+
+        Raises:
+            ValueError: for fewer than one node, or antipodal endpoints.
+        """
+        if count < 1:
+            raise ValueError("A quadrature rule needs at least one node.")
+        first, second = self._to_vector(start), self._to_vector(end)
+        # atan2 of the cross and dot products, as in geodesic_distance and for
+        # the same reason: arccos of a dot product loses half its digits for
+        # nearby points, which is exactly where the short paths are.
+        angle = float(
+            np.arctan2(np.linalg.norm(np.cross(first, second)), np.dot(first, second))
+        )
+
+        if angle < 1.0e-12:
+            # Separate copies, so that a caller editing one node edits one node.
+            nodes = [np.array(start, dtype=float) for _ in range(count)]
+            return nodes, np.zeros(count)
+        if abs(angle - np.pi) < 1.0e-10:
+            raise ValueError(
+                "The endpoints are antipodal, so the great circle through "
+                "them is not unique."
+            )
+
+        arc_length = self._radius * angle
+        abscissae, weights = _gauss_legendre(count)
+        parameters = 0.5 * (abscissae + 1.0)
+        sine = np.sin(angle)
+        # The slerp, over every node at once.
+        vectors = (
+            np.sin((1.0 - parameters) * angle)[:, None] * first[None, :]
+            + np.sin(parameters * angle)[:, None] * second[None, :]
+        ) / sine
+        return list(self._to_points(vectors)), weights * (0.5 * arc_length)
+
+    def geodesic_ball_quadrature(
+        self, center: Any, radius: float, /, *, count: int
+    ) -> tuple[list[np.ndarray], np.ndarray]:
+        """Nodes and weights integrating over a spherical cap.
+
+        Gauss-Legendre in ``cos(gamma)`` — which is the variable the area
+        element is uniform in — and a trapezoidal rule in azimuth on each ring.
+        The weights carry the area element, so they sum to the cap's area.
+
+        Args:
+            center: the cap's center, in degrees.
+            radius: its *physical* radius along the sphere, not an angle.
+            count: how many nodes to place.
+
+        Returns:
+            The nodes and their weights.
+
+        Raises:
+            ValueError: for a count below one, or a radius that is negative
+                or larger than half the circumference.
+        """
+        if count < 1:
+            raise ValueError("A quadrature rule needs at least one node.")
+        if radius < 0.0 or radius > np.pi * self._radius:
+            raise ValueError(
+                "A geodesic ball on the sphere has radius in "
+                f"[0, pi * {self._radius}], got {radius}."
+            )
+        if radius == 0.0:
+            nodes = [np.array(center, dtype=float) for _ in range(count)]
+            return nodes, np.zeros(count)
+
+        angular_radius = radius / self._radius
+        cosine = np.cos(angular_radius)
+        ring_count = min(count, max(1, int(np.sqrt(count))))
+        abscissae, weights = _gauss_legendre(ring_count)
+        half_width = 0.5 * (1.0 - cosine)
+        heights = half_width * (abscissae + 1.0) + cosine
+        ring_weights = half_width * weights
+        ring_radii = np.sqrt(np.clip(1.0 - heights**2, 0.0, None))
+        counts = _distribute(count, ring_radii)
+
+        center_vector = self._to_vector(center)
+        first, second = self._tangent_frame(center_vector)
+
+        # Every ring's azimuths at once, then every node converted at once:
+        # the rings differ only in how many points they hold, so the whole
+        # rule is three concatenations and one vectorized conversion.
+        azimuths = np.concatenate(
+            [
+                2.0 * np.pi * np.arange(points_here, dtype=float) / points_here
+                for points_here in counts
+            ]
+        )
+        ring_of_node = np.repeat(np.arange(counts.size), counts)
+        vectors = heights[ring_of_node, None] * center_vector[None, :] + ring_radii[
+            ring_of_node, None
+        ] * (
+            np.cos(azimuths)[:, None] * first[None, :]
+            + np.sin(azimuths)[:, None] * second[None, :]
+        )
+        shares = self._radius**2 * 2.0 * np.pi * ring_weights / counts
+        return list(self._to_points(vectors)), shares[ring_of_node]
+
+    # ----------------------------------------------------------------- #
+    #                          Cap averages                             #
+    # ----------------------------------------------------------------- #
+
+    def spherical_cap_integral(
+        self, center: Any, angular_radius: float, /, *, normalize: bool = False
+    ) -> LinearFunctional:
+        """The exact integral over a spherical cap, as a functional.
+
+        Exact in the truncated basis rather than quadrature-approximate: the
+        cap indicator's own harmonic coefficients are known in closed form, so
+        the functional's derivative components are read off directly. That is
+        both cheaper and more accurate than
+        :meth:`geodesic_ball_quadrature`, which remains the fallback for
+        anything that is not a cap.
+
+        Args:
+            center: the cap's center, as ``(latitude, longitude)`` in degrees.
+            angular_radius: the cap's half-angle, **in degrees**. An angle, not
+                a distance: :meth:`geodesic_ball_quadrature` takes a *physical*
+                radius, in the same units as :attr:`radius`, and the two are
+                related by the radius of the sphere.
+            normalize: divide by the cap's area, giving the average rather than
+                the integral.
+
+        Returns:
+            The functional.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
+        """
+        rows = self.cap_integral_components(
+            [center], angular_radius, normalize=normalize
+        )
+        return LinearFunctional.from_derivative_components(self, rows[0])
+
+    def cap_integral_components(
+        self,
+        centers: Sequence[Any],
+        angular_radius: float,
+        /,
+        *,
+        normalize: bool = False,
+        n_jobs: int | None = None,
     ) -> np.ndarray:
-        """Distribute an exact point budget across azimuthal rings."""
-        if total_points <= 0:
-            raise ValueError("Total quadrature point count must be positive.")
+        r"""The derivative components of many cap integrals, in closed form.
 
-        n_rings = ring_weights.size
-        counts = np.ones(n_rings, dtype=int)
-        remaining = total_points - n_rings
-        if remaining <= 0:
-            return counts
+        The row of an observation operator that averages over a cap, for every
+        center at once. What the functional needs is
+        ``g_k == integral over the cap of phi_k``, and the addition theorem
+        gives that in one line: rotate the cap to the pole, where only the
+        zonal harmonic survives the azimuthal integral, and rotate back.
 
-        positive_weights = np.clip(np.asarray(ring_weights, dtype=float), 0.0, None)
-        if np.all(positive_weights == 0.0):
-            counts[:remaining] += 1
-            return counts
+        .. code-block:: text
 
-        scaled = remaining * positive_weights / positive_weights.sum()
-        increments = np.floor(scaled).astype(int)
-        counts += increments
+            g_k == 2 pi R^2 I_l(cos alpha) phi_k(center)
 
-        leftover = remaining - int(increments.sum())
-        if leftover > 0:
-            remainders = scaled - increments
-            order = np.argsort(-remainders)
-            counts[order[:leftover]] += 1
+            I_0(x) == 1 - x
+            I_l(x) == (P_{l-1}(x) - P_{l+1}(x)) / (2l + 1)
 
-        return counts
+        so the whole set of caps is one Legendre evaluation at a single point
+        and one :meth:`basis_matrix`, with no rotation of a cap built at the
+        pole.
+
+        Args:
+            centers: the cap centers, ``(latitude, longitude)`` in degrees.
+            angular_radius: the caps' common half-angle, **in degrees**.
+            normalize: divide by the cap's area, giving the average rather
+                than the integral.
+            n_jobs: workers for the basis at the centers. Serial by default.
+
+        Returns:
+            A ``(len(centers), dim)`` array, one row per center.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
+        """
+        centers = tuple(centers)
+        weights = self._cap_weights(angular_radius, normalize=normalize)
+        if not np.any(weights):
+            return np.zeros((len(centers), self.dim))
+        return self.basis_matrix(centers, n_jobs=n_jobs) * weights
+
+    def _cap_weights(self, angular_radius: float, /, *, normalize: bool) -> np.ndarray:
+        """``c_k`` with ``g_k == c_k phi_k(center)`` for a cap of the given
+        half-angle, in degrees: the zonal filter a cap integral, or average,
+        applies before evaluation at its center.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
+        """
+        if angular_radius < 0.0 or angular_radius > 180.0:
+            raise ValueError(
+                f"A cap's angular radius lies in [0, 180] degrees, got "
+                f"{angular_radius}."
+            )
+        cosine = float(np.cos(np.radians(angular_radius)))
+        if 1.0 - cosine <= 0.0:
+            if normalize:
+                raise ValueError("A cap of zero area has no average.")
+            return np.zeros(self.dim)
+
+        # P_0 ... P_{lmax+1} at the single point cos(alpha).
+        legendre = np.polynomial.legendre.legvander(np.array([cosine]), self._lmax + 1)[
+            0
+        ]
+        degrees = np.arange(self._lmax + 1)
+        integrals = np.empty(self._lmax + 1)
+        integrals[0] = 1.0 - cosine
+        if self._lmax >= 1:
+            rest = degrees[1:]
+            integrals[1:] = (legendre[rest - 1] - legendre[rest + 1]) / (2 * rest + 1)
+
+        scale = 2.0 * np.pi * self._radius**2
+        weights = scale * integrals[self.degrees]
+        if normalize:
+            weights = weights / (scale * (1.0 - cosine))
+        return weights
+
+    def spherical_cap_average(
+        self, center: Any, angular_radius: float, /
+    ) -> LinearFunctional:
+        """The exact average over a spherical cap, as a functional.
+
+        Args:
+            center: the cap's center, as ``(latitude, longitude)`` in degrees.
+            angular_radius: the cap's half-angle, in degrees.
+
+        Returns:
+            The functional.
+        """
+        return self.spherical_cap_integral(center, angular_radius, normalize=True)
+
+    def geodesic_ball_average_operator(
+        self,
+        centers: Sequence[Any],
+        radius: float,
+        /,
+        *,
+        count: int | None = None,
+        normalize: bool = True,
+        dense: bool = False,
+        n_jobs: int | None = None,
+    ) -> LinearOperator:
+        """Cap averages, exactly, as an operator into a Euclidean space.
+
+        The property operator of a spherical inference problem. Uses the exact
+        cap functionals unless ``count`` is given, which forces the generic
+        quadrature route and exists so the two can be checked against each
+        other.
+
+        A cap integral is a zonal filter followed by evaluation at the
+        center (see :meth:`cap_integral_components`), and that is how the
+        exact route applies it unless *dense* is set: one filter and one
+        evaluation at the centers, with nothing of size
+        ``len(centers) x dim`` held. With *dense* the rows are assembled in
+        closed form instead.
+
+        Args:
+            centers: the cap centers, in degrees.
+            radius: the *physical* cap radius, not an angle.
+            count: nodes per cap for the quadrature route. Ignored on the
+                exact harmonic route.
+            normalize: divide by the cap's area, giving an average rather
+                than an integral.
+            dense: assemble the derivative matrix rather than staying
+                matrix-free, on either route.
+            n_jobs: workers for the dense assembly, the basis evaluations at
+                the centers on the exact route and at the nodes on the
+                quadrature route. Serial by default.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: for no centers, a negative radius or one larger than
+                half the circumference, a zero radius when normalizing, or a
+                count below one.
+        """
+        centers = tuple(centers)
+        if not centers:
+            raise ValueError("At least one center is needed.")
+        if count is not None:
+            return super().geodesic_ball_average_operator(
+                centers,
+                radius,
+                count=count,
+                normalize=normalize,
+                dense=dense,
+                n_jobs=n_jobs,
+            )
+
+        from ..algebra.spaces import EuclideanSpace
+
+        # `radius` here is a *physical* distance, in the units of self.radius;
+        # cap_integral_components takes the half-angle in degrees.
+        angular_radius = np.degrees(radius / self._radius)
+        codomain = EuclideanSpace(len(centers))
+        if dense:
+            rows = self.cap_integral_components(
+                centers, angular_radius, normalize=normalize, n_jobs=n_jobs
+            )
+            return LinearOperator.from_matrix(self, codomain, rows, form="galerkin")
+
+        weights = self._cap_weights(angular_radius, normalize=normalize)
+        points = self.prepare_points(centers)
+
+        def value(x: Any) -> np.ndarray:
+            filtered = self.from_components(weights * self.to_components(x))
+            return self.evaluate(filtered, points)
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            return weights * self.accumulate(y, points)
+
+        return LinearOperator.from_derivative_callables(
+            self, codomain, value, derivative_components
+        )
+
+    # ----------------------------------------------------------------- #
+    #                       Acquisition geometry                        #
+    # ----------------------------------------------------------------- #
+
+    def stations(
+        self, /, *, count: int | None = None, rng: Generator | None = None
+    ) -> list[np.ndarray]:
+        """Global Seismograph Network stations, as points on this sphere.
+
+        A real network, so the coverage is the real coverage: dense in North
+        America and Europe, thin over the southern oceans. Uniformly scattered
+        receivers make an inverse problem easier than any real one, which is
+        exactly the wrong direction for a test to err in.
+
+        Args:
+            count: how many to return, drawn without replacement. All of them
+                if omitted.
+            rng: the generator for that draw.
+
+        Returns:
+            ``(latitude, longitude)`` points in degrees.
+
+        Raises:
+            ValueError: if more are asked for than the table holds; the
+                message names the download that writes a larger one into the
+                cache. Nothing is fetched automatically.
+        """
+        from ..datasets import GSN_STATIONS, read_table
+
+        table = read_table(GSN_STATIONS)
+        points = _as_points(table["Latitude"], table["Longitude"])
+        return _subsample(points, count, rng, refresh="download_gsn_stations()")
+
+    def earthquakes(
+        self,
+        /,
+        *,
+        count: int | None = None,
+        minimum_magnitude: float = 0.0,
+        rng: Generator | None = None,
+    ) -> list[np.ndarray]:
+        """Earthquake epicenters from a cached USGS catalogue.
+
+        Sources cluster along plate boundaries, so the ray coverage they give
+        is strongly anisotropic. That is the point of using them.
+
+        Args:
+            count: how many to return. All of them if omitted.
+            minimum_magnitude: drop events below this, which is how the
+                catalogue is thinned to the events a study would use.
+            rng: the generator for the draw.
+
+        Returns:
+            ``(latitude, longitude)`` epicenters in degrees.
+
+        Raises:
+            ValueError: if more are asked for than the table holds after the
+                magnitude filter; the message names the download that writes a
+                larger one into the cache. Nothing is fetched automatically.
+        """
+        from ..datasets import USGS_EVENTS, read_table
+
+        table = read_table(USGS_EVENTS)
+        keep = table["mag"] >= minimum_magnitude
+        points = _as_points(table["latitude"][keep], table["longitude"][keep])
+        return _subsample(
+            points, count, rng, refresh="download_usgs_earthquakes(limit=...)"
+        )
+
+    def domain_mask(
+        self, /, *, ocean: bool = False, resolution: str = "110m"
+    ) -> np.ndarray:
+        """A field that is one on land and zero at sea, or the other way round.
+
+        Needs ``cartopy`` and ``shapely``, which come with the ``sphere``
+        extra. Sampled on the grid rather than expanded exactly, so the
+        coastlines ring: smooth the result with a heat-kernel covariance before
+        using it as a coefficient field.
+
+        Args:
+            ocean: mask the ocean rather than the land.
+            resolution: the Natural Earth resolution, as cartopy names it.
+
+        Returns:
+            The mask as a field of ones and zeros.
+
+        Raises:
+            ImportError: without cartopy, which supplies the coastlines.
+        """
+        on_land = _land_test(resolution)
+
+        def indicator(point: Any) -> float:
+            latitude, longitude = np.asarray(point, dtype=float)
+            return float(on_land(float(latitude), float(longitude)) != ocean)
+
+        return self.project_function(indicator)
+
+    def random_domain_points(
+        self,
+        count: int,
+        /,
+        *,
+        ocean: bool = True,
+        resolution: str = "110m",
+        rng: Generator | None = None,
+    ) -> list[np.ndarray]:
+        """Points drawn uniformly over the ocean, or over the land.
+
+        Rejection sampling against the Natural Earth coastlines, the same
+        polygons :meth:`domain_mask` uses, so the two agree on which side of
+        the coast a point is. Uniform in area within the chosen region. This
+        is how a synthetic ocean-only or land-only network is made.
+
+        Args:
+            count: how many points, exactly.
+            ocean: draw over the ocean; ``False`` draws over the land.
+            resolution: the Natural Earth resolution, as cartopy names it.
+            rng: the generator.
+
+        Returns:
+            ``(latitude, longitude)`` pairs in degrees.
+
+        Raises:
+            ImportError: without cartopy and shapely.
+            ValueError: for a negative count.
+        """
+        if count < 0:
+            raise ValueError("The count must not be negative.")
+        on_land = _land_test(resolution)
+        generator = resolve_rng(rng)
+        kept: list[np.ndarray] = []
+        # Land is about three tenths of the surface, so over-draw accordingly.
+        surplus = 1.5 if ocean else 4.0
+        while len(kept) < count:
+            batch = max(10, int((count - len(kept)) * surplus))
+            for point in self.random_points(batch, rng=generator):
+                if on_land(float(point[0]), float(point[1])) != ocean:
+                    kept.append(point)
+                    if len(kept) == count:
+                        break
+        return kept
+
+    def source_receiver_paths(
+        self,
+        /,
+        *,
+        sources: int = 20,
+        receivers: int = 10,
+        minimum_magnitude: float = 5.5,
+        minimum_separation: float = 0.0,
+        rng: Generator | None = None,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Every source-receiver pair, as paths, from the shipped catalogues.
+
+        The convenience every tomography script writes for itself.
+        ``minimum_separation`` drops pairs too close together to carry
+        information, which in a real network is a noticeable fraction of them.
+
+        Args:
+            sources: how many earthquakes to draw.
+            receivers: how many stations.
+            minimum_magnitude: the magnitude threshold for the sources.
+            minimum_separation: drop pairs closer than this, as a *physical*
+                distance. Zero keeps every pair.
+            rng: the generator.
+
+        Returns:
+            The ``(source, receiver)`` pairs that survive the separation
+            filter, so there may be fewer than ``sources * receivers``.
+        """
+        generator = resolve_rng(rng)
+        origins = self.earthquakes(
+            count=sources, minimum_magnitude=minimum_magnitude, rng=generator
+        )
+        stations = self.stations(count=receivers, rng=generator)
+        return [
+            (origin, station)
+            for origin in origins
+            for station in stations
+            if self.geodesic_distance(origin, station) > minimum_separation
+        ]
+
+    def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
+        """The points as vectors in R^3, scaled to the sphere's radius.
+
+        Euclidean distance in the embedding is the *chord*, not the geodesic;
+        the two are related by :meth:`_embedded_radius` and its inverse. Chord
+        length is what makes a KD-tree usable here, and it is exactly zero on
+        the diagonal, which the cosine route is not.
+        """
+        vectors = np.stack([self._to_vector(point) for point in points])
+        return vectors * self._radius, None
+
+    def _embedded_radius(self, distance: float, /) -> float:
+        """A geodesic radius as a chord: ``2 R sin(d / 2R)``."""
+        return float(2.0 * self._radius * np.sin(0.5 * distance / self._radius))
+
+    def _geodesic_from_embedded(self, lengths: np.ndarray, /) -> np.ndarray:
+        """Chords back to geodesics: ``2 R asin(c / 2R)``."""
+        ratio = np.clip(
+            np.asarray(lengths, dtype=float) / (2.0 * self._radius), -1.0, 1.0
+        )
+        return 2.0 * self._radius * np.arcsin(ratio)
+
+    # ----------------------------------------------------------------- #
+    #                            Resolution                             #
+    # ----------------------------------------------------------------- #
+
+    @cached_property
+    def _driscoll_healy(self) -> "Sphere":
+        """The Lebesgue space of this truncation on the square Driscoll-Healy
+        grid, which carries the double Fourier sphere a Gauss-Legendre grid
+        lacks. The components are the same, so it stands in for the fast
+        point-evaluation routes."""
+        return Lebesgue(self._lmax, radius=self._radius)
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> Sphere:
+        """The same sphere with some of its parameters changed.
+
+        **Returns the subclass its order names**, :class:`Lebesgue` or
+        :class:`Sobolev`, not a bare :class:`Sphere`, so that ``isinstance``
+        answers what it looks like it answers on every derived space.
+
+        The one hook the resolution methods build on, so there is one place
+        that knows which class goes with which order.
+
+        Args:
+            lmax: the new truncation. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The sphere, as ``Lebesgue`` at order zero and ``Sobolev``
+            otherwise.
+        """
+        lmax = self._lmax if lmax is None else int(lmax)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(
+                lmax,
+                radius=self._radius,
+                sampling=self._sampling,
+                extend=self._extend,
+                grid=self._grid.kind,
+            )
+        return Sobolev(
+            lmax,
+            order,
+            scale,
+            radius=self._radius,
+            sampling=self._sampling,
+            extend=self._extend,
+            grid=self._grid.kind,
+        )
+
+    def _extended_to(self, lmax: int, /) -> Sphere:
+        return self.with_degree(lmax)
+
+    def _degree_eigenvalues(self, degree: int, /) -> np.ndarray:
+        """``2l + 1`` copies of ``l (l + 1) / radius^2``."""
+        return np.full(2 * degree + 1, degree * (degree + 1) / self._radius**2)
+
+    def with_degree(self, lmax: int, /) -> Sphere:
+        """The same space, truncated at or extended to a different degree.
+
+        Args:
+            lmax: the new maximum degree.
+
+        Returns:
+            The space at that truncation, as the subclass its order names.
+        """
+        return self._rebuilt(lmax=lmax)
+
+    def degree_transfer_operator(self, target: Sphere, /) -> LinearOperator:
+        """Truncation to, or prolongation into, another degree.
+
+        Restriction when the target is coarser, zero-padding when it is finer.
+        The adjoint is derived through the metrics rather than written down,
+        which matters: the adjoint of a restriction is the matching
+        zero-padding only when the two spaces carry the same metric on their
+        shared components, and carries the ratio of the two metrics
+        otherwise.
+
+        Args:
+            target: the sphere to map into. It must have the same radius --
+                two spheres of different size are not two resolutions of one
+                domain.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if the radii differ.
+        """
+        if target.radius != self._radius:
+            raise ValueError("Degree transfer needs a common radius.")
+        shared = min(self._lmax, target.lmax)
+        keep = np.flatnonzero(self._packing[1] <= shared)
+        place = np.flatnonzero(target._packing[1] <= shared)
+
+        def value(x: np.ndarray) -> np.ndarray:
+            components = np.zeros(target.dim)
+            components[place] = self.to_components(x)[keep]
+            return target.from_components(components)
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            pulled = target.apply_gram(target.to_components(y))
+            total = np.zeros(self.dim)
+            total[keep] = pulled[place]
+            return total
+
+        return LinearOperator.from_derivative_callables(
+            self, target, value, derivative_components
+        )
+
+    def with_order(
+        self, order: float, /, *, length_scale: float | None = None
+    ) -> Sphere:
+        """The same expansion, viewed with a different Sobolev order.
+
+        Args:
+            order: the new Sobolev order.
+            length_scale: the new length scale. Kept as it is if omitted, so
+                this is a change of order alone.
+
+        Returns:
+            The same expansion in the new metric, as :class:`Lebesgue` at order
+            zero and :class:`Sobolev` otherwise. The components are unchanged;
+            only the inner product moves.
+        """
+        return self._rebuilt(order=order, length_scale=length_scale)
 
 
-class Sobolev(SymmetricSobolevSpace):
+def _as_points(latitudes: np.ndarray, longitudes: np.ndarray) -> list[np.ndarray]:
+    """Two columns of a catalogue as points.
+
+    No conversion: a catalogue holds degrees and so does a point, which is the
+    whole reason for the convention.
     """
-    Implementation of the Sobolev space Hˢ on a circle.
+    return [
+        np.array([float(latitude), float(longitude)])
+        for latitude, longitude in zip(
+            np.asarray(latitudes, dtype=float),
+            np.asarray(longitudes, dtype=float),
+        )
+    ]
+
+
+def _subsample(
+    points: list[np.ndarray],
+    count: int | None,
+    rng: Generator | None,
+    *,
+    refresh: str,
+) -> list[np.ndarray]:
+    """Draw ``count`` points without replacement, or return all of them.
+
+    A table too small for the request is refused, naming the download that
+    refreshes it: nothing is fetched on the caller's behalf.
+    """
+    if count is None:
+        return points
+    if count > len(points):
+        raise ValueError(
+            f"Asked for {count} points from a table of {len(points)}; "
+            f"pygeoinf.datasets.{refresh} writes a larger one into the cache."
+        )
+    generator = resolve_rng(rng)
+    chosen = generator.choice(len(points), size=count, replace=False)
+    return [points[index] for index in chosen]
+
+
+class Lebesgue(Sphere):
+    """The ``L2`` space on a sphere, with an orthonormal harmonic basis.
+
+    A class rather than a factory function, so that ``isinstance(x, Lebesgue)``
+    answers what it looks like it answers and ``type(x).__name__`` names the
+    geometry. Nothing is added: it is :class:`Sphere` at order zero.
+    """
+
+    def __init__(
+        self,
+        lmax: int,
+        /,
+        *,
+        radius: float = 1.0,
+        sampling: int = 1,
+        extend: bool = False,
+        grid: str = "DH",
+    ) -> None:
+        """
+        Args:
+            lmax: the maximum spherical harmonic degree.
+            radius: the sphere's radius.
+            sampling: grid columns per row, 1 or 2.
+            extend: whether fields carry the wrap column and the pole row.
+            grid: ``"DH"`` or ``"GLQ"``; see :class:`Sphere`.
+        """
+        super().__init__(
+            lmax,
+            radius=radius,
+            order=0.0,
+            sampling=sampling,
+            extend=extend,
+            grid=grid,
+        )
+
+
+class Sobolev(Sphere):
+    """The Sobolev space ``H^order`` on a sphere.
+
+    The same expansion as :class:`Lebesgue`, with
+    ``(1 + length_scale^2 l(l+1)/radius^2)^order`` as its metric — a
+    diagonal-metric space, so every invariant operator on it stays diagonal.
     """
 
     def __init__(
         self,
         lmax: int,
         order: float,
-        scale: float,
-        /,
-        radius: float = 1,
-        grid: str = "DH",
-        extend: bool = True,
-        safe: bool = True,
-    ):
-        """
-        Args:
-        lmax: Maximum degree for the expansions.
-        order: The Sobolev order, controlling the smoothness of functions.
-        scale: The Sobolev length-scale.
-        radius: Radius of the sphere. Defaults to 1.
-        grid: pyshtools grid type. Defaults to "DH"
-        extend: If true longitudes wrap fully. Defaults to True.
-        safe: If true, the class checks for mathematical correctness of operations
-                  where possible.
-        """
-
-        lebesgue_space = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
-        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale, safe=safe)
-
-    @staticmethod
-    def from_sobolev_parameters(
-        order: float,
-        scale: float,
+        length_scale: float,
         /,
         *,
         radius: float = 1.0,
+        sampling: int = 1,
+        extend: bool = False,
         grid: str = "DH",
-        rtol: float = 1e-8,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
+    ) -> None:
         """
-        Creates an instance with `lmax` chosen based on the Sobolev parameters.
-
-        This factory method estimates the spherical harmonic truncation degree
-        (`lmax`) required to represent the space while meeting a specified
-        relative tolerance for the truncation error. This is useful when the
-        required `lmax` is not known a priori.
-
         Args:
-            order: The order of the Sobolev space, controlling smoothness.
-            scale: The non-dimensional length-scale for the space.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The `pyshtools` grid type (e.g., 'DH'). Defaults to 'DH'.
-            rtol: The relative tolerance used to determine the `lmax`.
-            power_of_two: If True, `lmax` is set to the next power of two.
-            safe: If true, the class checks for mathematical correctness of operations
-                  where possible.
-
-        Returns:
-            An instance of the Sobolev class with a calculated `lmax`.
+            lmax: the maximum spherical harmonic degree.
+            order: the Sobolev order.
+            length_scale: the length at which the Sobolev weight turns over.
+            radius: the sphere's radius.
+            sampling: grid columns per row, 1 or 2.
+            extend: whether fields carry the wrap column and the pole row.
+            grid: ``"DH"`` or ``"GLQ"``; see :class:`Sphere`.
         """
-        if order <= 1.0:
-            raise ValueError("This method is only applicable for orders > 1.0")
-
-        summation = 1.0
-        l = 0
-        err = 1.0
-
-        def sobolev_func(deg):
-            return (1.0 + (scale / radius) ** 2 * deg * (deg + 1)) ** order
-
-        while err > rtol:
-            l += 1
-            term = 1 / sobolev_func(l)
-            summation += term
-            err = term / summation
-            if l > 10000:
-                raise RuntimeError("Failed to converge on a stable lmax.")
-
-        if power_of_two:
-            n = int(np.log2(l))
-            l = 2 ** (n + 1)
-
-        lmax = l
-        return Sobolev(lmax, order, scale, radius=radius, grid=grid, safe=safe)
-
-    @classmethod
-    def from_covariance(
-        cls,
-        covariance_function: Callable[[float], float],
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius: float = 1.0,
-        grid: str = "DH",
-        extend: bool = True,
-        rtol: float = 1e-6,
-        min_degree: int = 0,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance of the Sobolev space with a spherical harmonic truncation degree
-        (`lmax`) automatically chosen to capture the expected energy of functions drawn from
-        a specified prior measure.
-
-        This factory method calculates the expected squared norm (energy) of a random field
-        whose spectral variances are defined by the provided `covariance_function`, accounting
-        for the Sobolev mass-weighting factor. It iteratively adds higher spherical harmonic
-        degrees until the relative contribution of the next degree drops below the tolerance.
-
-        Args:
-            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
-            order: The Sobolev order, controlling the smoothness of functions.
-            scale: The Sobolev length-scale.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The pyshtools spatial grid format to use. Defaults to "DH".
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
-            max_degree: An optional safety ceiling for the truncation degree. If convergence
-                is not reached by this degree, the search terminates and returns this value.
-            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
-            safe: If True, enables mathematical correctness checks during operations.
-
-        Returns:
-            Sobolev: A fully instantiated Sobolev space on the sphere with the optimal `lmax`.
-
-        Raises:
-            RuntimeError: If the energy sequence fails to converge within 100,000 iterations
-                and no `max_degree` is specified.
-        """
-        dummy_space = cls(
-            max(1, min_degree),
-            order,
-            scale,
+        super().__init__(
+            lmax,
             radius=radius,
-            grid=grid,
+            order=order,
+            length_scale=length_scale,
+            sampling=sampling,
             extend=extend,
-            safe=safe,
-        )
-
-        optimal_degree = dummy_space.estimate_truncation_degree(
-            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
-        )
-
-        if power_of_two:
-            n = int(np.log2(optimal_degree))
-            optimal_degree = 2 ** (n + 1)
-
-        return cls(
-            optimal_degree,
-            order,
-            scale,
-            radius=radius,
             grid=grid,
-            extend=extend,
-            safe=safe,
         )
-
-    @classmethod
-    def from_heat_kernel_prior(
-        cls,
-        kernel_scale: float,
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius: float = 1.0,
-        grid: str = "DH",
-        extend: bool = True,
-        rtol: float = 1e-6,
-        min_degree: int = 0,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance of the Sobolev space on the sphere, tuned to the expected
-        energy of a Heat Kernel prior measure.
-
-        Args:
-            kernel_scale: The length-scale parameter of the heat kernel covariance.
-            order: The Sobolev order defining the function space.
-            scale: The Sobolev length-scale defining the function space.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The pyshtools spatial grid format to use. Defaults to "DH".
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
-            safe: If True, enables mathematical correctness checks during operations.
-        """
-        return cls.from_covariance(
-            cls.heat_kernel(kernel_scale),
-            order,
-            scale,
-            radius=radius,
-            grid=grid,
-            extend=extend,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-            safe=safe,
-        )
-
-    @classmethod
-    def from_sobolev_kernel_prior(
-        cls,
-        kernel_order: float,
-        kernel_scale: float,
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius: float = 1.0,
-        grid: str = "DH",
-        extend: bool = True,
-        rtol: float = 1e-6,
-        min_degree: int = 0,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance of the Sobolev space on the sphere, tuned to the expected
-        energy of a Sobolev-type prior measure.
-
-        Args:
-            kernel_order: The smoothness order of the Sobolev prior measure.
-            kernel_scale: The length-scale parameter of the Sobolev prior measure.
-            order: The Sobolev order defining the function space.
-            scale: The Sobolev length-scale defining the function space.
-            radius: The radius of the sphere. Defaults to 1.0.
-            grid: The pyshtools spatial grid format to use. Defaults to "DH".
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
-            safe: If True, enables mathematical correctness checks during operations.
-        """
-        return cls.from_covariance(
-            cls.sobolev_kernel(kernel_order, kernel_scale),
-            order,
-            scale,
-            radius=radius,
-            grid=grid,
-            extend=extend,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-            safe=safe,
-        )
-
-    # ----------------------------------------- #
-    #                 Properties                #
-    # ----------------------------------------- #
-
-    @property
-    def lmax(self) -> int:
-        """The maximum spherical harmonic truncation degree."""
-        return self.underlying_space.lmax
-
-    @property
-    def radius(self) -> float:
-        """The radius of the sphere."""
-        return self.underlying_space.radius
-
-    @property
-    def grid(self) -> str:
-        """The `pyshtools` grid type used for spatial representations."""
-        return self.underlying_space.grid
-
-    @property
-    def sampling(self) -> int:
-        """The sampling factor used for spatial representations."""
-        return self.underlying_space.sampling
-
-    @property
-    def extend(self) -> bool:
-        """True if the spatial grid includes both 0 and 360-degree longitudes."""
-        return self.underlying_space.extend
-
-    @property
-    def normalization(self) -> str:
-        """The spherical harmonic normalization convention used ('ortho')."""
-        return self.underlying_space.normalization
-
-    @property
-    def csphase(self) -> int:
-        """The Condon-Shortley phase convention used (1)."""
-        return self.underlying_space.csphase
-
-    @property
-    def grid_type(self) -> str:
-        """
-        Returns the pyshtools grid type.
-        """
-        return self.underlying_space.grid_type
-
-    # -------------------------------------------------- #
-    #                   Public methods                   #
-    # -------------------------------------------------- #
-
-    def with_order(self, order: float) -> Sobolev:
-        return Sobolev(
-            self.lmax,
-            order,
-            self.scale,
-            radius=self.radius,
-            grid=self.grid,
-            extend=self.extend,
-        )
-
-    def with_degree(self, degree: int) -> Sobolev:
-        return Sobolev(
-            degree,
-            self.order,
-            self.scale,
-            radius=self.radius,
-            grid=self.grid,
-            extend=self.extend,
-        )
-
-    def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
-        """
-        Returns an element of the space by projecting a given function.
-
-        Args:
-            f: A function that takes a point `(lat, lon)` and returns a value.
-        """
-        return self.underlying_space.project_function(f)
-
-    def to_coefficients(self, u: sh.SHGrid) -> sh.SHCoeffs:
-        """Maps a function vector to its spherical harmonic coefficients."""
-        return self.underlying_space.to_coefficients(u)
-
-    def from_coefficients(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
-        """Maps spherical harmonic coefficients to a function vector."""
-        return self.underlying_space.from_coefficients(ulm)
-
-    def sample_power_measure(
-        self,
-        measure,
-        n_samples,
-        /,
-        *,
-        lmin=None,
-        lmax=None,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ):
-        """
-        Takes in a Gaussian measure on the space, draws n_samples from
-        and returns samples for the spherical harmonic power at degrees in
-        the indicated range.
-        """
-
-        return self.underlying_space.sample_power_measure(
-            measure, n_samples, lmin=lmin, lmax=lmax, parallel=parallel, n_jobs=n_jobs
-        )
-
-    def ax(self, a: float, x: sh.SHGrid) -> None:
-        self.underlying_space.ax(a, x)
-
-    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
-        self.underlying_space.axpy(a, x, y)
-
-    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
-        r"""
-        Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
-
-        The operator maps an element of the Hilbert space to a vector in $\mathbb{R}^k$.
-        The coefficients in the output vector are ordered by degree $l$ (major)
-        and order $m$ (minor), from $-l$ to $+l$.
-
-        **Ordering:**
-
-        .. math::
-            u = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
-
-        (assuming `lmin=0`).
-
-        Args:
-            lmax: The maximum spherical harmonic degree to include in the output.
-            lmin: The minimum spherical harmonic degree to include. Defaults to 0.
-
-        Returns:
-            A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
-        """
-
-        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin=lmin)
-
-        return LinearOperator.from_formal_adjoint(
-            self, l2_operator.codomain, l2_operator
-        )
-
-    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
-        r"""
-        Returns a LinearOperator mapping a vector of coefficients to a function.
-
-        The operator maps a vector in $\mathbb{R}^k$ to an element of the Hilbert space.
-        The input vector must follow the standard $l$-major, $m$-minor ordering.
-
-        **Ordering:**
-
-        .. math::
-            v = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
-
-        (assuming `lmin=0`).
-
-        Args:
-            lmax: The maximum spherical harmonic degree expected in the input.
-            lmin: The minimum spherical harmonic degree expected. Defaults to 0.
-
-        Returns:
-            A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
-        """
-
-        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin=lmin)
-
-        return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
-
-    def point_evaluation_operator(
-        self,
-        points: List[Tuple[float, float]],
-        /,
-        *,
-        matrix_free: bool = False,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> LinearOperator:
-        """
-        Returns a linear operator that evaluates a function at a list of points.
-
-        Args:
-            points: A list of (latitude, longitude) tuples.
-            matrix_free: If True, evaluates the operator on-the-fly to save memory.
-            parallel: If True, distributes the matrix-free evaluations across CPU cores.
-            n_jobs: Number of parallel jobs. -1 uses all available cores.
-        """
-        if not matrix_free:
-            return super(Sobolev, self).point_evaluation_operator(points)
-
-        if self.safe and self.order <= self.spatial_dimension / 2:
-            raise NotImplementedError("Point evaluation is not defined on this space")
-
-        n_obs = len(points)
-        lats = np.array([p[0] for p in points])
-        lons = np.array([p[1] for p in points])
-        codomain = EuclideanSpace(n_obs)
-
-        # Target ~4 chunks per resolved worker to balance load and overhead.
-        num_chunks = min(n_obs, 4 * effective_n_jobs(n_jobs))
-        chunks = np.array_split(np.arange(n_obs), num_chunks)
-
-        def mapping(u: sh.SHGrid) -> np.ndarray:
-            coeffs = self.to_coefficients(u)
-
-            if not parallel:
-                raw = coeffs.expand(lat=lats, lon=lons, degrees=True)
-                return np.asarray(raw, dtype=float).ravel()
-
-            def compute_fwd_chunk(chunk_lats, chunk_lons):
-                raw = coeffs.expand(lat=chunk_lats, lon=chunk_lons, degrees=True)
-                return np.asarray(raw, dtype=float).ravel()
-
-            results = Parallel(n_jobs=n_jobs)(
-                delayed(compute_fwd_chunk)(lats[c], lons[c])
-                for c in chunks
-                if len(c) > 0
-            )
-            return np.concatenate(results)
-
-        def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
-            from pygeoinf.linear_forms import LinearForm
-
-            nonzero = np.flatnonzero(y)
-            if nonzero.size == 0:
-                return self.from_dual(LinearForm(self, components=np.zeros(self.dim)))
-
-            if not parallel:
-                total_components = np.zeros(self.dim)
-                for i in nonzero:
-                    total_components += y[i] * self.laplacian_eigenvectors_at_point(
-                        points[i]
-                    )
-                return self.from_dual(LinearForm(self, components=total_components))
-
-            def compute_adj_chunk(indices):
-                local_comps = np.zeros(self.dim)
-                for i in indices:
-                    local_comps += y[i] * self.laplacian_eigenvectors_at_point(
-                        points[i]
-                    )
-                return local_comps
-
-            adj_chunks = np.array_split(
-                nonzero, min(nonzero.size, 4 * effective_n_jobs(n_jobs))
-            )
-            results = Parallel(n_jobs=n_jobs)(
-                delayed(compute_adj_chunk)(c) for c in adj_chunks if len(c) > 0
-            )
-            return self.from_dual(LinearForm(self, components=np.sum(results, axis=0)))
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    def path_average_operator(
-        self,
-        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-        /,
-        *,
-        n_points: Optional[int] = None,
-        matrix_free: bool = False,
-        parallel: bool = False,
-        n_jobs: int = -1,
-        lazy_quadrature: bool = False,
-    ) -> LinearOperator:
-        """
-        Constructs a tomographic operator mapping a function field to its
-        line integrals along a set of geodesic paths.
-
-        In the (default) eager matrix-free mode the operator is factorised as
-        A = W E, where E is point evaluation at the flattened quadrature nodes
-        and W is a sparse (n_paths x n_total) matrix of quadrature weights built
-        once at construction.
-
-        Args:
-            paths: A list of start and end point pairs defining the geodesics.
-            n_points: The number of quadrature points per path.
-            matrix_free: If True, evaluates the integrals on-the-fly to save memory.
-            parallel: If True, distributes the matrix-free evaluations across CPU cores.
-            n_jobs: Number of parallel jobs. -1 uses all available cores.
-            lazy_quadrature: If True, computes quadrature points on-the-fly per chunk
-                to prevent memory blowouts when evaluating massive numbers of paths.
-        """
-        if not matrix_free:
-            return super(Sobolev, self).path_average_operator(paths, n_points=n_points)
-
-        if self.safe and self.order <= self.spatial_dimension / 2:
-            raise NotImplementedError("Point evaluation is not defined on this space")
-
-        n_paths = len(paths)
-        codomain = EuclideanSpace(n_paths)
-
-        num_path_chunks = min(n_paths, 4 * effective_n_jobs(n_jobs))
-        path_chunks = np.array_split(np.arange(n_paths), num_path_chunks)
-
-        def get_quad(p1, p2):
-            if n_points is None:
-                arc_length = self.geodesic_distance(p1, p2)
-                pts_count = max(2, int(np.ceil((arc_length / self.scale) * 2.0)))
-            else:
-                pts_count = n_points
-            return self.geodesic_quadrature(p1, p2, pts_count)
-
-        if not lazy_quadrature:
-            # =========================================================
-            # MODE 1: PRECOMPUTE ALL (Fastest, higher memory)
-            # =========================================================
-            def compute_quad_chunk(indices):
-                return [get_quad(*paths[i]) for i in indices]
-
-            if parallel:
-                quad_results = Parallel(n_jobs=n_jobs)(
-                    delayed(compute_quad_chunk)(chunk)
-                    for chunk in path_chunks
-                    if len(chunk) > 0
-                )
-                quads = [q for chunk in quad_results for q in chunk]
-            else:
-                quads = compute_quad_chunk(np.arange(n_paths))
-
-            flat_lats = np.array([pt[0] for pts, _ in quads for pt in pts])
-            flat_lons = np.array([pt[1] for pts, _ in quads for pt in pts])
-            lengths = np.array([len(wts) for _, wts in quads])
-            n_total = int(lengths.sum())
-            indptr = np.concatenate(([0], np.cumsum(lengths)))
-            weight_matrix = sparse.csr_matrix(
-                (
-                    np.concatenate([wts for _, wts in quads]),
-                    np.arange(n_total),
-                    indptr,
-                ),
-                shape=(n_paths, n_total),
-            )
-
-            num_node_chunks = min(n_total, 4 * effective_n_jobs(n_jobs))
-            node_chunks = np.array_split(np.arange(n_total), num_node_chunks)
-
-            def mapping(u: sh.SHGrid) -> np.ndarray:
-                coeffs = self.to_coefficients(u)
-
-                if not parallel:
-                    raw = coeffs.expand(lat=flat_lats, lon=flat_lons, degrees=True)
-                    flat = np.asarray(raw, dtype=float).ravel()
-                    return weight_matrix @ flat
-
-                def compute_fwd_chunk(chunk_lats, chunk_lons):
-                    raw = coeffs.expand(lat=chunk_lats, lon=chunk_lons, degrees=True)
-                    return np.asarray(raw, dtype=float).ravel()
-
-                results = Parallel(n_jobs=n_jobs)(
-                    delayed(compute_fwd_chunk)(flat_lats[c], flat_lons[c])
-                    for c in node_chunks
-                    if len(c) > 0
-                )
-                return weight_matrix @ np.concatenate(results)
-
-            def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
-                from pygeoinf.linear_forms import LinearForm
-
-                node_weights = weight_matrix.T @ y
-                nonzero = np.flatnonzero(node_weights)
-                if nonzero.size == 0:
-                    return self.from_dual(
-                        LinearForm(self, components=np.zeros(self.dim))
-                    )
-
-                if not parallel:
-                    total_components = np.zeros(self.dim)
-                    for q in nonzero:
-                        total_components += node_weights[
-                            q
-                        ] * self.laplacian_eigenvectors_at_point(
-                            (flat_lats[q], flat_lons[q])
-                        )
-                    return self.from_dual(LinearForm(self, components=total_components))
-
-                def compute_adj_chunk(indices):
-                    local_comps = np.zeros(self.dim)
-                    for q in indices:
-                        local_comps += node_weights[
-                            q
-                        ] * self.laplacian_eigenvectors_at_point(
-                            (flat_lats[q], flat_lons[q])
-                        )
-                    return local_comps
-
-                adj_chunks = np.array_split(
-                    nonzero, min(nonzero.size, 4 * effective_n_jobs(n_jobs))
-                )
-                results = Parallel(n_jobs=n_jobs)(
-                    delayed(compute_adj_chunk)(c) for c in adj_chunks if len(c) > 0
-                )
-                return self.from_dual(
-                    LinearForm(self, components=np.sum(results, axis=0))
-                )
-
-        else:
-            # =========================================================
-            # MODE 2: LAZY EVALUATION (Slightly slower, low memory)
-            # =========================================================
-            def mapping(u: sh.SHGrid) -> np.ndarray:
-                coeffs = self.to_coefficients(u)
-
-                def compute_lazy_fwd_chunk(indices):
-                    local_lats, local_lons, local_wts, local_slices = [], [], [], []
-                    local_idx = 0
-                    for i in indices:
-                        pts, wts = get_quad(*paths[i])
-                        local_lats.extend(pt[0] for pt in pts)
-                        local_lons.extend(pt[1] for pt in pts)
-                        local_slices.append((local_idx, local_idx + len(pts)))
-                        local_wts.append(wts)
-                        local_idx += len(pts)
-
-                    raw = coeffs.expand(lat=local_lats, lon=local_lons, degrees=True)
-                    flat = np.asarray(raw, dtype=float).ravel()
-
-                    res = np.empty(len(indices))
-                    for k, (start, end) in enumerate(local_slices):
-                        res[k] = np.dot(flat[start:end], local_wts[k])
-                    return res
-
-                if parallel:
-                    results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_lazy_fwd_chunk)(chunk)
-                        for chunk in path_chunks
-                        if len(chunk) > 0
-                    )
-                else:
-                    results = [
-                        compute_lazy_fwd_chunk(c) for c in path_chunks if len(c) > 0
-                    ]
-                return np.concatenate(results)
-
-            def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
-                from pygeoinf.linear_forms import LinearForm
-
-                def compute_lazy_adj_chunk(indices):
-                    local_comps = np.zeros(self.dim)
-                    for i in indices:
-                        if y[i] != 0.0:
-                            pts, wts = get_quad(*paths[i])
-                            for pt, w in zip(pts, wts):
-                                local_comps += (
-                                    y[i] * w
-                                ) * self.laplacian_eigenvectors_at_point(pt)
-                    return local_comps
-
-                if parallel:
-                    results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_lazy_adj_chunk)(chunk)
-                        for chunk in path_chunks
-                        if len(chunk) > 0
-                    )
-                else:
-                    results = [
-                        compute_lazy_adj_chunk(c) for c in path_chunks if len(c) > 0
-                    ]
-                return self.from_dual(
-                    LinearForm(self, components=np.sum(results, axis=0))
-                )
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    @staticmethod
-    def iris_stations(n_stations: int = None, include_names: bool = False):
-        """
-        Convenience method to retrieve a globally distributed set of
-        Global Seismograph Network (GSN) stations from IRIS.
-
-        Args:
-            n_stations: The number of random stations to return. If None,
-                        returns the entire available network (~177 stations).
-            include_names: If True, returns (Name, Latitude, Longitude).
-                           If False, returns (Latitude, Longitude) tuples.
-
-        Returns:
-            A list of tuples representing the station coordinates in degrees.
-        """
-
-        return load_gsn_stations(n_stations=n_stations, include_names=include_names)
-
-    @staticmethod
-    def random_earthquakes(n_points: int, min_magnitude: float = 5.0):
-        """
-        Returns a random sample of real, sensible earthquake locations.
-
-        This provides a highly clustered, non-uniform spatial distribution
-        along tectonic boundaries, perfect for testing robust spatial operators.
-
-        Args:
-            n_points: The exact number of locations to return.
-            min_magnitude: The minimum magnitude threshold for the catalog.
-
-        Returns:
-            A list of (Latitude, Longitude) tuples in degrees.
-        """
-        from pygeoinf.datasets import sample_earthquakes
-
-        # The FDSN API returns (lat, lon, depth). We strip the depth
-        # since we are operating on the 2D surface of the sphere.
-        events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
-        return [(lat, lon) for lat, lon, depth in events]
-
-    def random_domain_points(
-        self, n: int, /, *, keep_ocean: bool = True, resolution: str = "110m"
-    ) -> List[Tuple[float, float]]:
-        """
-        Generates a list of random points strictly bounded to either the land or the ocean.
-        """
-        return self.underlying_space.random_domain_points(
-            n, keep_ocean=keep_ocean, resolution=resolution
-        )
-
-    def domain_mask(
-        self, /, *, keep_ocean: bool = False, resolution: str = "110m"
-    ) -> "sh.SHGrid":
-        """
-        Generates a spatial mask that equals 1.0 in the specified domain
-        and 0.0 outside of it.
-
-        Args:
-            keep_ocean: If True, the mask is 1.0 on the ocean and 0.0 on land.
-                        If False, the mask is 1.0 on land and 0.0 on the ocean.
-            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
-
-        Returns:
-            An SHGrid object representing the mask.
-        """
-        return self.underlying_space.domain_mask(
-            keep_ocean=keep_ocean, resolution=resolution
-        )
-
-
-# -------------------------------------------------- #
-#             Associated plotting methods            #
-# -------------------------------------------------- #
-
-
-def create_map_figure(
-    figsize: Optional[Tuple[float, float]] = None,
-    projection: Optional[Projection] = None,
-    **kwargs,
-) -> Tuple[plt.Figure, GeoAxes]:
-    """Creates a modern Matplotlib Figure and Cartopy GeoAxes optimized for maps."""
-    if projection is None:
-        projection = ccrs.PlateCarree()
-
-    kwargs.setdefault("layout", "constrained")
-    fig, ax = plt.subplots(
-        figsize=figsize, subplot_kw={"projection": projection}, **kwargs
-    )
-    return fig, ax
-
-
-def _unwrap_axes(
-    ax_input: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]],
-    projection: Optional[Projection] = None,
-) -> Tuple[plt.Figure, GeoAxes]:
-    """Helper to safely unwrap chained axes tuples and initialize figures."""
-    if ax_input is None:
-        fig, ax = create_map_figure(projection=projection)
-        return fig, ax
-
-    ax = ax_input[0] if isinstance(ax_input, tuple) else ax_input
-    return ax.get_figure(), ax
-
-
-def plot(
-    u: "SHGrid",
-    /,
-    *,
-    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
-    projection: Optional[Projection] = None,
-    contour: bool = False,
-    cmap: str = "RdBu",
-    coasts: bool = False,
-    rivers: bool = False,
-    borders: bool = False,
-    map_extent: Optional[List[float]] = None,
-    gridlines: bool = True,
-    gridlines_kwargs: Optional[dict] = None,
-    symmetric: Union[bool, float] = False,
-    contour_lines: bool = False,
-    contour_lines_kwargs: Optional[dict] = None,
-    num_levels: int = 10,
-    colorbar: bool = False,
-    colorbar_kwargs: Optional[dict] = None,
-    **kwargs,
-) -> Tuple[GeoAxes, Any]:
-    """Creates a high-quality map plot of a spherical harmonic function using Cartopy."""
-    fig, ax = _unwrap_axes(ax, projection)
-
-    lons, lats = u.lons(), u.lats()
-
-    if map_extent is not None:
-        ax.set_extent(map_extent, crs=ccrs.PlateCarree())
-    if coasts:
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-    if rivers:
-        ax.add_feature(cfeature.RIVERS, linewidth=0.8)
-    if borders:
-        ax.add_feature(cfeature.BORDERS, linewidth=0.8)
-
-    kwargs.setdefault("cmap", cmap)
-    if symmetric:
-        scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
-        data_max = scale_factor * np.nanmax(np.abs(u.data))
-        kwargs.setdefault("vmin", -data_max)
-        kwargs.setdefault("vmax", data_max)
-
-    if "levels" in kwargs:
-        levels = kwargs.pop("levels")
-    else:
-        vmin = kwargs.get("vmin", np.nanmin(u.data))
-        vmax = kwargs.get("vmax", np.nanmax(u.data))
-        levels = np.linspace(vmin, vmax, num_levels)
-
-    im: Any
-    if contour:
-        kwargs.pop("vmin", None)
-        kwargs.pop("vmax", None)
-        im = ax.contourf(
-            lons, lats, u.data, transform=ccrs.PlateCarree(), levels=levels, **kwargs
-        )
-    else:
-        im = ax.pcolormesh(lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs)
-
-    if contour_lines:
-        cl_kwargs = contour_lines_kwargs.copy() if contour_lines_kwargs else {}
-        cl_kwargs.setdefault("colors", "k")
-        cl_kwargs.setdefault("linewidths", 0.5)
-        ax.contour(
-            lons, lats, u.data, transform=ccrs.PlateCarree(), levels=levels, **cl_kwargs
-        )
-
-    if gridlines:
-        gl_opts = gridlines_kwargs.copy() if gridlines_kwargs else {}
-        lat_interval = gl_opts.pop("lat_interval", 30)
-        lon_interval = gl_opts.pop("lon_interval", 30)
-
-        gl_opts.setdefault("linestyle", "--")
-        gl_opts.setdefault("draw_labels", True)
-        gl_opts.setdefault("dms", True)
-        gl_opts.setdefault("x_inline", False)
-        gl_opts.setdefault("y_inline", False)
-
-        gl = ax.gridlines(**gl_opts)
-        gl.xlocator = mticker.MultipleLocator(lon_interval)
-        gl.ylocator = mticker.MultipleLocator(lat_interval)
-        gl.xformatter = LongitudeFormatter()
-        gl.yformatter = LatitudeFormatter()
-        ax.gridliner = gl
-
-    if colorbar and fig:
-        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
-        cb_opts.setdefault("orientation", "horizontal")
-        cb_opts.setdefault("shrink", 0.7)
-        cb_opts.setdefault("pad", 0.05)
-
-        cb = fig.colorbar(im, ax=ax, **cb_opts)
-        im.colorbar = cb
-
-    return ax, im
-
-
-def plot_points(
-    points: List[Tuple[float, float]],
-    /,
-    *,
-    data: Optional[Union[List[float], np.ndarray]] = None,
-    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
-    projection: Optional[Projection] = None,
-    cmap: str = "RdBu",
-    color: str = "red",
-    s: float = 20,
-    marker: str = "o",
-    edgecolors: str = "none",
-    zorder: int = 5,
-    coasts: bool = False,
-    rivers: bool = False,
-    borders: bool = False,
-    map_extent: Optional[List[float]] = None,
-    gridlines: bool = True,
-    gridlines_kwargs: Optional[dict] = None,
-    symmetric: Union[bool, float] = False,
-    colorbar: bool = False,
-    colorbar_kwargs: Optional[dict] = None,
-    **kwargs,
-) -> Tuple[GeoAxes, Any]:
-    """Plots discrete observation points on a map."""
-    fig, ax = _unwrap_axes(ax, projection)
-
-    # Only set global if we initialized a fresh axis and no extent is provided
-    if map_extent is None and not ax.get_extent():
-        ax.set_global()
-    elif map_extent is not None:
-        ax.set_extent(map_extent, crs=ccrs.PlateCarree())
-
-    if coasts:
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.8, zorder=10)
-    if rivers:
-        ax.add_feature(cfeature.RIVERS, linewidth=0.8, zorder=10)
-    if borders:
-        ax.add_feature(cfeature.BORDERS, linewidth=0.8, zorder=10)
-
-    lats = [p[0] for p in points]
-    lons = [p[1] for p in points]
-
-    if data is not None:
-        if len(data) != len(points):
-            raise ValueError("The length of 'data' must match the length of 'points'.")
-        c = data
-        kwargs.setdefault("cmap", cmap)
-        if symmetric:
-            scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
-            data_max = scale_factor * np.nanmax(np.abs(data))
-            kwargs.setdefault("vmin", -data_max)
-            kwargs.setdefault("vmax", data_max)
-    else:
-        c = color
-
-    sc = ax.scatter(
-        lons,
-        lats,
-        c=c,
-        s=s,
-        marker=marker,
-        edgecolors=edgecolors,
-        zorder=zorder,
-        transform=ccrs.PlateCarree(),
-        **kwargs,
-    )
-
-    if gridlines:
-        gl_opts = gridlines_kwargs.copy() if gridlines_kwargs else {}
-        lat_interval = gl_opts.pop("lat_interval", 30)
-        lon_interval = gl_opts.pop("lon_interval", 30)
-
-        gl_opts.setdefault("linestyle", "--")
-        gl_opts.setdefault("draw_labels", True)
-        gl_opts.setdefault("zorder", 10)
-
-        gl = ax.gridlines(**gl_opts)
-        gl.xlocator = mticker.MultipleLocator(lon_interval)
-        gl.ylocator = mticker.MultipleLocator(lat_interval)
-        gl.xformatter = LongitudeFormatter()
-        gl.yformatter = LatitudeFormatter()
-        ax.gridliner = gl
-
-    if colorbar and data is not None and fig:
-        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
-        cb_opts.setdefault("orientation", "horizontal")
-        cb_opts.setdefault("shrink", 0.7)
-        cb_opts.setdefault("pad", 0.05)
-
-        cb = fig.colorbar(sc, ax=ax, **cb_opts)
-        sc.colorbar = cb
-
-    return ax, sc
-
-
-def plot_geodesic(
-    p1: Tuple[float, float],
-    p2: Tuple[float, float],
-    /,
-    *,
-    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
-    **kwargs,
-) -> Tuple[GeoAxes, Any]:
-    """Plots a geodesic (great-circle) curve between two points on the sphere."""
-    _, ax = _unwrap_axes(ax)
-
-    kwargs.setdefault("color", "black")
-    kwargs.setdefault("linewidth", 2)
-
-    lat1, lon1 = p1
-    lat2, lon2 = p2
-
-    # ax.plot returns a list of Line2D objects; we extract the first one
-    (line,) = ax.plot([lon1, lon2], [lat1, lat2], transform=ccrs.Geodetic(), **kwargs)
-
-    return ax, line
-
-
-def plot_geodesic_network(
-    paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-    /,
-    *,
-    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
-    plot_sources: bool = True,
-    plot_receivers: bool = True,
-    source_kwargs: Optional[dict] = None,
-    receiver_kwargs: Optional[dict] = None,
-    **kwargs,
-) -> Tuple[GeoAxes, List[Any]]:
-    """Plots a network of intersecting geodesic paths onto a Cartopy map."""
-    fig, ax = _unwrap_axes(ax)
-
-    if not ax.get_extent():
-        ax.set_global()
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-
-    kwargs.setdefault("color", "black")
-    kwargs.setdefault("linewidth", 0.8)
-    kwargs.setdefault("alpha", 0.5)
-
-    artists = []
-    for p1, p2 in paths:
-        _, line = plot_geodesic(p1, p2, ax=ax, **kwargs)
-        artists.append(line)
-
-    if plot_sources or plot_receivers:
-        sources = list(set([tuple(p[0]) for p in paths]))
-        receivers = list(set([tuple(p[1]) for p in paths]))
-
-        if plot_sources and sources:
-            src_lats, src_lons = zip(*sources)
-            src_style = source_kwargs.copy() if source_kwargs else {}
-            src_style.setdefault("marker", "*")
-            src_style.setdefault("color", "gold")
-            src_style.setdefault("s", 150)
-            src_style.setdefault("edgecolor", "black")
-            src_style.setdefault("zorder", 5)
-
-            sc_src = ax.scatter(
-                src_lons, src_lats, transform=ccrs.Geodetic(), **src_style
-            )
-            artists.append(sc_src)
-
-        if plot_receivers and receivers:
-            rec_lats, rec_lons = zip(*receivers)
-            rec_style = receiver_kwargs.copy() if receiver_kwargs else {}
-            rec_style.setdefault("marker", "o")
-            rec_style.setdefault("color", "red")
-            rec_style.setdefault("s", 50)
-            rec_style.setdefault("edgecolor", "white")
-            rec_style.setdefault("zorder", 5)
-
-            sc_rec = ax.scatter(
-                rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style
-            )
-            artists.append(sc_rec)
-
-    return ax, artists

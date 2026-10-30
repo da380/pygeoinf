@@ -1,1483 +1,162 @@
-"""
-Provides concrete implementations of function spaces on the 2D Torus.
+"""The two-dimensional torus: a doubly periodic domain.
 
-This module defines Lebesgue (L²) and Sobolev (Hˢ) spaces for doubly periodic
-functions defined on a rectangular domain that wraps at its boundaries.
-It utilizes 2D Real Fast Fourier Transforms (rfft2) for highly efficient
-spectral operations and coordinate basis mapping.
+Each geometry has its own module, so that the space a problem is posed on is
+named by its type. ``Torus`` is a
+:class:`~pygeoinf.symmetric_space.fourier.PeriodicBox` of two axes.
 """
 
 from __future__ import annotations
-from typing import Callable, Any, Optional, Tuple, List, Union
 
-from functools import cached_property
+from typing import Sequence
 
 import numpy as np
-from scipy.fft import rfft2, irfft2
 
-import matplotlib.pyplot as plt
-from matplotlib.axes import Axes
+from .fourier import PeriodicBox
 
-import finufft
-from scipy import sparse
-
-from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.linear_forms import LinearForm
-
-from pygeoinf.linear_operators import LinearOperator
-from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
+__all__ = ["Torus", "Lebesgue", "Sobolev"]
 
 
-class Lebesgue(AbstractSymmetricLebesgueSpace):
-    """
-    Implementation of the Lebesgue space L² on a 2D Torus.
-
-    Functions are represented by their values on an evenly spaced 2D grid. The
-    coordinate basis for the space is formed by 2D Fourier expansions.
-    """
+class Torus(PeriodicBox):
+    """A field on a two-dimensional torus, expanded in a Fourier series."""
 
     def __init__(
         self,
-        kmax: int,
+        shape: Sequence[int],
         /,
         *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-    ):
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
+        order: float = 0.0,
+        length_scale: float = 1.0,
+    ) -> None:
         """
         Args:
-            kmax: The maximum Fourier degree to be represented in both dimensions.
-            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
-            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
+            shape: grid points along each of the two axes.
+            lengths: the period along each axis. ``(2 pi, 2 pi)``, the unit
+                torus, if neither this nor *radii* is given. Points are
+                physical coordinates in these periods, never angles; on the
+                unit torus the two coincide.
+            radii: the radius along each axis, as an alternative to the
+                periods; ``length == 2 pi radius`` on each.
+            order: the Sobolev order. Zero gives the Lebesgue space.
+            length_scale: the length at which the Sobolev weight turns over.
+
+        Raises:
+            ValueError: if the shape is not two-dimensional, if both *lengths*
+                and *radii* are given, or if a radius is not positive.
         """
-        if kmax <= 0:
-            raise ValueError("kmax must be non-negative")
-        if radius_x <= 0 or radius_y <= 0:
-            raise ValueError("Radii must be positive")
-
-        self._kmax: int = kmax
-        self._radius_x: float = radius_x
-        self._radius_y: float = radius_y
-
-        self._fft_factor: float = np.sqrt(4 * np.pi**2 * radius_x * radius_y) / (
-            4 * kmax**2
+        shape = tuple(int(n) for n in shape)
+        if len(shape) != 2:
+            raise ValueError(f"A torus has two axes, got {len(shape)}.")
+        super().__init__(
+            shape,
+            lengths=_periods(lengths, radii),
+            order=order,
+            length_scale=length_scale,
         )
-        self._inverse_fft_factor: float = 1.0 / self._fft_factor
 
-        dim = 4 * kmax**2
-        self._build_index_map(dim)
+    @property
+    def radii(self) -> tuple[float, float]:
+        """The periods over ``2 pi``."""
+        first, second = self.lengths
+        return float(first) / (2.0 * np.pi), float(second) / (2.0 * np.pi)
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 2, kmax, dim)
-
-    @classmethod
-    def from_covariance(
-        cls,
-        covariance_function: Callable[[float], float],
+    def _rebuilt(
+        self,
         /,
         *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-    ) -> Lebesgue:
-        """
-        Creates an instance of the L² space with a Fourier truncation degree (`kmax`)
-        automatically chosen to capture the expected energy of functions drawn from
-        a specified prior measure.
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Torus":
+        """The same torus with some of its parameters changed.
+
+        Overridden so that ``with_order`` and ``with_shape`` give back a torus
+        as the :class:`Lebesgue` or :class:`Sobolev` subclass its order names,
+        rather than a bare
+        :class:`~pygeoinf.symmetric_space.fourier.PeriodicBox`.
 
         Args:
-            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
-            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
-            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 1.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+            shape: the new grid, two axes. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
 
         Returns:
-            Lebesgue: A fully instantiated L² space on the Torus with the optimal `kmax`.
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
         """
-        dummy_space = cls(max(1, min_degree), radius_x=radius_x, radius_y=radius_y)
-        optimal_degree = dummy_space.estimate_truncation_degree(
-            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
-        )
-        if power_of_two:
-            n = int(np.log2(optimal_degree))
-            optimal_degree = 2 ** (n + 1)
-        return cls(optimal_degree, radius_x=radius_x, radius_y=radius_y)
-
-    @classmethod
-    def from_heat_kernel_prior(
-        cls,
-        kernel_scale: float,
-        /,
-        *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-    ) -> Lebesgue:
-        """
-        Creates an instance of the L² space on the Torus, tuned to the expected
-        energy of a Heat Kernel prior measure.
-
-        Args:
-            kernel_scale: The length-scale parameter of the heat kernel covariance.
-            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
-            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 1.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
-        """
-        return cls.from_covariance(
-            cls.heat_kernel(kernel_scale),
-            radius_x=radius_x,
-            radius_y=radius_y,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-        )
-
-    @classmethod
-    def from_sobolev_kernel_prior(
-        cls,
-        kernel_order: float,
-        kernel_scale: float,
-        /,
-        *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-    ) -> Lebesgue:
-        """
-        Creates an instance of the L² space on the Torus, tuned to the expected
-        energy of a Sobolev-type prior measure.
-
-        Args:
-            kernel_order: The smoothness order of the Sobolev prior measure.
-            kernel_scale: The length-scale parameter of the Sobolev prior measure.
-            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
-            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return. Defaults to 1.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
-        """
-        return cls.from_covariance(
-            cls.sobolev_kernel(kernel_order, kernel_scale),
-            radius_x=radius_x,
-            radius_y=radius_y,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-        )
-
-    @property
-    def kmax(self) -> int:
-        """The maximum Fourier degree represented in this space."""
-        return self._kmax
-
-    @property
-    def radius_x(self) -> float:
-        """The radius of the Torus in the x-direction."""
-        return self._radius_x
-
-    @property
-    def radius_y(self) -> float:
-        """The radius of the Torus in the y-direction."""
-        return self._radius_y
-
-    @property
-    def fft_factor(self) -> float:
-        """The scaling factor applied during forward Fourier transforms."""
-        return self._fft_factor
-
-    @property
-    def inverse_fft_factor(self) -> float:
-        """The scaling factor applied during inverse Fourier transforms."""
-        return self._inverse_fft_factor
-
-    @property
-    def gaussian_curvature(self) -> float:
-        """The Gaussian curvature of the Torus (always 0.0)."""
-        return 0.0
-
-    def points(self) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Returns two flattened 1D arrays representing the X and Y coordinates of the 2D grid.
-        """
-        x = np.arange(2 * self.kmax) * np.pi / self.kmax
-        y = np.arange(2 * self.kmax) * np.pi / self.kmax
-        X, Y = np.meshgrid(x, y, indexing="ij")
-        return X.flatten(), Y.flatten()
-
-    def project_function(self, f: Callable[[Tuple[float, float]], float]) -> np.ndarray:
-        """
-        Returns an element of the space by projecting a given continuous 2D function.
-
-        Args:
-            f: A callable that takes a tuple `(x, y)` and returns a scalar value.
-
-        Returns:
-            A 2D numpy array representing the function evaluated on the spatial grid.
-        """
-        X, Y = self.points()
-        Z = np.fromiter((f((x, y)) for x, y in zip(X, Y)), float)
-        return Z.reshape((2 * self.kmax, 2 * self.kmax))
-
-    def to_coefficients(self, u: np.ndarray) -> np.ndarray:
-        """Maps a spatial function vector to its 2D complex Fourier coefficients."""
-        return rfft2(u) * self.fft_factor
-
-    def from_coefficients(self, coeff: np.ndarray) -> np.ndarray:
-        """Maps 2D complex Fourier coefficients back to a spatial function vector."""
-        return (
-            irfft2(coeff, s=(2 * self.kmax, 2 * self.kmax)) * self._inverse_fft_factor
-        )
-
-    def to_coefficient_operator(self, kmax: int) -> LinearOperator:
-        """Returns an operator that maps a function to its spectral coefficients."""
-        target_space = self.with_degree(kmax)
-        transfer_op = self.degree_transfer_operator(kmax)
-        return target_space.coordinate_projection @ transfer_op
-
-    def from_coefficient_operator(self, kmax: int) -> LinearOperator:
-        """Returns an operator that maps spectral coefficients to a spatial function."""
-        target_space = self.with_degree(kmax)
-        transfer_op = self.degree_transfer_operator(kmax)
-        return transfer_op.adjoint @ target_space.coordinate_inclusion
-
-    def wavevector_indices(self, kx: int, ky: int) -> List[int]:
-        """
-        Retrieves the 1D component indices corresponding to a specific 2D wavevector.
-
-        Args:
-            kx: The spatial frequency in the x-direction.
-            ky: The spatial frequency in the y-direction.
-
-        Returns:
-            A list of integers representing the indices in the flattened spectral vector.
-        """
-        if ky < 0 or ky > self.kmax:
-            raise ValueError(
-                f"Due to Real-FFT symmetry, ky must be in [0, {self.kmax}]."
-            )
-        mask = (self._kx_freqs == kx) & (self._ky_freqs == ky)
-        return np.where(mask)[0].tolist()
-
-    def spectral_projection_operator(
-        self, modes: List[Tuple[int, int]]
-    ) -> LinearOperator:
-        """
-        Returns an operator that projects a function onto a specific set of
-        Fourier wavevector modes.
-        """
-        indices = []
-        for kx, ky in modes:
-            indices.extend(self.wavevector_indices(kx, ky))
-        unique_indices = sorted(list(set(indices)))
-
-        if not unique_indices:
-            raise ValueError(
-                "No valid wavevector indices found for the provided modes."
-            )
-
-        full_coeff_op = self.to_coefficient_operator(self.kmax)
-        projection_op = full_coeff_op.codomain.subspace_projection(unique_indices)
-        return projection_op @ full_coeff_op
-
-    def integer_to_index(self, i: int) -> int:
-        return i
-
-    def index_to_integer(self, k: int) -> int:
-        return k
-
-    def laplacian_eigenvalue(self, k: int) -> float:
-        """Returns the eigenvalue of the Laplacian for the given flat index."""
-        return self._eigenvalues[k]
-
-    def laplacian_eigenvector_squared_norm(self, k: int) -> float:
-        """Returns the squared norm of the eigenfunction for the given flat index."""
-        return self._squared_norms[k]
-
-    @cached_property
-    def _eigvec_assembly(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Cached arrays for fast eigenfunction evaluation at a point.
-
-        Exploits the component layout built by `_build_index_map`: four
-        real-only modes at indices 0-3 followed by strict (cos, -sin) pairs
-        that share a wavevector. Returns the wavevector components of the
-        unique modes (singles plus one per pair) and the combined scaling
-        vector `dirac_weights / sqrt(4 pi^2 R_x R_y)`.
-        """
-        unique = np.concatenate((np.arange(4), np.arange(4, self.dim, 2)))
-        norm_factor = np.sqrt(4 * np.pi**2 * self.radius_x * self.radius_y)
-        scale = self._dirac_weights / norm_factor
-        return self._kx_freqs[unique], self._ky_freqs[unique], scale
-
-    def laplacian_eigenvectors_at_point(self, pt: Tuple[float, float]) -> np.ndarray:
-        """Evaluates all Laplacian eigenfunctions at a given physical coordinate."""
-        tx, ty = pt
-        unique_kx, unique_ky, scale = self._eigvec_assembly
-        phase = unique_kx * tx
-        phase += unique_ky * ty
-        cos_phase = np.cos(phase)
-        vals = np.empty(self.dim)
-        vals[:4] = cos_phase[:4]
-        vals[4::2] = cos_phase[4:]
-        vals[5::2] = -np.sin(phase[4:])
-        vals *= scale
-        return vals
-
-    def random_point(self) -> Tuple[float, float]:
-        """Returns a random coordinate point within the Torus domain [0, 2π] x [0, 2π]."""
-        return (np.random.uniform(0, 2 * np.pi), np.random.uniform(0, 2 * np.pi))
-
-    def geodesic_distance(
-        self, p1: Tuple[float, float], p2: Tuple[float, float]
-    ) -> float:
-        """Computes the shortest path distance between two points, accounting for periodic wrapping."""
-        dx = (p2[0] - p1[0] + np.pi) % (2 * np.pi) - np.pi
-        dy = (p2[1] - p1[1] + np.pi) % (2 * np.pi) - np.pi
-        return float(np.sqrt((dx * self.radius_x) ** 2 + (dy * self.radius_y) ** 2))
-
-    def geodesic_quadrature(
-        self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
-    ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
-        """Generates quadrature points and weights along a shortest-path geodesic."""
-        arc_length = self.geodesic_distance(p1, p2)
-        dx = (p2[0] - p1[0] + np.pi) % (2 * np.pi) - np.pi
-        dy = (p2[1] - p1[1] + np.pi) % (2 * np.pi) - np.pi
-
-        t, w = np.polynomial.legendre.leggauss(n_points)
-        t_mapped = (t + 1) / 2.0
-
-        angles_x = p1[0] + t_mapped * dx
-        angles_y = p1[1] + t_mapped * dy
-
-        scaled_weights = w * (arc_length / 2.0)
-        points = list(zip(angles_x, angles_y))
-
-        return points, scaled_weights
-
-    def with_degree(self, degree: int) -> Lebesgue:
-        """Returns a new space identical to this one but with a modified truncation degree."""
-        return Lebesgue(degree, radius_x=self.radius_x, radius_y=self.radius_y)
-
-    def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
-        """
-        Returns a mapping operator that safely truncates or zero-pads Fourier
-        coefficients to transition between different spectral resolutions.
-        """
-        codomain = self.with_degree(target_degree)
-
-        forward_indices = []
-        for i in range(self.dim):
-            kx = self._kx_freqs[i]
-            ky = self._ky_freqs[i]
-            is_imag = self._is_imag[i]
-
-            if abs(kx) <= target_degree and ky <= target_degree:
-                # -target_degree does not exist in the target grid. Drop it to prevent collisions.
-                if kx == -target_degree:
-                    continue
-
-                # Nyquist frequencies on the target grid are strictly real
-                if is_imag and (abs(kx) == target_degree or ky == target_degree):
-                    continue
-
-                mask = (
-                    (codomain._kx_freqs == kx)
-                    & (codomain._ky_freqs == ky)
-                    & (codomain._is_imag == is_imag)
-                )
-                idx_out = np.where(mask)[0]
-                if len(idx_out) == 1:
-                    forward_indices.append((i, idx_out[0]))
-
-        in_idx = np.array([pair[0] for pair in forward_indices], dtype=int)
-        out_idx = np.array([pair[1] for pair in forward_indices], dtype=int)
-
-        metric_ratio = codomain.metric_values[out_idx] / self.metric_values[in_idx]
-
-        def mapping(u: np.ndarray) -> np.ndarray:
-            c_in = self.to_components(u)
-            c_out = np.zeros(codomain.dim)
-            c_out[out_idx] = c_in[in_idx]
-            return codomain.from_components(c_out)
-
-        def adjoint_mapping(v: np.ndarray) -> np.ndarray:
-            c_in = codomain.to_components(v)
-            c_out = np.zeros(self.dim)
-            c_out[in_idx] = c_in[out_idx] * metric_ratio
-            return self.from_components(c_out)
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    def invariant_covariance_function(
-        self, spectral_variances: np.ndarray
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        """
-        Raises NotImplementedError. The anisotropic layout of the 2D Torus prevents
-        an exact 1D distance-to-covariance mapping.
-        """
-        raise NotImplementedError(
-            "Due to the grid anisotropy, an exact 1D distance-to-covariance mapping "
-            "is not mathematically defined for the Torus. Use purely diagonal preconditioners."
-        )
-
-    def estimate_truncation_degree(
-        self,
-        covariance_function: Callable[[float], float],
-        /,
-        *,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-    ) -> int:
-        """
-        Iteratively calculates the spherical truncation degree needed to capture
-        the variance of a random field below a specified error tolerance.
-        """
-        summation = 0.0
-        K = 0
-        err = 1.0
-
-        while err > rtol:
-            if max_degree is not None and K >= max_degree:
-                return max_degree
-
-            shell_energy = 0.0
-            if K == 0:
-                shell_energy += covariance_function(0.0)
-            else:
-                for kx in range(-K, K + 1):
-                    for ky in [-K, K]:
-                        eval_val = (kx / self.radius_x) ** 2 + (ky / self.radius_y) ** 2
-                        shell_energy += covariance_function(eval_val)
-                for ky in range(-K + 1, K):
-                    for kx in [-K, K]:
-                        eval_val = (kx / self.radius_x) ** 2 + (ky / self.radius_y) ** 2
-                        shell_energy += covariance_function(eval_val)
-
-            summation += shell_energy
-
-            if summation > 0:
-                err = shell_energy / summation
-            else:
-                err = 1.0
-
-            if err <= rtol:
-                break
-
-            K += 1
-            if K > 10000:
-                raise RuntimeError("Failed to converge on a stable truncation degree.")
-
-        return max(K, min_degree)
-
-    def degree_multiplicity(self, degree: int) -> int:
-        return 1
-
-    def representative_index(self, degree: int) -> int:
-        return degree
-
-    def to_components(self, x: np.ndarray) -> np.ndarray:
-        """Flattens and packs spatial data into a real-valued 1D component array."""
-        coeff = self.to_coefficients(x)
-        return self._coefficient_to_component(coeff)
-
-    def from_components(self, c: np.ndarray) -> np.ndarray:
-        """Unpacks a real-valued 1D component array back into spatial data."""
-        coeff = self._component_to_coefficients(c)
-        return self.from_coefficients(coeff)
-
-    def is_element(self, x: Any) -> bool:
-        """Checks if the given object is a valid spatial representation in this space."""
-        if not isinstance(x, np.ndarray):
-            return False
-        if not x.shape == (2 * self.kmax, 2 * self.kmax):
-            return False
-        return True
-
-    def __eq__(self, other: object) -> bool:
-        """Checks for mathematical equality based on truncation and radii."""
-        if not isinstance(other, Lebesgue):
-            return NotImplemented
-        return (
-            self.kmax == other.kmax
-            and self.radius_x == other.radius_x
-            and self.radius_y == other.radius_y
-        )
-
-    def vector_multiply(self, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
-        """Pointwise multiplication of two spatial functions."""
-        return x1 * x2
-
-    def vector_sqrt(self, x: np.ndarray) -> np.ndarray:
-        """Pointwise square root of a spatial function."""
-        return np.sqrt(x)
-
-    @property
-    def zero(self) -> np.ndarray:
-        """Returns a spatial field populated entirely with zeros."""
-        return np.zeros((2 * self.kmax, 2 * self.kmax))
-
-    def inner_product(self, x: np.ndarray, y: np.ndarray) -> float:
-        """Computes the exact L² inner product utilizing the spectral metric."""
-        cx = self.to_components(x)
-        cy = self.to_components(y)
-        return float(np.dot(cx, self.metric @ cy))
-
-    def norm(self, x: np.ndarray) -> float:
-        """Computes the exact L² norm utilizing the spectral metric."""
-        cx = self.to_components(x)
-        return float(np.sqrt(np.clip(np.dot(cx, self.metric @ cx), 0.0, None)))
-
-    def _build_index_map(self, dim: int):
-        """Constructs mappings between 1D component indices and 2D wavevectors."""
-        self._eigenvalues = np.zeros(dim)
-        self._squared_norms = np.zeros(dim)
-        self._dirac_weights = np.zeros(dim)
-        self._kx_freqs = np.zeros(dim)
-        self._ky_freqs = np.zeros(dim)
-        self._is_imag = np.zeros(dim, dtype=bool)
-
-        idx = 0
-
-        def add_mode(kx_idx, ky_idx, is_real_only=False):
-            nonlocal idx
-            kx_freq = kx_idx if kx_idx <= self.kmax else kx_idx - 2 * self.kmax
-            ky_freq = ky_idx
-            eval_val = (kx_freq / self.radius_x) ** 2 + (ky_freq / self.radius_y) ** 2
-
-            # A paired component stores a conjugate pair of modes: its basis
-            # function has amplitude 2 (dirac weight) and squared norm 2. A
-            # real-only Nyquist mode is stored once: amplitude 1 and squared
-            # norm 1/2. The constant mode has amplitude 1 and unit norm.
-            if is_real_only:
-                squared_norm = 1.0 if kx_idx == 0 and ky_idx == 0 else 0.5
-            else:
-                squared_norm = 2.0
-
-            self._eigenvalues[idx] = eval_val
-            self._squared_norms[idx] = squared_norm
-            self._dirac_weights[idx] = 1.0 if is_real_only else 2.0
-            self._kx_freqs[idx] = kx_freq
-            self._ky_freqs[idx] = ky_freq
-            self._is_imag[idx] = False
-            idx += 1
-
-            if not is_real_only:
-                self._eigenvalues[idx] = eval_val
-                self._squared_norms[idx] = 2.0
-                self._dirac_weights[idx] = 2.0
-                self._kx_freqs[idx] = kx_freq
-                self._ky_freqs[idx] = ky_freq
-                self._is_imag[idx] = True
-                idx += 1
-
-        add_mode(0, 0, True)
-        add_mode(self.kmax, 0, True)
-        add_mode(0, self.kmax, True)
-        add_mode(self.kmax, self.kmax, True)
-
-        for kx in range(1, self.kmax):
-            add_mode(kx, 0, False)
-
-        for kx in range(1, self.kmax):
-            add_mode(kx, self.kmax, False)
-
-        for ky in range(1, self.kmax):
-            for kx in range(2 * self.kmax):
-                add_mode(kx, ky, False)
-
-    def _coefficient_to_component(self, coeff: np.ndarray) -> np.ndarray:
-        """Packs a 2D complex Fourier array into a dense 1D real vector."""
-        c = np.empty(self.dim, dtype=float)
-        k = self.kmax
-
-        c[0] = coeff[0, 0].real
-        c[1] = coeff[k, 0].real
-        c[2] = coeff[0, k].real
-        c[3] = coeff[k, k].real
-
-        idx_end_0 = 4 + 2 * (k - 1)
-        c[4:idx_end_0:2] = coeff[1:k, 0].real
-        c[5:idx_end_0:2] = coeff[1:k, 0].imag
-
-        idx_end_k = idx_end_0 + 2 * (k - 1)
-        c[idx_end_0:idx_end_k:2] = coeff[1:k, k].real
-        c[idx_end_0 + 1 : idx_end_k : 2] = coeff[1:k, k].imag
-
-        interior_flat = coeff[:, 1:k].T.flatten()
-        c[idx_end_k::2] = interior_flat.real
-        c[idx_end_k + 1 :: 2] = interior_flat.imag
-
-        return c
-
-    def _component_to_coefficients(self, c: np.ndarray) -> np.ndarray:
-        """Unpacks a dense 1D real vector back into a 2D complex Fourier array."""
-        k = self.kmax
-        coeff = np.zeros((2 * k, k + 1), dtype=complex)
-
-        coeff[0, 0] = c[0]
-        coeff[k, 0] = c[1]
-        coeff[0, k] = c[2]
-        coeff[k, k] = c[3]
-
-        if k > 1:
-            idx_end_0 = 4 + 2 * (k - 1)
-            vals_0 = c[4:idx_end_0:2] + 1j * c[5:idx_end_0:2]
-            coeff[1:k, 0] = vals_0
-            coeff[-1:-k:-1, 0] = np.conj(vals_0)
-
-            idx_end_k = idx_end_0 + 2 * (k - 1)
-            vals_k = c[idx_end_0:idx_end_k:2] + 1j * c[idx_end_0 + 1 : idx_end_k : 2]
-            coeff[1:k, k] = vals_k
-            coeff[-1:-k:-1, k] = np.conj(vals_k)
-
-            interior_flat = c[idx_end_k::2] + 1j * c[idx_end_k + 1 :: 2]
-            coeff[:, 1:k] = interior_flat.reshape((k - 1, 2 * k)).T
-
-        return coeff
-
-    @cached_property
-    def _nufft_assembly(
-        self,
-    ) -> Tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Cached index arrays linking the component layout to a dense NUFFT grid.
-
-        Returns the grid size N = 2 kmax + 2, the per-unique-mode scaling
-        s_m = w_m / sqrt(4 pi^2 R_x R_y) with w_m the dirac (mode-multiplicity)
-        weight, the flattened grid positions of +k_m and -k_m, and the
-        (row, column) grid indices of +k_m.
-        """
-        unique = np.concatenate((np.arange(4), np.arange(4, self.dim, 2)))
-        grid_size = 2 * self.kmax + 2
-        offset = grid_size // 2
-        kx = self._kx_freqs[unique].astype(int)
-        ky = self._ky_freqs[unique].astype(int)
-        scale = self._dirac_weights[unique] / np.sqrt(
-            4 * np.pi**2 * self.radius_x * self.radius_y
-        )
-        positive_flat = (kx + offset) * grid_size + (ky + offset)
-        negative_flat = (-kx + offset) * grid_size + (-ky + offset)
-        return grid_size, scale, positive_flat, negative_flat, kx + offset, ky + offset
-
-    def _points_to_angle_arrays(
-        self, points: List[Tuple[float, float]]
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Splits a list of points into contiguous float64 angle arrays."""
-        arr = np.asarray(points, dtype=np.float64)
-        return np.ascontiguousarray(arr[:, 0]), np.ascontiguousarray(arr[:, 1])
-
-    def _nufft_evaluate(
-        self,
-        c: np.ndarray,
-        theta_x: np.ndarray,
-        theta_y: np.ndarray,
-        /,
-        *,
-        eps: float = 1e-12,
-        nthreads: int = 1,
-    ) -> np.ndarray:
-        """
-        Evaluates the field with components `c` at the given angles via a
-        type-2 NUFFT.
-        """
-        grid_size, scale, positive_flat, negative_flat, _, _ = self._nufft_assembly
-        c_cos = np.concatenate((c[:4], c[4::2]))
-        c_sin = np.concatenate((np.zeros(4), c[5::2]))
-        w = scale * (c_cos + 1j * c_sin)
-        spectrum = np.zeros(grid_size * grid_size, dtype=complex)
-        np.add.at(spectrum, positive_flat, 0.5 * w)
-        np.add.at(spectrum, negative_flat, 0.5 * np.conj(w))
-        values = finufft.nufft2d2(
-            theta_x,
-            theta_y,
-            spectrum.reshape(grid_size, grid_size),
-            isign=+1,
-            eps=eps,
-            nthreads=nthreads,
-        )
-        return np.ascontiguousarray(values.real)
-
-    def _nufft_accumulate(
-        self,
-        weights: np.ndarray,
-        theta_x: np.ndarray,
-        theta_y: np.ndarray,
-        /,
-        *,
-        eps: float = 1e-12,
-        nthreads: int = 1,
-    ) -> np.ndarray:
-        """
-        Returns the components of sum_i weights_i * dirac(x_i) via a type-1
-        NUFFT (the adjoint of `_nufft_evaluate`).
-        """
-        grid_size, scale, _, _, grid_i, grid_j = self._nufft_assembly
-        spectrum = finufft.nufft2d1(
-            theta_x,
-            theta_y,
-            np.ascontiguousarray(weights, dtype=complex),
-            (grid_size, grid_size),
-            isign=-1,
-            eps=eps,
-            nthreads=nthreads,
-        )
-        g = spectrum[grid_i, grid_j]
-        components = np.empty(self.dim)
-        components[:4] = scale[:4] * g[:4].real
-        components[4::2] = scale[4:] * g[4:].real
-        components[5::2] = scale[4:] * g[4:].imag
-        return components
-
-
-class Sobolev(SymmetricSobolevSpace):
-    """
-    Implementation of the Sobolev space Hˢ on a 2D Torus.
-
-    Constructs a mass-weighted Hilbert space over the base Torus Lebesgue geometry,
-    accounting for fractional smoothness via a spectral order parameter.
-    """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, lengths=self._lengths)
+        return Sobolev(shape, order, scale, lengths=self._lengths)
+
+
+class Lebesgue(Torus):
+    """The ``L2`` space on a torus."""
 
     def __init__(
         self,
-        kmax: int,
-        order: float,
-        scale: float,
+        shape: Sequence[int],
         /,
         *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        safe: bool = True,
-    ):
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
+    ) -> None:
         """
         Args:
-            kmax: The maximum Fourier degree to be represented in both dimensions.
-            order: The Sobolev order, controlling the smoothness of the function space.
-            scale: The Sobolev length-scale parameter.
-            radius_x: The effective radius of the Torus in the x-direction.
-            radius_y: The effective radius of the Torus in the y-direction.
-            safe: If True, enforces rigorous mathematical checks (e.g., verifying
-                  that point evaluation only occurs if the order is > 1.0).
+            shape: grid points along each of the two axes.
+            lengths: the period along each axis; ``2 pi`` each by default.
+            radii: the radii, as an alternative.
+
+        Raises:
+            ValueError: if both are given, or a radius is not positive.
         """
-        lebesgue_space = Lebesgue(kmax, radius_x=radius_x, radius_y=radius_y)
-        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale, safe=safe)
+        super().__init__(shape, lengths=lengths, radii=radii, order=0.0)
 
-    @staticmethod
-    def from_sobolev_parameters(
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance with `kmax` automatically chosen to limit spatial
-        truncation error.
 
-        Args:
-            order: The Sobolev order. Must be > 1.0 for valid point evaluation on a 2D domain.
-            scale: The Sobolev length-scale parameter.
-            radius_x: The radius of the Torus in the x-direction.
-            radius_y: The radius of the Torus in the y-direction.
-            rtol: Relative tolerance used in assessing truncation error.
-            power_of_two: If True, rounds `kmax` up to the next power of two.
-            safe: If True, enables mathematical correctness checks.
-        """
-        if safe and order <= 1.0:
-            raise ValueError(
-                "Point evaluation on a 2D Torus requires Sobolev order > 1.0"
-            )
+class Sobolev(Torus):
+    """The Sobolev space ``H^order`` on a torus."""
 
-        dummy = Sobolev(
-            1, order, scale, radius_x=radius_x, radius_y=radius_y, safe=False
-        )
-        kmax = dummy.estimate_truncation_degree(dummy.sobolev_function, rtol=rtol)
-
-        if power_of_two:
-            n = int(np.log2(kmax))
-            kmax = 2 ** (n + 1)
-
-        return Sobolev(
-            kmax, order, scale, radius_x=radius_x, radius_y=radius_y, safe=safe
-        )
-
-    @classmethod
-    def from_covariance(
-        cls,
-        covariance_function: Callable[[float], float],
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance with a Fourier truncation degree (`kmax`) automatically
-        chosen to capture the expected energy of functions drawn from a specified prior.
-
-        Args:
-            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
-            order: The Sobolev order defining the function space.
-            scale: The Sobolev length-scale defining the function space.
-            radius_x: The radius of the Torus in the x-direction.
-            radius_y: The radius of the Torus in the y-direction.
-            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
-            min_degree: The absolute minimum truncation degree to return.
-            max_degree: An optional safety ceiling for the truncation degree.
-            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
-            safe: If True, enables mathematical correctness checks.
-        """
-        dummy_space = cls(
-            max(1, min_degree),
-            order,
-            scale,
-            radius_x=radius_x,
-            radius_y=radius_y,
-            safe=False,
-        )
-        optimal_degree = dummy_space.estimate_truncation_degree(
-            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
-        )
-        if power_of_two:
-            n = int(np.log2(optimal_degree))
-            optimal_degree = 2 ** (n + 1)
-
-        return cls(
-            optimal_degree,
-            order,
-            scale,
-            radius_x=radius_x,
-            radius_y=radius_y,
-            safe=safe,
-        )
-
-    @classmethod
-    def from_heat_kernel_prior(
-        cls,
-        kernel_scale: float,
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance of the Sobolev space tuned to the expected energy of a
-        Heat Kernel prior measure.
-        """
-        return cls.from_covariance(
-            cls.heat_kernel(kernel_scale),
-            order,
-            scale,
-            radius_x=radius_x,
-            radius_y=radius_y,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-            safe=safe,
-        )
-
-    @classmethod
-    def from_sobolev_kernel_prior(
-        cls,
-        kernel_order: float,
-        kernel_scale: float,
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius_x: float = 1.0,
-        radius_y: float = 1.0,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-        power_of_two: bool = False,
-        safe: bool = True,
-    ) -> Sobolev:
-        """
-        Creates an instance of the Sobolev space tuned to the expected energy of a
-        Sobolev-type prior measure.
-        """
-        return cls.from_covariance(
-            cls.sobolev_kernel(kernel_order, kernel_scale),
-            order,
-            scale,
-            radius_x=radius_x,
-            radius_y=radius_y,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-            power_of_two=power_of_two,
-            safe=safe,
-        )
-
-    @property
-    def kmax(self) -> int:
-        """The maximum Fourier degree represented in this space."""
-        return self.underlying_space.kmax
-
-    @property
-    def radius_x(self) -> float:
-        """The radius of the Torus in the x-direction."""
-        return self.underlying_space.radius_x
-
-    @property
-    def radius_y(self) -> float:
-        """The radius of the Torus in the y-direction."""
-        return self.underlying_space.radius_y
-
-    def points(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Returns two flattened 1D arrays representing the X and Y grid coordinates."""
-        return self.underlying_space.points()
-
-    @property
-    def fft_factor(self) -> float:
-        """The scaling factor applied during forward Fourier transforms."""
-        return self.underlying_space.fft_factor
-
-    @property
-    def inverse_fft_factor(self) -> float:
-        """The scaling factor applied during inverse Fourier transforms."""
-        return self.underlying_space.inverse_fft_factor
-
-    def with_order(self, order: float) -> Sobolev:
-        """Returns a new Sobolev instance with a modified order."""
-        return Sobolev(
-            self.kmax, order, self.scale, radius_x=self.radius_x, radius_y=self.radius_y
-        )
-
-    def with_degree(self, degree: int) -> Sobolev:
-        """Returns a new Sobolev instance with a modified truncation degree."""
-        return Sobolev(
-            degree,
-            self.order,
-            self.scale,
-            radius_x=self.radius_x,
-            radius_y=self.radius_y,
-        )
-
-    def project_function(self, f: Callable[[Tuple[float, float]], float]) -> np.ndarray:
-        """Evaluates and projects a continuous function onto the spatial grid."""
-        return self.underlying_space.project_function(f)
-
-    def estimate_truncation_degree(
+    def __init__(
         self,
-        covariance_function: Callable[[float], float],
+        shape: Sequence[int],
+        order: float,
+        length_scale: float,
         /,
         *,
-        rtol: float = 1e-6,
-        min_degree: int = 1,
-        max_degree: Optional[int] = None,
-    ) -> int:
+        lengths: Sequence[float] | None = None,
+        radii: Sequence[float] | None = None,
+    ) -> None:
         """
-        Delegates the energy truncation search to the underlying Torus Lebesgue space,
-        ensuring it loops geometrically over (kx, ky) shells.
-        """
-
-        # We must wrap the covariance function in the Sobolev weighting factor
-        def sobolev_weighted_cov(eval_val: float) -> float:
-            return covariance_function(eval_val) * self.sobolev_function(eval_val)
-
-        return self.underlying_space.estimate_truncation_degree(
-            sobolev_weighted_cov,
-            rtol=rtol,
-            min_degree=min_degree,
-            max_degree=max_degree,
-        )
-
-    # ------------------------------------------------------ #
-    #                  Operator Delegations                  #
-    # ------------------------------------------------------ #
-
-    def wavevector_indices(self, kx: int, ky: int) -> List[int]:
-        """Retrieves the 1D component indices corresponding to a specific 2D wavevector."""
-        return self.underlying_space.wavevector_indices(kx, ky)
-
-    def to_coefficient_operator(self, kmax: int) -> LinearOperator:
-        """Returns an operator that maps a function to its spectral coefficients."""
-        l2_operator = self.underlying_space.to_coefficient_operator(kmax)
-        return LinearOperator.from_formal_adjoint(
-            self, l2_operator.codomain, l2_operator
-        )
-
-    def from_coefficient_operator(self, kmax: int) -> LinearOperator:
-        """Returns an operator that maps spectral coefficients to a spatial function."""
-        l2_operator = self.underlying_space.from_coefficient_operator(kmax)
-        return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
-
-    def spectral_projection_operator(
-        self, modes: List[Tuple[int, int]]
-    ) -> LinearOperator:
-        """Returns an operator projecting onto specific Fourier wavevector modes."""
-        l2_operator = self.underlying_space.spectral_projection_operator(modes)
-        return LinearOperator.from_formal_adjoint(
-            self, l2_operator.codomain, l2_operator
-        )
-
-    # ------------------------------------------------------ #
-    #         Fast Array-Math Overrides & Delegations        #
-    # ------------------------------------------------------ #
-
-    def is_element(self, x: Any) -> bool:
-        """Checks if the given object is a valid spatial representation in this space."""
-        return self.underlying_space.is_element(x)
-
-    def to_components(self, x: np.ndarray) -> np.ndarray:
-        """Flattens and packs spatial data into a dense 1D component array."""
-        return self.underlying_space.to_components(x)
-
-    def from_components(self, c: np.ndarray) -> np.ndarray:
-        """Unpacks a 1D component array back into spatial grid data."""
-        return self.underlying_space.from_components(c)
-
-    def to_coefficients(self, u: np.ndarray) -> np.ndarray:
-        """Maps a spatial function vector to its 2D complex Fourier coefficients."""
-        return self.underlying_space.to_coefficients(u)
-
-    def from_coefficients(self, coeff: np.ndarray) -> np.ndarray:
-        """Maps 2D complex Fourier coefficients back to a spatial function vector."""
-        return self.underlying_space.from_coefficients(coeff)
-
-    def inner_product(self, x: np.ndarray, y: np.ndarray) -> float:
-        """Computes the exact Sobolev inner product utilizing the mass-weighted metric."""
-        cx = self.to_components(x)
-        cy = self.to_components(y)
-        return float(np.dot(cx, self.metric @ cy))
-
-    def norm(self, x: np.ndarray) -> float:
-        """Computes the exact Sobolev norm utilizing the mass-weighted metric."""
-        cx = self.to_components(x)
-        return float(np.sqrt(np.clip(np.dot(cx, self.metric @ cx), 0.0, None)))
-
-    def point_evaluation_operator(
-        self,
-        points: List[Tuple[float, float]],
-        /,
-        *,
-        matrix_free: bool = False,
-        parallel: bool = False,
-        n_jobs: int = -1,
-        eps: float = 1e-12,
-    ) -> LinearOperator:
-        """
-        Returns a linear operator that evaluates a function at a list of points.
-
         Args:
-            points: A list of coordinate tuples.
-            matrix_free: If True, applies the operator via NUFFTs (finufft)
-                instead of building a dense matrix.
-            parallel: If True, lets finufft use multiple threads.
-            n_jobs: Thread count for finufft when parallel. -1 uses all cores.
-            eps: Requested NUFFT accuracy for the matrix-free operator.
+            shape: grid points along each of the two axes.
+            order: the Sobolev order.
+            length_scale: the length at which the Sobolev weight turns over.
+            lengths: the period along each axis; ``2 pi`` each by default.
+            radii: the radii, as an alternative.
+
+        Raises:
+            ValueError: if both are given, or a radius is not positive.
         """
-        if not matrix_free:
-            return super().point_evaluation_operator(points)
-
-        if self.safe and self.order <= self.spatial_dimension / 2:
-            raise NotImplementedError("Point evaluation is not defined on this space")
-
-        space = self.underlying_space
-        theta_x, theta_y = space._points_to_angle_arrays(points)
-        codomain = EuclideanSpace(len(points))
-        nthreads = (0 if n_jobs < 0 else n_jobs) if parallel else 1
-
-        def mapping(u) -> np.ndarray:
-            return space._nufft_evaluate(
-                self.to_components(u), theta_x, theta_y, eps=eps, nthreads=nthreads
-            )
-
-        def adjoint_mapping(y: np.ndarray):
-            components = space._nufft_accumulate(
-                y, theta_x, theta_y, eps=eps, nthreads=nthreads
-            )
-            return self.from_dual(LinearForm(self, components=components))
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    def path_average_operator(
-        self,
-        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-        /,
-        *,
-        n_points: Optional[int] = None,
-        matrix_free: bool = False,
-        parallel: bool = False,
-        n_jobs: int = -1,
-        lazy_quadrature: bool = False,
-        eps: float = 1e-12,
-    ) -> LinearOperator:
-        """
-        Constructs a tomographic operator mapping a function field to its
-        line integrals along a set of geodesic paths.
-
-        The matrix-free operator is factorised as A = W E, with E point
-        evaluation at the flattened quadrature nodes (applied via NUFFTs) and
-        W a sparse matrix of quadrature weights.
-
-        Args:
-            paths: A list of start and end point pairs defining the geodesics.
-            n_points: The number of quadrature points per path.
-            matrix_free: If True, applies the operator via NUFFTs (finufft)
-                instead of building a dense matrix.
-            parallel: If True, lets finufft use multiple threads.
-            n_jobs: Thread count for finufft when parallel. -1 uses all cores.
-            lazy_quadrature: If True, recomputes the quadrature geometry on
-                each application instead of storing it.
-            eps: Requested NUFFT accuracy for the matrix-free operator.
-        """
-        if not matrix_free:
-            return super().path_average_operator(paths, n_points=n_points)
-
-        if self.safe and self.order <= self.spatial_dimension / 2:
-            raise NotImplementedError("Point evaluation is not defined on this space")
-
-        space = self.underlying_space
-        n_paths = len(paths)
-        codomain = EuclideanSpace(n_paths)
-        nthreads = (0 if n_jobs < 0 else n_jobs) if parallel else 1
-
-        def get_quad(p1, p2):
-            if n_points is None:
-                arc_length = self.geodesic_distance(p1, p2)
-                pts_count = max(2, int(np.ceil((arc_length / self.scale) * 2.0)))
-            else:
-                pts_count = n_points
-            return self.geodesic_quadrature(p1, p2, pts_count)
-
-        def build_geometry():
-            quads = [get_quad(*path) for path in paths]
-            flat_points = [pt for pts, _ in quads for pt in pts]
-            theta_x, theta_y = space._points_to_angle_arrays(flat_points)
-            lengths = np.array([len(wts) for _, wts in quads])
-            n_total = int(lengths.sum())
-            indptr = np.concatenate(([0], np.cumsum(lengths)))
-            weight_matrix = sparse.csr_matrix(
-                (
-                    np.concatenate([wts for _, wts in quads]),
-                    np.arange(n_total),
-                    indptr,
-                ),
-                shape=(n_paths, n_total),
-            )
-            return theta_x, theta_y, weight_matrix
-
-        if not lazy_quadrature:
-            precomputed_geometry = build_geometry()
-
-            def get_geometry():
-                return precomputed_geometry
-
-        else:
-            get_geometry = build_geometry
-
-        def mapping(u) -> np.ndarray:
-            theta_x, theta_y, weight_matrix = get_geometry()
-            values = space._nufft_evaluate(
-                self.to_components(u), theta_x, theta_y, eps=eps, nthreads=nthreads
-            )
-            return weight_matrix @ values
-
-        def adjoint_mapping(y: np.ndarray):
-            theta_x, theta_y, weight_matrix = get_geometry()
-            node_weights = weight_matrix.T @ y
-            components = space._nufft_accumulate(
-                node_weights, theta_x, theta_y, eps=eps, nthreads=nthreads
-            )
-            return self.from_dual(LinearForm(self, components=components))
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-
-# ------------------------------------------------- #
-#           Associated plotting functions           #
-# ------------------------------------------------- #
-
-
-def _unwrap_axes(
-    ax_input: Optional[Union[Axes, Tuple[Axes, Any]]],
-) -> Tuple[plt.Figure, Axes]:
-    """Helper to safely unwrap chained axes tuples and initialize figures."""
-    if ax_input is None:
-        fig, ax = plt.subplots(figsize=(6, 6), layout="constrained")
-        return fig, ax
-
-    ax = ax_input[0] if isinstance(ax_input, tuple) else ax_input
-    return ax.get_figure(), ax
-
-
-def plot(
-    space: Union["Lebesgue", "Sobolev"],
-    u: np.ndarray,
-    /,
-    *,
-    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
-    contour: bool = False,
-    cmap: str = "RdBu",
-    symmetric: Union[bool, float] = False,
-    contour_lines: bool = False,
-    contour_lines_kwargs: Optional[dict] = None,
-    num_levels: int = 10,
-    colorbar: bool = False,
-    colorbar_kwargs: Optional[dict] = None,
-    **kwargs,
-) -> Tuple[Axes, Any]:
-    """Creates a high-quality plot of a function on the 2D Torus."""
-    fig, ax = _unwrap_axes(ax)
-
-    x_1d = np.arange(2 * space.kmax) * np.pi / space.kmax
-    y_1d = np.arange(2 * space.kmax) * np.pi / space.kmax
-
-    kwargs.setdefault("cmap", cmap)
-    if symmetric:
-        scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
-        data_max = scale_factor * np.nanmax(np.abs(u))
-        kwargs.setdefault("vmin", -data_max)
-        kwargs.setdefault("vmax", data_max)
-
-    if "levels" in kwargs:
-        levels = kwargs.pop("levels")
-    else:
-        vmin = kwargs.get("vmin", np.nanmin(u))
-        vmax = kwargs.get("vmax", np.nanmax(u))
-        levels = np.linspace(vmin, vmax, num_levels)
-
-    u_plot = u.T
-
-    im: Any
-    if contour:
-        kwargs.pop("vmin", None)
-        kwargs.pop("vmax", None)
-        im = ax.contourf(x_1d, y_1d, u_plot, levels=levels, **kwargs)
-    else:
-        kwargs.setdefault("shading", "auto")
-        im = ax.pcolormesh(x_1d, y_1d, u_plot, **kwargs)
-
-    if contour_lines:
-        cl_kwargs = contour_lines_kwargs.copy() if contour_lines_kwargs else {}
-        cl_kwargs.setdefault("colors", "k")
-        cl_kwargs.setdefault("linewidths", 0.5)
-        ax.contour(x_1d, y_1d, u_plot, levels=levels, **cl_kwargs)
-
-    if colorbar and fig:
-        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
-        cb_opts.setdefault("orientation", "horizontal")
-        cb_opts.setdefault("shrink", 0.7)
-        cb_opts.setdefault("pad", 0.05)
-
-        cb = fig.colorbar(im, ax=ax, **cb_opts)
-        im.colorbar = cb
-
-    ax.set_xlim(0, 2 * np.pi)
-    ax.set_ylim(0, 2 * np.pi)
-    ax.set_aspect("equal", adjustable="box")
-
-    return ax, im
-
-
-def plot_points(
-    points: List[Tuple[float, float]],
-    /,
-    *,
-    data: Optional[Union[List[float], np.ndarray]] = None,
-    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
-    cmap: str = "RdBu",
-    color: str = "red",
-    s: float = 20,
-    marker: str = "o",
-    edgecolors: str = "none",
-    zorder: int = 5,
-    symmetric: Union[bool, float] = False,
-    colorbar: bool = False,
-    colorbar_kwargs: Optional[dict] = None,
-    **kwargs,
-) -> Tuple[Axes, Any]:
-    """Plots discrete observation points wrapped onto the primary Torus domain [0, 2π] x [0, 2π]."""
-    fig, ax = _unwrap_axes(ax)
-
-    # Torus topology: Wrap coordinate bounds to [0, 2pi]
-    x_pts = [p[0] % (2 * np.pi) for p in points]
-    y_pts = [p[1] % (2 * np.pi) for p in points]
-
-    if data is not None:
-        if len(data) != len(points):
-            raise ValueError("The length of 'data' must match the length of 'points'.")
-        c = data
-        kwargs.setdefault("cmap", cmap)
-        if symmetric:
-            scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
-            data_max = scale_factor * np.nanmax(np.abs(data))
-            kwargs.setdefault("vmin", -data_max)
-            kwargs.setdefault("vmax", data_max)
-    else:
-        c = color
-
-    sc = ax.scatter(
-        x_pts,
-        y_pts,
-        c=c,
-        s=s,
-        marker=marker,
-        edgecolors=edgecolors,
-        zorder=zorder,
-        **kwargs,
-    )
-
-    if colorbar and data is not None and fig:
-        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
-        cb_opts.setdefault("orientation", "horizontal")
-        cb_opts.setdefault("shrink", 0.7)
-        cb_opts.setdefault("pad", 0.05)
-
-        cb = fig.colorbar(sc, ax=ax, **cb_opts)
-        sc.colorbar = cb
-
-    ax.set_xlim(0, 2 * np.pi)
-    ax.set_ylim(0, 2 * np.pi)
-    ax.set_aspect("equal", adjustable="box")
-
-    return ax, sc
-
-
-def plot_geodesic(
-    p1: Tuple[float, float],
-    p2: Tuple[float, float],
-    /,
-    *,
-    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
-    **kwargs,
-) -> Tuple[Axes, Any]:
-    """Plots a straight-line geodesic, wrapping around the Torus boundaries if necessary."""
-    fig, ax = _unwrap_axes(ax)
-
-    kwargs.setdefault("color", "black")
-    kwargs.setdefault("linewidth", 2)
-
-    dx = (p2[0] - p1[0] + np.pi) % (2 * np.pi) - np.pi
-    dy = (p2[1] - p1[1] + np.pi) % (2 * np.pi) - np.pi
-
-    t = np.linspace(0, 1, 500)
-    x = p1[0] + t * dx
-    y = p1[1] + t * dy
-
-    x_wrapped = x % (2 * np.pi)
-    y_wrapped = y % (2 * np.pi)
-
-    # Insert NaNs at wrap boundaries to prevent visual streaking across the plot
-    jump_idx = np.where(
-        (np.abs(np.diff(x_wrapped)) > np.pi) | (np.abs(np.diff(y_wrapped)) > np.pi)
-    )[0]
-
-    if len(jump_idx) > 0:
-        x_plot = np.insert(x_wrapped, jump_idx + 1, np.nan)
-        y_plot = np.insert(y_wrapped, jump_idx + 1, np.nan)
-    else:
-        x_plot = x_wrapped
-        y_plot = y_wrapped
-
-    (line,) = ax.plot(x_plot, y_plot, **kwargs)
-
-    ax.set_xlim(0, 2 * np.pi)
-    ax.set_ylim(0, 2 * np.pi)
-    ax.set_aspect("equal", adjustable="box")
-
-    return ax, line
-
-
-def plot_geodesic_network(
-    paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-    /,
-    *,
-    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
-    plot_sources: bool = True,
-    plot_receivers: bool = True,
-    source_kwargs: Optional[dict] = None,
-    receiver_kwargs: Optional[dict] = None,
-    **kwargs,
-) -> Tuple[Axes, List[Any]]:
-    """Plots a network of intersecting geodesic paths on the Torus."""
-    fig, ax = _unwrap_axes(ax)
-
-    line_kwargs = kwargs.copy()
-    line_kwargs.setdefault("color", "black")
-    line_kwargs.setdefault("linewidth", 0.8)
-    line_kwargs.setdefault("alpha", 0.5)
-
-    artists = []
-
-    for p1, p2 in paths:
-        _, line = plot_geodesic(p1, p2, ax=ax, **line_kwargs)
-        artists.append(line)
-
-    if plot_sources or plot_receivers:
-        sources = list(set([tuple(p[0]) for p in paths]))
-        receivers = list(set([tuple(p[1]) for p in paths]))
-
-        if plot_sources and sources:
-            src_x, src_y = zip(*sources)
-            src_x = np.array(src_x) % (2 * np.pi)
-            src_y = np.array(src_y) % (2 * np.pi)
-
-            src_style = source_kwargs.copy() if source_kwargs else {}
-            src_style.setdefault("marker", "*")
-            src_style.setdefault("color", "gold")
-            src_style.setdefault("s", 150)
-            src_style.setdefault("edgecolor", "black")
-            src_style.setdefault("zorder", 5)
-
-            sc_src = ax.scatter(src_x, src_y, **src_style)
-            artists.append(sc_src)
-
-        if plot_receivers and receivers:
-            rec_x, rec_y = zip(*receivers)
-            rec_x = np.array(rec_x) % (2 * np.pi)
-            rec_y = np.array(rec_y) % (2 * np.pi)
-
-            rec_style = receiver_kwargs.copy() if receiver_kwargs else {}
-            rec_style.setdefault("marker", "o")
-            rec_style.setdefault("color", "red")
-            rec_style.setdefault("s", 50)
-            rec_style.setdefault("edgecolor", "white")
-            rec_style.setdefault("zorder", 5)
-
-            sc_rec = ax.scatter(rec_x, rec_y, **rec_style)
-            artists.append(sc_rec)
-
-    ax.set_xlim(0, 2 * np.pi)
-    ax.set_ylim(0, 2 * np.pi)
-    ax.set_aspect("equal", adjustable="box")
-
-    return ax, artists
+        super().__init__(
+            shape,
+            lengths=lengths,
+            radii=radii,
+            order=order,
+            length_scale=length_scale,
+        )
+
+
+def _periods(
+    lengths: Sequence[float] | None, radii: Sequence[float] | None, /
+) -> tuple[float, float] | None:
+    """The periods from whichever of the two was given; None for the default."""
+    if lengths is not None and radii is not None:
+        raise ValueError("Give the periods or the radii, not both.")
+    if radii is not None:
+        radii = tuple(float(r) for r in radii)
+        if len(radii) != 2 or any(r <= 0.0 for r in radii):
+            raise ValueError(f"A torus has two positive radii, got {radii}.")
+        return (2.0 * np.pi * radii[0], 2.0 * np.pi * radii[1])
+    return None if lengths is None else (float(lengths[0]), float(lengths[1]))

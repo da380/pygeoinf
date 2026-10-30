@@ -1,35 +1,48 @@
-"""
-Symmetric space function spaces and utilities.
+"""Symmetric spaces: homogeneous domains whose basis diagonalizes the Laplacian.
+
+The circle, the torus and the N-dimensional periodic box are homogeneous under
+a group action; intervals, rectangles and boxes are built by embedding into
+them. What they share is a spectral basis in which the Laplace-Beltrami
+operator is diagonal, and every convenience in this package follows from that
+one fact.
+
+**One submodule per geometry**, each exporting ``Lebesgue`` and ``Sobolev`` as
+classes rather than factory functions, so that ``isinstance(x, Sobolev)``
+answers what it looks like it answers and ``type(x).__name__`` names the
+geometry a field lives on::
+
+    from pygeoinf.symmetric_space.sphere import Sobolev
+    from pygeoinf.symmetric_space.circle import Lebesgue
+
+The available geometries are :mod:`~pygeoinf.symmetric_space.sphere`,
+:mod:`~pygeoinf.symmetric_space.circle`,
+:mod:`~pygeoinf.symmetric_space.torus`,
+:mod:`~pygeoinf.symmetric_space.line`,
+:mod:`~pygeoinf.symmetric_space.plane` and
+:mod:`~pygeoinf.symmetric_space.box`. The names exported here without
+qualification are the N-dimensional periodic box's, which is the general case
+the periodic geometries specialize.
+
+The Fourier-based spaces are always available. The sphere needs ``pyshtools``,
+so its module is imported on demand rather than here.
 """
 
-import importlib
-
-from .symmetric_space import (
-    SymmetricHilbertSpace,
-    AbstractSymmetricLebesgueSpace,
-    SymmetricSobolevSpace,
-    InvariantLinearAutomorphism,
-    InvariantGaussianMeasure,
-    CorrelatedInvariantGaussianMeasure,
-)
+from . import box, circle, line, plane, torus
+from .base import SymmetricSpace, lift_formal_adjoint
+from .box import Box, Interval
+from .fourier import Lebesgue, PeriodicBox, Sobolev
 
 __all__ = [
-    "SymmetricHilbertSpace",
-    "AbstractSymmetricLebesgueSpace",
-    "SymmetricSobolevSpace",
-    "InvariantLinearAutomorphism",
-    "InvariantGaussianMeasure",
-    "CorrelatedInvariantGaussianMeasure",
+    "Box",
+    "Interval",
+    "Lebesgue",
+    "PeriodicBox",
+    "Sobolev",
+    "SymmetricSpace",
+    "lift_formal_adjoint",
+    "box",
+    "circle",
+    "line",
+    "plane",
+    "torus",
 ]
-
-
-def __getattr__(name):
-    """Lazily load submodules when requested."""
-    if name in ("circle", "line", "sphere"):
-        return importlib.import_module(f".{name}", __name__)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__():
-    """Ensure IDE autocompletion still sees the lazy submodules."""
-    return __all__ + ["circle", "line", "sphere"]

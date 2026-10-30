@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath("../.."))
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "pygeoinf"
-copyright = "2025, David Al-Attar, Dan Heathcote, Adrian Mag"
+copyright = "2025-2026, David Al-Attar, Dan Heathcote, Adrian Mag"
 author = "David Al-Attar, Dan Heathcote, Adrian Mag"
 
 # -- General configuration ---------------------------------------------------
@@ -36,6 +36,20 @@ extensions = [
 templates_path = ["_templates"]
 exclude_patterns = []
 
+# The docstrings use Markdown's convention of single backticks for inline code
+# (`HilbertSpace`, `cartopy`). Left to itself reStructuredText reads those as
+# "title reference" and renders them as italics; this makes them render as code,
+# which is what they mean everywhere in this project.
+default_role = "code"
+
+# The result dataclasses (BundleResult, KKTResult, ...) describe their fields in
+# an `Attributes:` docstring section *and* declare them as annotated fields.
+# Napoleon's default turns that section into standalone `.. attribute::`
+# directives, which autodoc then documents a second time from the annotations.
+# Rendering them as info-field entries instead keeps the descriptions and leaves
+# each field defined exactly once.
+napoleon_use_ivar = True
+
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
@@ -43,3 +57,46 @@ exclude_patterns = []
 # Set the HTML theme to 'furo' for a clean, modern look.
 html_theme = "furo"
 html_static_path = ["_static"]
+
+
+# -- Generated API reference -------------------------------------------------
+# sphinx-apidoc runs from here rather than from .readthedocs.yaml, so that a
+# local build and a Read the Docs build produce the same pages from the same
+# settings. The .rst files it writes are build output, not source, and are
+# gitignored; previously they were committed, went stale, and quietly hid whole
+# modules from anyone building the docs locally.
+
+_SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_SOURCE_DIR, "..", ".."))
+
+
+def _run_apidoc(_app):
+    """Regenerate the per-module .rst stubs before the build reads them.
+
+    Stubs left by an earlier build of a different tree are removed first:
+    Sphinx builds every ``.rst`` it finds, and a stub for a module that no
+    longer exists is an import error in the log and a dead page.
+    """
+    import glob
+
+    from sphinx.ext.apidoc import main
+
+    for stale in glob.glob(os.path.join(_SOURCE_DIR, "pygeoinf*.rst")) + [
+        os.path.join(_SOURCE_DIR, "modules.rst")
+    ]:
+        if os.path.exists(stale):
+            os.remove(stale)
+    main(
+        [
+            "--force",
+            "--templatedir",
+            os.path.join(_REPO_ROOT, "docs", "apidoc_templates"),
+            "--output-dir",
+            _SOURCE_DIR,
+            os.path.join(_REPO_ROOT, "pygeoinf"),
+        ]
+    )
+
+
+def setup(app):
+    app.connect("builder-inited", _run_apidoc)
