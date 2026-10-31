@@ -25,6 +25,7 @@ from ..spectral_element.base import (
     Boundary,
     LengthScale,
     SpectralElementSpace,
+    _RadialGroup,
     _clamped_length_scale,
     _checked_fit,
     _fitted_over_the_domain,
@@ -222,6 +223,7 @@ class Disk(SpectralElementSpace):
         self._radii = (inner, outer)
         self._padding = pads
         self._robin = robin
+        self._matched_boundary = isinstance(boundary, str)
         self._ngll = ngll
         self._element_length = element_length
         self._length_scale = length_scale
@@ -325,7 +327,10 @@ class Disk(SpectralElementSpace):
         """The mesh, the operator and the truncation, with the metric left out.
 
         Tagged by geometry and not by ``type(self)``: ``Lebesgue`` and
-        ``Sobolev`` are views of one set of fields.
+        ``Sobolev`` are views of one set of fields. Whether the Robin
+        coefficients were matched to the length scale or given is part of
+        it: a prior of another length scale matches its own on the first
+        and keeps the coefficients on the second.
         """
         return (
             "disk",
@@ -334,6 +339,7 @@ class Disk(SpectralElementSpace):
             self._radii,
             self._padding,
             self._robin,
+            self._matched_boundary,
             self._ngll,
             self._element_length,
             self._length_scale_key,
@@ -628,6 +634,45 @@ class Disk(SpectralElementSpace):
             if m:
                 out += squares[:, 1:] * angular[1, m][None, :]
         return out
+
+    def _radial_groups(self) -> list[_RadialGroup]:
+        """One group per order: its cosine mode and, above order zero, its
+        sine mode share the radial modes of the order, and their squares sum
+        to ``1 / 2 pi`` at order zero and ``1 / pi`` above."""
+        return [
+            _RadialGroup(
+                radial,
+                self._basis.block(0, m).start,
+                1 if m == 0 else 2,
+                1.0 / (2.0 * np.pi) if m == 0 else 1.0 / np.pi,
+            )
+            for m, radial in enumerate(self._basis)
+        ]
+
+    def _scaled_family(
+        self,
+        radial: Callable[[np.ndarray], np.ndarray],
+        lateral: Callable[[np.ndarray], np.ndarray] | None,
+        probe: np.ndarray,
+        /,
+    ) -> CylindricalOperatorFamily:
+        """``A'`` on this space's radial mesh under ``r dr``, its radial
+        coefficient ``radial^2`` and its angular one ``lateral^2``. Under
+        ``boundary="robin"`` its Robin coefficients are matched to the
+        radial scale at the ends of the domain, ``probe[0]`` and
+        ``probe[-1]``, with the plane's curvature at the ends of the mesh,
+        as this space's are to its own."""
+        robin = self._robin
+        if self._matched_boundary:
+            inner, outer = self._radii
+            ends = (inner - self._padding[0], outer + self._padding[1])
+            robin = _matched_robin("robin", probe, ends)
+        return CylindricalOperatorFamily(
+            self._basis.family.mesh,
+            kappa=lambda r: radial(r) ** 2,
+            kappa_h=None if lateral is None else (lambda r: lateral(r) ** 2),
+            robin=robin,
+        )
 
 
 class Lebesgue(Disk):

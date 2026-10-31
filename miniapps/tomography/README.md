@@ -6,11 +6,12 @@ How the app is built on the library is walked through in [IMPLEMENTATION.md](IMP
 
 Travel times of rays through a radially layered planet, and what they say
 about its slowness. The forward code is the user's own: a ray tracer
-(`src/rays.py`) that knows nothing of the library, wrapped as a path-integral
-operator on the library's layered disk through point evaluation at the ray
-nodes, with the adjoint the library's. The geometry is Earth-like and the
-data synthetic: the slowness perturbation is a draw from the prior, so that
-every answer below can be marked against the truth.
+(`src/rays.py`, loading the mini-apps' shared `raytracer/`) that knows
+nothing of the library, wrapped as a path-integral operator on the
+library's layered disk through point evaluation at the ray nodes, with the
+adjoint the library's. The geometry is Earth-like and the data synthetic:
+the slowness perturbation is a draw from the prior, so that every answer
+below can be marked against the truth.
 
 The planet has radius one: a mantle on `[0.55, 1]` whose velocity rises
 linearly with depth, `v(r) = 1 + 1.778 (1 - r)`, from 1 at the surface to
@@ -208,7 +209,7 @@ and part G's derivative check among them.
 
 | file | what it is |
 |---|---|
-| `src/rays.py` | the ray tracer in a radial medium: ray parameter, turning radius, `Delta(p)`, `T(p)`, the two-point ray, the nodes and weights; the circular rays of a flattened linear gradient, its closed form; and the shooting tracer for a medium that is not radial, `shoot` and the two-point `bend` |
+| `src/rays.py` | the ray tracer, loaded from the mini-apps' shared `raytracer/`: in a radial medium, ray parameter, turning radius, `Delta(p)`, `T(p)`, the two-point ray, the nodes and weights; the circular rays of a flattened linear gradient, its closed form; and the shooting tracer for a medium that is not radial, `shoot` and the two-point `bend` |
 | `src/problem.py` | the structure, the disk's network, the scale with its two presets, the forward operator, the means over boxes in a disk or a ball, the Sobolev prior and its exact pointwise standard deviation, `build(scale=)` for the disk |
 | `src/common.py` | the command line built from the scale, the disk's panels, the panels of an error budget, of marginals before and after, Gaussian or mixtures', and of brackets against the prior's ball alone |
 | `setup.py`, `point.py`, `bayesian.py`, `sets.py`, `mixture.py`, `ball.py`, `bent.py` | parts A to G, each a script with a `main()` and a function the others and the test call; `mixture.py` also holds the conduit, the candidates, the mixture prior and the noise sweep; `ball.py` also holds the network on the sphere, the rays placed on their great circles, the bump truth and the sections and shells; `bent.py` the perturbed slowness, the bent forward operator and the Gauss-Newton MAP |

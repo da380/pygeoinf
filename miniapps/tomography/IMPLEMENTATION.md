@@ -62,10 +62,11 @@ unit; the property space is `EuclideanSpace(3)`, three means.
 
 ## 2. The forward code wrapped as an operator
 
-The forward code is `src/rays.py`, a tracer in a radial medium written without
-the library. For a source and a receiver it returns a `Ray`: nodes at equal
-arc length along the curved ray, and the trapezoid weights along the
-polyline through them, so that the path integral of a field `f` is
+The forward code is the mini-apps' shared tracer, `raytracer/raytracer.py`
+beside the apps, which `src/rays.py` loads: a tracer in a radial medium
+written without the library. For a source and a receiver it returns a `Ray`:
+nodes at equal arc length along the curved ray, and the trapezoid weights
+along the polyline through them, so that the path integral of a field `f` is
 `weights @ f(nodes)`. That sentence is the operator: point evaluation at
 every node, then a matrix of weights. `composed_operator` in `src/problem.py` writes it
 exactly so:

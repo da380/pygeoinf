@@ -1754,7 +1754,9 @@ negative (the centre of a ball has weight zero), and is lifted on `Sobolev`.
 
 **D-117. Calibration is by a standard-deviation field** (2026-09-18).
 `sobolev_measure(order)` has covariance `A^-order` and no `scale`, the basis
-being the eigenbasis of one `A`; the draws are Matern with
+being the eigenbasis of one `A` (a scale of the prior's own came on
+2026-10-31, D-213, through the Galerkin blocks of a second operator); the
+draws are Matern with
 `nu = order + space.order - d/2`. `pointwise_std=` takes a number or a field
 and multiplies the diagonal measure's draws by `std / raw_std`, so the
 covariance is `S C S*` with factor `S C^1/2` and no closed-form precision.
@@ -3875,6 +3877,95 @@ the turning point, so macOS and Windows failed and Linux passed at
 produces, and the ray parameter and turning radius to `1e-9`, ten times
 what four ulps produce. Tests:
 `tests/test_miniapp_waveform.py::TestTheProofs::test_only_the_cached_fields_are_held`.
+
+**D-212. The ray tracer is shared beside the apps; the banana-doughnut app
+is withdrawn until finite-frequency kernels can be computed on the ball**
+(2026-10-31, David). The tomography app's tracer moves to
+`miniapps/raytracer/raytracer.py`, outside every app and outside the
+library, for any app that traces rays, extended on the way: the velocity
+in pieces between discontinuities, each side evaluated on its own and the
+integrals taken piece by piece, with the turning-point substitution in the
+piece the ray turns in; a source and a receiver at any radius above the
+turning point; a node wherever the ray crosses a discontinuity, so that the
+path integral of a jumping slowness stays second order in the spacing; a
+chosen branch where a distance is reached twice, as PREM reaches thirty
+degrees; and the circular-ray closed form and the shooting tracer as
+before. `tomography/src/rays.py` puts the directory on the path for the
+import, takes it off again and re-exports the tracer, and the app's rays
+are bit-identical to its old tracer's. The tracer's tests need NumPy and
+SciPy alone and run in the fast suite. The banana-doughnut app (ray theory
+against finite-frequency theory for travel times: Sobolev gradients of the
+two functionals on the mantle, and push-forwards of a prior through both,
+compared across rays, after Syvret's thesis; yspec's 3-D kernels sampled on
+the ball) is withdrawn with its `yspec` extra and its test. yspec's kernels
+of a point source are integrably singular at the source, like `R^-3`, and
+at the receiver, like `R^-2`, and sampled on the ball's Gauss-Legendre grid
+they alias: a radially uniform perturbation through the sampled 3-D kernel
+misses yspec's own radial kernel by ten to twenty per cent at degrees up to
+64, the wrong sign for P at 32, and converges only below the source, 0.1 to
+0.5 per cent at degree 48 and `1e-4` at 96, while S at 40 s needs degree
+128 and twenty minutes a receiver. The cure is on yspec's side, a source
+distributed over a length scale that cannot matter in practice, or
+DSpecM1D, which takes one naturally, wrapped for Python; until one exists
+the app has no finite-frequency functional to set against the ray's. The
+pinned tree, its brief with the findings and the resumption notes, is kept
+by David outside the repository. Tests: `tests/test_miniapp_raytracer.py`.
+
+**D-213. A prior on a spectral-element space carries its own length scales,
+isotropic or anisotropic; the space's scale is the inner product's alone**
+(2026-10-31, David: "the underlying function space should be something like
+`H^2` with the inner product from that, a fixed, sensible length scale; the
+prior doesn't, or shouldn't, affect the inner product; it has its own length
+scale(s), including anisotropic ones with different radial and lateral
+scales"). The banana-doughnut app had rebuilt its space with each prior
+length, which ties the norm to the prior. `sobolev_measure` on the
+spectral-element spaces (`Ball`, `Disk`, the axis spaces and, layer by layer,
+their `Layered` sums) takes `length_scale=` and `lateral_length_scale=`,
+numbers or functions of radius, the lateral one refused on an axis space.
+The covariance is `amplitude² (A')^-order` with `A' = 1 - div(L_r² grad)`
+plus the centrifugal term with `L_h²`, which is block-diagonal over the
+harmonics but not diagonal in the space's radial modes: a second
+`planetmodel` operator family with `kappa` and `kappa_h` is built on the
+space's own mesh, its Galerkin matrix `B_l = Φ_lᵀ M A'_l Φ_l` taken in each
+degree's kept modes, symmetrized, eigendecomposed, and `B_l^-order` applied
+to every harmonic of the degree in the space's orthonormal basis, conjugated
+by the metric on a Sobolev space so that the covariance is self-adjoint in
+the space's own inner product. The power is of the Galerkin projection, not
+the projection of the power, which is the definition of a prior on the
+truncated space and converges with the truncation. With both scales the
+space's own it coincides with the default measure to `1e-13`; with equal
+scales on a constant-`L` space under an explicit boundary condition the
+blocks are diagonal, `1 + (L'/L)²(θ - 1)`. `sobolev_pointwise_variance`
+gives the uncalibrated variance field; `pointwise_std=` calibrates as
+before. Under the default `boundary="robin"` the prior's operator takes
+the Robin coefficient matched to `L_r` rather than the space's, measured
+against a long-padded reference with `L_r` two to three times `L`: at the
+domain's ends 1 to 2 per cent off against 13 to 33 on an interval, 0.5 to 9
+against 9 to 45 at an annulus's surface; the condition is natural, lives
+in the bilinear form and constrains nothing in the span, so it is the
+operator's and not the space's, and whether a space's condition was
+matched or given explicitly is part of its coordinate key: a space built
+with `"robin"` and one given the same coefficients explicitly hold the
+same fields and the same default prior, but priors of another scale that
+differ by 10 to 18 per cent at three times `L`, so they are two spaces
+and do not share vectors. At the centre
+of a whole ball or disk a lateral scale that differs from the radial one
+makes the diffusion tensor discontinuous and the degree-`l` part grow like
+`r^a` with `a(a+1) = (L_h/L_r)² l(l+1)` instead of `r^l`, so convergence
+there is slow (1.7 per cent in the calibration at twelve radial modes with
+`L_h = 3 L_r`, 0.14 with `L_h(0) = L_r(0)`): give `L_h` as a function of
+radius equal to `L_r` at the centre. Cost: all the blocks at `lmax` 96 on an
+annulus in 6 ms; a covariance application is the transforms' 31 ms, as
+before. Checks: `planetmodel`'s own anisotropic sampler agrees on a 7-by-7
+correlation matrix to `7e-4`; `check_measure` on 4000 draws; the lateral
+scale raises the correlation along a shell at distance 0.15 from 0.84 to
+0.99 and leaves the radial one unmoved. The two basis-level pieces, the
+Galerkin block of another family and the pointwise variance of a dense
+block covariance, are to move into `planetmodel` 1.4 with the shell
+transform (the note in that repository's `docs/`), after which the local
+assembly goes. Tests: `tests/test_ball.py::TestScalesOfThePriorsOwn`,
+`tests/test_disk.py::TestScalesOfThePriorsOwn`, and the scale tests in
+`test_interval.py`, `test_radial.py` and `test_layered.py`.
 
 ## Appendix: measurements behind the defaults
 

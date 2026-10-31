@@ -28,6 +28,7 @@ from ..spectral_element.base import (
     Boundary,
     LengthScale,
     SpectralElementSpace,
+    _RadialGroup,
     _clamped_length_scale,
     _checked_fit,
     _fitted_over_the_domain,
@@ -212,6 +213,7 @@ class Ball(SpectralElementSpace):
         self._radii = (inner, outer)
         self._padding = pads
         self._robin = robin
+        self._matched_boundary = isinstance(boundary, str)
         self._ngll = ngll
         self._element_length = element_length
         self._length_scale = length_scale
@@ -319,7 +321,10 @@ class Ball(SpectralElementSpace):
         """The mesh, the operator and the truncation, with the metric left out.
 
         Tagged by geometry and not by ``type(self)``: ``Lebesgue`` and
-        ``Sobolev`` are views of one set of fields.
+        ``Sobolev`` are views of one set of fields. Whether the Robin
+        coefficients were matched to the length scale or given is part of
+        it: a prior of another length scale matches its own on the first
+        and keeps the coefficients on the second.
         """
         return (
             "radial_ball",
@@ -328,6 +333,7 @@ class Ball(SpectralElementSpace):
             self._radii,
             self._padding,
             self._robin,
+            self._matched_boundary,
             self._ngll,
             self._element_length,
             self._length_scale_key,
@@ -658,6 +664,46 @@ class Ball(SpectralElementSpace):
             )
             out += np.einsum("rh,hij->rij", squares, packed)
         return out
+
+    def _radial_groups(self) -> list[_RadialGroup]:
+        """One group per degree: its ``2 l + 1`` harmonics share the radial
+        modes of degree ``l``, and their squares sum to ``(2 l + 1) / 4 pi``
+        at every point."""
+        return [
+            _RadialGroup(
+                radial,
+                self._basis.block(0, degree, 0).start,
+                2 * degree + 1,
+                (2 * degree + 1) / (4.0 * np.pi),
+            )
+            for degree, radial in enumerate(self._basis)
+        ]
+
+    def _scaled_family(
+        self,
+        radial: Callable[[np.ndarray], np.ndarray],
+        lateral: Callable[[np.ndarray], np.ndarray] | None,
+        probe: np.ndarray,
+        /,
+    ) -> RadialOperatorFamily:
+        """``A'`` on this space's radial mesh under ``r^2 dr``, its radial
+        coefficient ``radial^2`` and its angular one ``lateral^2``. Under
+        ``boundary="robin"`` its Robin coefficients are matched to the
+        radial scale at the ends of the domain, ``probe[0]`` and
+        ``probe[-1]``, with the curvature at the ends of the mesh, as this
+        space's are to its own."""
+        robin = self._robin
+        if self._matched_boundary:
+            inner, outer = self._radii
+            ends = (inner - self._padding[0], outer + self._padding[1])
+            robin = _resolved_boundary("robin", probe, ends)
+        return RadialOperatorFamily(
+            self._basis.family.mesh,
+            kappa=lambda r: radial(r) ** 2,
+            kappa_h=None if lateral is None else (lambda r: lateral(r) ** 2),
+            weight="r2",
+            robin=robin,
+        )
 
 
 class Lebesgue(Ball):

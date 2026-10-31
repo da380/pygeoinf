@@ -18,6 +18,20 @@ name (`--noise-std`, `--length-scale`, ...), so that the resolution, the
 counts, the noise and the prior can be changed from the command line;
 `--help` lists them with the preset's values.
 
+Forward code that more than one app runs lives beside them, outside every app
+and outside the library. `raytracer/` is the ray tracer of the tomography app
+and of any app to come that traces rays, written without the library: rays in
+a planet whose velocity depends on radius alone, integrated piece by piece
+between its discontinuities, between a source and a receiver at any radius,
+with a node wherever a ray crosses a discontinuity, so that its path integrals
+stay second order across them, with the closed form of a medium whose rays are
+circles to check it against, and a shooting tracer for a medium that is not
+radial. An app loads it as it would load an external code: its `src/rays.py`
+puts the directory on the path for the import, takes it off again and
+re-exports the tracer, so the app's scripts and tests import `src.rays` and
+nothing else. The tracer's own tests need only NumPy and SciPy and run with
+the fast suite, in `tests/test_miniapp_raytracer.py`.
+
 | directory | problem |
 |---|---|
 | `cpp_backend/` | a C++ vector type, bound with nanobind and exposed as `H^1` on an interval, a `HilbertSpace` with no array underneath whose inner product and Riesz map are computed in C++: the check ladder on the space, its operators and a Matérn-type prior on it, then the point, measure and set answers on two local averages from a dozen point values, with a tally of every call the library made of the backend |

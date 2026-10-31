@@ -18,10 +18,11 @@ variance *field*; see :meth:`SpectralElementSpace.pointwise_variance` and
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Callable, Hashable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Hashable, Literal, NamedTuple, Sequence
 
 import warnings
 import numpy as np
+from numpy.random import Generator
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..symmetric_space.base import _require_trace_class
@@ -36,6 +37,9 @@ from ..algebra.spaces import (
 from ..probability.gaussian import GaussianMeasure, _refuse_identity_covariance
 from ..traits import Traits
 from ._points import LocalEvaluation
+
+if TYPE_CHECKING:
+    from planetmodel.randomfield import RadialOperatorFamily, SpectralBasis
 
 __all__ = ["Boundary", "LengthScale", "SpectralElementSpace"]
 
@@ -359,6 +363,108 @@ def _local_operator(
     )
 
 
+class _RadialGroup(NamedTuple):
+    """The components that share one radial operator: those of one degree of
+    a ball, of one order of a disk, or all of a space of one coordinate.
+
+    They are ``count`` consecutive runs of ``basis.nmodes`` components from
+    ``start``, one run per angular function of the group, each holding the
+    coefficients of the same radial modes.
+    """
+
+    #: ``planetmodel``'s ``SpectralBasis`` of the group: the radial modes,
+    #: M-orthonormal, and the degree of the operator they are modes of.
+    basis: SpectralBasis
+    #: Where the first run begins among the components.
+    start: int
+    #: How many runs: ``2 l + 1`` for degree ``l`` of a ball, one or two
+    #: for an order of a disk, one on a space of one coordinate.
+    count: int
+    #: The sum of the squares of the group's angular functions, the same at
+    #: every point: ``(2 l + 1) / 4 pi`` in a ball, ``1 / 2 pi`` at order
+    #: zero of a disk and ``1 / pi`` above. On a space of one coordinate,
+    #: whose components are ``scale`` times the modes' coefficients, it is
+    #: ``1 / scale^2``.
+    angular_weight: float
+
+
+class _RadialBlockOperator(LinearOperator):
+    """An operator that commutes with rotations but mixes the radial modes:
+    one small matrix per radial group, applied to the radial coefficients of
+    every harmonic of the group.
+
+    It is built from the matrices ``S`` it has in the space's orthonormal
+    basis, symmetric, so that in components each is ``D^-1 S D``, with
+    ``D^2`` the metric on the group's modes, and the operator is
+    self-adjoint in the space's own inner product, which it claims. On a
+    Lebesgue space ``D`` is the identity.
+    """
+
+    def __init__(
+        self,
+        space: SpectralElementSpace,
+        symmetric: Sequence[np.ndarray],
+        /,
+        *,
+        traits: Traits = Traits.NONE,
+    ) -> None:
+        """
+        Args:
+            space: the space it acts on.
+            symmetric: ``S`` for each of the space's radial groups, in order.
+            traits: claims beyond self-adjointness, definiteness above all.
+        """
+        super().__init__(space, space, traits=traits | Traits.SELF_ADJOINT)
+        self._groups = space._radial_groups()
+        self._matrices = []
+        for group, matrix in zip(self._groups, symmetric, strict=True):
+            root = np.sqrt(
+                space.metric_values[group.start : group.start + group.basis.nmodes]
+            )
+            self._matrices.append(matrix / root[:, None] * root[None, :])
+
+    def _apply(self, c: np.ndarray, /) -> np.ndarray:
+        """The action on components, run by run."""
+        c = np.asarray(c, dtype=float)
+        out = np.empty_like(c)
+        for group, matrix in zip(self._groups, self._matrices):
+            run = slice(group.start, group.start + group.count * matrix.shape[0])
+            out[run] = (c[run].reshape(group.count, -1) @ matrix.T).reshape(-1)
+        return out
+
+    def _value(self, x: np.ndarray) -> np.ndarray:
+        space: SpectralElementSpace = self.domain
+        return space.from_components(self._apply(space.to_components(x)))
+
+    def _adjoint_value(self, y: np.ndarray) -> np.ndarray:
+        return self._value(y)
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._apply
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._apply
+
+    def draw(self, rng: Generator | None, /) -> np.ndarray:
+        """This operator applied to white noise of the space, with one
+        synthesis and no analysis: a draw of the centered Gaussian whose
+        covariance factor it is.
+
+        Args:
+            rng: the generator.
+
+        Returns:
+            The draw, a vector of the space.
+        """
+        space: SpectralElementSpace = self.domain
+        return space.from_components(self._apply(space.white_noise_components(rng=rng)))
+
+    def __repr__(self) -> str:
+        return f"_RadialBlockOperator(dim={self.domain.dim})"
+
+
 class SpectralElementSpace(
     ArrayVectorMixin, HilbertModule[np.ndarray], DiagonalMetricSpace[np.ndarray]
 ):
@@ -368,8 +474,9 @@ class SpectralElementSpace(
     components are the coefficients of the kept eigenfunctions; the metric is
     ``eigenvalues ** order``. Subclasses supply :meth:`to_components`,
     :meth:`from_components`, :attr:`eigenvalues`, :attr:`grid_shape`,
-    :attr:`interior_mask`, :attr:`bounds`, :meth:`basis_matrix`,
-    ``_local_evaluation``, :meth:`_squared_modes`, :attr:`spatial_dimension`,
+    :attr:`interior_mask`, :attr:`bounds`, :attr:`length_scale`,
+    :meth:`basis_matrix`, ``_local_evaluation``, :meth:`_squared_modes`,
+    ``_radial_groups``, ``_scaled_family``, :attr:`spatial_dimension`,
     ``_coordinate_key`` and ``_class_for_order``, and tag the geometry they
     name with ``_geometry``.
     """
@@ -437,6 +544,33 @@ class SpectralElementSpace(
     @abstractmethod
     def _squared_modes(self, weights: np.ndarray, /) -> np.ndarray:
         """``sum_k weights_k phi_k(p)^2`` at every point of the grid."""
+
+    @abstractmethod
+    def _radial_groups(self) -> list[_RadialGroup]:
+        """The components grouped by the radial operator whose modes they
+        are coefficients of, in order, every component in one group."""
+
+    @abstractmethod
+    def _scaled_family(
+        self,
+        radial: Callable[[np.ndarray], np.ndarray],
+        lateral: Callable[[np.ndarray], np.ndarray] | None,
+        probe: np.ndarray,
+        /,
+    ) -> RadialOperatorFamily:
+        """The operator family of ``A' = 1 - div(kappa grad)`` on this space's
+        mesh and under its measure, with ``kappa = radial^2`` along the mesh
+        and ``lateral^2`` across it, ``radial^2`` if ``lateral`` is ``None``.
+
+        Its Robin coefficients are matched to ``probe``, the radial length
+        scale across the domain with its ends first and last, when this
+        space's are matched to its own length scale, and are this space's
+        when they were given.
+
+        Raises:
+            ValueError: for a lateral scale on a geometry with no lateral
+                direction.
+        """
 
     @abstractmethod
     def _coordinate_key(self) -> Hashable:
@@ -810,6 +944,123 @@ class SpectralElementSpace(
         variances = self._resolve_variances(spectral_variances)
         return self._squared_modes(variances / self.metric_values)
 
+    def sobolev_pointwise_variance(
+        self,
+        order: float,
+        /,
+        *,
+        amplitude: float = 1.0,
+        length_scale: LengthScale | None = None,
+        lateral_length_scale: LengthScale | None = None,
+    ) -> np.ndarray:
+        """The variance of ``x(p)`` at every grid point under
+        :meth:`sobolev_measure` with these arguments, before any calibration
+        by ``pointwise_std``.
+
+        With the space's own length scale it is :meth:`pointwise_variance`
+        of ``amplitude^2 eigenvalues^-order``. With scales of the prior's
+        own the covariance is block-diagonal, one symmetric block ``C_l``
+        per degree of a ball or order of a disk in the space's orthonormal
+        basis, and the variance is ``sum_l w_l diag(Psi_l C_l Psi_l^T)``,
+        with ``Psi_l`` the orthonormal radial functions of degree ``l`` at
+        the nodes and ``w_l`` the sum of the squares of its angular
+        functions, ``(2 l + 1) / 4 pi`` in a ball. Every harmonic of a
+        degree shares the block, so the variance is a function of radius.
+
+        Args:
+            order: the Sobolev order of the measure.
+            amplitude: an overall scale on the spectrum.
+            length_scale: the prior's radial length scale; see
+                :meth:`sobolev_measure`.
+            lateral_length_scale: the prior's lateral length scale; see
+                :meth:`sobolev_measure`.
+
+        Returns:
+            The variance on the padded grid, a vector of the space.
+
+        Raises:
+            ValueError: for a length scale that is not positive and finite
+                on the domain, or a lateral one on a space of one
+                coordinate.
+        """
+        if length_scale is None and lateral_length_scale is None:
+            return self.pointwise_variance(
+                amplitude**2 * self.eigenvalues ** (-float(order))
+            )
+        pairs = self._galerkin_eigenpairs(length_scale, lateral_length_scale)
+        spectra = [amplitude**2 * values ** (-float(order)) for values, _ in pairs]
+        return self._block_variance(pairs, spectra)
+
+    def _galerkin_eigenpairs(
+        self,
+        length_scale: LengthScale | None,
+        lateral_length_scale: LengthScale | None,
+        /,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """For each radial group, the eigenvalues and orthonormal eigenvectors
+        of the Galerkin matrix ``B = Phi^T A' Phi`` of the scaled operator in
+        the group's kept radial modes, ``Phi`` M-orthonormal.
+
+        ``A'`` is assembled on this space's mesh by :meth:`_scaled_family`
+        and applied to the modes, banded; ``B`` is then a dense matrix of the
+        size of the group's modes, symmetrized against rounding. Its
+        eigenvalues are at least one, as ``A'`` is at least the identity.
+
+        Raises:
+            ValueError: for a length scale that is not positive and finite on
+                the domain, or a lateral one the geometry cannot take.
+        """
+        lower, upper = self.bounds
+        radial, probe = _clamped_length_scale(
+            self.length_scale if length_scale is None else length_scale, lower, upper
+        )
+        lateral = (
+            None
+            if lateral_length_scale is None
+            else _clamped_length_scale(lateral_length_scale, lower, upper)[0]
+        )
+        family = self._scaled_family(radial, lateral, probe)
+        pairs = []
+        for group in self._radial_groups():
+            degree = group.basis.degree
+            mass = family.mass(degree)
+            modes = group.basis.modes()
+            # The family's degrees of freedom: a ball's centre is not one.
+            active = modes[modes.shape[0] - mass.size :]
+            galerkin = active.T @ (mass[:, None] * family.apply(degree, active))
+            pairs.append(np.linalg.eigh(0.5 * (galerkin + galerkin.T)))
+        return pairs
+
+    def _block_variance(
+        self,
+        pairs: list[tuple[np.ndarray, np.ndarray]],
+        spectra: list[np.ndarray],
+        /,
+    ) -> np.ndarray:
+        """The pointwise variance on the grid of the covariance whose block
+        for each radial group is ``U diag(s) U^T`` in the space's orthonormal
+        basis, ``U`` from *pairs* and ``s`` from *spectra*.
+
+        The orthonormal radial functions are the modes divided by the root
+        of the metric, so the field's covariance in components is ``D^-1 U
+        diag(s) U^T D^-1``, and its diagonal at the nodes is ``sum_j s_j
+        (Phi D^-1 u_j)^2``; the angular sum is the group's weight. The
+        result depends on the mesh's coordinate alone.
+        """
+        profile = np.zeros(self.grid_shape[0])
+        for group, (_, vectors), spectrum in zip(
+            self._radial_groups(), pairs, spectra, strict=True
+        ):
+            root = np.sqrt(
+                self.metric_values[group.start : group.start + group.basis.nmodes]
+            )
+            functions = group.basis.modes() @ (vectors / root[:, None])
+            profile += group.angular_weight * ((functions**2) @ spectrum)
+        shape = self.grid_shape
+        return np.broadcast_to(
+            profile.reshape((-1,) + (1,) * (len(shape) - 1)), shape
+        ).copy()
+
     def spectral_measure(
         self,
         spectral_variances: np.ndarray,
@@ -884,20 +1135,45 @@ class SpectralElementSpace(
                 precision=precision,
                 unsafe=unsafe,
             )
+        return self._calibrated_measure(
+            diagonal,
+            self.pointwise_variance(variances),
+            pointwise_std,
+            expectation=expectation,
+            unsafe=unsafe,
+        )
 
+    def _calibrated_measure(
+        self,
+        factor: LinearOperator,
+        raw: np.ndarray,
+        pointwise_std: float | np.ndarray,
+        /,
+        *,
+        expectation: np.ndarray | None,
+        unsafe: bool,
+    ) -> GaussianMeasure:
+        """The measure whose draws are those of *factor* multiplied by the
+        field ``pointwise_std / sqrt(raw)``, *raw* being the pointwise
+        variance of the uncalibrated draws: covariance ``S C S*`` and factor
+        ``S F``, with ``S`` the multiplication.
+
+        Raises:
+            ValueError: for a standard deviation that is not positive, or a
+                raw variance that vanishes somewhere.
+        """
         target = np.broadcast_to(
             np.asarray(pointwise_std, dtype=float), self.grid_shape
         )
         if np.any(target <= 0.0):
             raise ValueError("pointwise_std must be positive.")
-        raw = self.pointwise_variance(variances)
         if np.any(raw <= 0.0):
             raise ValueError(
                 "A measure with zero pointwise variance somewhere cannot be "
                 "scaled to a given standard deviation."
             )
-        # Positive everywhere, so invertible; with the diagonal's own
-        # invertibility the factor is, and the covariance it builds is
+        # Positive everywhere, so invertible; with the factor's own
+        # invertibility the product is, and the covariance it builds is
         # definite rather than merely semidefinite.
         scaling = self.multiplication_operator(target / np.sqrt(raw)).with_traits(
             Traits.INVERTIBLE
@@ -905,7 +1181,7 @@ class SpectralElementSpace(
         return GaussianMeasure(
             self,
             expectation=expectation,
-            covariance_factor=scaling @ diagonal,
+            covariance_factor=scaling @ factor,
             unsafe=unsafe,
         )
 
@@ -915,16 +1191,64 @@ class SpectralElementSpace(
         /,
         *,
         amplitude: float = 1.0,
+        length_scale: LengthScale | None = None,
+        lateral_length_scale: LengthScale | None = None,
         expectation: np.ndarray | None = None,
         pointwise_std: float | np.ndarray | None = None,
         unsafe: bool = False,
     ) -> GaussianMeasure:
-        """A Gaussian prior with covariance ``amplitude^2 A^-order``.
+        """A Gaussian prior with covariance ``amplitude^2 A'^-order``, a
+        Matern field.
 
-        The workhorse prior, and a Matern field with the correlation length
-        ``L`` the space was built with, varying as that does. There is no
-        ``scale`` argument, as a symmetric space's has, because the basis
-        that makes this diagonal is the eigenbasis of one ``A``.
+        By default ``A'`` is the space's own ``A = 1 - div(L^2 grad)``, with
+        the correlation length ``L`` the space was built with, varying as
+        that does, and the covariance is diagonal in the space's basis.
+
+        ``length_scale`` and ``lateral_length_scale`` give the prior scales
+        of its own: ``L_r`` along a radius (along the line, on an interval)
+        and ``L_h`` across one, along a sphere in a ball and a circle in a
+        disk, each a number or a function of radius. ``A'`` is ``1 - div(K
+        grad)`` with ``K`` the tensor ``L_r^2`` on the radial direction and
+        ``L_h^2`` on the lateral ones, anisotropic when the two differ; on a
+        harmonic of degree ``l`` of a ball it is ``f - r^-2 (L_r^2 r^2 f')'
+        + L_h^2 l (l + 1) r^-2 f``. It commutes with rotations, so it does
+        not mix harmonics, but it is not diagonal in the space's radial
+        modes. It enters through its Galerkin matrix in the kept modes of
+        each degree, ``B_l = Phi_l^T A'_l Phi_l`` with ``Phi_l``
+        orthonormal, and the covariance is ``amplitude^2 B_l^-order`` on the
+        radial coefficients of every harmonic of degree ``l`` (of order
+        ``m``, in a disk): one small symmetric eigendecomposition per
+        degree. That is the power of the projection and not the projection
+        of the power, which would need ``A'`` on modes the space does not
+        keep: it is the prior of the truncated space, converges as the
+        truncation is refined, and is exactly ``amplitude^2 A'^-order`` when
+        every mode of the mesh is kept. With the space's own scales ``B_l``
+        is diagonal, the space's eigenvalues, and the measure is the
+        default one to rounding.
+
+        Under the space's default ``boundary="robin"`` its mesh ends with a
+        Robin coefficient matched to ``L``, ``0.7 / L`` and the curvature;
+        ``A'`` takes the one matched in the same way to ``L_r``, which a
+        space of that length scale would have on the same mesh, so that the
+        ends of the mesh stay out of the domain when ``L_r`` is longer than
+        ``L``. A condition given to the space explicitly, natural or Robin
+        coefficients, is ``A'``'s too, and then constant scales ``L_r =
+        L_h`` on a constant ``L`` make ``B_l`` diagonal, ``1 + (L_r / L)^2
+        (eigenvalue - 1)``. The padding is the space's, sized to ``L``: a
+        prior much longer wants a space built with more.
+
+        At the centre of a whole ball there is no radial direction, and a
+        lateral scale unequal to the radial one there leaves ``K``
+        discontinuous at that point: the part of degree ``l`` of a draw goes
+        like ``r^a`` with ``a (a + 1) = (L_h / L_r)^2 l (l + 1)`` rather than
+        like ``r^l``, likewise in a disk, and the projection onto the kept
+        modes, which go like ``r^l``, converges more slowly there than
+        elsewhere. A lateral scale given as a function of radius that
+        equals the radial one at the centre keeps the prior regular.
+
+        On a Sobolev space the covariance is an operator in the space's own
+        metric, as the default one's spectrum is read: the blocks are its
+        matrices in the space's orthonormal basis.
 
         The covariance is trace class on this space, so that this is a
         Gaussian measure on it with draws in it, exactly when ``order``
@@ -934,9 +1258,21 @@ class SpectralElementSpace(
         space (at order zero it is the identity covariance), and it is
         refused.
 
+        Without ``pointwise_std`` the measure carries its precision, block
+        by block, and a draw costs one synthesis.
+        :meth:`sobolev_pointwise_variance` gives the variance a calibration
+        divides by.
+
         Args:
             order: the Sobolev order of the measure, above ``d/2``.
             amplitude: an overall scale on the spectrum.
+            length_scale: ``L_r``, a number or a function of radius (of
+                position, on an interval), asked about the domain only, the
+                padding taking its value at the nearer end. The space's own
+                ``L`` if omitted.
+            lateral_length_scale: ``L_h``, likewise; ``L_r`` if omitted. A
+                space of one coordinate has no lateral direction, and
+                refuses it.
             expectation: the mean. Zero if omitted.
             pointwise_std: calibrate by the pointwise standard deviation, one
                 number or a field; see :meth:`spectral_measure`.
@@ -948,12 +1284,58 @@ class SpectralElementSpace(
 
         Raises:
             ValueError: for an order at or below half the spatial dimension
-                without *unsafe*.
+                without *unsafe*, a length scale that is not positive and
+                finite on the domain, or a lateral one on a space of one
+                coordinate.
         """
         _require_trace_class(self, order, unsafe)
-        return self.spectral_measure(
-            amplitude**2 * self.eigenvalues ** (-float(order)),
+        if length_scale is None and lateral_length_scale is None:
+            return self.spectral_measure(
+                amplitude**2 * self.eigenvalues ** (-float(order)),
+                expectation=expectation,
+                pointwise_std=pointwise_std,
+                unsafe=unsafe,
+            )
+        pairs = self._galerkin_eigenpairs(length_scale, lateral_length_scale)
+        spectra = [amplitude**2 * values ** (-float(order)) for values, _ in pairs]
+        _refuse_identity_covariance(
+            self,
+            "A constant spectrum, a multiple of the identity covariance,",
+            unsafe=unsafe,
+            spectrum=np.concatenate(spectra),
+        )
+        positive = all(bool(np.all(spectrum > 0.0)) for spectrum in spectra)
+        definite = (
+            Traits.POSITIVE_DEFINITE if positive else Traits.POSITIVE_SEMIDEFINITE
+        )
+
+        def blocks(function: Callable[[np.ndarray], np.ndarray]) -> list[np.ndarray]:
+            return [
+                (vectors * function(spectrum)) @ vectors.T
+                for (_, vectors), spectrum in zip(pairs, spectra, strict=True)
+            ]
+
+        factor = _RadialBlockOperator(self, blocks(np.sqrt), traits=definite)
+        if pointwise_std is not None:
+            return self._calibrated_measure(
+                factor,
+                self._block_variance(pairs, spectra),
+                pointwise_std,
+                expectation=expectation,
+                unsafe=unsafe,
+            )
+        return GaussianMeasure(
+            self,
             expectation=expectation,
-            pointwise_std=pointwise_std,
+            covariance=_RadialBlockOperator(self, blocks(np.asarray), traits=definite),
+            covariance_factor=factor,
+            precision=(
+                _RadialBlockOperator(
+                    self, blocks(np.reciprocal), traits=Traits.POSITIVE_DEFINITE
+                )
+                if positive
+                else None
+            ),
+            sample=factor.draw,
             unsafe=unsafe,
         )
