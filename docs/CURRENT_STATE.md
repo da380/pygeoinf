@@ -45,7 +45,7 @@ is what most of the rest follows from:
 | `geometry` | convex sets (balls, ellipsoids including semidefinite ones, half-spaces, polytopes, intersections, oracle sets), the conversions between a set's descriptions (D-135), level and sublevel sets, affine and linear subspaces, projectors, support functions; the feasible property set with its algorithms `ClosedForm`, `Primal`, `Search`, `Dual`, `Splitting`, `Distance`, `SProcedure` (D-142), and the ellipsoidal descriptions of D-141: the S-procedure outer ellipsoid, the bound on a Minkowski sum of ellipsoids, a polytope's inscribed ellipsoid, a point set's enclosing ellipsoid |
 | `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval; `evaluate_gradient` at scattered points (ducc0 on the sphere, the `ik`-scaled transform on the boxes) and the nonlinear `ray_travel_time_operator`, bending or shooting, on every geometry, with its linearization and its Hessian action (D-156) |
-| `spectral_element`, `interval`, `ball` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies, reached by geometry (D-161): `interval` on the line under `dx` with `interval.radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, each with its `Layered` for piecewise-continuous fields over adjacent layers (their direct sum, with points, jumps, integrals and layer-by-layer priors, D-126); `spectral_element` is the shared core (`SpectralElementSpace`, `AxisSpace`, the mesh, Robin ends, the batched harmonic transform, the fit over the domain for sampled functions), wrapping `planetmodel.randomfield`, an optional extra; all three are imported on demand (D-115 to D-124) |
+| `spectral_element`, `interval`, `ball` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies, reached by geometry (D-161): `interval` on the line under `dx` with `interval.radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, each with its `Layered` for piecewise-continuous fields over adjacent layers (their direct sum, with points, jumps, integrals and layer-by-layer priors, D-126); `spectral_element` is the shared core (`SpectralElementSpace`, `AxisSpace`, the mesh, Robin ends, the fit over the domain for sampled functions), wrapping `planetmodel.randomfield` and its batched harmonic transform (planetmodel 1.4), an optional extra; all three are imported on demand (D-115 to D-124) |
 | `disk` | fields on a disk or an annulus in the plane, the two-dimensional `ball`: Fourier modes of the angle times radial eigenfunctions of `1 - div(L² grad)` under `r dr` on a padded spectral-element mesh, with `Lebesgue`, `Sobolev` and `Layered` (jumps taken at angles), points `(radius, angle)` in degrees anticlockwise from the `x` axis; the radial family is `planetmodel`'s with the measure changed (`spectral_element._cylindrical`: `CylindricalOperatorFamily`, the FFT `RingTransform`, `PolarBasis`); drawn whole in the plane by `plotting`, with points and polyline paths; imported on demand |
 | `inference` | forward problems with their likelihood `potential`; the estimator hierarchy, every class a `PointEstimator`, `SetEstimator` or `MeasureEstimator` (D-163): the linear point estimators `LeastSquares`, `MinimumNorm` (the discrepancy principle its method), their constrained forms and `BackusGilbert` (the averaging-kernel estimate, with its resolution, propagated covariance and bias), the generic `Minimization` with `NonlinearLeastSquares`, `MaximumAPosteriori` on it, `ConstrainedMinimization` with `Occam`; `LinearGaussianInversion`, the mixture inversion, `GaussianPosterior` (D-132) and `LaplaceApproximation` as the measure estimators; `BackusGilbertParker` over the geometry layer's feasible set, linearised about a model for a nonlinear forward; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
 | `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `ball`, a `disk` whole in the plane with its points and paths (D-175), lines on an `interval` and its radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
@@ -357,9 +357,11 @@ Recorded rather than settled, so nobody has to rediscover them.
   a seeded draw of the same measure with it. `Radial(12,
   inner_radius=1221.5, radius=3480.0, order=2.0, length_scale=200.0)`
   against the same in Earth radii, before the element-length margin, had
-  its first outer-core basis function flipped. For the planetmodel 1.4
-  update after the launch: fix each eigenvector's sign (first nonzero
-  component positive) in `SpectralBasis`.
+  its first outer-core basis function flipped. DONE in planetmodel 1.4
+  (2026-11-01, D-214): `RadialOperatorFamily.eig` fixes each eigenvector's
+  sign; no pygeoinf test flipped, and tutorial 11's ball inversion, which
+  a changed draw pushed past a marginal conjugate-gradient cap, takes a
+  direct solver.
 - **Left open by the 2.0 review's fix packages** (2026-10-29, D-200 to
   D-205; each needs a decision or new API, and none blocks 2.0):
   - *Data-space S-procedure*: its repair through the resolvent identity
@@ -501,9 +503,9 @@ planetmodel 1.3.2.
 - DONE, as far as the release needs: the pin is `planetmodel>=1.3`, the
   stale `[harmonics]` extra is gone, the venv and lock are on 1.3.2 (whose
   grids carry a `kind` that the transform now checks by name), and
-  `test_ball.py` no longer needs pyshtools. The planetmodel 1.4 release,
-  the pin to `>=1.4` and the deletion of `spectral_element/_transform.py`
-  are post-release (below); 2.0 ships the transform of its own.
+  `test_ball.py` no longer needs pyshtools. 2.0 shipped the transform of
+  its own; the pin is `>=1.4` and the local transform is deleted since
+  2026-11-01 (D-214).
 
 **Pre-review actions, in order (settled with David 2026-10-29):**
 
@@ -569,12 +571,14 @@ the rename, not before.
 platform it installs on; version 2.0.0; readthedocs flips at the tag with
 v1's docs kept under a version selector.
 
-**Post-release tracks:** the planetmodel 1.4 release, then the pin to
-`>=1.4` and the deletion of `spectral_element/_transform.py` (the
-migration is built and tested: `planetmodel.harmonics.ShellTransform` sits
-uncommitted in that repo on its `main`, where its rules want it on
-`develop`, same names, the version bump left for its release branch) and
-the sign-normalized spectral bases that come with it (§7); the student's
+**Post-release tracks:** DONE 2026-11-01, D-214: planetmodel 1.4 is
+released, the pin is `>=1.4`, `spectral_element/_transform.py` is deleted,
+the Galerkin blocks of a prior's own operator come from
+`SpectralBasis.galerkin`, and the signed bases are in; left there, a
+`physical=False` on `pointwise_variance_of` so that the block variance can
+move too. The planetmodel adapter `plotting.planet_model` and
+`plot_cutaway` (D-215) draw ball fields through planetmodel's slices.
+Then the student's
 sampling package (the brief's order
 of work, starting with the marker-gated methods already done pre-release
 and `from_product(correlation=)`); the sl3dpp items (the data-space route

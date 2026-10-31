@@ -863,9 +863,10 @@ class Sphere(SymmetricSpace[Any]):
         degree holds. :meth:`~pygeoinf.symmetric_space.base.SymmetricSpace.estimate_truncation_degree`
         answers the weighted question, which is the one about the field's
         energy, and the two are far apart where the spectrum decays slowly: at
-        order 1.5 and length scale 0.5 this returns 721 and the weighted rule
-        wants 13833. The weighted rule is the honest one for power and this one
-        is the usable one for a grid.
+        order 1.5, length scale 0.5 and this method's default ``rtol`` of
+        ``1e-8``, this returns 721 and the weighted rule at the same tolerance
+        wants 13833 (its own default, ``1e-6``, gives 1384). The weighted rule
+        is the honest one for power and this one is the usable one for a grid.
 
         Args:
             order: the Sobolev order. Must exceed one -- below that the total

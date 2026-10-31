@@ -8,7 +8,7 @@ and must agree forward and adjoint to rounding on every geometry; the
 matrix-free one must also pass the adjoint check on its own, against each
 space's Sobolev measure.
 
-Needs ``planetmodel`` 1.3.
+Needs ``planetmodel`` 1.4.
 """
 
 import numpy as np

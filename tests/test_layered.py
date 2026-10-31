@@ -368,6 +368,27 @@ class TestAlgebraAndMeasures:
         with pytest.raises(ValueError, match="layer by layer"):
             space.sobolev_measure([2.0, 2.0])
 
+    def test_the_prior_takes_scales_of_its_own_layer_by_layer(self, rng):
+        """Each layer's measure is the one its own ``sobolev_measure`` builds
+        from the scales given for it, a list read layer by layer."""
+        space = balls()
+        radial = [0.2, 0.4]
+        measure = space.sobolev_measure(
+            2.0, length_scale=radial, lateral_length_scale=0.6
+        )
+        x = space.random(rng=rng)
+        got = measure.covariance(x)
+        for i, layer in enumerate(space.layers):
+            want = layer.sobolev_measure(
+                2.0, length_scale=radial[i], lateral_length_scale=0.6
+            ).covariance(x[i])
+            gap = layer.norm(layer.subtract(got[i], want)) / layer.norm(want)
+            assert gap < 1e-12
+        with pytest.raises(ValueError, match="layer by layer"):
+            space.sobolev_measure(2.0, length_scale=[0.2])
+        with pytest.raises(ValueError, match="lateral"):
+            lines().sobolev_measure(1.0, lateral_length_scale=0.3)
+
 
 class TestAProductMeasureLivesOnTheLayeredSpace:
     """The measure's operators act on the layered space itself, not on the

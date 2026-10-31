@@ -17,7 +17,9 @@ The figures cut the ball three ways: by the equatorial plane; by the
 meridian through the continent, which on the far side of the center passes
 through its antipode; and by the meridian across them. Each section shows
 the parts of the rays within a few degrees of its plane, and the shell at
-mid-mantle depth shows where the rays run beneath it.
+mid-mantle depth shows where the rays run beneath it. A cut-away shows the
+truth's mantle beside the posterior mean in the ball cut in half by the
+plane of the meridian through the continent.
 """
 
 from __future__ import annotations
@@ -31,7 +33,9 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 from cartopy import crs
+from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
 from matplotlib.ticker import MaxNLocator
 
 from pygeoinf import GaussianMeasure, LinearForwardProblem, plotting
@@ -49,6 +53,7 @@ from src.common import (
     save,
 )
 from src.problem import (
+    CORE_RADIUS,
     MANTLE,
     QUICK,
     RADIUS,
@@ -109,6 +114,17 @@ SECTIONS = (
 SLAB = 6.0
 #: The shell drawn as a map: mid-mantle, through the middle of the boxes.
 MID_MANTLE = 0.825
+#: The cut-away: the half of the ball east of the meridian of -150° and west
+#: of the meridian of 30° removed at every latitude, so that the cut face is
+#: the plane of the meridian through the continent: the box under it and its
+#: bump on one side of the center, the box at its antipode and its bump on
+#: the other. Seen from 25° north and 50° west of the middle of the half
+#: removed, so that the half left shows beside the face; the surface and the
+#: core plain, the mantle's field on the face alone.
+CUTAWAY_LONGITUDES = (CONTINENT[1] - 180.0, CONTINENT[1])
+CUTAWAY_VIEW = (25.0, CONTINENT[1] - 140.0)
+SURFACE_COLOR = "0.85"
+CORE_COLOR = "0.6"
 
 #: Where the standard deviation is read exactly: the middle of each box, the
 #: middle of the core, and the mantle under the stations near the surface.
@@ -554,6 +570,44 @@ def section_row(
     )
 
 
+def cutaway_figure(problem: Problem, mean: Any, /, *, outdir: pathlib.Path) -> None:
+    """The truth's mantle beside the posterior mean, on one color scale, in
+    the ball cut in half by the plane of the meridian through the
+    continent."""
+    mantle = problem.space.layers[-1]
+    limit = float(np.abs(mantle.interior_values(problem.truth[-1])).max())
+    fig, axes = plt.subplots(1, 2, figsize=(10.0, 5.2), layout="constrained")
+    for ax, field, title in zip(
+        axes, (problem.truth, mean), ("the truth", "the posterior mean")
+    ):
+        plotting.plot_cutaway(
+            problem.space,
+            field,
+            ax=ax,
+            longitudes=CUTAWAY_LONGITUDES,
+            view=CUTAWAY_VIEW,
+            inner=CORE_RADIUS,
+            inner_color=CORE_COLOR,
+            surface=SURFACE_COLOR,
+            cmap="RdBu_r",
+            vmin=-limit,
+            vmax=limit,
+        )
+        ax.set_title(title, fontsize=9)
+    fig.colorbar(
+        ScalarMappable(Normalize(-limit, limit), "RdBu_r"),
+        ax=axes,
+        shrink=0.7,
+        label="slowness perturbation (%)",
+    )
+    save(
+        fig,
+        outdir / "ball_cutaway.png",
+        title="Tomography, part F: the truth and the posterior mean, cut by the "
+        f"meridian of {CONTINENT[1]:g}°",
+    )
+
+
 def setup_figure(problem: Problem, /, *, outdir: pathlib.Path) -> None:
     """The network on a map, and the truth in three sections and a shell."""
     fig = plt.figure(figsize=(17.0, 9.6), layout="constrained")
@@ -801,6 +855,7 @@ def measure_part(
         "mid-mantle,\nthe prior's standard deviation, and each mean's marginal before "
         "and after: the standard deviation falls where the rays cross and nowhere else",
     )
+    cutaway_figure(problem, mean, outdir=outdir)
     return {
         "posterior": measure,
         "mean": mean,

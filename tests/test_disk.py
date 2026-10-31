@@ -1,6 +1,6 @@
 """The spectral-element disk and annulus: the family, the space, its priors.
 
-Needs ``planetmodel`` 1.3. The independent routes are the cylindrical Bessel
+Needs ``planetmodel`` 1.4. The independent routes are the cylindrical Bessel
 functions, against which the radial family of a disk is held order by order;
 a finite-volume solve of the same radial eigenproblem on an annulus, which
 shares nothing with the spectral elements but the equation; the grid against
@@ -22,6 +22,7 @@ from scipy.special import jnp_zeros, jv  # noqa: E402
 from pygeoinf import Traits, spectral_element  # noqa: E402
 from pygeoinf import disk as disk_module  # noqa: E402
 from pygeoinf.algebra.direct_sum import DirectSum  # noqa: E402
+from pygeoinf.algebra.operators import LinearOperator  # noqa: E402
 from pygeoinf.disk import Disk, Lebesgue, Sobolev  # noqa: E402
 from pygeoinf.spectral_element._cylindrical import (  # noqa: E402
     CylindricalOperatorFamily,
@@ -759,6 +760,223 @@ class TestMeasures:
             # sqrt(2 / n), 0.03 at n = 2000; five of them is a safe bound at
             # every point at once.
             assert np.allclose(sampled, stated, rtol=0.16)
+
+
+def relative_gap(space, x, y, /):
+    """``|x - y| / |y|`` in the space's own norm."""
+    return space.norm(space.subtract(x, y)) / space.norm(y)
+
+
+def even(r):
+    """A length scale even in the radius, so regular at the centre."""
+    return 0.25 + 0.15 * np.asarray(r) ** 2
+
+
+class TestScalesOfThePriorsOwn:
+    """``sobolev_measure`` with length scales that are not the space's: the
+    Galerkin matrix of the scaled operator in each order's radial modes, and
+    one small eigendecomposition per order."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [disk, annulus, lambda order: disk(order, length_scale=even)],
+        ids=["disk", "annulus", "varying"],
+    )
+    @pytest.mark.parametrize("order", [0.0, 2.0])
+    def test_the_spaces_own_scales_give_the_default_measure(self, build, order, rng):
+        """``B_m`` is then the diagonal of eigenvalues, and every operator of
+        the measure and its variance are the default's to rounding; measured
+        at 1e-13 at most."""
+        space = build(order)
+        own = space.length_scale
+        default = space.sobolev_measure(2.0, amplitude=0.7)
+        scaled = space.sobolev_measure(
+            2.0, amplitude=0.7, length_scale=own, lateral_length_scale=own
+        )
+        for _ in range(3):
+            x = space.random(rng=rng)
+            for name in ("covariance", "covariance_factor", "precision"):
+                got, want = getattr(scaled, name), getattr(default, name)
+                assert relative_gap(space, got(x), want(x)) < 1e-10
+        assert np.allclose(
+            space.sobolev_pointwise_variance(2.0, amplitude=0.7, length_scale=own),
+            space.pointwise_variance(0.49 * space.eigenvalues**-2.0),
+            rtol=1e-10,
+        )
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    @pytest.mark.parametrize("boundary", [None, 1.5])
+    def test_equal_constant_scales_are_a_function_of_the_operator(
+        self, build, boundary, rng
+    ):
+        """Under a condition given to the space, ``A' = 1 + (L' / L)^2 (A -
+        1)`` exactly, the Robin term included; measured at 1e-13 at most."""
+        space = build(2.0, boundary=boundary)
+        ratio = 1.7**2
+        want = space.spectral_measure(
+            0.49 * (1.0 + ratio * (space.eigenvalues - 1.0)) ** -2.0
+        )
+        got = space.sobolev_measure(
+            2.0, amplitude=0.7, length_scale=1.7 * space.length_scale
+        )
+        for _ in range(3):
+            x = space.random(rng=rng)
+            assert relative_gap(space, got.covariance(x), want.covariance(x)) < 1e-10
+
+    def test_with_every_mode_kept_it_is_the_banded_solve(self, rng):
+        """Nothing truncated, the covariance ``A'^-1``, anisotropic, against a
+        Cholesky solve of the cylindrical family of ``A'`` on the same mesh,
+        mode by mode; measured at 7e-14."""
+        options = {"mmax": 3, "element_length": 0.25, "padding": 0.3, "boundary": None}
+        ring = annulus(0.0, **options)
+        space = annulus(0.0, radial_modes=ring.radii.size, **options)
+        family = CylindricalOperatorFamily(
+            space.basis.family.mesh, kappa=0.3**2, kappa_h=0.6**2
+        )
+        covariance = space.sobolev_measure(
+            1.0, length_scale=0.3, lateral_length_scale=0.6, unsafe=True
+        ).covariance
+        x = space.random(rng=rng)
+        got = space.basis.synthesise(space.to_components(covariance(x)), physical=False)
+        given = space.basis.synthesise(space.to_components(x), physical=False)
+        for m in range(4):
+            for part in (0, 1) if m else (0,):
+                want = family.solve(m, given[part, m])
+                assert np.allclose(
+                    got[part, m], want, rtol=0.0, atol=1e-10 * np.abs(want).max()
+                )
+
+    def test_the_robin_coefficient_is_matched_to_the_prior(self, rng):
+        """Under the default condition, with every mode kept, the prior of
+        scale ``L'`` on a space of ``L`` is the default prior of a space of
+        ``L'`` on the same mesh, measured to 2e-13; keeping the space's own
+        coefficient instead moves it by a fifth."""
+        options = {"mmax": 3, "element_length": 0.25, "padding": 0.3}
+        nodes = annulus(0.0, **options).radii.size
+        space = annulus(0.0, radial_modes=nodes, **options)
+        other = annulus(0.0, radial_modes=nodes, length_scale=0.35, **options)
+        assert np.array_equal(space.radii, other.radii)
+        assert space.robin != other.robin
+        kept = annulus(0.0, radial_modes=nodes, boundary=space.robin, **options)
+        want = other.sobolev_measure(2.0).covariance
+        got = space.sobolev_measure(2.0, length_scale=0.35).covariance
+        stale = kept.sobolev_measure(2.0, length_scale=0.35).covariance
+        for _ in range(3):
+            x = space.random(rng=rng)
+            scale = np.abs(want(x)).max()
+            assert np.abs(got(x) - want(x)).max() < 1e-10 * scale
+            assert np.abs(stale(x) - want(x)).max() > 0.05 * scale
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_it_is_self_adjoint_and_positive_in_the_sobolev_metric(self, build, rng):
+        """On a Sobolev space, whose metric differs from mode to mode of an
+        order, which the blocks mix; the blocks applied to the components as
+        they stand are not self-adjoint here."""
+        space = build(2.0)
+        measure = space.sobolev_measure(
+            2.0, length_scale=0.25, lateral_length_scale=0.6
+        )
+        for operator in (measure.covariance, measure.precision):
+            check_traits(operator, rng=rng, measure=measure)
+            check_operator(operator, rng=rng, measure=measure)
+        check_operator(measure.covariance_factor, rng=rng, measure=measure)
+        check_measure(measure, rng=rng, samples=4000, rtol=0.18)
+        lebesgue = space.with_order(0.0).sobolev_measure(
+            2.0, length_scale=0.25, lateral_length_scale=0.6
+        )
+        blind = LinearOperator.self_adjoint(space, lebesgue.covariance)
+        with pytest.raises(AssertionError, match="SELF_ADJOINT"):
+            check_traits(blind, rng=rng, measure=measure)
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_the_pointwise_variance_is_what_the_covariance_says(self, build, rng):
+        """Exactly, against ``diag(E C E*)`` at grid points (measured at
+        9e-16); and from a thousand draws, by the sampler and through the
+        factor, to five standard errors of ``sqrt(2 / 1000)`` (the worst
+        point measured at 3.5 over three seeds)."""
+        space = build(2.0, element_length=0.2)
+        measure = space.sobolev_measure(
+            2.0, length_scale=0.25, lateral_length_scale=0.6
+        )
+        field = space.interior_values(
+            space.sobolev_pointwise_variance(
+                2.0, length_scale=0.25, lateral_length_scale=0.6
+            )
+        )
+        points, where = grid_points(space)
+        look = space.point_evaluation_operator(points)
+        direct = np.diag(
+            (look @ measure.covariance @ look.adjoint).matrix(form="components")
+        )
+        assert np.allclose(field[where], direct, rtol=1e-10)
+        routes = (
+            lambda: measure.sample(rng=rng),
+            lambda: measure.covariance_factor(space.white_noise(rng=rng)),
+        )
+        for draw in routes:
+            draws = np.stack([space.interior_values(draw()) for _ in range(1000)])
+            assert np.allclose(np.mean(draws**2, axis=0), field, rtol=0.22)
+
+    def test_a_long_lateral_scale_correlates_along_a_ring(self):
+        """At one distance along a radius and along a ring: equal under the
+        space's own isotropic prior (measured 0.782 and 0.781), and the
+        lateral one far the larger with ``L_h = 4 L_r`` (0.765 and 0.974)."""
+        space = annulus(0.0, mmax=16)
+        radius, step = 0.75, 0.15
+        points = [
+            (radius, 0.0),
+            (radius + step, 0.0),
+            (radius, np.degrees(step / radius)),
+        ]
+
+        def correlations(measure):
+            look = space.point_evaluation_operator(points, unsafe=True)
+            covariance = (look @ measure.covariance @ look.adjoint).matrix(
+                form="components"
+            )
+            deviation = np.sqrt(np.diag(covariance))
+            return covariance[0, 1:] / (deviation[0] * deviation[1:])
+
+        isotropic = correlations(space.sobolev_measure(2.0))
+        anisotropic = correlations(space.sobolev_measure(2.0, lateral_length_scale=0.8))
+        assert abs(isotropic[1] - isotropic[0]) < 0.03
+        assert anisotropic[1] > anisotropic[0] + 0.1
+        assert anisotropic[0] == pytest.approx(isotropic[0], abs=0.03)
+
+    def test_a_matched_condition_and_its_coefficients_given_are_two_spaces(self, rng):
+        """The coefficients ``"robin"`` resolves to, given explicitly on the
+        same mesh, make the same fields and the same default prior (measured
+        identical), but a prior of another scale matches its own condition on
+        the one and keeps the coefficients on the other (measured 17% apart):
+        so the two spaces have different keys."""
+        matched = annulus(2.0)
+        given = annulus(2.0, boundary=matched.robin, padding=matched.padding)
+        assert given.robin == matched.robin and given.dim == matched.dim
+        assert given != matched and not given.shares_vectors_with(matched)
+        x = matched.random(rng=rng)
+        assert (
+            relative_gap(
+                matched,
+                given.sobolev_measure(2.0).covariance(x),
+                matched.sobolev_measure(2.0).covariance(x),
+            )
+            < 1e-12
+        )
+        assert (
+            relative_gap(
+                matched,
+                given.sobolev_measure(2.0, length_scale=0.35).covariance(x),
+                matched.sobolev_measure(2.0, length_scale=0.35).covariance(x),
+            )
+            > 0.05
+        )
+
+    def test_what_is_refused(self):
+        space = disk(2.0)
+        with pytest.raises(ValueError, match="trace class"):
+            space.sobolev_measure(1.0, length_scale=0.3, lateral_length_scale=0.6)
+        with pytest.raises(ValueError, match="positive"):
+            space.sobolev_measure(2.0, length_scale=0.0)
 
 
 # ------------------------------------------------------------------------- #

@@ -51,7 +51,12 @@ from ..algebra.spaces import EuclideanSpace, HilbertModule
 from ..probability.gaussian import GaussianMeasure
 from ._points import LocalEvaluation
 from .axis import AxisSpace
-from .base import SpectralElementSpace, _evaluation_route, _local_operator
+from .base import (
+    LengthScale,
+    SpectralElementSpace,
+    _evaluation_route,
+    _local_operator,
+)
 from ..traits import Traits
 
 __all__ = ["Layered"]
@@ -702,12 +707,15 @@ class Layered(CoordinateDirectSum, HilbertModule):
         /,
         *,
         amplitude: float | list[float] = 1.0,
+        length_scale: LengthScale | list[LengthScale | None] | None = None,
+        lateral_length_scale: LengthScale | list[LengthScale | None] | None = None,
         expectation: tuple | None = None,
         pointwise_std: Any = None,
         unsafe: bool = False,
     ) -> GaussianMeasure:
         """A Gaussian prior under which the layers are independent, each with
-        covariance ``amplitude^2 A^-order`` of its own ``A``.
+        covariance ``amplitude^2 A'^-order``, ``A'`` the layer's own ``A``
+        or one with length scales of the prior's.
 
         Independence is what a discontinuity means: knowing the field on one
         side of an interface says nothing of the other. A medium continuous
@@ -718,6 +726,12 @@ class Layered(CoordinateDirectSum, HilbertModule):
             order: the Sobolev order of each layer's measure, one for all or
                 a list.
             amplitude: an overall scale on each layer's spectrum, likewise.
+            length_scale: the prior's radial length scale in each layer, a
+                number or a function for all or a list layer by layer, with
+                ``None`` for a layer's own; see the layers'
+                ``sobolev_measure``.
+            lateral_length_scale: the prior's lateral length scale,
+                likewise, in a ball or a disk.
             expectation: the mean, a vector of this space. Zero if omitted.
             pointwise_std: calibrate each layer by its pointwise standard
                 deviation: one number for all, a list of numbers or fields
@@ -731,12 +745,15 @@ class Layered(CoordinateDirectSum, HilbertModule):
 
         Raises:
             ValueError: for a list of the wrong length, or for an order at or
-                below half the dimension without *unsafe*, which each
-                layer's measure refuses.
+                below half the dimension without *unsafe*, a length scale
+                that is not positive, or a lateral one in layers of one
+                coordinate, which each layer's measure refuses.
         """
         count = len(self)
         orders = _per_layer(order, count, "order")
         amplitudes = _per_layer(amplitude, count, "amplitude")
+        radial_scales = _per_layer(length_scale, count, "length_scale")
+        lateral_scales = _per_layer(lateral_length_scale, count, "lateral_length_scale")
         if isinstance(pointwise_std, tuple):
             deviations = list(pointwise_std)
             if len(deviations) != count:
@@ -751,6 +768,8 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 layer.sobolev_measure(
                     orders[i],
                     amplitude=amplitudes[i],
+                    length_scale=radial_scales[i],
+                    lateral_length_scale=lateral_scales[i],
                     expectation=means[i],
                     pointwise_std=deviations[i],
                     unsafe=unsafe,
