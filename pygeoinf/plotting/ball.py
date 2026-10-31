@@ -19,11 +19,20 @@ its projection onto the kept modes.
 A layered space of balls is drawn as a ball is, by the shell at ``radius=``,
 and ``plot_section`` and ``plot_profile`` take one too, drawing each layer's
 part with a break at every jump.
+
+**Through planetmodel.** :func:`planet_model` wraps a field as a
+``planetmodel`` ``Model`` on the domain's radii, so that everything
+``planetmodel.slices`` and ``planetmodel.plotting`` draw for a planet --
+sphere maps, sections along any arc, profiles, cutaways -- draws the field,
+by the space's own point evaluation. :func:`plot_cutaway` is the one such
+picture with a function here: the body seen from outside with a wedge cut
+from it, the field on the faces of the cut and on what remains of the
+surface.
 """
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
@@ -32,6 +41,8 @@ from ..spectral_element import Layered
 from .base import color_limits, plot, plot_points, subplots
 
 __all__ = [
+    "planet_model",
+    "plot_cutaway",
     "plot_profile",
     "plot_section",
     "plot_section_points",
@@ -554,3 +565,196 @@ def plot_profile(
     ax.set_xlim(shells[0].inner_radius, shells[-1].radius)
     ax.set_xlabel("radius")
     return ax, line
+
+
+def _point_values(
+    space: Ball, field: Any, /
+) -> Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
+    """The field as a function of ``(r, theta, phi)`` in ``planetmodel``'s
+    conventions -- colatitude and longitude in radians, broadcast against the
+    radius -- by the space's point evaluation, the components found once.
+
+    A radius within ``planetmodel``'s allowance outside the domain, which the
+    field wrapping this function has already granted, is moved onto the end.
+
+    Raises:
+        ValueError: if the field has the wrong shape.
+    """
+    values = np.asarray(field, dtype=float)
+    if values.shape != space.grid_shape:
+        raise ValueError(
+            f"A field on this ball has shape {space.grid_shape}, got {values.shape}."
+        )
+    components = space.to_components(values)
+    lower, upper = space.inner_radius, space.radius
+
+    def evaluate(r: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
+        r, theta, phi = np.broadcast_arrays(
+            np.asarray(r, dtype=float),
+            np.asarray(theta, dtype=float),
+            np.asarray(phi, dtype=float),
+        )
+        if r.size == 0:
+            return np.zeros(r.shape)
+        points = np.stack(
+            [
+                np.clip(r.ravel(), lower, upper),
+                np.clip(90.0 - np.degrees(theta.ravel()), -90.0, 90.0),
+                np.degrees(phi.ravel()),
+            ],
+            axis=-1,
+        )
+        return space._local_evaluation(points).values(components).reshape(r.shape)
+
+    return evaluate
+
+
+def planet_model(space: Ball | Layered, field: Any, /, *, name: str = "field") -> Any:
+    """A field of a ball as a ``planetmodel`` ``Model``, for drawing it
+    through ``planetmodel.slices`` and ``planetmodel.plotting``.
+
+    The model's skeleton is the domain's radii: the inner and the outer
+    radius of a ball or annulus, and every interface of a layered space
+    besides. Its geometry is plain, the identity mapping of the reference
+    sphere, so a radius of the model is a radius of the space, in the
+    space's units of length. Each layer holds one field under ``name``, a
+    ``planetmodel.fields.AnalyticField`` whose ``evaluate(r, theta, phi)``
+    is the space's point evaluation of ``field`` within that layer: the
+    coordinates broadcast against each other, colatitude and longitude in
+    radians, as ``planetmodel`` takes them. A radius outside the layer is
+    refused with a ``ValueError``, as ``planetmodel``'s own fields refuse
+    one, so at an interface each layer gives its own side.
+
+    ``name`` is declared a scalar with no units, a name of ``planetmodel``'s
+    vocabulary such as ``"rho"`` included, so that a label states only the
+    name: what the numbers mean is the caller's to say.
+
+    Args:
+        space: the ball or annulus, or a layered space of them.
+        field: a vector of the space.
+        name: the name the field is held under in every layer.
+
+    Returns:
+        The ``planetmodel.model.Model``.
+
+    Raises:
+        ValueError: if the field, or a layer's part of it, has the wrong
+            shape.
+        TypeError: for a layered space whose layers are not balls.
+    """
+    from planetmodel.character import SCALAR
+    from planetmodel.fields import AnalyticField
+    from planetmodel.geometry import Geometry
+    from planetmodel.model import Model
+    from planetmodel.skeleton import Skeleton
+    from planetmodel.vocabulary import FieldSpec
+
+    shells, parts = _shells(space, field)
+    skeleton = Skeleton([shells[0].inner_radius] + [shell.radius for shell in shells])
+    layers = [
+        {
+            name: AnalyticField(
+                (shell.inner_radius, shell.radius),
+                _point_values(shell, part),
+                name=name,
+            )
+        }
+        for shell, part in zip(shells, parts)
+    ]
+    return Model(
+        Geometry(skeleton),
+        layers,
+        specs={name: FieldSpec(SCALAR, None, meaning="a field of a pygeoinf ball")},
+    )
+
+
+def plot_cutaway(
+    space: Ball | Layered,
+    field: Any,
+    /,
+    *,
+    longitudes: Sequence[float] = (0.0, 90.0),
+    latitudes: Sequence[float] | None = None,
+    inner: float = 0.0,
+    outer: float | None = None,
+    view: Sequence[float] | None = None,
+    n: int = 400,
+    side: str | None = "below",
+    ax: Any = None,
+    name: str = "field",
+    inner_color: Any = "field",
+    **kwargs: Any,
+) -> Any:
+    """Draw a field of a ball as the body seen from outside with a wedge cut
+    from it, through ``planetmodel``'s cutaway.
+
+    The picture is ``planetmodel.slices.cutaway`` of :func:`planet_model`,
+    drawn by ``planetmodel.plotting.cutaway``: an orthographic view, rendered
+    pixel by pixel, the field on the faces of the cut, on the surface, and on
+    the sphere left standing in the cut at its inner radius. The angles are
+    this module's, in degrees and latitudes, and are converted to the
+    radians and colatitudes ``planetmodel`` takes.
+
+    Args:
+        space: the ball or annulus, or a layered space of them.
+        field: a vector of the space.
+        longitudes: the wedge, from its first longitude east to its second,
+            in degrees: ``planetmodel``'s ``longitudes``.
+        latitudes: the span of latitudes cut, in degrees, its ends in either
+            order: ``planetmodel``'s ``colatitudes``. The whole span if
+            omitted; ``(-90, 0)`` cuts the part south of the equator only.
+        inner: the radius the cut goes down to, zero for the centre, or the
+            domain's inner radius where that is higher, which an annulus
+            shows as its inner surface: ``planetmodel``'s ``inner``.
+        outer: the radius of the sphere shown as the surface, the domain's
+            outer radius if omitted; within the domain, the faces of the cut
+            stand proud of it: ``planetmodel``'s ``outer``.
+        view: the ``(latitude, longitude)`` in degrees of the direction
+            toward the viewer: ``planetmodel``'s ``view``. If omitted, above
+            the cut's first longitude and toward the pole of the hemisphere
+            the cut lies in.
+        n: the pixels across the picture: ``planetmodel``'s ``n``.
+        side: in a layered space, the side of an interface a sphere of the
+            picture is taken on, where it lies on one, ``"below"`` or
+            ``"above"``: ``planetmodel``'s ``side``.
+        ax: ordinary axes to draw on. A new figure is made if omitted.
+        name: the name the field is drawn and labeled under.
+        inner_color: ``"field"``, or a color for the sphere left standing in
+            the cut: the drawing's ``inner``.
+        **kwargs: passed to ``planetmodel.plotting.cutaway``: ``surface``
+            (``"field"``, a color, or the Earth's ``"land"`` or relief
+            ``"image"``, which need cartopy), ``coastlines``, ``interfaces``,
+            ``scale``, ``cmap``, ``vmin``, ``vmax``, ``diverging``, ``clip``,
+            ``normalised``, ``colorbar``, and the rest to ``imshow``.
+
+    Returns:
+        What ``planetmodel.plotting.cutaway`` returns: the image drawn.
+
+    Raises:
+        ValueError: for a wedge or radii ``planetmodel`` refuses, or a field
+            of the wrong shape.
+        TypeError: for a layered space whose layers are not balls.
+    """
+    import matplotlib.pyplot as pyplot
+    from planetmodel import slices
+    from planetmodel.plotting import cutaway
+
+    picture: dict[str, Any] = {
+        "longitudes": tuple(np.radians(float(value)) for value in longitudes),
+        "inner": inner,
+        "outer": outer,
+        "n": n,
+        "side": side,
+    }
+    if latitudes is not None:
+        picture["colatitudes"] = tuple(
+            sorted(np.radians(90.0 - float(value)) for value in latitudes)
+        )
+    if view is not None:
+        latitude, longitude = (float(value) for value in view)
+        picture["view"] = (np.radians(90.0 - latitude), np.radians(longitude))
+    model = planet_model(space, field, name=name)
+    cut = slices.cutaway(model, name, **picture)
+    if ax is None:
+        _, ax = pyplot.subplots(figsize=(5.0, 5.0), layout="constrained")
+    return cutaway(ax, cut, inner=inner_color, **kwargs)

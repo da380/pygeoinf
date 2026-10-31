@@ -13,9 +13,12 @@ poetry run pre-commit install
 On `git commit`, `pre-commit` runs Ruff (linting with `--fix`, then
 formatting) and `nbstripout`, and refuses commits made directly on `main`.
 
-The test suite is not a hook. CI runs it on every push, to any branch, on
-Linux, Windows and macOS; run whatever you touched locally before pushing
-(`poetry run pytest tests`, say).
+The test suite is not a hook. CI runs it on Linux, Windows and macOS on every
+pull request to `main` and on `main` itself, but not on pushes to other
+branches; run whatever you touched locally before pushing (`poetry run pytest
+tests`, say). To run CI on a branch before opening a pull request, start the
+workflow by hand (`gh workflow run ci.yml --ref <branch>`, or "Run workflow" on
+the Actions tab), which runs the slow set as well.
 
 The same hooks run in CI (the `Lint (pre-commit)` job reads the very same
 `.pre-commit-config.yaml`), so anything that passes locally passes there. To
@@ -73,7 +76,7 @@ The first step is to update the version number in the `pyproject.toml` file. Thi
 
 2.  **Update the version number** in `pyproject.toml`:
     ```toml
-    [tool.poetry]
+    [project]
     name = "pygeoinf"
     version = "X.Y.Z"  # Change this line
     # ...

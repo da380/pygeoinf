@@ -18,8 +18,25 @@ name (`--noise-std`, `--length-scale`, ...), so that the resolution, the
 counts, the noise and the prior can be changed from the command line;
 `--help` lists them with the preset's values.
 
+Forward code that more than one app runs lives beside them, outside every app
+and outside the library. `raytracer/` is the ray tracer of the tomography and
+banana-doughnut apps and of any app to come that traces rays, written without
+the library: rays in a planet whose velocity depends on radius alone,
+integrated piece by piece between its discontinuities, between a source and a
+receiver at any radius, with a node wherever a ray crosses a discontinuity, so
+that its path integrals stay second order across them, with the closed form of
+a medium whose rays are circles to check it against; dynamic ray tracing along
+a ray, the Hessians of the travel time across it from its two ends and the
+ray-centered frame in which they are diagonal, which a finite-frequency kernel
+needs; and a shooting tracer for a medium that is not radial. An app loads it as it would load an external code: its `src/rays.py`
+puts the directory on the path for the import, takes it off again and
+re-exports the tracer, so the app's scripts and tests import `src.rays` and
+nothing else. The tracer's own tests need only NumPy and SciPy and run with
+the fast suite, in `tests/test_miniapp_raytracer.py`.
+
 | directory | problem |
 |---|---|
+| `banana_doughnut/` | a traveltime as two linear functionals on one model space, the mantle in `H^2`: ray theory's along the ray, and finite-frequency theory's from the paraxial banana-doughnut kernel, a quadrature of our own in ray-centered coordinates composed with point evaluation as the ray's is; the two `L2` kernels, nothing alike, beside their Sobolev gradients and their representers under Sobolev priors with measured correlation distances; and the priors pushed forward to the two delays, which agree to a per cent where the prior's correlation distance is a few wavelengths and part ways below one, ray theory's breakdown, with the two theories' laws over a fan of distances compared by their divergence; no inversion |
 | `cpp_backend/` | a C++ vector type, bound with nanobind and exposed as `H^1` on an interval, a `HilbertSpace` with no array underneath whose inner product and Riesz map are computed in C++: the check ladder on the space, its operators and a Matérn-type prior on it, then the point, measure and set answers on two local averages from a dozen point values, with a tally of every call the library made of the backend |
 | `mfem/` | MFEM two ways: a finite element space as a `HilbertSpace`, through its matrices and with no coordinates at all, with an inverse problem on each; and an MFEM solve as an operator on the library's own periodic box, its adjoint proved by the check ladder, with the point, measure and set answers on it |
 | `planet_density/` | the Earth's radial density from its mass and moment of inertia on a space of PREM's own layers, the truth PREM plus a draw from a tight prior about it: the point, measure and set answers under that prior and under a deliberately wide bound, each marked against the truth; and the inner-core and core-mantle boundary radii as nonlinear unknowns, by the MAP model, the Laplace Gaussian and Occam |

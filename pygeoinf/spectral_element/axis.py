@@ -30,6 +30,7 @@ from .base import (
     Boundary,
     LengthScale,
     SpectralElementSpace,
+    _RadialGroup,
     _clamped_length_scale,
     _checked_fit,
     _fitted_over_the_domain,
@@ -143,6 +144,7 @@ class AxisSpace(SpectralElementSpace):
         self._bounds = (lower, upper)
         self._padding = pads
         self._robin = robin
+        self._matched_boundary = isinstance(boundary, str)
         self._ngll = ngll
         self._element_length = element_length
         self._length_scale = length_scale
@@ -191,7 +193,10 @@ class AxisSpace(SpectralElementSpace):
 
         Tagged by the geometry rather than by ``type(self)``, as the boxes'
         keys are, because ``Lebesgue`` and ``Sobolev`` are views of one set of
-        fields.
+        fields. Whether the Robin coefficients were matched to the length
+        scale or given is part of it: a prior of another length scale
+        matches its own on the first and keeps the coefficients on the
+        second.
         """
         return (
             self._geometry,
@@ -199,6 +204,7 @@ class AxisSpace(SpectralElementSpace):
             self._bounds,
             self._padding,
             self._robin,
+            self._matched_boundary,
             self._ngll,
             self._element_length,
             self._length_scale_key,
@@ -381,3 +387,45 @@ class AxisSpace(SpectralElementSpace):
 
     def _squared_modes(self, weights: np.ndarray, /) -> np.ndarray:
         return (self._basis.modes() ** 2) @ weights / self._scale**2
+
+    def _radial_groups(self) -> list[_RadialGroup]:
+        """One group, every component: a field of one coordinate has no
+        angular functions, and its components are ``scale`` times the
+        modes' coefficients."""
+        return [_RadialGroup(self._basis, 0, 1, 1.0 / self._scale**2)]
+
+    def _scaled_family(
+        self,
+        radial: Callable[[np.ndarray], np.ndarray],
+        lateral: Callable[[np.ndarray], np.ndarray] | None,
+        probe: np.ndarray,
+        /,
+    ) -> RadialOperatorFamily:
+        """``A'`` on this space's mesh under its measure, its coefficient
+        ``radial^2``. Under ``boundary="robin"`` its Robin coefficients are
+        matched to the scale at the ends of the domain, ``probe[0]`` and
+        ``probe[-1]``, as this space's are to its own.
+
+        Raises:
+            ValueError: for any lateral scale: there is no direction for it.
+        """
+        if lateral is not None:
+            raise ValueError(
+                "A space of one coordinate has no lateral direction; "
+                "lateral_length_scale is for a ball or a disk."
+            )
+        robin = self._robin
+        if self._matched_boundary:
+            lower, upper = self._bounds
+            ends = (
+                None
+                if self._weight == "one"
+                else (lower - self._padding[0], upper + self._padding[1])
+            )
+            robin = _resolved_boundary("robin", probe, ends)
+        return RadialOperatorFamily(
+            self._basis.family.mesh,
+            kappa=lambda x: radial(x) ** 2,
+            weight=self._weight,
+            robin=robin,
+        )

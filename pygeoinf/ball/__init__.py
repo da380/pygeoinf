@@ -40,9 +40,10 @@ quickly. In an annulus there is no centre and nothing to it.
 The numerics are ``planetmodel``'s: ``RadialOperatorFamily`` under the
 ``r^2`` measure, one ``SpectralBasis`` per degree held in a
 ``SphericalBasis`` (reachable as :attr:`Ball.basis`), and its harmonics. The
-transform between coefficients and the grid is this package's, all the radial
-shells at once; it agrees with ``planetmodel``'s shell-by-shell route to
-rounding and is used in its place up to degree 128.
+transform between coefficients and the grid takes all the radial shells at
+once through ``planetmodel.harmonics.ShellTransform`` up to degree 128, and
+goes shell by shell above it, where the batched route's dense Legendre step
+no longer pays.
 """
 
 from .layered import Layered

@@ -13,10 +13,12 @@ actually made.
     plotting.show()
 
 A ball has to be cut to be seen: ``plot_shell`` (which is what ``plot`` does
-there), ``plot_section`` by any plane through the centre, and
-``plot_profile`` along a ray, with ``section_values`` for the numbers and
-``plot_section_points`` for the stations in a section's plane. They are here
-when ``planetmodel`` is installed.
+there), ``plot_section`` by any plane through the centre, ``plot_profile``
+along a ray and ``plot_cutaway`` with a wedge cut from it, with
+``section_values`` for the numbers and ``plot_section_points`` for the
+stations in a section's plane; ``planet_model`` hands a field to
+``planetmodel``'s own slices and pictures. They are here when ``planetmodel``
+is installed.
 """
 
 from .base import (
@@ -39,6 +41,8 @@ try:  # The interval, ball and disk spaces need planetmodel, an optional extra.
     from . import interval as _interval  # noqa: F401  (registers the interval renderers)
     from . import disk as _disk  # noqa: F401  (registers the disk renderers)
     from .ball import (
+        planet_model,
+        plot_cutaway,
         plot_profile,
         plot_section,
         plot_section_points,
@@ -69,5 +73,7 @@ if "plot_section" in globals():
         "plot_section",
         "plot_section_points",
         "plot_profile",
+        "plot_cutaway",
+        "planet_model",
         "section_values",
     ]
