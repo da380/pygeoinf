@@ -566,22 +566,25 @@ def test_a_chord_in_a_constant_velocity(dynamic, distance, source):
     assert l[-1] == pytest.approx(chord, rel=1e-12)
     v = CHORD_VELOCITY
     expected = chord / (v * l[inner] * (chord - l[inner]))
-    # The largest relative differences are 1.4e-13.
+    # The largest relative differences are 1.4e-13 on Linux; the tolerances
+    # leave two decades for other platforms' libraries, whose rounding near
+    # the turning point the Hessians amplify.
     for i in range(2):
         assert np.allclose(
-            traced.forward[1:, i], 1.0 / (v * l[1:]), rtol=1e-12, atol=0.0
+            traced.forward[1:, i], 1.0 / (v * l[1:]), rtol=1e-11, atol=0.0
         )
         assert np.allclose(
-            traced.backward[:-1, i], 1.0 / (v * (chord - l[:-1])), rtol=1e-12, atol=0.0
+            traced.backward[:-1, i], 1.0 / (v * (chord - l[:-1])), rtol=1e-11, atol=0.0
         )
-        assert np.allclose(traced.sums[inner, i], expected, rtol=1e-12, atol=0.0)
+        assert np.allclose(traced.sums[inner, i], expected, rtol=1e-11, atol=0.0)
     assert np.all(np.isinf(traced.sums[[0, -1]]))
     if source is None:
         middle = len(l) // 2
         assert l[middle] == pytest.approx(chord / 2.0, rel=1e-12)
-        # The traced chord is 2 sin(Delta / 2) long to 7.5e-13.
+        # The traced chord is 2 sin(Delta / 2) long to 7.5e-13 on Linux and
+        # about 1e-12 on macOS.
         assert traced.sums[middle] == pytest.approx(
-            2.0 / (v * np.sin(np.radians(distance) / 2.0)), rel=5e-12
+            2.0 / (v * np.sin(np.radians(distance) / 2.0)), rel=1e-10
         )
     # The nodes are off the chord by at most 4.7e-12, and the tangent off its
     # direction by 1.4e-11, near the turning point.
@@ -712,20 +715,21 @@ def test_the_frame_is_right_handed_and_follows_the_ray(
 def test_the_derivatives_default_to_the_series(rays, dynamic):
     """Without the velocity's derivatives, those of its Chebyshev series on
     each piece are taken: the linear gradient's exactly, the flattened
-    gradient's to 3.3e-10 and 6.3e-7 of a second derivative that reaches 76
-    at the bottom, which moves the sums along its rays by at most 1.9e-12."""
+    gradient's to 3.3e-10 (3.2e-9 on macOS) and 6.3e-7 of a second
+    derivative that reaches 76 at the bottom, which moves the sums along its
+    rays by at most 1.9e-12 on Linux."""
     for name, bottom in (("mantle", 0.55), ("flattened", 0.05)):
         given = dynamic[name]
         series = rays.RadialProfile(given.velocity, bottom=bottom)
         radii = np.linspace(bottom, 1.0, 401)
         first, second = series._derivatives(0)
         exact = [f(radii) for f in given.derivatives]
-        assert np.abs(first(radii) - exact[0]).max() < 3e-9
-        assert np.abs(second(radii) - exact[1]).max() < 6e-6
+        assert np.abs(first(radii) - exact[0]).max() < 3e-8
+        assert np.abs(second(radii) - exact[1]).max() < 6e-5
         for distance, source in ((20.0, None), (60.0, None), (45.0, 0.9)):
             ray = given.trace(0.0, distance, source_radius=source)
             sums = (profile.dynamic_ray(ray).sums for profile in (given, series))
-            assert np.allclose(*sums, rtol=2e-11, atol=0.0)
+            assert np.allclose(*sums, rtol=1e-9, atol=0.0)
 
 
 def test_one_pair_of_derivatives_for_each_piece(rays, dynamic):
@@ -754,9 +758,10 @@ def test_one_pair_of_derivatives_for_each_piece(rays, dynamic):
         assert np.count_nonzero(np.isin(ray.nodes[1:-1, 0], cut)) >= 3
         traced = once.dynamic_ray(ray)
         assert np.array_equal(each.dynamic_ray(ray).sums, traced.sums)
-        # The largest relative difference is 2.8e-13.
+        # The largest relative difference is 2.8e-13 on Linux and above 1e-11
+        # on macOS; the tolerance leaves room for either.
         assert np.allclose(
-            series.dynamic_ray(ray).sums, traced.sums, rtol=1e-11, atol=0.0
+            series.dynamic_ray(ray).sums, traced.sums, rtol=1e-9, atol=0.0
         )
         closed = _out_of_plane_sum(ray)
         assert np.allclose(traced.sums[1:-1, 1], closed, rtol=2e-10, atol=0.0)

@@ -4062,7 +4062,11 @@ resolution-sensitive (`1 − ρ` under the shortest prior `7e-5`, `4.5e-4`,
 `1.8e-3` at `lmax` 64, 96, 160) and are called indications. Cost at the
 full scale: 18 minutes end to end, 9.7 GB at peak, the quick scale 11 s;
 `tests/test_miniapp_banana_doughnut.py`, 42 slow tests in about two
-minutes, and the tracer's 47 fast tests in `tests/test_miniapp_raytracer.py`.
+minutes, and the tracer's 47 fast tests in `tests/test_miniapp_raytracer.py`, whose
+dynamic-ray tolerances sit a decade or two above Linux's rounding after
+macOS CI exceeded three of them by factors of about one to ten, the
+Hessians amplifying the libraries' rounding near the turning point as
+D-211 found for the travel times.
 
 ## Appendix: measurements behind the defaults
 
