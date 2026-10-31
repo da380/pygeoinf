@@ -311,7 +311,11 @@ the posterior. The exact pointwise standard deviation at a few points is
 its `affine_map` through `space.point_evaluation_operator(points)`; the map
 is `sample_pointwise_std(samples, rng=rng)`; the means' posterior is
 `affine_map(problem.properties)`. Figure `posterior.png` sets the prior's
-map beside the posterior's, and each mean's marginal before and after.
+map beside the posterior's, and each mean's marginal before and after. In
+the ball, `plotting.plot_cutaway(space, mean, longitudes=..., view=...,
+inner=CORE_RADIUS, inner_color=..., surface=...)` draws the layered field,
+a part per layer, through `planetmodel` for `ball_cutaway.png`, the core
+left standing in the cut as a plain sphere.
 
 **The mixture** (part E). `LinearGaussianMixtureInversion(forward, prior,
 solver=CholeskySolver(), n_jobs=scale.n_jobs)` updates each component by its

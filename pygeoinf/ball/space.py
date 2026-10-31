@@ -8,6 +8,7 @@ from typing import Callable, Hashable, Sequence
 import numpy as np
 from numpy.random import Generator
 from planetmodel import harmonics
+from planetmodel.harmonics import ShellTransform
 from planetmodel.randomfield import (
     RadialOperatorFamily,
     SpectralBasis,
@@ -20,7 +21,6 @@ from planetmodel.sampling import AngularGrid, gauss_legendre
 from ..algebra.operators import LinearFunctional
 from ..algebra.spaces import resolve_rng
 from ..spectral_element._points import LocalEvaluation, harmonic_table
-from ..spectral_element._transform import ShellTransform
 from ..spectral_element.base import (
     _EXTENSIONS,
     _NODES_PER_MODE,

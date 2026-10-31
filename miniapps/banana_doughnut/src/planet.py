@@ -80,6 +80,11 @@ class Path:
         """The velocity on the ray at an arc length from the source."""
         return float(np.interp(arc, self.dynamic.arc_length, self.dynamic.velocity))
 
+    def wavelength(self, period: float, /) -> float:
+        """The wavelength at mid-path of a dominant period, ``c T0`` with
+        ``c`` the velocity there."""
+        return self.velocity_at(0.5 * self.length) * float(period)
+
     def fresnel_half_width(self, period: float, /) -> float:
         """The half-width of the first Fresnel zone at mid-path for a
         dominant period, ``sqrt(c T0 L) / 2`` with ``c`` the velocity there:

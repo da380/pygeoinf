@@ -1001,10 +1001,11 @@ class SpectralElementSpace(
         of the Galerkin matrix ``B = Phi^T A' Phi`` of the scaled operator in
         the group's kept radial modes, ``Phi`` M-orthonormal.
 
-        ``A'`` is assembled on this space's mesh by :meth:`_scaled_family`
-        and applied to the modes, banded; ``B`` is then a dense matrix of the
-        size of the group's modes, symmetrized against rounding. Its
-        eigenvalues are at least one, as ``A'`` is at least the identity.
+        ``A'`` is assembled on this space's mesh by :meth:`_scaled_family`,
+        and ``B`` is ``planetmodel``'s ``SpectralBasis.galerkin`` of it in
+        the group's basis: a dense symmetric matrix of the size of the
+        group's modes. Its eigenvalues are at least one, as ``A'`` is at
+        least the identity.
 
         Raises:
             ValueError: for a length scale that is not positive and finite on
@@ -1020,16 +1021,10 @@ class SpectralElementSpace(
             else _clamped_length_scale(lateral_length_scale, lower, upper)[0]
         )
         family = self._scaled_family(radial, lateral, probe)
-        pairs = []
-        for group in self._radial_groups():
-            degree = group.basis.degree
-            mass = family.mass(degree)
-            modes = group.basis.modes()
-            # The family's degrees of freedom: a ball's centre is not one.
-            active = modes[modes.shape[0] - mass.size :]
-            galerkin = active.T @ (mass[:, None] * family.apply(degree, active))
-            pairs.append(np.linalg.eigh(0.5 * (galerkin + galerkin.T)))
-        return pairs
+        return [
+            np.linalg.eigh(group.basis.galerkin(family))
+            for group in self._radial_groups()
+        ]
 
     def _block_variance(
         self,
@@ -1045,7 +1040,11 @@ class SpectralElementSpace(
         of the metric, so the field's covariance in components is ``D^-1 U
         diag(s) U^T D^-1``, and its diagonal at the nodes is ``sum_j s_j
         (Phi D^-1 u_j)^2``; the angular sum is the group's weight. The
-        result depends on the mesh's coordinate alone.
+        result depends on the mesh's coordinate alone. It is wanted at every
+        node of the padded mesh, being a vector of the space that a
+        calibration divides by there too, where ``planetmodel``'s
+        ``SpectralBasis.pointwise_variance_of`` reads the domain's nodes
+        alone.
         """
         profile = np.zeros(self.grid_shape[0])
         for group, (_, vectors), spectrum in zip(

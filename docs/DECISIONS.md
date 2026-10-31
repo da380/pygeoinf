@@ -3967,6 +3967,103 @@ assembly goes. Tests: `tests/test_ball.py::TestScalesOfThePriorsOwn`,
 `tests/test_disk.py::TestScalesOfThePriorsOwn`, and the scale tests in
 `test_interval.py`, `test_radial.py` and `test_layered.py`.
 
+**D-214. planetmodel 1.4: the batched shell transform and the Galerkin
+blocks are planetmodel's; the block variance stays until its method reads
+the padding** (2026-11-01, David). The pin is `planetmodel>=1.4`, the lock's
+diff touching planetmodel alone. `spectral_element/_transform.py` is deleted
+and the ball imports `ShellTransform` from `planetmodel.harmonics`, the
+degree-128 switch kept (D-123). `_galerkin_eigenpairs` takes each radial
+group's block from `SpectralBasis.galerkin(family)` (D-213's hand assembly
+deleted), bit-identical to it on six spaces and four settings; against 1.3.2
+the blocks agree in absolute value exactly, only signs of entries changing
+with the signed eigenvectors, and the variances and covariance actions are
+bit-identical. `pointwise_variance_of` is not adopted: it returns the
+domain's nodes alone, and the space's variance field must cover the padding
+too, where the calibration divides by it (they agree to `1.8e-15` on the
+domain); the local `_block_variance` stays until planetmodel's method takes
+`physical=False`, noted in that repository's `docs/`. The signed eigenvectors
+(D-199) flipped 261 of 1352 basis functions of tutorial 11's ball and so
+changed its calibrated prior's seeded draw, which pushed the default
+conjugate gradients on its sixty-datum normal operator past the cap of
+`2 dim` that it had cleared by one iteration (condition 3100; 4.5 per cent
+of random right-hand sides need more); the tutorial takes `CholeskySolver`,
+the right tool for a sixty-by-sixty matrix, with a sentence saying so. No
+other test moved. Tests: `tests/test_ball.py::TestTransform` against
+planetmodel's per-shell route; the scale tests of D-213 unchanged.
+
+**D-215. A ball field is drawn through planetmodel by one adapter**
+(2026-11-01, David: planetmodel 1.4's slices and pictures, cut-aways among
+them, should serve this and the tomography app). `plotting.planet_model(space,
+field, name=)` wraps a field of a `Ball` or a layered ball as a planetmodel
+`Model`: a `Skeleton` of the domain's radii, a plain `Geometry` of the
+identity mapping so that radii are the space's in its units, one
+`AnalyticField` per layer whose `evaluate(r, theta, phi)` is the space's
+point evaluation (radians, colatitude, broadcast, the components computed
+once), refusing a radius outside its layer as planetmodel's own fields do, a
+`FieldSpec` without units under the given name. With it `planetmodel.slices`
+and `planetmodel.plotting` draw the field; `plot_cutaway(space, field,
+longitudes=, latitudes=, view=, inner=, outer=, n=, inner_color=, ...)`
+wraps the one picture pygeoinf lacked, taking degrees and latitudes at its
+boundary as the rest of `pygeoinf.plotting` does and converting to
+planetmodel's radians and colatitudes inside; `plot_section` and
+`plot_shell` keep their own renderers, since planetmodel's return other
+axes and other option names. Costs: the model 0.2 ms, a cut-away 0.7 s at
+400 pixels. Tests: `tests/test_spectral_element_plotting.py::TestThroughPlanetmodel`
+(the model evaluates as the space does to `1e-15`; a section through
+planetmodel is `section_values` to `3e-15`; a cut-away draws) and
+`TestLayered`.
+
+**D-216. The banana-doughnut mini-app: ray theory and finite-frequency
+theory as two functionals on one space, compared through priors**
+(2026-10-31 to 2026-11-01, David). The app withdrawn under D-212 is rebuilt
+on the paraxial kernels of Dahlen, Hung and Nolet (2000), which need only the
+Hessian sums `A_i = M_i' + M_i''` from dynamic ray tracing along the ray, now
+in the shared tracer (`RadialProfile.dynamic_ray`, checked against the
+closed forms (A50), (A51), the conserved quantity (A53), a constant-velocity
+chord and second differences of the flattened gradient's exact detour time,
+to `1e-9` or better). The scaling `q_i = η_i / √A_i` cancels the endpoint
+singularities exactly, so the finite-frequency functional is the app's own
+quadrature in `(l, u, θ)`, bounded everywhere, composed with point
+evaluation, the same form as the ray functional, and the Gaussian identity
+makes the two agree on a model constant across the banana. The free surface
+is taken by images, a point above it folded to its mirror image with its
+weight (right for an SH-type phase), after plain clipping was found to set
+the gap between the two delays on smooth priors; the core is the region of
+no structure, where the functional is zero and the model space, the mantle
+annulus, does not reach. The planet is the tomography app's smooth mantle;
+one S-like phase; a Gaussian pulse spectrum; three bands set by Fresnel
+half-width. The space is `H^2` on the annulus with a length scale of 0.02
+and `lmax` 160 (padding 0.32, a field of the scale, after the default moved
+the longest prior's delay by 6 per cent), chosen short because a prior's
+covariance is an operator in the space's metric and the space's scale is a
+floor on the roughness of its draws (an `L2`-spectrum reading of the prior
+was proposed and declined: "I would be disinclined from natively reading
+off the prior scale from the covariance due precisely to its metric
+dependence"); priors carry their own scales (D-213) and are placed by their
+measured `1/e` correlation distances, not their nominal lengths, with their
+correlation functions and a draw shown; the wavelength is the reference
+length. Parts: A the kernels drawn from the formula; the priors seen; B one
+2-by-2 figure per band and prior, the ray as a line beside the
+banana-doughnut kernel over the two Cameron-Martin representers on one
+scale, plus a cut-away through D-215; C, the centerpiece, the prior pushed
+forward through `m ↦ (δT_ray, δT_FF)` to a Gaussian on `R²` per geometry,
+band and prior, its correlation, regression slope and conditional spread
+against the prior's correlation distance in wavelengths; D the push-forwards
+over the fan of distances, their KL divergence and the scatter of draws.
+Result: ray theory breaks down where the prior's correlation distance falls
+below about a wavelength; at 45 degrees in the widest band under the
+shortest prior (0.46 wavelengths) the two delays correlate at 0.70, the
+slope is 0.54 and 72 per cent of the finite-frequency delay's spread is
+what the ray delay cannot predict; at four wavelengths or more the
+correlation exceeds 0.997 and the slope 0.988 in every band; the KL
+divergence of the four delays' laws grows ten to a hundred times a band
+and falls with the prior's distance. The narrow band's numbers are
+resolution-sensitive (`1 − ρ` under the shortest prior `7e-5`, `4.5e-4`,
+`1.8e-3` at `lmax` 64, 96, 160) and are called indications. Cost at the
+full scale: 18 minutes end to end, 9.7 GB at peak, the quick scale 11 s;
+`tests/test_miniapp_banana_doughnut.py`, 42 slow tests in about two
+minutes, and the tracer's 47 fast tests in `tests/test_miniapp_raytracer.py`.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

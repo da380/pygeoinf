@@ -69,12 +69,15 @@ def _reader(hint: Any, value: Any, /) -> dict[str, Any]:
     command line: a flag pair for a bool, one or more values for a tuple,
     ``none`` for an optional field's ``None``, else the type itself. A
     tuple's items are of its annotation's type, or of its preset's first
-    item's where the annotation does not say; items that are tuples
+    item's where the annotation does not say; a ``Literal`` is one of its
+    values; items that are tuples
     themselves, of an annotation such as ``tuple[float, float]``, are each
     one word with commas between its values."""
     if hint is bool:
         return {"action": argparse.BooleanOptionalAction}
     arguments = typing.get_args(hint)
+    if typing.get_origin(hint) is typing.Literal:
+        return {"choices": arguments, "metavar": "|".join(map(str, arguments))}
     if typing.get_origin(hint) is tuple and typing.get_origin(arguments[0]) is tuple:
         read = _group(typing.get_args(arguments[0]))
         return {"type": read, "nargs": "+", "metavar": read.__name__}
@@ -225,10 +228,12 @@ def symmetric_mesh(
     *,
     limit: float,
     label: str,
+    shading: str = "auto",
 ) -> Any:
     """Values on a grid, curvilinear or not, signed about zero under a
     diverging map with a colorbar of the drawing's own height, at equal
-    scales on the two axes; NaN where nothing is drawn."""
+    scales on the two axes; NaN where nothing is drawn, or ``shading=
+    "gouraud"`` to interpolate between the nodes of a grid with no gaps."""
     mesh = ax.pcolormesh(
         x,
         y,
@@ -236,7 +241,7 @@ def symmetric_mesh(
         cmap="RdBu_r",
         vmin=-limit,
         vmax=limit,
-        shading="auto",
+        shading=shading,
         rasterized=True,
     )
     ax.set_aspect("equal")

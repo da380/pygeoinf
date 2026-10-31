@@ -145,11 +145,23 @@ are dropped, and the model space is the mantle annulus alone, on which
 every representer and every figure lives; nothing is ever computed or
 drawn in the core. The free surface is where the paraxial kernel is
 blind: it knows nothing of the surface, so the points of the doughnut
-that fall above it, half of it near a surface receiver, are dropped too,
-and that is the approximation. Report the two clipped fractions per ray
-separately, below the core-mantle boundary and above the surface, and
-state the second in the README in one sentence as the approximation it
-is; it does not touch the point the app makes.
+that fall above it, half of it near a surface receiver, would be lost,
+up to a quarter of the weight at 30 degrees in the widest band, and on
+smooth priors that loss, not the physics, would set the gap between the
+two delays. The free surface is taken by images instead: for a receiver
+on the surface the back-propagated field includes the surface reflection,
+and for a locally flat surface the reflected leg's travel time from a
+scatterer equals the direct leg's from the scatterer's mirror image, so
+the kernel inside the mantle carries what the mirrored point would have;
+a quadrature point above the surface is folded back to the same direction
+at radius `2a − r`, keeping its weight, which for an SH-type phase (free
+surface reflection coefficient plus one) adds with the same sign and
+restores the Gaussian identity. `surface="fold"` is the default and
+`"clip"` keeps the plain dropping, a field of the scale, so that both can
+be shown. Report the fraction of the weight folded (or clipped) above the
+surface and the fraction dropped below the core-mantle boundary per ray,
+separately, and state the fold in the README in one sentence as the
+free surface by images; it does not touch the point the app makes.
 
 ## The design
 
@@ -189,13 +201,18 @@ is; it does not touch the point the app makes.
   of every `(l, u, θ)`, times the product of the three weights and
   `−G(u) / (2π c(l))`.
 - **The model space**: `m = δln c` on the mantle annulus,
-  `pygeoinf.ball.Sobolev(lmax, 2, 0.1, inner_radius=0.55)`: `H^2`, where
-  a value at a point exists, with one fixed length scale of 0.1 in its
+  `pygeoinf.ball.Sobolev(lmax, 2, 0.02, inner_radius=0.55)`: `H^2`, where
+  a value at a point exists, with one fixed length scale of 0.02 in its
   inner product, which is the norm the Sobolev gradients and the dual
   norms are measured in. The space is the problem's and never changes
-  with the prior. `lmax` is a field of the scale: 96 at the full scale,
-  which resolves about 0.033, so that the narrowest band and the shortest
-  prior lengths are above the truncation; 16 at the quick scale. Both
+  with the prior. The scale is short on purpose: a prior's covariance is
+  an operator in this metric, so the draws' `L2` spectrum carries the
+  space's symbol as a factor, and the space's scale is a floor below which
+  no prior can roughen its draws; at 0.02 that floor sits below every
+  Fresnel half-width and every prior of interest. `lmax` is a field of the
+  scale, 160 at the full scale (resolving about 0.02, so that the space's
+  own scale and the shortest priors are above the truncation; 128 if the
+  timings demand it, stated), 16 at the quick scale. Both
   functionals are built on it exactly as the tomography app builds its
   path integrals: point evaluation composed with a matrix of weights, the
   adjoint the library's.
@@ -210,10 +227,23 @@ is; it does not touch the point the app makes.
   spectral-element spaces, which builds the covariance
   `a² (1 − div(L_r² ∇) − L_h² Δ_h)^(−2)` in the space's own basis (block
   by degree). Never rebuild the space to change a prior. The isotropic
-  lengths run from well below to well above the Fresnel width, about 0.04
+  lengths run from well below to well above the Fresnel width, about 0.02
   to 0.5 of the radius; and anisotropic pairs, a radial length shorter
-  than the lateral one as in the mantle (say 0.05 radial with 0.2 and 0.5
-  lateral), are part of the sweep. The pointwise standard deviation of
+  than the lateral one as in the mantle (say 0.03 radial with 0.2 and 0.5
+  lateral), are part of the sweep. **A prior's scale is never read off
+  its covariance's nominal length** (David, 2026-11-01): the metric makes
+  that reading unreliable. Each prior is characterized by what its draws
+  do: its correlation function from a reference point along a radius and
+  along a shell, computed exactly from the covariance, its distance to a
+  correlation of `1/e` in each direction, and a representative draw on
+  the two sections, all shown in a figure of the priors; and the
+  comparison's axes use the measured correlation distance, not the
+  nominal length. **The reference length is the wavelength** (David,
+  2026-11-01): each band's `λ = c T0` at mid-path; every length is quoted
+  in units of the radius and in wavelengths, and part C's primary axis is
+  the prior's measured correlation distance over the band's wavelength,
+  with each band's Fresnel half-width marked on it in the same units, so
+  that the three bands' curves line up where the physics is the same. The pointwise standard deviation of
   `δln c` is a few per cent, as in global tomographic models: 0.02 by
   default, by the library's own `pointwise_std=` calibration, which makes
   it 0.02 at every point (everything is linear, so it only scales the
@@ -261,7 +291,11 @@ stop only for something serious that needs the owner's decision.
   comments or tests; docstrings are self-contained. American spelling in
   code and docstrings, as in the other apps.
 - **Figures**: titled, self-explanatory, saved, never shown. Run everything
-  with `MPLBACKEND=Agg`.
+  with `MPLBACKEND=Agg`. Headings are short (David, 2026-11-01): one
+  one-line suptitle naming the figure, panel titles of a few words with
+  the one parameter that varies, short colorbar and axis labels; every
+  other number goes to the printed report and the results table. The
+  ray-kernel panels show just the ray, a line or a cross, nothing else.
 - **Threads**: give every loop over independent rays or bands an `n_jobs=`;
   set `OMP_NUM_THREADS` for runs by hand; one heavy job at a time.
 - **Diagnose small before large**: time one functional at the quick scale
@@ -355,7 +389,7 @@ unchanged.
 
 ## Stage 2: the functionals on the ball
 
-**Done 2026-10-31** (the numbers are in `STAGE2_NOTES.md`): the package,
+**Done 2026-10-31** (its numbers are now in the README and IMPLEMENTATION.md): the package,
 `setup.py` at both scales and `tests/test_miniapp_banana_doughnut.py`
 (22 tests, 30 s). At `lmax` 96 a finite-frequency functional has 201 286
 points and applies in 2.3 to 3.3 s; the space, its six priors and a draw
@@ -403,9 +437,55 @@ the full scale.
 
 ## Stage 3: the comparison
 
-Part B, `gradients.py`: the Sobolev gradients of both functionals, for two
-priors' length scales, on the same two sections as the `L2` pictures;
-across the path at mid-path is the figure that carries the point.
+**First half done 2026-11-01**: the fold (`surface="fold"|"clip"`, the
+Gaussian identity and the constant model exact with the fold on; the
+smooth-draw gap in the quick band seventeen times smaller; the gap at 45
+degrees in the middle band unchanged and physics), part B
+(`gradients.py`) and part C (`agreement.py`, all four distances in 41 s
+at `lmax` 96, with a ratio axis). Found on the way: with the space at
+0.1 no prior decorrelated below 0.19, every prior smoother than every
+Fresnel half-width, so the comparison never reached the regime where ray
+theory breaks down; hence the space's scale of 0.02, the measured
+correlation distances and the figure of the priors above, and the sweep
+redone at `lmax` 160.
+
+**Redone 2026-11-01 at the space's scale of 0.02**: `lmax` 160 and
+padding 0.32 at the full scale (padding is a field of the scale: the
+default of two space scales moved the longest prior's delay standard
+deviation by 6 per cent; 0.32 against 0.64 by 1.2), dimension 659 316,
+one finite-frequency adjoint 10 s, a push-forward 10 s, 2.1 GB. A new
+part, `priors.py` with `src/correlations.py`, measures and draws each
+prior; `src/sections.py` draws the sections for parts B and priors. The
+measured `1/e` distances along the shell run from 0.058 (nominal 0.02) to
+0.37 (nominal 0.32), the anisotropic pairs 0.07 radially; in wavelengths
+the sweep reaches 7 to 47 in the narrow band, 1.8 to 12 in the middle and
+0.46 to 2.9 in the widest. The breakdown shows: in the widest band under
+the shortest prior the correlation of the two delays is 0.70 at 45
+degrees (0.63 and 0.59 at 60 and 75) and the slope 0.54; above a few
+wavelengths both are within a per cent of one. On the wavelength axis the
+three bands' spread curves nearly collapse; on the Fresnel axis the slope
+curves do, so both figures are kept. Part B's 2-by-2 figures: the `H^2`
+gradient's hole persists in the widest band (fill 0.52) and fills under
+the priors (0.87 and above, the pairs 0.74 to 0.92). Full-scale times:
+part A 9 s, priors 40 s, part B 4 min, part C 8 min; the slow set 35
+tests in 108 s. The narrow band is resolution-sensitive (`1 − ρ` under
+the shortest prior 1.8e-3 at `lmax` 160 against 4.5e-4 at 96): say so in
+the README.
+
+Part B, `gradients.py`: one figure per band and prior, a 2-by-2 grid on
+one section (David, 2026-11-01): top row the `L2` picture, the ray kernel
+as the ray drawn as a line beside the banana-doughnut kernel from the
+formula; bottom row the Sobolev equivalents under that prior, the two
+functionals' Cameron-Martin representers `C ℓ`, ray's and
+finite-frequency's, on one shared color scale per row. Two sections, the
+across-the-ray one at mid-path (the figure that carries the point) and
+the ray plane; the set made for one fixed band and prior first, then
+repeated for every band and prior of the scale, each its own file, titles
+stating the band, its Fresnel half-width, the prior and its measured
+`1/e` distances. The `H^2` gradient in the space's own metric may be
+shown the same way as the case of no prior. With the space's scale below
+the Fresnel widths the hole persists in the `H^2` gradient of the wider
+bands and fills under the priors: say so in the captions.
 
 Part C, `agreement.py`, the centerpiece: for one source-receiver
 geometry, one band and one prior, the operator `m ↦ (δT_ray, δT_FF)`,
@@ -432,6 +512,17 @@ Figures per method and per band, titled; no head-to-head summary figure
 beyond the curves of part C.
 
 ## Stage 4: finishing
+
+**Done 2026-11-01**, with part D (`pushforward.py`: the fan's two laws per
+band and prior, their KL divergence both ways, the scatter of draws; the
+divergence grows ten to a hundred times a band and falls with the prior's
+distance) and the cut-away through the library's planetmodel adapter
+(`plotting.plot_cutaway`, D-215) in part B. `run_all.py`, README,
+IMPLEMENTATION.md, the row and the `raytracer/` paragraph in
+`miniapps/README.md`, 42 slow tests in about two minutes. Full scale 18
+minutes end to end (A 8 s, priors 36 s, B 3.7 min, C 7.3 min, D 5.9 min),
+9.7 GB at peak; quick 11 s. `STAGE2_NOTES.md` deleted. The app is recorded
+as D-216.
 
 README (the problem, the figures and what they mean, the planet and the
 periods stated, the boundary clipping in one sentence),

@@ -1,6 +1,6 @@
 """The spectral-element ball and annulus: the space, its operators, its priors.
 
-Needs ``planetmodel`` 1.3. The independent routes
+Needs ``planetmodel`` 1.4. The independent routes
 are the grid against the point: values synthesized on the
 grid through ``planetmodel.harmonics`` and the nodal eigenfunctions, against the same field
 evaluated through scipy's harmonics and the element polynomials; and
@@ -183,7 +183,7 @@ class TestTransform:
         from planetmodel import harmonics
         from planetmodel.sampling import gauss_legendre
 
-        from pygeoinf.spectral_element._transform import ShellTransform
+        from planetmodel.harmonics import ShellTransform
 
         grid = gauss_legendre(lmax)
         transform = ShellTransform(grid)
@@ -204,16 +204,6 @@ class TestTransform:
             harmonics.analyse_grid(rough, grid, lmax=lmax),
             atol=1e-11,
         )
-
-    def test_a_grid_that_is_not_gauss_legendre_is_refused(self):
-        from planetmodel.sampling import equiangular, gauss_legendre
-
-        from pygeoinf.spectral_element._transform import ShellTransform
-
-        with pytest.raises(ValueError, match="Gauss-Legendre"):
-            ShellTransform(equiangular(6, 11))
-        with pytest.raises(ValueError, match="longitudes"):
-            ShellTransform(gauss_legendre(5, nphi=16))
 
     def test_beyond_the_measured_degree_the_other_route_is_taken(
         self, monkeypatch, rng

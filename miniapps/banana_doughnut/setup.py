@@ -8,7 +8,9 @@ paraxial formula ``K = -sqrt(A1 A2) G(u) / (2 pi c)`` on two sections: the
 ray's own plane, and the plane across the ray at mid-path. The kernel is
 zero on the ray, the hollow banana, and in the plane across it a set of
 rings about the ray, the doughnut. Points outside the mantle annulus are
-left blank: the functional drops them.
+left blank: the functional drops those below the core-mantle boundary and
+folds those above the surface back to their mirror images below it, the
+free surface by images, or drops them too if the scale says so.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ PIXELS = 600
 DRAWN_OFFSETS = 241
 REACH = 3.0
 #: The label of the kernel's colorbar.
-KERNEL_LABEL = "K, time per unit volume"
+KERNEL_LABEL = "K"
 
 
 def _turned(points: np.ndarray, distance: float, /) -> tuple[np.ndarray, np.ndarray]:
@@ -133,11 +135,7 @@ def ray_plane(ax, path: Path, band: Band, /, *, scale: Scale) -> None:
     _arcs(ax, path.distance)
     ax.set_xlim(x[0], x[-1])
     ax.set_ylim(y[0], y[-1])
-    ax.set_title(
-        f"T0 = {band.period:g}, in the ray's plane: Fresnel half-width "
-        f"{width:.3f} at mid-path",
-        fontsize=9,
-    )
+    ax.set_title(f"T0 = {band.period:g}, ray plane", fontsize=9)
     ax.set_xticks([])
     ax.set_yticks([])
 
@@ -171,9 +169,9 @@ def across(ax, path: Path, band: Band, /, *, scale: Scale) -> None:
     symmetric_mesh(ax, q2, q1, values, limit=limit, label=KERNEL_LABEL)
     radius_contours(ax, q2, q1, radii)
     ax.plot(0.0, 0.0, "k+", ms=8)
-    ax.set_xlabel("offset across the ray's plane, q2", fontsize=8)
-    ax.set_ylabel("offset in it, q1 (up)", fontsize=8)
-    ax.set_title(f"T0 = {band.period:g}, across the ray at mid-path", fontsize=9)
+    ax.set_xlabel("q2", fontsize=8)
+    ax.set_ylabel("q1", fontsize=8)
+    ax.set_title(f"T0 = {band.period:g}, across the ray", fontsize=9)
 
 
 def kernels_figure(
@@ -202,9 +200,7 @@ def kernels_figure(
     save(
         fig,
         outdir / name,
-        title=f"Banana-doughnut, part A: the paraxial L2 kernel of the traveltime at "
-        f"{path.distance:g} degrees,\nin the ray's plane (saturated near the ends) "
-        "and across the ray at mid-path; blank outside the mantle",
+        title=f"Paraxial L2 kernels, {path.distance:g} degrees",
     )
     return outdir / name
 
@@ -226,7 +222,7 @@ def rays_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
         chord = (
             path.dynamic.velocity[inner] * arc[inner] * (length - arc[inner]) / length
         )
-        for which, style, name in ((0, "-", "in the plane"), (1, "--", "across it")):
+        for which, style, name in ((0, "-", "A1"), (1, "--", "A2")):
             right.plot(
                 arc[inner] / length,
                 path.dynamic.sums[inner, which] * chord,
@@ -239,21 +235,17 @@ def rays_figure(problem: Problem, /, *, outdir: pathlib.Path) -> pathlib.Path:
     left.set_xticks([])
     left.set_yticks([])
     left.legend(fontsize=8, loc="lower left")
-    left.set_title("The rays in the equatorial plane, the core below 0.55", fontsize=10)
+    left.set_title("rays", fontsize=10)
     right.axhline(1.0, color="0.5", lw=0.8)
-    right.set_xlabel("arc length from the source, l / L")
-    right.set_ylabel("A_i c l (L - l) / L")
+    right.set_xlabel("l / L")
+    right.set_ylabel("A c l (L - l) / L")
     right.legend(fontsize=7, ncol=2)
-    right.set_title(
-        "The sums of the Hessians, against a straight ray at constant speed (one)",
-        fontsize=10,
-    )
+    right.set_title("Hessian sums over the chord's", fontsize=10)
     path = outdir / "rays.png"
     save(
         fig,
         path,
-        title="Banana-doughnut, part A: the rays, and the Hessians of the travel "
-        "time across them from both ends",
+        title="Rays and Hessian sums",
     )
     return path
 

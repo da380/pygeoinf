@@ -36,9 +36,18 @@ point is the end itself, and the quadrature there is that one point.
 core has no three-dimensional structure, so the functional is zero below
 the core-mantle boundary by physics: a point there is dropped, and the model
 space is the annulus alone. The paraxial kernel knows nothing of the free
-surface, and a point above it is dropped too, which is the approximation:
-near a surface end, more than half of the banana lies above the surface.
-The quadrature keeps the fraction of the weight lost at each boundary.
+surface, and near a surface end more than half of the banana lies above it.
+The surface is taken by images: for a receiver at the surface the field
+carried back from it includes the surface reflection, and for a locally
+flat surface the reflected leg's time from a point equals the direct leg's
+from the point's mirror image, so a point above the surface is folded back
+along its own direction to the mirror radius ``2a - r``, keeping its
+weight, which for an SH-type phase, whose free-surface reflection
+coefficient is one, adds with the same sign. A folded point that lands
+below the core-mantle boundary is dropped like any other there. The
+alternative, ``surface="clip"``, drops the points above the surface
+instead. The quadrature keeps the fraction of the weight above the surface
+and the fraction dropped below the core-mantle boundary.
 
 The rays lie in the equatorial plane, the source at longitude zero, and a
 point of the tracer's ray plane ``(x, y, z)`` is the point of the ball of
@@ -49,7 +58,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Literal, Sequence
 
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -63,6 +72,10 @@ from .pulse import Band
 #: boundary, where it is moved: the ends of a ray at the surface, which lie
 #: on it to rounding.
 _EDGE = 1e-12
+#: What becomes of a point above the free surface: folded back to its
+#: mirror image below it, or dropped.
+Surface = Literal["fold", "clip"]
+SURFACES: tuple[str, ...] = ("fold", "clip")
 
 
 def thread_map(
@@ -118,6 +131,18 @@ def below_core(radii: np.ndarray, /) -> np.ndarray:
     return np.asarray(radii) < CORE_RADIUS - _EDGE
 
 
+def fold(points: np.ndarray, /) -> np.ndarray:
+    """Points ``(..., 3)`` with those above the free surface moved along
+    their own direction to the mirror radius ``2a - r``, the others as they
+    are: the free surface by images."""
+    points = np.asarray(points, dtype=float)
+    radii = np.linalg.norm(points, axis=-1, keepdims=True)
+    above = radii > RADIUS + _EDGE
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mirrored = points * ((2.0 * RADIUS - radii) / radii)
+    return np.where(above, mirrored, points)
+
+
 @dataclass(frozen=True)
 class Rule:
     """The counts of the quadrature in ``(u, t)`` at each node of a ray.
@@ -139,86 +164,117 @@ class Rule:
 @dataclass(frozen=True)
 class Quadrature:
     """The quadrature of one finite-frequency functional: every point of
-    every ``(l, u, t)`` and its weight, with the points outside the annulus
-    marked.
+    every ``(l, u, t)`` and its weight, where the model is asked about it,
+    and whether it is kept.
 
-    The weight dropped is reported at each boundary apart: below the
-    core-mantle boundary, where the functional is zero by physics, and
-    above the free surface, of which the paraxial kernel knows nothing,
-    which is the approximation. Each fraction is signed, by how much the
-    functional misses on a constant model, or absolute.
+    The fractions are of the weight, signed, by how much a share of the
+    functional counts on a constant model, or of the absolute weight: the
+    fraction above the free surface, folded back or dropped as ``surface``
+    says, and the fraction dropped below the core-mantle boundary, where the
+    functional is zero by physics, folded points that land there included.
 
     Attributes:
-        points: ``(count, 3)``: the points, in the ray plane's coordinates.
+        points: ``(count, 3)``: the points where the paraxial formula puts
+            them, in the ray plane's coordinates.
         weights: ``(count,)``: the weight of each, so that ``weights @
-            m(points)`` is the traveltime's perturbation.
-        kept: ``(count,)``: whether each lies in the mantle annulus.
+            m(placed)`` over the points kept is the traveltime's
+            perturbation.
+        placed: ``(count, 3)``: where the model is asked about each: the
+            points above the surface folded to the mirror radius under
+            ``surface="fold"``, every point where it is under ``"clip"``.
+        kept: ``(count,)``: whether each point as placed lies in the mantle
+            annulus.
+        surface: ``"fold"`` or ``"clip"``, what became of the points above
+            the surface.
     """
 
     points: np.ndarray
     weights: np.ndarray
+    placed: np.ndarray
     kept: np.ndarray
+    surface: str
 
     @property
     def lifted(self) -> np.ndarray:
-        """The points kept, as points ``(radius, latitude, longitude)`` of
-        the ball."""
-        return lift(self.points[self.kept])
+        """The points kept, as placed, as points ``(radius, latitude,
+        longitude)`` of the ball."""
+        return lift(self.placed[self.kept])
 
     @property
     def kept_weights(self) -> np.ndarray:
         """The weights of the points kept."""
         return self.weights[self.kept]
 
-    def _fraction(self, dropped: np.ndarray, /, *, absolute: bool) -> float:
+    def _fraction(self, marked: np.ndarray, /, *, absolute: bool) -> float:
         """The fraction of the weight, or of the absolute weight, at the
         points marked."""
         weights = np.abs(self.weights) if absolute else self.weights
-        # Plus zero, so that nothing dropped is never a negative zero.
-        return float(weights[dropped].sum() / weights.sum()) + 0.0
+        # Plus zero, so that nothing marked is never a negative zero.
+        return float(weights[marked].sum() / weights.sum()) + 0.0
 
     @property
     def radii(self) -> np.ndarray:
-        """The radius of every point."""
+        """The radius of every point where the formula puts it."""
         return np.linalg.norm(self.points, axis=1)
 
     @property
-    def clipped(self) -> float:
-        """The fraction of the weight dropped with the points outside the
-        annulus, at both boundaries: by how much the functional misses on a
-        constant model."""
+    def above(self) -> np.ndarray:
+        """Whether each point lies above the free surface where the formula
+        puts it."""
+        return above_surface(self.radii)
+
+    @property
+    def surface_fraction(self) -> float:
+        """The fraction of the weight above the free surface, folded back or
+        dropped."""
+        return self._fraction(self.above, absolute=False)
+
+    @property
+    def surface_fraction_absolute(self) -> float:
+        """The fraction of the absolute weight above the free surface."""
+        return self._fraction(self.above, absolute=True)
+
+    @property
+    def core_fraction(self) -> float:
+        """The fraction of the weight dropped below the core-mantle
+        boundary, where the functional is zero by physics."""
+        return self._fraction(self._below_core, absolute=False)
+
+    @property
+    def core_fraction_absolute(self) -> float:
+        """The fraction of the absolute weight dropped below the core-mantle
+        boundary."""
+        return self._fraction(self._below_core, absolute=True)
+
+    @property
+    def _below_core(self) -> np.ndarray:
+        return below_core(np.linalg.norm(self.placed, axis=1))
+
+    @property
+    def folded_below_core(self) -> int:
+        """How many points folded back from above the surface land below
+        the core-mantle boundary and are dropped there."""
+        if self.surface != "fold":
+            return 0
+        return int(np.count_nonzero(self.above & self._below_core))
+
+    @property
+    def dropped_fraction(self) -> float:
+        """The fraction of the weight of every point dropped, at either
+        boundary: by how much the functional misses on a constant model."""
         return self._fraction(~self.kept, absolute=False)
 
     @property
-    def clipped_absolute(self) -> float:
-        """The fraction of the absolute weight dropped at both boundaries."""
+    def dropped_fraction_absolute(self) -> float:
+        """The fraction of the absolute weight of every point dropped."""
         return self._fraction(~self.kept, absolute=True)
 
-    @property
-    def surface_clipped(self) -> float:
-        """The fraction of the weight dropped above the free surface, the
-        paraxial kernel's approximation."""
-        return self._fraction(above_surface(self.radii), absolute=False)
-
-    @property
-    def surface_clipped_absolute(self) -> float:
-        """The fraction of the absolute weight dropped above the surface."""
-        return self._fraction(above_surface(self.radii), absolute=True)
-
-    @property
-    def core_clipped(self) -> float:
-        """The fraction of the weight dropped below the core-mantle
-        boundary, where the functional is zero by physics."""
-        return self._fraction(below_core(self.radii), absolute=False)
-
-    @property
-    def core_clipped_absolute(self) -> float:
-        """The fraction of the absolute weight dropped below the core-mantle
-        boundary."""
-        return self._fraction(below_core(self.radii), absolute=True)
-
     def integrate(
-        self, function: Callable[[np.ndarray], np.ndarray], /, *, clip: bool = True
+        self,
+        function: Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        boundaries: bool = True,
     ) -> float:
         """The functional applied to a function of position, evaluated at the
         points exactly rather than through a space.
@@ -226,13 +282,16 @@ class Quadrature:
         Args:
             function: called with a ``(count, 3)`` array of points ``(radius,
                 latitude, longitude)``, returning the values there.
-            clip: drop the points outside the annulus, as the functional on
-                the model space does; without, the function is asked about
-                them too.
+            boundaries: treat the boundaries as the functional on the model
+                space does, asking about the points kept where they are
+                placed; without, the function is asked about every point
+                where the paraxial formula puts it, outside the annulus too.
         """
-        chosen = self.kept if clip else np.ones_like(self.kept)
-        points = lift(self.points[chosen])
-        return float(self.weights[chosen] @ np.asarray(function(points), dtype=float))
+        if boundaries:
+            points, weights = self.lifted, self.kept_weights
+        else:
+            points, weights = lift(self.points), self.weights
+        return float(weights @ np.asarray(function(points), dtype=float))
 
 
 def ray_points(path: Path, /) -> np.ndarray:
@@ -267,7 +326,9 @@ def offsets(
     return q1, q2, weights
 
 
-def quadrature(path: Path, band: Band, rule: Rule, /) -> Quadrature:
+def quadrature(
+    path: Path, band: Band, rule: Rule, /, *, surface: Surface = "fold"
+) -> Quadrature:
     """The quadrature of the finite-frequency functional of one ray in one
     band.
 
@@ -276,7 +337,21 @@ def quadrature(path: Path, band: Band, rule: Rule, /) -> Quadrature:
     times the node's weight along the ray, which is the ray functional's,
     ``dl / c`` by the tracer; at each end the one point the offsets all
     collapse to, of weight ``-sum G(u) w_u`` times the ray functional's.
+
+    Args:
+        path: the ray.
+        band: the band.
+        rule: the counts in the detour time and the angle.
+        surface: ``"fold"`` to fold the points above the free surface back
+            to their mirror images below it, keeping their weights, or
+            ``"clip"`` to drop them. Points below the core-mantle boundary
+            are dropped either way.
+
+    Raises:
+        ValueError: for a ``surface`` that is neither.
     """
+    if surface not in SURFACES:
+        raise ValueError(f"surface is one of {SURFACES}, not {surface!r}.")
     q1, q2, local = offsets(path, band, rule)
     along = ray_weights(path)
     ends = ~np.all(np.isfinite(path.dynamic.sums), axis=1)
@@ -287,8 +362,9 @@ def quadrature(path: Path, band: Band, rule: Rule, /) -> Quadrature:
     total = float(local.sum())
     points = np.concatenate([points, frame.point[ends]])
     weights = np.concatenate([weights, along[ends] * total])
-    radii = np.linalg.norm(points, axis=1)
-    return Quadrature(points, weights, inside(radii))
+    placed = fold(points) if surface == "fold" else points
+    kept = inside(np.linalg.norm(placed, axis=1))
+    return Quadrature(points, weights, placed, kept, surface)
 
 
 def kernel(
@@ -359,28 +435,3 @@ def composed_operator(
         evaluation.codomain, EuclideanSpace(len(pieces)), matrix, form="components"
     )
     return weights @ evaluation
-
-
-def assembled_operator(
-    space: Any,
-    pieces: Sequence[tuple[np.ndarray, np.ndarray]],
-    /,
-    *,
-    n_jobs: int | None = None,
-) -> LinearOperator:
-    """The same functionals as :func:`composed_operator`, from their rows.
-
-    Each row is the derivative components of one functional, read off its
-    own composition by one application of the adjoint, so that each pass
-    over the points touches that functional's points alone; the rows are
-    formed in ``n_jobs`` threads. The operator is the matrix of those rows:
-    an application is a product with it.
-    """
-
-    def row(piece: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
-        return composed_operator(space, [piece]).matrix(form="galerkin")[0]
-
-    rows = np.array(thread_map(row, pieces, n_jobs=n_jobs))
-    return LinearOperator.from_matrix(
-        space, EuclideanSpace(len(pieces)), rows, form="galerkin"
-    )

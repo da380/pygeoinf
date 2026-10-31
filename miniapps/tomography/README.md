@@ -104,7 +104,11 @@ The same questions are answered every way the library offers:
   parts of the rays within six degrees of its plane and the stations on it,
   and by the shell at radius 0.825 through the middle of the boxes, with the
   rays where they run beneath it; a fourth figure is the network on a map
-  and the truth.
+  and the truth. A fifth sets the truth's mantle beside the posterior mean
+  on one color scale, the ball cut in half by the plane of the meridian of
+  30 degrees and the core a plain sphere standing in the cut, so that one
+  face holds both boxes: the bump under the continent comes back nearly
+  whole and the one at its antipode smeared and weakened.
 - **G, bent rays** (`bent.py`): the forward problem as it is rather than as
   linearized, on a few dozen rays in the disk under a prior five times
   wider: the travel time through the perturbed slowness, along the ray
@@ -212,7 +216,7 @@ and part G's derivative check among them.
 | `src/rays.py` | the ray tracer, loaded from the mini-apps' shared `raytracer/`: in a radial medium, ray parameter, turning radius, `Delta(p)`, `T(p)`, the two-point ray, the nodes and weights; the circular rays of a flattened linear gradient, its closed form; and the shooting tracer for a medium that is not radial, `shoot` and the two-point `bend` |
 | `src/problem.py` | the structure, the disk's network, the scale with its two presets, the forward operator, the means over boxes in a disk or a ball, the Sobolev prior and its exact pointwise standard deviation, `build(scale=)` for the disk |
 | `src/common.py` | the command line built from the scale, the disk's panels, the panels of an error budget, of marginals before and after, Gaussian or mixtures', and of brackets against the prior's ball alone |
-| `setup.py`, `point.py`, `bayesian.py`, `sets.py`, `mixture.py`, `ball.py`, `bent.py` | parts A to G, each a script with a `main()` and a function the others and the test call; `mixture.py` also holds the conduit, the candidates, the mixture prior and the noise sweep; `ball.py` also holds the network on the sphere, the rays placed on their great circles, the bump truth and the sections and shells; `bent.py` the perturbed slowness, the bent forward operator and the Gauss-Newton MAP |
+| `setup.py`, `point.py`, `bayesian.py`, `sets.py`, `mixture.py`, `ball.py`, `bent.py` | parts A to G, each a script with a `main()` and a function the others and the test call; `mixture.py` also holds the conduit, the candidates, the mixture prior and the noise sweep; `ball.py` also holds the network on the sphere, the rays placed on their great circles, the bump truth, the sections and shells and the cut-away; `bent.py` the perturbed slowness, the bent forward operator and the Gauss-Newton MAP |
 | `run_all.py` | the parts in order |
 | `results/` | the figures a run writes, `results/quick/` at the quick scale |
 

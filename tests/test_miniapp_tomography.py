@@ -579,7 +579,7 @@ def test_the_ball_answers_follow_the_coverage(ball_results):
 
 def test_the_ball_figures_were_written(ball_results):
     outdir = ball_results[1]
-    for name in ("setup", "point", "posterior", "brackets"):
+    for name in ("setup", "point", "posterior", "cutaway", "brackets"):
         assert (outdir / f"ball_{name}.png").exists(), name
 
 

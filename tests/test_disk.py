@@ -1,6 +1,6 @@
 """The spectral-element disk and annulus: the family, the space, its priors.
 
-Needs ``planetmodel`` 1.3. The independent routes are the cylindrical Bessel
+Needs ``planetmodel`` 1.4. The independent routes are the cylindrical Bessel
 functions, against which the radial family of a disk is held order by order;
 a finite-volume solve of the same radial eigenproblem on an annulus, which
 shares nothing with the spectral elements but the equation; the grid against
