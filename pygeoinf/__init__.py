@@ -19,11 +19,11 @@ The names a typical workflow needs are also exported here, flat, except
 the spaces, which are reached by geometry: ``symmetric_space.sphere.Sobolev``,
 ``symmetric_space.line.Lebesgue``, ``interval.Sobolev``, and so on, every
 geometry naming its own ``Lebesgue`` and ``Sobolev``.
-``compat``, ``datasets`` and ``testing`` are imported separately.
+``datasets`` and ``testing`` are imported separately.
 """
 
 # The subpackages, so that ``gi.inference.X`` works without a separate import.
-# compat, datasets and testing are deliberately not pulled in.
+# datasets and testing are deliberately not pulled in.
 from . import (
     algebra,
     geometry,
@@ -135,6 +135,7 @@ from .numerics.solvers import (
     LSQRSolver,
     LUSolver,
     MinResSolver,
+    ModelSpace,
     ProgressCallback,
     SolutionTrackingCallback,
     SolveResult,
@@ -201,6 +202,7 @@ __all__ = [
     "LSQRSolver",
     "LUSolver",
     "MinResSolver",
+    "ModelSpace",
     "NormalDiagonalPreconditioner",
     "ProgressCallback",
     "SolutionTrackingCallback",

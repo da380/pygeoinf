@@ -27,7 +27,7 @@ from __future__ import annotations
 import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Literal
 
 import numpy as np
 from scipy.linalg import (
@@ -49,6 +49,7 @@ __all__ = [
     "FamilySolver",
     "SpectralFamilySolver",
     "SolverLike",
+    "ModelSpace",
     "resolve_solver",
     "ConvergenceError",
     "ProgressCallback",
@@ -194,6 +195,95 @@ type SolverLike = LinearSolver | Callable[[LinearOperator], LinearSolver]
 """A solver, or a function that builds one once the operator is known."""
 
 
+class ModelSpace:
+    """Solve a linear problem's normal equations in the model space.
+
+    The estimators of a linear problem, and the feasible set's algorithms,
+    solve normal equations, and by default they assemble them in the data
+    space: ``A Q A* + R``, of the data's dimension, which needs the
+    covariances. Passing ``solver=ModelSpace(solver)`` asks for the
+    model-space equations instead: ``Q^-1 + A* R^-1 A``, of the model's
+    dimension, which needs the precisions and an error measure, since exact
+    data cannot be written in the model space. The two give the same answer;
+    the choice is only of which linear system is solved and how well
+    conditioned it is.
+
+    The model space suits an explicitly finite-dimensional problem with more
+    data than unknowns and a cheap prior precision, and a low-dimensional
+    surrogate, which is such a problem by construction. On a space that
+    discretizes functions the data space is the one to use: the conditioning
+    of a function-space prior's precision grows under refinement, and so do
+    the log-determinants behind a model-space evidence.
+
+    It is a choice of equations, not a solver, so
+    :func:`resolve_solver` refuses it: it is unwrapped by whatever assembles
+    the equations.
+    """
+
+    def __init__(self, solver: SolverLike | None, /) -> None:
+        """
+        Args:
+            solver: how to invert the model-space normal operator: a
+                :class:`LinearSolver`, a callable taking the operator and
+                returning one, or None for the default of whatever uses it,
+                as in ``ModelSpace(None)``.
+
+        Raises:
+            TypeError: if *solver* is itself a ``ModelSpace``.
+        """
+        if isinstance(solver, ModelSpace):
+            raise TypeError(
+                "ModelSpace(ModelSpace(...)) asks for the model space twice; "
+                "wrap the solver once."
+            )
+        self._solver = solver
+
+    @property
+    def solver(self) -> SolverLike | None:
+        """The wrapped solver, or None for the default."""
+        return self._solver
+
+    @staticmethod
+    def split(solver: Any, /) -> tuple[Literal["model_space", "data_space"], Any]:
+        """Which equations a ``solver=`` argument asks for, and the solver.
+
+        Args:
+            solver: what was passed as ``solver=``.
+
+        Returns:
+            ``("model_space", inner)`` for ``ModelSpace(inner)``, and
+            ``("data_space", solver)`` for anything else, None included.
+        """
+        if isinstance(solver, ModelSpace):
+            return "model_space", solver.solver
+        return "data_space", solver
+
+    @staticmethod
+    def wrap(space: Literal["model_space", "data_space"], solver: Any, /) -> Any:
+        """The ``solver=`` argument asking for *space* with *solver*: the
+        inverse of :meth:`split`.
+
+        Args:
+            space: ``"model_space"`` or ``"data_space"``.
+            solver: the solver, or None for the default.
+
+        Returns:
+            ``ModelSpace(solver)`` for the model space, *solver* itself for
+            the data space.
+
+        Raises:
+            ValueError: if *space* is neither.
+        """
+        if space == "model_space":
+            return ModelSpace(solver)
+        if space == "data_space":
+            return solver
+        raise ValueError(f"The space is 'model_space' or 'data_space', got {space!r}.")
+
+    def __repr__(self) -> str:
+        return f"ModelSpace({self._solver!r})"
+
+
 def resolve_solver(
     solver: Any,
     operator: LinearOperator,
@@ -230,9 +320,21 @@ def resolve_solver(
         A :class:`LinearSolver`.
 
     Raises:
-        TypeError: if a factory returns something that is not one, or the
-            argument is neither a solver, a callable, nor None.
+        TypeError: if a factory returns something that is not one, the
+            argument is neither a solver, a callable, nor None, or it is a
+            :class:`ModelSpace`, which only an assembly of normal equations
+            unwraps.
     """
+    if isinstance(solver, ModelSpace):
+        raise TypeError(
+            "ModelSpace(...) chooses which normal equations are solved, and "
+            "is unwrapped only where they are assembled: as solver= to "
+            "LeastSquares, MinimumNorm, their constrained forms, "
+            "LinearGaussianInversion and the mixture inversion, or to a "
+            "feasible-set algorithm passed through via=. It is not itself a "
+            "solver; pass the solver it wraps here. A normal operator or a "
+            "Tikhonov family takes formalism= instead."
+        )
     if solver is None:
         return CGSolver() if default is None else default
     if isinstance(solver, LinearSolver):

@@ -30,9 +30,8 @@ from ..algebra.spaces import HilbertSpace
 from ..geometry.sets import Subset
 from ..geometry.subspaces import AffineSubspace
 from ..numerics.normal import Formalism
-from ..numerics.normal import choose_formalism as _choose
 from ..numerics.root_find import RootResult
-from ..numerics.solvers import LinearSolver, SolveStep, resolve_solver
+from ..numerics.solvers import LinearSolver, ModelSpace, SolveStep, resolve_solver
 from ..numerics.tikhonov import TikhonovFamily, TikhonovNormalOperator, misfit_search
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
@@ -44,26 +43,7 @@ __all__ = [
     "ConstrainedMinimumNorm",
     "LeastSquares",
     "MinimumNorm",
-    "choose_formalism",
 ]
-
-
-def choose_formalism(
-    problem: LinearForwardProblem, /, *, formalism: Formalism = "auto"
-) -> str:
-    """Which space to assemble *this problem's* normal equations in.
-
-    The spaces-based decision of
-    :func:`~pygeoinf.numerics.normal.choose_formalism`, read off a problem.
-
-    Args:
-        problem: the forward problem.
-        formalism: ``"model_space"``, ``"data_space"``, or ``"auto"``.
-
-    Returns:
-        The formalism to use.
-    """
-    return _choose(problem.model_space, problem.data_space, formalism=formalism)
 
 
 def _error_measure(problem: LinearForwardProblem) -> Any:
@@ -105,8 +85,7 @@ class LeastSquares(LinearPointEstimator):
         /,
         *,
         damping: float = 0.0,
-        solver: LinearSolver | None = None,
-        formalism: Formalism = "data_space",
+        solver: Any = None,
     ) -> None:
         """
         Args:
@@ -119,9 +98,12 @@ class LeastSquares(LinearPointEstimator):
                 handed :attr:`normal_operator`, which still knows its factors.
                 For one built from *other* factors, pass a callable taking the
                 normal operator and returning the solver — see
-                :func:`~pygeoinf.numerics.solvers.resolve_solver`.
-            formalism: which space to solve in; see :func:`choose_formalism`.
+                :func:`~pygeoinf.numerics.solvers.resolve_solver`. The normal
+                equations are solved in the data space;
+                ``ModelSpace(solver)`` solves them in the model space instead,
+                for a finite-dimensional problem or a surrogate.
         """
+        formalism, solver = ModelSpace.split(solver)
         # The normal operator is built before the solver, which only inverts
         # it, so a caller may pass a factory that builds a preconditioner from
         # the operator about to be inverted.
@@ -184,11 +166,6 @@ class LeastSquares(LinearPointEstimator):
         return self._normal.right_hand_side(data)
 
     @property
-    def formalism(self) -> str:
-        """Which space the normal equations were assembled in."""
-        return self._normal.formalism
-
-    @property
     def damping(self) -> float:
         """The Tikhonov parameter used."""
         return self._damping
@@ -207,26 +184,14 @@ class LeastSquares(LinearPointEstimator):
     #                          The same, but                            #
     # ----------------------------------------------------------------- #
 
+    def _solver_argument(self) -> Any:
+        """This estimator's ``solver=``, in the space it solves in."""
+        return ModelSpace.wrap(self._normal.formalism, self._solver)
+
     def with_solver(self, solver: Any, /) -> "LeastSquares":
-        """The same estimator, solved a different way."""
-        return type(self)(
-            self._problem,
-            damping=self._damping,
-            solver=solver,
-            formalism=self._normal.formalism,
-        )
-
-    def with_formalism(self, formalism: Formalism, /) -> "LeastSquares":
-        """The same estimator, assembled in the other space.
-
-        The two formalisms give the same answer, to the solver's tolerance.
-        """
-        return type(self)(
-            self._problem,
-            damping=self._damping,
-            solver=self._solver,
-            formalism=formalism,
-        )
+        """The same estimator, solved a different way: in the data space for
+        a plain solver, in the model space for ``ModelSpace(solver)``."""
+        return type(self)(self._problem, damping=self._damping, solver=solver)
 
     def with_damping(self, damping: float, /) -> "LeastSquares":
         """The same estimator at a different damping.
@@ -239,8 +204,7 @@ class LeastSquares(LinearPointEstimator):
         return type(self)(
             self._problem,
             damping=damping,
-            solver=self._solver,
-            formalism=self._normal.formalism,
+            solver=self._solver_argument(),
         )
 
     def family(self) -> TikhonovFamily:
@@ -267,7 +231,9 @@ class LeastSquares(LinearPointEstimator):
             forward: a cheaper ``A``, sharing the data space.
             error: a cheaper ``R``.
             damping: a different damping.
-            formalism: which space to assemble in. Inherited if omitted.
+            formalism: which space to assemble the surrogate in:
+                ``"model_space"`` or ``"data_space"``. This estimator's own if
+                omitted.
 
         Returns:
             The surrogate normal operator, which is the part a preconditioner
@@ -290,8 +256,7 @@ class LeastSquares(LinearPointEstimator):
         return type(self)(
             self._problem.parameterized(parameterization),
             damping=self._damping,
-            solver=self._solver,
-            formalism=self._normal.formalism,
+            solver=self._solver_argument(),
         )
 
     def data_reduced(
@@ -314,8 +279,7 @@ class LeastSquares(LinearPointEstimator):
         return type(self)(
             self._problem.data_reduced(reduction, error=error),
             damping=self._damping,
-            solver=self._solver,
-            formalism=self._normal.formalism,
+            solver=self._solver_argument(),
         )
 
     @classmethod
@@ -345,8 +309,7 @@ class LeastSquares(LinearPointEstimator):
         estimator = cls(
             problem,
             damping=damping,
-            solver=family.member_solver(damping),
-            formalism=family.formalism,
+            solver=ModelSpace.wrap(family.formalism, family.member_solver(damping)),
         )
         estimator._solver = family.solver
         return estimator
@@ -528,8 +491,7 @@ class MinimumNorm(PointEstimator, Operator):
         /,
         *,
         level: float = 0.95,
-        solver: LinearSolver | None = None,
-        formalism: Formalism = "data_space",
+        solver: Any = None,
         max_iterations: int = 60,
         rtol: float = 1e-6,
         atol: float = 0.0,
@@ -541,8 +503,8 @@ class MinimumNorm(PointEstimator, Operator):
             level: the confidence level setting the misfit target. Unused
                 when the problem has no error.
             solver: how to invert each ``N(t)``. Conjugate gradients by
-                default; see :class:`LeastSquares`.
-            formalism: which space to solve in; see :func:`choose_formalism`.
+                default, in the data space; ``ModelSpace(solver)`` for the
+                model space. See :class:`LeastSquares`.
             max_iterations: the discrepancy search's budget.
             rtol: the search's bracket tolerance.
             atol: the absolute half of that tolerance, for a damping near
@@ -553,6 +515,7 @@ class MinimumNorm(PointEstimator, Operator):
                 system. Zero is no floor.
         """
         super().__init__(problem.data_space, problem.model_space)
+        formalism, solver = ModelSpace.split(solver)
         self._problem = problem
         self._level = level
         self._solver = solver
@@ -589,11 +552,6 @@ class MinimumNorm(PointEstimator, Operator):
         return self._solver
 
     @property
-    def formalism(self) -> str:
-        """Which space the normal equations are assembled in."""
-        return self._family.formalism
-
-    @property
     def data_space(self) -> HilbertSpace:
         """The problem's data space."""
         return self._problem.data_space
@@ -621,8 +579,7 @@ class MinimumNorm(PointEstimator, Operator):
         """A copy with the given settings replaced."""
         settings: dict[str, Any] = dict(
             level=self._level,
-            solver=self._solver,
-            formalism=self._formalism,
+            solver=ModelSpace.wrap(self._formalism, self._solver),
             max_iterations=self._max_iterations,
             rtol=self._rtol,
             atol=self._atol,
@@ -632,12 +589,9 @@ class MinimumNorm(PointEstimator, Operator):
         return type(self)(self._problem if problem is None else problem, **settings)
 
     def with_solver(self, solver: Any, /) -> "MinimumNorm":
-        """The same estimator, solved a different way."""
+        """The same estimator, solved a different way: in the data space for
+        a plain solver, in the model space for ``ModelSpace(solver)``."""
         return self._rebuild(solver=solver)
-
-    def with_formalism(self, formalism: Formalism, /) -> "MinimumNorm":
-        """The same estimator, assembled in the other space."""
-        return self._rebuild(formalism=formalism)
 
     def with_level(self, level: float, /) -> "MinimumNorm":
         """The same estimator at another confidence level."""
@@ -818,8 +772,8 @@ class MinimumNorm(PointEstimator, Operator):
             damping: the Tikhonov parameter.
 
         Returns:
-            The :class:`LeastSquares` with this estimator's solver and
-            formalism.
+            The :class:`LeastSquares` with this estimator's solver, in the
+            same space.
         """
         # The family's own member, so that a solver which assembled or
         # factored the family once is not asked to do it again.
@@ -918,7 +872,7 @@ class MinimumNorm(PointEstimator, Operator):
         error = self._problem.error_measure
 
         # h == H(t)^-1 u, through the identity that fits the formalism.
-        if fixed.formalism == "model_space":
+        if fixed.normal_operator.formalism == "model_space":
             h = fixed.inverse_normal_operator(model)
         else:
             # (A* R^-1 A + t I)^-1 == (1/t)[I - A* (A A* + t R)^-1 A].
@@ -990,16 +944,15 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         /,
         *,
         damping: float = 0.0,
-        solver: LinearSolver | None = None,
-        formalism: Formalism = "data_space",
+        solver: Any = None,
     ) -> None:
         """
         Args:
             problem: the forward problem.
             subspace: an ``AffineSubspace`` of the model space.
             damping: the Tikhonov parameter, applied within the subspace.
-            solver: how to invert the reduced normal operator.
-            formalism: which space to solve in.
+            solver: how to invert the reduced normal operator, in the data
+                space, or ``ModelSpace(solver)`` for the model space.
 
         Raises:
             ValueError: if the subspace is not in the model space.
@@ -1010,9 +963,8 @@ class ConstrainedLeastSquares(LinearPointEstimator):
             _reduced_problem(problem, subspace),
             damping=damping,
             solver=solver,
-            formalism=formalism,
         )
-        self._attach(problem, subspace, inner, solver, formalism)
+        self._attach(problem, subspace, inner, solver)
 
     @classmethod
     def _from_reduced(
@@ -1023,11 +975,10 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         /,
         *,
         solver: Any,
-        formalism: Formalism,
     ) -> "ConstrainedLeastSquares":
         """The estimator around an unconstrained one already built on the reduced problem."""
         estimator = cls.__new__(cls)
-        estimator._attach(problem, subspace, inner, solver, formalism)
+        estimator._attach(problem, subspace, inner, solver)
         return estimator
 
     def _attach(
@@ -1036,7 +987,6 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         subspace: AffineSubspace,
         inner: LeastSquares,
         solver: Any,
-        formalism: Formalism,
     ) -> None:
         model_space = problem.model_space
         data_space = problem.data_space
@@ -1065,7 +1015,6 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         self._inner = inner
         self._damping = inner.damping
         self._solver = solver
-        self._formalism = formalism
 
     @property
     def forward_problem(self) -> LinearForwardProblem:
@@ -1092,11 +1041,6 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         """The reduced normal operator, which is the one actually inverted."""
         return self._inner.normal_operator
 
-    @property
-    def formalism(self) -> str:
-        """Which space the reduced normal equations were assembled in."""
-        return self._inner.formalism
-
     def _rebuild(
         self,
         *,
@@ -1105,9 +1049,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         **changes: Any,
     ) -> "ConstrainedLeastSquares":
         """A copy with the given settings replaced."""
-        settings: dict[str, Any] = dict(
-            damping=self._damping, solver=self._solver, formalism=self._formalism
-        )
+        settings: dict[str, Any] = dict(damping=self._damping, solver=self._solver)
         settings.update(changes)
         return type(self)(
             self._problem if problem is None else problem,
@@ -1116,12 +1058,9 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         )
 
     def with_solver(self, solver: Any, /) -> "ConstrainedLeastSquares":
-        """The same estimator, solved a different way."""
+        """The same estimator, solved a different way: in the data space for
+        a plain solver, in the model space for ``ModelSpace(solver)``."""
         return self._rebuild(solver=solver)
-
-    def with_formalism(self, formalism: Formalism, /) -> "ConstrainedLeastSquares":
-        """The same estimator, assembled in the other space."""
-        return self._rebuild(formalism=formalism)
 
     def with_damping(self, damping: float, /) -> "ConstrainedLeastSquares":
         """The same estimator at a different damping."""
@@ -1254,8 +1193,7 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         /,
         *,
         level: float = 0.95,
-        solver: LinearSolver | None = None,
-        formalism: Formalism = "data_space",
+        solver: Any = None,
         max_iterations: int = 60,
         rtol: float = 1e-6,
         atol: float = 0.0,
@@ -1268,8 +1206,8 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
             level: the confidence level setting the misfit target. Unused
                 when the problem has no error.
             solver: how to invert each reduced ``N(t)``. Conjugate gradients
-                by default.
-            formalism: which space to solve in.
+                by default, in the data space; ``ModelSpace(solver)`` for the
+                model space.
             max_iterations: the discrepancy search's budget.
             rtol: the search's bracket tolerance.
             atol: the absolute half of that tolerance, for a damping near
@@ -1293,7 +1231,6 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         self._translation = subspace.translation
         self._level = level
         self._solver = solver
-        self._formalism = formalism
         self._max_iterations = max_iterations
         self._rtol = rtol
         self._atol = atol
@@ -1302,7 +1239,6 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
             _reduced_problem(problem, subspace),
             level=level,
             solver=solver,
-            formalism=formalism,
             max_iterations=max_iterations,
             rtol=rtol,
             atol=atol,
@@ -1323,12 +1259,7 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
     @property
     def solver(self) -> LinearSolver | None:
         """How each reduced normal operator is inverted; None for the default."""
-        return self._solver
-
-    @property
-    def formalism(self) -> str:
-        """Which space the reduced normal equations are assembled in."""
-        return self._inner.formalism
+        return ModelSpace.split(self._solver)[1]
 
     @property
     def data_space(self) -> HilbertSpace:
@@ -1383,7 +1314,6 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         settings: dict[str, Any] = dict(
             level=self._level,
             solver=self._solver,
-            formalism=self._formalism,
             max_iterations=self._max_iterations,
             rtol=self._rtol,
             atol=self._atol,
@@ -1397,12 +1327,9 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
         )
 
     def with_solver(self, solver: Any, /) -> "ConstrainedMinimumNorm":
-        """The same method, solved a different way."""
+        """The same method, solved a different way: in the data space for a
+        plain solver, in the model space for ``ModelSpace(solver)``."""
         return self._rebuild(solver=solver)
-
-    def with_formalism(self, formalism: Formalism, /) -> "ConstrainedMinimumNorm":
-        """The same method, assembled in the other space."""
-        return self._rebuild(formalism=formalism)
 
     def with_level(self, level: float, /) -> "ConstrainedMinimumNorm":
         """The same method at another confidence level."""
@@ -1554,8 +1481,8 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
             damping: the Tikhonov parameter, applied within the subspace.
 
         Returns:
-            The :class:`ConstrainedLeastSquares` with this method's solver
-            and formalism.
+            The :class:`ConstrainedLeastSquares` with this method's solver,
+            in the same space.
         """
         return self._around(self._inner.estimator_at(damping))
 
@@ -1566,7 +1493,6 @@ class ConstrainedMinimumNorm(PointEstimator, Operator):
             self._subspace,
             reduced,
             solver=self._solver,
-            formalism=self._formalism,
         )
 
     # ----------------------------------------------------------------- #

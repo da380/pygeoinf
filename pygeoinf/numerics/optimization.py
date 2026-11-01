@@ -952,6 +952,7 @@ class TrustRegionNewton(Optimizer):
         initial_radius: float | None = None,
         max_radius: float | None = None,
         acceptance: float = 0.1,
+        max_cg_iterations: int | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -966,6 +967,8 @@ class TrustRegionNewton(Optimizer):
                 initial radius.
             acceptance: reject a step whose actual-to-predicted reduction ratio
                 falls below this.
+            max_cg_iterations: cap on the inner iteration. ``None`` means the
+                larger of the dimension and ten.
             **kwargs: passed to :class:`Optimizer`, except ``line_search``:
                 a trust region chooses its steps itself.
 
@@ -981,6 +984,7 @@ class TrustRegionNewton(Optimizer):
         self._initial_radius = initial_radius
         self._max_radius = max_radius
         self._acceptance = acceptance
+        self._max_cg_iterations = max_cg_iterations
         super().__init__(**kwargs)
 
     def minimize(self, functional: Functional, x0: Any, /) -> OptimizationResult:
@@ -1090,6 +1094,7 @@ class TrustRegionNewton(Optimizer):
                 model.hessian,
                 space.negative(model.gradient),
                 rtol=_forcing(0.1, gradient_norm, initial_gradient_norm),
+                max_iterations=self._max_cg_iterations,
                 radius=radius,
             )
             stops.append(reason)

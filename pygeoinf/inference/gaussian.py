@@ -38,7 +38,7 @@ from ..algebra.operators import AffineOperator, LinearOperator
 from ..geometry.sets import Subset
 from ..numerics.normal import Formalism, NormalOperator
 from ..numerics.randomized import random_svd
-from ..numerics.solvers import LinearSolver, resolve_solver
+from ..numerics.solvers import LinearSolver, ModelSpace, resolve_solver
 from ..probability.absolutely_continuous import (
     AbsolutelyContinuousMeasure,
     combine_log_normalizer,
@@ -113,8 +113,7 @@ class LinearGaussianInversion(GaussianEstimator):
         prior: GaussianMeasure,
         /,
         *,
-        solver: LinearSolver | None = None,
-        formalism: Formalism = "data_space",
+        solver: Any = None,
     ) -> None:
         """
         Args:
@@ -132,14 +131,11 @@ class LinearGaussianInversion(GaussianEstimator):
                 the assembled normal operator and returns the solver, so the
                 preconditioner can be built from the very thing it will
                 precondition. See
-                :func:`~pygeoinf.numerics.solvers.resolve_solver`.
-            formalism: which space to assemble in: ``"data_space"`` (the
-                default), ``"model_space"``, or ``"auto"`` to take the
-                smaller, which for an underdetermined problem is the data
-                space and for an overdetermined one the model space; see
-                :func:`~pygeoinf.numerics.normal.choose_formalism`. The model-space
-                formalism is for explicitly finite-dimensional problems and
-                low-dimensional surrogates.
+                :func:`~pygeoinf.numerics.solvers.resolve_solver`. The normal
+                equations are solved in the data space, ``A Q A* + R``;
+                ``ModelSpace(solver)`` solves ``Q^-1 + A* R^-1 A`` instead,
+                for an explicitly finite-dimensional problem or a surrogate.
+                The answer is the same.
         """
         if not isinstance(prior, GaussianMeasure):
             raise TypeError(
@@ -160,6 +156,7 @@ class LinearGaussianInversion(GaussianEstimator):
         # it is built first and the solver resolved against it. That is what
         # lets a caller hand in a factory and precondition with something built
         # from the very operator about to be inverted.
+        formalism, solver = ModelSpace.split(solver)
         normal = NormalOperator(
             problem.forward_operator,
             prior,
@@ -266,14 +263,22 @@ class LinearGaussianInversion(GaussianEstimator):
         return self._inverse
 
     @property
-    def formalism(self) -> str:
-        """Which space the normal equations were assembled in."""
-        return self._formalism
-
-    @property
     def prior(self) -> GaussianMeasure:
         """The prior this posterior updates."""
         return self._prior
+
+    @property
+    def property_space(self) -> HilbertSpace:
+        """The space the posterior lives on: the prior's domain.
+
+        The mean map's codomain compares equal to it, but in the model-space
+        formalism it is the forward operator's domain, and a block operator
+        builds that without the labels the prior's summands carry. The
+        prior's keeps them, so a marginal can be asked for by name in either
+        formalism.
+        """
+        space = super().property_space
+        return self._prior.domain if self._prior.domain == space else space
 
     @property
     def forward_problem(self) -> LinearForwardProblem:
@@ -286,23 +291,13 @@ class LinearGaussianInversion(GaussianEstimator):
         return self._solver
 
     def with_solver(self, solver: Any, /) -> "LinearGaussianInversion":
-        """The same inversion, solved a different way.
+        """The same inversion, solved a different way: in the data space for
+        a plain solver, in the model space for ``ModelSpace(solver)``.
 
         The whole point of a preconditioner: build one against
         :attr:`normal_operator` or a :meth:`surrogate`, then come back here.
         """
-        return LinearGaussianInversion(
-            self._problem, self._prior, solver=solver, formalism=self._formalism
-        )
-
-    def with_formalism(self, formalism: Formalism, /) -> "LinearGaussianInversion":
-        """The same inversion, assembled in the other space.
-
-        The two give the same answer, so this is a computational choice.
-        """
-        return LinearGaussianInversion(
-            self._problem, self._prior, solver=self._solver, formalism=formalism
-        )
+        return LinearGaussianInversion(self._problem, self._prior, solver=solver)
 
     # ----------------------------------------------------------------- #
     #                            Surrogates                             #
@@ -329,7 +324,9 @@ class LinearGaussianInversion(GaussianEstimator):
             forward: a cheaper ``A``, sharing the data space.
             prior: a cheaper ``Q``, on the surrogate's model space.
             error: a cheaper ``R``.
-            formalism: which space to assemble in. Inherited if omitted.
+            formalism: which space to assemble the surrogate in:
+                ``"model_space"`` or ``"data_space"``. This inversion's own if
+                omitted.
 
         Returns:
             The surrogate normal operator.
@@ -416,7 +413,7 @@ class LinearGaussianInversion(GaussianEstimator):
         """
         reduced = self._problem.parameterized(parameterization)
         return LinearGaussianInversion(
-            reduced, prior, solver=self._solver, formalism=self._formalism
+            reduced, prior, solver=ModelSpace.wrap(self._formalism, self._solver)
         )
 
     def data_reduced(
@@ -440,7 +437,9 @@ class LinearGaussianInversion(GaussianEstimator):
         """
         reduced = self._problem.data_reduced(reduction, error=error)
         return LinearGaussianInversion(
-            reduced, self._prior, solver=self._solver, formalism=self._formalism
+            reduced,
+            self._prior,
+            solver=ModelSpace.wrap(self._formalism, self._solver),
         )
 
     def _data_key(self, data: Any, /) -> bytes | None:

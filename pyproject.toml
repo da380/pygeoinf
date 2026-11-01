@@ -30,7 +30,7 @@ sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0
 # harmonics run on ducc0 as a core dependency, so there is no extra to name
 # and pyshtools no longer arrives through it; drawing a ball's shells as
 # maps still goes through the sphere renderer, which is the sphere extra.
-planetmodel = ["planetmodel>=1.4"]
+planetmodel = ["planetmodel>=1.4.1"]
 # Alternative QP backends for the convex-analysis solvers.
 osqp = ["osqp>=1.0.0"]
 clarabel = ["clarabel>=0.9.0"]

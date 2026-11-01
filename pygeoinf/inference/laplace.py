@@ -147,9 +147,12 @@ class MaximumAPosteriori(Minimization):
 
         self._problem = problem
         self._prior = prior
+        # The prior's domain rather than the forward operator's: the two
+        # compare equal, and the prior's carries the labels of its summands,
+        # which a block operator's domain does not.
         super().__init__(
             problem.data_space,
-            problem.model_space,
+            prior.domain,
             self.objective,
             optimizer=optimizer,
             start=prior.expectation,

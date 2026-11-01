@@ -2080,6 +2080,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         is the exact one and costs no draws. The draws are summed a block at
         a time, so memory holds a block of fields, not every draw.
 
+        The result is a product formed on the grid, which is not in the span
+        of the basis. Read at a point off the grid, it is read through its
+        components, which project it onto the span and smooth it; on a coarse
+        truncation the value comes out noticeably low. For the variance at
+        chosen points, push the measure forward through the space's
+        point-evaluation operator and read the diagonal of the covariance,
+        or use ``pointwise_variance_at`` where the space has it.
+
         Args:
             samples: how many draws.
             rng: the generator.
@@ -2131,6 +2139,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         n_jobs: int | None = None,
     ) -> X:
         """The pointwise standard deviation field, the square root of the variance.
+
+        A field on the grid, like :meth:`sample_pointwise_variance`, and to be
+        read at its nodes for the same reason.
 
         Args:
             samples: how many draws.
@@ -2385,19 +2396,25 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # The dropped tail is positive, so the radius is a lower bound; a
             # Hutchinson trace, a few dozen applications against the
             # decomposition's hundreds, says how much the kept part carries.
-            trace = self._stochastic_trace(
-                target, samples=32, rtol=None, rng=rng, n_jobs=n_jobs
-            )
-            if trace > 0.0 and float(kept.sum()) < 0.95 * trace:
-                import warnings
+            # At full rank nothing is dropped and there is nothing to check;
+            # below it, the warning allows for the estimate's own scatter,
+            # which is large when a few modes dominate the trace.
+            if kept.size < target.domain.dim:
+                from ..numerics.randomized import random_trace
 
-                warnings.warn(
-                    f"The {kept.size} eigenvalues kept carry about "
-                    f"{100.0 * float(kept.sum()) / trace:.0f}% of the trace "
-                    f"(Hutchinson estimate {trace:.3g}); the radius is a lower "
-                    f"bound by the rest. Raise rank=, or sample.",
-                    stacklevel=2,
-                )
+                estimate = random_trace(target, samples=32, rng=rng, n_jobs=n_jobs)
+                trace = estimate.value - 2.0 * estimate.standard_error
+                if trace > 0.0 and float(kept.sum()) < 0.95 * trace:
+                    import warnings
+
+                    warnings.warn(
+                        f"The {kept.size} eigenvalues kept carry about "
+                        f"{100.0 * float(kept.sum()) / estimate.value:.0f}% of "
+                        f"the trace (Hutchinson estimate {estimate!r}); the "
+                        f"radius is a lower bound by the rest. Raise rank=, or "
+                        f"sample.",
+                        stacklevel=2,
+                    )
             return from_spectrum(kept)
         if method != "dense":
             raise ValueError(f"Unknown method {method!r}.")
