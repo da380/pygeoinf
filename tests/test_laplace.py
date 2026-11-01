@@ -915,7 +915,9 @@ class TestAPosteriorKeepsThePriorsLabels:
     def test_the_linear_posterior(self, labelled, formalism):
         forward, prior, error, data = labelled
         posterior = LinearGaussianInversion(
-            LinearForwardProblem(forward, error=error), prior, formalism=formalism
+            LinearForwardProblem(forward, error=error),
+            prior,
+            solver=gi.ModelSpace.wrap(formalism, None),
         )(data)
         assert posterior.domain.labels == ("field", "offset")
         assert posterior.marginal("offset").domain.dim == 1

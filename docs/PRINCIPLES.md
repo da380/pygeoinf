@@ -92,21 +92,19 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
     their diagnostics from `solve`. `with_solver`, `with_traits` and the
     other `with_*` methods return new objects, so a handed-out covariance or
     Kalman operator keeps referring to the solve that produced it.
-12. **The formalism defaults to `"data_space"`**, and `"auto"` is opt-in, so
-    a grid refinement never silently changes which algebra runs.
-13. **Parallelism goes around operators, not inside them:** `n_jobs=` on
+12. **Parallelism goes around operators, not inside them:** `n_jobs=` on
     loops of independent, expensive applications, all through
     `parallel_map`.
 
 ### Structure and practice
 
-14. **Layering runs one way.** `algebra`, `numerics` and `geometry` never
+13. **Layering runs one way.** `algebra`, `numerics` and `geometry` never
     import `probability` or `inference`.
-15. **Optional dependencies are extras**, and the core works without them.
-16. **Names.** Use American spelling in identifiers, and one name per
+14. **Optional dependencies are extras**, and the core works without them.
+15. **Names.** Use American spelling in identifiers, and one name per
     concept: `max_iterations` is a budget going in and `iterations` a count
     coming out; `rng`, `n_jobs` and `solver` mean the same thing everywhere.
-17. **House rules, enforced by `tests/test_code_practice.py`:**
+16. **House rules, enforced by `tests/test_code_practice.py`:**
     - every public class and function has a docstring;
     - every parameter and return is annotated;
     - every optional argument is keyword-only;
@@ -162,7 +160,9 @@ spectral-element packages need the `planetmodel` extra.
   searches back off, and an optimizer returns its last good state with
   `failure` set.
 - **Solver defaults** are `rtol=1e-8`, `strict=True`, and conjugate
-  gradients unless a solver is passed.
+  gradients unless a solver is passed. Normal equations are solved in the
+  data space; `solver=ModelSpace(...)` solves them in the model space, for a
+  finite-dimensional problem or a surrogate.
 
 ## 5. Writing a backend
 

@@ -159,7 +159,7 @@ def matrix_inverse(
     error = V.norm(V.subtract(recovered, truth)) / V.norm(truth)
     boundary = float(np.abs(values(recovered)[V.essential_dofs]).max())
     print(
-        f"the posterior mean in the {inversion.formalism}, "
+        f"the posterior mean in "
         f"{time.perf_counter() - t0:.1f} s: relative error {error:.3f} (sixteen "
         f"numbers cannot fix a field of {V.dim} degrees of freedom), zero on the "
         f"boundary to {boundary:.1e} because it never left the space"

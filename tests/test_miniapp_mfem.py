@@ -561,7 +561,8 @@ class TestMatrixMaternMeasure:
 
     def test_it_is_a_gaussian_measure_with_all_three_pieces(self, field):
         """Covariance, factor *and* precision — so it can be sampled, and used
-        in a model-space formalism, without anything being formed."""
+        to solve normal equations in the model space, without anything being
+        formed."""
         space, _, _ = field
         measure = coordinate.matern_measure(
             space, smoothness=1.0, correlation_length=0.2

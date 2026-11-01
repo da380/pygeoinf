@@ -20,6 +20,7 @@ from pygeoinf.geometry import (
     SupportResult,
 )
 from pygeoinf.inference import BackusGilbertParker, LinearForwardProblem
+from pygeoinf.numerics.solvers import ModelSpace
 from pygeoinf.traits import Traits
 
 from .conftest import (
@@ -713,7 +714,7 @@ class TestKnobs:
             noise=Ball(data_space, radius=0.5),
         )
         q = prop.basis_vector(0)
-        by_model = feasible.support_result(q, via=Primal(formalism="model_space"))
+        by_model = feasible.support_result(q, via=Primal(solver=ModelSpace(None)))
         assert by_model.converged
         # The prior is slack: the data alone bound the property, at γ == 0.
         assert by_model.multipliers[0] <= 1e-6 * by_model.multipliers[1]
@@ -721,7 +722,7 @@ class TestKnobs:
         # there, so its walk stops at the floor and returns a bracket that
         # holds the limit to the order of the floor; nothing refuses by
         # dimension.
-        by_data = feasible.support_result(q, via=Primal(formalism="data_space"))
+        by_data = feasible.support_result(q, via=Primal())
         assert by_data.converged
         assert by_data.inner <= by_model.value + 1e-9 <= by_data.value + 1e-9
         assert by_data.inner == pytest.approx(by_model.value, rel=1e-5)
@@ -729,11 +730,11 @@ class TestKnobs:
         # The truth fits the data, so its property is admitted; a value the
         # data pin down away from it is excluded, with a finite certificate.
         admitted = feasible.inclusion_result(
-            target(truth), via=Search(formalism="model_space")
+            target(truth), via=Search(solver=ModelSpace(None))
         )
         assert admitted.level <= feasible.level * (1.0 + 1e-8)
         excluded = feasible.inclusion_result(
-            prop.scale(50.0, prop.basis_vector(1)), via=Search(formalism="model_space")
+            prop.scale(50.0, prop.basis_vector(1)), via=Search(solver=ModelSpace(None))
         )
         assert excluded.lower_bound > feasible.level
 
@@ -998,7 +999,7 @@ class TestTheOuterEllipsoid:
         ]:
             assert h(q) >= feasible.support(q) - 1e-9
         assert result.algorithm == "s_procedure" and "checked" in result.message
-        other = feasible.outer_ellipsoid_result(via=SProcedure(formalism="data_space"))
+        other = feasible.outer_ellipsoid_result(via=SProcedure(solver=None))
         assert other.weight == pytest.approx(result.weight, rel=1e-6)
         assert np.allclose(
             target.codomain.to_components(other.ellipsoid.center),
@@ -1205,14 +1206,14 @@ class TestMoreDataThanModel:
         feasible = FeasiblePropertySet(
             forward, target, Ball(model, radius=3.0), data, noise=noise
         )
-        assert not feasible.is_empty(via=Search(formalism="data_space"))
-        assert not feasible.is_empty(via=Search(formalism="model_space"))
-        in_data = feasible.feasibility_result(via=Search(formalism="data_space"))
-        in_model = feasible.feasibility_result(via=Search(formalism="model_space"))
+        assert not feasible.is_empty(via=Search())
+        assert not feasible.is_empty(via=Search(solver=ModelSpace(None)))
+        in_data = feasible.feasibility_result(via=Search())
+        in_model = feasible.feasibility_result(via=Search(solver=ModelSpace(None)))
         assert in_data.level == pytest.approx(in_model.level, rel=1e-5)
         for q in directions(target.codomain):
-            data_side = feasible.support_result(q, via=Primal(formalism="data_space"))
-            model_side = feasible.support_result(q, via=Primal(formalism="model_space"))
+            data_side = feasible.support_result(q, via=Primal())
+            model_side = feasible.support_result(q, via=Primal(solver=ModelSpace(None)))
             # The inner value is attained either way; the outer one sits
             # above the limit by the order of the primal's floor where the
             # prior is slack.
@@ -1221,9 +1222,9 @@ class TestMoreDataThanModel:
             assert data_side.inner <= model_side.value + 1e-9 <= data_side.value + 1e-9
         p = target(truth)
         assert feasible.admits(p)
-        assert feasible.inclusion_level(p, via=Search(formalism="data_space")) == (
+        assert feasible.inclusion_level(p, via=Search()) == (
             pytest.approx(
-                feasible.inclusion_level(p, via=Search(formalism="model_space")),
+                feasible.inclusion_level(p, via=Search(solver=ModelSpace(None))),
                 rel=1e-5,
             )
         )
@@ -1237,8 +1238,8 @@ class TestMoreDataThanModel:
         feasible = FeasiblePropertySet(
             forward, target, Ball(model, radius=0.1), far, noise=noise
         )
-        assert feasible.is_empty(via=Search(formalism="data_space"))
-        assert feasible.is_empty(via=Search(formalism="model_space"))
+        assert feasible.is_empty(via=Search())
+        assert feasible.is_empty(via=Search(solver=ModelSpace(None)))
 
 
 # --------------------------------------------------------------------- #
@@ -1298,7 +1299,7 @@ class TestTheOuterEllipsoidIsChecked:
         )
         qs = circle(prop, 8)
         attained = [
-            feasible.support_bracket(q, via=Primal(formalism="model_space"))[0]
+            feasible.support_bracket(q, via=Primal(solver=ModelSpace(None)))[0]
             for q in qs
         ]
 
@@ -1312,9 +1313,9 @@ class TestTheOuterEllipsoidIsChecked:
         assert result.algorithm == "s_procedure" and "checked" in result.message
         assert reaches(result.ellipsoid)
         try:
-            by_data = feasible.outer_ellipsoid(via=SProcedure(formalism="data_space"))
+            by_data = feasible.outer_ellipsoid(via=SProcedure(solver=None))
         except ValueError as error:
-            assert "model_space" in str(error)
+            assert "model space" in str(error)
         else:
             assert reaches(by_data)
 
@@ -1551,12 +1552,12 @@ class TestADegeneratePrior:
         observed = data.add(forward(truth), data.scale(0.01, data.random(rng=rng)))
         feasible = FeasiblePropertySet(forward, target, prior, observed, noise=noise)
         q = prop.basis_vector(0)
-        with pytest.raises(ValueError, match="model_space"):
+        with pytest.raises(ValueError, match=r"ModelSpace\(None\)"):
             feasible.is_empty()
-        with pytest.raises(ValueError, match="model_space"):
+        with pytest.raises(ValueError, match=r"ModelSpace\(None\)"):
             feasible.support(q)
-        assert not feasible.is_empty(via=Search(formalism="model_space"))
-        primal = Primal(formalism="model_space")
+        assert not feasible.is_empty(via=Search(solver=ModelSpace(None)))
+        primal = Primal(solver=ModelSpace(None))
         inner, outer = feasible.support_bracket(q, via=primal)
         assert inner <= outer + 1e-12 and outer - inner <= 1e-4 * abs(outer)
         extremal = feasible.extremal_model(q, via=primal)
@@ -1603,7 +1604,7 @@ class TestSweepsAndWorkers:
             return original(self, multiplier, right_hand_side, x0=x0)
 
         monkeypatch.setattr(_QuadraticFamily, "solve", recording)
-        primal = Primal(formalism="data_space")
+        primal = Primal()
         for q in directions(target.codomain):
             feasible.support(q, via=primal)
         for i, (multiplier, rhs) in enumerate(cold):

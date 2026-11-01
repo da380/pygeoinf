@@ -207,8 +207,9 @@ which `LinearGaussianInversion(...).normal_operator` assembles from its
 factors (tutorial 4), and its damped relatives `A C A* + t R`, which the
 point and set estimators sweep: with `C = Q` in the point answers, which
 measure size by the prior, and with `C = r^2 I`, the shape of the prior's
-ball, in the set answer. The data space is the library's default
-formalism: the model-space form would need `Q^-1` and gives the same answer.
+ball, in the set answer. The normal equations are solved in the data
+space, the library's default: the model-space form would need `Q^-1` and
+gives the same answer.
 
 Part B (`solve.py`) sets plain conjugate gradients, capped and with
 `strict=False` so that the unfinished solve is returned and shown (tutorial
@@ -223,8 +224,8 @@ return CGSolver().with_preconditioner(
 ```
 
 `NormalOperator.surrogate` replaces `A` and `Q` by their versions on the
-coarse sphere, sharing only the data space, which is why the data-space
-formalism survives the substitution. `WoodburyPreconditioner.from_normal`
+coarse sphere, sharing only the data space, which is why solving in the
+data space survives the substitution. `WoodburyPreconditioner.from_normal`
 reads the factors off it and inverts it exactly through the Woodbury
 identity, the inner solve one Cholesky factorization of
 `Q_c^-1 + A_c* R^-1 A_c` on the coarse space. The coarse forward operator is

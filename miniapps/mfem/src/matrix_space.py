@@ -798,7 +798,8 @@ def matern_measure(
         precision   A^2a / eta^2
 
     all three of which the measure is given, so it can be sampled, conditioned
-    and used in a model-space formalism without anything being formed.
+    and used to solve normal equations in the model space without anything
+    being formed.
 
     Args:
         space: the finite element space, carrying any essential conditions.

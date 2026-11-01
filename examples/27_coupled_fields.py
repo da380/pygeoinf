@@ -144,7 +144,6 @@ solver = CGSolver(rtol=1e-10, max_iterations=5000).with_preconditioner(
     JacobiPreconditioner()
 )
 estimator = LinearGaussianInversion(problem, prior, solver=solver)
-print(f"assembled in the {estimator.formalism}")
 posterior = estimator(data)
 density_mean, traction_mean = posterior.expectation
 

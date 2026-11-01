@@ -10,7 +10,7 @@ ducc0 0.42 broke planetmodel 1.4.0's `real_harmonics`, and with it every
 spectral-element space. planetmodel 1.4.1 fixes it. The `planetmodel` extra
 now requires `planetmodel>=1.4.1`, and the lock holds planetmodel 1.4.1 and
 ducc0 0.42.0. The fast suite passes on the lock and under the newest versions
-the pins admit (4443 each). What is left is a patch release, so that
+the pins admit. What is left is the next release (2.1), so that
 `pip install pygeoinf[planetmodel]` no longer admits the broken pair.
 `.github/workflows/newest.yml` now catches this kind of break each week.
 
@@ -21,36 +21,6 @@ the pins admit (4443 each). What is left is a patch release, so that
   is not reentrant across threads.
 
 ## 3. Open design items
-
-**Decided, not built: the formalism moves into the solver.** Whether the
-normal equations are solved in the data space or the model space changes
-only the linear algebra (the systems solved, the determinant behind the
-evidence, what must exist to form them, conditioning), never the answer. So
-it should not sit on the inference classes beside the prior. The plan:
-
-- estimators take `solver=` only: a plain solver means the data space, and a
-  small wrapper in `numerics` (name to choose, e.g. `ModelSpace(solver)`)
-  asks for the model-space normal equations, documented as for
-  finite-dimensional problems and surrogates;
-- `formalism=` and `with_formalism()` leave `LeastSquares`, `MinimumNorm`,
-  the two constrained classes, `LinearGaussianInversion` and the mixture
-  inversion; `with_solver()` covers both;
-- the feasible-set algorithms (`Search`, `Primal`, `SProcedure`) take the
-  same wrapper through their `solver=`, with `SProcedure` keeping the model
-  space as its default;
-- `formalism=` stays where assembly is the object itself: `NormalOperator`,
-  `DampedNormalOperator`, `TikhonovNormalOperator`, `TikhonovFamily` and the
-  `surrogate(...)` builders;
-- both `choose_formalism` functions and `"auto"` go, and `Formalism` stops
-  being exported from `inference`;
-- `docs/PRINCIPLES.md` rule 12 goes; tutorial 7's section becomes one cell
-  showing the wrapper; examples 22, 24, 27, 28 and the MFEM app stop printing
-  `.formalism`; the parity tests use the wrapper, with the assembly-level
-  parity kept on `NormalOperator`;
-- the nonlinear route's "formalism" is the same question inside a Newton step
-  or the Laplace covariance, and is answered by the same wrapper if wanted.
-
-A public API change, so after 2.0.2.
 
 Each item below is still open as checked against the code.
 
@@ -167,8 +137,11 @@ Each item below is still open as checked against the code.
 
 **Anticipated, not started**
 
-- `formalism=` on the nonlinear route, with `"data_space"` the default and
-  `with_probed_derivative()` mirroring `with_probed_adjoint()`.
+- The data space on the nonlinear route: a Newton step and the Laplace
+  covariance solve in the model space today. If the data space is wanted
+  there, it is chosen through `solver=` as on the linear route, with
+  `with_probed_derivative()` mirroring `with_probed_adjoint()` for problems
+  with few data.
 - Function-space sampling: presets `PCN`, `MALA`, `HMC`, `SMC` and results
   `SampledPosterior`, `WeightedEnsemble`, with the low-rank posterior as a
   reference.

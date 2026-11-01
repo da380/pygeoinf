@@ -49,9 +49,7 @@ print()
 # --- the posterior ----------------------------------------------------------
 inversion = LinearGaussianInversion(problem, prior)
 posterior = inversion(data)
-print(
-    f"a {type(posterior).__name__}, its normal equations in the {inversion.formalism}"
-)
+print(f"a {type(posterior).__name__}")
 print("  the normal operator, recognized rather than asserted:")
 print("  ", inversion.normal_operator.traits)
 

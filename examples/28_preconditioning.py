@@ -71,11 +71,9 @@ print()
 # deliberate too, and the only one in this file: it is the reference the
 # iterative solves are checked against, and this problem is small enough to
 # afford one. Nothing else here assembles anything.
-inversion = LinearGaussianInversion(
-    problem, prior, formalism="data_space", solver=CholeskySolver()
-)
+inversion = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
 reference = inversion(data).expectation
-print(f"reference solve: Cholesky on the {inversion.formalism} normal operator")
+print("reference solve: Cholesky on the normal operator")
 print(
     "  relative error of the posterior mean: "
     f"{X.norm(X.subtract(reference, truth)) / X.norm(truth):.3f}"
