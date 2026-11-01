@@ -184,9 +184,8 @@ Each is still open as checked against the code.
 ## 4. Mini-apps and repository hygiene
 
 - `miniapps/banana_doughnut/BRIEF.md` is tracked. It is a development brief,
-  cites decision numbers, and contains a local path
-  (`/home/david/dev/banana_doughnut-pinned-2026-10-31.tar.gz`). The app has
-  its README and IMPLEMENTATION.md, so the brief can go.
+  cites decision numbers, and gives the local path of a private archive.
+  The app has its README and IMPLEMENTATION.md, so the brief can go.
 - `tests/test_code_practice.py` skips Markdown, so the no-decision-number
   rule does not reach READMEs or walkthroughs. Today only that brief
   offends.
