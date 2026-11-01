@@ -141,7 +141,8 @@ def plot_shell(
             radius that is an interface: ``"below"`` or ``"above"``.
         **kwargs: those of the sphere's ``plot``: ``ax``, ``cmap``,
             ``symmetric``, ``coasts``, ``contour``, ``colorbar_label`` and
-            the rest.
+            the rest. ``shading="gouraud"`` smooths the coarse grid of a
+            low degree.
 
     Returns:
         The ``(axes, mappable)`` pair.

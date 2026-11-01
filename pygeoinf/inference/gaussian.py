@@ -276,6 +276,19 @@ class LinearGaussianInversion(GaussianEstimator):
         return self._prior
 
     @property
+    def property_space(self) -> HilbertSpace:
+        """The space the posterior lives on: the prior's domain.
+
+        The mean map's codomain compares equal to it, but in the model-space
+        formalism it is the forward operator's domain, and a block operator
+        builds that without the labels the prior's summands carry. The
+        prior's keeps them, so a marginal can be asked for by name in either
+        formalism.
+        """
+        space = super().property_space
+        return self._prior.domain if self._prior.domain == space else space
+
+    @property
     def forward_problem(self) -> LinearForwardProblem:
         """The forward problem being inverted."""
         return self._problem

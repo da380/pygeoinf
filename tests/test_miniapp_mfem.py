@@ -122,7 +122,8 @@ class _OnAnInterval:
     """Quadratic elements on [0, 1], the matrix form's simplest space."""
 
     @pytest.fixture(scope="class")
-    def elements(self):
+    @classmethod
+    def elements(cls):
         mesh = mfem.Mesh.MakeCartesian1D(16, 1.0)
         collection = mfem.H1_FECollection(2, mesh.Dimension())
         return mfem.FiniteElementSpace(mesh, collection)
@@ -549,7 +550,8 @@ class TestMatrixMaternMeasure:
     """The Lindgren SPDE method, wrapped from MFEM's own pieces."""
 
     @pytest.fixture(scope="class")
-    def field(self):
+    @classmethod
+    def field(cls):
         mesh = mfem.Mesh.MakeCartesian2D(32, 32, mfem.Element.QUADRILATERAL)
         elements = mfem.FiniteElementSpace(mesh, mfem.H1_FECollection(1, 2))
         space = coordinate.MfemSpace(elements)
@@ -1207,13 +1209,15 @@ class TestBoxOperator:
     """The screened Poisson solve on a periodic box, with MFEM inside."""
 
     @pytest.fixture(scope="class")
-    def box(self):
+    @classmethod
+    def box(cls):
         return _module("src.box_operator").ScreenedPoisson(
             a_box(), elements=12, screening_length=0.05
         )
 
     @pytest.fixture(scope="class")
-    def prior(self, box):
+    @classmethod
+    def prior(cls, box):
         """The probe fields' measure, part E's prior: a Sobolev measure of
         order two on the box's H^2."""
         return box.space.sobolev_measure(2.0, 0.1, pointwise_std=1.0)

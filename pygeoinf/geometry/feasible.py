@@ -24,7 +24,7 @@ certificate, and one no larger, from an attainable point.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, Callable, Literal, Sequence
 
@@ -136,8 +136,10 @@ class InclusionResult:
     evaluations: int
     fitting_model: Any = None
     """The model attaining ``level``, where the algorithm exhibits one."""
-    multiplier: float | None = None
     message: str = ""
+    _multiplier: float | None = field(default=None, repr=False)
+    """The quadratic search's damping at the root, which the level's
+    gradient reads; zero where the data are fitted without a correction."""
 
     def __repr__(self) -> str:
         return (
@@ -1495,7 +1497,7 @@ class Search(Algorithm):
                 algorithm=self.name,
                 evaluations=0,
                 fitting_model=fitting,
-                multiplier=0.0,
+                _multiplier=0.0,
                 message="the data are fitted without a correction",
             )
         if root.exhausted == "low":
@@ -1505,7 +1507,7 @@ class Search(Algorithm):
                 converged=True,
                 algorithm=self.name,
                 evaluations=root.evaluations,
-                multiplier=float(root.argument),
+                _multiplier=float(root.argument),
                 message="no model fits the data",
             )
         # The dual of min f s.t. g <= 1 at multiplier 1/η: f + (g − 1)/η <= min;
@@ -1518,7 +1520,7 @@ class Search(Algorithm):
             algorithm=self.name,
             evaluations=root.evaluations,
             fitting_model=fitting,
-            multiplier=float(root.argument),
+            _multiplier=float(root.argument),
             message="misfit search converged"
             if root.converged
             else "misfit search did not converge",
@@ -1623,7 +1625,6 @@ class Search(Algorithm):
                 algorithm=self.name,
                 evaluations=evaluations,
                 fitting_model=model,
-                multiplier=float("inf"),
                 message="the data constraint is tight",
             )
 
@@ -1657,7 +1658,6 @@ class Search(Algorithm):
             algorithm=self.name,
             evaluations=evaluations + root.inner_iterations,
             fitting_model=model,
-            multiplier=float(root.argument),
             message=(
                 "multiplier search converged"
                 if root.converged
@@ -1729,7 +1729,7 @@ class Search(Algorithm):
         a = structure.prior_center()
         pieces = _kernel_pieces(structure)
         offset = space.to_components(space.subtract(value, T(a)))
-        eta = result.multiplier
+        eta = result._multiplier
         if eta:
             relative = structure.model_space.subtract(result.fitting_model, a)
             residual = structure.data_space.subtract(

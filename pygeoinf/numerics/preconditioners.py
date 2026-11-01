@@ -616,8 +616,10 @@ def _thresholded_matrix(
         shape=(dimension, dimension),
     ).tocsr()
     mirrored = thresholded.T.tocsr()
-    missing = mirrored.copy()
-    missing[thresholded.astype(bool)] = 0.0
+    # The mirrored entries where the kept pattern has none. Subtracting the
+    # overlap leaves explicit zeros, which are then dropped: the same matrix
+    # as zeroing the overlap in place, without inserting entries one by one.
+    missing = mirrored - mirrored.multiply(thresholded.astype(bool))
     missing.eliminate_zeros()
     return (thresholded + missing).tocsc()
 

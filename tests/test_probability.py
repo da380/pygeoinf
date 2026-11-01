@@ -1757,6 +1757,29 @@ class TestATruncatedSpectrumWarns:
         with pytest.warns(UserWarning, match="of the trace"):
             mu.ambient_ball(level=0.9, method="randomized", rank=3, rng=rng)
 
+    def test_at_full_rank_there_is_nothing_to_warn_of(self):
+        """Every eigenvalue kept means nothing dropped. A spectrum dominated by
+        a few modes is where a 32-probe trace estimate scatters most, and where
+        comparing against it would warn on some seeds."""
+        import warnings
+
+        from pygeoinf.algebra.spaces import EuclideanSpace
+
+        X = EuclideanSpace(64)
+        spectrum = 1.0 / (1.0 + np.arange(64.0)) ** 4
+        mu = GaussianMeasure.from_covariance_matrix(
+            X, np.diag(spectrum), form="components"
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for seed in range(20):
+                mu.ambient_ball(
+                    level=0.9,
+                    method="randomized",
+                    rank=64,
+                    rng=np.random.default_rng(seed),
+                )
+
 
 class TestACorrelatedProduct:
     """Factors tied through their latent white noise by a correlation

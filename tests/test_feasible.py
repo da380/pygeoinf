@@ -1668,7 +1668,7 @@ class TestTheLevelSideOnQuadraticSets:
         point = target(truth)
         result = feasible.inclusion_result(point, via=tight)
         # The data constraint binds, so both terms of the gradient count.
-        assert result.multiplier > 0.0
+        assert result.message == "misfit search converged"
         gradient = tight.level_gradient(feasible, point)
         step = 1e-4 * prop.norm(point)
         for u in (prop.basis_vector(0), prop.basis_vector(1)):

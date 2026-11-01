@@ -31,12 +31,14 @@ in no layer.
 
 The layers are all of one geometry, and each geometry has its own
 ``Layered``: :class:`pygeoinf.interval.Layered`,
-:class:`pygeoinf.interval.radial.Layered` and :class:`pygeoinf.ball.Layered`
-are subclasses of this one whose constructors build the layers from the
-boundaries, with every other argument given once for all layers or, as a
-*list*, layer by layer. This class takes layers already built, of any one
-geometry, and is what the subclasses share; :meth:`Layered.from_layers` makes
-a geometry's own from layers built by hand.
+:class:`pygeoinf.interval.radial.Layered`, :class:`pygeoinf.ball.Layered` and
+:class:`pygeoinf.disk.Layered` are subclasses of this one whose constructors
+build the layers from the boundaries, with every other argument given once
+for all layers or, as a *list*, layer by layer. This class takes layers
+already built, of one geometry, and is what the subclasses share;
+:meth:`Layered.from_layers` makes a geometry's own from layers built by hand.
+Disks are the exception: their jumps are taken at angles, which only
+:class:`pygeoinf.disk.Layered` knows, so disk layers go there.
 """
 
 from __future__ import annotations
@@ -209,7 +211,8 @@ class Layered(CoordinateDirectSum, HilbertModule):
 
         Raises:
             TypeError: if the layers are not all intervals, all radial
-                profiles or all balls.
+                profiles, all balls or all disks, or are disks given to a
+                class other than :class:`pygeoinf.disk.Layered`.
             ValueError: if there are none, or they are out of order or
                 overlap.
         """
@@ -219,7 +222,17 @@ class Layered(CoordinateDirectSum, HilbertModule):
         kind = _geometry_of(layers[0])
         if not all(isinstance(layer, kind) for layer in layers):
             raise TypeError(
-                "The layers must all be intervals, all radial profiles or all " "balls."
+                "The layers must all be intervals, all radial profiles, all "
+                "balls or all disks."
+            )
+        if (
+            getattr(kind, "_geometry", None) == "disk"
+            and type(self).jump_operator is Layered.jump_operator
+        ):
+            raise TypeError(
+                "Disks are layered by pygeoinf.disk.Layered, whose jumps are "
+                "taken at angles: build it from boundaries, or use "
+                "pygeoinf.disk.Layered.from_layers(layers)."
             )
         self._kind = kind
         # On an axis an interface is a point; in a ball it is a sphere.

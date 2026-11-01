@@ -1,10 +1,8 @@
 # Code notes
 
 A working list, to be turned into issues or acted on and then deleted.
-Nothing here has been changed in the code. The items under 2 and 3 were
-checked against the `develop` tree, with `path:line` evidence. The open
-questions the old `CURRENT_STATE.md` recorded are carried here when still
-open, and dropped when fixed or obsolete.
+Items are removed as they are fixed. Line numbers are approximate after
+later edits.
 
 ## 1. ducc0 0.42 and planetmodel: resolved, release pending
 
@@ -18,40 +16,21 @@ the pins admit (4443 each). What is left is a patch release, so that
 
 ## 2. Defects
 
-- **A posterior's labels depend on the formalism.** In the default
-  data-space formalism a posterior on a direct sum keeps the prior's labels,
-  and `marginal("bias")` works. With `formalism="model_space"` the labels are
-  lost and it raises `KeyError`. The block constructors take no `labels=`
-  (`algebra/direct_sum.py:845`). `tutorials/10_coupled_problems.py:84-87`
-  says marginals must be reached by position, which is no longer true in the
-  default formalism.
-- **`Optimizer.with_tolerance` silently does nothing on the bundle method.**
-  It sets `_gtol`, `_rtol` and `_ftol` (`numerics/optimization.py:181-211`),
-  while `ProximalBundleMethod` stops on `_gap_tolerance`
-  (`numerics/convex.py:1148`). The same reportedly holds for `ProximalPoint`
-  and `SubgradientDescent`. The bundle also keeps per-run state on `self`
-  (`convex.py:1208-1210`), so it is not reentrant.
-- **A base `Layered` of disks** builds, but `jump_operator(0, directions=...)`
-  then fails with "cannot unpack non-iterable float object"
-  (`spectral_element/layered.py`, around :600-626). The messages at :34,
-  :212 and :222 do not mention disks.
-- **`Ball.contains` at radius zero** has no absolute tolerance
-  (`geometry/convex.py:1531`): a zero-radius ball rejects its own centre
-  after a rounding of 5.6e-17.
-- **`InclusionResult.multiplier` means opposite things.** The quadratic
-  search reports `η`, whose dual multiplier is `1/η`
-  (`geometry/feasible.py:1511, :1521`). The general search reports the
-  multiplier itself (:1655, :1660). The field is undocumented (:139).
-- **`plot_shell` rejects `shading=`.** The sphere renderer hard-codes
-  `shading="flat"` beside `**kwargs` (`plotting/sphere.py:173`), so passing
-  it raises a duplicate-keyword `TypeError`.
-- **Stale docstring.** The package docstring and the comment beside the
-  imports name `compat`, which no longer exists (`pygeoinf/__init__.py:22,
-  :26`).
+- `ProximalBundleMethod` keeps per-run state on `self`
+  (`numerics/convex.py`, the warm start and the cut cache), so one instance
+  is not reentrant across threads.
 
 ## 3. Open design items
 
-Each is still open as checked against the code.
+**For discussion: the formalism's place in the API.** The choice between
+the data-space and model-space formalisms is a numerical solution strategy,
+mostly relevant to linear problems, yet it appears as a design rule in
+`docs/PRINCIPLES.md` (rule 12) and as a `formalism=` argument across the
+estimators and the feasible set. Whether it should be downplayed, both in
+the principles and in how prominently the API exposes it, is open. Labels
+no longer depend on it: answers are built on the prior's domain either way.
+
+Each item below is still open as checked against the code.
 
 **Feasible sets**
 
@@ -85,8 +64,9 @@ Each is still open as checked against the code.
 - Renames not taken: LSQR's squared `damping` (`solvers.py:2036`), and the
   coexisting tolerance spellings `rtol`, `tolerance`, `gtol`, `ftol`,
   `relative_tolerance` and `absolute_tolerance`.
-- `TrustRegionNewton` has no `max_cg_iterations` (`NewtonCG` does), and
-  stays unpreconditioned.
+- `TrustRegionNewton` stays unpreconditioned, since its region would have to
+  be measured in the preconditioner's norm, and its forcing is fixed where
+  `NewtonCG` takes `forcing=`.
 - `SpectralPreconditioner` takes no `factor=`. The waveform app builds that
   by hand (`miniapps/waveform/laplace.py:82-91`).
 - Jacobi requires self-adjointness (`preconditioners.py:117`). Whether it
@@ -97,9 +77,6 @@ Each is still open as checked against the code.
 - `dense_limit` on `kl_divergence` (4000) and `ambient_ball` (1024) keys on
   dimension, not application count (`probability/gaussian.py:1607, :2326`).
   `log_determinant` already does the right comparison.
-- `ambient_ball(method="randomized", rank=dim)` warns on a 32-probe trace
-  estimate even at full rank (`gaussian.py:2388-2399`). It should skip the
-  check at full rank and allow for the estimate's standard error.
 - A product measure's `L L*` is not folded block by block
   (`gaussian.py:747-758`). On a layered spectral-element space a covariance
   application costs two transform round trips, about 2.5 times the folded
@@ -108,10 +85,9 @@ Each is still open as checked against the code.
   (`spectral_element/base.py:1179-1184`). A symmetric space's invariant
   measure has a diagonal precision but no `precision_factor`
   (`symmetric_space/base.py:935-941`).
-- `sample_pointwise_std` read off the grid is the projection of a grid
-  product and smooths the field (0.314 against an exact 0.380 in one app).
-  It needs a sentence in the docstring, and perhaps `points=`
-  (`gaussian.py:2125-2144`).
+- `sample_pointwise_variance` and `sample_pointwise_std` could take
+  `points=`, to sample the variance at chosen points directly. The
+  docstring now says why reading the grid field off the grid smooths it.
 - A mixture's one-dimensional marginals are closed form, but `moments` and
   `plot_densities` sample them (`plotting/distributions.py:71, :86, :387`).
   `LinearGaussianMixtureInversion` factorizes the same normal operator once
@@ -181,14 +157,8 @@ Each is still open as checked against the code.
   tomography), last seen in git at `8c53839` under `benchmarks/`. The dual
   did not converge on flexure–gravity at 1 500 bundle iterations.
 
-## 4. Mini-apps and repository hygiene
+## 4. Mini-apps
 
-- `miniapps/banana_doughnut/BRIEF.md` is tracked. It is a development brief,
-  cites decision numbers, and gives the local path of a private archive.
-  The app has its README and IMPLEMENTATION.md, so the brief can go.
-- `tests/test_code_practice.py` skips Markdown, so the no-decision-number
-  rule does not reach READMEs or walkthroughs. Today only that brief
-  offends.
 - The point-data app runs no checks on its operators
   (`miniapps/point_data/IMPLEMENTATION.md:103`). The planet-density app
   checks its linear rows only in its test. Each app should run the check

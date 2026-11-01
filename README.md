@@ -86,18 +86,19 @@ from here and draws the result.
 
 ## Where to go next
 
-- **[Tutorials](tutorials/README.md)**: an ordered course of fourteen
-  scripts, from the first inversion to nonlinear problems, coupled fields
-  and writing a backend. Each runs top to bottom, opens as a notebook, and
-  has a Colab badge.
-- **[Examples](examples/README.md)**: thirty-six short scripts, one idea
-  each, from spaces and operators to feasible sets and planet models.
-- **[Mini-apps](miniapps/README.md)**: six complete inverse problems in the
-  spirit of MFEM's, each a directory with real or realistic data, several
-  features composed, and a run of a few minutes: a C++ vector backend,
-  finite elements through MFEM, the Earth's radial density, a field on the
-  sphere from ocean data, ray tomography in a layered planet, and acoustic
-  waveform inversion with an MPI-split solver.
+- **[Tutorials](tutorials/README.md)**: an ordered course of scripts, from
+  the first inversion to nonlinear problems, coupled fields and writing a
+  backend. Each runs top to bottom, opens as a notebook, and has a Colab
+  badge.
+- **[Examples](examples/README.md)**: short scripts, one idea each, from
+  spaces and operators to feasible sets and planet models.
+- **[Mini-apps](miniapps/README.md)**: complete applications, each a
+  directory with real or realistic data, several features composed, and a
+  run of a few minutes: a C++ vector backend, a finite element backend, the
+  Earth's radial density, a field on the sphere from ocean data, ray
+  tomography in a layered planet, ray theory against finite-frequency
+  travel-time kernels, and acoustic waveform inversion with an MPI-split
+  solver.
 - **[API reference](https://pygeoinf.readthedocs.io/)**: every public class
   and function, with the contract each keeps.
 

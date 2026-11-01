@@ -1020,6 +1020,15 @@ class TestLayered:
         handed = disk_module.Layered.from_layers(space.layers, labels=space.labels)
         assert type(handed) is disk_module.Layered and handed == space
 
+    def test_the_shared_class_sends_disks_to_their_own(self):
+        """Only the disk's class takes jumps at angles, so disk layers given
+        to the shared one are refused by name, not left to fail at a jump."""
+        layers = rings().layers
+        with pytest.raises(TypeError, match="disk.Layered"):
+            spectral_element.Layered(layers)
+        with pytest.raises(TypeError, match="disk.Layered"):
+            spectral_element.Layered.from_layers(layers)
+
     def test_the_structure(self):
         space = rings()
         assert space.geometry is Disk and len(space) == 2

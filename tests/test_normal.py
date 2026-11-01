@@ -547,7 +547,8 @@ class TestInvariantDistancePreconditioner:
     """
 
     @pytest.fixture(scope="class")
-    def sphere(self):
+    @classmethod
+    def sphere(cls):
         pytest.importorskip("pyshtools")
         from pygeoinf.symmetric_space.sphere import Sobolev
 

@@ -44,15 +44,16 @@ Learning the library
 --------------------
 
 The `tutorials <https://github.com/da380/pygeoinf/tree/main/tutorials>`_
-are an ordered course of fourteen scripts, from a first inversion to
-nonlinear problems, coupled fields and writing a backend; each opens as a
-notebook and runs in Google Colab from its badge. The
+are an ordered course of scripts, from a first inversion to nonlinear
+problems, coupled fields and writing a backend; each opens as a notebook and
+runs in Google Colab from its badge. The
 `examples <https://github.com/da380/pygeoinf/tree/main/examples>`_ are
 short scripts, one idea each. The
 `mini-apps <https://github.com/da380/pygeoinf/tree/main/miniapps>`_ are
-six complete inverse problems: a C++ vector backend, finite elements
-through MFEM, the Earth's radial density, a field on the sphere from ocean
-data, ray tomography in a layered planet, and acoustic waveform inversion.
+complete applications: a C++ vector backend, a finite element backend, the
+Earth's radial density, a field on the sphere from ocean data, ray
+tomography in a layered planet, ray theory against finite-frequency
+travel-time kernels, and acoustic waveform inversion.
 
 The reference below documents every public class and function, with the
 contract each keeps.
