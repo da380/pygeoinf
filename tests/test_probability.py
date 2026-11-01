@@ -157,16 +157,20 @@ class TestConstruction:
             mu.mahalanobis_squared(X.random(rng=rng))
 
     def test_a_slightly_negative_eigenvalue_is_clipped_with_a_warning(self, rng):
-        """What a semidefinite matrix assembled in floating point looks like."""
+        """What a semidefinite matrix assembled in floating point looks like.
+
+        The negative eigenvalues sit well above the rounding of the rotation
+        (about 1e-16, whose sign is the platform's), so that they are negative
+        on every LAPACK, and well inside the clipping tolerance."""
         X = make_dense_metric_space(5)
         rotation, _ = np.linalg.qr(rng.standard_normal((5, 5)))
-        spectrum = np.array([3.0, 2.0, 1.0, -1e-17, -2e-17])
+        spectrum = np.array([3.0, 2.0, 1.0, -1e-12, -2e-12])
         galerkin = rotation @ np.diag(spectrum) @ rotation.T
 
         with pytest.warns(UserWarning, match="small negative eigenvalues"):
             mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
         assert mu.covariance.matrix(form="galerkin") == pytest.approx(
-            galerkin, abs=1e-12
+            galerkin, abs=1e-11
         )
 
     def test_a_genuinely_indefinite_matrix_is_still_refused(self, rng):

@@ -20,6 +20,13 @@ tests`, say). To run CI on a branch before opening a pull request, start the
 workflow by hand (`gh workflow run ci.yml --ref <branch>`, or "Run workflow" on
 the Actions tab), which runs the slow set as well.
 
+CI tests the locked environment. A second workflow, `newest.yml`, runs the
+fast suite on Linux with every dependency raised to the newest version the
+pins in `pyproject.toml` admit. It runs on the same pull requests and pushes,
+and weekly, so that an upstream release that breaks the package shows there
+before a fresh `pip install pygeoinf` meets it. When it fails and CI passes,
+the cause is upstream: fix or pin, then relock.
+
 The same hooks run in CI (the `Lint (pre-commit)` job reads the very same
 `.pre-commit-config.yaml`), so anything that passes locally passes there. To
 check the whole repository by hand rather than waiting for a commit:
