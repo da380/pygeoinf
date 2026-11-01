@@ -22,13 +22,35 @@ the pins admit (4443 each). What is left is a patch release, so that
 
 ## 3. Open design items
 
-**For discussion: the formalism's place in the API.** The choice between
-the data-space and model-space formalisms is a numerical solution strategy,
-mostly relevant to linear problems, yet it appears as a design rule in
-`docs/PRINCIPLES.md` (rule 12) and as a `formalism=` argument across the
-estimators and the feasible set. Whether it should be downplayed, both in
-the principles and in how prominently the API exposes it, is open. Labels
-no longer depend on it: answers are built on the prior's domain either way.
+**Decided, not built: the formalism moves into the solver.** Whether the
+normal equations are solved in the data space or the model space changes
+only the linear algebra (the systems solved, the determinant behind the
+evidence, what must exist to form them, conditioning), never the answer. So
+it should not sit on the inference classes beside the prior. The plan:
+
+- estimators take `solver=` only: a plain solver means the data space, and a
+  small wrapper in `numerics` (name to choose, e.g. `ModelSpace(solver)`)
+  asks for the model-space normal equations, documented as for
+  finite-dimensional problems and surrogates;
+- `formalism=` and `with_formalism()` leave `LeastSquares`, `MinimumNorm`,
+  the two constrained classes, `LinearGaussianInversion` and the mixture
+  inversion; `with_solver()` covers both;
+- the feasible-set algorithms (`Search`, `Primal`, `SProcedure`) take the
+  same wrapper through their `solver=`, with `SProcedure` keeping the model
+  space as its default;
+- `formalism=` stays where assembly is the object itself: `NormalOperator`,
+  `DampedNormalOperator`, `TikhonovNormalOperator`, `TikhonovFamily` and the
+  `surrogate(...)` builders;
+- both `choose_formalism` functions and `"auto"` go, and `Formalism` stops
+  being exported from `inference`;
+- `docs/PRINCIPLES.md` rule 12 goes; tutorial 7's section becomes one cell
+  showing the wrapper; examples 22, 24, 27, 28 and the MFEM app stop printing
+  `.formalism`; the parity tests use the wrapper, with the assembly-level
+  parity kept on `NormalOperator`;
+- the nonlinear route's "formalism" is the same question inside a Newton step
+  or the Laplace covariance, and is answered by the same wrapper if wanted.
+
+A public API change, so after 2.0.2.
 
 Each item below is still open as checked against the code.
 
