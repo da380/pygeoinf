@@ -258,7 +258,13 @@ class _BlockKernel(Kernel):
     """A scheme whose block is Metropolized and whose other letters are not."""
 
     def __init__(
-        self, scheme: SplittingScheme, block: SplittingScheme, start: int, /, *, flip: bool
+        self,
+        scheme: SplittingScheme,
+        block: SplittingScheme,
+        start: int,
+        /,
+        *,
+        flip: bool,
     ) -> None:
         self._scheme = scheme
         self._block = block
@@ -428,7 +434,9 @@ class MetropolisHastings(Kernel):
         """The scheme's time step."""
         return self._scheme.step
 
-    def _run(self, flows: list[tuple[Flow, float]], state: State, rng: Generator) -> State:
+    def _run(
+        self, flows: list[tuple[Flow, float]], state: State, rng: Generator
+    ) -> State:
         """Apply uncorrected flows in order."""
         step = self._scheme.step
         for flow, fraction in flows:
@@ -494,7 +502,9 @@ def _require_label_jump(scheme: SplittingScheme, /) -> None:
     Raises:
         ValueError: if the dynamics has a label jump and the word lacks it.
     """
-    if "L" in scheme.dynamics.flows() and "L" not in {letter for letter, _ in scheme.word}:
+    if "L" in scheme.dynamics.flows() and "L" not in {
+        letter for letter, _ in scheme.word
+    }:
         raise ValueError(
             "Over a mixture reference the word needs the label jump L, or a "
             "chain would never leave the component it started in."

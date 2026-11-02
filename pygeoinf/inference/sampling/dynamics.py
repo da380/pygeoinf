@@ -80,7 +80,9 @@ class Dynamics(ABC):
         if target.is_mixture:
             self._flows["L"] = LabelJump(target)
         if not target.has_gradient:
-            needing = [letter for letter, flow in self._flows.items() if flow.uses_gradient]
+            needing = [
+                letter for letter, flow in self._flows.items() if flow.uses_gradient
+            ]
             if needing:
                 raise ValueError(
                     f"{type(self).__name__} needs the potential's gradient (for "

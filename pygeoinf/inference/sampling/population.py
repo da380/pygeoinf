@@ -191,7 +191,9 @@ class Chains:
             TypeError: if the recording map's codomain has no coordinates.
         """
         if steps < 1 or burn_in < 0:
-            raise ValueError("A chain keeps at least one step and burns in none or more.")
+            raise ValueError(
+                "A chain keeps at least one step and burns in none or more."
+            )
         if thin is not None and thin < 1:
             raise ValueError(f"A thinning interval is at least one, got {thin}.")
         target = kernel.target
@@ -341,13 +343,17 @@ class Tempering:
         mutation_steps: int = 1,
     ) -> None:
         if int(particles) != particles or particles < 2:
-            raise ValueError(f"A population has at least two particles, got {particles}.")
+            raise ValueError(
+                f"A population has at least two particles, got {particles}."
+            )
         if schedule != "ess":
             raise ValueError(f"The schedule offered is 'ess', not {schedule!r}.")
         if not 0.0 < ess_fraction < 1.0:
             raise ValueError(f"The fraction lies in (0, 1), got {ess_fraction}.")
         if int(mutation_steps) != mutation_steps or mutation_steps < 1:
-            raise ValueError(f"A particle takes at least one step, got {mutation_steps}.")
+            raise ValueError(
+                f"A particle takes at least one step, got {mutation_steps}."
+            )
         self._particles = int(particles)
         self._mutation = mutation
         self._ess_fraction = float(ess_fraction)
@@ -359,7 +365,12 @@ class Tempering:
         return self._particles
 
     def __call__(
-        self, target: Target, /, *, rng: Generator | None = None, n_jobs: int | None = None
+        self,
+        target: Target,
+        /,
+        *,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
     ) -> WeightedEnsemble:
         """Move the population from the prior to the target.
 
@@ -408,7 +419,9 @@ class Tempering:
             chosen = _systematic(weights, rng)
             positions = [positions[i] for i in chosen]
             log_weights = np.zeros(count)
-            kernel = self._mutation.with_target(target.with_temperature(temperature / beta))
+            kernel = self._mutation.with_target(
+                target.with_temperature(temperature / beta)
+            )
             streams = rng.spawn(count)
             moved = parallel_map(
                 lambda item: _mutate(kernel, item[0], item[1], self._mutation_steps),
@@ -427,7 +440,9 @@ class Tempering:
             effective_sizes=np.array(effective),
         )
 
-    def _next_step(self, log_weights: np.ndarray, scaled: np.ndarray, remaining: float) -> float:
+    def _next_step(
+        self, log_weights: np.ndarray, scaled: np.ndarray, remaining: float
+    ) -> float:
         """The step in ``beta`` that brings the effective sample size to the
         set fraction, or the whole of what remains if it does not fall that
         far."""
@@ -455,7 +470,9 @@ class Tempering:
         return f"Tempering({self._particles}, mutation={self._mutation!r})"
 
 
-def _mutate(kernel: Kernel, position: Any, rng: Generator, steps: int) -> tuple[Any, float]:
+def _mutate(
+    kernel: Kernel, position: Any, rng: Generator, steps: int
+) -> tuple[Any, float]:
     """A particle moved by a kernel, and its potential where it lands."""
     state = kernel.initial_state(position, rng=rng)
     for _ in range(steps):

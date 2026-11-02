@@ -233,7 +233,9 @@ class Target:
                     x, 0.0, LinearFunctional.from_representer(space, space.zero())
                 )
 
-            potential = Functional.from_callables(space, lambda x: 0.0, linearize=linearize)
+            potential = Functional.from_callables(
+                space, lambda x: 0.0, linearize=linearize
+            )
         else:
             potential = -reference.relative_log_density
         target = cls.__new__(cls)
@@ -469,9 +471,7 @@ class Target:
         return entry
 
     def __repr__(self) -> str:
-        return (
-            f"Target(rank={self._reference.rank}, temperature={self._temperature:g})"
-        )
+        return f"Target(rank={self._reference.rank}, temperature={self._temperature:g})"
 
 
 class _Source:

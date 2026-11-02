@@ -1303,7 +1303,9 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
                 f"and a covariance of shape ({count}, {count}); got "
                 f"{mean.shape} and {covariance.shape}."
             )
-        transform, whitened, whitened_images = _whiten(prior, vectors, images, rtol=rtol)
+        transform, whitened, whitened_images = _whiten(
+            prior, vectors, images, rtol=rtol
+        )
         a = transform @ mean
         s = transform @ covariance @ transform.T
         self._build(prior, whitened, whitened_images, a, 0.5 * (s + s.T))
@@ -1466,7 +1468,9 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
         offset = space.subtract(mean, prior.expectation)
         a = np.array([space.inner_product(w, offset) for w in vectors])
         mapped = [covariance(w) for w in vectors]
-        s = np.array([[space.inner_product(w, image) for image in mapped] for w in vectors])
+        s = np.array(
+            [[space.inner_product(w, image) for image in mapped] for w in vectors]
+        )
         return cls(prior, vectors, a, s.reshape(len(vectors), len(vectors)), rtol=rtol)
 
     # ----------------------------------------------------------------- #
@@ -1658,7 +1662,9 @@ class MixtureReference(GaussianMixture, AbsolutelyContinuousMeasure):
                 f"{count}) and covariances of shape (components, {count}, "
                 f"{count}); got {means.shape} and {covariances.shape}."
             )
-        transform, whitened, whitened_images = _whiten(prior, vectors, images, rtol=rtol)
+        transform, whitened, whitened_images = _whiten(
+            prior, vectors, images, rtol=rtol
+        )
         if not whitened:
             raise ValueError("A mixture reference needs a chart the prior can see.")
         parts = []
@@ -1764,7 +1770,9 @@ class MixtureReference(GaussianMixture, AbsolutelyContinuousMeasure):
             mapped = end._cholesky @ solve_triangular(start._cholesky, z, lower=True)
         else:
             z = self.coordinates(x)
-            deviation = solve_triangular(start._cholesky, z - start._chart_mean, lower=True)
+            deviation = solve_triangular(
+                start._cholesky, z - start._chart_mean, lower=True
+            )
             mapped = end._chart_mean + end._cholesky @ deviation
         result = space.copy(x)
         for weight, image in zip(mapped - z, self._images):
@@ -1785,7 +1793,9 @@ class MixtureReference(GaussianMixture, AbsolutelyContinuousMeasure):
                 component._cholesky, z - component._chart_mean, lower=True
             )
             terms[j] = (
-                self._log_weights[j] - 0.5 * deviation @ deviation - component._log_det_half
+                self._log_weights[j]
+                - 0.5 * deviation @ deviation
+                - component._log_det_half
             )
         return terms
 
@@ -1862,7 +1872,9 @@ def _whiten(
         raise ValueError(f"Expected {count} images, one per chart vector.")
     if not count:
         return np.zeros((0, 0)), [], []
-    gram = np.array([[space.inner_product(w, image) for image in images] for w in vectors])
+    gram = np.array(
+        [[space.inner_product(w, image) for image in images] for w in vectors]
+    )
     gram = 0.5 * (gram + gram.T)
     values, vecs = np.linalg.eigh(gram)
     largest = float(values.max()) if values.size else 0.0
@@ -1915,11 +1927,15 @@ def _data_chart(
         raise ValueError("The error measure needs a covariance.")
     count = data_space.dim
     unit = np.identity(count)
-    duals = [data_space.from_components(data_space.solve_gram(unit[j])) for j in range(count)]
+    duals = [
+        data_space.from_components(data_space.solve_gram(unit[j])) for j in range(count)
+    ]
     vectors = jacobian.adjoint.apply_block(duals, n_jobs=n_jobs)
     images = prior.covariance.apply_block(vectors, n_jobs=n_jobs)
     space = prior.domain
-    gram = np.array([[space.inner_product(w, image) for image in images] for w in vectors])
+    gram = np.array(
+        [[space.inner_product(w, image) for image in images] for w in vectors]
+    )
     noise = np.column_stack(
         [data_space.to_components(error.covariance(dual)) for dual in duals]
     )

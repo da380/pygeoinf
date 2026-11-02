@@ -71,7 +71,11 @@ class SplittingScheme:
         totals: dict[str, float] = {}
         for letter, fraction in pairs:
             totals[letter] = totals.get(letter, 0.0) + fraction
-        uneven = {letter: total for letter, total in totals.items() if abs(total - 1.0) > 1e-12}
+        uneven = {
+            letter: total
+            for letter, total in totals.items()
+            if abs(total - 1.0) > 1e-12
+        }
         if uneven:
             raise ValueError(
                 f"Each letter's fractions must sum to one over the word; got {uneven}."
@@ -79,7 +83,9 @@ class SplittingScheme:
         if not 0.0 < step < float("inf"):
             raise ValueError(f"A step is positive and finite, got {step}.")
         if int(repeat) != repeat or repeat < 1:
-            raise ValueError(f"A word is repeated a whole number of times, got {repeat}.")
+            raise ValueError(
+                f"A word is repeated a whole number of times, got {repeat}."
+            )
         self._dynamics = dynamics
         self._pairs = pairs
         self._step = float(step)
@@ -161,7 +167,9 @@ class SplittingScheme:
     #                           New schemes                             #
     # ----------------------------------------------------------------- #
 
-    def block(self, word: str | Sequence[tuple[str, float]], /, *, repeat: int = 1) -> "SplittingScheme":
+    def block(
+        self, word: str | Sequence[tuple[str, float]], /, *, repeat: int = 1
+    ) -> "SplittingScheme":
         """A sub-word on the same dynamics and step, for a correction.
 
         Args:
@@ -270,9 +278,9 @@ class SplittingScheme:
         drift_time = drift_fraction * self._step
         angle = ou.angle(ou_fraction * self._step)
         c, b = float(np.cos(angle)), float(np.sin(angle))
-        return self._drift_density(proposal, state, drift_time, c, b) - self._drift_density(
-            state, proposal, drift_time, c, b
-        )
+        return self._drift_density(
+            proposal, state, drift_time, c, b
+        ) - self._drift_density(state, proposal, drift_time, c, b)
 
     def _drift_density(
         self, origin: State, destination: State, drift_time: float, c: float, b: float
@@ -283,15 +291,12 @@ class SplittingScheme:
         mean = target.component(origin).expectation
         gradient = target.gradient(origin)
         preconditioned = target.preconditioned_gradient(origin)
-        centre = space.axpy(
-            c, space.subtract(origin.position, mean), space.copy(mean)
-        )
+        centre = space.axpy(c, space.subtract(origin.position, mean), space.copy(mean))
         offset = space.subtract(destination.position, centre)
         scale = c * drift_time
-        return (
-            -(scale / b**2) * space.inner_product(gradient, offset)
-            - (scale**2 / (2.0 * b**2)) * space.inner_product(gradient, preconditioned)
-        )
+        return -(scale / b**2) * space.inner_product(gradient, offset) - (
+            scale**2 / (2.0 * b**2)
+        ) * space.inner_product(gradient, preconditioned)
 
     def __repr__(self) -> str:
         repeat = f", repeat={self._repeat}" if self._repeat != 1 else ""

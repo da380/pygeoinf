@@ -1803,7 +1803,9 @@ def check_scheme(
 
     def gram(covariance):
         images = [covariance(u) for u in probes]
-        return np.array([[space.inner_product(image, v) for v in probes] for image in images])
+        return np.array(
+            [[space.inner_product(image, v) for v in probes] for image in images]
+        )
 
     block = gram(reference.covariance)
     expected_cov = np.zeros((parts * count, parts * count))

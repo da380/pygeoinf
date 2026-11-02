@@ -159,9 +159,7 @@ class PriorRotation(Flow):
         position = space.axpy(
             float(s), state.velocity, space.axpy(float(c), offset, space.copy(mean))
         )
-        velocity = space.axpy(
-            float(-s), offset, space.scale(float(c), state.velocity)
-        )
+        velocity = space.axpy(float(-s), offset, space.scale(float(c), state.velocity))
         return state.moved(position, velocity), 0.0
 
 
@@ -206,9 +204,13 @@ class LikelihoodKick(Flow):
             target.preconditioned_gradient(state),
             space.copy(state.velocity),
         )
-        change = -0.5 * float(time) * (
-            space.inner_product(gradient, state.velocity)
-            + space.inner_product(gradient, velocity)
+        change = (
+            -0.5
+            * float(time)
+            * (
+                space.inner_product(gradient, state.velocity)
+                + space.inner_product(gradient, velocity)
+            )
         )
         return state.with_velocity(velocity), change
 
@@ -332,7 +334,9 @@ class PriorOU(Flow):
         noise = component.fluctuation(rng=rng)
         offset = space.subtract(state.position, mean)
         position = space.axpy(
-            float(np.sin(a)), noise, space.axpy(float(np.cos(a)), offset, space.copy(mean))
+            float(np.sin(a)),
+            noise,
+            space.axpy(float(np.cos(a)), offset, space.copy(mean)),
         )
         return state.with_position(position), None
 
@@ -375,7 +379,6 @@ class GradientDrift(Flow):
             space.copy(state.position),
         )
         return state.with_position(position), None
-
 
 
 class LabelJump(Flow):

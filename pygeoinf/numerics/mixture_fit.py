@@ -109,7 +109,9 @@ def fit_gaussian_mixture(
         covariances = np.empty((components, dimension, dimension))
         for j in range(components):
             deviation = x - means[j]
-            covariances[j] = (deviation * (w * shares[:, j])[:, np.newaxis]).T @ deviation
+            covariances[j] = (
+                deviation * (w * shares[:, j])[:, np.newaxis]
+            ).T @ deviation
             covariances[j] = covariances[j] / mass[j] + floor
         log_terms = np.log(mixing) + _log_normal(x, means, covariances)
         largest = log_terms.max(axis=1, keepdims=True)
@@ -128,9 +130,7 @@ def _seed(x: np.ndarray, w: np.ndarray, components: int, rng: Generator) -> np.n
     squared distance from the nearest already chosen."""
     chosen = [x[rng.choice(x.shape[0], p=w)]]
     for _ in range(components - 1):
-        nearest = np.min(
-            [((x - centre) ** 2).sum(axis=1) for centre in chosen], axis=0
-        )
+        nearest = np.min([((x - centre) ** 2).sum(axis=1) for centre in chosen], axis=0)
         score = w * nearest
         total = score.sum()
         probabilities = score / total if total > 0.0 else w
@@ -138,7 +138,9 @@ def _seed(x: np.ndarray, w: np.ndarray, components: int, rng: Generator) -> np.n
     return np.array(chosen)
 
 
-def _log_normal(x: np.ndarray, means: np.ndarray, covariances: np.ndarray) -> np.ndarray:
+def _log_normal(
+    x: np.ndarray, means: np.ndarray, covariances: np.ndarray
+) -> np.ndarray:
     """``log n(x_i; m_j, S_j)`` for every point and component."""
     count, dimension = x.shape
     result = np.empty((count, means.shape[0]))

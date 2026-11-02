@@ -59,7 +59,9 @@ class TestTheAutocorrelationTime:
 
     def test_an_antithetic_chain_is_floored(self):
         draws = np.tile([1.0, -1.0], 500)
-        assert integrated_autocorrelation_time(draws) == pytest.approx(1 / np.log10(1000))
+        assert integrated_autocorrelation_time(draws) == pytest.approx(
+            1 / np.log10(1000)
+        )
 
     def test_a_constant_chain_has_unit_time(self):
         assert integrated_autocorrelation_time(np.ones((2, 10))) == 1.0

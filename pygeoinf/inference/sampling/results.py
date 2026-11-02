@@ -286,9 +286,7 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
                     "A chart other than the record is read off the stored "
                     "states; run the chains with thin= set."
                 )
-            values = np.array(
-                [chart.codomain.to_components(chart(x)) for x in stored]
-            )
+            values = np.array([chart.codomain.to_components(chart(x)) for x in stored])
         return _fit_reference(prior, chart, values, None, components, rng)
 
     @property
@@ -482,7 +480,9 @@ class WeightedEnsemble(AbsolutelyContinuousMeasure):
         values = np.array(
             [chart.codomain.to_components(chart(x)) for x in self._particles]
         )
-        return _fit_reference(self.reference, chart, values, self.weights, components, rng)
+        return _fit_reference(
+            self.reference, chart, values, self.weights, components, rng
+        )
 
     def weighted_mean(self, function: Any, /) -> float:
         """The weighted mean of a scalar function of the particles.

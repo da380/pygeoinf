@@ -59,7 +59,9 @@ rng = np.random.default_rng(38)
 # the grid is refined. The prior is a Sobolev Gaussian, the same measure at
 # every resolution up to the modes the grid resolves.
 
-arcs = [(np.array([a]), np.array([a + 1.2])) for a in np.linspace(0.0, 2.0 * np.pi, 7)[:-1]]
+arcs = [
+    (np.array([a]), np.array([a + 1.2])) for a in np.linspace(0.0, 2.0 * np.pi, 7)[:-1]
+]
 sigma = 0.05
 
 
@@ -151,8 +153,10 @@ acceptance = {name: [] for name in names}
 posterior_means = {}
 starts = {}
 started = time.perf_counter()
-print(f"acceptance at a fixed step; pCN h = {steps['pCN']}, MALA h = {steps['MALA']}, "
-      f"HMC h = {steps['HMC']} x 3, random walk s = {walk_step:.3f}")
+print(
+    f"acceptance at a fixed step; pCN h = {steps['pCN']}, MALA h = {steps['MALA']}, "
+    f"HMC h = {steps['HMC']} x 3, random walk s = {walk_step:.3f}"
+)
 print(f"{'points':>6s}" + "".join(f"{name:>16s}" for name in names))
 for points in levels:
     space, prior, problem = build(points)
@@ -166,10 +170,17 @@ for points in levels:
     row = f"{points:6d}"
     for name, sampler in samplers.items():
         posterior = sampler(
-            data, steps=300, chains=2, burn_in=100, start=start, thin=10,
+            data,
+            steps=300,
+            chains=2,
+            burn_in=100,
+            start=start,
+            thin=10,
             rng=np.random.default_rng(1),
         )
-        value, error = mean_and_error(np.stack([c.acceptance for c in posterior.chains]))
+        value, error = mean_and_error(
+            np.stack([c.acceptance for c in posterior.chains])
+        )
         acceptance[name].append((value, error))
         row += f"{value:10.3f}+-{error:.3f}"
         if name == "HMC":
@@ -215,14 +226,23 @@ for points in levels:
     row = f"{points:6d}"
     for name, sampler in samplers.items():
         posterior = sampler(
-            data, steps=10, chains=2, burn_in=300, start=start,
+            data,
+            steps=10,
+            chains=2,
+            burn_in=300,
+            start=start,
             rng=np.random.default_rng(3),
         )
         settled = float(np.mean([chain.step_size for chain in posterior.chains]))
         adapted[name].append(settled)
         row += f"{settled:16.4f}"
     _, settled = random_walk(
-        problem, prior, start, 0.1, 1500, np.random.default_rng(4),
+        problem,
+        prior,
+        start,
+        0.1,
+        1500,
+        np.random.default_rng(4),
         adapt=StepSizeAdaptation(acceptance=0.25),
     )
     adapted["random walk"].append(settled)
@@ -246,8 +266,9 @@ markers = {"pCN": "o", "MALA": "s", "HMC": "^", "random walk": "x"}
 axis = axes[0]
 for name in names:
     values, errors = np.array(acceptance[name]).T
-    axis.errorbar(levels, values, yerr=2 * errors, marker=markers[name], capsize=3,
-                  label=name)
+    axis.errorbar(
+        levels, values, yerr=2 * errors, marker=markers[name], capsize=3, label=name
+    )
 axis.set_xscale("log")
 axis.set_xticks(levels, [str(n) for n in levels])
 axis.set_ylim(0.0, 1.0)
@@ -269,15 +290,32 @@ axis = axes[2]
 shades = plt.get_cmap("viridis")
 for k, (points, mean) in enumerate(posterior_means.items()):
     space = build(points)[0]
-    axis.plot(space.grid_axes[0], mean, linewidth=1, color=shades(k / len(levels)),
-              label=f"{points} points")
-axis.plot(finest_space.grid_axes[0], truth, color="black", linestyle="--",
-          linewidth=1, label="truth")
-bottom = min(float(np.min(truth)), *(float(np.min(m)) for m in posterior_means.values()))
+    axis.plot(
+        space.grid_axes[0],
+        mean,
+        linewidth=1,
+        color=shades(k / len(levels)),
+        label=f"{points} points",
+    )
+axis.plot(
+    finest_space.grid_axes[0],
+    truth,
+    color="black",
+    linestyle="--",
+    linewidth=1,
+    label="truth",
+)
+bottom = min(
+    float(np.min(truth)), *(float(np.min(m)) for m in posterior_means.values())
+)
 for k, (start_point, end_point) in enumerate(arcs):
     level = bottom - 0.3 - 0.12 * k
     first, last = start_point[0], end_point[0]
-    pieces = [(first, last)] if last <= 2 * np.pi else [(first, 2 * np.pi), (0.0, last - 2 * np.pi)]
+    pieces = (
+        [(first, last)]
+        if last <= 2 * np.pi
+        else [(first, 2 * np.pi), (0.0, last - 2 * np.pi)]
+    )
     for a, b in pieces:
         axis.plot([a, b], [level, level], color="0.5", linewidth=2)
 axis.set_xlabel("position around the circle")

@@ -348,7 +348,9 @@ class PCN(ChainSampler):
 
     def _kernel(self, target: Target, /) -> Kernel:
         return MetropolisHastings(
-            SplittingScheme(PreconditionedOU(target), _word(target, "O"), step=self._step)
+            SplittingScheme(
+                PreconditionedOU(target), _word(target, "O"), step=self._step
+            )
         )
 
 
@@ -445,7 +447,9 @@ class HMC(ChainSampler):
         constraint: "Subset | None" = None,
     ) -> None:
         if int(length) != length or length < 1:
-            raise ValueError(f"A trajectory has at least one leapfrog step, got {length}.")
+            raise ValueError(
+                f"A trajectory has at least one leapfrog step, got {length}."
+            )
         self._length = int(length)
         super().__init__(
             problem,
@@ -466,8 +470,12 @@ class HMC(ChainSampler):
         return float(np.pi / (2 * self._length))
 
     def _kernel(self, target: Target, /) -> Kernel:
-        scheme = SplittingScheme(Hamiltonian(target), _word(target, "OBAB"), step=self._step)
-        return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(scheme)
+        scheme = SplittingScheme(
+            Hamiltonian(target), _word(target, "OBAB"), step=self._step
+        )
+        return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(
+            scheme
+        )
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(step={self._step:g}, length={self._length})"
@@ -519,7 +527,9 @@ class PreconditionedHMC(ChainSampler):
         if not 0.0 < friction < float("inf"):
             raise ValueError(f"A friction is positive and finite, got {friction}.")
         if int(length) != length or length < 1:
-            raise ValueError(f"A trajectory has at least one leapfrog step, got {length}.")
+            raise ValueError(
+                f"A trajectory has at least one leapfrog step, got {length}."
+            )
         self._friction = float(friction)
         self._length = int(length)
         super().__init__(
@@ -548,7 +558,9 @@ class PreconditionedHMC(ChainSampler):
     def _kernel(self, target: Target, /) -> Kernel:
         dynamics = Underdamped(target, friction=self._friction)
         scheme = SplittingScheme(dynamics, _word(target, "OBAB"), step=self._step)
-        return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(scheme)
+        return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(
+            scheme
+        )
 
     def __repr__(self) -> str:
         return (

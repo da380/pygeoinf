@@ -109,8 +109,10 @@ density = unnormalized / evidence
 second_moment = float((grid**2 * density).sum() * spacing)
 mean_potential = float((phi * density).sum() * spacing)
 
-print(f"exact posterior: mean 0 by symmetry, E[m^2] = {second_moment:.4f}, "
-      f"log Z = {np.log(evidence):.4f}")
+print(
+    f"exact posterior: mean 0 by symmetry, E[m^2] = {second_moment:.4f}, "
+    f"log Z = {np.log(evidence):.4f}"
+)
 print(f"  the barrier at m = 0 is {phi[2000] - phi.min():.1f} nats above the modes")
 print(f"  the potential averages {mean_potential:.3f} under the posterior")
 print()
@@ -199,8 +201,10 @@ def run(name: str, sampler) -> None:
     )
 
 
-header = (f"{'sampler':18s} {'accept':>6s} {'step':>6s} {'E[m^2]':>14s} {'m > 0':>6s} "
-          f"{'crossings':>9s} {'R-hat(m)':>8s} {'seconds':>7s}")
+header = (
+    f"{'sampler':18s} {'accept':>6s} {'step':>6s} {'E[m^2]':>14s} {'m > 0':>6s} "
+    f"{'crossings':>9s} {'R-hat(m)':>8s} {'seconds':>7s}"
+)
 print(header)
 for name, sampler in samplers.items():
     run(name, sampler)
@@ -240,9 +244,11 @@ print()
 # what they sample.
 
 mixture = posteriors["PCN"].fitted_reference(components=2, rng=rng)
-print("a mixture fitted to the pCN run: weights "
-      f"{np.round(mixture.weights, 3)}, means "
-      f"{np.round([c.expectation[0] for c in mixture.components], 3)}")
+print(
+    "a mixture fitted to the pCN run: weights "
+    f"{np.round(mixture.weights, 3)}, means "
+    f"{np.round([c.expectation[0] for c in mixture.components], 3)}"
+)
 print(header)
 run("MALA, mixture", GeometricMALA(problem, mixture, step=1.0))
 run("HMC, mixture", GeometricHMC(problem, mixture, step=0.3, length=3))
@@ -251,8 +257,10 @@ run("HMC, mixture", GeometricHMC(problem, mixture, step=0.3, length=3))
 # mixture, independent of the others and of the stored states.
 draws = posteriors["PCN"].with_draw_reference(mixture).samples(200, rng=rng)
 draws = np.array([x[0] for x in draws])
-print(f"200 fresh draws from the pCN run, started from the mixture: E[m^2] = "
-      f"{np.mean(draws**2):.4f}, m > 0 for {np.mean(draws > 0):.2f} of them")
+print(
+    f"200 fresh draws from the pCN run, started from the mixture: E[m^2] = "
+    f"{np.mean(draws**2):.4f}, m > 0 for {np.mean(draws > 0):.2f} of them"
+)
 print()
 
 # ------------------------------------------------------------------ #
@@ -277,10 +285,14 @@ ensemble = SMC(
 elapsed = time.perf_counter() - started
 particles = np.array([x[0] for x in ensemble.particles])
 weights = ensemble.weights
-print(f"SMC: {ensemble.temperatures.size} stages, {elapsed:.1f} s, at beta = "
-      f"{', '.join(f'{beta:.2f}' for beta in ensemble.temperatures)}")
-print(f"  E[m^2] = {weights @ particles**2:.4f}, "
-      f"m > 0 for {weights @ (particles > 0):.2f} of the weight")
+print(
+    f"SMC: {ensemble.temperatures.size} stages, {elapsed:.1f} s, at beta = "
+    f"{', '.join(f'{beta:.2f}' for beta in ensemble.temperatures)}"
+)
+print(
+    f"  E[m^2] = {weights @ particles**2:.4f}, "
+    f"m > 0 for {weights @ (particles > 0):.2f} of the weight"
+)
 print(f"  log Z = {ensemble.log_normalizer.value:.4f} against {np.log(evidence):.4f}")
 print()
 
@@ -306,13 +318,22 @@ panels = list(results.items()) + [("SMC", None)]
 figure, axes = plt.subplots(2, 4, figsize=(15, 6), sharex=True, sharey=True)
 for axis, (name, values) in zip(axes.ravel(), panels):
     if values is None:
-        axis.hist(particles, bins=60, range=(-2, 2), weights=weights, density=True, alpha=0.5)
+        axis.hist(
+            particles, bins=60, range=(-2, 2), weights=weights, density=True, alpha=0.5
+        )
         for beta in ensemble.temperatures[:-1]:
-            axis.plot(grid, tempered(beta), color=path(beta), linewidth=0.9,
-                      label=f"beta = {beta:.2f}")
+            axis.plot(
+                grid,
+                tempered(beta),
+                color=path(beta),
+                linewidth=0.9,
+                label=f"beta = {beta:.2f}",
+            )
     else:
         axis.hist(values, bins=60, range=(-2, 2), density=True, alpha=0.5)
-    axis.plot(grid, prior_density, color="0.5", linestyle="--", linewidth=1, label="prior")
+    axis.plot(
+        grid, prior_density, color="0.5", linestyle="--", linewidth=1, label="prior"
+    )
     axis.plot(grid, density, color="black", linewidth=1, label="posterior")
     axis.set_title(name)
 axes[-1, -1].legend(fontsize=7, loc="upper center")
@@ -355,14 +376,21 @@ figure, axis = plt.subplots(figsize=(8, 4.5))
 for name, values in potential_traces.items():
     binned = [values[:, a - 1 : b - 1].mean() for a, b in zip(edges[:-1], edges[1:])]
     axis.plot(centres, binned, marker="o", markersize=3, linewidth=1, label=name)
-axis.axhline(mean_potential, color="black", linestyle="--", linewidth=1,
-             label="posterior average")
+axis.axhline(
+    mean_potential,
+    color="black",
+    linestyle="--",
+    linewidth=1,
+    label="posterior average",
+)
 axis.axvline(burn_in, color="0.6", linewidth=0.8)
 axis.set_xscale("log")
 axis.set_yscale("log")
 axis.set_xlabel("step (burn-in ends at the grey line)")
 axis.set_ylabel("Phi, averaged over the chains")
-axis.set_title("convergence: the likelihood potential from the prior draws to the posterior")
+axis.set_title(
+    "convergence: the likelihood potential from the prior draws to the posterior"
+)
 axis.legend(fontsize=8)
 figure.tight_layout()
 
