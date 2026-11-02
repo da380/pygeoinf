@@ -147,7 +147,7 @@ def _accept(log_alpha: float, rng: Generator, /) -> tuple[bool, float]:
     if not np.isfinite(log_alpha):
         accepted = bool(log_alpha > 0.0)
         return accepted, 1.0 if accepted else 0.0
-    acceptance = float(min(1.0, np.exp(log_alpha)))
+    acceptance = float(np.exp(min(0.0, log_alpha)))
     return bool(np.log(rng.random()) < log_alpha), acceptance
 
 

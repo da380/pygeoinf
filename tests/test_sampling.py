@@ -50,7 +50,10 @@ from pygeoinf.inference.sampling import (
     Underdamped,
     WeightedEnsemble,
 )
+from pygeoinf.inference.laplace import MaximumAPosteriori
 from pygeoinf.inference.sampling.flows import Flow
+from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
+from pygeoinf.symmetric_space import circle
 from pygeoinf.testing import check_scheme
 
 from .conftest import make_dense_metric_space
@@ -599,3 +602,132 @@ class TestThePresets:
                       reference=setting.inversion.reference(setting.data))
         with pytest.raises(ValueError, match="prior"):
             SMC(sampler)
+
+
+class MeshSetting:
+    """Attenuation along arcs of a circle, ``d_i == exp(-(a_i, m))``, on grids
+    of any size, with one data set made on the finest and shared by all."""
+
+    arcs = [(np.array([a]), np.array([a + 1.2])) for a in np.linspace(0.0, 2 * np.pi, 7)[:-1]]
+    sigma = 0.05
+    levels = (32, 128, 512)
+
+    def __init__(self):
+        rng = np.random.default_rng(38)
+        _, prior, problem = self.build(self.levels[-1])
+        truth = prior.sample(rng=rng)
+        self.data = problem.forward_operator(truth) + self.sigma * rng.standard_normal(6)
+        self.grids = {}
+        for points in self.levels:
+            space, prior, problem = self.build(points)
+            start = MaximumAPosteriori(problem, prior).solve(self.data).minimizer
+            self.grids[points] = (space, prior, problem, start)
+
+    def build(self, points):
+        space = circle.Sobolev(points, 1.0, 0.3)
+        prior = space.sobolev_measure(2.0, 0.3)
+        paths = space.path_integral_operator(self.arcs, dense=True)
+        data_space = paths.codomain
+
+        def derivative(m):
+            weights = LinearOperator.from_matrix(
+                data_space, data_space, np.diag(-np.exp(-paths(m))), form="components"
+            )
+            return weights @ paths
+
+        forward = Operator.from_callables(
+            space, data_space, lambda m: np.exp(-paths(m)), derivative=derivative
+        )
+        error = gi.GaussianMeasure.from_standard_deviation(data_space, self.sigma)
+        return space, prior, ForwardProblem(forward, error=error)
+
+
+def mean_acceptance(probabilities):
+    """The mean acceptance probability and its Monte Carlo standard error."""
+    probabilities = np.asarray(probabilities)
+    tau = integrated_autocorrelation_time(probabilities)
+    return probabilities.mean(), probabilities.std() * np.sqrt(tau / probabilities.size)
+
+
+@pytest.fixture(scope="module")
+def mesh_setting():
+    return MeshSetting()
+
+
+@pytest.mark.slow
+class TestTheMeshDoesNotMatter:
+    """The function-space guarantee, measured: at a fixed step, a sampler's
+    acceptance rate is the same on every grid of a nonlinear problem, and
+    tempering takes the same stages. A random walk with the same proposal size
+    is the control that shows the check can fail: its acceptance falls as the
+    grid is refined."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda problem, prior: PCN(problem, prior, step=0.005, acceptance=None),
+            lambda problem, prior: MALA(problem, prior, step=0.005, acceptance=None),
+            lambda problem, prior: HMC(problem, prior, step=0.08, length=3, acceptance=None),
+        ],
+        ids=["pcn", "mala", "hmc"],
+    )
+    def test_the_acceptance_rate_is_flat_under_refinement(self, mesh_setting, build):
+        rates = []
+        for space, prior, problem, start in mesh_setting.grids.values():
+            posterior = build(problem, prior)(
+                mesh_setting.data, steps=400, chains=2, burn_in=100, start=start,
+                rng=np.random.default_rng(1),
+            )
+            rates.append(mean_acceptance(np.stack([c.acceptance for c in posterior.chains])))
+        (coarse, coarse_error) = rates[0]
+        assert 0.1 < coarse < 0.95
+        for rate, error in rates[1:]:
+            assert abs(rate - coarse) < 3.0 * np.hypot(error, coarse_error)
+
+    def test_tempering_takes_the_same_path_under_refinement(self, mesh_setting):
+        """The invariant for SMC is the stages it takes. Each stage raises
+        beta as far as the effective sample size allows, which is the
+        information the data add, a property of the posterior and not of the
+        grid. So the number of stages, and where each early stage stops, must
+        agree across grids. (The effective size before each resampling is set
+        by construction and tests nothing.) The final stage may split in two
+        when the bisection lands just short of one, and the evidence, from 300
+        particles, is checked only to its own scatter."""
+        paths = []
+        evidence = []
+        for space, prior, problem, start in mesh_setting.grids.values():
+            ensemble = SMC(PCN(problem, prior, step=0.005), particles=300, mutation_steps=10)(
+                mesh_setting.data, rng=np.random.default_rng(0)
+            )
+            paths.append(ensemble.temperatures)
+            evidence.append(ensemble.log_normalizer.value)
+        coarse = paths[0]
+        assert coarse.size >= 5
+        for path, log_z in zip(paths[1:], evidence[1:]):
+            assert abs(path.size - coarse.size) <= 1
+            assert np.all(np.abs(np.log(path[:6]) - np.log(coarse[:6])) < 0.3)
+            assert abs(log_z - evidence[0]) < 1.5
+
+    def test_a_random_walk_is_not(self, mesh_setting):
+        """``m + s xi`` with ``xi`` a prior draw and ``s`` pCN's proposal size
+        at ``h == 0.005``: the same proposal less pCN's contraction."""
+        step = np.sqrt(1.0 - np.exp(-0.01))
+        rates = []
+        for space, prior, problem, start in mesh_setting.grids.values():
+            potential = problem.potential(mesh_setting.data)
+
+            def log_density(m):
+                return -potential(m) - 0.5 * space.inner_product(prior.precision(m), m)
+
+            generator = np.random.default_rng(2)
+            current, value = start, log_density(start)
+            probabilities = []
+            for _ in range(600):
+                proposal = space.axpy(step, prior.sample(rng=generator), space.copy(current))
+                proposed = log_density(proposal)
+                probabilities.append(np.exp(min(0.0, proposed - value)))
+                if np.log(generator.random()) < proposed - value:
+                    current, value = proposal, proposed
+            rates.append(mean_acceptance(probabilities)[0])
+        assert rates[0] > 0.15
+        assert rates[-1] < 0.3 * rates[0]

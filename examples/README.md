@@ -89,6 +89,7 @@ failing test rather than a surprise later.
 | | | |
 |---|---|---|
 | 37 | `sampling` | the sampling presets on a posterior with two modes: which chains cross the barrier, how the diagnostics say so, and tempering's evidence |
+| 38 | `sampling_discretization_invariance` | one nonlinear problem on four grids: pCN, MALA and HMC accept at the same rate and settle on the same step on every one, while a random walk stops moving as the grid is refined |
 
 ## The ones with optional dependencies
 
