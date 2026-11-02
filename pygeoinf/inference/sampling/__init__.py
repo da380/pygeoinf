@@ -35,6 +35,13 @@ estimators, called on data::
     refined = GeometricHMC(problem, reference, step=0.4, length=4)(data, steps=2000, rng=rng)
     ensemble = SMC(PCN(problem, prior, step=0.1), particles=256)(data, rng=rng)
 
+A posterior with several modes is sampled over a mixture fitted to a first
+run, whose components the chains jump between::
+
+    mixture = posterior.fitted_reference(components=2, rng=rng)
+    refined = GeometricHMC(problem, mixture, step=0.3, length=3)(data, steps=2000, rng=rng)
+    draws = refined.with_draw_reference(mixture).samples(100, rng=rng, n_jobs=4)
+
 The same samplers by hand, pCN and HMC::
 
     target = Target(problem, data, prior)
@@ -52,10 +59,15 @@ from .dynamics import Dynamics, Hamiltonian, Overdamped, PreconditionedOU, Under
 from .flows import (
     Flow,
     GradientDrift,
+    LabelJump,
     LikelihoodKick,
     MomentumRefresh,
     PriorOU,
     PriorRotation,
+    crank_nicolson_delta,
+    pcn_beta,
+    time_from_crank_nicolson,
+    time_from_pcn_beta,
 )
 from .population import Chains, StepSizeAdaptation, Tempering
 from .presets import (
@@ -85,6 +97,7 @@ __all__ = [
     "HMC",
     "Hamiltonian",
     "Kernel",
+    "LabelJump",
     "LikelihoodKick",
     "MALA",
     "MetropolisHastings",
@@ -107,4 +120,8 @@ __all__ = [
     "Tempering",
     "Underdamped",
     "WeightedEnsemble",
+    "crank_nicolson_delta",
+    "pcn_beta",
+    "time_from_crank_nicolson",
+    "time_from_pcn_beta",
 ]

@@ -36,6 +36,10 @@ data, by :meth:`~pygeoinf.inference.gaussian.LinearGaussianInversion.reference`
 or :meth:`~pygeoinf.inference.laplace.LaplaceApproximation.reference`, so a
 geometric preset is meant to be called on the data its reference was built
 from. Any reference leaves the chain exact; a poor one only makes it slow.
+
+Over a :class:`~pygeoinf.inference.gaussian.MixtureReference`, fitted to a
+posterior with several modes, every word starts with the label jump ``L``,
+which moves a chain between the mixture's components, and so between modes.
 """
 
 from __future__ import annotations
@@ -50,7 +54,7 @@ from ...algebra.operators import LinearOperator
 from ...algebra.spaces import HilbertSpace
 from ...probability.gaussian import GaussianMeasure
 from ..estimators import MeasureEstimator, _PushedMeasureEstimator
-from ..gaussian import GaussianReference
+from ..gaussian import GaussianReference, MixtureReference
 from .corrections import Kernel, MetropolisHastings, MetropolizedBlock, Step
 from .dynamics import Hamiltonian, Overdamped, PreconditionedOU, Underdamped
 from .population import Chains, StepSizeAdaptation, Tempering
@@ -86,15 +90,16 @@ class ChainSampler(MeasureEstimator):
         prior: the Gaussian prior on the model space.
         step: the time step ``h``, where the burn-in's adaptation starts.
         reference: a :class:`~pygeoinf.inference.gaussian.GaussianReference`
-            over the prior, which the dynamics solves exactly; the prior if
-            omitted.
+            or :class:`~pygeoinf.inference.gaussian.MixtureReference` over the
+            prior, which the dynamics solves exactly; the prior if omitted.
         acceptance: the acceptance probability the step is adapted towards
             during burn-in, or ``None`` to keep the step fixed.
         constraint: a subset of the model space outside which the
             posterior has no mass; a proposal outside it is rejected.
 
     Raises:
-        TypeError: if the reference is not a ``GaussianReference``.
+        TypeError: if the reference is not a ``GaussianReference`` or a
+            ``MixtureReference``.
         ValueError: if the prior is not on the model space, the reference
             is not over the prior, the step is not positive and finite, the
             acceptance lies outside ``(0, 1)``, or the sampler needs a
@@ -111,7 +116,7 @@ class ChainSampler(MeasureEstimator):
         /,
         *,
         step: float,
-        reference: GaussianReference | None = None,
+        reference: GaussianReference | MixtureReference | None = None,
         acceptance: float | None,
         constraint: "Subset | None" = None,
     ) -> None:
@@ -119,9 +124,10 @@ class ChainSampler(MeasureEstimator):
             raise ValueError("The prior is not defined on the model space.")
         if reference is None:
             reference = GaussianReference.from_prior(prior)
-        elif not isinstance(reference, GaussianReference):
+        elif not isinstance(reference, (GaussianReference, MixtureReference)):
             raise TypeError(
-                "A reference is a GaussianReference, which the estimators hand "
+                "A reference is a GaussianReference or a MixtureReference, which "
+                "the estimators and the sampled posteriors hand "
                 f"out; got {type(reference).__name__}."
             )
         elif reference.prior is not prior:
@@ -159,7 +165,7 @@ class ChainSampler(MeasureEstimator):
         return self._prior
 
     @property
-    def reference(self) -> GaussianReference:
+    def reference(self) -> GaussianReference | MixtureReference:
         """The reference the dynamics solves exactly."""
         return self._reference
 
@@ -327,7 +333,7 @@ class PCN(ChainSampler):
         /,
         *,
         step: float,
-        reference: GaussianReference | None = None,
+        reference: GaussianReference | MixtureReference | None = None,
         acceptance: float | None = 0.25,
         constraint: "Subset | None" = None,
     ) -> None:
@@ -341,7 +347,9 @@ class PCN(ChainSampler):
         )
 
     def _kernel(self, target: Target, /) -> Kernel:
-        return MetropolisHastings(SplittingScheme(PreconditionedOU(target), "O", step=self._step))
+        return MetropolisHastings(
+            SplittingScheme(PreconditionedOU(target), _word(target, "O"), step=self._step)
+        )
 
 
 class MALA(ChainSampler):
@@ -377,7 +385,7 @@ class MALA(ChainSampler):
         /,
         *,
         step: float,
-        reference: GaussianReference | None = None,
+        reference: GaussianReference | MixtureReference | None = None,
         acceptance: float | None = 0.57,
         constraint: "Subset | None" = None,
     ) -> None:
@@ -391,7 +399,9 @@ class MALA(ChainSampler):
         )
 
     def _kernel(self, target: Target, /) -> Kernel:
-        return MetropolisHastings(SplittingScheme(Overdamped(target), "BO", step=self._step))
+        return MetropolisHastings(
+            SplittingScheme(Overdamped(target), _word(target, "BO"), step=self._step)
+        )
 
 
 class HMC(ChainSampler):
@@ -430,7 +440,7 @@ class HMC(ChainSampler):
         *,
         step: float,
         length: int,
-        reference: GaussianReference | None = None,
+        reference: GaussianReference | MixtureReference | None = None,
         acceptance: float | None = 0.65,
         constraint: "Subset | None" = None,
     ) -> None:
@@ -456,7 +466,7 @@ class HMC(ChainSampler):
         return float(np.pi / (2 * self._length))
 
     def _kernel(self, target: Target, /) -> Kernel:
-        scheme = SplittingScheme(Hamiltonian(target), "OBAB", step=self._step)
+        scheme = SplittingScheme(Hamiltonian(target), _word(target, "OBAB"), step=self._step)
         return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(scheme)
 
     def __repr__(self) -> str:
@@ -502,7 +512,7 @@ class PreconditionedHMC(ChainSampler):
         step: float,
         friction: float = 1.0,
         length: int = 1,
-        reference: GaussianReference | None = None,
+        reference: GaussianReference | MixtureReference | None = None,
         acceptance: float | None = 0.8,
         constraint: "Subset | None" = None,
     ) -> None:
@@ -537,7 +547,7 @@ class PreconditionedHMC(ChainSampler):
 
     def _kernel(self, target: Target, /) -> Kernel:
         dynamics = Underdamped(target, friction=self._friction)
-        scheme = SplittingScheme(dynamics, "OBAB", step=self._step)
+        scheme = SplittingScheme(dynamics, _word(target, "OBAB"), step=self._step)
         return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(scheme)
 
     def __repr__(self) -> str:
@@ -565,14 +575,15 @@ class GeometricMALA(MALA):
         constraint: where the posterior has its mass.
 
     Raises:
-        TypeError: if the reference is not a ``GaussianReference``.
+        TypeError: if the reference is not a ``GaussianReference`` or a
+            ``MixtureReference``.
         ValueError: as for :class:`ChainSampler`.
     """
 
     def __init__(
         self,
         problem: "ForwardProblem",
-        reference: GaussianReference,
+        reference: GaussianReference | MixtureReference,
         /,
         *,
         step: float,
@@ -608,7 +619,8 @@ class GeometricHMC(HMC):
         constraint: where the posterior has its mass.
 
     Raises:
-        TypeError: if the reference is not a ``GaussianReference``.
+        TypeError: if the reference is not a ``GaussianReference`` or a
+            ``MixtureReference``.
         ValueError: for a length below one, or as for
             :class:`ChainSampler`.
     """
@@ -616,7 +628,7 @@ class GeometricHMC(HMC):
     def __init__(
         self,
         problem: "ForwardProblem",
-        reference: GaussianReference,
+        reference: GaussianReference | MixtureReference,
         /,
         *,
         step: float,
@@ -635,16 +647,22 @@ class GeometricHMC(HMC):
         )
 
 
-def _prior_of(reference: GaussianReference, /) -> GaussianMeasure:
+def _word(target: Target, word: str, /) -> str:
+    """The preset's word, led by the label jump over a mixture reference."""
+    return "L" + word if target.is_mixture else word
+
+
+def _prior_of(reference: GaussianReference | MixtureReference, /) -> GaussianMeasure:
     """The prior a reference is built over.
 
     Raises:
-        TypeError: if the reference is not a ``GaussianReference``.
+        TypeError: if the reference is not a ``GaussianReference`` or a
+            ``MixtureReference``.
     """
-    if not isinstance(reference, GaussianReference):
+    if not isinstance(reference, (GaussianReference, MixtureReference)):
         raise TypeError(
-            "A geometric sampler takes a GaussianReference, which the "
-            f"estimators hand out; got {type(reference).__name__}."
+            "A geometric sampler takes a GaussianReference or a MixtureReference, "
+            f"which the estimators hand out; got {type(reference).__name__}."
         )
     return reference.prior
 

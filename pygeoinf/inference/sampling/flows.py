@@ -17,6 +17,13 @@ reference's Gaussian energy ``(|u - m|_K^2 + |v|_K^2) / 2``: infinite at a
 typical point, finite in its changes, and zero for every flow that preserves
 the reference. A Metropolis correction of a deterministic block adds those
 changes up; stochastic flows report none, never sitting inside one.
+
+Over a mixture reference every flow solves the component the state is
+labelled with, and :class:`LabelJump` changes the label.
+
+Two converters take the literature's parameters for the prior
+Ornstein-Uhlenbeck step to the time step ``h``, for readers coming from the
+papers: pCN's ``beta`` and Crank-Nicolson's ``delta``.
 """
 
 from __future__ import annotations
@@ -30,15 +37,21 @@ from .target import State, Target
 __all__ = [
     "Flow",
     "GradientDrift",
+    "LabelJump",
     "LikelihoodKick",
     "MomentumRefresh",
     "PriorOU",
     "PriorRotation",
+    "crank_nicolson_delta",
+    "pcn_beta",
+    "time_from_crank_nicolson",
+    "time_from_pcn_beta",
 ]
 
 #: Names for what a flow can touch and preserve.
 POSITION = "position"
 VELOCITY = "velocity"
+LABEL = "label"
 REFERENCE = "reference"
 TARGET = "target"
 
@@ -140,7 +153,7 @@ class PriorRotation(Flow):
             The rotated state and an energy change of zero.
         """
         space = self._target.model_space
-        mean = self._target.reference.expectation
+        mean = self._target.component(state).expectation
         offset = space.subtract(state.position, mean)
         c, s = np.cos(time), np.sin(time)
         position = space.axpy(
@@ -262,7 +275,7 @@ class MomentumRefresh(Flow):
         """
         space = self._target.model_space
         z = self.angle(time)
-        noise = self._target.reference.fluctuation(rng=rng)
+        noise = self._target.component(state).fluctuation(rng=rng)
         velocity = space.axpy(
             float(np.sin(z)), noise, space.scale(float(np.cos(z)), state.velocity)
         )
@@ -313,9 +326,10 @@ class PriorOU(Flow):
         """
         target = self._target
         space = target.model_space
-        mean = target.reference.expectation
+        component = target.component(state)
+        mean = component.expectation
         a = self.angle(time)
-        noise = target.reference.fluctuation(rng=rng)
+        noise = component.fluctuation(rng=rng)
         offset = space.subtract(state.position, mean)
         position = space.axpy(
             float(np.sin(a)), noise, space.axpy(float(np.cos(a)), offset, space.copy(mean))
@@ -362,3 +376,143 @@ class GradientDrift(Flow):
         )
         return state.with_position(position), None
 
+
+
+class LabelJump(Flow):
+    """A Metropolized change of component, over a mixture reference.
+
+    A chain over a mixture reference follows one component at a time, and a
+    Gibbs step on the label would leave it there when the components are
+    well apart, since the label is then all but fixed by the position. This
+    move proposes a new component ``k`` from the mixture's weights and
+    carries the state to it by
+    :meth:`~pygeoinf.inference.gaussian.MixtureReference.transport`, which
+    maps component ``j`` onto ``k`` exactly, the velocity with it. The map's
+    pushforward is exact and the label is proposed from the weights, so the
+    acceptance is ``exp(Phi_ref(u) - Phi_ref(u'))``: where the mixture fits
+    the posterior, a jump between modes is accepted as readily as the fit is
+    good. It preserves the target, and so the reference when there is no
+    likelihood; the time step plays no part.
+    """
+
+    touches = frozenset({POSITION, VELOCITY, LABEL})
+    preserves = frozenset({REFERENCE, TARGET})
+    deterministic = False
+    reversible = False
+
+    def __init__(self, target: Target, /) -> None:
+        if not target.is_mixture:
+            raise ValueError("A label jump needs a mixture reference.")
+        super().__init__(target)
+
+    def apply(
+        self, state: State, time: float, /, *, rng: Generator | None = None
+    ) -> tuple[State, None]:
+        """Propose a component and carry the state to it, accepted or not.
+
+        Args:
+            state: the state, with a label.
+            time: unused.
+            rng: the generator for the proposal and the acceptance.
+
+        Returns:
+            The new state, or the old one on a rejection, and no energy
+            change.
+        """
+        from ...algebra.spaces import resolve_rng
+
+        rng = resolve_rng(rng)
+        target = self._target
+        mixture = target.reference
+        source = state.label
+        destination = int(rng.choice(len(mixture.weights), p=mixture.weights))
+        if destination == source:
+            return state, None
+        position = mixture.transport(state.position, source, destination)
+        velocity = state.velocity
+        if velocity is not None:
+            velocity = mixture.transport(velocity, source, destination, centered=True)
+        proposal = State(position, velocity, label=destination)
+        current = target.value(state)
+        proposed = target.value(proposal)
+        if proposed == float("inf"):
+            return state, None
+        if np.log(rng.random()) < current - proposed:
+            return proposal, None
+        return state, None
+
+
+def time_from_pcn_beta(beta: float, /) -> float:
+    """The time step of a pCN move with the literature's ``beta``.
+
+    pCN proposes ``sqrt(1 - beta^2) u + beta xi``; the prior
+    Ornstein-Uhlenbeck step does so with ``beta == sqrt(1 - exp(-2 h))``.
+
+    Args:
+        beta: in ``(0, 1)``.
+
+    Returns:
+        ``h == -log(1 - beta^2) / 2``.
+
+    Raises:
+        ValueError: for a ``beta`` outside ``(0, 1)``.
+    """
+    if not 0.0 < beta < 1.0:
+        raise ValueError(f"pCN's beta lies in (0, 1), got {beta}.")
+    return float(-0.5 * np.log1p(-beta * beta))
+
+
+def pcn_beta(time: float, /) -> float:
+    """pCN's ``beta`` for a time step, ``sqrt(1 - exp(-2 h))``.
+
+    Args:
+        time: the time step ``h``, positive.
+
+    Returns:
+        ``beta``.
+
+    Raises:
+        ValueError: for a time that is not positive.
+    """
+    if not time > 0.0:
+        raise ValueError(f"A time step is positive, got {time}.")
+    return float(np.sqrt(-np.expm1(-2.0 * time)))
+
+
+def time_from_crank_nicolson(delta: float, /) -> float:
+    """The time step of a Crank-Nicolson move with the literature's ``delta``.
+
+    The Crank-Nicolson discretization of the prior's Ornstein-Uhlenbeck
+    dynamics contracts by ``(2 - delta) / (2 + delta)``; the exact step does
+    so by ``exp(-h)``.
+
+    Args:
+        delta: in ``(0, 2)``; ``delta == 2`` is the independence sampler,
+            an infinite time.
+
+    Returns:
+        ``h == 2 artanh(delta / 2)``.
+
+    Raises:
+        ValueError: for a ``delta`` outside ``(0, 2)``.
+    """
+    if not 0.0 < delta < 2.0:
+        raise ValueError(f"Crank-Nicolson's delta lies in (0, 2), got {delta}.")
+    return float(2.0 * np.arctanh(0.5 * delta))
+
+
+def crank_nicolson_delta(time: float, /) -> float:
+    """Crank-Nicolson's ``delta`` for a time step, ``2 tanh(h / 2)``.
+
+    Args:
+        time: the time step ``h``, positive.
+
+    Returns:
+        ``delta``.
+
+    Raises:
+        ValueError: for a time that is not positive.
+    """
+    if not time > 0.0:
+        raise ValueError(f"A time step is positive, got {time}.")
+    return float(2.0 * np.tanh(0.5 * time))

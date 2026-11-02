@@ -18,6 +18,7 @@ from pygeoinf.inference import (
     LaplaceApproximation,
     LinearForwardProblem,
     LinearGaussianInversion,
+    MixtureReference,
 )
 from pygeoinf.testing import check_gradient, check_measure
 
@@ -271,3 +272,66 @@ class TestTheChart:
         space, _, _, _ = linear
         with pytest.raises(TypeError):
             GaussianReference("prior", [], np.zeros(0), np.zeros((0, 0)))
+
+
+@pytest.fixture
+def mixture(linear, rng):
+    space, prior, _, _ = linear
+    chart = [space.random(rng=rng) for _ in range(2)]
+    return MixtureReference(
+        prior,
+        chart,
+        np.array([0.3, 0.7]),
+        np.array([[1.0, 0.0], [-1.0, 0.5]]),
+        np.array([np.diag([0.1, 0.2]), np.diag([0.3, 0.05])]),
+    )
+
+
+class TestTheMixtureReference:
+    def test_its_density_is_normalized(self, mixture, rng):
+        prior = mixture.prior
+        weights = np.array(
+            [np.exp(mixture.relative_log_density(prior.sample(rng=rng))) for _ in range(20000)]
+        )
+        assert abs(weights.mean() - 1.0) < 5 * weights.std() / np.sqrt(weights.size)
+
+    def test_its_density_has_the_right_gradient(self, mixture, rng):
+        check_gradient(mixture.relative_log_density, mixture.sample(rng=rng), rng=rng)
+
+    def test_it_draws_from_its_own_moments(self, mixture, rng):
+        check_measure(mixture, rng=rng)
+
+    def test_its_components_share_one_chart(self, mixture):
+        for component in mixture.components:
+            assert component.chart == mixture.chart
+
+    def test_transport_carries_one_component_onto_another(self, mixture, rng):
+        end = mixture.components[1]
+        carried = np.array(
+            [mixture.coordinates(mixture.transport(mixture.components[0].sample(rng=rng), 0, 1))
+             for _ in range(4000)]
+        )
+        assert carried.mean(axis=0) == pytest.approx(end.chart_mean, abs=0.02)
+        assert np.cov(carried.T) == pytest.approx(end.chart_covariance, abs=0.02)
+
+    def test_transport_there_and_back_is_the_identity(self, mixture, rng):
+        space = mixture.domain
+        x = mixture.sample(rng=rng)
+        back = mixture.transport(mixture.transport(x, 0, 1), 1, 0)
+        assert space.norm(space.subtract(back, x)) < 1e-12
+        v = space.random(rng=rng)
+        back = mixture.transport(mixture.transport(v, 0, 1, centered=True), 1, 0, centered=True)
+        assert space.norm(space.subtract(back, v)) < 1e-12
+
+    def test_the_responsibilities_pick_the_nearer_component(self, mixture, rng):
+        x = mixture.components[1].expectation
+        shares = mixture.responsibilities(x)
+        assert shares.sum() == pytest.approx(1.0)
+        assert shares[1] > 0.99
+
+    def test_mismatched_parameters_are_refused(self, linear, rng):
+        space, prior, _, _ = linear
+        with pytest.raises(ValueError, match="shape"):
+            MixtureReference(
+                prior, [space.random(rng=rng)], np.ones(2), np.zeros((2, 2)), np.ones((2, 1, 1))
+            )

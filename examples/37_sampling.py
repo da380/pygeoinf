@@ -29,6 +29,10 @@ called on the data:
 * ``SMC`` moves a population from the prior to the posterior through a
   sequence of tempered measures, and estimates the evidence on the way.
 
+Then the fix for a posterior with several modes: a mixture of Gaussians
+fitted to the pCN run, one per mode, as the reference of MALA and HMC, which
+then jump between the modes; and fresh draws, short chains started from it.
+
 Needs matplotlib.
 """
 
@@ -46,7 +50,15 @@ from pygeoinf import (
     Operator,
     plotting,
 )
-from pygeoinf.inference.sampling import HMC, MALA, PCN, SMC, GeometricHMC, PreconditionedHMC
+from pygeoinf.inference.sampling import (
+    HMC,
+    MALA,
+    PCN,
+    SMC,
+    GeometricHMC,
+    GeometricMALA,
+    PreconditionedHMC,
+)
 
 rng = np.random.default_rng(37)
 
@@ -147,12 +159,14 @@ def watcher(positions: np.ndarray, potentials: np.ndarray):
     return callback
 
 
-print(f"{'sampler':18s} {'accept':>6s} {'step':>6s} {'E[m^2]':>14s} {'m > 0':>6s} "
-      f"{'crossings':>9s} {'R-hat(m)':>8s} {'seconds':>7s}")
 results = {}
 traces = {}
 potential_traces = {}
-for name, sampler in samplers.items():
+posteriors = {}
+
+
+def run(name: str, sampler) -> None:
+    """Run a sampler's chains, keep what the figures need, and print its row."""
     traces[name] = np.empty((chains, burn_in + steps))
     potential_traces[name] = np.empty((chains, burn_in + steps))
     started = time.perf_counter()
@@ -168,6 +182,7 @@ for name, sampler in samplers.items():
         callback=watcher(traces[name], potential_traces[name]),
     )
     elapsed = time.perf_counter() - started
+    posteriors[name] = posterior
     m = posterior.scalars()[1]
     results[name] = m.ravel()
     squared = m**2
@@ -182,6 +197,13 @@ for name, sampler in samplers.items():
         f"{squared.mean():7.4f}+-{error_of_mean:.4f} {np.mean(m > 0):6.2f} "
         f"{crossings:9d} {rhat:8.2f} {elapsed:7.1f}"
     )
+
+
+header = (f"{'sampler':18s} {'accept':>6s} {'step':>6s} {'E[m^2]':>14s} {'m > 0':>6s} "
+          f"{'crossings':>9s} {'R-hat(m)':>8s} {'seconds':>7s}")
+print(header)
+for name, sampler in samplers.items():
+    run(name, sampler)
 
 print()
 print("E[m^2] does not see the sign, so every sampler gets it, within its own")
@@ -201,6 +223,36 @@ print("  version keeps going the way it was going, which here means staying put.
 print("  GeometricHMC proposes about the positive mode alone. A gradient helps")
 print("  a sampler move within a mode, quickly in many dimensions; it is no")
 print("  help in getting from one mode to another.")
+print()
+
+# ------------------------------------------------------------------ #
+# A mixture fitted to the run                                        #
+# ------------------------------------------------------------------ #
+#
+# The pCN run has seen both wells, so its record of m is a sample of the
+# posterior to fit a reference to: a mixture of two Gaussians in the chart m,
+# one per well, the prior everywhere else (here, nowhere else). Over a mixture
+# reference a chain follows one component at a time and jumps between them
+# by a Metropolized move that carries the state from one Gaussian onto the
+# other exactly; where the mixture fits, the jump is accepted. The gradient
+# samplers that could not cross the barrier now cross it at nearly every
+# step. As for any reference, the fit decides how fast the chains mix, never
+# what they sample.
+
+mixture = posteriors["PCN"].fitted_reference(components=2, rng=rng)
+print("a mixture fitted to the pCN run: weights "
+      f"{np.round(mixture.weights, 3)}, means "
+      f"{np.round([c.expectation[0] for c in mixture.components], 3)}")
+print(header)
+run("MALA, mixture", GeometricMALA(problem, mixture, step=1.0))
+run("HMC, mixture", GeometricHMC(problem, mixture, step=0.3, length=3))
+
+# And fresh draws: each a short chain of the pCN kernel started from the
+# mixture, independent of the others and of the stored states.
+draws = posteriors["PCN"].with_draw_reference(mixture).samples(200, rng=rng)
+draws = np.array([x[0] for x in draws])
+print(f"200 fresh draws from the pCN run, started from the mixture: E[m^2] = "
+      f"{np.mean(draws**2):.4f}, m > 0 for {np.mean(draws > 0):.2f} of them")
 print()
 
 # ------------------------------------------------------------------ #
@@ -250,8 +302,8 @@ def tempered(beta: float) -> np.ndarray:
 
 
 path = plt.get_cmap("viridis")
-figure, axes = plt.subplots(2, 3, figsize=(12, 6), sharex=True, sharey=True)
 panels = list(results.items()) + [("SMC", None)]
+figure, axes = plt.subplots(2, 4, figsize=(15, 6), sharex=True, sharey=True)
 for axis, (name, values) in zip(axes.ravel(), panels):
     if values is None:
         axis.hist(particles, bins=60, range=(-2, 2), weights=weights, density=True, alpha=0.5)
@@ -273,7 +325,9 @@ figure.tight_layout()
 # that keeps to one side of the barrier is the R-hat of the table, drawn.
 
 modes = grid[np.argmax(density * (grid > 0))]
-figure, axes = plt.subplots(len(traces), 1, figsize=(10, 9), sharex=True, sharey=True)
+figure, axes = plt.subplots(
+    len(traces), 1, figsize=(10, 1.6 * len(traces)), sharex=True, sharey=True
+)
 for axis, (name, trace) in zip(axes, traces.items()):
     axis.axvspan(0, burn_in, color="0.92")
     for chain in trace:

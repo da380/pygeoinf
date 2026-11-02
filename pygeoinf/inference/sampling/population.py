@@ -226,6 +226,7 @@ class Chains:
             target.log_density_against_prior(),
             chains,
             kernel=kernel,
+            record=record,
             record_names=record_names,
         )
 

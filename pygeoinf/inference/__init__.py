@@ -44,6 +44,7 @@ from .estimators import (
 from .gaussian import (
     GaussianPosterior,
     GaussianReference,
+    MixtureReference,
     LinearGaussianInversion,
     LowRankGaussianPosterior,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "GaussianPosterior",
     "GaussianReference",
     "LowRankGaussianPosterior",
+    "MixtureReference",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
     "FactoredNormalOperator",

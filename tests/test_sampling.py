@@ -22,6 +22,7 @@ from pygeoinf.inference import (
     GaussianReference,
     LinearForwardProblem,
     LinearGaussianInversion,
+    MixtureReference,
 )
 from pygeoinf.inference.estimators import MeasureEstimator
 from pygeoinf.inference.sampling import (
@@ -33,6 +34,7 @@ from pygeoinf.inference.sampling import (
     GeometricHMC,
     GeometricMALA,
     Hamiltonian,
+    LabelJump,
     MetropolisHastings,
     MetropolizedBlock,
     MomentumRefresh,
@@ -51,7 +53,13 @@ from pygeoinf.inference.sampling import (
     WeightedEnsemble,
 )
 from pygeoinf.inference.laplace import MaximumAPosteriori
-from pygeoinf.inference.sampling.flows import Flow
+from pygeoinf.inference.sampling.flows import (
+    Flow,
+    crank_nicolson_delta,
+    pcn_beta,
+    time_from_crank_nicolson,
+    time_from_pcn_beta,
+)
 from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 from pygeoinf.symmetric_space import circle
 from pygeoinf.testing import check_scheme
@@ -428,10 +436,6 @@ class TestTheChains:
         with pytest.raises(ValueError, match="thin"):
             posterior.sample_thinned(rng=rng)
 
-    def test_a_fresh_draw_is_not_yet_offered(self, setting, rng):
-        posterior = Chains(1)(self.kernel(setting), start=setting.prior, steps=20, rng=rng)
-        with pytest.raises(NotImplementedError):
-            posterior.sample(rng=rng)
 
     def test_the_records_are_named_and_shaped(self, setting, rng):
         posterior = Chains(3)(
@@ -602,6 +606,221 @@ class TestThePresets:
                       reference=setting.inversion.reference(setting.data))
         with pytest.raises(ValueError, match="prior"):
             SMC(sampler)
+
+
+class TestTheConverters:
+    def test_pcn_beta_is_the_step_s_sine(self, setting):
+        h = time_from_pcn_beta(0.3)
+        assert np.sin(PriorOU(setting.target()).angle(h)) == pytest.approx(0.3)
+        assert pcn_beta(h) == pytest.approx(0.3)
+
+    def test_crank_nicolson_delta_is_the_step_s_contraction(self, setting):
+        h = time_from_crank_nicolson(0.5)
+        assert np.cos(PriorOU(setting.target()).angle(h)) == pytest.approx(1.5 / 2.5)
+        assert crank_nicolson_delta(h) == pytest.approx(0.5)
+
+    @pytest.mark.parametrize(
+        "convert, value",
+        [(time_from_pcn_beta, 1.0), (time_from_crank_nicolson, 2.0), (pcn_beta, 0.0),
+         (crank_nicolson_delta, -1.0)],
+    )
+    def test_values_out_of_range_are_refused(self, convert, value):
+        with pytest.raises(ValueError):
+            convert(value)
+
+
+def make_mixture(setting, rng):
+    """Two components on a two-dimensional chart, apart along it."""
+    chart = [setting.space.random(rng=rng) for _ in range(2)]
+    return MixtureReference(
+        setting.prior,
+        chart,
+        np.array([0.4, 0.6]),
+        np.array([[0.5, 0.0], [-0.5, 0.3]]),
+        np.array([np.diag([0.2, 0.3]), np.diag([0.4, 0.1])]),
+    )
+
+
+class TestOverAMixtureReference:
+    def test_the_reference_as_a_target_has_no_residual(self, setting, rng):
+        """``Phi_ref == 0``: its target is the reference itself, not the prior."""
+        mixture = make_mixture(setting, rng)
+        target = Target.from_reference(mixture)
+        state = Hamiltonian(target).initial_state(mixture.sample(rng=rng), rng=rng)
+        assert target.value(state) == pytest.approx(0.0, abs=1e-12)
+        assert setting.space.norm(target.gradient(state)) < 1e-12
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda t: SplittingScheme(PreconditionedOU(t), "LO", step=0.7),
+            lambda t: SplittingScheme(Overdamped(t), "LBO", step=0.7),
+            lambda t: SplittingScheme(Hamiltonian(t), "LOBAB", step=0.7),
+            lambda t: SplittingScheme(Underdamped(t, friction=1.0), "LOBAB", step=0.7),
+        ],
+        ids=["pcn", "mala", "hmc", "underdamped"],
+    )
+    def test_every_word_leaves_the_mixture_invariant(self, setting, build, rng):
+        check_scheme(build(setting.target(make_mixture(setting, rng))), rng=rng, samples=3000)
+
+    def test_a_state_starts_with_a_component(self, setting, rng):
+        mixture = make_mixture(setting, rng)
+        state = Hamiltonian(setting.target(mixture)).initial_state(
+            mixture.components[1].expectation, rng=rng
+        )
+        assert state.label == 1
+        assert state.velocity is not None
+
+    def test_a_word_without_the_label_jump_is_refused(self, setting, rng):
+        target = setting.target(make_mixture(setting, rng))
+        with pytest.raises(ValueError, match="label jump"):
+            MetropolisHastings(SplittingScheme(PreconditionedOU(target), "O", step=0.3))
+        scheme = SplittingScheme(Hamiltonian(target), "OBAB", step=0.3)
+        with pytest.raises(ValueError, match="label jump"):
+            MetropolizedBlock(scheme.block("BAB")).within(scheme)
+
+    def test_a_label_jump_needs_a_mixture(self, setting):
+        with pytest.raises(ValueError, match="mixture"):
+            LabelJump(setting.target())
+
+    @pytest.mark.parametrize(
+        "build, steps",
+        [
+            (lambda s, r: PCN(s.problem, s.prior, step=0.3, reference=r), 6000),
+            (lambda s, r: MALA(s.problem, s.prior, step=0.1, reference=r), 4000),
+            (lambda s, r: GeometricHMC(s.problem, r, step=0.3, length=3), 2000),
+        ],
+        ids=["pcn", "mala", "hmc"],
+    )
+    def test_each_preset_samples_the_posterior(self, setting, build, steps, rng):
+        """Any mixture over the prior leaves a chain exact; this one is not
+        fitted to the posterior at all."""
+        posterior = build(setting, make_mixture(setting, rng))(
+            setting.data, steps=steps, chains=2, burn_in=500, record=setting.record,
+            rng=np.random.default_rng(7),
+        )
+        assert_recovers_the_mean(posterior, setting.exact)
+
+
+@pytest.fixture(scope="module")
+def recorded_run(setting):
+    """An HMC run recording every component, its states stored."""
+    space = setting.space
+    record = LinearOperator.from_matrix(space, EuclideanSpace(4), np.eye(4), form="components")
+    return HMC(setting.problem, setting.prior, step=0.3, length=5)(
+        setting.data, steps=3000, chains=2, burn_in=500, record=record, thin=50,
+        rng=np.random.default_rng(11),
+    )
+
+
+@pytest.fixture(scope="module")
+def pcn_run(setting):
+    """A pCN run recording the probe."""
+    return PCN(setting.problem, setting.prior, step=0.3)(
+        setting.data, steps=2000, chains=2, burn_in=500, record=setting.record,
+        rng=np.random.default_rng(5),
+    )
+
+
+class TestTheFittedReference:
+    def test_a_gaussian_fit_is_close_to_the_posterior(self, setting, recorded_run):
+        """Charted on every component, the fit is the posterior to the
+        Monte Carlo error."""
+        reference = recorded_run.fitted_reference()
+        assert isinstance(reference, GaussianReference)
+        assert np.allclose(reference.expectation, setting.posterior.expectation, atol=0.1)
+        fitted = setting.components_covariance(reference)
+        exact = setting.components_covariance(setting.posterior)
+        assert np.allclose(fitted, exact, atol=0.1 * np.abs(exact).max())
+
+    def test_a_mixture_fit_has_the_components_asked_for(self, recorded_run, rng):
+        reference = recorded_run.fitted_reference(components=2, rng=rng)
+        assert isinstance(reference, MixtureReference)
+        assert len(reference.components) == 2
+
+    def test_another_chart_is_read_off_the_stored_states(self, setting, recorded_run):
+        reference = recorded_run.fitted_reference(chart=setting.record)
+        assert reference.rank == 1
+
+    def test_a_chart_is_needed(self, setting, rng):
+        kernel = MetropolisHastings(
+            SplittingScheme(PreconditionedOU(setting.target()), "O", step=0.3)
+        )
+        posterior = Chains(1)(kernel, start=setting.prior, steps=20, rng=rng)
+        with pytest.raises(ValueError, match="record="):
+            posterior.fitted_reference()
+        with pytest.raises(ValueError, match="thin="):
+            posterior.fitted_reference(chart=setting.record)
+
+    def test_a_weighted_ensemble_fits_one_too(self, setting):
+        ensemble = SMC(PCN(setting.problem, setting.prior, step=0.05), particles=500,
+                       mutation_steps=10)(setting.data, rng=np.random.default_rng(0))
+        reference = ensemble.fitted_reference(setting.record)
+        assert reference.rank == 1
+        assert setting.space.inner_product(
+            reference.expectation, setting.space.basis_vector(0)
+        ) == pytest.approx(setting.exact, abs=0.15)
+
+
+class TestFreshDraws:
+    def test_draws_are_from_the_posterior(self, setting, pcn_run):
+        values = np.array([
+            setting.space.inner_product(x, setting.space.basis_vector(0))
+            for x in pcn_run.samples(120, rng=np.random.default_rng(1))
+        ])
+        error = values.std() / np.sqrt(values.size)
+        assert abs(values.mean() - setting.exact) < 4 * error
+        assert pcn_run.steps_per_draw >= 1
+
+    def test_draws_do_not_depend_on_the_workers(self, pcn_run):
+        serial = pcn_run.samples(4, rng=np.random.default_rng(2))
+        parallel = pcn_run.samples(4, rng=np.random.default_rng(2), n_jobs=2)
+        assert all(np.array_equal(a, b) for a, b in zip(serial, parallel))
+
+    def test_a_draw_reference_can_be_set(self, setting, pcn_run, rng):
+        mixture = pcn_run.fitted_reference(components=2, rng=rng)
+        other = pcn_run.with_draw_reference(mixture)
+        assert other.draw_reference is mixture
+        assert pcn_run.draw_reference is not mixture
+        other.sample(rng=rng)
+
+    def test_a_draw_reference_over_another_prior_is_refused(self, setting, pcn_run):
+        prior = gi.GaussianMeasure.from_standard_deviation(setting.space, 2.0)
+        with pytest.raises(ValueError, match="prior"):
+            pcn_run.with_draw_reference(GaussianReference.from_prior(prior))
+
+
+class TestAPosteriorWithTwoModes:
+    """``d == m^2 + e``: a gradient sampler stays in the well it starts in;
+    over a mixture fitted to a pCN run it jumps between them."""
+
+    def test_a_fitted_mixture_moves_hmc_between_the_modes(self):
+        space, data_space = EuclideanSpace(1), EuclideanSpace(1)
+        forward = Operator.from_callables(
+            space, data_space, lambda m: m**2,
+            derivative=lambda m: LinearOperator.from_matrix(
+                space, data_space, np.array([[2.0 * m[0]]]), form="components"
+            ),
+        )
+        prior = gi.GaussianMeasure.from_standard_deviation(space, 1.0)
+        problem = ForwardProblem(
+            forward, error=gi.GaussianMeasure.from_standard_deviation(data_space, 0.3)
+        )
+        data = np.array([1.0])
+        record = LinearOperator.from_matrix(space, EuclideanSpace(1), np.eye(1), form="components")
+        rng = np.random.default_rng(37)
+        run = PCN(problem, prior, step=0.1)(
+            data, steps=1000, chains=4, burn_in=300, record=record, rng=rng
+        )
+        mixture = run.fitted_reference(components=2, rng=rng)
+        posterior = GeometricHMC(problem, mixture, step=0.3, length=3)(
+            data, steps=1000, chains=4, burn_in=300, record=record, rng=rng
+        )
+        m = posterior.scalars()[1]
+        crossings = int(np.sum(np.diff(np.sign(m), axis=1) != 0))
+        assert crossings > 500
+        assert np.mean(m > 0) == pytest.approx(0.5, abs=0.05)
+        assert posterior.diagnostics().rhat[1] < 1.02
 
 
 class MeshSetting:

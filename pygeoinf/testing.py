@@ -1720,7 +1720,9 @@ def check_scheme(
       removed, every flow left is an exact solve of the reference's own
       dynamics, so one application of the word, at the scheme's own step
       however large, must map the reference (with an independent ``N(0,
-      K)`` velocity, for an inertial dynamics) to itself. The sample mean
+      K)`` velocity, for an inertial dynamics) to itself. Over a mixture
+      reference the state carries a component, drawn from its share of the
+      density, and the velocity is drawn from that component's covariance. The sample mean
       and covariance of the position, and of the velocity, along a few
       probe directions are compared with the reference's, as
       :func:`check_measure` compares them, and so is the cross-covariance
@@ -1799,13 +1801,24 @@ def check_scheme(
                 f"{expected:g} before, beyond six standard errors",
             )
 
-    covariance = reference.covariance
-    images = [covariance(u) for u in probes]
-    block = np.array([[space.inner_product(image, v) for v in probes] for image in images])
+    def gram(covariance):
+        images = [covariance(u) for u in probes]
+        return np.array([[space.inner_product(image, v) for v in probes] for image in images])
+
+    block = gram(reference.covariance)
     expected_cov = np.zeros((parts * count, parts * count))
     expected_cov[:count, :count] = block
     if parts == 2:
-        expected_cov[count:, count:] = block
+        # Over a mixture the velocity is N(0, K_j) given the component, so
+        # its covariance is the weighted sum of the components'.
+        if dynamics.target.is_mixture:
+            velocity_block = sum(
+                weight * gram(component.covariance)
+                for weight, component in zip(reference.weights, reference.components)
+            )
+        else:
+            velocity_block = block
+        expected_cov[count:, count:] = velocity_block
     centered = projections - projections.mean(axis=0, keepdims=True)
     empirical = centered.T @ centered / (samples - 1)
     diagonal = np.diag(expected_cov)

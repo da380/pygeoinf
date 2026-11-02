@@ -32,7 +32,7 @@ from ...algebra.linearization import QuadraticModel
 from ...algebra.operators import EvaluationError, Functional, LinearFunctional
 from ...probability.absolutely_continuous import AbsolutelyContinuousMeasure
 from ...probability.gaussian import GaussianMeasure
-from ..gaussian import GaussianReference
+from ..gaussian import GaussianReference, MixtureReference
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...geometry.sets import Subset
@@ -53,14 +53,18 @@ class State:
     Attributes:
         position: the model.
         velocity: the velocity, or ``None`` for dynamics without one.
+        label: the component of a mixture reference the chain is following,
+            or ``None`` for a Gaussian reference.
     """
 
     position: Any
     velocity: Any = None
     cache: dict = field(default_factory=dict, repr=False)
+    label: int | None = None
 
     def with_position(self, position: Any, /) -> "State":
-        """A record at a new position, its velocity kept and nothing cached.
+        """A record at a new position, its velocity and label kept and
+        nothing cached.
 
         Args:
             position: the new model.
@@ -68,7 +72,7 @@ class State:
         Returns:
             The new record.
         """
-        return State(position, self.velocity)
+        return State(position, self.velocity, label=self.label)
 
     def with_velocity(self, velocity: Any, /) -> "State":
         """A record with a new velocity at the same position, cache kept.
@@ -79,10 +83,24 @@ class State:
         Returns:
             The new record.
         """
-        return State(self.position, velocity, self.cache)
+        return State(self.position, velocity, self.cache, self.label)
+
+    def with_label(self, label: int, /) -> "State":
+        """A record following another component, at the same position and
+        velocity, cache kept: what is cached per component is filed under
+        its label.
+
+        Args:
+            label: the component.
+
+        Returns:
+            The new record.
+        """
+        return State(self.position, self.velocity, self.cache, label)
 
     def moved(self, position: Any, velocity: Any, /) -> "State":
-        """A record at a new position and velocity, nothing cached.
+        """A record at a new position and velocity, its label kept and
+        nothing cached.
 
         Args:
             position: the new model.
@@ -91,7 +109,7 @@ class State:
         Returns:
             The new record.
         """
-        return State(position, velocity)
+        return State(position, velocity, label=self.label)
 
 
 class _Evaluation:
@@ -126,8 +144,9 @@ class Target:
         problem: the forward problem, with a Gaussian error measure.
         data: the observations.
         reference: a :class:`~pygeoinf.inference.gaussian.GaussianReference`
-            on the model space, or a Gaussian prior, which is taken as its
-            own reference.
+            or :class:`~pygeoinf.inference.gaussian.MixtureReference` on the
+            model space, or a Gaussian prior, which is taken as its own
+            reference.
         temperature: divides the likelihood potential. One is the posterior.
         constraint: a subset of the model space outside which the potential
             is ``+inf``, checked before the forward is called.
@@ -135,15 +154,15 @@ class Target:
     Raises:
         ValueError: if the reference does not live on the model space, or
             for a non-positive temperature.
-        TypeError: if the reference is neither a ``GaussianReference`` nor a
-            ``GaussianMeasure``.
+        TypeError: if the reference is not a ``GaussianReference``, a
+            ``MixtureReference`` or a ``GaussianMeasure``.
     """
 
     def __init__(
         self,
         problem: "ForwardProblem",
         data: Any,
-        reference: GaussianReference | GaussianMeasure,
+        reference: GaussianReference | MixtureReference | GaussianMeasure,
         /,
         *,
         temperature: float = 1.0,
@@ -168,7 +187,7 @@ class Target:
     def _init(
         self,
         potential: Functional,
-        reference: GaussianReference,
+        reference: GaussianReference | MixtureReference,
         /,
         *,
         temperature: float,
@@ -187,9 +206,13 @@ class Target:
 
     @classmethod
     def from_reference(
-        cls, reference: GaussianReference | GaussianMeasure, /
+        cls, reference: GaussianReference | MixtureReference | GaussianMeasure, /
     ) -> "Target":
-        """The target with no likelihood at all, ``Phi == 0``: the reference.
+        """The target that is the reference itself, ``Phi_ref == 0``.
+
+        Its likelihood potential is ``-log d nu / d mu_0``, which cancels the
+        reference's density, so the target is ``nu``; for the prior as its
+        own reference that is ``Phi == 0``.
 
         What a scheme is checked against: with nothing to correct, a word
         built from the reference's exact flows must leave the reference
@@ -203,11 +226,16 @@ class Target:
         """
         reference = _as_reference(reference)
         space = reference.domain
+        if reference.rank == 0:
 
-        def linearize(x: Any) -> QuadraticModel:
-            return QuadraticModel(x, 0.0, LinearFunctional.from_representer(space, space.zero()))
+            def linearize(x: Any) -> QuadraticModel:
+                return QuadraticModel(
+                    x, 0.0, LinearFunctional.from_representer(space, space.zero())
+                )
 
-        potential = Functional.from_callables(space, lambda x: 0.0, linearize=linearize)
+            potential = Functional.from_callables(space, lambda x: 0.0, linearize=linearize)
+        else:
+            potential = -reference.relative_log_density
         target = cls.__new__(cls)
         target._init(
             potential,
@@ -224,9 +252,36 @@ class Target:
     # ----------------------------------------------------------------- #
 
     @property
-    def reference(self) -> GaussianReference:
+    def reference(self) -> GaussianReference | MixtureReference:
         """The reference the dynamics solves exactly."""
         return self._reference
+
+    @property
+    def is_mixture(self) -> bool:
+        """Whether the reference is a mixture, its states carrying a label."""
+        return isinstance(self._reference, MixtureReference)
+
+    def component(self, state: State, /) -> GaussianReference:
+        """The Gaussian reference the state's flows solve: the reference
+        itself, or the mixture's component the state is labelled with.
+
+        Args:
+            state: the chain's state.
+
+        Returns:
+            The Gaussian reference.
+
+        Raises:
+            ValueError: for a mixture reference and a state with no label.
+        """
+        if not isinstance(self._reference, MixtureReference):
+            return self._reference
+        if state.label is None:
+            raise ValueError(
+                "A state on a mixture reference carries the label of a "
+                "component; start it with the dynamics' initial_state."
+            )
+        return self._reference.components[state.label]
 
     @property
     def prior(self) -> GaussianMeasure:
@@ -352,7 +407,8 @@ class Target:
         )
 
     def preconditioned_gradient(self, state: State, /) -> Any:
-        """``K grad Phi_ref``, with ``K`` the reference's covariance.
+        """``K grad Phi_ref``, with ``K`` the covariance of the state's
+        Gaussian reference (:meth:`component`).
 
         The data force of every gradient-based sampler, and the same vector
         whatever the space's metric: the metric that enters the gradient
@@ -367,10 +423,10 @@ class Target:
         Raises:
             ValueError: as for :meth:`gradient`.
         """
-        key = ("preconditioned", self)
+        key = ("preconditioned", self, state.label)
         cached = state.cache.get(key)
         if cached is None:
-            cached = self._reference.covariance(self.gradient(state))
+            cached = self.component(state).covariance(self.gradient(state))
             state.cache[key] = cached
         return cached
 
@@ -427,17 +483,20 @@ class _Source:
         self.potential = potential
 
 
-def _as_reference(reference: GaussianReference | GaussianMeasure) -> GaussianReference:
+def _as_reference(
+    reference: GaussianReference | MixtureReference | GaussianMeasure,
+) -> GaussianReference | MixtureReference:
     """A reference, taking a plain Gaussian as the prior and its own reference.
 
     Raises:
-        TypeError: for anything that is not a Gaussian.
+        TypeError: for anything that is not a Gaussian or a mixture reference.
     """
-    if isinstance(reference, GaussianReference):
+    if isinstance(reference, (GaussianReference, MixtureReference)):
         return reference
     if isinstance(reference, GaussianMeasure):
         return GaussianReference.from_prior(reference)
     raise TypeError(
-        f"A target is built on a GaussianReference or a Gaussian prior, not a "
+        f"A target is built on a GaussianReference, a MixtureReference or a "
+        f"Gaussian prior, not a "
         f"{type(reference).__name__}."
     )

@@ -29,7 +29,10 @@ Hamiltonian        the same, ``O`` a full refresh
 =================  =========================================================
 
 Letters belong to their dynamics: ``O`` is a momentum refresh in one and the
-prior's Ornstein-Uhlenbeck step in another.
+prior's Ornstein-Uhlenbeck step in another. Over a mixture reference every
+dynamics also has ``L``, :class:`~.flows.LabelJump`, the move between
+components; a kernel over a mixture must use it, or a chain would never
+leave the component it started in.
 """
 
 from __future__ import annotations
@@ -43,7 +46,15 @@ from ...algebra.direct_sum import DirectSum
 from ...algebra.spaces import HilbertSpace
 from ...probability.base import ProbabilityMeasure, ProductMeasure
 from ...probability.gaussian import GaussianMeasure
-from .flows import Flow, GradientDrift, LikelihoodKick, MomentumRefresh, PriorOU, PriorRotation
+from .flows import (
+    Flow,
+    GradientDrift,
+    LabelJump,
+    LikelihoodKick,
+    MomentumRefresh,
+    PriorOU,
+    PriorRotation,
+)
 from .target import State, Target
 
 __all__ = ["Dynamics", "Hamiltonian", "Overdamped", "PreconditionedOU", "Underdamped"]
@@ -66,6 +77,8 @@ class Dynamics(ABC):
     def __init__(self, target: Target, /) -> None:
         self._target = target
         self._flows = self._build_flows()
+        if target.is_mixture:
+            self._flows["L"] = LabelJump(target)
         if not target.has_gradient:
             needing = [letter for letter, flow in self._flows.items() if flow.uses_gradient]
             if needing:
@@ -111,10 +124,19 @@ class Dynamics(ABC):
 
         The target, against its reference, with an independent ``N(0, K)``
         velocity for the inertial dynamics.
+
+        Raises:
+            NotImplementedError: for an inertial dynamics over a mixture
+                reference, whose velocity's law depends on the label.
         """
         measure = self._target.measure
         if not self.has_velocity:
             return measure
+        if self._target.is_mixture:
+            raise NotImplementedError(
+                "Over a mixture reference the velocity's law depends on the "
+                "component, so the invariant measure is not a product."
+            )
         return ProductMeasure(
             [measure, _velocity_measure(self._target)],
             labels=("position", "velocity"),
@@ -124,16 +146,29 @@ class Dynamics(ABC):
         """A state at a position, with a velocity drawn from ``N(0, K)`` if
         the dynamics has one.
 
+        Over a mixture reference the state is first given a component, drawn
+        from its share of the density at the position, ``P(j | u)``, and the
+        velocity is drawn from that component's covariance.
+
         Args:
             position: the model.
-            rng: the generator for the velocity.
+            rng: the generator for the label and the velocity.
 
         Returns:
             The state.
         """
+        from ...algebra.spaces import resolve_rng
+
+        rng = resolve_rng(rng)
+        label = None
+        target = self._target
+        if target.is_mixture:
+            shares = target.reference.responsibilities(position)
+            label = int(rng.choice(shares.size, p=shares))
+        state = State(position, label=label)
         if not self.has_velocity:
-            return State(position)
-        return State(position, self._target.reference.fluctuation(rng=rng))
+            return state
+        return state.with_velocity(target.component(state).fluctuation(rng=rng))
 
     def flip(self, state: State, /) -> State:
         """The state with its velocity reversed, its cache kept.

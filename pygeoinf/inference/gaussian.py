@@ -45,6 +45,7 @@ from ..probability.absolutely_continuous import (
 )
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
+from ..probability.mixture import GaussianMixture
 from ..traits import Traits
 from .estimators import GaussianEstimator
 from .problem import LinearForwardProblem
@@ -59,6 +60,7 @@ __all__ = [
     "GaussianReference",
     "LinearGaussianInversion",
     "LowRankGaussianPosterior",
+    "MixtureReference",
 ]
 
 
@@ -1290,20 +1292,7 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
         images: Sequence[Any] | None = None,
         rtol: float = 1e-10,
     ) -> None:
-        from ..algebra.operators import Functional, LinearFunctional
-        from ..numerics.randomized import Estimate
-
-        if not isinstance(prior, GaussianMeasure):
-            raise TypeError(
-                f"A reference is built on a GaussianMeasure prior, not a "
-                f"{type(prior).__name__}."
-            )
-        prior_covariance = prior.covariance
-        if prior_covariance is None:
-            raise ValueError("A reference needs a prior that carries its covariance.")
-        if not prior.can_sample:
-            raise ValueError("A reference needs a prior that can be sampled.")
-        space = prior.domain
+        _check_prior(prior)
         vectors = list(chart)
         count = len(vectors)
         mean = np.asarray(chart_mean, dtype=float).reshape(-1)
@@ -1314,36 +1303,30 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
                 f"and a covariance of shape ({count}, {count}); got "
                 f"{mean.shape} and {covariance.shape}."
             )
-        if images is None:
-            images = [prior_covariance(w) for w in vectors]
-        images = list(images)
-        if len(images) != count:
-            raise ValueError(f"Expected {count} images, one per chart vector.")
+        transform, whitened, whitened_images = _whiten(prior, vectors, images, rtol=rtol)
+        a = transform @ mean
+        s = transform @ covariance @ transform.T
+        self._build(prior, whitened, whitened_images, a, 0.5 * (s + s.T))
 
-        whitened: list[Any] = []
-        whitened_images: list[Any] = []
-        a = np.zeros(0)
-        s = np.zeros((0, 0))
-        if count:
-            gram = np.array(
-                [[space.inner_product(w, image) for image in images] for w in vectors]
-            )
-            gram = 0.5 * (gram + gram.T)
-            values, vecs = np.linalg.eigh(gram)
-            largest = float(values.max()) if values.size else 0.0
-            keep = values > rtol * largest if largest > 0.0 else values > np.inf
-            transform = (vecs[:, keep] / np.sqrt(values[keep])).T
-            for row in transform:
-                w = space.zero()
-                image = space.zero()
-                for weight, vector, mapped in zip(row, vectors, images):
-                    w = space.axpy(float(weight), vector, w)
-                    image = space.axpy(float(weight), mapped, image)
-                whitened.append(w)
-                whitened_images.append(image)
-            a = transform @ mean
-            s = transform @ covariance @ transform.T
-            s = 0.5 * (s + s.T)
+    def _build(
+        self,
+        prior: GaussianMeasure,
+        whitened: list[Any],
+        whitened_images: list[Any],
+        a: np.ndarray,
+        s: np.ndarray,
+        /,
+    ) -> None:
+        """Set the reference up from a chart already whitened under the prior.
+
+        Raises:
+            ValueError: if the chart's covariance is not positive definite.
+        """
+        from ..algebra.operators import Functional, LinearFunctional
+        from ..numerics.randomized import Estimate
+
+        space = prior.domain
+        prior_covariance = prior.covariance
         rank = len(whitened)
         try:
             cholesky = np.linalg.cholesky(s) if rank else np.zeros((0, 0))
@@ -1408,6 +1391,23 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
                 unsafe=True,
             )
         self._init_density(prior, density, log_normalizer=Estimate(0.0, 0.0, 0))
+
+    @classmethod
+    def _from_whitened(
+        cls,
+        prior: GaussianMeasure,
+        whitened: list[Any],
+        whitened_images: list[Any],
+        a: np.ndarray,
+        s: np.ndarray,
+        /,
+    ) -> "GaussianReference":
+        """A reference on a chart already whitened, which is kept as it is:
+        what the components of a mixture are built from, so that they share
+        one chart exactly."""
+        reference = cls.__new__(cls)
+        reference._build(prior, list(whitened), list(whitened_images), a, s)
+        return reference
 
     # ----------------------------------------------------------------- #
     #                            Constructors                           #
@@ -1586,6 +1586,299 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
         for weight, w in zip(weights, self._chart):
             result = space.axpy(float(weight), w, result)
         return result
+
+
+class MixtureReference(GaussianMixture, AbsolutelyContinuousMeasure):
+    """The prior with a finite chart's law replaced by a Gaussian mixture.
+
+    :class:`GaussianReference` with ``N(a, S)`` on the chart replaced by
+    ``sum_j p_j N(a_j, S_j)``: a mixture of Gaussian references that share
+    one chart and differ only in its law, so it is equivalent to the prior
+    and its density against it is ``r``-dimensional,
+
+    .. code-block:: text
+
+        log d nu / d mu_0 (u) == log sum_j p_j n(l(u); a_j, S_j) - log n(l(u); 0, I)
+
+    in the whitened chart, normalized, with a gradient. It is what a posterior
+    with several modes is fitted by, one component a mode.
+
+    A rotation preserves only Gaussians, so a sampler uses it through its
+    components: a chain carries the label of one, whose exact flows it
+    follows, and changes label by :meth:`transport`, the affine map in the
+    chart that carries one component onto another exactly.
+
+    Args:
+        prior: the Gaussian prior, samplable and carrying a covariance.
+        chart: the vectors ``w_k`` of the chart, as for
+            :class:`GaussianReference`.
+        weights: the components' weights ``p_j``, normalized here.
+        means: the chart's mean under each component, shape ``(count, r)``.
+        covariances: the chart's covariance under each component, shape
+            ``(count, r, r)``, each positive definite.
+        images: ``C w_k`` for each chart vector, when already computed.
+        rtol: the relative size below which a chart direction is dropped.
+
+    Raises:
+        TypeError: if the prior is not a ``GaussianMeasure``.
+        ValueError: if the prior has no covariance or cannot be sampled,
+            the chart is empty after dependent directions are dropped, the
+            parameters have the wrong shapes or weights, or a component's
+            covariance is not positive definite.
+    """
+
+    def __init__(
+        self,
+        prior: GaussianMeasure,
+        chart: Sequence[Any],
+        weights: np.ndarray,
+        means: np.ndarray,
+        covariances: np.ndarray,
+        /,
+        *,
+        images: Sequence[Any] | None = None,
+        rtol: float = 1e-10,
+    ) -> None:
+        from ..algebra.operators import Functional, LinearFunctional
+        from ..numerics.randomized import Estimate
+
+        _check_prior(prior)
+        vectors = list(chart)
+        count = len(vectors)
+        means = np.asarray(means, dtype=float)
+        covariances = np.asarray(covariances, dtype=float)
+        components = means.shape[0] if means.ndim == 2 else 0
+        if (
+            components == 0
+            or means.shape != (components, count)
+            or covariances.shape != (components, count, count)
+        ):
+            raise ValueError(
+                f"A chart of {count} vectors needs means of shape (components, "
+                f"{count}) and covariances of shape (components, {count}, "
+                f"{count}); got {means.shape} and {covariances.shape}."
+            )
+        transform, whitened, whitened_images = _whiten(prior, vectors, images, rtol=rtol)
+        if not whitened:
+            raise ValueError("A mixture reference needs a chart the prior can see.")
+        parts = []
+        for mean, covariance in zip(means, covariances):
+            s = transform @ covariance @ transform.T
+            parts.append(
+                GaussianReference._from_whitened(
+                    prior, whitened, whitened_images, transform @ mean, 0.5 * (s + s.T)
+                )
+            )
+        super().__init__(parts, weights=weights)
+        self._prior = prior
+        self._chart = tuple(whitened)
+        self._images = tuple(whitened_images)
+        self._log_weights = np.log(np.maximum(self.weights, np.finfo(float).tiny))
+        space = prior.domain
+        density = Functional.from_callables(
+            space,
+            self._density_value,
+            derivative=lambda x: LinearFunctional.from_representer(
+                space, self._density_gradient(x)
+            ),
+        )
+        self._init_density(prior, density, log_normalizer=Estimate(0.0, 0.0, 0))
+
+    # ----------------------------------------------------------------- #
+    #                              Reading                              #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def prior(self) -> GaussianMeasure:
+        """The prior this reference is equivalent to; also its ``reference``."""
+        return self._prior
+
+    @property
+    def components(self) -> list[GaussianReference]:
+        """The Gaussian references mixed, sharing one whitened chart."""
+        return list(self._components)
+
+    @property
+    def rank(self) -> int:
+        """The chart's dimension after dependent directions are dropped."""
+        return len(self._chart)
+
+    @property
+    def chart(self) -> tuple[Any, ...]:
+        """The whitened chart vectors, shared by every component."""
+        return self._chart
+
+    def coordinates(self, x: Any, /) -> np.ndarray:
+        """The whitened chart coordinates of a model, ``((w_k, x - m_0))_k``.
+
+        Args:
+            x: a model.
+
+        Returns:
+            The ``rank`` coordinates.
+        """
+        space = self.domain
+        offset = space.subtract(x, self._prior.expectation)
+        return np.array([space.inner_product(w, offset) for w in self._chart])
+
+    def responsibilities(self, x: Any, /) -> np.ndarray:
+        """``P(j | u)``: each component's share of the density at a model.
+
+        Args:
+            x: a model.
+
+        Returns:
+            The probabilities, one per component.
+        """
+        terms = self._log_terms(self.coordinates(x))
+        terms = np.exp(terms - terms.max())
+        return terms / terms.sum()
+
+    def transport(
+        self, x: Any, source: int, destination: int, /, *, centered: bool = False
+    ) -> Any:
+        """Carry a model from one component to another, exactly.
+
+        In the chart, ``z' == a_k + L_k L_j^-1 (z - a_j)`` with ``L`` each
+        component's Cholesky factor; outside it nothing changes, so the model
+        moves by ``C W (z' - z)``, ``r`` precomputed vectors. The map pushes
+        component ``j`` onto component ``k``, which is what makes a change of
+        label an exact Metropolis move. A velocity, which has mean zero under
+        every component, is carried with *centered*.
+
+        Args:
+            x: the model, or a velocity with *centered*.
+            source: the component ``j`` it is drawn from.
+            destination: the component ``k`` it is carried to.
+            centered: carry a centered vector: the means are left out.
+
+        Returns:
+            The carried vector.
+        """
+        from scipy.linalg import solve_triangular
+
+        space = self.domain
+        start, end = self._components[source], self._components[destination]
+        if centered:
+            z = np.array([space.inner_product(w, x) for w in self._chart])
+            mapped = end._cholesky @ solve_triangular(start._cholesky, z, lower=True)
+        else:
+            z = self.coordinates(x)
+            deviation = solve_triangular(start._cholesky, z - start._chart_mean, lower=True)
+            mapped = end._chart_mean + end._cholesky @ deviation
+        result = space.copy(x)
+        for weight, image in zip(mapped - z, self._images):
+            result = space.axpy(float(weight), image, result)
+        return result
+
+    # ----------------------------------------------------------------- #
+    #                             Internals                             #
+    # ----------------------------------------------------------------- #
+
+    def _log_terms(self, z: np.ndarray, /) -> np.ndarray:
+        """``log p_j + log n(z; a_j, S_j)``, less the shared ``2 pi`` term."""
+        from scipy.linalg import solve_triangular
+
+        terms = np.empty(len(self._components))
+        for j, component in enumerate(self._components):
+            deviation = solve_triangular(
+                component._cholesky, z - component._chart_mean, lower=True
+            )
+            terms[j] = (
+                self._log_weights[j] - 0.5 * deviation @ deviation - component._log_det_half
+            )
+        return terms
+
+    def _density_value(self, x: Any) -> float:
+        """``logsumexp_j(...) - log n(z; 0, I)`` at the chart coordinates."""
+        z = self.coordinates(x)
+        terms = self._log_terms(z)
+        largest = terms.max()
+        return float(largest + np.log(np.exp(terms - largest).sum()) + 0.5 * z @ z)
+
+    def _density_gradient(self, x: Any) -> Any:
+        """``W* (z - sum_j r_j S_j^-1 (z - a_j))``, ``r_j`` the responsibilities."""
+        from scipy.linalg import cho_solve
+
+        space = self.domain
+        z = self.coordinates(x)
+        terms = self._log_terms(z)
+        shares = np.exp(terms - terms.max())
+        shares /= shares.sum()
+        weights = z.copy()
+        for share, component in zip(shares, self._components):
+            weights -= share * cho_solve(
+                (component._cholesky, True), z - component._chart_mean
+            )
+        result = space.zero()
+        for weight, w in zip(weights, self._chart):
+            result = space.axpy(float(weight), w, result)
+        return result
+
+    def __repr__(self) -> str:
+        return f"MixtureReference({len(self._components)} components, rank {self.rank})"
+
+
+def _check_prior(prior: Any, /) -> None:
+    """Refuse a prior a reference cannot be built on.
+
+    Raises:
+        TypeError: if the prior is not a ``GaussianMeasure``.
+        ValueError: if it has no covariance or cannot be sampled.
+    """
+    if not isinstance(prior, GaussianMeasure):
+        raise TypeError(
+            f"A reference is built on a GaussianMeasure prior, not a "
+            f"{type(prior).__name__}."
+        )
+    if prior.covariance is None:
+        raise ValueError("A reference needs a prior that carries its covariance.")
+    if not prior.can_sample:
+        raise ValueError("A reference needs a prior that can be sampled.")
+
+
+def _whiten(
+    prior: GaussianMeasure,
+    vectors: list[Any],
+    images: Sequence[Any] | None,
+    /,
+    *,
+    rtol: float,
+) -> tuple[np.ndarray, list[Any], list[Any]]:
+    """The chart whitened under the prior, dependent directions dropped.
+
+    Returns ``(T, whitened, images)`` with ``T`` the ``(rank, count)`` map
+    from the given chart's coordinates to the whitened ones.
+
+    Raises:
+        ValueError: for a number of images other than the number of vectors.
+    """
+    space = prior.domain
+    count = len(vectors)
+    if images is None:
+        images = [prior.covariance(w) for w in vectors]
+    images = list(images)
+    if len(images) != count:
+        raise ValueError(f"Expected {count} images, one per chart vector.")
+    if not count:
+        return np.zeros((0, 0)), [], []
+    gram = np.array([[space.inner_product(w, image) for image in images] for w in vectors])
+    gram = 0.5 * (gram + gram.T)
+    values, vecs = np.linalg.eigh(gram)
+    largest = float(values.max()) if values.size else 0.0
+    keep = values > rtol * largest if largest > 0.0 else values > np.inf
+    transform = (vecs[:, keep] / np.sqrt(values[keep])).T
+    whitened: list[Any] = []
+    whitened_images: list[Any] = []
+    for row in transform:
+        w = space.zero()
+        image = space.zero()
+        for weight, vector, mapped in zip(row, vectors, images):
+            w = space.axpy(float(weight), vector, w)
+            image = space.axpy(float(weight), mapped, image)
+        whitened.append(w)
+        whitened_images.append(image)
+    return transform, whitened, whitened_images
 
 
 def _data_chart(

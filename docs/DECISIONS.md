@@ -3994,7 +3994,10 @@ to be Gaussian, since a rotation preserves only Gaussian pairs; a non-Gaussian
 chart law, a mixture for one, serves only pCN-type moves with a Gibbs step on
 the label, entering as a kernel flow. Constructors come from the linear
 low-rank posterior and from Laplace first; from chains' output, and as
-mixtures, later.
+mixtures, later. *Amended 2026-11-02 by D-223 and D-224:* a mixture chart law
+serves every dynamics, through its components, and the label changes by a
+Metropolized transport rather than a Gibbs step; references are fitted from
+chains' output and weighted ensembles.
 
 **D-216. The Laplace Gaussian is a reference in its Gauss–Newton form, at
 any rank** (2026-11-02, Oscar). With `m` data the Gauss–Newton update
@@ -4146,6 +4149,70 @@ same through `LinearGaussianInversion.reference(data)` and a low-rank route
 mirroring `LowRankGaussianPosterior.from_linear_problem`, whose spelling
 settles with the implementation. D-132's posteriors are unchanged. The
 geometric presets take a `GaussianReference`.
+
+**D-222. The literature's step parameters convert to the time step**
+(2026-11-02, Oscar, settling D-213's converters). Four functions in
+`sampling/flows.py`, beside the prior Ornstein-Uhlenbeck step whose angle
+they describe: `time_from_pcn_beta(beta)`, `h == -log(1 - beta^2) / 2`, and
+`time_from_crank_nicolson(delta)`, `h == 2 artanh(delta / 2)`, with their
+inverses `pcn_beta(h)` and `crank_nicolson_delta(h)`. Functions rather than
+preset constructors, so that a reader converts once and every preset and
+hand-built scheme keeps the one parameter, `h`. HMC's literature step is
+already an angle and needs none.
+
+**D-223. A mixture reference, and a Metropolized jump between its
+components** (2026-11-02, Oscar, amending D-215's "a Gibbs step on the
+label"). `MixtureReference(prior, chart, weights, means, covariances)`, in
+`inference/gaussian.py`, is the prior with the chart's law a Gaussian
+mixture: a `GaussianMixture` of `GaussianReference` components sharing one
+whitened chart, and an `AbsolutelyContinuousMeasure` over the prior whose
+density is the `r`-dimensional log-sum-exp, normalized, with a gradient; it
+is equivalent to the prior by construction. A rotation preserves only
+Gaussians, so a chain carries a component label (`State.label`) and every
+flow solves the labelled component, through `Target.component(state)`; the
+joint target is `exp(-Phi_ref) p_j nu_j`, with `Phi_ref == Phi + log d nu /
+d mu_0` independent of the label, so its marginal is the posterior and the
+dynamics, the corrections and the energy bookkeeping are unchanged within a
+component. The label changes by the letter `L`, `LabelJump`, which every
+dynamics gains over a mixture: it proposes a component from the weights and
+carries the state by the affine map in the chart that pushes one component
+onto the other exactly (`MixtureReference.transport`, the velocity carried
+with it), so the acceptance is `exp(-dPhi_ref)` and the move preserves the
+target. A Gibbs step on the label, as D-215 had it, was rejected: where the
+components are well apart the label is all but fixed by the position, so the
+chain would never change mode, which is the case the mixture exists for.
+Corrections refuse a word over a mixture without `L`; Metropolis-Hastings
+runs target-preserving letters before and after its proposal, as the block
+correction does; the presets prefix `L` (`"LO"`, `"LBO"`, `"LOBAB"`), and
+the geometric presets take either kind of reference. On the double well of
+example 37, MALA and HMC over a two-component mixture fitted to a pCN run
+cross the barrier about 1700 times in 4000 steps, against 3 to 40 without.
+Tempering still starts from the prior only. Settled with it:
+`Target.from_reference(nu)` is the target `nu` itself, `Phi_ref == 0`,
+its potential `-log d nu / d mu_0`; it had been the prior for any reference
+but the prior, which `check_scheme` relies on.
+
+**D-224. References fitted to a run, and `sample()` as a short chain from
+one** (2026-11-02, Oscar, settling D-215's "from chains' output" and D-220).
+`SampledPosterior.fitted_reference(*, components=1, chart=None, rng=None)`
+charts the run's recorded map (`l(u) == R (u - m_0)`, its vectors the
+representers of `R`'s components) and fits the chart's law to the records
+of every kept step: one Gaussian, or a mixture of `components` by weighted
+expectation-maximization (`numerics/mixture_fit.py`, k-means++ seeding, a
+ridge relative to the points' spread). The chart is required: the record, or
+an explicit `chart=` read off the stored states; nothing falls back to
+principal directions, since a run that records nothing is not one to fit.
+The number of components is the caller's. `WeightedEnsemble` fits the same
+way from its particles and weights, over a chart it is given.
+`SampledPosterior.sample()` draws a start from `draw_reference` (a single
+Gaussian fitted on first use and cached, or the reference set by
+`with_draw_reference(...)`, named so because `reference` is already the
+prior a density is taken against), runs the run's kernel at the mean of its
+chains' adapted steps for `steps_per_draw`, twice the largest integrated
+autocorrelation time of the recorded scalars, and returns the last state;
+each call is its own chain, so `samples(n, n_jobs=)` is parallel and does
+not depend on the workers. Measured on the double well, 3000 draws gave
+`E[m^2]` within one standard error of the exact value from either start.
 
 ## Appendix: measurements behind the defaults
 

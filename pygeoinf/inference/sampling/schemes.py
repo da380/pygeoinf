@@ -280,7 +280,7 @@ class SplittingScheme:
         """``log q(origin, destination) / Q(origin, destination)``."""
         target = self._dynamics.target
         space = target.model_space
-        mean = target.reference.expectation
+        mean = target.component(origin).expectation
         gradient = target.gradient(origin)
         preconditioned = target.preconditioned_gradient(origin)
         centre = space.axpy(

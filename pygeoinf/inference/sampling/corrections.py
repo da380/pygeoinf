@@ -219,11 +219,13 @@ class MetropolizedBlock:
 
         Raises:
             ValueError: if the scheme is over another dynamics or repeated,
-                does not contain the block's word, or has a letter outside
-                the block that does not preserve the target.
+                does not contain the block's word, has a letter outside the
+                block that does not preserve the target, or lacks the label
+                jump over a mixture reference.
         """
         if scheme.dynamics is not self._block.dynamics:
             raise ValueError("The block and the scheme must share one dynamics.")
+        _require_label_jump(scheme)
         if scheme.repeat != 1:
             raise ValueError(
                 "Repeat the block, not the outer word: the block's own repeat "
@@ -358,19 +360,24 @@ class _BlockKernel(Kernel):
 class MetropolisHastings(Kernel):
     """A stochastic proposal corrected through its transition density.
 
-    The proposal is one application of the scheme; it is accepted with
+    The proposal is the scheme's word less any letters before and after it
+    that preserve the target, such as a mixture's label jump, which run
+    uncorrected. It is accepted with
     ``log alpha == Phi_ref(u) - Phi_ref(v) + log q(v, u) / q(u, v)``, the
     last term taken relative to the reference's own kernel so that it is
     finite on a function space.
 
     Args:
-        scheme: a scheme whose transition density is known: a word of prior
-            Ornstein-Uhlenbeck steps (pCN and its generalization), or a
-            drift followed by one such step (the overdamped MALA proposal).
+        scheme: a scheme whose proposal's transition density is known: a
+            word of prior Ornstein-Uhlenbeck steps (pCN and its
+            generalization), or a drift followed by one such step (the
+            overdamped MALA proposal), with target-preserving letters
+            around it.
 
     Raises:
-        ValueError: for a scheme whose transition density is not known, or
-            one whose dynamics carries a velocity.
+        ValueError: for a proposal whose transition density is not known, a
+            dynamics that carries a velocity, or a mixture reference and a
+            word without its label jump.
     """
 
     def __init__(self, scheme: SplittingScheme, /) -> None:
@@ -380,12 +387,26 @@ class MetropolisHastings(Kernel):
                 f"{type(scheme.dynamics).__name__} carries a velocity, so "
                 "correct its deterministic block with MetropolizedBlock."
             )
-        if not scheme.has_transition_density:
+        _require_label_jump(scheme)
+        flows = scheme.flows
+        first = 0
+        while first < len(flows) and TARGET in flows[first][0].preserves:
+            first += 1
+        last = len(flows)
+        while last > first and TARGET in flows[last - 1][0].preserves:
+            last -= 1
+        if first == last:
+            raise ValueError(f"{scheme!r} has no proposal for a correction to accept.")
+        proposal = scheme.block(scheme.word[first:last])
+        if not proposal.has_transition_density:
             raise ValueError(
-                f"The transition density of {scheme!r} is not known, so no "
+                f"The transition density of {proposal!r} is not known, so no "
                 "Metropolis-Hastings ratio can be formed for it."
             )
         self._scheme = scheme
+        self._proposal = proposal
+        self._before: list[tuple[Flow, float]] = list(flows[:first])
+        self._after: list[tuple[Flow, float]] = list(flows[last:])
 
     @property
     def dynamics(self) -> Dynamics:
@@ -394,16 +415,29 @@ class MetropolisHastings(Kernel):
 
     @property
     def scheme(self) -> SplittingScheme:
-        """The proposal."""
+        """The whole word."""
         return self._scheme
+
+    @property
+    def proposal(self) -> SplittingScheme:
+        """The part of the word that is corrected."""
+        return self._proposal
 
     @property
     def step_size(self) -> float:
         """The scheme's time step."""
         return self._scheme.step
 
+    def _run(self, flows: list[tuple[Flow, float]], state: State, rng: Generator) -> State:
+        """Apply uncorrected flows in order."""
+        step = self._scheme.step
+        for flow, fraction in flows:
+            state, _ = flow.apply(state, fraction * step, rng=rng)
+        return state
+
     def step(self, state: State, /, *, rng: Generator | None = None) -> Step:
-        """One proposal, accepted or not.
+        """The letters before the proposal, one proposal accepted or not,
+        and the letters after.
 
         Args:
             state: where to start.
@@ -414,15 +448,17 @@ class MetropolisHastings(Kernel):
         """
         rng = resolve_rng(rng)
         target = self.dynamics.target
-        proposal, _ = self._scheme.apply(state, rng=rng)
+        state = self._run(self._before, state, rng)
+        proposal, _ = self._proposal.apply(state, rng=rng)
         proposed = target.value(proposal)
         if proposed == float("inf"):
             error = float("inf")
         else:
-            ratio = self._scheme.log_transition_ratio(state, proposal)
+            ratio = self._proposal.log_transition_ratio(state, proposal)
             error = proposed - target.value(state) - ratio
         accepted, acceptance = _accept(-error, rng)
-        return Step(proposal if accepted else state, 0.0, StepInfo(accepted, acceptance, error))
+        state = self._run(self._after, proposal if accepted else state, rng)
+        return Step(state, 0.0, StepInfo(accepted, acceptance, error))
 
     def with_step(self, step: float, /) -> Kernel:
         """The same correction at another time step.
@@ -450,3 +486,16 @@ class MetropolisHastings(Kernel):
 
     def __repr__(self) -> str:
         return f"MetropolisHastings({self._scheme!r})"
+
+
+def _require_label_jump(scheme: SplittingScheme, /) -> None:
+    """Refuse a word over a mixture reference that never changes component.
+
+    Raises:
+        ValueError: if the dynamics has a label jump and the word lacks it.
+    """
+    if "L" in scheme.dynamics.flows() and "L" not in {letter for letter, _ in scheme.word}:
+        raise ValueError(
+            "Over a mixture reference the word needs the label jump L, or a "
+            "chain would never leave the component it started in."
+        )

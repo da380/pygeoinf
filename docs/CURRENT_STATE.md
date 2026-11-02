@@ -14,7 +14,11 @@ full on 2026-10-29. The release plan in §10 was settled with David on
 2026-10-24 and its first tranche landed the same day as D-127 to D-133; the
 feasible-set rebuild and the ray operator followed on 2026-10-27 (D-134 to
 D-156) and the review clean-up on 2026-10-28 (D-157 to D-160); the
-remaining items carry their D-numbers as each change lands.
+remaining items carry their D-numbers as each change lands. The sampling
+package (`inference.sampling`, D-211 to D-224) was built on the `sampling`
+branch on 2026-11-02 and is not in the counts above: its fast tests, its
+slow mesh-refinement tests and examples 37 and 38 were run then, against
+the core dependencies only.
 
 ---
 
@@ -43,21 +47,22 @@ is what most of the rest follows from:
 | `traits` | the seven trait flags and their closure and propagation rules |
 | `probability` | `ProbabilityMeasure`, `GaussianMeasure`, `GaussianMixture`, `AbsolutelyContinuousMeasure` (D-132), products and push-forwards, conditioning, credible sets |
 | `geometry` | convex sets (balls, ellipsoids including semidefinite ones, half-spaces, polytopes, intersections, oracle sets), the conversions between a set's descriptions (D-135), level and sublevel sets, affine and linear subspaces, projectors, support functions; the feasible property set with its algorithms `ClosedForm`, `Primal`, `Search`, `Dual`, `Splitting`, `Distance`, `SProcedure` (D-142), and the ellipsoidal descriptions of D-141: the S-procedure outer ellipsoid, the bound on a Minkowski sum of ellipsoids, a polytope's inscribed ellipsoid, a point set's enclosing ellipsoid |
-| `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles |
+| `numerics` | Krylov and direct solvers, the spectral family solver, preconditioners generic and structure-aware, the normal operators and the Tikhonov family with its misfit search (D-142), randomised linear algebra, the operator calculus, log-determinants, optimisation and line searches, convex methods (bundle, KKT, Chambolle-Pock), quadratic programming, root finding, weighted chi-square quantiles; chain diagnostics (Geyer's autocorrelation time, effective sample size, split rank-normalized `R-hat`) and a weighted Gaussian-mixture fit by EM, both on plain arrays for the samplers (D-218, D-224) |
 | `symmetric_space` | the sphere on Driscoll-Healy or Gauss-Legendre grids; the periodic box in any dimension with the circle, torus, line and plane as named geometries; the bounded box and interval; `evaluate_gradient` at scattered points (ducc0 on the sphere, the `ik`-scaled transform on the boxes) and the nonlinear `ray_travel_time_operator`, bending or shooting, on every geometry, with its linearization and its Hessian action (D-156) |
 | `spectral_element`, `interval`, `ball` | spaces in the eigenbasis of `1 - div(L² grad)` on a padded spectral-element mesh, for a length scale that varies, reached by geometry (D-161): `interval` on the line under `dx` with `interval.radial` for functions of radius under `r² dr`, `ball` for a ball or annulus, each with its `Layered` for piecewise-continuous fields over adjacent layers (their direct sum, with points, jumps, integrals and layer-by-layer priors, D-126); `spectral_element` is the shared core (`SpectralElementSpace`, `AxisSpace`, the mesh, Robin ends, the batched harmonic transform, the fit over the domain for sampled functions), wrapping `planetmodel.randomfield`, an optional extra; all three are imported on demand (D-115 to D-124) |
 | `disk` | fields on a disk or an annulus in the plane, the two-dimensional `ball`: Fourier modes of the angle times radial eigenfunctions of `1 - div(L² grad)` under `r dr` on a padded spectral-element mesh, with `Lebesgue`, `Sobolev` and `Layered` (jumps taken at angles), points `(radius, angle)` in degrees anticlockwise from the `x` axis; the radial family is `planetmodel`'s with the measure changed (`spectral_element._cylindrical`: `CylindricalOperatorFamily`, the FFT `RingTransform`, `PolarBasis`); drawn whole in the plane by `plotting`, with points and polyline paths; imported on demand |
-| `inference` | forward problems with their likelihood `potential`; the estimator hierarchy, every class a `PointEstimator`, `SetEstimator` or `MeasureEstimator` (D-163): the linear point estimators `LeastSquares`, `MinimumNorm` (the discrepancy principle its method), their constrained forms and `BackusGilbert` (the averaging-kernel estimate, with its resolution, propagated covariance and bias), the generic `Minimization` with `NonlinearLeastSquares`, `MaximumAPosteriori` on it, `ConstrainedMinimization` with `Occam`; `LinearGaussianInversion`, the mixture inversion, `GaussianPosterior` (D-132) and `LaplaceApproximation` as the measure estimators; `BackusGilbertParker` over the geometry layer's feasible set, linearised about a model for a nonlinear forward; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics` |
+| `inference` | forward problems with their likelihood `potential`; the estimator hierarchy, every class a `PointEstimator`, `SetEstimator` or `MeasureEstimator` (D-163): the linear point estimators `LeastSquares`, `MinimumNorm` (the discrepancy principle its method), their constrained forms and `BackusGilbert` (the averaging-kernel estimate, with its resolution, propagated covariance and bias), the generic `Minimization` with `NonlinearLeastSquares`, `MaximumAPosteriori` on it, `ConstrainedMinimization` with `Occam`; `LinearGaussianInversion`, the mixture inversion, `GaussianPosterior` (D-132) and `LaplaceApproximation` as the measure estimators; `BackusGilbertParker` over the geometry layer's feasible set, linearised about a model for a nonlinear forward; the normal operators, the Tikhonov family and the structure-aware preconditioners are re-exported from `numerics`. `inference.sampling` is function-space MCMC as discretised SDE dynamics in four layers, each a file (D-211, D-218): the `Target` (the residual potential against a reference), dynamics and their exact flows, splitting schemes, Metropolis corrections, and populations (`Chains`, `Tempering`), with the presets `PCN`, `MALA`, `HMC`, `PreconditionedHMC`, `GeometricMALA`, `GeometricHMC` and `SMC` as measure estimators returning a `SampledPosterior` or a `WeightedEnsemble`; its references are `GaussianReference` and `MixtureReference`, beside the posteriors in `inference/gaussian.py`, handed out by the estimators and fitted to runs (D-214, D-215, D-221, D-223, D-224) |
 | `plotting` | fields, points, paths, balls and networks on every symmetric geometry; shells, sections by any plane with their stations, and profiles of a `ball`, a `disk` whole in the plane with its points and paths (D-175), lines on an `interval` and its radial profile (D-120); convex sets in one, two and three dimensions, with plotly as an optional 3-D engine (D-133); marginals, corner plots and error bounds |
-| `testing` | thirteen `check_*` functions, from the space axioms to affine operators and convexity (D-105), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
+| `testing` | fifteen `check_*` functions, from the space axioms to affine operators, convexity and a sampler's splitting scheme (D-105, D-218), each taking `rtol=` and returning a `CheckReport` of what it measured (D-128) |
 | `datasets` | the shipped station and earthquake tables, the cache directory, and the explicit downloads that refresh them (D-103) |
 | `parallel` | `parallel_map` and `resolve_jobs`, the one place joblib is called (D-52) |
 | `compat` | v1 class-name aliases and the v1-space adapter; goes with v1 (D-101) |
 
 111 names are re-exported at the top level and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `testing`,
-`compat`, `spectral_element`, `interval`, `ball` and `disk` are imported explicitly. Thirty-six examples under `examples/`
-run in the suite, two of them marked slow; their README says what each shows. Fourteen tutorials
+`compat`, `spectral_element`, `interval`, `ball` and `disk` are imported explicitly, and
+the samplers from `gi.inference.sampling`. Thirty-eight examples under `examples/`
+run in the suite, two of them marked slow, the last two on sampling; their README says what each shows. Fourteen tutorials
 under `tutorials/` with generated notebooks (two marked slow), and the first mini-app under
 `miniapps/` (the C++ vector backend, D-169), run in the fast suite.
 MFEM is not in the package: `miniapps/mfem/` wraps it, as a finite element
@@ -144,6 +149,20 @@ S-procedure ellipsoid, model-space by default, is checked against the
 set's support along its principal axes before it is returned (D-203); a
 polytope's `inscribed_ellipsoid()` describes the polytope and a point set's
 `enclosing_ellipsoid()` the points, neither the set (D-141).
+
+The samplers are exact in the long-run limit and Metropolis-corrected
+whatever their step: no unadjusted scheme is offered (D-217). A
+`SampledPosterior` reports the means of its recorded scalars as `Estimate`s
+whose error is `sigma sqrt(tau / n)`, with `tau` Geyer's integrated
+autocorrelation time, and its diagnostics (`R-hat`, effective sample size)
+are lower bounds on how slowly a chain mixes: a slow direction no recorded
+scalar sees is invisible. `sample()` is a short chain from a fitted
+reference, approximate by that chain's distance from equilibrium;
+`sample_thinned()` returns stored states, exact and correlated (D-220,
+D-224). Tempering's log evidence has no standard error, a single run of
+sequential Monte Carlo not estimating its own. Acceptance at a fixed step,
+and tempering's stages, are flat under mesh refinement, which the slow tests
+measure on four grids of a nonlinear problem and example 38 shows (D-211).
 
 ## 5. Where a dense matrix is still formed
 
@@ -444,8 +463,8 @@ Recorded rather than settled, so nobody has to rediscover them.
 
 Deferred by agreement, not by omission (D-112, D-113): `dynamical_system`
 and sequential data assimilation, PETSc, `parallel=` inside operator actions,
-and the v2 documentation set. Function-space MCMC is no longer deferred: its
-design is D-211 to D-216 (2026-11-02), and it is being built (§10).
+and the v2 documentation set. Function-space MCMC is no longer deferred: it
+is D-211 to D-224 (2026-11-02), built on the `sampling` branch (§10).
 
 ## 10. Between here and a release
 
@@ -542,26 +561,33 @@ and is happy, and sl3dpp's list is not a concern now.
   large backended problem little or nothing is done datum by datum, the
   adjoint acting on a general data-space vector through one adjoint
   solve, so this is not the picture to design around; the details wait.
-- Sampling: the presets (`PCN`, `MALA`, `HMC`, `SMC`) and the result types
-  (`SampledPosterior`, `WeightedEnsemble`) are the public contract; whether
-  they are built as kernels-and-driver or as discretised SDE dynamics is
-  the student's call, made against a working pCN benchmark. Unadjusted
-  schemes on function spaces: leaning no. Decided 2026-11-02 (D-211 to
-  D-216): discretised SDE dynamics in four layers (dynamics, splitting
-  scheme, corrections, population), every sampler defined on function
-  space, the step a time `h` converted by each flow, references as
-  `GaussianReference` built from an `r`-dimensional chart, the Laplace
-  Gaussian a reference in its Gauss-Newton form at any rank, and the
-  geometric presets kept as thin wrappers. Then (D-217 to D-221): no
-  unadjusted schemes; the layers under `inference/sampling/`, one file
-  each, `GaussianReference` in `inference/gaussian.py` and the chain
-  diagnostics in `numerics/chain_diagnostics.py`; the protocols (an
-  immutable state record carrying its gradient caches, flows reporting
-  their change to the reference's energy, `Kernel.step` returning a
-  `Step`); `sample()` a fresh short chain from the fitted reference and
-  `sample_thinned()` the stored states; references handed out by the
-  estimators. Deferred: tempering from a non-prior reference,
-  state-dependent references.
+- Sampling: built on the `sampling` branch, 2026-11-02, D-211 to D-224.
+  Discretised SDE dynamics in four layers (dynamics, splitting scheme,
+  corrections, population), every sampler defined on function space and
+  Metropolis-corrected; the step a time `h`, each flow converting it, with
+  converters from pCN's `beta` and Crank-Nicolson's `delta` (D-222).
+  References are `GaussianReference`, the prior with an `r`-dimensional
+  chart's law replaced, handed out by `LinearGaussianInversion.reference`
+  and `LaplaceApproximation.reference` (Gauss-Newton, any rank), and
+  `MixtureReference`, its chart's law a Gaussian mixture, whose components
+  a chain jumps between by a Metropolized transport (D-223); both are
+  fitted to a run's recorded scalars or an ensemble's particles, the
+  number of components the caller's (D-224). `SampledPosterior.sample()`
+  is a short chain from a fitted reference and `sample_thinned()` the
+  stored states. Measured: every preset recovers an exact linear posterior
+  within its Monte Carlo error on a dense metric; acceptance and
+  tempering's stages are flat from 32 to 2048 grid points on a nonlinear
+  problem, where a random walk of pCN's proposal size falls from 0.25 to
+  0.01; on a double well, MALA and HMC over a fitted two-component
+  mixture cross the barrier about 1700 times in 4000 steps against 3 to
+  40 without. Open: `KernelFlow` (any invariant kernel as a letter: Gibbs
+  blocks on a summand, structure moves); tempering from a non-prior
+  reference and state-dependent references, deferred; a coupled
+  Wasserstein-Fisher-Rao flow, sketched (continuous-time tempering, or
+  birth-death at a fixed target with a fitted reference's density) and
+  not decided; a standard error for tempering's evidence and its
+  per-stage history; whether the presets join the top-level names. The
+  unadjusted schemes of the original brief are dropped (D-217).
 
 **Confirmed drops** (v1 things that stay gone): derivative-free
 minimization, BiCG, and a separate deflated pointwise-variance estimator.
@@ -591,9 +617,8 @@ migration is built and tested: `planetmodel.harmonics.ShellTransform` sits
 uncommitted in that repo on its `main`, where its rules want it on
 `develop`, same names, the version bump left for its release branch) and
 the sign-normalized spectral bases that come with it (§7); the student's
-sampling package (the brief's order
-of work, starting with the marker-gated methods already done pre-release
-and `from_product(correlation=)`); the sl3dpp items (the data-space route
+sampling package, built on the `sampling` branch, its state and open
+items under "Decided now, built after the release" above; the sl3dpp items (the data-space route
 and low-rank posterior above, then blocks with a size hint, process-safety
 declarations, the spectral-element separable-basis export, optimizer checkpointing,
 resource-owning linearizations, and the tensor product space, which sl3dpp has
