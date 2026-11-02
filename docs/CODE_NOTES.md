@@ -98,6 +98,15 @@ Each item below is still open as checked against the code.
   because the spectral bases' eigenvector signs were arbitrary. planetmodel
   1.4 now normalizes them, so this is unblocked but not built
   (`gaussian.py:687`).
+- `GaussianMeasure.condition` with an exact constraint needs `A C A*` to
+  claim positive definiteness, which it infers only from a positive definite
+  `C` and a surjective `A` (`gaussian.py:2602-2624`). A semidefinite prior
+  whose `A C A*` is definite, such as a masked prior `P C P*` under a
+  constraint that is definite on the masked range, cannot be conditioned
+  exactly. The claim belongs to neither factor, so the fix is a keyword on
+  `condition` with which the caller asserts it; together with a dense
+  Cholesky `solver=`, a false claim then fails loudly. Conditioning before
+  masking works where the constraint satisfies `A P = A`.
 
 **Spaces**
 
