@@ -454,6 +454,64 @@ class TestConditioning:
         assert conditioned.nuclear_norm() < measure.nuclear_norm()
 
 
+class TestConditioningASemidefinitePrior:
+    """A masked prior ``P C P*`` is semidefinite, but under a constraint that
+    does not see the masked part, ``A P == A``, ``A P C P* A*`` is ``A C A*``
+    and definite. The traits cannot show that, so the caller claims it."""
+
+    @staticmethod
+    def setup(rng, *, blind=False):
+        """The prior, the mask and a constraint on the kept components, or
+        with *blind* one on the masked components only."""
+        space = make_dense_metric_space(5)
+        root = rng.normal(size=(space.dim, space.dim))
+        prior = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
+        )
+        kept = np.array([1.0, 1.0, 1.0, 0.0, 0.0])
+        mask = LinearOperator.from_matrix(
+            space, space, np.diag(kept), form="components"
+        )
+        rows = rng.normal(size=(2, space.dim)) * (1.0 - kept if blind else kept)
+        constraint = LinearOperator.from_matrix(
+            space, EuclideanSpace(2), rows, form="components", traits=Traits.SURJECTIVE
+        )
+        return space, prior, mask, constraint
+
+    def test_without_the_claim_it_is_refused_and_told_how(self, rng):
+        _, prior, mask, constraint = self.setup(rng)
+        masked = prior.push_forward(mask)
+        assert Traits.POSITIVE_DEFINITE not in masked.covariance.traits
+        with pytest.raises(ValueError, match="definite=True"):
+            masked.condition(constraint, np.array([0.5, -1.0]))
+
+    def test_with_the_claim_it_is_the_masked_posterior(self, rng):
+        """Conditioning then masking gives the same measure, since
+        ``A P == A``."""
+        space, prior, mask, constraint = self.setup(rng)
+        value = np.array([0.5, -1.0])
+        claimed = prior.push_forward(mask).condition(constraint, value, definite=True)
+        reference = prior.condition(constraint, value).push_forward(mask)
+        assert np.allclose(constraint(claimed.expectation), value)
+        assert np.allclose(
+            space.to_components(claimed.expectation),
+            space.to_components(reference.expectation),
+        )
+        assert np.allclose(
+            claimed.covariance.matrix(form="components"),
+            reference.covariance.matrix(form="components"),
+        )
+
+    def test_a_false_claim_fails_loudly_under_a_dense_cholesky(self, rng):
+        """A constraint on the masked components only sees no variance."""
+        _, prior, mask, blind = self.setup(rng, blind=True)
+        masked = prior.push_forward(mask)
+        with pytest.raises(np.linalg.LinAlgError):
+            masked.condition(
+                blind, np.array([0.5, -1.0]), definite=True, solver=CholeskySolver()
+            )
+
+
 class TestImhofOnATrapezoid:
     """Adaptive quadrature on a scalar integrand exhausted its subdivisions,
     warned, and took 106 ms at three weights -- the slowest-decaying case.
