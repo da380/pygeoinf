@@ -29,7 +29,7 @@ the data, so the mapping is a pair and only the mean moves.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -54,7 +54,12 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.spaces import HilbertSpace
     from ..numerics.randomized import Estimate
 
-__all__ = ["GaussianPosterior", "LinearGaussianInversion", "LowRankGaussianPosterior"]
+__all__ = [
+    "GaussianPosterior",
+    "GaussianReference",
+    "LinearGaussianInversion",
+    "LowRankGaussianPosterior",
+]
 
 
 class GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure):
@@ -764,6 +769,71 @@ class LinearGaussianInversion(GaussianEstimator):
         constant = mahalanobis + dimension * np.log(2.0 * np.pi)
         return combine_log_normalizer([(-0.5, float(constant)), (-0.5, volume)])
 
+    def reference(
+        self,
+        data: Any,
+        /,
+        *,
+        rank: int | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> "GaussianReference":
+        """The posterior as a reference for a sampler, in chart form.
+
+        At full rank (*rank* omitted) the chart is the data themselves,
+        ``l(u) == A (u - m_0)`` read through the data space's components,
+        and the reference *is* the posterior: a linear-Gaussian posterior
+        differs from the prior only through ``A u``. It costs one adjoint
+        and one prior-covariance application per datum, and a dense
+        factorization of the data dimension. With *rank*, the chart is the
+        leading directions the data inform, those of the
+        :class:`LowRankGaussianPosterior`, and the reference is that
+        measure: the prior corrected in ``rank`` directions.
+
+        Args:
+            data: the observations.
+            rank: how many directions to keep; the full data chart if
+                omitted.
+            rng: the generator for the randomized eigendecomposition behind
+                *rank*.
+            n_jobs: workers for the chart's applications.
+
+        Returns:
+            The reference.
+
+        Raises:
+            ValueError: if the problem has no error measure, the posterior
+                then being singular to the prior.
+        """
+        problem = self._problem
+        prior = self._prior
+        if not problem.has_error:
+            raise ValueError(
+                "Exact data condition the prior onto the models that fit "
+                "them, which is singular to it; a reference needs an error "
+                "measure."
+            )
+        forward = problem.forward_operator
+        if rank is None:
+            vectors, images, gram, noise, data_space = _data_chart(
+                forward, prior, problem.error_measure, n_jobs=n_jobs
+            )
+            residual = data_space.to_components(
+                data_space.subtract(data, self._data_shift(problem, prior))
+            )
+            combined = gram + noise
+            mean = gram @ np.linalg.solve(combined, residual)
+            covariance = gram - gram @ np.linalg.solve(combined, gram)
+            return GaussianReference(prior, vectors, mean, covariance, images=images)
+        posterior = LowRankGaussianPosterior.from_linear_problem(
+            problem, prior, data, rank=rank, rng=rng, n_jobs=n_jobs
+        )
+        misfit = forward.adjoint @ problem.error_measure.precision @ forward
+        vectors = misfit.apply_block(posterior.modes(n_jobs=n_jobs), n_jobs=n_jobs)
+        return GaussianReference.from_gaussian(
+            prior, vectors, mean=posterior.expectation, covariance=posterior.covariance
+        )
+
     @staticmethod
     def _prior_and_noise_can_be_drawn(
         problem: LinearForwardProblem, prior: GaussianMeasure
@@ -1145,3 +1215,425 @@ class LowRankGaussianPosterior(GaussianPosterior):
         for weight, mode in zip(shrink, self.modes(n_jobs=n_jobs)):
             total = space.axpy(float(weight), space.multiply(mode, mode), total)
         return total
+
+
+class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
+    """A Gaussian equivalent to a prior, carrying its own density against it.
+
+    The reference measure a function-space sampler is built on: the part of
+    the dynamics it defines is solved exactly, and only the residual
+    ``Phi + log d nu / d mu_0`` is left to the integrator and the
+    Metropolis step. Its two readings describe one measure. The Gaussian
+    moments are this measure's, and so is ``relative_log_density``, which
+    is ``log d nu / d mu_0`` and normalized: the log normalizer is exactly
+    zero. That is what separates it from a Laplace
+    :class:`GaussianPosterior`, whose moments are the approximation and
+    whose density is the exact posterior's.
+
+    Every reference is the prior with the law of a finite-dimensional
+    *chart* replaced. The chart is ``r`` bounded functionals,
+    ``l(u) == ((w_k, u - m_0))_k``, distributed under the prior as
+    ``N(0, K_l)`` with ``K_l == ((w_i, C w_j))``; the reference gives it
+    the law ``N(a, S)`` instead and leaves the conditional law given the
+    chart as the prior's. So in every direction outside the chart the
+    reference *is* the prior, which makes it equivalent to the prior by
+    construction, and
+
+    .. code-block:: text
+
+        draw     u == xi + C W K_l^-1 (z - l(xi)),   xi ~ prior,  z ~ N(a, S)
+        density  log d nu / d mu_0 (u) == log n(l(u); a, S) - log n(l(u); 0, K_l)
+
+    The draw costs a prior draw and ``r`` precomputed vectors, the density
+    ``r`` inner products, and neither needs the prior's precision. Draws
+    and density are built from the one chart, so they describe the same
+    measure whatever the accuracy of the vectors that went into it.
+
+    Internally the chart is whitened to ``K_l == I``, and directions in
+    which the chart functionals are dependent under the prior (an
+    eigenvalue of ``K_l`` below ``rtol`` times the largest) are dropped:
+    there the prior cannot tell the functionals apart, so the reference
+    cannot either.
+
+    Args:
+        prior: the Gaussian prior, which must be samplable and carry a
+            covariance.
+        chart: the vectors ``w_k`` whose inner products with ``u - m_0``
+            are the chart coordinates.
+        chart_mean: ``a``, the chart's mean under the reference, one entry
+            per vector.
+        chart_covariance: ``S``, the chart's covariance under the
+            reference, symmetric and positive definite.
+        images: ``C w_k`` for each chart vector, when already computed;
+            computed here otherwise, one application of the prior
+            covariance per vector.
+        rtol: the relative size below which a direction of ``K_l`` is
+            treated as dependent and dropped.
+
+    Raises:
+        TypeError: if the prior is not a ``GaussianMeasure``.
+        ValueError: if the prior has no covariance or cannot be sampled,
+            the chart's mean or covariance has the wrong shape, or the
+            chart's covariance is not positive definite on the directions
+            kept, without which the reference is not equivalent to the
+            prior.
+    """
+
+    def __init__(
+        self,
+        prior: GaussianMeasure,
+        chart: Sequence[Any],
+        chart_mean: np.ndarray,
+        chart_covariance: np.ndarray,
+        /,
+        *,
+        images: Sequence[Any] | None = None,
+        rtol: float = 1e-10,
+    ) -> None:
+        from ..algebra.operators import Functional, LinearFunctional
+        from ..numerics.randomized import Estimate
+
+        if not isinstance(prior, GaussianMeasure):
+            raise TypeError(
+                f"A reference is built on a GaussianMeasure prior, not a "
+                f"{type(prior).__name__}."
+            )
+        prior_covariance = prior.covariance
+        if prior_covariance is None:
+            raise ValueError("A reference needs a prior that carries its covariance.")
+        if not prior.can_sample:
+            raise ValueError("A reference needs a prior that can be sampled.")
+        space = prior.domain
+        vectors = list(chart)
+        count = len(vectors)
+        mean = np.asarray(chart_mean, dtype=float).reshape(-1)
+        covariance = np.asarray(chart_covariance, dtype=float)
+        if mean.shape != (count,) or covariance.shape != (count, count):
+            raise ValueError(
+                f"A chart of {count} vectors needs a mean of shape ({count},) "
+                f"and a covariance of shape ({count}, {count}); got "
+                f"{mean.shape} and {covariance.shape}."
+            )
+        if images is None:
+            images = [prior_covariance(w) for w in vectors]
+        images = list(images)
+        if len(images) != count:
+            raise ValueError(f"Expected {count} images, one per chart vector.")
+
+        whitened: list[Any] = []
+        whitened_images: list[Any] = []
+        a = np.zeros(0)
+        s = np.zeros((0, 0))
+        if count:
+            gram = np.array(
+                [[space.inner_product(w, image) for image in images] for w in vectors]
+            )
+            gram = 0.5 * (gram + gram.T)
+            values, vecs = np.linalg.eigh(gram)
+            largest = float(values.max()) if values.size else 0.0
+            keep = values > rtol * largest if largest > 0.0 else values > np.inf
+            transform = (vecs[:, keep] / np.sqrt(values[keep])).T
+            for row in transform:
+                w = space.zero()
+                image = space.zero()
+                for weight, vector, mapped in zip(row, vectors, images):
+                    w = space.axpy(float(weight), vector, w)
+                    image = space.axpy(float(weight), mapped, image)
+                whitened.append(w)
+                whitened_images.append(image)
+            a = transform @ mean
+            s = transform @ covariance @ transform.T
+            s = 0.5 * (s + s.T)
+        rank = len(whitened)
+        try:
+            cholesky = np.linalg.cholesky(s) if rank else np.zeros((0, 0))
+        except np.linalg.LinAlgError:
+            raise ValueError(
+                "The chart's covariance is not positive definite on the "
+                "directions the prior distinguishes, so the reference would be "
+                "singular to the prior."
+            ) from None
+
+        self._prior = prior
+        self._chart = tuple(whitened)
+        self._images = tuple(whitened_images)
+        self._chart_mean = a
+        self._chart_covariance = s
+        self._cholesky = cholesky
+        self._log_det_half = float(np.sum(np.log(np.diag(cholesky)))) if rank else 0.0
+
+        if rank == 0:
+            expectation = prior.expectation
+            density = Functional.from_callables(
+                space,
+                lambda x: 0.0,
+                derivative=lambda x: LinearFunctional.from_representer(
+                    space, space.zero()
+                ),
+            )
+            super().__init__(
+                space,
+                expectation=expectation,
+                covariance=prior_covariance,
+                covariance_factor=prior.covariance_factor,
+                precision=prior.precision,
+                precision_factor=prior.precision_factor,
+                sample=None if prior.covariance_factor is not None else self._fluctuate,
+                unsafe=True,
+            )
+        else:
+            expectation = prior.expectation
+            for weight, image in zip(a, whitened_images):
+                expectation = space.axpy(float(weight), image, space.copy(expectation))
+            reduction = np.identity(rank) - s
+            definite = Traits.POSITIVE_DEFINITE & prior_covariance.traits
+            covariance_operator = LinearOperator.self_adjoint(
+                space,
+                self._apply_covariance,
+                traits=Traits.POSITIVE_SEMIDEFINITE | definite,
+            )
+            self._reduction = reduction
+            density = Functional.from_callables(
+                space,
+                self._density_value,
+                derivative=lambda x: LinearFunctional.from_representer(
+                    space, self._density_gradient(x)
+                ),
+            )
+            super().__init__(
+                space,
+                expectation=expectation,
+                covariance=covariance_operator,
+                sample=self._fluctuate,
+                unsafe=True,
+            )
+        self._init_density(prior, density, log_normalizer=Estimate(0.0, 0.0, 0))
+
+    # ----------------------------------------------------------------- #
+    #                            Constructors                           #
+    # ----------------------------------------------------------------- #
+
+    @classmethod
+    def from_prior(cls, prior: GaussianMeasure, /) -> "GaussianReference":
+        """The prior as its own reference: a chart of no dimensions.
+
+        Its density against the prior is zero, and it draws as the prior
+        does.
+
+        Args:
+            prior: the Gaussian prior.
+
+        Returns:
+            The trivial reference.
+        """
+        return cls(prior, [], np.zeros(0), np.zeros((0, 0)))
+
+    @classmethod
+    def from_gaussian(
+        cls,
+        prior: GaussianMeasure,
+        chart: Sequence[Any],
+        /,
+        *,
+        mean: Any,
+        covariance: LinearOperator,
+        rtol: float = 1e-10,
+    ) -> "GaussianReference":
+        """The reference giving a chart the law a Gaussian gives it.
+
+        The chart's mean and covariance are read off ``N(mean,
+        covariance)``: ``a_k == (w_k, mean - m_0)`` and
+        ``S_ij == (w_i, covariance w_j)``. Outside the chart the result is
+        the prior. When the Gaussian's density against the prior depends on
+        the model only through the chart -- a low-rank update of the prior
+        in those directions, its mean shifted within them -- the result is
+        that Gaussian; otherwise it is the nearest measure of chart form,
+        and still a valid reference.
+
+        Args:
+            prior: the Gaussian prior.
+            chart: the chart vectors.
+            mean: the Gaussian's mean.
+            covariance: the Gaussian's covariance, applied once per chart
+                vector.
+            rtol: as for the constructor.
+
+        Returns:
+            The reference.
+        """
+        space = prior.domain
+        vectors = list(chart)
+        offset = space.subtract(mean, prior.expectation)
+        a = np.array([space.inner_product(w, offset) for w in vectors])
+        mapped = [covariance(w) for w in vectors]
+        s = np.array([[space.inner_product(w, image) for image in mapped] for w in vectors])
+        return cls(prior, vectors, a, s.reshape(len(vectors), len(vectors)), rtol=rtol)
+
+    # ----------------------------------------------------------------- #
+    #                              Reading                              #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def prior(self) -> GaussianMeasure:
+        """The prior this reference is equivalent to; also its ``reference``."""
+        return self._prior
+
+    @property
+    def rank(self) -> int:
+        """The chart's dimension after dependent directions are dropped."""
+        return len(self._chart)
+
+    @property
+    def chart(self) -> tuple[Any, ...]:
+        """The whitened chart vectors, ``(w_i, C w_j) == delta_ij``."""
+        return self._chart
+
+    @property
+    def chart_mean(self) -> np.ndarray:
+        """The whitened chart's mean under the reference."""
+        return self._chart_mean.copy()
+
+    @property
+    def chart_covariance(self) -> np.ndarray:
+        """The whitened chart's covariance under the reference."""
+        return self._chart_covariance.copy()
+
+    def fluctuation(self, *, rng: Generator | None = None) -> Any:
+        """One centered draw, ``u - m``: a draw of ``N(0, K)``.
+
+        What a momentum refresh and a prior Ornstein-Uhlenbeck step draw.
+
+        Args:
+            rng: the generator.
+
+        Returns:
+            A vector of the domain.
+        """
+        if self.rank == 0:
+            return self._prior_fluctuation(rng)
+        return self._fluctuate(rng)
+
+    def coordinates(self, x: Any, /) -> np.ndarray:
+        """The whitened chart coordinates of a model, ``((w_k, x - m_0))_k``.
+
+        Args:
+            x: a model.
+
+        Returns:
+            The ``rank`` coordinates.
+        """
+        space = self.domain
+        offset = space.subtract(x, self._prior.expectation)
+        return np.array([space.inner_product(w, offset) for w in self._chart])
+
+    # ----------------------------------------------------------------- #
+    #                             Internals                             #
+    # ----------------------------------------------------------------- #
+
+    def _prior_fluctuation(self, rng: Generator | None) -> Any:
+        """A centered prior draw."""
+        prior = self._prior
+        return prior.domain.subtract(prior.sample(rng=rng), prior.expectation)
+
+    def _fluctuate(self, rng: Generator | None) -> Any:
+        """``xi + C W (z - l(xi))`` centered: the Matheron rule."""
+        from ..algebra.spaces import resolve_rng
+
+        rng = resolve_rng(rng)
+        space = self.domain
+        draw = self._prior_fluctuation(rng)
+        if self.rank == 0:
+            return draw
+        coordinates = np.array([space.inner_product(w, draw) for w in self._chart])
+        target = self._cholesky @ rng.standard_normal(self.rank)
+        for weight, image in zip(target - coordinates, self._images):
+            draw = space.axpy(float(weight), image, draw)
+        return draw
+
+    def _apply_covariance(self, x: Any) -> Any:
+        """``C x - U (I - S) U* x`` with ``U`` the whitened chart's images."""
+        space = self.domain
+        result = self._prior.covariance(x)
+        pairings = np.array([space.inner_product(image, x) for image in self._images])
+        for weight, image in zip(self._reduction @ pairings, self._images):
+            result = space.axpy(-float(weight), image, result)
+        return result
+
+    def _density_value(self, x: Any) -> float:
+        """``log n(l; a, S) - log n(l; 0, I)`` at the chart coordinates."""
+        from scipy.linalg import solve_triangular
+
+        coordinates = self.coordinates(x)
+        deviation = solve_triangular(
+            self._cholesky, coordinates - self._chart_mean, lower=True
+        )
+        return float(
+            -0.5 * deviation @ deviation
+            - self._log_det_half
+            + 0.5 * coordinates @ coordinates
+        )
+
+    def _density_gradient(self, x: Any) -> Any:
+        """``W* (l - S^-1 (l - a))``, the representer of the density's derivative."""
+        from scipy.linalg import cho_solve
+
+        space = self.domain
+        coordinates = self.coordinates(x)
+        weights = coordinates - cho_solve(
+            (self._cholesky, True), coordinates - self._chart_mean
+        )
+        result = space.zero()
+        for weight, w in zip(weights, self._chart):
+            result = space.axpy(float(weight), w, result)
+        return result
+
+
+def _data_chart(
+    jacobian: LinearOperator,
+    prior: GaussianMeasure,
+    error: GaussianMeasure,
+    /,
+    *,
+    n_jobs: int | None,
+) -> tuple[list[Any], list[Any], np.ndarray, np.ndarray, Any]:
+    """The chart ``l(u) == E J (u - m_0)`` through a data space's components.
+
+    ``E`` is the data space's coordinate map, so the chart vectors are
+    ``J* E* e_j``, one adjoint application per datum, and their images
+    under the prior covariance one application of it each. Returns the
+    vectors, their images, the prior's chart covariance ``K_l``, the
+    error's covariance in the same coordinates, ``E R E*``, and the data
+    space.
+
+    Raises:
+        TypeError: if the data space has no coordinates, which the chart's
+            coordinates are.
+        ValueError: if the error measure has no covariance.
+    """
+    from ..algebra.spaces import CoordinateSpace
+
+    data_space = jacobian.codomain
+    if not isinstance(data_space, CoordinateSpace):
+        raise TypeError(
+            "A full-rank data chart reads the data through their components, "
+            f"and {type(data_space).__name__} has none; use rank= instead."
+        )
+    if error.covariance is None:
+        raise ValueError("The error measure needs a covariance.")
+    count = data_space.dim
+    unit = np.identity(count)
+    duals = [data_space.from_components(data_space.solve_gram(unit[j])) for j in range(count)]
+    vectors = jacobian.adjoint.apply_block(duals, n_jobs=n_jobs)
+    images = prior.covariance.apply_block(vectors, n_jobs=n_jobs)
+    space = prior.domain
+    gram = np.array([[space.inner_product(w, image) for image in images] for w in vectors])
+    noise = np.column_stack(
+        [data_space.to_components(error.covariance(dual)) for dual in duals]
+    )
+    return (
+        list(vectors),
+        list(images),
+        0.5 * (gram + gram.T),
+        0.5 * (noise + noise.T),
+        data_space,
+    )

@@ -84,6 +84,12 @@ failing test rather than a surprise later.
 | 35 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
 | 36 | `layered_planet` | fields that are smooth in each layer and jump between them: a direct sum of spaces that knows its layers are adjacent, data of three kinds at once, and continuity by conditioning |
 
+**Sampling**
+
+| | | |
+|---|---|---|
+| 37 | `sampling` | the sampling presets on a posterior with two modes: which chains cross the barrier, how the diagnostics say so, and tempering's evidence |
+
 ## The ones with optional dependencies
 
 Each skips without what it needs. The list is the one `tests/test_examples.py`

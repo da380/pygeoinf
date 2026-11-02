@@ -43,6 +43,7 @@ from .estimators import (
 )
 from .gaussian import (
     GaussianPosterior,
+    GaussianReference,
     LinearGaussianInversion,
     LowRankGaussianPosterior,
 )
@@ -62,6 +63,7 @@ from .point import (
     choose_formalism,
 )
 from .problem import ForwardProblem, LinearForwardProblem
+from . import sampling
 
 
 __all__ = [
@@ -77,6 +79,7 @@ __all__ = [
     "LinearizedFeasiblePropertySet",
     "FeasiblePropertySet",
     "GaussianPosterior",
+    "GaussianReference",
     "LowRankGaussianPosterior",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",

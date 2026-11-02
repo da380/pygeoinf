@@ -37,6 +37,7 @@ to the prior beside its Gaussian approximation.
 
 from __future__ import annotations
 
+import numpy as np
 from numpy.random import Generator
 
 from typing import TYPE_CHECKING, Any
@@ -54,7 +55,7 @@ from .minimization import _mixed_derivative as _misfit_mixed_derivative
 from .problem import ForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .gaussian import GaussianPosterior
+    from .gaussian import GaussianPosterior, GaussianReference
 
 __all__ = ["MaximumAPosteriori", "LaplaceApproximation", "LaplaceResult"]
 
@@ -570,11 +571,12 @@ class LaplaceApproximation(MeasureEstimator):
             ),
         )
 
-    def _low_rank(
-        self, model: Any, data: Any, exact: bool, relative_log_density: Functional, /
-    ) -> "GaussianPosterior":
-        """The low-rank route of :meth:`at`."""
-        from .gaussian import LowRankGaussianPosterior, _information_eigenpairs
+    def _low_rank_parts(
+        self, model: Any, data: Any, exact: bool, /
+    ) -> tuple[LinearOperator, LinearOperator, Any]:
+        """The misfit's curvature at a model, and its leading eigenpairs seen
+        through the prior's factor: the pieces of the low-rank route."""
+        from .gaussian import _information_eigenpairs
 
         estimator = self._estimator
         problem = estimator.forward_problem
@@ -598,12 +600,113 @@ class LaplaceApproximation(MeasureEstimator):
             n_jobs=self._n_jobs,
             semidefinite=not exact,
         )
+        return curvature, directions, eigenvalues
+
+    def _low_rank(
+        self, model: Any, data: Any, exact: bool, relative_log_density: Functional, /
+    ) -> "GaussianPosterior":
+        """The low-rank route of :meth:`at`."""
+        from .gaussian import LowRankGaussianPosterior
+
+        _, directions, eigenvalues = self._low_rank_parts(model, data, exact)
         return LowRankGaussianPosterior(
-            estimator.prior,
+            self._estimator.prior,
             model,
             eigenvalues,
             directions,
             relative_log_density=relative_log_density,
+        )
+
+    def reference(self, model: Any, data: Any, /) -> "GaussianReference":
+        """The Laplace Gaussian at a model as a reference for a sampler.
+
+        The reference is in chart form, the prior with the law of a few
+        functionals replaced, so it is equivalent to the prior by
+        construction and needs no prior precision. Its mean is held as
+        ``m_0 + C J* R^-1 r``, with ``J`` the forward operator's derivative
+        at *model* and ``r`` the residual there less the error's
+        expectation: at a stationary MAP point that is the mode itself, and
+        elsewhere it is still a valid reference, a worse fit costing only
+        efficiency.
+
+        * Without ``rank`` (the estimator's), the chart is the data,
+          ``l(u) == J (u - m_0)`` read through the data space's components,
+          and the reference is the Gauss-Newton Laplace Gaussian exactly. It
+          costs one adjoint and one prior-covariance application per datum
+          and a dense factorization of the data dimension; at many data,
+          ``rank=`` is the affordable route.
+        * With ``rank``, the chart is the leading directions of the misfit's
+          curvature seen through the prior's factor, together with the mean's
+          shift, and the reference is the low-rank Laplace Gaussian in chart
+          form. The exact Hessian is accepted here, its negative eigenvalues
+          clipped.
+
+        Args:
+            model: where to place it, usually the MAP model.
+            data: the observations.
+
+        Returns:
+            The reference.
+
+        Raises:
+            ValueError: on the full-rank route with the exact Hessian, whose
+                curvature term is not of finite rank and may be indefinite,
+                so that the Gaussian is not of chart form; pass
+                ``gauss_newton=True`` to the estimator, or a ``rank``. Also
+                if the error measure has no precision.
+        """
+        from .gaussian import GaussianReference, LowRankGaussianPosterior, _data_chart
+
+        estimator = self._estimator
+        problem = estimator.forward_problem
+        prior = estimator.prior
+        error = problem.error_measure
+        if error.precision is None:
+            raise ValueError("The error measure needs a precision.")
+        exact = _exact_hessian(estimator)
+        data_space = problem.data_space
+        linearization = problem.forward_operator.at(model)
+        residual = data_space.subtract(
+            data_space.subtract(data, linearization.value), error.expectation
+        )
+        weighted = error.precision(residual)
+
+        if self._rank is None:
+            if exact:
+                raise ValueError(
+                    "The full-rank Laplace Gaussian with the exact Hessian is "
+                    "not a reference: the forward operator's curvature weighted "
+                    "by the residual is not of finite rank and may be "
+                    "indefinite. Build the estimator with gauss_newton=True, or "
+                    "give it a rank."
+                )
+            vectors, images, gram, noise, _ = _data_chart(
+                linearization.derivative, prior, error, n_jobs=self._n_jobs
+            )
+            mean = gram @ data_space.apply_gram(data_space.to_components(weighted))
+            covariance = gram - gram @ np.linalg.solve(gram + noise, gram)
+            return GaussianReference(prior, vectors, mean, covariance, images=images)
+
+        curvature, directions, eigenvalues = self._low_rank_parts(model, data, exact)
+        posterior = LowRankGaussianPosterior(
+            prior,
+            model,
+            eigenvalues,
+            directions,
+            relative_log_density=-problem.potential(data),
+            penalized_misfit=0.0,
+        )
+        kept = [k for k, value in enumerate(eigenvalues) if value > 0.0]
+        unit = np.identity(len(eigenvalues))
+        through = prior.covariance_factor @ directions
+        modes = through.apply_block([unit[:, k] for k in kept], n_jobs=self._n_jobs)
+        vectors = curvature.apply_block(modes, n_jobs=self._n_jobs)
+        shift = linearization.derivative.adjoint(weighted)
+        vectors.append(shift)
+        space = self.model_space
+        mean = space.add(prior.expectation, prior.covariance(shift))
+        return GaussianReference.from_gaussian(
+            prior, vectors, mean=mean, covariance=posterior.covariance
         )
 
     def _log_normalizer(

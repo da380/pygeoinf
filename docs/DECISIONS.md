@@ -3915,19 +3915,19 @@ checker. Most users will need only the presets. The cost of the layering is
 metadata: each flow declares which variables it touches, which measure it
 preserves exactly (the reference, the target, or none), whether it is
 deterministic and whether it is reversible under a momentum flip; the scheme
-checks its word (each letter's fractions sum to one; a word that is not a
-palindrome is refused unless asked for), and each correction refuses a block
-or word whose declarations do not fit. In particular Metropolis–Hastings is
-offered only where the scheme can state its transition density. The working
-names are the brief's. The placement, whether unadjusted schemes are offered,
-and the internal protocols (each flow's contribution to the acceptance, and
-the cached state that lets one gradient serve adjacent kicks) are settled
-when the layers are built. MALA is reachable two ways, as an overdamped word
-under Metropolis–Hastings and as one Hamiltonian step with full refresh under
-the block correction; the two must agree to rounding, which is the layer's
-two-routes test. *Amended 2026-11-02:* unadjusted schemes are not offered
-(D-217); the placement and the protocols are D-218 and D-219; the geometric
-presets take a `GaussianReference`, which the estimators hand out (D-221).
+checks its word (each letter's fractions sum to one), and each correction
+refuses a block or word whose declarations do not fit; a Metropolized block
+must be a palindrome, so that a velocity flip inverts it. In particular
+Metropolis–Hastings is offered only where the scheme can state its transition
+density. The working names are the brief's. The placement, whether
+unadjusted schemes are offered, and the internal protocols (each flow's
+contribution to the acceptance, and the cached state that lets one gradient
+serve adjacent kicks) are settled when the layers are built. *Amended 2026-11-02:* unadjusted schemes are not
+offered (D-217); the placement and the protocols are D-218 and D-219; the
+geometric presets take a `GaussianReference`, which the estimators hand out
+(D-221). With every scheme corrected, the scheme no longer refuses a word that
+is not a palindrome: HMC's `OBAB` and MALA's `BO` are not, and exactness rests
+on the corrected block alone.
 
 **D-213. The step is a time `h`; each flow converts it to its own angle**
 (2026-11-02, Oscar). Every scheme takes the dynamics' time step `h` rather
@@ -4084,10 +4084,9 @@ are built to; argument lists settle with the implementation.
   measure and `initial_state(u, /, *, rng)`, which draws a velocity. Letters
   are scoped to their dynamics: `O` is the momentum refresh of `Underdamped`
   and the prior OU step of `Overdamped`.
-- *`SplittingScheme(dynamics, word, /, *, step, repeat=1,
-  allow_asymmetric=False)`* stores its word in application order (a string
-  or `(letter, fraction)` pairs), checks each letter's fractions sum to one,
-  refuses a non-palindrome unless allowed, and offers `apply`, `block(word)`
+- *`SplittingScheme(dynamics, word, /, *, step, repeat=1)`* stores its word
+  in application order (a string or `(letter, fraction)` pairs), checks each
+  letter's fractions sum to one, and offers `apply`, `block(word)`
   for the correction and `with_step(h)`, a copy, nothing being mutated
   (D-43).
 - *A kernel* is what a correction makes of a scheme:
