@@ -454,6 +454,64 @@ class TestConditioning:
         assert conditioned.nuclear_norm() < measure.nuclear_norm()
 
 
+class TestConditioningASemidefinitePrior:
+    """A masked prior ``P C P*`` is semidefinite, but under a constraint that
+    does not see the masked part, ``A P == A``, ``A P C P* A*`` is ``A C A*``
+    and definite. The traits cannot show that, so the caller claims it."""
+
+    @staticmethod
+    def setup(rng, *, blind=False):
+        """The prior, the mask and a constraint on the kept components, or
+        with *blind* one on the masked components only."""
+        space = make_dense_metric_space(5)
+        root = rng.normal(size=(space.dim, space.dim))
+        prior = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + space.dim * np.identity(space.dim), form="galerkin"
+        )
+        kept = np.array([1.0, 1.0, 1.0, 0.0, 0.0])
+        mask = LinearOperator.from_matrix(
+            space, space, np.diag(kept), form="components"
+        )
+        rows = rng.normal(size=(2, space.dim)) * (1.0 - kept if blind else kept)
+        constraint = LinearOperator.from_matrix(
+            space, EuclideanSpace(2), rows, form="components", traits=Traits.SURJECTIVE
+        )
+        return space, prior, mask, constraint
+
+    def test_without_the_claim_it_is_refused_and_told_how(self, rng):
+        _, prior, mask, constraint = self.setup(rng)
+        masked = prior.push_forward(mask)
+        assert Traits.POSITIVE_DEFINITE not in masked.covariance.traits
+        with pytest.raises(ValueError, match="definite=True"):
+            masked.condition(constraint, np.array([0.5, -1.0]))
+
+    def test_with_the_claim_it_is_the_masked_posterior(self, rng):
+        """Conditioning then masking gives the same measure, since
+        ``A P == A``."""
+        space, prior, mask, constraint = self.setup(rng)
+        value = np.array([0.5, -1.0])
+        claimed = prior.push_forward(mask).condition(constraint, value, definite=True)
+        reference = prior.condition(constraint, value).push_forward(mask)
+        assert np.allclose(constraint(claimed.expectation), value)
+        assert np.allclose(
+            space.to_components(claimed.expectation),
+            space.to_components(reference.expectation),
+        )
+        assert np.allclose(
+            claimed.covariance.matrix(form="components"),
+            reference.covariance.matrix(form="components"),
+        )
+
+    def test_a_false_claim_fails_loudly_under_a_dense_cholesky(self, rng):
+        """A constraint on the masked components only sees no variance."""
+        _, prior, mask, blind = self.setup(rng, blind=True)
+        masked = prior.push_forward(mask)
+        with pytest.raises(np.linalg.LinAlgError):
+            masked.condition(
+                blind, np.array([0.5, -1.0]), definite=True, solver=CholeskySolver()
+            )
+
+
 class TestImhofOnATrapezoid:
     """Adaptive quadrature on a scalar integrand exhausted its subdivisions,
     warned, and took 106 ms at three weights -- the slowest-decaying case.
@@ -617,6 +675,133 @@ class TestCorrelatedMeasures:
         X = self.space()
         with pytest.raises(ValueError, match="Expected shape"):
             X.correlated_measure(np.zeros((3, 2, 2)))
+
+
+class TestCorrelatedMeasuresOnSteepSpectra:
+    """Definiteness is a property of each slice, judged in correlation form.
+
+    A heat kernel's variances fall by many orders of magnitude across the
+    spectrum, so the slices at short wavelengths are tiny next to those at
+    long ones. Each is still judged on its own terms.
+    """
+
+    @staticmethod
+    def space():
+        pytest.importorskip("pyshtools")
+        from pygeoinf.symmetric_space.sphere import Sobolev
+
+        return Sobolev(10, 2.0, 0.2)
+
+    @staticmethod
+    def steep(X):
+        """Two heat marginals parting by twelve orders of magnitude."""
+        first, second = X.heat_symbol(0.05), X.heat_symbol(0.5)
+        assert np.min(second / first) < 1.0e-11
+        return first, second
+
+    @staticmethod
+    def slices(first, second, correlation):
+        sigma = np.empty((first.size, 2, 2))
+        sigma[:, 0, 0], sigma[:, 1, 1] = first, second
+        sigma[:, 0, 1] = sigma[:, 1, 0] = correlation * np.sqrt(first * second)
+        return sigma
+
+    def test_a_steep_pair_is_definite_and_conditions_exactly(self):
+        from pygeoinf.algebra import RowLinearOperator
+
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            self.steep(X), np.array([[1.0, -0.8], [-0.8, 1.0]])
+        )
+        assert Traits.POSITIVE_DEFINITE in measure.covariance.traits
+        assert measure.precision is not None
+
+        mean = X.l2_products_operator([X.from_components(np.eye(X.dim)[0])])
+        constraint = RowLinearOperator([mean, mean]).with_traits(Traits.SURJECTIVE)
+        posterior = measure.condition(constraint, np.array([0.3]))
+        assert constraint(posterior.expectation) == pytest.approx([0.3])
+        spread = constraint @ posterior.covariance @ constraint.adjoint
+        prior_spread = constraint @ measure.covariance @ constraint.adjoint
+        assert abs(spread(np.ones(1))[0]) < 1e-10 * prior_spread(np.ones(1))[0]
+
+    def test_the_precision_is_each_slices_inverse(self):
+        """Entry by entry against the closed form of a 2x2 inverse, so that
+        a precision accurate only in its large entries would fail."""
+        X = self.space()
+        first, second = self.steep(X)
+        r = -0.8
+        measure = X.correlated_measure_from_correlations(
+            [first, second], np.array([[1.0, r], [r, 1.0]])
+        )
+        expected = np.empty((X.dim, 2, 2))
+        expected[:, 0, 0], expected[:, 1, 1] = 1.0 / first, 1.0 / second
+        expected[:, 0, 1] = expected[:, 1, 0] = -r / np.sqrt(first * second)
+        expected /= 1.0 - r**2
+        assert measure.precision.slices == pytest.approx(expected, rel=1e-12)
+
+    def test_a_slice_with_unit_correlation_gives_no_precision(self):
+        X = self.space()
+        correlations = np.broadcast_to(
+            np.array([[1.0, 0.5], [0.5, 1.0]]), (X.dim, 2, 2)
+        ).copy()
+        singular = X.degrees == 3
+        correlations[singular, 0, 1] = correlations[singular, 1, 0] = 1.0
+        measure = X.correlated_measure_from_correlations(self.steep(X), correlations)
+        assert Traits.POSITIVE_SEMIDEFINITE in measure.covariance.traits
+        assert Traits.POSITIVE_DEFINITE not in measure.covariance.traits
+        assert measure.precision is None
+
+    def test_a_field_without_variance_at_a_mode_gives_no_precision(self):
+        """The rule an invariant measure applies to a single field."""
+        X = self.space()
+        first, second = self.steep(X)
+        second = second.copy()
+        second[0] = 0.0
+        measure = X.correlated_measure_from_correlations(
+            [first, second], np.array([[1.0, -0.8], [-0.8, 1.0]])
+        )
+        assert Traits.POSITIVE_DEFINITE not in measure.covariance.traits
+        assert measure.precision is None
+
+    def test_a_covariance_with_a_field_without_variance_is_refused(self):
+        X = self.space()
+        sigma = self.slices(*self.steep(X), 0.5)
+        sigma[0, 1, 1] = 0.0
+        with pytest.raises(ValueError, match="no variance"):
+            X.correlated_measure(sigma)
+
+    @pytest.mark.parametrize(
+        "defect, message",
+        [("correlation", "positive semidefinite"), ("asymmetry", "symmetric")],
+    )
+    def test_a_defect_confined_to_the_tiny_slices_is_caught(self, defect, message):
+        """Both marginals steep, so the defective slices are far below the
+        largest entry of the whole array."""
+        X = self.space()
+        steep = X.heat_symbol(0.5)
+        tail = X.degrees == X.degrees.max()
+        correlation = np.full(X.dim, 0.8)
+        if defect == "correlation":
+            correlation[tail] = 1.5
+        sigma = self.slices(steep, steep, correlation)
+        if defect == "asymmetry":
+            sigma[tail, 0, 1] *= 1.5
+        assert np.abs(sigma[tail]).max() < 1e-10 * np.abs(sigma).max()
+        with pytest.raises(ValueError, match=message):
+            X.correlated_measure(sigma)
+
+    @pytest.mark.parametrize("unit", [1.0e-8, 1.0, 1.0e8])
+    def test_a_change_of_units_leaves_the_claim_alone(self, unit):
+        X = self.space()
+        first, second = self.steep(X)
+        definite = X.correlated_measure_from_correlations(
+            [first, unit**2 * second], np.array([[1.0, -0.8], [-0.8, 1.0]])
+        )
+        singular = X.correlated_measure_from_correlations(
+            [first, unit**2 * second], np.array([[1.0, 1.0], [1.0, 1.0]])
+        )
+        assert Traits.POSITIVE_DEFINITE in definite.covariance.traits
+        assert Traits.POSITIVE_DEFINITE not in singular.covariance.traits
 
 
 class TestAMeasureOnAFunctionSpaceIsTraceClass:

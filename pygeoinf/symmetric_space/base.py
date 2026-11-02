@@ -1065,6 +1065,20 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         non-trivial metric demands is carried by the white noise rather than
         written out here, as for :meth:`invariant_measure`.
 
+        **Each slice is judged in correlation form**: written as
+        ``D^1/2 R(k) D^1/2``, with ``D`` the fields' variances at that mode
+        and ``R(k)`` their correlation matrix, it is positive semidefinite
+        when the variances are non-negative, a field with no variance there
+        has no covariance with another, and ``R(k)`` has no eigenvalue below
+        rounding; it is positive definite when, besides, every variance is
+        positive and ``R(k)`` is not singular. Judged that way, the verdict
+        depends neither on the units the fields are measured in nor on how
+        far down a steep spectrum the slice sits, where its entries may be
+        many orders of magnitude below those of the first. The covariance
+        claims positive definiteness, and carries the slice-wise inverse as
+        its precision, exactly when every slice is positive definite: for a
+        single field that is the rule :meth:`invariant_measure` applies.
+
         Each field's marginal is an invariant measure, so a field whose
         variances ``Sigma(k)[i, i]`` are the same at every mode has the
         identity covariance, which is not trace class on a function space
@@ -1086,8 +1100,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Raises:
             ValueError: for the wrong shape, a slice that is not symmetric,
                 one that is not positive semidefinite -- which for a pair
-                of fields means a correlation outside ``[-1, 1]`` -- or a
-                field with a constant spectrum without *unsafe*.
+                of fields means a correlation outside ``[-1, 1]``, or a
+                covariance with a field that has no variance at that mode --
+                or a field with a constant spectrum without *unsafe*.
         """
         from ..algebra.direct_sum import DirectSum
 
@@ -1096,25 +1111,63 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             sigma.ndim != 3
             or sigma.shape[0] != self.dim
             or sigma.shape[1] != sigma.shape[2]
+            or sigma.shape[1] == 0
         ):
             raise ValueError(f"Expected shape ({self.dim}, n, n), got {sigma.shape}.")
         count = sigma.shape[1]
 
-        scale = float(np.max(np.abs(sigma))) if sigma.size else 0.0
-        tolerance = 1.0e-10 * max(scale, np.finfo(float).tiny)
-        if not np.allclose(sigma, np.swapaxes(sigma, -1, -2), atol=tolerance):
-            raise ValueError("Each cross-covariance slice must be symmetric.")
-        sigma = 0.5 * (sigma + np.swapaxes(sigma, -1, -2))
-
-        values, vectors = np.linalg.eigh(sigma)
-        if values.min(initial=0.0) < -tolerance:
-            worst = int(np.argmin(values.min(axis=1)))
+        # Every check is made on the correlation matrices, which have a unit
+        # diagonal whatever the fields' units and wherever the slice sits in
+        # the spectrum, so that one absolute tolerance means "rounding" for
+        # all of them. A tolerance relative to the largest entry of the whole
+        # array would call a positive definite slice far down a steep
+        # spectrum singular, and let a correlation beyond one there through.
+        tolerance = 1.0e-10
+        variances = np.diagonal(sigma, axis1=-2, axis2=-1)
+        if np.any(variances < 0.0):
+            worst = int(np.argmin(variances.min(axis=1)))
             raise ValueError(
                 "Each cross-covariance slice must be positive semidefinite; "
-                f"the one at component {worst} has smallest eigenvalue "
-                f"{values.min():.3e}. For a pair of fields that means "
-                "|correlation| <= 1."
+                f"the one at component {worst} has a negative variance."
             )
+        deviations = np.sqrt(variances)
+        live = deviations > 0.0
+        divisor = np.where(live, deviations, 1.0)
+        # Divided in turn rather than by the product, which can underflow
+        # where both variances are tiny.
+        correlation = sigma / divisor[:, :, None] / divisor[:, None, :]
+        both = live[:, :, None] & live[:, None, :]
+        asymmetry = np.abs(correlation - np.swapaxes(correlation, -1, -2))
+        if np.any(asymmetry[both] > tolerance):
+            raise ValueError("Each cross-covariance slice must be symmetric.")
+
+        # A field with no variance at a mode can have no covariance with
+        # another there. Its row and column are set to the identity's, which
+        # leaves the eigenvalues of the rest of the slice to be judged.
+        diagonal = np.eye(count, dtype=bool)
+        stray = ~both & ~diagonal & (sigma != 0.0)
+        if np.any(stray):
+            worst = int(np.argmax(stray.any(axis=(1, 2))))
+            raise ValueError(
+                "Each cross-covariance slice must be positive semidefinite; "
+                f"the one at component {worst} gives a field with no variance "
+                "a covariance with another."
+            )
+        sigma = 0.5 * (sigma + np.swapaxes(sigma, -1, -2))
+        correlation = 0.5 * (correlation + np.swapaxes(correlation, -1, -2))
+        judged = np.where(both, correlation, diagonal.astype(float))
+        lowest = np.linalg.eigvalsh(judged)[:, 0]
+        if lowest.min() < -tolerance:
+            worst = int(np.argmin(lowest))
+            raise ValueError(
+                "Each cross-covariance slice must be positive semidefinite; "
+                f"the correlation matrix at component {worst} has smallest "
+                f"eigenvalue {lowest[worst]:.3e}. For a pair of fields that "
+                "means |correlation| <= 1."
+            )
+        definite = bool(np.all(live)) and lowest.min() > tolerance
+
+        values, vectors = np.linalg.eigh(sigma)
         values = np.clip(values, 0.0, None)
         for field in range(count):
             _refuse_identity_covariance(
@@ -1135,12 +1188,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         )
         # Every slice invertible: the precision is the slice-wise inverse,
         # which nothing downstream could otherwise recover from the
-        # covariance without a solve per application.
+        # covariance without a solve per application. Inverted in correlation
+        # form, D^-1/2 R^-1 D^-1/2, so the inversion sees the slice's
+        # conditioning and not the spread of its variances.
         precision = None
-        if values.size and values.min() > tolerance:
-            precision = SpectralBlockLinearOperator(
-                space, np.linalg.inv(sigma)
-            ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        if definite:
+            inverse = np.linalg.inv(correlation)
+            inverse = 0.5 * (inverse + np.swapaxes(inverse, -1, -2))
+            inverse = inverse / deviations[:, :, None] / deviations[:, None, :]
+            precision = SpectralBlockLinearOperator(space, inverse).with_traits(
+                Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            )
             covariance = covariance.with_traits(Traits.POSITIVE_DEFINITE)
 
         # A draw is the factor on white noise. Drawn in components it is the

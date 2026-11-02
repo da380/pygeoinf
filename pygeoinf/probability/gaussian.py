@@ -2551,6 +2551,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *,
         noise: "GaussianMeasure | None" = None,
         solver: Any = None,
+        definite: bool = False,
     ) -> "GaussianMeasure[X]":
         """The measure conditioned on ``A x == value``, or on noisy data.
 
@@ -2578,6 +2579,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             solver: how to invert ``A C A* + R`` on the constraint codomain.
                 Conjugate gradients by default; a factory taking the operator
                 is also accepted.
+            definite: claim that ``A C A* + R`` is positive definite where
+                the traits cannot show it. Under an exact constraint they
+                show it only for a definite covariance, but a semidefinite
+                one can do: a masked prior ``P C P*`` under a constraint
+                that does not see the masked part, ``A P == A``, gives
+                ``A C A*``. The claim belongs to neither factor, so it is
+                made here. Like any claim it is not checked; a dense
+                :class:`~pygeoinf.numerics.solvers.CholeskySolver` as
+                *solver* fails loudly if it is false.
 
         Returns:
             The conditioned measure.
@@ -2587,10 +2597,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 ``A C A* + R`` is not known to be invertible: that needs the
                 covariance to claim positive definiteness and, for an exact
                 constraint, the operator to claim ``SURJECTIVE``, or else a
-                noise covariance claiming positive definiteness. A constraint
-                operator with dependent rows has no exact conditioning;
-                drop the dependent rows, or claim the trait where it is
-                known to hold.
+                noise covariance claiming positive definiteness, or else
+                *definite*. A constraint operator with dependent rows has no
+                exact conditioning; drop the dependent rows, or claim the
+                trait where it is known to hold.
         """
         from ..numerics.solvers import resolve_solver
         from ..traits import Traits as _Traits
@@ -2607,6 +2617,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
         if noise is not None:
             normal = normal + noise.covariance
+        if definite:
+            normal = normal.with_traits(_Traits.POSITIVE_DEFINITE)
         if _Traits.POSITIVE_DEFINITE not in normal.traits:
             raise ValueError(
                 "Conditioning needs A C A* + R to be invertible, and it is not "
@@ -2619,7 +2631,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 )
                 + " An exact constraint needs a POSITIVE_DEFINITE covariance and "
                 "an operator claiming SURJECTIVE (with_traits attaches it); a "
-                "noisy one needs a POSITIVE_DEFINITE noise covariance."
+                "noisy one needs a POSITIVE_DEFINITE noise covariance. Where "
+                "A C A* + R is known to be definite although the traits cannot "
+                "show it, as for a semidefinite covariance under a constraint "
+                "definite on its range, pass definite=True."
             )
         inverse = resolve_solver(solver, normal)(normal)
         cross = covariance @ operator.adjoint
