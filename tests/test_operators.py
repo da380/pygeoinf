@@ -1334,6 +1334,80 @@ class TestChecksTakeAMeasure:
             AffineOperator(A, measure.sample(rng=rng)), rng=rng, measure=measure
         )
 
+    @pytest.fixture
+    def pair(self):
+        """The inclusion of one Sobolev space in another, with a smooth
+        measure on each."""
+        from pygeoinf.symmetric_space import Lebesgue as BoxLebesgue
+        from pygeoinf.symmetric_space import Sobolev as BoxSobolev
+
+        base = BoxLebesgue((16,), lengths=(1.0,))
+        X = BoxSobolev((16,), 2.0, 0.1, lengths=(1.0,))
+        Y = BoxSobolev((16,), 1.0, 0.1, lengths=(1.0,))
+        A = LinearOperator.from_formal_adjoint(X, Y, LinearOperator.identity(base))
+        return A, X.sobolev_measure(2.0, 0.1), Y.sobolev_measure(2.0, 0.1)
+
+    @staticmethod
+    def refuse_white_noise(monkeypatch, space):
+        def refuse(*, rng=None):
+            raise RuntimeError("white noise was drawn")
+
+        monkeypatch.setattr(space, "random", refuse)
+
+    def test_the_codomain_takes_a_measure_of_its_own(self, pair, rng, monkeypatch):
+        from pygeoinf.testing import check_affine, check_operator
+
+        A, on_domain, on_codomain = pair
+        translation = on_codomain.sample(rng=rng)
+        self.refuse_white_noise(monkeypatch, A.codomain)
+        check_operator(A, rng=rng, measure=on_domain, codomain_measure=on_codomain)
+        check_affine(
+            AffineOperator(A, translation),
+            rng=rng,
+            measure=on_domain,
+            codomain_measure=on_codomain,
+        )
+
+    def test_another_codomain_without_one_is_probed_with_white_noise(
+        self, pair, rng, monkeypatch
+    ):
+        from pygeoinf.testing import check_operator
+
+        A, on_domain, _ = pair
+        self.refuse_white_noise(monkeypatch, A.codomain)
+        with pytest.raises(RuntimeError, match="white noise"):
+            check_operator(A, rng=rng, measure=on_domain)
+
+    def test_an_endomorphism_probes_both_sides_with_the_one_measure(
+        self, field, rng, monkeypatch
+    ):
+        from pygeoinf.testing import check_operator
+
+        X, measure = field
+        A = X.spectral_operator(1.0 / (1.0 + X.degrees.astype(float)))
+        self.refuse_white_noise(monkeypatch, X)
+        check_operator(A, rng=rng, measure=measure)
+
+    def test_a_codomain_measure_on_another_space_is_refused(self, pair, rng):
+        from pygeoinf.testing import check_operator
+
+        A, on_domain, _ = pair
+        with pytest.raises(ValueError, match="lives on"):
+            check_operator(A, rng=rng, measure=on_domain, codomain_measure=on_domain)
+
+    def test_a_wrong_adjoint_between_two_spaces_still_fails(self, pair, rng):
+        from pygeoinf.testing import check_operator
+
+        A, on_domain, on_codomain = pair
+        X = A.domain
+        wrong = LinearOperator.from_callables(
+            X, A.codomain, A, adjoint=lambda y: X.scale(2.0, A.adjoint(y))
+        )
+        with pytest.raises(AssertionError, match="adjoint"):
+            check_operator(
+                wrong, rng=rng, measure=on_domain, codomain_measure=on_codomain
+            )
+
 
 class TestPublicStructureAccessors:
     """What an operator will say about itself without being applied: the
