@@ -552,10 +552,16 @@ and is happy, and sl3dpp's list is not a concern now.
   space, the step a time `h` converted by each flow, references as
   `GaussianReference` built from an `r`-dimensional chart, the Laplace
   Gaussian a reference in its Gauss-Newton form at any rank, and the
-  geometric presets kept as thin wrappers. Still open: placement and
-  names, unadjusted schemes, the flows' acceptance protocol and gradient
-  cache; deferred: tempering from a non-prior reference, state-dependent
-  references.
+  geometric presets kept as thin wrappers. Then (D-217 to D-221): no
+  unadjusted schemes; the layers under `inference/sampling/`, one file
+  each, `GaussianReference` in `inference/gaussian.py` and the chain
+  diagnostics in `numerics/chain_diagnostics.py`; the protocols (an
+  immutable state record carrying its gradient caches, flows reporting
+  their change to the reference's energy, `Kernel.step` returning a
+  `Step`); `sample()` a fresh short chain from the fitted reference and
+  `sample_thinned()` the stored states; references handed out by the
+  estimators. Deferred: tempering from a non-prior reference,
+  state-dependent references.
 
 **Confirmed drops** (v1 things that stay gone): derivative-free
 minimization, BiCG, and a separate deflated pointwise-variance estimator.

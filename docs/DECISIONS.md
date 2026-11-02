@@ -3925,7 +3925,9 @@ the cached state that lets one gradient serve adjacent kicks) are settled
 when the layers are built. MALA is reachable two ways, as an overdamped word
 under Metropolis–Hastings and as one Hamiltonian step with full refresh under
 the block correction; the two must agree to rounding, which is the layer's
-two-routes test.
+two-routes test. *Amended 2026-11-02:* unadjusted schemes are not offered
+(D-217); the placement and the protocols are D-218 and D-219; the geometric
+presets take a `GaussianReference`, which the estimators hand out (D-221).
 
 **D-213. The step is a time `h`; each flow converts it to its own angle**
 (2026-11-02, Oscar). Every scheme takes the dynamics' time step `h` rather
@@ -3961,6 +3963,9 @@ derivative. It never needs a precision, a log-determinant, or the inverse
 covariance applied to a draw. The same object serves a prior reference, a
 fixed Laplace or Gauss–Newton reference (the geometric presets), a reference
 fitted from an earlier run, and, later, the start of a tempering path.
+*Amended 2026-11-02 by D-221:* the reference is handed out by the estimator
+that produced the posterior, not by the posterior object, which does not hold
+what its chart needs.
 
 **D-215. Every reference is the prior with an `r`-dimensional chart's law
 replaced** (2026-11-02, Oscar). A reference is given by bounded functionals
@@ -4007,6 +4012,141 @@ full-rank exact Hessian is refused as a reference: the forward operator's
 curvature weighted by the residual is generally not of finite rank and may be
 indefinite, so that Gaussian is not of chart form and its equivalence to the
 prior is not guaranteed.
+
+**D-217. Unadjusted schemes are not offered** (2026-11-02, Oscar). Every
+sampler is Metropolis-corrected. Unadjusted schemes are biased by the step,
+their bias in Hilbert space has not been analysed (the splitting note §5.3;
+the notebook's question 11), and they have little use where an exact
+corrected sampler of the same cost exists. The rule is enforced by the types,
+not by a check: a `SplittingScheme` is not a `Kernel`, only a correction
+turns one into a kernel, and the population layer runs only kernels. So a
+word that no correction accepts, BAOAB with its stochastic letter inside the
+deterministic part, cannot be run, and the report's reference-split BAOAB
+preset is dropped. `check_scheme` still applies a bare scheme, because prior
+invariance at a large step with `Phi == 0` is a property of the word alone.
+
+**D-218. Where the sampling package lives** (2026-11-02, Oscar).
+`GaussianReference` is in `inference/gaussian.py`, beside the posteriors its
+constructors read, with `GaussianReference.from_prior(prior)` for the trivial
+reference, so nothing in `probability` creates one. The layers are
+`inference/sampling/`, one file each: `target.py` (`Target`), `flows.py`
+(`Flow`, `PriorRotation`, `LikelihoodKick`, `MomentumRefresh`, `PriorOU`,
+`GradientDrift`, and `KernelFlow` later), `dynamics.py` (`Dynamics`,
+`PreconditionedOU`, `Overdamped`, `Underdamped`, `Hamiltonian`), `schemes.py`
+(`SplittingScheme`), `corrections.py` (`Kernel`, `Step`, `MetropolizedBlock`,
+`MetropolisHastings`), `population.py` (`Chains`, `Tempering`, step-size
+adaptation), `results.py` (`SampledPosterior`, `WeightedEnsemble`) and
+`presets.py` (`PCN`, `MALA`, `HMC`, `PreconditionedHMC`, `GeometricMALA`,
+`GeometricHMC`, `SMC`); the package docstring states D-211's guarantee. A
+preset maps data to a measure, so it is a `MeasureEstimator` (D-163) and
+belongs in `inference`. The chain diagnostics -- the integrated
+autocorrelation time by Geyer's initial monotone sequence, the effective
+sample size, and split rank-normalised `R-hat` -- act on plain arrays and are
+`numerics/chain_diagnostics.py`, which D-111 allows. `check_scheme` joins
+`testing.py`. The file names are working names, easy to change before the
+package ships.
+
+**D-219. The layers' protocols** (2026-11-02, Oscar). The shape the layers
+are built to; argument lists settle with the implementation.
+- *The state* is a small immutable record: the position, the velocity
+  (`None` for the overdamped dynamics), and caches at the position filled on
+  first use: the residual potential's value, its derivative and `K` applied
+  to its gradient. A flow that moves the position returns a record with
+  empty caches; one that touches only the velocity carries them over; a
+  rejection restores the old record, caches and all. So the trailing
+  half-kick's gradient serves the next leading one, and a rejected step
+  costs no recomputation. The cache is on an explicit object passed along,
+  not on a solver and not keyed on vector identity, which is the hidden
+  state D-38 and D-127 keep out. The extended state space, a labelled
+  `DirectSum` of position and velocity, exists for the invariant measure and
+  `check_scheme`.
+- *`Target(problem, data, reference, /, *, temperature=1.0, constraint=None)`*
+  holds `Phi_ref == Phi / T + log dμ_ref/dμ_0`, the temperature dividing the
+  likelihood alone, and is the only caller of the forward operator, through
+  `forward.at`, one evaluation serving value and derivative. A forward that
+  raises `EvaluationError` (D-129) or a point outside `constraint` (checked
+  before the forward is called) has potential `+inf`, so the proposal is
+  rejected.
+- *A flow* declares what it touches, what it preserves exactly (the
+  reference, the target, or neither), whether it is deterministic and
+  reversible under a momentum flip, whether it uses the gradient, and
+  `angle(h)` (D-213). `apply(state, time, /, *, rng=None)` returns the new
+  record and the change it makes to the reference's Gaussian energy
+  `(|u - m|_K^2 + |v|_K^2) / 2`: infinite at a typical point, finite in its
+  changes, zero for a rotation, `-(t/2) DPhi_ref(u)[v_before + v_after]` for
+  a kick of length `t`, which applies a derivative to vectors and needs no
+  `K^-1`. Stochastic flows report none, never sitting inside a corrected
+  block. That number is the whole interface between the scheme and the
+  correction.
+- *A dynamics* holds its target and reference, generates its letters from
+  the reference (`flows()`, letter to flow; the user does not supply the
+  reference's flow, D-211), and gives its state space, its invariant
+  measure and `initial_state(u, /, *, rng)`, which draws a velocity. Letters
+  are scoped to their dynamics: `O` is the momentum refresh of `Underdamped`
+  and the prior OU step of `Overdamped`.
+- *`SplittingScheme(dynamics, word, /, *, step, repeat=1,
+  allow_asymmetric=False)`* stores its word in application order (a string
+  or `(letter, fraction)` pairs), checks each letter's fractions sum to one,
+  refuses a non-palindrome unless allowed, and offers `apply`, `block(word)`
+  for the correction and `with_step(h)`, a copy, nothing being mutated
+  (D-43).
+- *A kernel* is what a correction makes of a scheme:
+  `Kernel.step(state, /, *, rng) -> Step(state, log_weight, info)`, the
+  log-weight zero for a kernel that preserves its target and the info
+  carrying acceptance and energy error. `MetropolizedBlock(block, /, *,
+  flip=True).within(scheme)` refuses a block with a stochastic, irreversible
+  or undeclared flow, accepts with `log α == -(ΔPhi_ref + Σ energy
+  changes)` and flips the velocity on rejection. `MetropolisHastings(scheme)`
+  needs `scheme.log_transition_ratio(state, proposal)` against the
+  reference -- zero for words of reference-preserving flows (pCN,
+  generalised pCN, the independence sampler), closed form for the overdamped
+  drift and OU pair (MALA) -- and refuses a word for which it is `None`.
+- *`Chains(count)(kernel, /, *, start, steps, burn_in, adapt, thin, record,
+  rng, n_jobs, callback)`* spawns one generator per chain from `rng`, so a
+  result does not depend on `n_jobs`; runs chains in processes through
+  `parallel_map`, each serial within its worker, with `n_jobs` unset for an
+  operator that is itself parallel; adapts `log h` by Robbins–Monro towards
+  a target acceptance during burn-in only, through `with_step`, then
+  freezes; records the potential, the acceptance and the scalars of
+  `record=` (a linear map to a small property space) at every step and full
+  fields every `thin` steps; and checkpoints only through the callback, the
+  library doing no I/O. `Tempering(particles, /, *, mutation, schedule="ess")`
+  reweights by `exp(-Δβ Phi)` with the next `β` set by the effective sample
+  size, resamples and mutates with a kernel built for the new `β`, and
+  returns a `WeightedEnsemble` whose normalizer estimates `log Z`.
+- *A preset* assembles target, dynamics, scheme, correction and population:
+  `HMC(problem, prior, /, *, step, length, reference=None)` called on data
+  with `steps`, `chains`, `burn_in`, `rng` and `n_jobs`.
+
+**D-220. A sampled posterior draws by a fresh short chain; its stored states
+are a separate method** (2026-11-02, Oscar). A measure's draws are
+independent and a chain's states are not, and the two have very different
+properties, so they are two methods. `SampledPosterior.sample(*, rng=)`
+starts from a draw of the reference fitted to the run (D-215's constructor
+from chains), runs the run's kernel for a number of steps set from its
+diagnostics, at least twice the largest integrated autocorrelation time of
+the recorded scalars, and returns the last state: independent across calls,
+each call its own spawned generator, so `samples(n, n_jobs=)` is parallel,
+and approximate by the chain's distance from equilibrium after those steps,
+which the docstring states and the result reports. Each draw costs forward
+evaluations. `SampledPosterior.sample_thinned(*, rng=)` draws from the stored
+thinned states: no new evaluations, exact in the long-run limit, and
+correlated with one another, which is why it is not `sample`. `sample`
+depends on the fitted reference, so it lands with that constructor.
+
+**D-221. References are handed out by the estimators** (2026-11-02, Oscar,
+revising the "handed out by the posterior" of D-214). A posterior object
+does not hold what its chart needs: the Laplace Gaussians, full or low-rank,
+lack the Jacobian and the data that give the mean's shift `w` in
+`m == m_0 + C w`, and the linear posteriors lack the forward operator behind
+`w_k == M L v_k / λ_k`. The estimators hold both. So
+`LaplaceApproximation.reference(model, data)` returns the Gauss–Newton
+reference at a given model, honouring the estimator's `rank=` (full rank
+being the `m`-dimensional data chart of D-216); the linear case gains the
+same through `LinearGaussianInversion.reference(data)` and a low-rank route
+mirroring `LowRankGaussianPosterior.from_linear_problem`, whose spelling
+settles with the implementation. D-132's posteriors are unchanged. The
+geometric presets take a `GaussianReference`.
 
 ## Appendix: measurements behind the defaults
 
