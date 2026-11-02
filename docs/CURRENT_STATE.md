@@ -444,7 +444,8 @@ Recorded rather than settled, so nobody has to rediscover them.
 
 Deferred by agreement, not by omission (D-112, D-113): `dynamical_system`
 and sequential data assimilation, PETSc, `parallel=` inside operator actions,
-full function-space MCMC (the hooks exist), and the v2 documentation set.
+and the v2 documentation set. Function-space MCMC is no longer deferred: its
+design is D-211 to D-216 (2026-11-02), and it is being built (§10).
 
 ## 10. Between here and a release
 
@@ -545,7 +546,16 @@ and is happy, and sl3dpp's list is not a concern now.
   (`SampledPosterior`, `WeightedEnsemble`) are the public contract; whether
   they are built as kernels-and-driver or as discretised SDE dynamics is
   the student's call, made against a working pCN benchmark. Unadjusted
-  schemes on function spaces: leaning no.
+  schemes on function spaces: leaning no. Decided 2026-11-02 (D-211 to
+  D-216): discretised SDE dynamics in four layers (dynamics, splitting
+  scheme, corrections, population), every sampler defined on function
+  space, the step a time `h` converted by each flow, references as
+  `GaussianReference` built from an `r`-dimensional chart, the Laplace
+  Gaussian a reference in its Gauss-Newton form at any rank, and the
+  geometric presets kept as thin wrappers. Still open: placement and
+  names, unadjusted schemes, the flows' acceptance protocol and gradient
+  cache; deferred: tempering from a non-prior reference, state-dependent
+  references.
 
 **Confirmed drops** (v1 things that stay gone): derivative-free
 minimization, BiCG, and a separate deflated pointwise-variance estimator.

@@ -54,7 +54,16 @@ D-52 for the reach.
 **D-7. Nonlinear MAP and Laplace inference are in scope for 2.0**; full
 function-space MCMC is later, so its seeds are laid now: `log_density`,
 `grad_log_density` and the prior samplers are the interface a sampler will
-consume. `inference.laplace` is the result.
+consume. `inference.laplace` is the result. *Amended 2026-11-02 (Oscar):* the
+sampler's interface is not the volume density and its gradient, which D-131
+refuses on a function space. A sampler consumes a reference measure equivalent
+to the prior (its draws, its covariance applied, and its density relative to
+the prior, D-214), the likelihood potential `Phi` of `ForwardProblem.potential`
+with its derivative, and nothing else. `MaximumAPosteriori.log_posterior`
+includes the prior's precision term and is an objective for an optimizer, not a
+sampler's target. The docstrings that say otherwise (`probability/base.py` on
+`grad_log_density`, `inference/laplace.py` on what a sampler needs) are
+corrected when the sampling package lands.
 
 **D-8. Solver defaults are `rtol=1e-8`, `strict=True`.** A solve that does
 not converge raises `ConvergenceError`; `strict=False` downgrades it to a
@@ -1708,11 +1717,15 @@ pyshtools selects by default when it is importable; nothing in the code names
 it. Measured on analysis plus synthesis of a Sobolev field: 8.5 ms to 1.3 ms
 at lmax 128, 57 ms to 6.7 ms at lmax 256, coefficients agreeing to 1e-13.
 
-**D-113. Also later:** full function-space MCMC (D-7 lays the hooks), PETSc
-(D-98), parallelism inside operator actions (D-6), and pointing Sphinx at
-the new package (REVIEW2 question 11). No longer deferred (2026-10-27): the
-convex solvers' API and the certified gap, settled as D-134 to D-152
-without Mag; the gap is the bracket of D-148.
+**D-113. Also later:** PETSc (D-98), parallelism inside operator actions
+(D-6), and pointing Sphinx at the new package (REVIEW2 question 11). No
+longer deferred (2026-10-27): the convex solvers' API and the certified gap,
+settled as D-134 to D-152 without Mag; the gap is the bracket of D-148. No
+longer deferred (2026-11-02, Oscar): full function-space MCMC, as D-211 to
+D-216. Within it, still later: tempering from a reference other than the
+prior, and references that depend on the state (stochastic Newton,
+∞-mMALA), whose acceptance needs the reverse proposal density and so is not
+an involution.
 
 ---
 
@@ -3853,6 +3866,147 @@ factor of two there shows only in tests built to see it. Tests:
 a masked multiplication self-adjoint, point values by both routes, the
 transfer exact on the circle and a torus corner mode with its adjoint
 checked).
+
+---
+
+## 18. Sampling
+
+**D-211. Every sampler is defined on function space** (2026-11-02, Oscar,
+from the design report's first rule). A sampler is built so that it has a
+limit under mesh refinement: its reference is equivalent to the prior; the
+part of its dynamics that defines the reference is solved exactly and never
+split; and every acceptance ratio, weight and preconditioner it computes
+converges as the mesh is refined. So constructors refuse what is
+finite-dimensional by nature: identity mass, the kinetic/potential split that
+puts the prior's force inside a kick, random-walk proposals, adapting with
+the particle covariance, and references not built to be equivalent. They also
+refuse a prior that is not trace class, which D-190's gates already supply.
+The reason is Feldman–Hájek: a step error made on the prior's infinitely many
+modes makes the discrete chain singular to the prior, and acceptance falls to
+zero under refinement (the splitting note's Fig. 3, the notebook's Fig. 8.3).
+Since nothing in the package is finite-dimensional, no name carries the
+literature's "∞" prefix; the guarantee is stated in the package docstring.
+The test that holds the package to it is acceptance, or for SMC the number of
+stages and the effective sample size, flat at two or three mesh levels.
+
+**D-212. A sampler is four layers, with presets for the common cases**
+(2026-11-02, Oscar). The four layers: (1) the **dynamics**, an SDE whose
+invariant measure is the posterior, which generates its exactly solvable
+flows from its reference; (2) the **splitting scheme**, a word over those
+flows in application order; (3) the **corrections**, a Metropolized
+deterministic block with a momentum flip on rejection, or Metropolis–Hastings
+on a proposal whose transition density is known; (4) the **population**,
+independent chains or tempering with reweighting and resampling, both
+reporting a log-weight increment per step. The presets are the brief's list
+(`PCN`, `MALA`, `HMC`, `PreconditionedHMC`, `GeometricMALA`, `GeometricHMC`,
+`SMC`), and the results are `SampledPosterior` and `WeightedEnsemble`, as
+`CURRENT_STATE` §10 fixed. The geometric presets exist for the user's
+convenience even though, under D-214, they are `MALA` and `HMC` with a
+reference other than the prior: each is a thin wrapper that takes the
+reference, or the posterior that hands one out, and says in its name what it
+is. The notebook (§8.5) shows that pCN, MALA, HMC and partially refreshed HMC
+are one equation at different parameters; that unification was not taken as
+the interface, for two reasons. The method of integration matters to a user:
+different words have different errors and different acceptance, and only
+some can be corrected. And the general alternative, a dynamics given as
+energy, dissipation and circulation operators, would be an opaque list of
+preconditioners to anyone unfamiliar with sampling; it stays as a test-time
+checker. Most users will need only the presets. The cost of the layering is
+metadata: each flow declares which variables it touches, which measure it
+preserves exactly (the reference, the target, or none), whether it is
+deterministic and whether it is reversible under a momentum flip; the scheme
+checks its word (each letter's fractions sum to one; a word that is not a
+palindrome is refused unless asked for), and each correction refuses a block
+or word whose declarations do not fit. In particular Metropolis–Hastings is
+offered only where the scheme can state its transition density. The working
+names are the brief's. The placement, whether unadjusted schemes are offered,
+and the internal protocols (each flow's contribution to the acceptance, and
+the cached state that lets one gradient serve adjacent kicks) are settled
+when the layers are built. MALA is reachable two ways, as an overdamped word
+under Metropolis–Hastings and as one Hamiltonian step with full refresh under
+the block correction; the two must agree to rounding, which is the layer's
+two-routes test.
+
+**D-213. The step is a time `h`; each flow converts it to its own angle**
+(2026-11-02, Oscar). Every scheme takes the dynamics' time step `h` rather
+than a rotation angle, to keep the parameter physical; a letter's fraction of
+the word scales it, and an HMC trajectory lasts `T = L h`. Each flow owns its
+conversion and exposes the angle it applies, because the mapping differs from
+flow to flow and no single conversion at the scheme level would be right: the
+prior rotation turns by `h`; the prior Ornstein–Uhlenbeck step (pCN) has
+`cos θ = exp(-h)`, so `β = sqrt(1 - exp(-2h))`; the momentum refresh has
+`cos ζ = exp(-γ h)`; the likelihood kick has length `h`. Converters from the
+literature's parameters (pCN's `β`, Crank–Nicolson's `δ` with
+`cos θ = (2 - δ)/(2 + δ)`) are offered for readers coming from the papers.
+The presets take `h`, and step-size adaptation acts on `log h`, during
+burn-in only.
+
+**D-214. A reference is a `GaussianReference`, whose two readings describe
+one measure** (2026-11-02, Oscar). The dynamics is built relative to a
+reference Gaussian equivalent to the prior: the rotation and refresh solve it
+exactly, and the kick and the acceptance see only the residual
+`Phi + log dμ_ref/dμ_0`. `GaussianReference` is a `GaussianMeasure` and an
+`AbsolutelyContinuousMeasure` over the prior, the shape of
+`GaussianPosterior`, held to a stricter rule: its `relative_log_density` is
+its *own* density, `log dμ_ref/dμ_0`, so its moments and its density describe
+the same measure. D-132 is unchanged by this. A Laplace `GaussianPosterior`
+keeps its deliberately different readings (moments of the approximation,
+density of the exact posterior), and the reference is handed out by the
+posterior rather than being it. The linear posterior already meets the
+stricter rule, since `-Phi` is exactly its own density. The prior is the
+trivial reference, with density zero, so a dynamics always holds a reference.
+What a reference must supply: its mean, its covariance applied, centred
+draws, and its density against the prior as a `Functional` with a
+derivative. It never needs a precision, a log-determinant, or the inverse
+covariance applied to a draw. The same object serves a prior reference, a
+fixed Laplace or Gauss–Newton reference (the geometric presets), a reference
+fitted from an earlier run, and, later, the start of a tempering path.
+
+**D-215. Every reference is the prior with an `r`-dimensional chart's law
+replaced** (2026-11-02, Oscar). A reference is given by bounded functionals
+`l(u) = ((w_k, u - m_0))_k`, under the prior distributed `N(0, K_l)` with
+`K_l = (w_i, C w_j)`, and a new law `g` for the chart. A draw is the Matheron
+rule `condition` already uses, `u = ξ + C W K_l^-1 (z - l(ξ))` with `ξ` a
+prior draw and `z` drawn from `g`, at the cost of `r` precomputed
+applications of `C`; the density is `log g(l(u)) - log n(l(u); 0, K_l)`,
+`r`-dimensional, with a gradient through `W`. In every direction outside the
+chart the reference *is* the prior, which is why it is equivalent to the
+prior by construction (D-60's pattern) and why it is cheap. The chain is
+exact whatever chart is chosen; the chart decides how much the reference
+knows about the posterior, and so the sampler's efficiency. The Gauss–Newton
+case fits this exactly. With `(λ_k, v_k)` the eigenpairs of `L* M L`, where
+`M = J* R^-1 J` and `L` is the prior's factor, the identity
+`(v_k, L^-1 (u - m_0)) == (M L v_k, u - m_0) / λ_k` makes `w_k = M L v_k / λ_k`
+an ordinary vector built from data-space quantities; and the mean is held as
+`m = m_0 + C w`, which at a stationary MAP point is `w = J* R^-1 (d - F(m))`
+and is the form used whether or not the search converged. So no precision is
+needed anywhere, which matters for the priors calibrated by `pointwise_std=`,
+which have none. Draws and density are built from the same chart, never from
+separate routes: the randomized eigenvectors are approximate, and a density
+from one route paired with draws from another would describe two measures,
+leaving the chain exact for neither. The rotation and refresh flows need `g`
+to be Gaussian, since a rotation preserves only Gaussian pairs; a non-Gaussian
+chart law, a mixture for one, serves only pCN-type moves with a Gibbs step on
+the label, entering as a kernel flow. Constructors come from the linear
+low-rank posterior and from Laplace first; from chains' output, and as
+mixtures, later.
+
+**D-216. The Laplace Gaussian is a reference in its Gauss–Newton form, at
+any rank** (2026-11-02, Oscar). With `m` data the Gauss–Newton update
+`J* R^-1 J` has rank at most `m`, so the full-rank Laplace Gaussian departs
+from the prior in at most `m` directions: it is already a chart,
+`l(u) = J(u - m_0)` in the data space, equivalent to the prior whatever the
+discretisation, and it is accepted as a reference. The cost is `m`
+applications of `C` to build the chart and an `m × m` factorization for
+draws, which is the user's to weigh against `rank=`, the truncation to the
+leading directions and the route at thousands of data. As D-174 requires,
+nothing refuses or reroutes by the number of data; the docstring states the
+cost and the switch is the caller's. The low-rank exact-Hessian route clips
+negative eigenvalues and truncates, so it is a chart and is accepted. The
+full-rank exact Hessian is refused as a reference: the forward operator's
+curvature weighted by the residual is generally not of finite rank and may be
+indefinite, so that Gaussian is not of chart form and its equivalence to the
+prior is not guaranteed.
 
 ## Appendix: measurements behind the defaults
 
