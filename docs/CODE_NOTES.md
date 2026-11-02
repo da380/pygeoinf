@@ -121,10 +121,8 @@ Each item below is still open as checked against the code.
 
 **Checks and results**
 
-- `check_operator(measure=)` probes the codomain with white noise, not a
-  measure (`testing.py:766`).
-- One `atol` default across the checks: some are 1e-12 (`testing.py:134,
-  :207, :393`) and others 0.0 (:690, :859, :1021 and on).
+- One `atol` default across the checks: some are 1e-12 (`testing.py:136,
+  :209, :395`) and others 0.0 (:693, :872, :1034 and on).
 - `OptimizationResult.history` holds values only. Per-iteration gradient
   norms would spare the waveform app its wrapper
   (`numerics/optimization.py:64-75`).

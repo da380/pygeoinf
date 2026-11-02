@@ -15,7 +15,9 @@ the space is passed, in which case they are draws from it. ``random`` is the
 neutral default on a space with no further structure, and an unrealistic one
 on a function space, where it is rough in every mode at once and not the kind
 of vector an operator will meet; a check can then pass or fail for the wrong
-reason. A prior on the space is usually the better source of probes.
+reason. A prior on the space is usually the better source of probes. The
+adjoint identity also probes the codomain, which takes a
+``codomain_measure=`` of its own.
 """
 
 from __future__ import annotations
@@ -685,6 +687,7 @@ def check_operator(
     *,
     rng: Generator | None = None,
     measure: ProbabilityMeasure | None = None,
+    codomain_measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     rtol: float = 1e-9,
     atol: float = 0.0,
@@ -695,6 +698,10 @@ def check_operator(
     The adjoint identity ``(A x, y)_Y == (x, A* y)_X`` is the one that catches
     a mass matrix applied in the wrong place, which is the most common way for
     a hand-written adjoint to be subtly wrong on a non-orthonormal space.
+
+    The identity takes a probe ``x`` in the domain and a probe ``y`` in the
+    codomain, so each space has its own source of probes. On an operator
+    into a different function space, pass a measure on each.
 
     The shortcuts are the action on component arrays, when the operator has
     one (:meth:`~pygeoinf.algebra.operators.LinearOperator.components_action`
@@ -715,6 +722,10 @@ def check_operator(
         rng: the generator for the probe vectors.
         measure: a measure on the domain to draw the probe vectors from, in
             place of its ``random`` method; see the module docstring.
+        codomain_measure: a measure on the codomain to draw the adjoint's
+            probe vectors from, in place of its ``random`` method. When it
+            is omitted and the codomain is the domain, ``measure`` serves
+            both.
         trials: how many pairs to check the adjoint identity on.
         rtol: the agreement required, for linearity, the adjoint and the
             shortcuts alike.
@@ -730,6 +741,8 @@ def check_operator(
     """
     rng = resolve_rng(rng)
     domain, codomain = operator.domain, operator.codomain
+    if codomain_measure is None and codomain == domain:
+        codomain_measure = measure
     defects: dict[str, float] = {}
 
     for _ in range(trials):
@@ -763,7 +776,7 @@ def check_operator(
 
     probes = []
     for _ in range(trials):
-        x, y = _draw(domain, rng, measure), codomain.random(rng=rng)
+        x, y = _draw(domain, rng, measure), _draw(codomain, rng, codomain_measure)
         probes.append((x, y))
         ax, ay = operator(x), adjoint(y)
         _assert_scalar(
@@ -1614,6 +1627,7 @@ def check_affine(
     *,
     rng: Generator | None = None,
     measure: ProbabilityMeasure | None = None,
+    codomain_measure: ProbabilityMeasure | None = None,
     trials: int = 5,
     rtol: float = 1e-8,
     atol: float = 0.0,
@@ -1634,6 +1648,9 @@ def check_affine(
         rng: the generator for the probe vectors.
         measure: a measure on the domain to draw the probe vectors from, in
             place of its ``random`` method; see the module docstring.
+        codomain_measure: a measure on the codomain, for the adjoint
+            identity in the nested :func:`check_operator`, which says what
+            happens when it is omitted.
         trials: how many random points and combinations to test.
         rtol: the allowance, relative to the size of what is compared.
         atol: an absolute allowance added to every comparison, here and in
@@ -1692,7 +1709,13 @@ def check_affine(
             record=defects,
         )
     nested = check_operator(
-        linear, rng=rng, measure=measure, trials=trials, rtol=rtol, atol=atol
+        linear,
+        rng=rng,
+        measure=measure,
+        codomain_measure=codomain_measure,
+        trials=trials,
+        rtol=rtol,
+        atol=atol,
     )
     for axiom, defect in nested.defects.items():
         _record(defects, axiom, defect)

@@ -185,9 +185,11 @@ check_traits(A, rng=rng)
 ```
 
 Each check takes the `rtol` it enforces and reports the worst relative
-defect it measured. On a function space, probe with a smooth measure. An
-adjoint consistent only to discretization level passes at the `rtol` it can
-meet, and its defect should fall under refinement.
+defect it measured. On a function space, probe with a smooth measure, and
+pass `codomain_measure=` as well when an operator maps into another
+function space; an operator from a space to itself uses the one measure
+for both. An adjoint consistent only to discretization level passes at the
+`rtol` it can meet, and its defect should fall under refinement.
 
 Wrapping foreign memory: know who owns each buffer, and keep wrapped solvers
 alive from the pygeoinf object that owns them. A finite element space fits
