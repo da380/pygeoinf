@@ -117,7 +117,7 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 
 | module | what lives there |
 |---|---|
-| `algebra` | `HilbertSpace`, `CoordinateSpace`, `HilbertModule`, `MassWeightedSpace`, `DirectSum`; `Operator`, `LinearOperator`, `Functional`, the expression nodes, `DiagonalLinearOperator`, the block operators, `Linearization` |
+| `algebra` | `HilbertSpace`, `CoordinateSpace`, `HilbertModule`, `MassWeightedSpace`, `DirectSum`, `TensorProduct`; `Operator`, `LinearOperator`, `Functional`, the expression nodes, `DiagonalLinearOperator`, the block operators, `TensorProductLinearOperator`, `Linearization` |
 | `traits` | the trait flags and their propagation rules |
 | `numerics` | linear solvers and preconditioners, the normal operators and the Tikhonov family, randomized linear algebra, the operator calculus and log-determinants, optimization and line searches, convex methods, quadratic programming, root finding, weighted chi-square distributions |
 | `geometry` | convex sets, level and sublevel sets, subspaces and projectors, support functions, the feasible property set and its algorithms |
@@ -143,8 +143,9 @@ spectral-element packages need the `planetmodel` extra.
   from the `x` axis. Lengths are physical; a circle or torus is unit by
   default, so its coordinate is the angle.
 - **Vectors.** A sphere's are `pyshtools.SHGrid` objects, a box's are arrays,
-  and a spectral-element space's are values on the padded grid with the
-  eigen-coefficients as components.
+  a spectral-element space's are values on the padded grid with the
+  eigen-coefficients as components, and a tensor product's are arrays with
+  one axis per factor, holding components on the factors' bases.
 - **Products stay on the grid**, untruncated, and `truncate` is public. An
   operator reads a grid array through its components.
 - **Spherical harmonics** are orthonormal on the sphere of the given radius,

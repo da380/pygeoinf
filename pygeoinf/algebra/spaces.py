@@ -422,6 +422,28 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         xi = resolve_rng(rng).standard_normal(self.dim)
         return solve_triangular(self._gram_cholesky.T, xi, lower=False)
 
+    def whiten_columns(self, xi: np.ndarray, /) -> np.ndarray:
+        """``L^-T`` applied to every column of an array, with ``G == L L^T``.
+
+        The map behind :meth:`white_noise_components`, exposed on columns:
+        standard normal columns go in, and columns of white noise components,
+        ``N(0, G^-1)`` each, come out. It is what a space built from this one
+        needs to draw its own white noise through this space's factor -- a
+        tensor product applies it along each factor's axis -- and what a
+        caller holding several standard normal draws applies at once.
+
+        The default uses the dense Cholesky factor, formed once; a space
+        with a cheaper factor overrides it, as :class:`DiagonalMetricSpace`
+        and :class:`OrthonormalSpace` do.
+
+        Args:
+            xi: a ``(dim, k)`` array of standard normal draws.
+
+        Returns:
+            A ``(dim, k)`` array, each column distributed as ``N(0, G^-1)``.
+        """
+        return solve_triangular(self._gram_cholesky.T, xi, lower=False)
+
     @cached_property
     def _gram_cholesky(self) -> np.ndarray:
         """The lower Cholesky factor ``L`` of the Gram matrix, computed once."""
@@ -1237,6 +1259,10 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
         xi = resolve_rng(rng).standard_normal(self.dim)
         return xi / self._sqrt_metric_values
 
+    def whiten_columns(self, xi: np.ndarray, /) -> np.ndarray:
+        """``L^-T`` on every column: one broadcast divide by ``sqrt(g)``."""
+        return xi / self._sqrt_metric_values[:, None]
+
     def inner_product(self, x: V, y: V) -> float:
         """``c_x . (g * c_y)``, avoiding a full matrix apply."""
         cx = self.to_components(x)
@@ -1322,6 +1348,10 @@ class ComponentView(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
         """White noise as the viewed space draws it."""
         return self._space.white_noise_components(rng=rng)
 
+    def whiten_columns(self, xi: np.ndarray, /) -> np.ndarray:
+        """``L^-T`` on every column, as the viewed space applies it."""
+        return self._space.whiten_columns(xi)
+
     @property
     def is_orthonormal(self) -> bool:
         """Whether the viewed space's basis is orthonormal."""
@@ -1352,6 +1382,10 @@ class OrthonormalSpace[V](CoordinateSpace[V], ABC):
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Standard normal components, since ``G`` is the identity here."""
         return resolve_rng(rng).standard_normal(self.dim)
+
+    def whiten_columns(self, xi: np.ndarray, /) -> np.ndarray:
+        """The columns themselves, copied: ``G`` is the identity."""
+        return np.array(xi, dtype=float)
 
     def gram_matrix(self) -> np.ndarray:
         """The identity matrix."""

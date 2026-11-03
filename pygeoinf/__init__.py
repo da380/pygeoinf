@@ -5,7 +5,8 @@ Vectors are whatever objects a backend provides, and every algorithm works
 through the space's inner product, so the same estimator runs on a Euclidean
 space, a spherical-harmonic field or a finite element space. The subpackages:
 
-* ``algebra`` -- Hilbert spaces, direct sums, linear and nonlinear operators;
+* ``algebra`` -- Hilbert spaces, direct sums and tensor products, linear and
+  nonlinear operators;
 * ``numerics`` -- linear solvers, preconditioners, randomized methods, the
   operator calculus, optimization and convex solvers;
 * ``geometry`` -- convex sets, subsets and subspaces;
@@ -46,6 +47,7 @@ from .algebra.direct_sum import (
     RowOperator,
 )
 from .algebra.linearization import Linearization, QuadraticModel
+from .algebra.tensor_product import TensorProduct, TensorProductLinearOperator
 from .algebra.operators import (
     AffineOperator,
     EvaluationError,
@@ -251,6 +253,9 @@ __all__ = [
     # algebra.linearization
     "Linearization",
     "QuadraticModel",
+    # algebra.tensor_product
+    "TensorProduct",
+    "TensorProductLinearOperator",
     # geometry
     "AffineSubspace",
     "Ball",

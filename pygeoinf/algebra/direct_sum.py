@@ -353,6 +353,15 @@ class CoordinateDirectSum(DirectSum, CoordinateSpace):
             [space.white_noise_components(rng=rng) for space in self._spaces]
         )
 
+    def whiten_columns(self, xi: np.ndarray, /) -> np.ndarray:
+        """``L^-T`` on every column, one summand's block of rows at a time."""
+        return np.concatenate(
+            [
+                space.whiten_columns(xi[s])
+                for space, s in zip(self._spaces, self._slices)
+            ]
+        )
+
     @property
     def is_orthonormal(self) -> bool:
         """True only when every summand has an orthonormal basis."""

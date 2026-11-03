@@ -24,6 +24,7 @@ from .operators import (
     Operator,
     require_coordinates,
 )
+from .tensor_product import TensorProduct, TensorProductLinearOperator
 from .spaces import (
     REORTHOGONALIZATION_THRESHOLD,
     ArrayVectorMixin,
@@ -73,4 +74,6 @@ __all__ = [
     "Reals",
     "require_coordinates",
     "require_module",
+    "TensorProduct",
+    "TensorProductLinearOperator",
 ]

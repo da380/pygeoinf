@@ -1545,8 +1545,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> LinearOperator[X, Y]:
         """The rank-one outer product ``x -> (v, x) u``.
 
-        Not a tensor product of *spaces*, which the library does not provide,
-        but the operator construction that shares the name, and the building
+        Not an operator between tensor products of spaces, which is
+        :class:`~pygeoinf.algebra.tensor_product.TensorProductLinearOperator`,
+        but the rank-one construction that shares the name, and the building
         block of every low-rank representation. When ``u`` and ``v`` are the
         same vector on the same space, the result claims positive
         semidefiniteness.
