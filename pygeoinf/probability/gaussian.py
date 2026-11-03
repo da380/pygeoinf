@@ -788,7 +788,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # judged again.
         return cls(
             domain,
-            expectation=tuple(m.expectation for m in measures),
+            expectation=(
+                None
+                if all(m.has_zero_expectation for m in measures)
+                else tuple(m.expectation for m in measures)
+            ),
             covariance=covariance,
             covariance_factor=factor,
             precision=precision,
@@ -870,7 +874,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
         return cls(
             domain,
-            expectation=tuple(m.expectation for m in measures),
+            expectation=(
+                None
+                if all(m.has_zero_expectation for m in measures)
+                else tuple(m.expectation for m in measures)
+            ),
             covariance_factor=factor,
             precision_factor=precision_factor,
             unsafe=True,
@@ -3296,9 +3304,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         the precision across, where the base class's push-forward takes over.
         """
         codomain = operator.codomain
-        mean = operator(self.expectation)
-        if translation is not None:
-            mean = codomain.add(mean, translation)
+        # A centered measure stays centered under a linear map; the mean is
+        # left unstored rather than computed as the image of zero.
+        if self._expectation is None:
+            mean = translation
+        else:
+            mean = operator(self._expectation)
+            if translation is not None:
+                mean = codomain.add(mean, translation)
 
         factor = (
             None
@@ -3410,7 +3423,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             sample = None  # the factor is the better sampler
         return self._rebuild(
             self._domain,
-            expectation=self._domain.add(self.expectation, other.expectation),
+            expectation=(
+                None
+                if self._expectation is None and other.has_zero_expectation
+                else self._domain.add(self.expectation, other.expectation)
+            ),
             covariance=total,
             covariance_factor=factor,
             precision=precision,
@@ -3461,7 +3478,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         return self._rebuild(
             self._domain,
-            expectation=self._domain.scale(alpha, self.expectation),
+            expectation=(
+                None
+                if self._expectation is None
+                else self._domain.scale(alpha, self._expectation)
+            ),
             covariance=covariance,
             covariance_factor=factor,
             precision=precision,
