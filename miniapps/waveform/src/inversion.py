@@ -83,12 +83,21 @@ def newton(
 
 
 def modes_path(outdir: pathlib.Path, scale: Scale, /) -> pathlib.Path:
-    """Where part C leaves its modes for parts D and E.
+    """Where part C leaves its modes for parts D, E and G.
 
     Named by the preset and the seed; a scale that departs from its preset
     in anything else, by an option given on the command line, adds a digest
-    of itself, so that a mode is never read back under another problem.
+    of itself, so that a mode is never read back under another problem. Part
+    G's sampler options come after the mode and are left out.
     """
+    scale = dataclasses.replace(
+        scale,
+        **{
+            field.name: field.default
+            for field in dataclasses.fields(scale)
+            if field.name.startswith("hmc_")
+        },
+    )
     stem = f"modes_{scale.name}_{scale.seed}"
     preset = {s.name: s for s in (PROOF, QUICK, FULL)}.get(scale.name)
     if preset is None or dataclasses.replace(scale, seed=preset.seed) != preset:

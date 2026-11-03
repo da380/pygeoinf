@@ -129,6 +129,12 @@ class Scale:
         occam_iterations: Occam's outer iterations.
         occam_newton_iterations: the Newton iterations of each of Occam's.
         occam_cg_iterations: the inner iterations of Occam's Newton steps.
+        hmc_step: the time step GeometricHMC's burn-in starts its adaptation
+            from.
+        hmc_length: the leapfrog steps of a GeometricHMC trajectory.
+        hmc_chains: the chains each GeometricHMC runs, one after another.
+        hmc_burn_in: the steps each chain takes and discards first.
+        hmc_steps: the steps each chain keeps.
         probe_jobs: the threads of the spectral preconditioner's probes.
         n_jobs: the threads the shots run on; none for one.
         curvature_jobs: the threads of the exact Hessian's curvature shots;
@@ -163,6 +169,11 @@ class Scale:
     occam_iterations: int = 10
     occam_newton_iterations: int = 6
     occam_cg_iterations: int = 40
+    hmc_step: float = 0.3
+    hmc_length: int = 4
+    hmc_chains: int = 2
+    hmc_burn_in: int = 20
+    hmc_steps: int = 100
     probe_jobs: int = 2
     n_jobs: int | None = None
     curvature_jobs: int | None = None

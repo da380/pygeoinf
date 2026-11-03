@@ -1,7 +1,8 @@
-"""Every serial part in order, on one problem: A to E.
+"""Every serial part in order, on one problem: A to E, and G at the quick scale.
 
-``python run_all.py --quick`` for the small scale, which runs in well under
-two minutes; the full scale runs each part for about a minute or two, so run
+``python run_all.py --quick`` for the small scale, which runs A to E in well
+under two minutes and then part G, the posterior sampled by GeometricHMC, in
+about five more; the full scale runs each part for about a minute or two, so run
 its scripts one at a time, C before D and E (both read the mode C saves).
 Part F runs under ``mpiexec``. The scale's fields are options, applied to
 the preset and passed to every part.
@@ -12,6 +13,7 @@ from __future__ import annotations
 import pathlib
 import time
 
+import hmc
 import laplace
 import newton
 import occam
@@ -31,6 +33,10 @@ def run_all(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
     mode = results["c"]["runs"]["polish"]["model"]
     results["d"] = occam.run(scale, outdir=outdir, state=state, mode=mode)
     results["e"] = laplace.run(scale, outdir=outdir, state=state, mode=mode)
+    if scale.name == QUICK.name:
+        results["g"] = hmc.run(
+            scale, outdir=outdir, state=state, mode=mode, laplace=results["e"]
+        )
     print(f"\ntotal {time.perf_counter() - started:.1f} s; figures in {outdir}")
     return results
 

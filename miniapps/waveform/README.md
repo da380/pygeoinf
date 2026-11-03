@@ -53,11 +53,17 @@ The parts:
 - **F, the grid split across MPI ranks** (`mpi_run.py`, under `mpiexec`): the
   distributed operator against the serial one, the check ladder through it,
   the time of each kind of application, and part C's Gauss-Newton MAP.
+- **G, the posterior sampled** (`hmc.py`, at the quick scale only, on the
+  serial solver): the library's `GeometricHMC` about the low-rank Laplace
+  Gaussian at the mode, once on the Gauss-Newton Hessian and once on the
+  exact one. Its figures: how the two samplers' chains converge, and what
+  they find against the Laplace Gaussians, on the four box means and on the
+  velocity's pointwise spread.
 
 Two scales of the same section. `--quick` puts it on 100 by 40 cells of
 20 m, in a grid of 148 by 64 with the sponge, with 50 receivers, a 2.5 Hz
 wavelet and 400 steps of 3.6 ms; parts A to E run in about 70 s in all, and
-it is what the test runs. The full scale is 200 by 80 cells of 10 m, in a
+it is what the test runs; part G, at this scale only, adds about five minutes. The full scale is 200 by 80 cells of 10 m, in a
 grid of 248 by 104, with 67 receivers, a 5 Hz wavelet and 600 steps of
 1.8 ms; each part runs in under two minutes. In both, the shortest wavelength
 that matters, at two and a half times the peak frequency in the slowest
@@ -74,9 +80,10 @@ receivers.
 ```
 cd miniapps/waveform
 python cpp/build.py                          # cmake + nanobind, -O3, module copied into src/
-MPLBACKEND=Agg python run_all.py --quick     # parts A to E, small scale
+MPLBACKEND=Agg python run_all.py --quick     # parts A to E and G, small scale
 MPLBACKEND=Agg python proofs.py              # one part at the full scale; likewise
                                              # synthetic.py, newton.py, occam.py, laplace.py
+MPLBACKEND=Agg python hmc.py --quick         # part G, which runs at the quick scale only
 MPICXX=/path/to/mpicxx python cpp/build.py --mpi          # also acoustic_mpi
 mpiexec -n 3 python mpi_run.py --quick                    # part F, that MPI's mpiexec
 ```
@@ -145,7 +152,8 @@ Two overrides at the quick scale, against its own numbers:
 
 A part run alone rebuilds the problem from the seed. Part C saves its modes
 to `modes_<scale>_<seed>.npz` beside the figures, with a digest of the scale
-added when an option departs from the preset, and parts D and E read the
+added when an option departs from the preset (part G's `--hmc-*` options,
+which come after the mode, do not count), and parts D, E and G read the
 polished mode from there, or run part C's Newton iterations first when it is
 missing; at the full scale run the scripts one at a time, C before D and E.
 Each part's figure is titled with the app and the part, and written into
@@ -167,7 +175,8 @@ wrapper builds it (set `MPICXX` to choose one).
 | `src/inversion.py` | a Newton-CG that logs its gradient norms, the saved mode |
 | `src/common.py` | the command line built from the scale, the stopwatch, the section plots |
 | `proofs.py`, `synthetic.py`, `newton.py`, `occam.py`, `laplace.py` | parts A to E, each a script with a `main()` and a `run()` the others and the test call; `proofs.reflection`, what the sponge sends back |
-| `run_all.py` | parts A to E in order |
+| `hmc.py` | part G, the posterior sampled by `GeometricHMC` about the Laplace Gaussians, at the quick scale |
+| `run_all.py` | parts A to E in order, and G at the quick scale |
 | `mpi_run.py` | part F, run by every rank under `mpiexec` |
 | `results/` | what a run writes: the figures, the saved modes and part F's numbers, `results/quick/` at the quick scale |
 
@@ -477,6 +486,63 @@ system's Open MPI has no development headers installed):
 The `--quick` run of part F on three ranks takes 10 s; the full one 47 s on
 three ranks and 46 s on six.
 
+## G. The posterior sampled (quick scale)
+
+`hmc.py` samples the posterior itself with the library's `GeometricHMC`,
+whose reference is the Laplace Gaussian at the polished mode in the low-rank
+chart form of `LaplaceApproximation.reference`, rank `laplace_rank` (60):
+once on the Gauss-Newton Hessian and once on the exact one, the forward
+operator's curvature weighted by the residual added by second-order adjoints
+and its negative eigenvalues clipped. The reference decides how fast a chain
+mixes, never what it converges to: both samplers are exact. Each runs two
+chains, one after another, of 20 burn-in and 100 kept steps of four leapfrog
+steps, from the same seed, recording the four box means of part E at every
+step. The run lengths are options, `--hmc-steps`, `--hmc-burn-in`,
+`--hmc-chains`, `--hmc-length` and `--hmc-step`, and do not change the saved
+mode's name. The serial solver is required: the operator holds the C++
+solver, which a worker process cannot be sent, and its cache holds one model,
+so the chains run in turn with the shots on threads.
+
+Measured with `run_all.py --quick`, on the machine above; part G took 289 s
+of the run's 370 s and the process peaked at 555 MB:
+
+| | Gauss-Newton reference | exact reference |
+|---|---|---|
+| reference, 341 applications of its curvature | 10.9 s | 19.1 s |
+| step after burn-in, acceptance | 0.309, 0.66 | 0.318, 0.61 |
+| gradients, seconds | 962, 128 s | 962, 127 s |
+| autocorrelation time, potential / box means | 2.4 / 1.1 to 1.9 | 4.5 / 1.6 to 5.2 |
+| ESS per 100 gradients, potential / box means | 8.8 / 11 to 19 | 4.6 / 4.0 to 12.8 |
+| largest split R-hat | 1.03 | 1.07 |
+
+A gradient costs about 0.13 s in a chain, 0.065 s of it the kernels. The two
+references give box standard deviations within 2% of each other at this
+noise, and the difference in mixing is of the size one seed of two short
+chains can show; it is not a ranking.
+
+| box | truth | MAP | Laplace rank 60, ± 2 sd | part E, full rank | HMC, Gauss-Newton reference | HMC, exact reference |
+|---|---|---|---|---|---|---|
+| fast, shallow | 0.2388 | 0.2392 | ± 0.0031 | 0.2392 ± 0.0021 | 0.2396 ± 0.0019 | 0.2396 ± 0.0021 |
+| slow | 0.2762 | 0.2733 | ± 0.0050 | 0.2733 ± 0.0030 | 0.2734 ± 0.0034 | 0.2736 ± 0.0028 |
+| fast, deep | 0.2151 | 0.2166 | ± 0.0082 | 0.2166 ± 0.0050 | 0.2168 ± 0.0059 | 0.2166 ± 0.0054 |
+| background | 0.2308 | 0.2317 | ± 0.0117 | 0.2317 ± 0.0071 | 0.2335 ± 0.0068 | 0.2334 ± 0.0072 |
+
+At 3% noise the posterior on the box means is the full-rank Laplace
+Gaussian's to within the chains' Monte Carlo error in its spread, and close
+to it in its centre: the sampled means lie within a fifth of a standard
+deviation of the mode but in the background box, where they lie a quarter of
+one above it, five Monte Carlo errors. The rank-60 references are wider, by
+a factor of about 1.6 on the box means and 1.5 on the velocity's pointwise
+standard deviation (the sampled one over the reference's has a median of
+0.65 over the section): the curvature's eigenvalues through the prior's
+factor are still about 13 at the 60th and fall to one near the 100th, and a
+low-rank reference keeps the prior's spread in the directions it leaves out.
+The sampler corrects that, at an acceptance of 0.6 to 0.66; a rank near 100
+would make the reference the posterior's in those directions too, at twice
+its cost. The sampled mean less the MAP velocity has an rms of 8 to 9 m/s
+over the section against a median standard deviation of 19 m/s, largest in
+the bottom corners, where the survey sees least.
+
 ## Choices
 
 - **The model space and the prior.** The library's `symmetric_space.fourier`
@@ -567,6 +633,10 @@ three ranks and 46 s on six.
   spectrum of many decades. A randomized eigendecomposition of that operator
   seen through the prior's covariance factor, once, turns four solves that
   reach a cap of 120 iterations into four of 17.
+- The Laplace Gaussian is a reference, not an answer: `GeometricHMC` about it
+  samples the posterior exactly, on the same operator, and at 3% noise
+  confirms the full-rank Laplace spread on the box means; a rank-60
+  reference is too wide by half, which the sampler corrects.
 - An absorbing boundary is measured against a grid too big to reflect, not
   judged by eye: the sponge here sends back under 1% of the data's rms, well
   below the noise, so that the answers are the survey's own and not the
