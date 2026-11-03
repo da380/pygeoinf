@@ -33,6 +33,7 @@ from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
+    from ..algebra.tensor_product import TensorProduct
     from ..geometry.convex import Ellipsoid
     from ..numerics.randomized import Estimate
 from .base import ProbabilityMeasure, _require_density
@@ -871,6 +872,146 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             domain,
             expectation=tuple(m.expectation for m in measures),
             covariance_factor=factor,
+            precision_factor=precision_factor,
+            unsafe=True,
+        )
+
+    @classmethod
+    def from_tensor_product(
+        cls,
+        measures: Sequence[GaussianMeasure],
+        /,
+        *,
+        domain: TensorProduct | None = None,
+        expectation: np.ndarray | None = None,
+    ) -> GaussianMeasure[np.ndarray]:
+        """The Gaussian on the tensor product of the factors' domains whose
+        covariance is the tensor product of theirs, ``C_1 (x) ... (x) C_n``.
+
+        A separable covariance: the covariance between the values at ``(t,
+        x)`` and ``(s, y)`` of a draw is ``k_1(t, s) k_2(x, y)``, the product
+        of the factors' covariance functions. It is not the law of ``x_1 (x)
+        ... (x) x_n`` for independent draws of the factors, which is not
+        Gaussian; what is tensored is the covariance operators, and a draw is
+        an array of full rank.
+
+        On a product of function spaces the covariance is trace class
+        exactly when every factor's is, so each factor must be a measure on
+        its own space in the full sense. An identity covariance is admitted
+        on a factor that is not a function space, a finite set of parameters
+        say, where it is trace class, and nowhere else: a factor white in
+        time is as ill-defined as one white in space.
+
+        When every covariance is a scaling of components and the product's
+        metric is diagonal, the covariance is a
+        :class:`~pygeoinf.algebra.diagonal.DiagonalLinearOperator` on the
+        product with the outer product of the factors' spectra, and the
+        measure samples in one whitening and carries its precision and both
+        factors. Otherwise the covariance, the covariance factor, the
+        precision and the precision factor are each the tensor product of
+        the factors', whenever every factor has one; the measure samples
+        when every factor has a covariance factor.
+
+        The factors must be centered. The mean is a vector of the product,
+        given as *expectation*; the factors' expectations would make it their
+        tensor product, which is zero as soon as one of them is, and that
+        convention is not taken silently.
+
+        Args:
+            measures: the factors, two or more, each on a coordinate space.
+            domain: the tensor product to put the measure on, when the caller
+                has one already; its factors must be the measures' domains,
+                in order. Built from them if omitted.
+            expectation: the mean, an array of the product's shape. Zero if
+                omitted.
+
+        Returns:
+            The measure on the tensor product of the domains.
+
+        Raises:
+            ValueError: with fewer than two factors, if a factor is not
+                centered or has neither a covariance nor a covariance factor,
+                or if a given domain's factors are not the measures' domains.
+            TypeError: if a factor's domain provides no coordinate map.
+        """
+        from functools import reduce
+
+        from ..algebra.diagonal import DiagonalLinearOperator
+        from ..algebra.tensor_product import (
+            TensorProduct,
+            TensorProductLinearOperator,
+        )
+
+        measures = tuple(measures)
+        if len(measures) < 2:
+            raise ValueError("A tensor product measure needs at least two factors.")
+        for index, measure in enumerate(measures):
+            if not measure.has_zero_expectation:
+                raise ValueError(
+                    f"Factor {index} is not centered; give the product's "
+                    f"expectation instead."
+                )
+            if measure.covariance is None:
+                raise ValueError(
+                    f"Factor {index} has neither a covariance nor a covariance "
+                    f"factor."
+                )
+        if domain is None:
+            domain = TensorProduct([m.domain for m in measures])
+        else:
+            if not isinstance(domain, TensorProduct) or len(domain.factors) != len(
+                measures
+            ):
+                raise ValueError(
+                    f"The domain must be a tensor product of {len(measures)} "
+                    f"factors, got {domain!r}."
+                )
+            for index, (factor, measure) in enumerate(zip(domain.factors, measures)):
+                if factor != measure.domain:
+                    raise ValueError(
+                        f"Factor {index} of the domain is {factor!r}, and the "
+                        f"measure there lives on {measure.domain!r}."
+                    )
+
+        covariances = [m.covariance for m in measures]
+        scalings = [covariance._known_scaling() for covariance in covariances]
+        if domain.has_diagonal_metric and all(s is not None for s in scalings):
+            # Diagonal in the product's basis: the constructor reads off the
+            # factor and the precision, and a draw is one whitening.
+            values = reduce(
+                np.multiply.outer, [np.asarray(s, dtype=float) for s in scalings]
+            ).reshape(-1)
+            return cls(
+                domain,
+                expectation=expectation,
+                covariance=DiagonalLinearOperator(domain, values),
+                unsafe=True,
+            )
+
+        # Each factor claims what a covariance must, so their tensor product
+        # claims it too, and a factor's domain is the product's exactly when
+        # every factor's covariance factor maps into its own domain.
+        factor = None
+        if all(m.covariance_factor is not None for m in measures):
+            factor = TensorProductLinearOperator(
+                [m.covariance_factor for m in measures]
+            )
+        precision = None
+        if all(m.precision is not None for m in measures):
+            precision = TensorProductLinearOperator([m.precision for m in measures])
+        precision_factor = None
+        if all(m.precision_factor is not None for m in measures):
+            precision_factor = TensorProductLinearOperator(
+                [m.precision_factor for m in measures]
+            )
+        # Each factor was gated when it was built; their product is not
+        # judged again.
+        return cls(
+            domain,
+            expectation=expectation,
+            covariance=TensorProductLinearOperator(covariances),
+            covariance_factor=factor,
+            precision=precision,
             precision_factor=precision_factor,
             unsafe=True,
         )

@@ -144,8 +144,7 @@ Each item below is still open as checked against the code.
   `SampledPosterior`, `WeightedEnsemble`, with the low-rank posterior as a
   reference.
 - Process-safety declarations for operators, checkpointing in the
-  optimizers, resource-owning linearizations, and a tensor-product space as
-  a backend.
+  optimizers, and resource-owning linearizations.
 - The paper-scale feasible-set benchmarks (flexure–gravity, nested
   tomography), last seen in git at `8c53839` under `benchmarks/`. The dual
   did not converge on flexure–gravity at 1 500 bundle iterations.
