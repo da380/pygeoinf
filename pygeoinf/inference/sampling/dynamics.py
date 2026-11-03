@@ -26,6 +26,8 @@ Overdamped         ``O``: :class:`~.flows.PriorOU`, ``B``: :class:`~.flows.Gradi
 Underdamped        ``A``: :class:`~.flows.PriorRotation`, ``B``: :class:`~.flows.LikelihoodKick`,
                    ``O``: :class:`~.flows.MomentumRefresh` at the friction
 Hamiltonian        the same, ``O`` a full refresh
+Blockwise          one letter per summand of a direct sum, named by its label
+                   (or position): :class:`~.flows.GibbsBlock`
 =================  =========================================================
 
 Letters belong to their dynamics: ``O`` is a momentum refresh in one and the
@@ -51,6 +53,7 @@ from ...probability.base import ProbabilityMeasure, ProductMeasure
 from ...probability.gaussian import GaussianMeasure
 from .flows import (
     Flow,
+    GibbsBlock,
     GradientDrift,
     LabelJump,
     LikelihoodKick,
@@ -60,7 +63,14 @@ from .flows import (
 )
 from .target import State, Target
 
-__all__ = ["Dynamics", "Hamiltonian", "Overdamped", "PreconditionedOU", "Underdamped"]
+__all__ = [
+    "Blockwise",
+    "Dynamics",
+    "Hamiltonian",
+    "Overdamped",
+    "PreconditionedOU",
+    "Underdamped",
+]
 
 
 class Dynamics(ABC):
@@ -344,6 +354,146 @@ class Hamiltonian(Dynamics):
             The dynamics.
         """
         return Hamiltonian(target)
+
+
+class Blockwise(Dynamics):
+    """Gibbs sampling over the summands of a direct sum, one block at a time.
+
+    Each summand is a letter, a :class:`~.flows.GibbsBlock` that updates it
+    against its conditional target with its own sampler and step, the others
+    held. Every letter preserves the target, so a word over them, a
+    systematic scan or its palindrome, needs no correction and is applied
+    by a :class:`~pygeoinf.inference.sampling.corrections.Sweep`. The
+    letters are the summands' labels, or their positions where the direct
+    sum has none.
+
+    Args:
+        target: the target, on a direct sum, its reference the prior.
+        blocks: what samples each summand: a mapping from the summand (by
+            position or label) to its recipe, covering every summand once.
+        steps: each block's time step, by summand; the recipe's if omitted.
+
+    Raises:
+        ValueError: if the model space is not a direct sum, the reference is
+            not the prior, a summand has no block or two, or as for
+            :class:`Dynamics`.
+    """
+
+    def __init__(
+        self,
+        target: Target,
+        blocks: Any,
+        /,
+        *,
+        steps: Any = None,
+    ) -> None:
+        space = target.model_space
+        if not isinstance(space, DirectSum):
+            raise ValueError(
+                f"Blocks are the summands of a direct sum; the model space is {space!r}."
+            )
+        if target.is_local or target.is_mixture or target.reference.rank != 0:
+            raise ValueError(
+                "A Gibbs block's reference is the prior's conditional law, so "
+                "the target's reference must be the prior."
+            )
+        recipes: dict[int, Any] = {}
+        for key, recipe in dict(blocks).items():
+            index = space.index(key)
+            if index in recipes:
+                raise ValueError(f"Summand {key!r} has two blocks.")
+            recipes[index] = recipe
+        missing = [i for i in range(len(space.subspaces)) if i not in recipes]
+        if missing:
+            raise ValueError(
+                f"Every summand needs a block, or it never moves; {missing} have none."
+            )
+        given = (
+            {} if steps is None else {space.index(k): v for k, v in dict(steps).items()}
+        )
+        self._recipes = tuple(recipes[i] for i in range(len(space.subspaces)))
+        self._steps = tuple(
+            float(given.get(i, recipe.step)) for i, recipe in enumerate(self._recipes)
+        )
+        labels = space.labels
+        self._letters = tuple(
+            str(i) if labels is None else labels[i] for i in range(len(space.subspaces))
+        )
+        super().__init__(target)
+
+    @property
+    def letters(self) -> tuple[str, ...]:
+        """The blocks' letters, in summand order."""
+        return self._letters
+
+    @property
+    def recipes(self) -> tuple[Any, ...]:
+        """The blocks' recipes, in summand order."""
+        return self._recipes
+
+    @property
+    def block_steps(self) -> tuple[float, ...]:
+        """The blocks' time steps, in summand order."""
+        return self._steps
+
+    def _build_flows(self) -> dict[str, Flow]:
+        return {
+            letter: GibbsBlock(self._target, index, recipe, step=step)
+            for index, (letter, recipe, step) in enumerate(
+                zip(self._letters, self._recipes, self._steps)
+            )
+        }
+
+    def scan(self, *, order: str = "systematic") -> list[tuple[str, float]]:
+        """The word that visits every block: in summand order, or, for
+        ``"symmetric"``, there and back, a palindrome and so reversible.
+
+        Args:
+            order: ``"systematic"`` or ``"symmetric"``.
+
+        Returns:
+            The word, as ``(letter, fraction)`` pairs.
+
+        Raises:
+            ValueError: for another order.
+        """
+        letters = list(self._letters)
+        if order == "systematic":
+            return [(letter, 1.0) for letter in letters]
+        if order == "symmetric":
+            if len(letters) == 1:
+                return [(letters[0], 1.0)]
+            ends = [(letter, 0.5) for letter in letters[:-1]]
+            return ends + [(letters[-1], 1.0)] + ends[::-1]
+        raise ValueError(f"A scan is 'systematic' or 'symmetric', not {order!r}.")
+
+    def with_steps(self, steps: Any, /) -> "Blockwise":
+        """The same blocks at other steps.
+
+        Args:
+            steps: the blocks' steps, in summand order.
+
+        Returns:
+            The dynamics.
+        """
+        return Blockwise(
+            self._target,
+            dict(enumerate(self._recipes)),
+            steps=dict(enumerate(steps)),
+        )
+
+    def with_target(self, target: Target, /) -> "Blockwise":
+        """The same blocks, at the same steps, on another target.
+
+        Args:
+            target: the new target.
+
+        Returns:
+            The dynamics.
+        """
+        return Blockwise(
+            target, dict(enumerate(self._recipes)), steps=dict(enumerate(self._steps))
+        )
 
 
 def _velocity_measure(target: Target, /) -> GaussianMeasure:

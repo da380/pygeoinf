@@ -29,14 +29,18 @@ papers: pCN's ``beta`` and Crank-Nicolson's ``delta``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
+
 import numpy as np
 from numpy.random import Generator
 
-from .target import State, Target
+from .target import State, Target, enter_block, leave_block
 
 __all__ = [
     "Flow",
+    "GibbsBlock",
     "GradientDrift",
+    "KernelFlow",
     "LabelJump",
     "LikelihoodKick",
     "MomentumRefresh",
@@ -443,6 +447,115 @@ class LabelJump(Flow):
         if np.log(rng.random()) < current - proposed:
             return proposal, None
         return state, None
+
+
+class KernelFlow(Flow):
+    """A flow that runs a kernel: any update that leaves the target invariant.
+
+    Stochastic and target-preserving, so it sits outside every correction,
+    in a word that a :class:`~pygeoinf.inference.sampling.corrections.Sweep`
+    applies as it stands. A subclass says which kernel runs and on what;
+    :class:`GibbsBlock` is the first, a kernel on one summand's conditional
+    target.
+    """
+
+    touches = frozenset({POSITION})
+    preserves = frozenset({REFERENCE, TARGET})
+    deterministic = False
+    reversible = False
+
+
+class GibbsBlock(KernelFlow):
+    """One summand updated against its conditional, the others held: a
+    Gibbs block.
+
+    At each application the block's target is built from the state
+    (:meth:`~pygeoinf.inference.sampling.target.Target.block`), its kernel is
+    built from the recipe at the block's step and run for the recipe's
+    number of steps, and the summand is written back. Every kernel leaves
+    its target invariant, so the block leaves the conditional, and so the
+    whole target, invariant; with no likelihood, the reference's conditional
+    and so the reference. A velocity, for an inertial block sampler, is drawn
+    afresh at every visit. The likelihood's value is carried in and out of
+    the block, so a visit costs no forward evaluation beyond the kernel's
+    own. The step's mean acceptance, and whether the summand moved, are left
+    on the new state's cache for the sweep to read.
+
+    Args:
+        target: the whole target, on a direct sum.
+        key: the summand, by position or by label.
+        recipe: what samples the block: a
+            :class:`~pygeoinf.inference.sampling.presets.BlockRecipe`, or any
+            object with ``kernel(target, step)``, ``steps`` and
+            ``uses_gradient``.
+        step: the block kernel's time step.
+
+    Raises:
+        ValueError: for a step that is not positive and finite.
+    """
+
+    def __init__(
+        self, target: Target, key: int | str, recipe: Any, /, *, step: float
+    ) -> None:
+        if not 0.0 < step < float("inf"):
+            raise ValueError(f"A step is positive and finite, got {step}.")
+        super().__init__(target)
+        self._index = target.model_space.index(key)
+        self._recipe = recipe
+        self._step = float(step)
+        self.uses_gradient = bool(recipe.uses_gradient)
+
+    @property
+    def index(self) -> int:
+        """The summand's position."""
+        return self._index
+
+    @property
+    def recipe(self) -> Any:
+        """What samples the block."""
+        return self._recipe
+
+    @property
+    def step(self) -> float:
+        """The block kernel's time step."""
+        return self._step
+
+    def apply(
+        self, state: State, time: float, /, *, rng: Generator | None = None
+    ) -> tuple[State, None]:
+        """Update the summand by its kernel, the others held.
+
+        Args:
+            state: the whole state.
+            time: unused; the block has its own step.
+            rng: the generator.
+
+        Returns:
+            The new state, and no energy change.
+        """
+        from ...algebra.spaces import resolve_rng
+
+        rng = resolve_rng(rng)
+        target = self._target
+        block = target.block(self._index, state)
+        kernel = self._recipe.kernel(block, self._step)
+        summand = target.model_space.component(state.position, self._index)
+        inner = kernel.initial_state(summand, rng=rng)
+        enter_block(target, block, self._index, state, inner)
+        acceptances = []
+        moved = False
+        for _ in range(int(self._recipe.steps)):
+            step = kernel.step(inner, rng=rng)
+            inner = step.state
+            acceptances.append(step.info.acceptance)
+            moved = moved or step.info.accepted
+        result = leave_block(target, block, self._index, state, inner)
+        result.cache[("block acceptance", self._index)] = float(np.mean(acceptances))
+        result.cache[("block moved", self._index)] = moved
+        return result, None
+
+    def __repr__(self) -> str:
+        return f"GibbsBlock({self._index}, step={self._step:g})"
 
 
 def time_from_pcn_beta(beta: float, /) -> float:

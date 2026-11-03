@@ -60,7 +60,11 @@ class Chain:
         records: the recorded scalars at every step, shape
             ``(steps, count)``, or ``None`` when nothing was recorded.
         positions: the stored states, one every ``thin`` steps.
-        step_size: the time step the chain ran at after burn-in.
+        step_size: the time step the chain ran at after burn-in, the first
+            block's for a kernel of several.
+        step_sizes: every block's time step after burn-in.
+        block_acceptance: each block's acceptance at every kept step, shape
+            ``(steps, blocks)``, for a kernel of several blocks.
     """
 
     potential: np.ndarray
@@ -69,6 +73,8 @@ class Chain:
     records: np.ndarray | None
     positions: tuple
     step_size: float
+    step_sizes: tuple[float, ...] = ()
+    block_acceptance: np.ndarray | None = None
 
     @property
     def steps(self) -> int:
@@ -157,6 +163,17 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
     def acceptance_rate(self) -> float:
         """The mean acceptance probability over every kept step."""
         return float(np.mean([chain.acceptance.mean() for chain in self._chains]))
+
+    @property
+    def block_acceptance_rates(self) -> np.ndarray | None:
+        """Each block's mean acceptance over every kept step, for a Gibbs
+        run; ``None`` for a kernel of one block."""
+        blocks = [
+            c.block_acceptance for c in self._chains if c.block_acceptance is not None
+        ]
+        if not blocks:
+            return None
+        return np.concatenate(blocks).mean(axis=0)
 
     def scalars(self) -> np.ndarray:
         """The potential and the recorded scalars, shape ``(count, chains, steps)``.
@@ -372,8 +389,10 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
         rng = resolve_rng(rng)
         reference = self.draw_reference
         steps = self.steps_per_draw
-        step = float(np.mean([chain.step_size for chain in self._chains]))
-        kernel = self._kernel.with_step(step)
+        step_sizes = np.mean(
+            [chain.step_sizes or (chain.step_size,) for chain in self._chains], axis=0
+        )
+        kernel = self._kernel.with_steps(step_sizes)
         state = kernel.initial_state(reference.sample(rng=rng), rng=rng)
         if kernel.target.value(state) == float("inf"):
             raise ValueError(

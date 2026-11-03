@@ -124,6 +124,7 @@ from .inference.sampling import (
     SMC,
     GeometricHMC,
     GeometricMALA,
+    Gibbs,
     PreconditionedHMC,
     SampledPosterior,
     WeightedEnsemble,
@@ -201,6 +202,7 @@ __all__ = [
     # sampling: the presets and what they return
     "GeometricHMC",
     "GeometricMALA",
+    "Gibbs",
     "HMC",
     "MALA",
     "PCN",

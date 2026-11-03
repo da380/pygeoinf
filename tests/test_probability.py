@@ -2132,6 +2132,133 @@ class TestMarginalsKeepWhatTheJointHas:
         check_measure(marginal, rng=rng, samples=3000)
 
 
+def _components_covariance(measure):
+    """The covariance in components, ``C_c`` with ``C x == C_c G x``."""
+    space = measure.domain
+    columns = np.array(
+        [
+            space.to_components(measure.covariance(space.basis_vector(k)))
+            for k in range(space.dim)
+        ]
+    ).T
+    return columns @ np.linalg.inv(space.gram_matrix())
+
+
+def _schur_conditional(joint, key, given):
+    """The conditional's mean and covariance in components, from the dense
+    Schur complement of the joint's."""
+    domain = joint.domain
+    index = domain.index(key)
+    starts = np.cumsum([0] + [summand.dim for summand in domain.subspaces])
+    own = np.arange(starts[index], starts[index + 1])
+    others = np.setdiff1d(np.arange(domain.dim), own)
+    covariance = _components_covariance(joint)
+    mean = domain.to_components(joint.expectation)
+    values = domain.to_components(given)
+    regression = covariance[np.ix_(own, others)] @ np.linalg.inv(
+        covariance[np.ix_(others, others)]
+    )
+    return (
+        mean[own] + regression @ (values[others] - mean[others]),
+        covariance[np.ix_(own, own)] - regression @ covariance[np.ix_(others, own)],
+    )
+
+
+class TestTheConditionalOfASummand:
+    """Every route to a summand's law given the others is the dense Schur
+    complement of the joint covariance; the closed forms never condition."""
+
+    @pytest.fixture
+    def no_conditioning(self, monkeypatch):
+        def refuse(*args, **kwargs):
+            raise AssertionError("the closed form conditioned")
+
+        monkeypatch.setattr(GaussianMeasure, "condition", refuse)
+
+    @staticmethod
+    def assert_is_the_schur_complement(joint, key, rng):
+        given = joint.sample(rng=rng)
+        conditional = joint.conditional(key, given)
+        mean, covariance = _schur_conditional(joint, key, given)
+        space = conditional.domain
+        scale = np.abs(covariance).max()
+        assert space.to_components(conditional.expectation) == pytest.approx(
+            mean, abs=1e-10 * max(1.0, np.abs(mean).max())
+        )
+        assert np.abs(_components_covariance(conditional) - covariance).max() < (
+            1e-10 * scale
+        )
+        return conditional
+
+    @staticmethod
+    def latent_product(rng):
+        Y = make_dense_metric_space(4)
+        factors = [
+            GaussianMeasure.from_standard_deviation(Y, s).translate(Y.random(rng=rng))
+            for s in (1.0, 0.5, 2.0)
+        ]
+        correlation = np.array([[1.0, 0.6, -0.3], [0.6, 1.0, 0.1], [-0.3, 0.1, 1.0]])
+        return factors, GaussianMeasure.from_product(
+            factors, correlation=correlation, labels=("u", "v", "w")
+        )
+
+    def test_a_spectrally_correlated_measure(self, rng, no_conditioning):
+        from pygeoinf.symmetric_space.circle import Sobolev
+
+        X = Sobolev(16, 1.0, 0.3)
+        variances = (1.0 + np.arange(16)) ** -2.0
+        decay = 0.8 * np.exp(-np.arange(16) / 10)
+        blocks = np.array(
+            [
+                variances[k]
+                * np.array(
+                    [[1.0, decay[k], 0.3], [decay[k], 1.0, 0.2], [0.3, 0.2, 1.0]]
+                )
+                for k in range(16)
+            ]
+        )
+        joint = X.correlated_measure(
+            blocks,
+            expectation=[X.random(rng=rng) for _ in range(3)],
+            labels=("a", "b", "c"),
+        )
+        conditional = self.assert_is_the_schur_complement(joint, "b", rng)
+        check_measure(conditional, rng=rng, samples=3000)
+
+    def test_a_product_correlated_through_its_noises(self, rng, no_conditioning):
+        _, joint = self.latent_product(rng)
+        conditional = self.assert_is_the_schur_complement(joint, "u", rng)
+        check_measure(conditional, rng=rng, samples=3000)
+
+    def test_a_translated_product(self, rng, no_conditioning):
+        _, joint = self.latent_product(rng)
+        moved = joint.translate(joint.domain.random(rng=rng))
+        self.assert_is_the_schur_complement(moved, 1, rng)
+
+    def test_a_general_covariance(self, rng):
+        _, product = self.latent_product(rng)
+        domain = product.domain
+        joint = GaussianMeasure.from_covariance_matrix(
+            domain,
+            spd(rng, domain.dim),
+            form="galerkin",
+            expectation=domain.random(rng=rng),
+        )
+        self.assert_is_the_schur_complement(joint, 1, rng)
+
+    def test_an_independent_product_is_its_marginal(self, rng, no_conditioning):
+        factors, _ = self.latent_product(rng)
+        joint = GaussianMeasure.from_product(factors, labels=("u", "v", "w"))
+        conditional = self.assert_is_the_schur_complement(joint, "w", rng)
+        x = factors[2].domain.random(rng=rng)
+        assert conditional.covariance(x) == pytest.approx(factors[2].covariance(x))
+
+    def test_a_measure_off_a_direct_sum_is_refused(self, rng):
+        mu = GaussianMeasure.from_standard_deviation(EuclideanSpace(3), 1.0)
+        with pytest.raises(ValueError, match="direct sum"):
+            mu.conditional(0, EuclideanSpace(3).random(rng=rng))
+
+
 class TestSmallerShouldFixes:
     def test_a_density_cannot_be_sampled_and_says_so(self, rng):
         from pygeoinf.algebra.operators import Functional

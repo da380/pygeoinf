@@ -4273,6 +4273,65 @@ and a step at the cap; acceptance is 0.71 at 32, 128 and 512 grid points.
 Each step builds one reference, at the proposal; the forward is evaluated
 twice there, for the potential and for the reference's linearization.
 
+**D-228. A Gaussian on a direct sum gives the conditional law of one
+summand** (2026-11-03, Oscar; to confirm with David). `GaussianMeasure.
+conditional(key, given)` is the law of summand `key` given the other
+summands' values, read off a vector of the direct sum whose own summand is
+ignored, beside `marginal` and `condition`. Its mean moves linearly with the
+others and its covariance is a Schur complement, never formed as a matrix:
+for an independent product it is the marginal; for `correlated_measure`'s
+spectral slices it is the slice-wise Schur complement mode by mode, a
+diagonal covariance and a regression coefficient per mode; for
+`from_product(correlation=R)` it is the Schur complement of `R` on the
+latent noises, `x_i == m_i + L_i (b . eta_others) + s L_i xi`, with
+`eta_j == L_j^-1 (x_j - m_j)`, where every factor's latent whitening is
+known; and otherwise it is `condition` on the other summands' exact values,
+marginalized, a solve per application. It is a statement about the measure
+and serves beyond sampling: one field kriged from another under a joint
+prior. On a function space the conditionals for different values of the
+others are singular to one another when the correlation does not decay with
+scale (a constant `R`): each is a well-defined Gaussian, but no move may
+compare two of them.
+
+**D-229. Gibbs blocks: one summand at a time, against its conditional
+prior** (2026-11-03, Oscar, settling D-218's `KernelFlow`). The use is
+several physical fields with different correlation structures sampled
+together, a level set beside elastic parameters say; hierarchical blocks,
+hyperparameters updated by Gibbs, are a separate and harder topic on a
+function space and are left out. Blocks are the summands of a `DirectSum`
+model space and act on the fields themselves, not on latent noises, which
+several fields would share. A block's update is a kernel on the conditional
+target, `Target.block(key, state)`: the likelihood with the other summands
+inserted, against `GaussianReference.from_prior(prior.conditional(...))`,
+so every block sampler is a function-space sampler of its conditional and
+every Gibbs move is exact. `KernelFlow` is a flow that runs an invariant
+kernel, stochastic and preserving the target; `GibbsBlock(target, key,
+recipe, /, *, step)` is its first form, building the block target from the
+state, running the block's kernel for the recipe's `steps` steps, and writing
+the summand back, the likelihood's value carried across so that a visit
+costs no extra forward evaluation. The `Blockwise` dynamics has one letter
+per summand, named by its label (or position); a word over them is a scan,
+systematic or symmetric (the palindrome, which is reversible). A word of
+target-preserving letters needs no correction, so `Sweep(scheme)` is the
+kernel that applies one, consistent with D-217 since every letter is exact.
+A block's velocity is drawn afresh at each visit and not kept between
+sweeps. The prior must be the reference; references other than the prior
+per block are not offered yet.
+
+**D-230. Block recipes, per-block step adaptation, and the `Gibbs` preset**
+(2026-11-03, Oscar). A block's sampler is given as a recipe, the presets'
+kernels without their problem and prior: `PCN.recipe(step=)`,
+`MALA.recipe(step=)`, `HMC.recipe(step=, length=)` and
+`PreconditionedHMC.recipe(step=, friction=, length=)`, each carrying its
+default acceptance and its longest step; the name may change. `Gibbs(problem,
+prior, /, *, blocks={key: recipe}, order="systematic")` is a `ChainSampler`
+over a `Sweep`. Blocks have their own steps and acceptances, so a kernel
+reports `step_sizes` and takes `with_steps(...)`, a step's `StepInfo` carries
+`acceptances` per block, `Chains` takes one `StepSizeAdaptation` per block
+and adapts each block towards its own acceptance during burn-in, and a
+`Chain` keeps each block's acceptance at every kept step; a kernel of one
+step is the case of one block.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

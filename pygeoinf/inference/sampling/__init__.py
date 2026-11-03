@@ -48,6 +48,13 @@ run, whose components the chains jump between::
     refined = GeometricHMC(problem, mixture, step=0.3, length=3)(data, steps=2000, rng=rng)
     draws = refined.with_draw_reference(mixture).samples(100, rng=rng, n_jobs=4)
 
+A model of several fields, a direct sum, is sampled block by block, each
+field by its own sampler against its conditional::
+
+    gibbs = Gibbs(problem, prior, blocks={"level_set": PCN.recipe(step=0.1),
+                                          "fields": HMC.recipe(step=0.2, length=5)})
+    posterior = gibbs(data, steps=2000, burn_in=500, rng=rng)
+
 The same samplers by hand, pCN and HMC::
 
     target = Target(problem, data, prior)
@@ -60,11 +67,27 @@ The same samplers by hand, pCN and HMC::
     posterior = Chains(4)(hmc, start=prior, steps=2000, burn_in=500, rng=rng, n_jobs=4)
 """
 
-from .corrections import Kernel, MetropolisHastings, MetropolizedBlock, Step, StepInfo
-from .dynamics import Dynamics, Hamiltonian, Overdamped, PreconditionedOU, Underdamped
+from .corrections import (
+    Kernel,
+    MetropolisHastings,
+    MetropolizedBlock,
+    Step,
+    StepInfo,
+    Sweep,
+)
+from .dynamics import (
+    Blockwise,
+    Dynamics,
+    Hamiltonian,
+    Overdamped,
+    PreconditionedOU,
+    Underdamped,
+)
 from .flows import (
     Flow,
+    GibbsBlock,
     GradientDrift,
+    KernelFlow,
     LabelJump,
     LikelihoodKick,
     MomentumRefresh,
@@ -81,7 +104,9 @@ from .presets import (
     MALA,
     PCN,
     SMC,
+    BlockRecipe,
     ChainSampler,
+    Gibbs,
     GeometricHMC,
     GeometricMALA,
     PreconditionedHMC,
@@ -91,6 +116,8 @@ from .schemes import SplittingScheme
 from .target import State, Target
 
 __all__ = [
+    "BlockRecipe",
+    "Blockwise",
     "Chain",
     "ChainDiagnostics",
     "ChainSampler",
@@ -99,10 +126,13 @@ __all__ = [
     "Flow",
     "GeometricHMC",
     "GeometricMALA",
+    "Gibbs",
+    "GibbsBlock",
     "GradientDrift",
     "HMC",
     "Hamiltonian",
     "Kernel",
+    "KernelFlow",
     "LabelJump",
     "LikelihoodKick",
     "MALA",
@@ -122,6 +152,7 @@ __all__ = [
     "Step",
     "StepInfo",
     "StepSizeAdaptation",
+    "Sweep",
     "Target",
     "Tempering",
     "Underdamped",

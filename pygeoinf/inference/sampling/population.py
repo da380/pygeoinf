@@ -23,7 +23,7 @@ checkpointing a long run is the callback's business.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -144,7 +144,7 @@ class Chains:
         start: Any,
         steps: int,
         burn_in: int = 0,
-        adapt: StepSizeAdaptation | None = None,
+        adapt: StepSizeAdaptation | Sequence[StepSizeAdaptation | None] | None = None,
         thin: int | None = None,
         record: LinearOperator | None = None,
         record_names: list[str] | None = None,
@@ -165,7 +165,12 @@ class Chains:
                 start from, the prior or a reference say.
             steps: how many steps each chain keeps, after its burn-in.
             burn_in: how many steps each chain takes first and discards.
-            adapt: how the step adapts during burn-in; fixed if omitted.
+            adapt: how the step adapts during burn-in, towards its target
+                acceptance; fixed if omitted. For a kernel of several blocks
+                (:attr:`~pygeoinf.inference.sampling.corrections.Kernel.step_sizes`),
+                one adaptation per block, each towards its own acceptance,
+                ``None`` keeping a block's step fixed; one adaptation alone
+                serves every block.
             thin: store the position every this many kept steps; nothing
                 is stored if omitted, which leaves
                 :meth:`~pygeoinf.inference.sampling.results.SampledPosterior.sample_thinned`
@@ -245,7 +250,7 @@ def _run_chain(
     start: Any,
     steps: int,
     burn_in: int,
-    adapt: StepSizeAdaptation | None,
+    adapt: Any,
     thin: int | None,
     record: LinearOperator | None,
     callback: Callable[[int, int, Step], None] | None,
@@ -263,13 +268,19 @@ def _run_chain(
             "The potential cannot be evaluated at the chain's start; start "
             "where the forward operator evaluates."
         )
-    step_size = kernel.step_size
+    step_sizes = list(kernel.step_sizes)
+    adapters = _adapters(adapt, len(step_sizes))
     for iteration in range(burn_in):
         step = kernel.step(state, rng=rng)
         state = step.state
-        if adapt is not None:
-            step_size = adapt.update(step_size, iteration, step.info.acceptance)
-            kernel = kernel.with_step(step_size)
+        if adapters is not None:
+            acceptances = step.info.acceptances or (step.info.acceptance,)
+            for block, (adapter, acceptance) in enumerate(zip(adapters, acceptances)):
+                if adapter is not None:
+                    step_sizes[block] = adapter.update(
+                        step_sizes[block], iteration, acceptance
+                    )
+            kernel = kernel.with_steps(step_sizes)
         if callback is not None:
             callback(index, iteration, step)
 
@@ -282,19 +293,52 @@ def _run_chain(
         space = record.codomain
         records = np.empty((steps, space.dim))
     positions = []
+    blocks = None
+    if len(step_sizes) > 1:
+        blocks = np.empty((steps, len(step_sizes)))
     for kept in range(steps):
         step = kernel.step(state, rng=rng)
         state = step.state
         potential[kept] = target.potential(state)
         accepted[kept] = step.info.accepted
         acceptance[kept] = step.info.acceptance
+        if blocks is not None and step.info.acceptances is not None:
+            blocks[kept] = step.info.acceptances
         if records is not None:
             records[kept] = space.to_components(record(state.position))
         if thin is not None and (kept + 1) % thin == 0:
             positions.append(state.position)
         if callback is not None:
             callback(index, burn_in + kept, step)
-    return Chain(potential, accepted, acceptance, records, tuple(positions), step_size)
+    return Chain(
+        potential,
+        accepted,
+        acceptance,
+        records,
+        tuple(positions),
+        step_sizes[0],
+        step_sizes=tuple(step_sizes),
+        block_acceptance=blocks,
+    )
+
+
+def _adapters(adapt: Any, count: int, /) -> list | None:
+    """One adaptation per step of a kernel: the one given, for every step, or
+    a sequence of them, ``None`` keeping a step fixed.
+
+    Raises:
+        ValueError: for a sequence of the wrong length.
+    """
+    if adapt is None:
+        return None
+    if isinstance(adapt, StepSizeAdaptation):
+        return [adapt] * count
+    adapters = list(adapt)
+    if len(adapters) != count:
+        raise ValueError(
+            f"Expected {count} adaptations, one per block of the kernel; got {len(adapters)}."
+        )
+    return adapters
 
 
 class Tempering:

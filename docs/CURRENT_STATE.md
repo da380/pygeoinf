@@ -562,7 +562,7 @@ and is happy, and sl3dpp's list is not a concern now.
   large backended problem little or nothing is done datum by datum, the
   adjoint acting on a general data-space vector through one adjoint
   solve, so this is not the picture to design around; the details wait.
-- Sampling: built on the `sampling` branch, 2026-11-02 and 03, D-211 to D-227.
+- Sampling: built on the `sampling` branch, 2026-11-02 and 03, D-211 to D-230.
   Discretised SDE dynamics in four layers (dynamics, splitting scheme,
   corrections, population), every sampler defined on function space and
   Metropolis-corrected; the step a time `h`, each flow converting it, with
@@ -586,9 +586,19 @@ and is happy, and sl3dpp's list is not a concern now.
   Laplace Gaussian at each state (Gauss-Newton on the full data chart, or a
   user-supplied Hessian through `LaplaceApproximation(hessian=)`), its
   acceptance flat under refinement (D-227); the Laplace reference's mean is
-  the Newton step from the model. Next (D-226): `KernelFlow`, any invariant
-  kernel as a letter, with Gibbs blocks on the summands of a direct sum its
-  first use. Also open: local HMC (deferred, its block not reversed by a
+  the Newton step from the model. `Gibbs(problem, prior, blocks={key:
+  recipe})` samples a direct sum one summand at a time, each by its own
+  recipe (`PCN.recipe(step=)` and the like) against the prior's conditional
+  law of that summand, `GaussianMeasure.conditional` (D-228, to confirm
+  with David), so each block is a function-space sampler; the blocks are
+  `KernelFlow` letters of a `Blockwise` dynamics, applied uncorrected by a
+  `Sweep`, systematic or symmetric, each block's step adapted to its own
+  acceptance (D-229, D-230). Measured: one sweep from 200,000 exact
+  posterior draws of a correlated two-field problem moves neither mean nor
+  variance (paired differences within 1.4 standard errors). Not offered:
+  hyperparameter blocks, and per-block references other than the
+  conditional prior. Also open: the geometric samplers' remaining parts,
+  to be discussed; local HMC (deferred, its block not reversed by a
   flip once the reference moves), tempering from a non-prior reference
   (deferred), and a standard error for tempering's evidence and its
   per-stage history. Dropped: the unadjusted schemes of

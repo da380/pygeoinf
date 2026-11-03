@@ -31,9 +31,11 @@ from pygeoinf.inference.sampling import (
     MALA,
     PCN,
     SMC,
+    Blockwise,
     Chains,
     GeometricHMC,
     GeometricMALA,
+    Gibbs,
     Hamiltonian,
     LabelJump,
     MetropolisHastings,
@@ -48,6 +50,7 @@ from pygeoinf.inference.sampling import (
     SplittingScheme,
     State,
     StepSizeAdaptation,
+    Sweep,
     Target,
     Tempering,
     Underdamped,
@@ -1134,6 +1137,278 @@ class TestTheLocalMALA:
             GeometricMALA(setting.problem, s.laplace, step=1.0)
         with pytest.raises(ValueError, match="forward problem"):
             Target(setting.problem, setting.data, s.laplace)
+
+
+class GibbsSetting:
+    """Two fields on a direct sum, tied in the prior through their noises and
+    both seen by every datum, so the exact posterior couples them."""
+
+    def __init__(self):
+        rng = np.random.default_rng(1)
+        field = make_dense_metric_space(4)
+        self.prior = gi.GaussianMeasure.from_product(
+            [
+                gi.GaussianMeasure.from_standard_deviation(field, 1.0),
+                gi.GaussianMeasure.from_standard_deviation(field, 0.5),
+            ],
+            correlation=np.array([[1.0, 0.6], [0.6, 1.0]]),
+            labels=("a", "b"),
+        )
+        self.space = space = self.prior.domain
+        data_space = EuclideanSpace(5)
+        self.matrix = rng.standard_normal((5, 8))
+        self.forward = LinearOperator.from_matrix(
+            space, data_space, self.matrix, form="components"
+        )
+        self.error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.3)
+        self.problem = LinearForwardProblem(self.forward, error=self.error)
+        self.data = self.forward(self.prior.sample(rng=rng)) + self.error.sample(
+            rng=rng
+        )
+        self.posterior = LinearGaussianInversion(self.problem, self.prior)(self.data)
+        probes = (field.basis_vector(0), field.basis_vector(1))
+        self.record = LinearOperator.from_callables(
+            space,
+            EuclideanSpace(2),
+            lambda x: np.array(
+                [field.inner_product(x[0], probes[0]), field.inner_product(x[1], probes[1])]
+            ),
+            adjoint=lambda c: (c[0] * probes[0], c[1] * probes[1]),
+        )
+        self.exact = self.record(self.posterior.expectation)
+
+    def target(self, problem=None):
+        return Target(problem or self.problem, self.data, self.prior)
+
+
+@pytest.fixture(scope="module")
+def gibbs_setting():
+    return GibbsSetting()
+
+
+@pytest.fixture(scope="module")
+def gibbs_run(gibbs_setting):
+    """PCN on one field and HMC on the other, from one starting step."""
+    s = gibbs_setting
+    sampler = Gibbs(
+        s.problem,
+        s.prior,
+        blocks={"a": PCN.recipe(step=0.3), "b": HMC.recipe(step=0.3, length=3)},
+    )
+    return sampler(
+        s.data,
+        steps=3000,
+        chains=2,
+        burn_in=500,
+        record=s.record,
+        rng=np.random.default_rng(2),
+    )
+
+
+def assert_recovers_both_means(posterior, exact):
+    estimates = posterior.scalar_means()
+    for k in range(2):
+        estimate = estimates[k + 1]
+        assert abs(estimate.value - exact[k]) < 4.0 * estimate.standard_error
+    assert posterior.diagnostics().rhat.max() < 1.05
+
+
+class TestABlock:
+    def test_it_is_the_whole_target_with_the_others_held(self, gibbs_setting, rng):
+        s = gibbs_setting
+        target = s.target()
+        state = State(s.prior.sample(rng=rng))
+        block = target.block("b", state)
+        inner = State(state.position[1])
+        assert block.value(inner) == pytest.approx(target.value(state), rel=1e-12)
+        assert np.allclose(
+            block.gradient(inner), target.gradient(state)[1], atol=1e-12
+        )
+
+    def test_its_reference_is_the_prior_s_conditional(self, gibbs_setting, rng):
+        s = gibbs_setting
+        state = State(s.prior.sample(rng=rng))
+        reference = s.target().block(0, state).reference
+        conditional = s.prior.conditional(0, state.position)
+        field = conditional.domain
+        assert np.allclose(reference.prior.expectation, conditional.expectation)
+        x = field.random(rng=rng)
+        assert np.allclose(reference.prior.covariance(x), conditional.covariance(x))
+
+    def test_a_reference_other_than_the_prior_is_refused(self, gibbs_setting, rng):
+        s = gibbs_setting
+        reference = LinearGaussianInversion(s.problem, s.prior).reference(
+            s.data, rank=2, rng=rng
+        )
+        target = Target(s.problem, s.data, reference)
+        with pytest.raises(ValueError, match="conditional"):
+            target.block(0, State(s.prior.sample(rng=rng)))
+
+    def test_a_model_off_a_direct_sum_is_refused(self, setting, rng):
+        with pytest.raises(ValueError, match="direct sum"):
+            setting.target().block(0, State(setting.prior.sample(rng=rng)))
+
+
+class TestTheSweep:
+    def test_the_preset_is_a_sweep_of_blockwise_dynamics(self, gibbs_setting):
+        s = gibbs_setting
+        kernel = Gibbs(
+            s.problem,
+            s.prior,
+            blocks={"b": MALA.recipe(step=0.2), "a": PCN.recipe(step=0.3)},
+            order="symmetric",
+        ).kernel(s.data)
+        assert isinstance(kernel, Sweep) and isinstance(kernel.dynamics, Blockwise)
+        assert kernel.step_sizes == (0.3, 0.2)
+        flows = [flow.index for flow, _ in kernel.scheme.flows]
+        assert flows == flows[::-1] and set(flows) == {0, 1}
+
+    @pytest.mark.parametrize("order", ["systematic", "symmetric"])
+    def test_it_leaves_the_reference_invariant(self, gibbs_setting, order, rng):
+        s = gibbs_setting
+        kernel = Gibbs(
+            s.problem,
+            s.prior,
+            blocks={"a": PCN.recipe(step=0.5), "b": HMC.recipe(step=0.5, length=3)},
+            order=order,
+        ).kernel(s.data)
+        check_scheme(kernel.scheme, rng=rng, samples=2000)
+
+    def test_a_sweep_evaluates_the_forward_once_per_proposal(self, gibbs_setting, rng):
+        """The block starts from the likelihood the whole state holds, and
+        hands its own back."""
+        s = gibbs_setting
+        calls = []
+
+        def value(x):
+            calls.append(1)
+            return s.forward(x)
+
+        forward = Operator.from_callables(
+            s.space, s.forward.codomain, value, derivative=lambda x: s.forward
+        )
+        problem = ForwardProblem(forward, error=s.error)
+        kernel = Gibbs(
+            problem,
+            s.prior,
+            blocks={"a": PCN.recipe(step=0.1), "b": PCN.recipe(step=0.1, steps=2)},
+        ).kernel(s.data)
+        state = kernel.initial_state(s.prior.sample(rng=rng), rng=rng)
+        kernel.target.value(state)
+        calls.clear()
+        kernel.step(state, rng=rng)
+        assert len(calls) == 3
+
+    def test_a_letter_that_does_not_preserve_the_target_is_refused(self, setting):
+        with pytest.raises(ValueError, match="preserve"):
+            Sweep(SplittingScheme(PreconditionedOU(setting.target()), "O", step=0.5))
+
+
+class TestGibbs:
+    def test_it_samples_the_posterior(self, gibbs_setting, gibbs_run):
+        assert_recovers_both_means(gibbs_run, gibbs_setting.exact)
+
+    def test_each_block_adapts_to_its_own_acceptance(self, gibbs_run):
+        """PCN aims at a quarter, HMC at two thirds, from the same step."""
+        steps = gibbs_run.chains[0].step_sizes
+        assert steps[0] != steps[1]
+        rates = gibbs_run.block_acceptance_rates
+        assert rates.shape == (2,)
+        assert abs(rates[0] - 0.25) < 0.1
+        assert abs(rates[1] - 0.65) < 0.15
+
+    def test_the_symmetric_scan_samples_the_posterior(self, gibbs_setting):
+        s = gibbs_setting
+        sampler = Gibbs(
+            s.problem,
+            s.prior,
+            blocks={0: MALA.recipe(step=0.2, steps=4), 1: PCN.recipe(step=0.3, steps=4)},
+            order="symmetric",
+        )
+        posterior = sampler(
+            s.data,
+            steps=1500,
+            chains=2,
+            burn_in=500,
+            record=s.record,
+            rng=np.random.default_rng(3),
+        )
+        assert_recovers_both_means(posterior, s.exact)
+
+    def test_fresh_draws_are_whole_models(self, gibbs_setting, gibbs_run):
+        draws = gibbs_run.samples(4, rng=np.random.default_rng(5))
+        assert len(draws) == 4
+        assert all(np.all(np.isfinite(gibbs_setting.record(x))) for x in draws)
+
+    @pytest.mark.parametrize(
+        "blocks, keywords, error, match",
+        [
+            ({"a": PCN.recipe(step=0.1)}, {}, ValueError, "needs a block"),
+            (
+                {"a": PCN.recipe(step=0.1), 0: PCN.recipe(step=0.1)},
+                {},
+                ValueError,
+                "two blocks",
+            ),
+            ({"a": PCN, "b": PCN.recipe(step=0.1)}, {}, TypeError, "recipe"),
+            (
+                {"a": PCN.recipe(step=0.1), "b": PCN.recipe(step=0.1)},
+                {"order": "random"},
+                ValueError,
+                "scan",
+            ),
+        ],
+        ids=["missing", "duplicate", "not-a-recipe", "unknown-order"],
+    )
+    def test_bad_blocks_are_refused(self, gibbs_setting, blocks, keywords, error, match):
+        s = gibbs_setting
+        with pytest.raises(error, match=match):
+            Gibbs(s.problem, s.prior, blocks=blocks, **keywords)
+
+    def test_a_model_off_a_direct_sum_is_refused(self, setting):
+        with pytest.raises(ValueError, match="direct sum"):
+            Gibbs(setting.problem, setting.prior, blocks={0: PCN.recipe(step=0.1)})
+
+    @pytest.mark.parametrize("preset", [GeometricMALA, GeometricHMC])
+    def test_a_geometric_preset_offers_no_recipe(self, preset):
+        with pytest.raises(TypeError, match="conditional"):
+            preset.recipe(step=0.1)
+
+    @pytest.mark.parametrize(
+        "keywords",
+        [{"step": 0.0}, {"step": 0.1, "acceptance": 1.0}, {"step": 0.1, "steps": 0}],
+    )
+    def test_bad_recipes_are_refused(self, keywords):
+        with pytest.raises(ValueError):
+            PCN.recipe(**keywords)
+
+    @pytest.mark.slow
+    def test_one_sweep_from_the_posterior_stays_there(self, gibbs_setting):
+        """From exact posterior draws, one sweep changes neither the mean nor
+        the variance: invariance with no autocorrelation to estimate. The
+        steps are small, so most blocks move."""
+        s = gibbs_setting
+        kernel = Gibbs(
+            s.problem,
+            s.prior,
+            blocks={
+                "a": PCN.recipe(step=0.05, steps=3),
+                "b": HMC.recipe(step=0.1, length=3, steps=2),
+            },
+        ).kernel(s.data)
+        rng = np.random.default_rng(11)
+        before, after = [], []
+        for _ in range(20000):
+            x = s.posterior.sample(rng=rng)
+            state = kernel.step(kernel.initial_state(x, rng=rng), rng=rng).state
+            before.append(s.record(x))
+            after.append(s.record(state.position))
+        before, after = np.array(before), np.array(after)
+        difference = after - before
+        assert np.mean(np.abs(difference) > 0) > 0.5
+        z = difference.mean(axis=0) / (difference.std(axis=0) / np.sqrt(len(after)))
+        assert np.all(np.abs(z) < 4.0)
+        assert np.allclose(after.var(axis=0) / before.var(axis=0), 1.0, atol=0.03)
 
 
 class MeshSetting:

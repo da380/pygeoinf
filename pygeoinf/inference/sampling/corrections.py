@@ -13,6 +13,9 @@ depends on the word and a single wrapper would hide it:
   rejection the velocity is flipped, which is generalized HMC; with a full
   refresh that is immaterial. Stochastic letters sit outside the block and
   must preserve the target.
+* :class:`Sweep`, for a word whose every letter already leaves the target
+  invariant, Gibbs blocks above all: it needs no correction and is applied
+  as it stands.
 * :class:`MetropolisHastings`, for a stochastic proposal whose transition
   density is known relative to the reference's own kernel: pCN and its
   generalization over any reference, the independence sampler, the
@@ -40,7 +43,14 @@ from .flows import TARGET, Flow
 from .schemes import SplittingScheme, _locate
 from .target import State, Target
 
-__all__ = ["Kernel", "MetropolisHastings", "MetropolizedBlock", "Step", "StepInfo"]
+__all__ = [
+    "Kernel",
+    "MetropolisHastings",
+    "MetropolizedBlock",
+    "Step",
+    "StepInfo",
+    "Sweep",
+]
 
 
 @dataclass(frozen=True)
@@ -52,11 +62,15 @@ class StepInfo:
         acceptance: the acceptance probability, ``min(1, exp(log alpha))``.
         energy_error: ``-log alpha``, the error the correction removed:
             for a Metropolized block, the change in the shadow energy.
+        acceptances: for a kernel of several blocks, each block's mean
+            acceptance probability, in the order of its ``step_sizes``;
+            ``None`` for a kernel of one.
     """
 
     accepted: bool
     acceptance: float
     energy_error: float
+    acceptances: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True, eq=False)
@@ -119,6 +133,30 @@ class Kernel(ABC):
         Returns:
             A new kernel.
         """
+
+    @property
+    def step_sizes(self) -> tuple[float, ...]:
+        """Every time step the kernel has, one per block; one for most."""
+        return (self.step_size,)
+
+    def with_steps(self, steps: Any, /) -> "Kernel":
+        """The same kernel at other steps, one per entry of :attr:`step_sizes`.
+
+        Args:
+            steps: the new steps.
+
+        Returns:
+            A new kernel.
+
+        Raises:
+            ValueError: for the wrong number of steps.
+        """
+        steps = tuple(steps)
+        if len(steps) != len(self.step_sizes):
+            raise ValueError(
+                f"Expected {len(self.step_sizes)} steps, one per block; got {len(steps)}."
+            )
+        return self.with_step(steps[0])
 
     @abstractmethod
     def with_target(self, target: Target, /) -> "Kernel":
@@ -495,7 +533,7 @@ class MetropolisHastings(Kernel):
         two is finite, both references being equivalent to the prior.
         """
         target = self.dynamics.target
-        (flow, fraction), = self._proposal.flows
+        ((flow, fraction),) = self._proposal.flows
         correlation = float(np.cos(flow.angle(fraction * self._scheme.step)))
         u, v = state.position, proposal.position
         return target.component(proposal).pair_log_density(
@@ -543,3 +581,131 @@ def _require_label_jump(scheme: SplittingScheme, /) -> None:
             "Over a mixture reference the word needs the label jump L, or a "
             "chain would never leave the component it started in."
         )
+
+
+class Sweep(Kernel):
+    """A word of target-preserving letters, applied as it stands.
+
+    Every letter already leaves the target invariant, so the word does too
+    and nothing is corrected: the Gibbs blocks of a
+    :class:`~pygeoinf.inference.sampling.dynamics.Blockwise` dynamics, each
+    an exact kernel on its summand's conditional. A palindromic word, the
+    symmetric scan, is reversible. Over a ``Blockwise`` dynamics the kernel
+    has one step per block, and each step reports each block's acceptance.
+
+    Args:
+        scheme: a scheme every letter of which preserves the target.
+
+    Raises:
+        ValueError: if a letter does not preserve the target.
+    """
+
+    def __init__(self, scheme: SplittingScheme, /) -> None:
+        unfit = [repr(flow) for flow, _ in scheme.flows if TARGET not in flow.preserves]
+        if unfit:
+            raise ValueError(
+                "A sweep applies its letters uncorrected, so each must preserve "
+                f"the target; {', '.join(unfit)} does not."
+            )
+        _require_label_jump(scheme)
+        self._scheme = scheme
+
+    @property
+    def dynamics(self) -> Dynamics:
+        """The dynamics the word is written over."""
+        return self._scheme.dynamics
+
+    @property
+    def scheme(self) -> SplittingScheme:
+        """The word."""
+        return self._scheme
+
+    @property
+    def step_size(self) -> float:
+        """The first block's step, or the scheme's; see :attr:`step_sizes`."""
+        return self.step_sizes[0]
+
+    @property
+    def step_sizes(self) -> tuple[float, ...]:
+        """Each block's step, in summand order; the scheme's step otherwise."""
+        steps = getattr(self.dynamics, "block_steps", None)
+        return tuple(steps) if steps is not None else (self._scheme.step,)
+
+    def step(self, state: State, /, *, rng: Generator | None = None) -> Step:
+        """Every letter in turn.
+
+        Args:
+            state: where to start.
+            rng: the generator.
+
+        Returns:
+            The step, with a log-weight of zero, accepted when any block
+            moved, with the blocks' mean acceptance and each block's.
+        """
+        rng = resolve_rng(rng)
+        step = self._scheme.step
+        totals: dict[int, list[float]] = {}
+        moved = False
+        for flow, fraction in self._scheme.flows:
+            state, _ = flow.apply(state, fraction * step, rng=rng)
+            index = getattr(flow, "index", None)
+            if index is not None:
+                totals.setdefault(index, []).append(
+                    state.cache.get(("block acceptance", index), 1.0)
+                )
+                moved = moved or bool(state.cache.get(("block moved", index), False))
+        if totals:
+            acceptances = tuple(float(np.mean(totals[i])) for i in sorted(totals))
+            return Step(
+                state,
+                0.0,
+                StepInfo(moved, float(np.mean(acceptances)), 0.0, acceptances),
+            )
+        return Step(state, 0.0, StepInfo(True, 1.0, 0.0))
+
+    def with_step(self, step: float, /) -> Kernel:
+        """The same word with every block at one step.
+
+        Args:
+            step: the new step.
+
+        Returns:
+            A new kernel.
+        """
+        return self.with_steps([step] * len(self.step_sizes))
+
+    def with_steps(self, steps: Any, /) -> Kernel:
+        """The same word at other steps, one per block.
+
+        Args:
+            steps: the new steps, in summand order.
+
+        Returns:
+            A new kernel.
+
+        Raises:
+            ValueError: for the wrong number of steps.
+        """
+        steps = tuple(float(value) for value in steps)
+        if len(steps) != len(self.step_sizes):
+            raise ValueError(
+                f"Expected {len(self.step_sizes)} steps, one per block; got {len(steps)}."
+            )
+        with_steps = getattr(self.dynamics, "with_steps", None)
+        if with_steps is None:
+            return Sweep(self._scheme.with_step(steps[0]))
+        return Sweep(self._scheme.with_dynamics(with_steps(steps)))
+
+    def with_target(self, target: Target, /) -> Kernel:
+        """The same word on another target.
+
+        Args:
+            target: the new target.
+
+        Returns:
+            A new kernel.
+        """
+        return Sweep(self._scheme.with_dynamics(self.dynamics.with_target(target)))
+
+    def __repr__(self) -> str:
+        return f"Sweep({self._scheme!r})"

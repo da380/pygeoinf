@@ -45,19 +45,20 @@ which moves a chain between the mixture's components, and so between modes.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 import numpy as np
 from numpy.random import Generator
 
+from ...algebra.direct_sum import DirectSum
 from ...algebra.operators import LinearOperator
 from ...algebra.spaces import HilbertSpace
 from ...probability.gaussian import GaussianMeasure
 from ..estimators import MeasureEstimator, _PushedMeasureEstimator
 from ..gaussian import GaussianReference, MixtureReference
 from ..laplace import LaplaceApproximation
-from .corrections import Kernel, MetropolisHastings, MetropolizedBlock, Step
-from .dynamics import Hamiltonian, Overdamped, PreconditionedOU, Underdamped
+from .corrections import Kernel, MetropolisHastings, MetropolizedBlock, Step, Sweep
+from .dynamics import Blockwise, Hamiltonian, Overdamped, PreconditionedOU, Underdamped
 from .population import Chains, StepSizeAdaptation, Tempering
 from .results import SampledPosterior, WeightedEnsemble
 from .schemes import SplittingScheme
@@ -68,9 +69,11 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..problem import ForwardProblem
 
 __all__ = [
+    "BlockRecipe",
     "ChainSampler",
     "GeometricHMC",
     "GeometricMALA",
+    "Gibbs",
     "HMC",
     "MALA",
     "PCN",
@@ -181,8 +184,9 @@ class ChainSampler(MeasureEstimator):
         return False
 
     @property
-    def adaptation(self) -> StepSizeAdaptation | None:
-        """How the step adapts during burn-in, or ``None`` for a fixed step."""
+    def adaptation(self) -> StepSizeAdaptation | tuple | None:
+        """How the step adapts during burn-in, or ``None`` for a fixed step;
+        one per block for :class:`Gibbs`."""
         return self._adaptation
 
     @property
@@ -221,13 +225,32 @@ class ChainSampler(MeasureEstimator):
     def _kernel(self, target: Target, /) -> Kernel:
         """The preset's kernel on a target."""
 
-    def _longest_step(self) -> float:
+    @classmethod
+    def _build(cls, target: Target, step: float, /, **options: Any) -> Kernel:
+        """The preset's kernel on a target at a step, from its options alone:
+        what a block recipe builds.
+
+        Raises:
+            NotImplementedError: for a preset that offers no recipe.
+        """
+        raise NotImplementedError(f"{cls.__name__} offers no block recipe.")
+
+    @classmethod
+    def _cap(cls, **options: Any) -> float:
         """The step beyond which the adaptation gains nothing.
 
         For an Ornstein-Uhlenbeck step, ten: ``exp(-10)`` of the old point
         is left, and the proposal is as good as independent.
         """
         return 10.0
+
+    def _options(self) -> dict[str, Any]:
+        """The preset's options beyond its step."""
+        return {}
+
+    def _longest_step(self) -> float:
+        """The step beyond which the adaptation gains nothing."""
+        return self._cap(**self._options())
 
     # ----------------------------------------------------------------- #
     #                              Running                              #
@@ -352,12 +375,31 @@ class PCN(ChainSampler):
             constraint=constraint,
         )
 
-    def _kernel(self, target: Target, /) -> Kernel:
+    @classmethod
+    def recipe(
+        cls, *, step: float, acceptance: float | None = 0.25, steps: int = 1
+    ) -> "BlockRecipe":
+        """pCN as one block of a :class:`Gibbs` sampler.
+
+        Args:
+            step: the block's time step.
+            acceptance: the acceptance its step adapts towards during
+                burn-in; ``None`` keeps it fixed.
+            steps: the kernel's steps at each visit to the block.
+
+        Returns:
+            The recipe.
+        """
+        return BlockRecipe(cls, step=step, acceptance=acceptance, steps=steps)
+
+    @classmethod
+    def _build(cls, target: Target, step: float, /, **options: Any) -> Kernel:
         return MetropolisHastings(
-            SplittingScheme(
-                PreconditionedOU(target), _word(target, "O"), step=self._step
-            )
+            SplittingScheme(PreconditionedOU(target), _word(target, "O"), step=step)
         )
+
+    def _kernel(self, target: Target, /) -> Kernel:
+        return self._build(target, self._step)
 
 
 class MALA(ChainSampler):
@@ -406,10 +448,31 @@ class MALA(ChainSampler):
             constraint=constraint,
         )
 
-    def _kernel(self, target: Target, /) -> Kernel:
+    @classmethod
+    def recipe(
+        cls, *, step: float, acceptance: float | None = 0.57, steps: int = 1
+    ) -> "BlockRecipe":
+        """MALA as one block of a :class:`Gibbs` sampler.
+
+        Args:
+            step: the block's time step.
+            acceptance: the acceptance its step adapts towards during
+                burn-in; ``None`` keeps it fixed.
+            steps: the kernel's steps at each visit to the block.
+
+        Returns:
+            The recipe.
+        """
+        return BlockRecipe(cls, step=step, acceptance=acceptance, steps=steps)
+
+    @classmethod
+    def _build(cls, target: Target, step: float, /, **options: Any) -> Kernel:
         return MetropolisHastings(
-            SplittingScheme(Overdamped(target), _word(target, "BO"), step=self._step)
+            SplittingScheme(Overdamped(target), _word(target, "BO"), step=step)
         )
+
+    def _kernel(self, target: Target, /) -> Kernel:
+        return MALA._build(target, self._step)
 
 
 class HMC(ChainSampler):
@@ -471,17 +534,55 @@ class HMC(ChainSampler):
         """The leapfrog steps per trajectory."""
         return self._length
 
-    def _longest_step(self) -> float:
-        """A quarter turn over the trajectory, ``pi / (2 length)``."""
-        return float(np.pi / (2 * self._length))
+    @classmethod
+    def recipe(
+        cls,
+        *,
+        step: float,
+        length: int,
+        acceptance: float | None = 0.65,
+        steps: int = 1,
+    ) -> "BlockRecipe":
+        """HMC as one block of a :class:`Gibbs` sampler.
 
-    def _kernel(self, target: Target, /) -> Kernel:
-        scheme = SplittingScheme(
-            Hamiltonian(target), _word(target, "OBAB"), step=self._step
+        Args:
+            step: the block's time step.
+            length: the leapfrog steps per trajectory.
+            acceptance: the acceptance its step adapts towards during
+                burn-in; ``None`` keeps it fixed.
+            steps: the kernel's trajectories at each visit to the block.
+
+        Returns:
+            The recipe.
+
+        Raises:
+            ValueError: for a length below one.
+        """
+        if int(length) != length or length < 1:
+            raise ValueError(
+                f"A trajectory has at least one leapfrog step, got {length}."
+            )
+        return BlockRecipe(
+            cls, step=step, acceptance=acceptance, steps=steps, length=int(length)
         )
-        return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(
+
+    @classmethod
+    def _cap(cls, **options: Any) -> float:
+        """A quarter turn over the trajectory, ``pi / (2 length)``."""
+        return float(np.pi / (2 * options["length"]))
+
+    def _options(self) -> dict[str, Any]:
+        return {"length": self._length}
+
+    @classmethod
+    def _build(cls, target: Target, step: float, /, **options: Any) -> Kernel:
+        scheme = SplittingScheme(Hamiltonian(target), _word(target, "OBAB"), step=step)
+        return MetropolizedBlock(scheme.block("BAB", repeat=options["length"])).within(
             scheme
         )
+
+    def _kernel(self, target: Target, /) -> Kernel:
+        return HMC._build(target, self._step, **self._options())
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(step={self._step:g}, length={self._length})"
@@ -557,16 +658,67 @@ class PreconditionedHMC(ChainSampler):
         """The leapfrog steps per trajectory."""
         return self._length
 
-    def _longest_step(self) -> float:
-        """A quarter turn over the trajectory, ``pi / (2 length)``."""
-        return float(np.pi / (2 * self._length))
+    @classmethod
+    def recipe(
+        cls,
+        *,
+        step: float,
+        friction: float = 1.0,
+        length: int = 1,
+        acceptance: float | None = 0.8,
+        steps: int = 1,
+    ) -> "BlockRecipe":
+        """Partially refreshed HMC as one block of a :class:`Gibbs` sampler;
+        the velocity is drawn afresh at each visit to the block.
 
-    def _kernel(self, target: Target, /) -> Kernel:
-        dynamics = Underdamped(target, friction=self._friction)
-        scheme = SplittingScheme(dynamics, _word(target, "OBAB"), step=self._step)
-        return MetropolizedBlock(scheme.block("BAB", repeat=self._length)).within(
+        Args:
+            step: the block's time step.
+            friction: ``gamma``, positive and finite.
+            length: the leapfrog steps per trajectory.
+            acceptance: the acceptance its step adapts towards during
+                burn-in; ``None`` keeps it fixed.
+            steps: the kernel's trajectories at each visit to the block.
+
+        Returns:
+            The recipe.
+
+        Raises:
+            ValueError: for a friction that is not positive and finite, or a
+                length below one.
+        """
+        if not 0.0 < friction < float("inf"):
+            raise ValueError(f"A friction is positive and finite, got {friction}.")
+        if int(length) != length or length < 1:
+            raise ValueError(
+                f"A trajectory has at least one leapfrog step, got {length}."
+            )
+        return BlockRecipe(
+            cls,
+            step=step,
+            acceptance=acceptance,
+            steps=steps,
+            friction=float(friction),
+            length=int(length),
+        )
+
+    @classmethod
+    def _cap(cls, **options: Any) -> float:
+        """A quarter turn over the trajectory, ``pi / (2 length)``."""
+        return float(np.pi / (2 * options["length"]))
+
+    def _options(self) -> dict[str, Any]:
+        return {"friction": self._friction, "length": self._length}
+
+    @classmethod
+    def _build(cls, target: Target, step: float, /, **options: Any) -> Kernel:
+        dynamics = Underdamped(target, friction=options["friction"])
+        scheme = SplittingScheme(dynamics, _word(target, "OBAB"), step=step)
+        return MetropolizedBlock(scheme.block("BAB", repeat=options["length"])).within(
             scheme
         )
+
+    def _kernel(self, target: Target, /) -> Kernel:
+        return PreconditionedHMC._build(target, self._step, **self._options())
 
     def __repr__(self) -> str:
         return (
@@ -614,6 +766,21 @@ class GeometricMALA(MALA):
         ValueError: if a Laplace approximation is of another problem, or as
             for :class:`ChainSampler`.
     """
+
+    @classmethod
+    def recipe(cls, **options: Any) -> "BlockRecipe":
+        """Not offered: a block's reference is the prior's conditional law.
+
+        Args:
+            **options: as for the plain preset.
+
+        Raises:
+            TypeError: always.
+        """
+        raise TypeError(
+            f"{cls.__name__} takes its reference from the caller; a Gibbs block's "
+            "reference is the prior's conditional, so use the plain preset's recipe."
+        )
 
     def __init__(
         self,
@@ -695,6 +862,21 @@ class GeometricHMC(HMC):
             :class:`ChainSampler`.
     """
 
+    @classmethod
+    def recipe(cls, **options: Any) -> "BlockRecipe":
+        """Not offered: a block's reference is the prior's conditional law.
+
+        Args:
+            **options: as for the plain preset.
+
+        Raises:
+            TypeError: always.
+        """
+        raise TypeError(
+            f"{cls.__name__} takes its reference from the caller; a Gibbs block's "
+            "reference is the prior's conditional, so use the plain preset's recipe."
+        )
+
     def __init__(
         self,
         problem: "ForwardProblem",
@@ -715,6 +897,213 @@ class GeometricHMC(HMC):
             acceptance=acceptance,
             constraint=constraint,
         )
+
+
+class BlockRecipe:
+    """What samples one block of a :class:`Gibbs` sampler.
+
+    A preset's kernel without its problem and prior, which a block takes
+    from the whole: built by the presets' ``recipe`` methods,
+    ``PCN.recipe(step=0.1)``, ``HMC.recipe(step=0.2, length=5)`` and the
+    like, and turned into a kernel on each visit, on the block's conditional
+    target.
+
+    Args:
+        sampler: the preset class whose kernel this is.
+        step: the block's time step, where the burn-in's adaptation starts.
+        acceptance: the acceptance its step adapts towards during burn-in,
+            or ``None`` to keep it fixed.
+        steps: the kernel's steps at each visit to the block.
+        **options: the preset's options beyond its step, a trajectory's
+            length say.
+
+    Raises:
+        ValueError: for a step that is not positive and finite, an
+            acceptance outside ``(0, 1)``, or a step count below one.
+    """
+
+    def __init__(
+        self,
+        sampler: type,
+        /,
+        *,
+        step: float,
+        acceptance: float | None,
+        steps: int = 1,
+        **options: Any,
+    ) -> None:
+        if not 0.0 < step < float("inf"):
+            raise ValueError(f"A step is positive and finite, got {step}.")
+        if acceptance is not None and not 0.0 < acceptance < 1.0:
+            raise ValueError(f"A target acceptance lies in (0, 1), got {acceptance}.")
+        if int(steps) != steps or steps < 1:
+            raise ValueError(f"A block takes at least one step per visit, got {steps}.")
+        self._sampler = sampler
+        self._step = float(step)
+        self._acceptance = acceptance
+        self._steps = int(steps)
+        self._options = dict(options)
+
+    @property
+    def sampler(self) -> type:
+        """The preset class whose kernel this is."""
+        return self._sampler
+
+    @property
+    def step(self) -> float:
+        """The block's starting time step."""
+        return self._step
+
+    @property
+    def acceptance(self) -> float | None:
+        """The acceptance the step adapts towards, or ``None``."""
+        return self._acceptance
+
+    @property
+    def steps(self) -> int:
+        """The kernel's steps at each visit."""
+        return self._steps
+
+    @property
+    def uses_gradient(self) -> bool:
+        """Whether the kernel differentiates the forward operator."""
+        return bool(self._sampler.uses_gradient)
+
+    @property
+    def longest_step(self) -> float:
+        """The step beyond which the adaptation gains nothing."""
+        return self._sampler._cap(**self._options)
+
+    def kernel(self, target: Target, step: float, /) -> Kernel:
+        """The kernel on a block's target.
+
+        Args:
+            target: the block's conditional target.
+            step: the time step.
+
+        Returns:
+            The kernel.
+        """
+        return self._sampler._build(target, step, **self._options)
+
+    def adaptation(self) -> StepSizeAdaptation | None:
+        """How the block's step adapts during burn-in, or ``None``.
+
+        Returns:
+            The adaptation, capped at :attr:`longest_step`.
+        """
+        if self._acceptance is None:
+            return None
+        return StepSizeAdaptation(
+            acceptance=self._acceptance, maximum=self.longest_step
+        )
+
+    def __repr__(self) -> str:
+        options = "".join(f", {key}={value!r}" for key, value in self._options.items())
+        return f"{self._sampler.__name__}.recipe(step={self._step:g}{options})"
+
+
+class Gibbs(ChainSampler):
+    """Gibbs sampling over the summands of a direct sum: each field its own
+    sampler, against its conditional.
+
+    For a model of several physical fields with different correlation
+    structures, a level set beside elastic parameters say: each summand of
+    the model space is a block, updated with the others held by its own
+    recipe's kernel on its conditional target, whose reference is the
+    prior's conditional law of that summand
+    (:meth:`~pygeoinf.probability.gaussian.GaussianMeasure.conditional`), so
+    every block is a function-space sampler and the sweep is exact. A
+    systematic scan visits the blocks in summand order; a symmetric one
+    there and back, which is reversible. Each block's step adapts towards
+    its own acceptance during burn-in, and the run reports each block's
+    acceptance (``block_acceptance_rates``).
+
+    Args:
+        problem: the forward problem, on a direct sum.
+        prior: the Gaussian prior on it, independent or correlated across
+            the summands.
+        blocks: each summand's recipe, by position or label, covering every
+            summand once.
+        order: ``"systematic"`` or ``"symmetric"``.
+        constraint: where the posterior has its mass.
+
+    Raises:
+        TypeError: if a block is not a :class:`BlockRecipe`.
+        ValueError: if the model space is not a direct sum, a summand has no
+            block or two, the order is unknown, or as for
+            :class:`ChainSampler`.
+    """
+
+    def __init__(
+        self,
+        problem: "ForwardProblem",
+        prior: GaussianMeasure,
+        /,
+        *,
+        blocks: Mapping[int | str, BlockRecipe],
+        order: str = "systematic",
+        constraint: "Subset | None" = None,
+    ) -> None:
+        space = problem.model_space
+        if not isinstance(space, DirectSum):
+            raise ValueError(
+                f"Gibbs blocks are the summands of a direct sum; the model space is {space!r}."
+            )
+        if order not in ("systematic", "symmetric"):
+            raise ValueError(f"A scan is 'systematic' or 'symmetric', not {order!r}.")
+        indexed: dict[int, BlockRecipe] = {}
+        for key, recipe in dict(blocks).items():
+            if not isinstance(recipe, BlockRecipe):
+                raise TypeError(
+                    "A block is a recipe, PCN.recipe(step=...) say; got "
+                    f"{type(recipe).__name__}."
+                )
+            index = space.index(key)
+            if index in indexed:
+                raise ValueError(f"Summand {key!r} has two blocks.")
+            indexed[index] = recipe
+        missing = [i for i in range(len(space.subspaces)) if i not in indexed]
+        if missing:
+            raise ValueError(
+                f"Every summand needs a block, or it never moves; {missing} have none."
+            )
+        self._recipes = tuple(indexed[i] for i in range(len(space.subspaces)))
+        self._order = order
+        self.uses_gradient = any(recipe.uses_gradient for recipe in self._recipes)
+        super().__init__(
+            problem,
+            prior,
+            step=self._recipes[0].step,
+            acceptance=None,
+            constraint=constraint,
+        )
+        self._adaptation = tuple(recipe.adaptation() for recipe in self._recipes)
+
+    @property
+    def recipes(self) -> tuple[BlockRecipe, ...]:
+        """The blocks' recipes, in summand order."""
+        return self._recipes
+
+    @property
+    def steps(self) -> tuple[float, ...]:
+        """The blocks' starting steps, in summand order."""
+        return tuple(recipe.step for recipe in self._recipes)
+
+    @property
+    def order(self) -> str:
+        """The scan."""
+        return self._order
+
+    def _kernel(self, target: Target, /) -> Kernel:
+        dynamics = Blockwise(target, dict(enumerate(self._recipes)))
+        return Sweep(
+            SplittingScheme(dynamics, dynamics.scan(order=self._order), step=1.0)
+        )
+
+    def __repr__(self) -> str:
+        blocks = ", ".join(repr(recipe) for recipe in self._recipes)
+        return f"Gibbs([{blocks}], order={self._order!r})"
 
 
 def _word(target: Target, word: str, /) -> str:

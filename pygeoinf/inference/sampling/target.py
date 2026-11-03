@@ -29,14 +29,20 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ...algebra.linearization import QuadraticModel
-from ...algebra.operators import EvaluationError, Functional, LinearFunctional
+from ...algebra.direct_sum import DirectSum
+from ...algebra.operators import (
+    AffineOperator,
+    EvaluationError,
+    Functional,
+    LinearFunctional,
+)
+from ...geometry.sets import Subset
 from ...probability.absolutely_continuous import AbsolutelyContinuousMeasure
 from ...probability.gaussian import GaussianMeasure
 from ..gaussian import GaussianReference, MixtureReference
 from ..laplace import LaplaceApproximation
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ...geometry.sets import Subset
     from ..problem import ForwardProblem
 
 __all__ = ["State", "Target"]
@@ -170,7 +176,10 @@ class Target:
         problem: "ForwardProblem",
         data: Any,
         reference: (
-            GaussianReference | MixtureReference | GaussianMeasure | LaplaceApproximation
+            GaussianReference
+            | MixtureReference
+            | GaussianMeasure
+            | LaplaceApproximation
         ),
         /,
         *,
@@ -390,6 +399,57 @@ class Target:
         """
         return (-1.0 / self._temperature) * self._potential
 
+    def block(self, key: int | str, state: State, /) -> "Target":
+        """The conditional target of one summand, the others held at the state's.
+
+        For a model space that is a direct sum: the likelihood with the other
+        summands inserted, ``u_i -> Phi(u_1, .., u_i, .., u_n) / T``, against
+        the prior's conditional law of summand ``i`` given the others
+        (:meth:`~pygeoinf.probability.gaussian.GaussianMeasure.conditional`),
+        as a reference. Its posterior is the conditional posterior of the
+        summand, so a kernel on it is one block of a Gibbs sampler, and a
+        function-space sampler of that block. A constraint carries over to
+        the block's fibre.
+
+        Args:
+            key: the summand, by position or by label.
+            state: the state whose other summands are held.
+
+        Returns:
+            The block's target, on the summand's space.
+
+        Raises:
+            ValueError: if the model space is not a direct sum, or the
+                reference is not the prior.
+        """
+        space = self.model_space
+        if not isinstance(space, DirectSum):
+            raise ValueError(
+                f"Blocks are the summands of a direct sum; the model space is {space!r}."
+            )
+        if self._local is not None or self.is_mixture or self._reference.rank != 0:
+            raise ValueError(
+                "A block's reference is the prior's conditional law, so the "
+                "target's reference must be the prior."
+            )
+        index = space.index(key)
+        conditional = self._reference.prior.conditional(index, state.position)
+        insert = _insertion(space, index, state.position)
+        potential = self._potential @ insert
+        constraint = (
+            None if self._constraint is None else _Fibre(self._constraint, insert)
+        )
+        block = Target.__new__(Target)
+        block._init(
+            potential,
+            GaussianReference.from_prior(conditional),
+            temperature=self._temperature,
+            constraint=constraint,
+            has_gradient=self._has_gradient,
+            source=_Source(potential),
+        )
+        return block
+
     @property
     def measure(self) -> AbsolutelyContinuousMeasure:
         """The target as a measure: ``exp(-Phi_ref)`` against the reference."""
@@ -504,7 +564,9 @@ class Target:
         """``log d nu / d mu_0`` and its gradient, cached per reference: the
         local reference's own at its position, for a local reference."""
         local = self._local is not None
-        key = ("local density", self._source) if local else ("reference", self._reference)
+        key = (
+            ("local density", self._source) if local else ("reference", self._reference)
+        )
         entry = state.cache.get(key)
         if entry is None:
             reference = self.component(state) if local else self._reference
@@ -547,3 +609,68 @@ def _as_reference(
         f"Gaussian prior, not a "
         f"{type(reference).__name__}."
     )
+
+
+def _insertion(space: DirectSum, index: int, position: tuple, /) -> AffineOperator:
+    """``u_i -> (x_1, .., u_i, .., x_n)``: summand ``index`` put into a position."""
+    inclusion = space.inclusion(index)
+    rest = tuple(
+        summand.zero() if j == index else value
+        for j, (summand, value) in enumerate(zip(space.subspaces, position))
+    )
+    return AffineOperator(inclusion, rest)
+
+
+def enter_block(
+    parent: Target, block: Target, index: int, state: State, inner: State
+) -> None:
+    """Carry the likelihood the parent state has cached into a block's state.
+
+    The block's likelihood at its summand is the parent's at the whole
+    position, and its gradient the summand's part of the parent's, the
+    direct sum's inner product being the sum of its summands'.
+    """
+    entry = state.cache.get(parent._source)
+    if entry is None:
+        return
+    gradient = None
+    if entry.gradient is not None:
+        gradient = parent.model_space.component(entry.gradient, index)
+    inner.cache[block._source] = _Evaluation(entry.value, gradient)
+
+
+def leave_block(
+    parent: Target, block: Target, index: int, state: State, inner: State, /
+) -> State:
+    """The parent's state with summand ``index`` replaced by the block's
+    position, the block's cached likelihood value carried back."""
+    position = tuple(
+        inner.position if j == index else value
+        for j, value in enumerate(state.position)
+    )
+    result = State(position, state.velocity, label=state.label)
+    entry = inner.cache.get(block._source)
+    if entry is not None:
+        result.cache[parent._source] = _Evaluation(entry.value, None)
+    return result
+
+
+class _Fibre(Subset):
+    """The summands ``u_i`` whose insertion lies in a subset of the whole."""
+
+    def __init__(self, subset: Subset, insert: AffineOperator, /) -> None:
+        super().__init__(insert.domain)
+        self._subset = subset
+        self._insert = insert
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Whether the inserted point is in the subset.
+
+        Args:
+            x: a vector of the summand's space.
+            rtol: passed to the subset.
+
+        Returns:
+            The membership.
+        """
+        return self._subset.contains(self._insert(x), rtol=rtol)
