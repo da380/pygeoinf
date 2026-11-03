@@ -3994,7 +3994,12 @@ to be Gaussian, since a rotation preserves only Gaussian pairs; a non-Gaussian
 chart law, a mixture for one, serves only pCN-type moves with a Gibbs step on
 the label, entering as a kernel flow. Constructors come from the linear
 low-rank posterior and from Laplace first; from chains' output, and as
-mixtures, later. *Amended 2026-11-02 by D-223 and D-224:* a mixture chart law
+mixtures, later. *Amended 2026-11-03 by D-227:* the Laplace reference's mean
+is the Newton step from the model, `m_0 - K grad Phi + C W (I - S) l(u -
+m_0)` in the whitened chart, not `m_0 + C J* R^-1 r`: the two agree at a
+stationary MAP point, and away from one the old form could lie far outside
+the posterior (measured at tens of prior standard deviations), while the
+Newton step is the linearized problem's posterior mean. *Amended 2026-11-02 by D-223 and D-224:* a mixture chart law
 serves every dynamics, through its components, and the label changes by a
 Metropolized transport rather than a Gibbs step; references are fitted from
 chains' output and weighted ensembles.
@@ -4213,6 +4218,60 @@ autocorrelation time of the recorded scalars, and returns the last state;
 each call is its own chain, so `samples(n, n_jobs=)` is parallel and does
 not depend on the workers. Measured on the double well, 3000 draws gave
 `E[m^2]` within one standard error of the exact value from either start.
+
+**D-225. The presets and the sampled results are top-level names**
+(2026-11-03, Oscar). `PCN`, `MALA`, `HMC`, `PreconditionedHMC`,
+`GeometricMALA`, `GeometricHMC` and `SMC`, and the `SampledPosterior` and
+`WeightedEnsemble` they return, are exported from `pygeoinf` itself, as the
+other measure estimators and their posteriors are (D-5): a preset is the
+workflow, and most users need nothing else from the package. The layers,
+the references and the diagnostics stay in `inference.sampling`, where a
+user assembling a sampler by hand goes for them.
+
+**D-226. No coupled Wasserstein-Fisher-Rao flow; Gibbs blocks come next**
+(2026-11-03, Oscar). Tempering already alternates the two geometries,
+reweighting along the path and transporting between stages, and the two
+coupled forms considered were dropped: a continuous-time tempering gains
+little over adaptive stages, and birth-death at a fixed target needs the
+cloud's density, which on a function space only a fitted reference can
+supply and then not exactly, while the mixture reference's jump (D-223)
+already moves mass between modes exactly. `KernelFlow`, with Gibbs blocks
+on the summands of a direct sum as its first use, is the next sampling
+item, before the state-dependent references of the geometric samplers.
+
+**D-227. The local MALA, and a supplied Hessian** (2026-11-03, Oscar,
+settling the first of the state-dependent references deferred by D-211 to
+D-221; local HMC stays deferred). `GeometricMALA(problem, laplace)`, given a
+`LaplaceApproximation` on the same problem in place of a reference, uses at
+every state the Laplace reference there, `K_u == (C^-1 + H(u))^-1` centred on
+the Newton step (D-215 as amended). That Gaussian is the posterior's
+quadratic model at `u`, so the residual's preconditioned gradient vanishes
+there and MALA's drift with it: the proposal is the local Gaussian's
+Ornstein-Uhlenbeck step, the word `"O"` over `PreconditionedOU`, and the
+∞-mMALA of Beskos, Girolami, Lan, Farrell and Stuart (2017). The acceptance
+is `Phi_ref,A(u) - Phi_ref,B(v) + G_B(u, v) - G_A(u, v)`, with `A` and `B`
+the references at the state and the proposal and `G == log d eta / d eta_0`
+the pair law of a reference and its step against the prior's
+(`GaussianReference.pair_log_density`): `eta` is `eta_0` with the law of
+the `2 r` chart coordinates replaced, so `G` is `2 r`-dimensional and
+splits into two `r`-dimensional ratios, and nothing needs `C^-1`. The
+target takes the Laplace approximation and caches the reference on each
+state; only `PreconditionedOU` and the one-letter word are offered over it,
+since a later letter would see another reference, and tempering refuses it.
+The reference must be a fixed function of the state, so the low-rank
+routes draw one seed when the estimator is built and reuse it. The full
+data chart is the default; with `hessian=` (a function of the data
+returning the likelihood potential as a `Functional` with its Hessian,
+which second-order adjoints supply), `LaplaceApproximation` uses
+`P + Hess Phi` as its curvature for the Gaussian and for the reference, the
+reference then needing `rank=` and its eigenvalues checked: the user is to
+have zeroed the negative ones, and one below `-1e-8` of the largest raises.
+Measured: the ratio agrees with direct finite-dimensional densities to
+`1e-13`; on a linear problem every proposal is accepted at any step; on a
+nonlinear one the mean agrees with importance sampling, at acceptance 0.88
+and a step at the cap; acceptance is 0.71 at 32, 128 and 512 grid points.
+Each step builds one reference, at the proposal; the forward is evaluated
+twice there, for the potential and for the reference's linearization.
 
 ## Appendix: measurements behind the defaults
 

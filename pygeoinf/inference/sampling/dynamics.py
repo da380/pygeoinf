@@ -29,7 +29,10 @@ Hamiltonian        the same, ``O`` a full refresh
 =================  =========================================================
 
 Letters belong to their dynamics: ``O`` is a momentum refresh in one and the
-prior's Ornstein-Uhlenbeck step in another. Over a mixture reference every
+prior's Ornstein-Uhlenbeck step in another. Over a reference that follows the state,
+the Laplace reference at each position, only :class:`PreconditionedOU` is
+offered: its one step about the local Gaussian is the local MALA proposal.
+Over a mixture reference every
 dynamics also has ``L``, :class:`~.flows.LabelJump`, the move between
 components; a kernel over a mixture must use it, or a chain would never
 leave the component it started in.
@@ -68,13 +71,20 @@ class Dynamics(ABC):
 
     Raises:
         ValueError: if one of the dynamics' flows needs a gradient the
-            target cannot supply.
+            target cannot supply, or the target's reference follows the
+            state and the dynamics is not :class:`PreconditionedOU`.
     """
 
     #: Whether the state carries a velocity.
     has_velocity: bool = False
 
     def __init__(self, target: Target, /) -> None:
+        if target.is_local and not isinstance(self, PreconditionedOU):
+            raise ValueError(
+                "A reference that follows the state is solved by the prior "
+                "Ornstein-Uhlenbeck step alone, whose transition density is "
+                f"known; {type(self).__name__} is not offered over one."
+            )
         self._target = target
         self._flows = self._build_flows()
         if target.is_mixture:
@@ -213,7 +223,16 @@ class PreconditionedOU(Dynamics):
 
     @property
     def invariant_measure(self) -> ProbabilityMeasure:
-        """The reference: the data are left to the correction."""
+        """The reference: the data are left to the correction.
+
+        Raises:
+            NotImplementedError: for a reference that follows the state,
+                which no one measure is.
+        """
+        if self._target.is_local:
+            raise NotImplementedError(
+                "A reference that follows the state is not one measure."
+            )
         return self._target.reference
 
     def with_target(self, target: Target, /) -> "PreconditionedOU":

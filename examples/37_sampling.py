@@ -26,6 +26,9 @@ called on the data:
   its direction.
 * ``GeometricHMC`` is HMC about a Gaussian fitted to the posterior, here the
   Laplace approximation at one of the modes.
+* ``GeometricMALA``, given the Laplace approximation itself rather than one
+  of its Gaussians, is the local MALA: at every state it proposes from the
+  Laplace Gaussian there, so its proposal follows the posterior's shape.
 * ``SMC`` moves a population from the prior to the posterior through a
   sequence of tempered measures, and estimates the evidence on the way.
 
@@ -42,22 +45,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf import (
-    EuclideanSpace,
-    ForwardProblem,
-    GaussianMeasure,
-    LaplaceApproximation,
-    LinearOperator,
-    Operator,
-    plotting,
-)
-from pygeoinf.inference.sampling import (
     HMC,
     MALA,
     PCN,
     SMC,
+    EuclideanSpace,
+    ForwardProblem,
+    GaussianMeasure,
     GeometricHMC,
     GeometricMALA,
+    LaplaceApproximation,
+    LinearOperator,
+    Operator,
     PreconditionedHMC,
+    plotting,
 )
 
 rng = np.random.default_rng(37)
@@ -126,6 +127,12 @@ print()
 # mode alone, so GeometricHMC proposes well within it and is no help with the
 # other. Its chain is exact all the same: a reference makes a sampler fast or
 # slow, never wrong.
+#
+# The local MALA is given the estimator instead, and builds the Laplace
+# Gaussian afresh at every state: at m the curvature is that of the data's
+# 2m, so anywhere near a mode the proposal is narrow and centred on that mode.
+# It would widen to the prior near the barrier, where the data say nothing
+# about m, but a chain proposing so well within its mode never goes there.
 
 laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
 mode = laplace.solve(data, start=np.array([0.5])).model
@@ -137,6 +144,7 @@ samplers = {
     "HMC": HMC(problem, prior, step=0.1, length=5),
     "PreconditionedHMC": PreconditionedHMC(problem, prior, step=0.1, friction=0.5),
     "GeometricHMC": GeometricHMC(problem, reference, step=0.3, length=3),
+    "MALA, local": GeometricMALA(problem, laplace, step=1.0),
 }
 
 # Record m itself at every step: a linear map to a small coordinate space, here
@@ -228,6 +236,11 @@ print("  GeometricHMC proposes about the positive mode alone. A gradient helps")
 print("  a sampler move within a mode, quickly in many dimensions; it is no")
 print("  help in getting from one mode to another.")
 print()
+print("The local MALA is the extreme of that: its proposal is the Laplace")
+print("  Gaussian where it stands, accepted nearly always at a step long enough")
+print("  to be all but independent, so within a mode it is the best sampler")
+print("  here. It proposes about the mode it is in, and never crosses.")
+print()
 
 # ------------------------------------------------------------------ #
 # A mixture fitted to the run                                        #
@@ -315,7 +328,7 @@ def tempered(beta: float) -> np.ndarray:
 
 path = plt.get_cmap("viridis")
 panels = list(results.items()) + [("SMC", None)]
-figure, axes = plt.subplots(2, 4, figsize=(15, 6), sharex=True, sharey=True)
+figure, axes = plt.subplots(3, 3, figsize=(13, 8.5), sharex=True, sharey=True)
 for axis, (name, values) in zip(axes.ravel(), panels):
     if values is None:
         axis.hist(

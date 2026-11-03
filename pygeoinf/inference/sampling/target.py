@@ -33,6 +33,7 @@ from ...algebra.operators import EvaluationError, Functional, LinearFunctional
 from ...probability.absolutely_continuous import AbsolutelyContinuousMeasure
 from ...probability.gaussian import GaussianMeasure
 from ..gaussian import GaussianReference, MixtureReference
+from ..laplace import LaplaceApproximation
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...geometry.sets import Subset
@@ -146,28 +147,45 @@ class Target:
         reference: a :class:`~pygeoinf.inference.gaussian.GaussianReference`
             or :class:`~pygeoinf.inference.gaussian.MixtureReference` on the
             model space, or a Gaussian prior, which is taken as its own
-            reference.
+            reference; or a
+            :class:`~pygeoinf.inference.laplace.LaplaceApproximation` on the
+            same problem, for a reference that follows the state: the
+            Laplace reference at each position, built on first use and
+            cached on the state.
         temperature: divides the likelihood potential. One is the posterior.
         constraint: a subset of the model space outside which the potential
             is ``+inf``, checked before the forward is called.
 
     Raises:
-        ValueError: if the reference does not live on the model space, or
-            for a non-positive temperature.
+        ValueError: if the reference does not live on the model space, a
+            Laplace approximation is of another problem, or for a
+            non-positive temperature.
         TypeError: if the reference is not a ``GaussianReference``, a
-            ``MixtureReference`` or a ``GaussianMeasure``.
+            ``MixtureReference``, a ``GaussianMeasure`` or a
+            ``LaplaceApproximation``.
     """
 
     def __init__(
         self,
         problem: "ForwardProblem",
         data: Any,
-        reference: GaussianReference | MixtureReference | GaussianMeasure,
+        reference: (
+            GaussianReference | MixtureReference | GaussianMeasure | LaplaceApproximation
+        ),
         /,
         *,
         temperature: float = 1.0,
         constraint: "Subset | None" = None,
     ) -> None:
+        local = None
+        if isinstance(reference, LaplaceApproximation):
+            if reference.estimator.forward_problem is not problem:
+                raise ValueError(
+                    "The Laplace approximation must be built on the target's "
+                    "forward problem."
+                )
+            local = reference
+            reference = reference.estimator.prior
         reference = _as_reference(reference)
         if reference.domain != problem.model_space:
             raise ValueError(
@@ -182,6 +200,8 @@ class Target:
             constraint=constraint,
             has_gradient=problem.forward_operator.has_derivative,
             source=_Source(potential),
+            local=local,
+            data=data,
         )
 
     def _init(
@@ -194,9 +214,13 @@ class Target:
         constraint: "Subset | None",
         has_gradient: bool,
         source: "_Source",
+        local: LaplaceApproximation | None = None,
+        data: Any = None,
     ) -> None:
         if not temperature > 0.0:
             raise ValueError(f"A temperature is positive, got {temperature}.")
+        self._local = local
+        self._data = data
         self._potential = potential
         self._reference = reference
         self._temperature = float(temperature)
@@ -263,9 +287,21 @@ class Target:
         """Whether the reference is a mixture, its states carrying a label."""
         return isinstance(self._reference, MixtureReference)
 
+    @property
+    def is_local(self) -> bool:
+        """Whether the reference follows the state: the Laplace reference at
+        each position, :attr:`reference` being the prior."""
+        return self._local is not None
+
+    @property
+    def local(self) -> LaplaceApproximation | None:
+        """The Laplace approximation a local reference is built from."""
+        return self._local
+
     def component(self, state: State, /) -> GaussianReference:
         """The Gaussian reference the state's flows solve: the reference
-        itself, or the mixture's component the state is labelled with.
+        itself, the mixture's component the state is labelled with, or the
+        local reference at the state's position.
 
         Args:
             state: the chain's state.
@@ -276,6 +312,13 @@ class Target:
         Raises:
             ValueError: for a mixture reference and a state with no label.
         """
+        if self._local is not None:
+            key = ("local", self._source)
+            cached = state.cache.get(key)
+            if cached is None:
+                cached = self._local.reference(state.position, self._data)
+                state.cache[key] = cached
+            return cached
         if not isinstance(self._reference, MixtureReference):
             return self._reference
         if state.label is None:
@@ -328,6 +371,8 @@ class Target:
             constraint=self._constraint,
             has_gradient=self._has_gradient,
             source=self._source,
+            local=self._local,
+            data=self._data,
         )
         return target
 
@@ -456,11 +501,13 @@ class Target:
         return entry
 
     def _density(self, state: State, /) -> _Evaluation:
-        """``log d nu / d mu_0`` and its gradient, cached per reference."""
-        key = ("reference", self._reference)
+        """``log d nu / d mu_0`` and its gradient, cached per reference: the
+        local reference's own at its position, for a local reference."""
+        local = self._local is not None
+        key = ("local density", self._source) if local else ("reference", self._reference)
         entry = state.cache.get(key)
         if entry is None:
-            reference = self._reference
+            reference = self.component(state) if local else self._reference
             if reference.rank == 0:
                 space = self.model_space
                 entry = _Evaluation(0.0, space.zero())

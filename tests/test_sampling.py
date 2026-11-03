@@ -20,6 +20,7 @@ from pygeoinf.geometry import Ball
 from pygeoinf.inference import (
     ForwardProblem,
     GaussianReference,
+    LaplaceApproximation,
     LinearForwardProblem,
     LinearGaussianInversion,
     MixtureReference,
@@ -983,6 +984,158 @@ class TestAPosteriorWithTwoModes:
         assert posterior.diagnostics().rhat[1] < 1.02
 
 
+class NonlinearSetting:
+    """``exp(B m)`` on a dense metric, its Laplace approximation, and the
+    posterior mean of a probe by self-normalized importance sampling from the
+    Laplace reference at the mode, with its standard error."""
+
+    def __init__(self):
+        rng = np.random.default_rng(4)
+        space = make_dense_metric_space(4)
+        data_space = EuclideanSpace(3)
+        matrix = 0.5 * rng.standard_normal((3, 4))
+        forward = Operator.from_callables(
+            space,
+            data_space,
+            lambda m: np.exp(matrix @ m),
+            derivative=lambda m: LinearOperator.from_matrix(
+                space, data_space, np.diag(np.exp(matrix @ m)) @ matrix, form="components"
+            ),
+        )
+        self.space = space
+        self.prior = gi.GaussianMeasure.from_standard_deviation(space, 0.5)
+        self.error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.1)
+        self.problem = ForwardProblem(forward, error=self.error)
+        self.data = forward(self.prior.sample(rng=rng)) + self.error.sample(rng=rng)
+        self.laplace = LaplaceApproximation.from_problem(
+            self.problem, self.prior, gauss_newton=True
+        )
+        probe = space.basis_vector(0)
+        self.record = LinearOperator.from_callables(
+            space,
+            EuclideanSpace(1),
+            lambda x: np.array([space.inner_product(x, probe)]),
+            adjoint=lambda c: c[0] * probe,
+        )
+        mode = self.laplace.solve(self.data).model
+        proposal = self.laplace.reference(mode, self.data)
+        potential = self.problem.potential(self.data)
+        draws = [proposal.sample(rng=rng) for _ in range(20000)]
+        log_weights = np.array(
+            [-potential(x) - proposal.relative_log_density(x) for x in draws]
+        )
+        weights = np.exp(log_weights - log_weights.max())
+        weights /= weights.sum()
+        values = np.array([space.inner_product(x, probe) for x in draws])
+        self.exact = float(weights @ values)
+        self.exact_error = float(np.sqrt(np.sum(weights**2 * (values - self.exact) ** 2)))
+
+
+@pytest.fixture(scope="module")
+def nonlinear_setting():
+    return NonlinearSetting()
+
+
+class TestTheLocalMALA:
+    """MALA about the Laplace Gaussian at each state: the proposal is that
+    Gaussian's Ornstein-Uhlenbeck step, and the acceptance compares the
+    pair laws of the references at the state and at the proposal."""
+
+    def test_the_ratio_is_the_direct_one(self, nonlinear_setting, rng):
+        """Against the finite-dimensional densities: the posterior's, and
+        each proposal's ``N(m_x + c (x - m_x), s^2 K_x)``."""
+        s = nonlinear_setting
+        space, prior, laplace = s.space, s.prior, s.laplace
+        target = Target(s.problem, s.data, laplace)
+        scheme = SplittingScheme(PreconditionedOU(target), "O", step=0.4)
+        kernel = MetropolisHastings(scheme)
+        c = np.exp(-0.4)
+        gram_inverse = np.linalg.inv(space.gram_matrix())
+
+        def covariance(measure):
+            columns = np.array([measure.covariance(space.basis_vector(i)) for i in range(4)])
+            return columns.T @ gram_inverse
+
+        potential = s.problem.potential(s.data)
+        prior_covariance = covariance(prior)
+
+        def log_posterior(x):
+            return -potential(x) + multivariate_normal(prior.expectation, prior_covariance).logpdf(x)
+
+        def log_proposal(x, y):
+            local = laplace.reference(x, s.data)
+            mean = local.expectation
+            return multivariate_normal(
+                mean + c * (x - mean), (1 - c * c) * covariance(local)
+            ).logpdf(y)
+
+        for _ in range(3):
+            state = State(prior.sample(rng=rng))
+            proposal, _ = scheme.apply(state, rng=rng)
+            x, y = state.position, proposal.position
+            library = target.value(state) - target.value(proposal) + kernel._local_ratio(
+                state, proposal
+            )
+            direct = log_posterior(y) + log_proposal(y, x) - log_posterior(x) - log_proposal(x, y)
+            assert library == pytest.approx(direct, rel=1e-8, abs=1e-8)
+
+    def test_on_a_linear_problem_every_proposal_is_accepted(self, setting):
+        """The local Gaussian is then the posterior at every state, so the
+        sampler draws from it exactly, at any step."""
+        laplace = LaplaceApproximation.from_problem(
+            setting.problem, setting.prior, gauss_newton=True
+        )
+        posterior = GeometricMALA(setting.problem, laplace, step=3.0, acceptance=None)(
+            setting.data, steps=100, chains=1, rng=np.random.default_rng(3)
+        )
+        assert posterior.chains[0].acceptance.min() == pytest.approx(1.0, abs=1e-10)
+
+    def test_it_samples_a_nonlinear_posterior(self, nonlinear_setting):
+        s = nonlinear_setting
+        posterior = GeometricMALA(s.problem, s.laplace, step=1.0)(
+            s.data, steps=1500, chains=2, burn_in=300, record=s.record,
+            rng=np.random.default_rng(2),
+        )
+        estimate = posterior.scalar_means()[1]
+        assert abs(estimate.value - s.exact) < 4.0 * np.hypot(
+            estimate.standard_error, s.exact_error
+        )
+        assert posterior.diagnostics().rhat.max() < 1.05
+
+    def test_the_preset_says_it_is_local(self, nonlinear_setting):
+        s = nonlinear_setting
+        assert GeometricMALA(s.problem, s.laplace, step=1.0).is_local
+        assert not MALA(s.problem, s.prior, step=1.0).is_local
+
+    def test_only_the_ou_word_is_offered(self, nonlinear_setting):
+        s = nonlinear_setting
+        target = Target(s.problem, s.data, s.laplace)
+        with pytest.raises(ValueError, match="'O'"):
+            MetropolisHastings(SplittingScheme(PreconditionedOU(target), "OO", step=0.4))
+        with pytest.raises(ValueError, match="Ornstein-Uhlenbeck"):
+            Overdamped(target)
+        with pytest.raises(ValueError, match="Ornstein-Uhlenbeck"):
+            Hamiltonian(target)
+
+    def test_tempering_refuses_it(self, nonlinear_setting, rng):
+        s = nonlinear_setting
+        local = GeometricMALA(s.problem, s.laplace, step=1.0)
+        with pytest.raises(ValueError, match="prior"):
+            SMC(local)
+        kernel = local.kernel(s.data)
+        with pytest.raises(ValueError, match="prior"):
+            Tempering(10, mutation=kernel)(kernel.target, rng=rng)
+
+    def test_a_laplace_approximation_of_another_problem_is_refused(
+        self, nonlinear_setting, setting
+    ):
+        s = nonlinear_setting
+        with pytest.raises(ValueError, match="forward problem"):
+            GeometricMALA(setting.problem, s.laplace, step=1.0)
+        with pytest.raises(ValueError, match="forward problem"):
+            Target(setting.problem, setting.data, s.laplace)
+
+
 class MeshSetting:
     """Attenuation along arcs of a circle, ``d_i == exp(-(a_i, m))``, on grids
     of any size, with one data set made on the finest and shared by all."""
@@ -1054,8 +1207,14 @@ class TestTheMeshDoesNotMatter:
             lambda problem, prior: HMC(
                 problem, prior, step=0.08, length=3, acceptance=None
             ),
+            lambda problem, prior: GeometricMALA(
+                problem,
+                LaplaceApproximation.from_problem(problem, prior, gauss_newton=True),
+                step=1.0,
+                acceptance=None,
+            ),
         ],
-        ids=["pcn", "mala", "hmc"],
+        ids=["pcn", "mala", "hmc", "local-mala"],
     )
     def test_the_acceptance_rate_is_flat_under_refinement(self, mesh_setting, build):
         rates = []

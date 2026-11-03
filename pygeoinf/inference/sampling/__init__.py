@@ -35,6 +35,12 @@ estimators, called on data::
     refined = GeometricHMC(problem, reference, step=0.4, length=4)(data, steps=2000, rng=rng)
     ensemble = SMC(PCN(problem, prior, step=0.1), particles=256)(data, rng=rng)
 
+Given the Laplace approximation itself, ``GeometricMALA`` is the local MALA,
+proposing from the Laplace Gaussian at each state::
+
+    laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
+    posterior = GeometricMALA(problem, laplace, step=1.0)(data, steps=2000, rng=rng)
+
 A posterior with several modes is sampled over a mixture fitted to a first
 run, whose components the chains jump between::
 

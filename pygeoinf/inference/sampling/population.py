@@ -383,9 +383,10 @@ class Tempering:
             normalizer.
 
         Raises:
-            ValueError: if the target's reference is not the prior.
+            ValueError: if the target's reference is not the prior, or
+                follows the state.
         """
-        if target.reference.rank != 0:
+        if target.reference.rank != 0 or target.is_local:
             raise ValueError(
                 "Tempering starts from the prior; a target whose reference is "
                 "another Gaussian is not offered."

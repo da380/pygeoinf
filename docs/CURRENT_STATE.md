@@ -15,7 +15,7 @@ full on 2026-10-29. The release plan in §10 was settled with David on
 feasible-set rebuild and the ray operator followed on 2026-10-27 (D-134 to
 D-156) and the review clean-up on 2026-10-28 (D-157 to D-160); the
 remaining items carry their D-numbers as each change lands. The sampling
-package (`inference.sampling`, D-211 to D-224) was built on the `sampling`
+package (`inference.sampling`, D-211 to D-227) was built on the `sampling`
 branch on 2026-11-02 and is not in the counts above: its fast tests, its
 slow mesh-refinement tests and examples 37 and 38 were run then, against
 the core dependencies only.
@@ -58,10 +58,11 @@ is what most of the rest follows from:
 | `parallel` | `parallel_map` and `resolve_jobs`, the one place joblib is called (D-52) |
 | `compat` | v1 class-name aliases and the v1-space adapter; goes with v1 (D-101) |
 
-111 names are re-exported at the top level and the subpackages are importable
+116 names are re-exported at the top level, the sampling presets and
+their results among them (D-225), and the subpackages are importable
 as `gi.inference`, `gi.numerics`, `gi.plotting` (D-5). `testing`,
 `compat`, `spectral_element`, `interval`, `ball` and `disk` are imported explicitly, and
-the samplers from `gi.inference.sampling`. Thirty-eight examples under `examples/`
+the samplers' layers, references and diagnostics from `gi.inference.sampling`. Thirty-eight examples under `examples/`
 run in the suite, two of them marked slow, the last two on sampling; their README says what each shows. Fourteen tutorials
 under `tutorials/` with generated notebooks (two marked slow), and the first mini-app under
 `miniapps/` (the C++ vector backend, D-169), run in the fast suite.
@@ -464,7 +465,7 @@ Recorded rather than settled, so nobody has to rediscover them.
 Deferred by agreement, not by omission (D-112, D-113): `dynamical_system`
 and sequential data assimilation, PETSc, `parallel=` inside operator actions,
 and the v2 documentation set. Function-space MCMC is no longer deferred: it
-is D-211 to D-224 (2026-11-02), built on the `sampling` branch (§10).
+is D-211 to D-227 (2026-11-02 and 03), built on the `sampling` branch (§10).
 
 ## 10. Between here and a release
 
@@ -561,7 +562,7 @@ and is happy, and sl3dpp's list is not a concern now.
   large backended problem little or nothing is done datum by datum, the
   adjoint acting on a general data-space vector through one adjoint
   solve, so this is not the picture to design around; the details wait.
-- Sampling: built on the `sampling` branch, 2026-11-02, D-211 to D-224.
+- Sampling: built on the `sampling` branch, 2026-11-02 and 03, D-211 to D-227.
   Discretised SDE dynamics in four layers (dynamics, splitting scheme,
   corrections, population), every sampler defined on function space and
   Metropolis-corrected; the step a time `h`, each flow converting it, with
@@ -580,14 +581,19 @@ and is happy, and sl3dpp's list is not a concern now.
   problem, where a random walk of pCN's proposal size falls from 0.25 to
   0.01; on a double well, MALA and HMC over a fitted two-component
   mixture cross the barrier about 1700 times in 4000 steps against 3 to
-  40 without. Open: `KernelFlow` (any invariant kernel as a letter: Gibbs
-  blocks on a summand, structure moves); tempering from a non-prior
-  reference and state-dependent references, deferred; a coupled
-  Wasserstein-Fisher-Rao flow, sketched (continuous-time tempering, or
-  birth-death at a fixed target with a fitted reference's density) and
-  not decided; a standard error for tempering's evidence and its
-  per-stage history; whether the presets join the top-level names. The
-  unadjusted schemes of the original brief are dropped (D-217).
+  40 without. The presets and their results are top-level names (D-225).
+  `GeometricMALA(problem, laplace)` is the local MALA, proposing from the
+  Laplace Gaussian at each state (Gauss-Newton on the full data chart, or a
+  user-supplied Hessian through `LaplaceApproximation(hessian=)`), its
+  acceptance flat under refinement (D-227); the Laplace reference's mean is
+  the Newton step from the model. Next (D-226): `KernelFlow`, any invariant
+  kernel as a letter, with Gibbs blocks on the summands of a direct sum its
+  first use. Also open: local HMC (deferred, its block not reversed by a
+  flip once the reference moves), tempering from a non-prior reference
+  (deferred), and a standard error for tempering's evidence and its
+  per-stage history. Dropped: the unadjusted schemes of
+  the original brief (D-217) and a coupled Wasserstein-Fisher-Rao flow
+  (D-226).
 
 **Confirmed drops** (v1 things that stay gone): derivative-free
 minimization, BiCG, and a separate deflated pointwise-variance estimator.

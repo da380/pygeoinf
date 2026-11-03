@@ -55,6 +55,7 @@ from ...algebra.spaces import HilbertSpace
 from ...probability.gaussian import GaussianMeasure
 from ..estimators import MeasureEstimator, _PushedMeasureEstimator
 from ..gaussian import GaussianReference, MixtureReference
+from ..laplace import LaplaceApproximation
 from .corrections import Kernel, MetropolisHastings, MetropolizedBlock, Step
 from .dynamics import Hamiltonian, Overdamped, PreconditionedOU, Underdamped
 from .population import Chains, StepSizeAdaptation, Tempering
@@ -173,6 +174,11 @@ class ChainSampler(MeasureEstimator):
     def step(self) -> float:
         """The time step ``h`` the chains start at."""
         return self._step
+
+    @property
+    def is_local(self) -> bool:
+        """Whether the reference follows the state; see :class:`GeometricMALA`."""
+        return False
 
     @property
     def adaptation(self) -> StepSizeAdaptation | None:
@@ -570,38 +576,64 @@ class PreconditionedHMC(ChainSampler):
 
 
 class GeometricMALA(MALA):
-    """MALA about a Gaussian reference fitted to the posterior.
+    """MALA about a Gaussian fitted to the posterior, fixed or following the
+    state.
 
-    :class:`MALA` with the reference given first: its prior is the
+    Given a reference, :class:`MALA` with that reference: its prior is the
     reference's. The reference is built from the data, by an estimator's
-    ``reference`` method, and the sampler is meant to be called on the same
-    data.
+    ``reference`` method or fitted to a run, and the sampler is meant to be
+    called on the same data.
+
+    Given a :class:`~pygeoinf.inference.laplace.LaplaceApproximation`, the
+    local MALA: at every state the reference is the Laplace Gaussian there,
+    ``K == (C^-1 + H(u))^-1`` with ``H`` the Gauss-Newton or a supplied
+    Hessian, centred on the Newton step from ``u``. That Gaussian is the
+    posterior's quadratic model at ``u``, so the drift vanishes and the
+    proposal is its Ornstein-Uhlenbeck step,
+    ``v == m_u + cos(a) (u - m_u) + sin(a) xi`` with ``xi ~ N(0, K_u)``; the
+    acceptance compares the pair laws of the references at ``u`` and ``v``,
+    an ``r``-dimensional ratio, so the sampler is defined on a function
+    space. Each step builds the reference at the proposal: with the full
+    data chart, one adjoint and one prior-covariance application per datum.
+    The proposal follows the posterior's local shape, which pays where that
+    shape changes across the posterior.
 
     Args:
         problem: the forward problem, with a Gaussian error measure and a
             differentiable forward operator.
-        reference: the reference, whose prior is the sampler's.
+        reference: the reference, whose prior is the sampler's; or a Laplace
+            approximation on *problem*, for the local MALA.
         step: the time step ``h``.
         acceptance: the acceptance to adapt towards during burn-in, 0.57 by
             default; ``None`` keeps the step fixed.
         constraint: where the posterior has its mass.
 
     Raises:
-        TypeError: if the reference is not a ``GaussianReference`` or a
-            ``MixtureReference``.
-        ValueError: as for :class:`ChainSampler`.
+        TypeError: if the reference is not a ``GaussianReference``, a
+            ``MixtureReference`` or a ``LaplaceApproximation``.
+        ValueError: if a Laplace approximation is of another problem, or as
+            for :class:`ChainSampler`.
     """
 
     def __init__(
         self,
         problem: "ForwardProblem",
-        reference: GaussianReference | MixtureReference,
+        reference: GaussianReference | MixtureReference | LaplaceApproximation,
         /,
         *,
         step: float,
         acceptance: float | None = 0.57,
         constraint: "Subset | None" = None,
     ) -> None:
+        self._local = None
+        if isinstance(reference, LaplaceApproximation):
+            if reference.estimator.forward_problem is not problem:
+                raise ValueError(
+                    "The Laplace approximation must be built on the sampler's "
+                    "forward problem."
+                )
+            self._local = reference
+            reference = GaussianReference.from_prior(reference.estimator.prior)
         super().__init__(
             problem,
             _prior_of(reference),
@@ -610,6 +642,32 @@ class GeometricMALA(MALA):
             acceptance=acceptance,
             constraint=constraint,
         )
+
+    @property
+    def is_local(self) -> bool:
+        """Whether the reference follows the state."""
+        return self._local is not None
+
+    def target(self, data: Any, /) -> Target:
+        """The residual potential for the data: against the fixed reference,
+        or against the Laplace reference at each state.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The target.
+        """
+        if self._local is None:
+            return super().target(data)
+        return Target(self._problem, data, self._local, constraint=self._constraint)
+
+    def _kernel(self, target: Target, /) -> Kernel:
+        if target.is_local:
+            return MetropolisHastings(
+                SplittingScheme(PreconditionedOU(target), "O", step=self._step)
+            )
+        return super()._kernel(target)
 
 
 class GeometricHMC(HMC):
@@ -700,7 +758,8 @@ class SMC(MeasureEstimator):
 
     Raises:
         TypeError: if the mutation is not a chain preset.
-        ValueError: if the preset's reference is not its prior.
+        ValueError: if the preset's reference is not its prior, or follows
+            the state.
     """
 
     def __init__(
@@ -716,7 +775,7 @@ class SMC(MeasureEstimator):
             raise TypeError(
                 f"The mutation is a chain preset, PCN say; got {type(mutation).__name__}."
             )
-        if mutation.reference.rank != 0:
+        if mutation.reference.rank != 0 or mutation.is_local:
             raise ValueError(
                 "Tempering starts from the prior, so the mutation's reference "
                 "must be the prior."

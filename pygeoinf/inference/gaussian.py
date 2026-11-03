@@ -885,6 +885,7 @@ def _information_eigenpairs(
     rng: Generator | None,
     n_jobs: int | None,
     semidefinite: bool = True,
+    clip: bool = True,
 ) -> tuple[LinearOperator, np.ndarray]:
     """The leading eigenpairs of ``L* M L``, the misfit Hessian ``M`` seen
     through the prior's factor ``L``: an isometry from ``R^r`` into the
@@ -895,7 +896,8 @@ def _information_eigenpairs(
     curvature weighted by the residual, need not be (*semidefinite* False):
     its eigenpairs are taken by magnitude and the negative eigenvalues are
     clipped at zero, so the directions in which the curvature would widen
-    the prior keep the prior instead."""
+    the prior keep the prior instead; with *clip* False they are returned
+    as they are, for a caller that refuses them."""
     from ..numerics.randomized import random_eig
 
     factor = prior.covariance_factor
@@ -906,7 +908,9 @@ def _information_eigenpairs(
         traits |= Traits.POSITIVE_SEMIDEFINITE
     hessian = (factor.adjoint @ misfit_hessian @ factor).with_traits(traits)
     decomposition = random_eig(hessian, rank=rank, rng=rng, n_jobs=n_jobs)
-    eigenvalues = np.clip(np.asarray(decomposition.eigenvalues, dtype=float), 0.0, None)
+    eigenvalues = np.asarray(decomposition.eigenvalues, dtype=float)
+    if clip:
+        eigenvalues = np.clip(eigenvalues, 0.0, None)
     return decomposition.factor, eigenvalues
 
 
@@ -1529,6 +1533,49 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
         space = self.domain
         offset = space.subtract(x, self._prior.expectation)
         return np.array([space.inner_product(w, offset) for w in self._chart])
+
+    def pair_log_density(self, x: Any, y: Any, correlation: float, /) -> float:
+        """``log d eta / d eta_0 (x, y)``: a correlated pair's law against the
+        prior's.
+
+        ``eta`` is the law of ``(x, y)`` with ``x`` drawn from this reference
+        and ``y`` from its Ornstein-Uhlenbeck step of correlation ``c``,
+        ``y == m + c (x - m) + sqrt(1 - c^2) xi``; ``eta_0`` the same for the
+        prior. ``eta`` is ``eta_0`` with the law of the ``2 r`` chart
+        coordinates replaced, so the density is ``2 r``-dimensional; in the
+        coordinates ``p == (z_x + z_y) / sqrt(2 (1 + c))`` and
+        ``q == (z_x - z_y) / sqrt(2 (1 - c))`` it splits into two
+        ``r``-dimensional Gaussian ratios. It is what a Metropolis-Hastings
+        ratio needs when the reference changes with the state.
+
+        Args:
+            x: the first model.
+            y: the second.
+            correlation: ``c``, in ``[0, 1)``.
+
+        Returns:
+            The log density, zero for the prior.
+
+        Raises:
+            ValueError: for a correlation outside ``[0, 1)``.
+        """
+        from scipy.linalg import solve_triangular
+
+        if not 0.0 <= correlation < 1.0:
+            raise ValueError(f"A correlation lies in [0, 1), got {correlation}.")
+        if self.rank == 0:
+            return 0.0
+        zx, zy = self.coordinates(x), self.coordinates(y)
+        p = (zx + zy) / np.sqrt(2.0 * (1.0 + correlation))
+        q = (zx - zy) / np.sqrt(2.0 * (1.0 - correlation))
+        centre = self._chart_mean * np.sqrt(2.0 / (1.0 + correlation))
+        dp = solve_triangular(self._cholesky, p - centre, lower=True)
+        dq = solve_triangular(self._cholesky, q, lower=True)
+        return float(
+            -0.5 * (dp @ dp + dq @ dq)
+            - 2.0 * self._log_det_half
+            + 0.5 * (p @ p + q @ q)
+        )
 
     # ----------------------------------------------------------------- #
     #                             Internals                             #

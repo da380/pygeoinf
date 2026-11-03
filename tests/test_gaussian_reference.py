@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import pygeoinf as gi
-from pygeoinf.algebra.operators import LinearOperator, Operator
+from pygeoinf.algebra.operators import Functional, LinearOperator, Operator
 from pygeoinf.algebra.spaces import EuclideanSpace
 from pygeoinf.inference import (
     ForwardProblem,
@@ -20,6 +20,7 @@ from pygeoinf.inference import (
     LinearGaussianInversion,
     MixtureReference,
 )
+from pygeoinf.inference.minimization import _misfit_plus_quadratic
 from pygeoinf.testing import check_gradient, check_measure
 
 from .conftest import make_dense_metric_space
@@ -381,3 +382,158 @@ class TestTheMixtureReference:
                 np.zeros((2, 2)),
                 np.ones((2, 1, 1)),
             )
+
+
+def components_covariance(measure, space):
+    """``C_c`` with ``C x == C_c G x``: the covariance in components."""
+    return covariance_matrix(measure, space).T @ np.linalg.inv(space.gram_matrix())
+
+
+class TestTheNewtonMean:
+    """The Laplace reference's mean is the Newton step from the model."""
+
+    def test_on_a_linear_problem_it_is_the_posterior_from_anywhere(self, linear, rng):
+        space, prior, problem, data = linear
+        posterior = LinearGaussianInversion(problem, prior)(data)
+        laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
+        reference = laplace.reference(prior.sample(rng=rng), data)
+        assert np.allclose(reference.expectation, posterior.expectation, atol=1e-10)
+
+    @pytest.mark.parametrize("rank", [None, 3])
+    def test_it_is_the_explicit_newton_step(self, nonlinear, rng, rank):
+        """``u - K (grad Phi + C^-1 (u - m_0))``, formed here with the prior's
+        precision, which the reference itself never uses."""
+        space, prior, problem, data = nonlinear
+        laplace = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, rank=rank, rng=rng
+        )
+        model = prior.sample(rng=rng)
+        reference = laplace.reference(model, data)
+        gram = space.gram_matrix()
+        covariance = components_covariance(reference, space)
+        prior_covariance = components_covariance(prior, space)
+        gradient = problem.potential(data).gradient(model)
+        offset = model - prior.expectation
+        newton = (
+            model
+            - covariance @ (gram @ gradient)
+            - covariance @ np.linalg.solve(prior_covariance, offset)
+        )
+        assert np.allclose(reference.expectation, newton, atol=1e-10)
+
+    def test_the_low_rank_reference_is_a_fixed_function_of_the_model(self, nonlinear, rng):
+        space, prior, problem, data = nonlinear
+        laplace = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, rank=2, rng=rng
+        )
+        model = prior.sample(rng=rng)
+        first, second = laplace.reference(model, data), laplace.reference(model, data)
+        assert np.array_equal(first.expectation, second.expectation)
+        assert np.array_equal(first.chart_covariance, second.chart_covariance)
+
+
+def with_hessian(problem):
+    """The likelihood potential carrying its exact Hessian, as a user with
+    second-order adjoints would supply it."""
+
+    def build(data):
+        potential = problem.potential(data)
+        misfit = _misfit_plus_quadratic(problem, data)
+        return Functional.from_callables(
+            potential.domain,
+            potential,
+            gradient=potential.gradient,
+            hessian=lambda m: misfit.hessian(m) * 0.5,
+        )
+
+    return build
+
+
+class TestASuppliedHessian:
+    def test_it_is_the_exact_hessian_s_reference(self, nonlinear, rng):
+        space, prior, problem, data = nonlinear
+        mode = LaplaceApproximation.from_problem(problem, prior).solve(data).model
+        exact = LaplaceApproximation.from_problem(
+            problem, prior, rank=3, rng=np.random.default_rng(1)
+        )
+        supplied = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, rank=3, hessian=with_hessian(problem),
+            rng=np.random.default_rng(1),
+        )
+        a, b = exact.reference(mode, data), supplied.reference(mode, data)
+        assert np.allclose(a.expectation, b.expectation, atol=1e-12)
+        assert np.allclose(covariance_matrix(a, space), covariance_matrix(b, space), atol=1e-12)
+
+    def test_it_drives_the_laplace_gaussian_too(self, nonlinear):
+        space, prior, problem, data = nonlinear
+        mode = LaplaceApproximation.from_problem(problem, prior).solve(data).model
+        exact = LaplaceApproximation.from_problem(problem, prior).at(mode, data)
+        supplied = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, hessian=with_hessian(problem)
+        ).at(mode, data)
+        assert np.allclose(
+            covariance_matrix(exact, space), covariance_matrix(supplied, space), atol=1e-10
+        )
+
+    def test_a_negative_eigenvalue_is_refused(self, nonlinear, rng):
+        space, prior, problem, data = nonlinear
+
+        def negative(data):
+            return Functional.from_callables(
+                space,
+                lambda m: 0.0,
+                gradient=lambda m: space.zero(),
+                hessian=lambda m: LinearOperator.from_matrix(
+                    space, space, -np.eye(space.dim), form="components"
+                ),
+            )
+
+        laplace = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, rank=3, hessian=negative, rng=rng
+        )
+        with pytest.raises(ValueError, match="negative eigenvalue"):
+            laplace.reference(prior.sample(rng=rng), data)
+
+    def test_the_full_rank_reference_is_refused(self, nonlinear, rng):
+        _, prior, problem, data = nonlinear
+        laplace = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, hessian=with_hessian(problem)
+        )
+        with pytest.raises(ValueError, match="rank"):
+            laplace.reference(prior.sample(rng=rng), data)
+
+    def test_a_potential_without_a_hessian_is_refused(self, nonlinear, rng):
+        _, prior, problem, data = nonlinear
+        laplace = LaplaceApproximation.from_problem(
+            problem, prior, gauss_newton=True, rank=3, hessian=problem.potential, rng=rng
+        )
+        with pytest.raises(TypeError, match="Hessian"):
+            laplace.reference(prior.sample(rng=rng), data)
+
+
+class TestThePairLaw:
+    def test_it_is_the_ratio_of_two_correlated_gaussians(self, nonlinear, rng):
+        """Against the ``2 n``-dimensional densities, in components."""
+        from scipy.stats import multivariate_normal
+
+        space, prior, problem, data = nonlinear
+        laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
+        reference = laplace.reference(prior.sample(rng=rng), data)
+        c = 0.6
+
+        def pair(mean, covariance):
+            joint = np.block([[covariance, c * covariance], [c * covariance, covariance]])
+            return multivariate_normal(np.r_[mean, mean], joint)
+
+        u, v = prior.sample(rng=rng), prior.sample(rng=rng)
+        direct = pair(
+            reference.expectation, components_covariance(reference, space)
+        ).logpdf(np.r_[u, v]) - pair(
+            prior.expectation, components_covariance(prior, space)
+        ).logpdf(np.r_[u, v])
+        assert reference.pair_log_density(u, v, c) == pytest.approx(direct, rel=1e-10)
+
+    def test_the_prior_s_is_zero(self, linear, rng):
+        _, prior, _, _ = linear
+        reference = GaussianReference.from_prior(prior)
+        assert reference.pair_log_density(prior.sample(rng=rng), prior.sample(rng=rng), 0.3) == 0.0

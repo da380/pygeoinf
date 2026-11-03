@@ -117,6 +117,17 @@ from .inference import (
     TikhonovFamily,
     TikhonovNormalOperator,
 )
+from .inference.sampling import (
+    HMC,
+    MALA,
+    PCN,
+    SMC,
+    GeometricHMC,
+    GeometricMALA,
+    PreconditionedHMC,
+    SampledPosterior,
+    WeightedEnsemble,
+)
 from .numerics.preconditioners import (
     BandedPreconditioner,
     IdentityPreconditioner,
@@ -187,6 +198,16 @@ __all__ = [
     "NormalOperator",
     "TikhonovFamily",
     "TikhonovNormalOperator",
+    # sampling: the presets and what they return
+    "GeometricHMC",
+    "GeometricMALA",
+    "HMC",
+    "MALA",
+    "PCN",
+    "PreconditionedHMC",
+    "SMC",
+    "SampledPosterior",
+    "WeightedEnsemble",
     # solvers and preconditioners
     "BandedPreconditioner",
     "BiCGStabSolver",

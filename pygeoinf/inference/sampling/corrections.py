@@ -15,8 +15,10 @@ depends on the word and a single wrapper would hide it:
   must preserve the target.
 * :class:`MetropolisHastings`, for a stochastic proposal whose transition
   density is known relative to the reference's own kernel: pCN and its
-  generalization over any reference, the independence sampler, and the
-  overdamped MALA proposal.
+  generalization over any reference, the independence sampler, the
+  overdamped MALA proposal, and the local MALA proposal, the prior
+  Ornstein-Uhlenbeck step about a reference that follows the state, whose
+  ratio compares the two references' pair laws.
 
 A kernel's :meth:`Kernel.step` returns a :class:`Step`: the new state, a
 log-weight increment (zero for a kernel that preserves its target, which
@@ -382,8 +384,9 @@ class MetropolisHastings(Kernel):
 
     Raises:
         ValueError: for a proposal whose transition density is not known, a
-            dynamics that carries a velocity, or a mixture reference and a
-            word without its label jump.
+            dynamics that carries a velocity, a mixture reference and a
+            word without its label jump, or a reference that follows the
+            state and a word other than ``"O"``.
     """
 
     def __init__(self, scheme: SplittingScheme, /) -> None:
@@ -404,11 +407,21 @@ class MetropolisHastings(Kernel):
         if first == last:
             raise ValueError(f"{scheme!r} has no proposal for a correction to accept.")
         proposal = scheme.block(scheme.word[first:last])
+        local = scheme.dynamics.target.is_local
+        if local and (
+            len(scheme.flows) != 1 or scheme.repeat != 1 or proposal.word[0][0] != "O"
+        ):
+            raise ValueError(
+                "Over a reference that follows the state the proposal is one "
+                "prior Ornstein-Uhlenbeck step, the word 'O': each later letter "
+                "would see another reference."
+            )
         if not proposal.has_transition_density:
             raise ValueError(
                 f"The transition density of {proposal!r} is not known, so no "
                 "Metropolis-Hastings ratio can be formed for it."
             )
+        self._local = local
         self._scheme = scheme
         self._proposal = proposal
         self._before: list[tuple[Flow, float]] = list(flows[:first])
@@ -461,12 +474,33 @@ class MetropolisHastings(Kernel):
         proposed = target.value(proposal)
         if proposed == float("inf"):
             error = float("inf")
+        elif self._local:
+            ratio = self._local_ratio(state, proposal)
+            error = proposed - target.value(state) - ratio
         else:
             ratio = self._proposal.log_transition_ratio(state, proposal)
             error = proposed - target.value(state) - ratio
         accepted, acceptance = _accept(-error, rng)
         state = self._run(self._after, proposal if accepted else state, rng)
         return Step(state, 0.0, StepInfo(accepted, acceptance, error))
+
+    def _local_ratio(self, state: State, proposal: State) -> float:
+        """``G_B(u, v) - G_A(u, v)``: the pair laws' densities against the
+        prior's, ``A`` the reference at the state and ``B`` at the proposal.
+
+        The proposal is ``A``'s Ornstein-Uhlenbeck step, reversible with
+        respect to ``A``, so ``pi(du) q(u, dv)`` has density
+        ``exp(-Phi_ref,A(u) + G_A(u, v))`` against the prior's pair law, and
+        the reverse move ``exp(-Phi_ref,B(v) + G_B(u, v))``; the ratio of the
+        two is finite, both references being equivalent to the prior.
+        """
+        target = self.dynamics.target
+        (flow, fraction), = self._proposal.flows
+        correlation = float(np.cos(flow.angle(fraction * self._scheme.step)))
+        u, v = state.position, proposal.position
+        return target.component(proposal).pair_log_density(
+            u, v, correlation
+        ) - target.component(state).pair_log_density(u, v, correlation)
 
     def with_step(self, step: float, /) -> Kernel:
         """The same correction at another time step.

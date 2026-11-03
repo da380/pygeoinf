@@ -36,6 +36,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf import (
+    HMC,
+    MALA,
+    PCN,
     ForwardProblem,
     GaussianMeasure,
     LinearOperator,
@@ -43,7 +46,7 @@ from pygeoinf import (
     Operator,
     plotting,
 )
-from pygeoinf.inference.sampling import HMC, MALA, PCN, StepSizeAdaptation
+from pygeoinf.inference.sampling import StepSizeAdaptation
 from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 from pygeoinf.symmetric_space import circle
 
