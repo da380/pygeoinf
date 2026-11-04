@@ -51,7 +51,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ...algebra.direct_sum import DirectSum
-from ...algebra.operators import LinearOperator
+from ...algebra.operators import LinearOperator, Operator
 from ...algebra.spaces import HilbertSpace
 from ...probability.gaussian import GaussianMeasure
 from ..estimators import MeasureEstimator, _PushedMeasureEstimator
@@ -266,7 +266,7 @@ class ChainSampler(MeasureEstimator):
         burn_in: int = 0,
         start: Any = None,
         thin: int | None = None,
-        record: LinearOperator | None = None,
+        record: Operator | None = None,
         record_names: list[str] | None = None,
         rng: Generator | None = None,
         n_jobs: int | None = None,
@@ -285,8 +285,9 @@ class ChainSampler(MeasureEstimator):
             thin: store the position every this many kept steps, for
                 :meth:`~pygeoinf.inference.sampling.results.SampledPosterior.sample_thinned`;
                 nothing is stored if omitted.
-            record: a small linear map from the model space to a space with
-                coordinates, whose components are recorded at every step.
+            record: a small map from the model space to a space with
+                coordinates, linear or not, whose components are recorded at
+                every step.
             record_names: names for the recorded components.
             callback: called as ``callback(chain, iteration, step)`` after
                 every step, where the chain runs.

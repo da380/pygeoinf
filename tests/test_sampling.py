@@ -520,6 +520,28 @@ class TestTheChains:
         assert posterior.diagnostics().names == ("potential", "first")
         assert 0.0 <= posterior.acceptance_rate <= 1.0
 
+    def test_a_record_may_be_nonlinear(self, setting, rng):
+        space = setting.space
+        squared = Operator.from_callables(
+            space, EuclideanSpace(1), lambda x: np.array([space.squared_norm(x)])
+        )
+        posterior = Chains(2)(
+            self.kernel(setting),
+            start=setting.prior,
+            steps=30,
+            thin=1,
+            record=squared,
+            record_names=["squared norm"],
+            rng=rng,
+        )
+        recorded = posterior.scalars()[1]
+        stored = np.array([space.squared_norm(x) for x in posterior.stored_positions])
+        assert recorded.shape == (2, 30)
+        np.testing.assert_allclose(recorded.ravel(), stored)
+        assert posterior.record is squared
+        with pytest.raises(ValueError, match="nonlinear"):
+            posterior.fitted_reference()
+
     def test_the_callback_sees_every_step(self, setting, rng):
         seen = []
         Chains(2)(
@@ -1002,7 +1024,10 @@ class NonlinearSetting:
             data_space,
             lambda m: np.exp(matrix @ m),
             derivative=lambda m: LinearOperator.from_matrix(
-                space, data_space, np.diag(np.exp(matrix @ m)) @ matrix, form="components"
+                space,
+                data_space,
+                np.diag(np.exp(matrix @ m)) @ matrix,
+                form="components",
             ),
         )
         self.space = space
@@ -1031,7 +1056,9 @@ class NonlinearSetting:
         weights /= weights.sum()
         values = np.array([space.inner_product(x, probe) for x in draws])
         self.exact = float(weights @ values)
-        self.exact_error = float(np.sqrt(np.sum(weights**2 * (values - self.exact) ** 2)))
+        self.exact_error = float(
+            np.sqrt(np.sum(weights**2 * (values - self.exact) ** 2))
+        )
 
 
 @pytest.fixture(scope="module")
@@ -1056,14 +1083,18 @@ class TestTheLocalMALA:
         gram_inverse = np.linalg.inv(space.gram_matrix())
 
         def covariance(measure):
-            columns = np.array([measure.covariance(space.basis_vector(i)) for i in range(4)])
+            columns = np.array(
+                [measure.covariance(space.basis_vector(i)) for i in range(4)]
+            )
             return columns.T @ gram_inverse
 
         potential = s.problem.potential(s.data)
         prior_covariance = covariance(prior)
 
         def log_posterior(x):
-            return -potential(x) + multivariate_normal(prior.expectation, prior_covariance).logpdf(x)
+            return -potential(x) + multivariate_normal(
+                prior.expectation, prior_covariance
+            ).logpdf(x)
 
         def log_proposal(x, y):
             local = laplace.reference(x, s.data)
@@ -1076,10 +1107,17 @@ class TestTheLocalMALA:
             state = State(prior.sample(rng=rng))
             proposal, _ = scheme.apply(state, rng=rng)
             x, y = state.position, proposal.position
-            library = target.value(state) - target.value(proposal) + kernel._local_ratio(
-                state, proposal
+            library = (
+                target.value(state)
+                - target.value(proposal)
+                + kernel._local_ratio(state, proposal)
             )
-            direct = log_posterior(y) + log_proposal(y, x) - log_posterior(x) - log_proposal(x, y)
+            direct = (
+                log_posterior(y)
+                + log_proposal(y, x)
+                - log_posterior(x)
+                - log_proposal(x, y)
+            )
             assert library == pytest.approx(direct, rel=1e-8, abs=1e-8)
 
     def test_on_a_linear_problem_every_proposal_is_accepted(self, setting):
@@ -1096,7 +1134,11 @@ class TestTheLocalMALA:
     def test_it_samples_a_nonlinear_posterior(self, nonlinear_setting):
         s = nonlinear_setting
         posterior = GeometricMALA(s.problem, s.laplace, step=1.0)(
-            s.data, steps=1500, chains=2, burn_in=300, record=s.record,
+            s.data,
+            steps=1500,
+            chains=2,
+            burn_in=300,
+            record=s.record,
             rng=np.random.default_rng(2),
         )
         estimate = posterior.scalar_means()[1]
@@ -1114,7 +1156,9 @@ class TestTheLocalMALA:
         s = nonlinear_setting
         target = Target(s.problem, s.data, s.laplace)
         with pytest.raises(ValueError, match="'O'"):
-            MetropolisHastings(SplittingScheme(PreconditionedOU(target), "OO", step=0.4))
+            MetropolisHastings(
+                SplittingScheme(PreconditionedOU(target), "OO", step=0.4)
+            )
         with pytest.raises(ValueError, match="Ornstein-Uhlenbeck"):
             Overdamped(target)
         with pytest.raises(ValueError, match="Ornstein-Uhlenbeck"):
@@ -1171,7 +1215,10 @@ class GibbsSetting:
             space,
             EuclideanSpace(2),
             lambda x: np.array(
-                [field.inner_product(x[0], probes[0]), field.inner_product(x[1], probes[1])]
+                [
+                    field.inner_product(x[0], probes[0]),
+                    field.inner_product(x[1], probes[1]),
+                ]
             ),
             adjoint=lambda c: (c[0] * probes[0], c[1] * probes[1]),
         )
@@ -1221,9 +1268,7 @@ class TestABlock:
         block = target.block("b", state)
         inner = State(state.position[1])
         assert block.value(inner) == pytest.approx(target.value(state), rel=1e-12)
-        assert np.allclose(
-            block.gradient(inner), target.gradient(state)[1], atol=1e-12
-        )
+        assert np.allclose(block.gradient(inner), target.gradient(state)[1], atol=1e-12)
 
     def test_its_reference_is_the_prior_s_conditional(self, gibbs_setting, rng):
         s = gibbs_setting
@@ -1322,7 +1367,10 @@ class TestGibbs:
         sampler = Gibbs(
             s.problem,
             s.prior,
-            blocks={0: MALA.recipe(step=0.2, steps=4), 1: PCN.recipe(step=0.3, steps=4)},
+            blocks={
+                0: MALA.recipe(step=0.2, steps=4),
+                1: PCN.recipe(step=0.3, steps=4),
+            },
             order="symmetric",
         )
         posterior = sampler(
@@ -1360,7 +1408,9 @@ class TestGibbs:
         ],
         ids=["missing", "duplicate", "not-a-recipe", "unknown-order"],
     )
-    def test_bad_blocks_are_refused(self, gibbs_setting, blocks, keywords, error, match):
+    def test_bad_blocks_are_refused(
+        self, gibbs_setting, blocks, keywords, error, match
+    ):
         s = gibbs_setting
         with pytest.raises(error, match=match):
             Gibbs(s.problem, s.prior, blocks=blocks, **keywords)

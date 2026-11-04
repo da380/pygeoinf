@@ -1,9 +1,12 @@
 # LLSVPs: thermal or chemical? A sampling mini-app (plan)
 
-A plan, not an app: what the mini-app would ask, how it is built, what each
-part shows of the sampling package, and what the library still lacks for it.
-Nothing below is built. The facts marked *checked* were confirmed against
-the `sampling` branch on 2026-11-03.
+What the mini-app asks, how it is built, what each part shows of the sampling
+package, and what the library still lacks for it. **Parts A to D and F are built**, on
+a thin shell with a sharp indicator and a synthetic network; their numbers are in the
+[README](README.md) and their construction in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+Parts E, G and H and the gaps below are what remains. Facts marked *checked* were
+confirmed against the `sampling` branch, and the measurements are at the quick scale
+unless they say otherwise.
 
 ## 1. The question
 
@@ -77,8 +80,8 @@ with `H` the indicator of `phi > 0`.
   the sphere, *checked* present), and ScS−S and PcP−P as averages over small
   caps at the bounce points (`geodesic_ball_average_operator`). These see Vs
   and Vp, not density. Events along plate boundaries, stations on the
-  continents through the land mask the point-data app uses, so the Pacific
-  is crossed far less than Africa.
+  continents through the land mask the point-data app uses. *Checked:* about
+  6% of the arcs enter a cap of radius 0.3 about Africa and 4% about the Pacific.
 - **Normal-mode structure coefficients.** For a handful of modes sensitive
   to D″, the even-degree coefficients `c_st`, s = 2, 4, 6, each a weighted
   sum of the three fields' spherical-harmonic coefficients of that degree
@@ -95,9 +98,7 @@ the low-degree coefficients, never as a band-limited field (which would ring).
 
 A deterministic level set dominated by degree 2 that puts provinces under
 Africa and the Pacific, chemical contrasts of (−2%, −0.5%, +1%), dense piles,
-and a thermal draw from the prior. Noise: a fixed fraction of the rms of each
-data type, chosen so that the travel times pin the provinces' edges where
-coverage is good and the mode data constrain density to a factor of two.
+and a thermal draw from the prior. Noise: 20% of the rms of the S data, 30% of the P data and 20% of the modes'.
 
 ### Scales
 
@@ -121,35 +122,32 @@ coupled fields, side by side, and of the level set; the truth; the data.
 Shows `from_product(correlation=)` and a nested direct sum. Figure: draws
 and the truth on maps.
 
-**C. The thermal-only problem, exactly** (`linear.py`). With no chemistry
-the problem is linear and Gaussian, so the posterior is known exactly. PCN,
-MALA, HMC, PreconditionedHMC and GeometricHMC run on it and each is checked
-against the exact posterior on regional means. The same runs at lmax 12, 24
-and 48 show acceptance and step flat under refinement. Shows: every preset,
-the diagnostics, discretisation invariance. Figure: autocorrelations, and
-acceptance against lmax.
+**C. The thermal-only problem, exactly** (`linear.py`). Built. With no chemistry
+the problem is linear and Gaussian, so the posterior is known exactly. PCN, MALA, HMC,
+PreconditionedHMC and GeometricHMC run on it, on the data as given and on a weak
+problem, the same noise draw times 15, where the prior-reference samplers mix and the
+check has power; and on a ladder of degrees, at fixed steps and against a random walk.
 
-**D. Gibbs over the fields** (`gibbs.py`). The full problem by
-`Gibbs(problem, prior, blocks={"thermal": HMC.recipe(...), "level_set":
-PCN.recipe(..., steps=k), "chemistry": MALA.recipe(...)})`: per-block step
-adaptation and acceptance (`block_acceptance_rates`), and systematic against
-symmetric scan. The level set is the hard block: pCN on a level set slows as
-the data inform its edges, and the part says how many pCN steps per visit
-pay. Figure: traces per block, block acceptances, the province probability.
+**D. Gibbs over the fields** (`gibbs.py`). Built. Two blocks, not the three first
+planned: HMC on the thermal fields and the contrasts as one nested summand, and pCN on
+the level set, since apart the first two creep along a valley they trade off in
+(*checked:* `c_s` at −1.29, τ 717 after 800 sweeps of three blocks, against −1.9 with
+two). Compared in squared jumps per forward evaluation: pCN steps per visit, a symmetric
+scan, three blocks, and a start from the prior.
 
 **E. What coupling costs** (`coupling.py`). The thermal fields sampled as one
-block, then as three: with R near 0.95 the three-block Gibbs crawls along
-the correlation, and the part measures it, ESS per forward evaluation
-against R from 0 to 0.95. This needs grouped blocks or a block-sparse
-correlation (gap 2 below).
+block, then as three: with R near 0.95 the three-block Gibbs crawls along the
+correlation, and the part measures it, against R from 0 to 0.95. Part A already
+measures how little room there is: each of `vs` and `vp` has 9% of its marginal's
+variance given the other two. This needs grouped blocks or a block-sparse correlation
+(gap 2 below).
 
-**F. The answers** (`answers.py`). From the part-D posterior: the map of
-`P(x inside a province)`, with the truth's outline; the posterior of
-`c_rho` and of its sign (dense or not); `dlnVs / dlnVp` inside the
-provinces against outside, against the thermal value; the number of
-connected provinces. Every one is nonlinear in the model, and the Laplace
-approximation gives none of them. Figure: the probability map, and the
-marginals against the truth.
+**F. The answers** (`answers.py`). Built. From the part-D posterior: the map of
+`P(x inside a province)`, with the truth's outline; the posterior of `c_rho` and of
+its sign; the jump in `dlnVs` across the provinces' edges over the jump in `dlnVp`,
+against the thermal value and what thermal fields alone make of the data; and the number
+of connected provinces. The jump is used, not a ratio inside against one outside, since
+a contrast offsets a field inside without changing its slope there.
 
 **G. Does the data need chemistry?** (`evidence.py`). SMC with the Gibbs
 kernel as its mutation, once on the thermal-only model and once on the full
@@ -157,39 +155,28 @@ one, and the log evidence of each from the `WeightedEnsemble`. A sweep of
 the noise shows where the data stop telling the models apart. This needs a
 standard error on the evidence (gap 5).
 
-**H. (stretch) Several modes.** The model has a near-symmetry that makes
-the posterior bimodal by construction: flipping `phi` and the contrasts'
-signs and shifting the thermal fields' mean gives nearly the same anomalies
-(`c H(-phi) == c - c H(phi)`), broken only by the prior. Either break it (a
-constraint `c_s < 0`, `constraint=`) or show it: tempering crosses between
-the modes where a chain does not. A fitted mixture reference would need
-per-block references (gap 6).
-
-**Run times.** A forward evaluation is a matrix-vector product per data type
-plus one sphere synthesis for the indicator: a few milliseconds at lmax 24.
-A Gibbs sweep of three blocks costs a few such evaluations and gradients, so
-10 000 sweeps fit in about a minute, and the forward is pure numpy and
-pyshtools, so chains and SMC particles can run in worker processes
-(`Chains(n_jobs=)`), unlike the waveform app's C++ operator. To check: that
-the sphere's objects pickle and that pyshtools is safe there (gap 7).
+**H. (stretch) Several modes.** Two kinds are now measured. An exact near-symmetry,
+`c H(-phi) == c - c H(phi)` (*checked* to 8e-15), which only the prior breaks. And
+arrangements of the provinces that chains hold on to: part D's chains from one guess
+split into two groups, 40 apart in potential, one with a lobe over the North Atlantic,
+and chains from the prior stay higher still. Tempering is the natural test. A fitted
+mixture reference would need per-block references (gap 6).
 
 ## 4. Layout
 
 ```
 miniapps/llsvp/
-  README.md, IMPLEMENTATION.md, run_all.py
-  proofs.py  synthetic.py  linear.py  gibbs.py  coupling.py  answers.py  evidence.py
+  README.md, IMPLEMENTATION.md, PLAN.md, run_all.py
+  proofs.py  synthetic.py  linear.py  gibbs.py  answers.py     # built
+  coupling.py  evidence.py                                     # to come
   src/
-    shell.py      # the Scale presets, the sphere, the network, the mode kernels, the truth
-    prior.py      # the nested coupled prior, labels, the thermal correlation
-    forward.py    # the anomaly fields, the indicator at the nodes, the two data operators
-    common.py     # the command line from the Scale, the stopwatch, the map plots
+    shell.py      # the Scale presets, the network, the mode kernels
+    prior.py      # the coupled prior, its two groupings, the true level set
+    forward.py    # T, G(phi), the map and its derivative
+    record.py     # what a chain records
+    common.py     # the command line from the Scale, the stopwatch, the maps
   results/        # git-ignored; results/quick/ at the quick scale
 ```
-
-The same conventions as the other apps: `--quick` / `--full`, every field of
-the scale an option, a part rebuilding the problem from the seed when run
-alone, and a slow test that runs the quick scale.
 
 ## 5. What the library has, and what the app would ask for
 
@@ -222,19 +209,13 @@ alone, and a slow test that runs the quick scale.
    while correlated: either `blocks={("vs", "vp", "rho"): ...}` over a flat
    sum, or `correlation=` allowing zeros between summands of different
    latent spaces.
-3. **Differentiable in some summands only.** The forward map has no
-   derivative in `phi` (the indicator), but the thermal and chemistry blocks
-   need gradients. A block's potential is the whole potential composed with
-   the insertion, so its gradient asks for the whole derivative. The options:
-   a derivative declared zero in `phi` (true almost everywhere, but a quiet
-   lie), a smoothed indicator (a modelling choice to defend), or a library
-   notion of a partial derivative per summand, which a block would use.
-4. **Nonlinear records and streaming statistics.** `record=` takes a linear
-   map, but the answers here are nonlinear (an indicator, a ratio, a count).
-   Storing states instead costs about 40 KB each at lmax 24 for five fields,
-   400 MB for 10 000 states. A recorded nonlinear function, or running
-   pointwise means of a function of the state, would avoid that; this fits
-   the planned change to how chains are stored.
+3. **Differentiable in some summands only.** Worked around, and enough for now: the
+   forward map's derivative is declared zero in `phi`. A library notion of a partial
+   derivative per summand would stop a sampler being able to follow it across the level
+   set by accident.
+4. **Nonlinear records.** Done: `record=` takes any `Operator`, and a fitted reference
+   asks for `chart=` over a nonlinear one. Streaming pointwise statistics remain: the
+   province map still averages stored states, 40 KB each.
 5. **The evidence's standard error.** Part G compares two log evidences, and
    tempering reports no error for them (already an open item); nor the
    per-stage history that shows where the estimate's variance comes from.
@@ -242,38 +223,47 @@ alone, and a slow test that runs the quick scale.
    reference, so neither a geometric block (the thermal block about its
    Laplace Gaussian would mix in a step) nor a mixture reference (part H)
    fits inside a sweep. Already listed as not offered.
-7. **Process safety of the sphere.** Chains and particles in worker
-   processes need the sphere space and its prepared points to pickle and
-   pyshtools to be safe in a worker; to be checked, and the app is the test
-   of it.
-8. **A block's cost.** Every block step evaluates the whole forward map,
-   though a level-set step changes only the indicator's term and a thermal
-   step only the linear term. Cheap here; for an expensive forward map a
-   block would want the others' contribution held. Not needed for this app,
-   worth noting for later ones.
+7. **Process safety of the sphere.** *Checked:* chains in worker processes work on
+   the sphere, with the operators' closures and the stored `SHGrid`s, and run 2.3 times
+   faster on two workers.
+8. **A block's cost.** Every block step evaluates the whole forward map, though a
+   level-set step changes only the indicator's term and a linear step only the linear
+   term. `Forward` caches `G(phi)` itself. Cheap here; for an expensive forward map a
+   block would want the others' contribution held.
+9. **The chart's pairings.** A `GaussianReference` pairs a state with each chart vector
+   by the space's inner product, in `coordinates` and `_apply_covariance`, which on the
+   sphere is two analyses per field per vector: 0.42 s a step at rank 50, nine tenths of
+   it there, and 3.7 s to build the reference. A chart's dual components computed once
+   would make each a single analysis and a matrix product. This is why part C counts
+   `GeometricHMC` in steps of its own.
+10. **A joint Gaussian block.** Given `phi` the linear part's conditional is linear and
+    Gaussian, known exactly, and part D samples it by HMC with τ in the hundreds. Per-block
+    references (gap 6) on it, or an exact-draw block, should take most of that away and
+    leave pCN's level set as the slow part. Probably the largest gain available to part D.
+11. **The trajectory's resonance.** HMC's adaptation stops at `L h == pi / 2`, where a
+    direction of frequency near 4 makes a whole turn: on the weak problem the potential's
+    τ is 16 or 143 by seed, against 6.4 at `h == 0.15`, and the regional means do not see
+    it. Jittering the trajectory's length or step would remove it.
+12. **Threads on the sphere.** `ducc0` fixes its pool at import to one thread per core,
+    and at these sizes one thread is several times faster: 0.10 ms an analysis against
+    0.59. The workers are told one by the library; the main process is not. The app sets
+    `OMP_NUM_THREADS` in `src/__init__.py`, and the library could default the sphere's
+    transforms to one thread, as it does its NUFFTs.
 
 ## 6. Order of work
 
-1. `src/` and parts A and B: the problem, its proofs, the coupled prior.
-2. Part C: the exact linear benchmark, which tests the samplers before the
-   hard problem does.
-3. Part D with the zero-derivative or smoothed choice for gap 3, and part F
-   from its states (gap 4 worked around by thinning).
-4. Gaps 5 and 2 in the library, then parts G and E.
-5. Gap 1, hyperparameters, then the version of part F that infers the
-   scaling; part H if the near-symmetry is kept.
+1. Done: `src/` and parts A to D and F.
+2. Gaps 5 and 2 in the library, then parts G and E.
+3. Gap 10 or 6, for a linear block that does not crawl, then a longer part D, to see
+   whether its two groups of chains become one.
+4. Gap 1, hyperparameters, then the version of part F that infers the scaling; part H.
 
-## 7. Decisions to make first
+## 7. Decisions
 
-- The thin shell, or a layered ball from the start.
-- A sharp or a smoothed indicator (gap 3), and whether the near-symmetry of
-  part H is broken by a constraint or kept as a demonstration.
-- A synthetic network on a realistic geometry, as the other apps use, or a
-  real catalogue's events and stations; for the mode coefficients,
-  synthetic, or published values with their own errors.
-- Which quantities are *the* answers, so that the README can lead with them:
-  my suggestion is the province probability map, the sign of `c_rho`, and
-  the evidence ratio.
+Made: a thin shell, a sharp indicator with a derivative zero in it, and a synthetic
+network. Open, for the later stages: whether the near-symmetry of part H is broken by a
+constraint or kept as a demonstration; synthetic mode coefficients, or published values
+with their own errors; and which quantities the README leads with once part G exists.
 
 ## 8. Extensions
 

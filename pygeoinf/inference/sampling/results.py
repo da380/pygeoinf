@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 import numpy as np
 from numpy.random import Generator
 
-from ...algebra.operators import Functional, LinearOperator
+from ...algebra.operators import Functional, LinearOperator, Operator
 from ...algebra.spaces import CoordinateSpace, resolve_rng
 from ...numerics.chain_diagnostics import (
     effective_sample_size,
@@ -133,7 +133,7 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
         /,
         *,
         kernel: "Kernel",
-        record: LinearOperator | None = None,
+        record: Operator | None = None,
         record_names: Sequence[str] | None = None,
     ) -> None:
         super().__init__(prior, relative_log_density)
@@ -248,7 +248,7 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
         return stored[int(resolve_rng(rng).integers(len(stored)))]
 
     @property
-    def record(self) -> LinearOperator | None:
+    def record(self) -> Operator | None:
         """The map whose components were recorded at every step."""
         return self._record
 
@@ -282,9 +282,9 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
             The reference.
 
         Raises:
-            ValueError: if the run recorded nothing and no chart is given, a
-                chart is given and no states were stored, or there are fewer
-                kept steps than components.
+            ValueError: if the run recorded nothing, or a nonlinear map, and
+                no chart is given, a chart is given and no states were
+                stored, or there are fewer kept steps than components.
             TypeError: if the chart's codomain has no coordinates.
         """
         prior = self.reference
@@ -293,6 +293,11 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
                 raise ValueError(
                     "A fitted reference needs a chart: run the chains with "
                     "record=, or pass chart=."
+                )
+            if not isinstance(self._record, LinearOperator):
+                raise ValueError(
+                    "A fitted reference's chart is linear and the run recorded a "
+                    "nonlinear map; pass chart=."
                 )
             chart = self._record
             values = np.concatenate([c.records for c in self._chains])

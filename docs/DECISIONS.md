@@ -4332,6 +4332,15 @@ and adapts each block towards its own acceptance during burn-in, and a
 `Chain` keeps each block's acceptance at every kept step; a kernel of one
 step is the case of one block.
 
+**D-231. A chain records any operator, not only a linear one** (2026-11-04,
+Oscar). `Chains`, the presets and `SampledPosterior` take `record: Operator`:
+the chain only applies the map and reads its codomain's components, so linearity
+was never used there, and the answers a sampler is run for are often nonlinear (a
+level set's positive share, a ratio of regional means, a count of provinces),
+which otherwise have to be read off stored states. A fitted reference still
+needs a linear chart: over a nonlinear record `fitted_reference()` raises and
+asks for `chart=`, and so does `draw_reference`, which `sample` starts from.
+
 ## Appendix: measurements behind the defaults
 
 Kept because they would be costly to redo. Timings are from a throttling

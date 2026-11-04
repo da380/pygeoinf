@@ -28,7 +28,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 from numpy.random import Generator
 
-from ...algebra.operators import LinearOperator
+from ...algebra.operators import Operator
 from ...algebra.spaces import CoordinateSpace, resolve_rng
 from ...parallel import parallel_map
 from ...probability.base import ProbabilityMeasure
@@ -146,7 +146,7 @@ class Chains:
         burn_in: int = 0,
         adapt: StepSizeAdaptation | Sequence[StepSizeAdaptation | None] | None = None,
         thin: int | None = None,
-        record: LinearOperator | None = None,
+        record: Operator | None = None,
         record_names: list[str] | None = None,
         rng: Generator | None = None,
         n_jobs: int | None = None,
@@ -175,10 +175,11 @@ class Chains:
                 is stored if omitted, which leaves
                 :meth:`~pygeoinf.inference.sampling.results.SampledPosterior.sample_thinned`
                 nothing to read.
-            record: a linear map from the model space to a space with
-                coordinates, small, whose components are recorded at every
-                step: chart coordinates, or the averages a property operator
-                takes.
+            record: a map from the model space to a space with coordinates,
+                small, whose components are recorded at every step: chart
+                coordinates, the averages a property operator takes, or any
+                nonlinear function of the state, the share of a level set
+                that is positive say.
             record_names: names for the recorded components.
             callback: called as ``callback(chain, iteration, step)`` after
                 every step, burn-in included (iterations below *burn_in*),
@@ -252,7 +253,7 @@ def _run_chain(
     burn_in: int,
     adapt: Any,
     thin: int | None,
-    record: LinearOperator | None,
+    record: Operator | None,
     callback: Callable[[int, int, Step], None] | None,
 ) -> Chain:
     """One chain, burned in and then recorded.
