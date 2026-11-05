@@ -421,7 +421,9 @@ class TestTheNewtonMean:
         )
         assert np.allclose(reference.expectation, newton, atol=1e-10)
 
-    def test_the_low_rank_reference_is_a_fixed_function_of_the_model(self, nonlinear, rng):
+    def test_the_low_rank_reference_is_a_fixed_function_of_the_model(
+        self, nonlinear, rng
+    ):
         space, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(
             problem, prior, gauss_newton=True, rank=2, rng=rng
@@ -457,12 +459,18 @@ class TestASuppliedHessian:
             problem, prior, rank=3, rng=np.random.default_rng(1)
         )
         supplied = LaplaceApproximation.from_problem(
-            problem, prior, gauss_newton=True, rank=3, hessian=with_hessian(problem),
+            problem,
+            prior,
+            gauss_newton=True,
+            rank=3,
+            hessian=with_hessian(problem),
             rng=np.random.default_rng(1),
         )
         a, b = exact.reference(mode, data), supplied.reference(mode, data)
         assert np.allclose(a.expectation, b.expectation, atol=1e-12)
-        assert np.allclose(covariance_matrix(a, space), covariance_matrix(b, space), atol=1e-12)
+        assert np.allclose(
+            covariance_matrix(a, space), covariance_matrix(b, space), atol=1e-12
+        )
 
     def test_it_drives_the_laplace_gaussian_too(self, nonlinear):
         space, prior, problem, data = nonlinear
@@ -472,7 +480,9 @@ class TestASuppliedHessian:
             problem, prior, gauss_newton=True, hessian=with_hessian(problem)
         ).at(mode, data)
         assert np.allclose(
-            covariance_matrix(exact, space), covariance_matrix(supplied, space), atol=1e-10
+            covariance_matrix(exact, space),
+            covariance_matrix(supplied, space),
+            atol=1e-10,
         )
 
     def test_a_negative_eigenvalue_is_refused(self, nonlinear, rng):
@@ -505,7 +515,12 @@ class TestASuppliedHessian:
     def test_a_potential_without_a_hessian_is_refused(self, nonlinear, rng):
         _, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(
-            problem, prior, gauss_newton=True, rank=3, hessian=problem.potential, rng=rng
+            problem,
+            prior,
+            gauss_newton=True,
+            rank=3,
+            hessian=problem.potential,
+            rng=rng,
         )
         with pytest.raises(TypeError, match="Hessian"):
             laplace.reference(prior.sample(rng=rng), data)
@@ -522,7 +537,9 @@ class TestThePairLaw:
         c = 0.6
 
         def pair(mean, covariance):
-            joint = np.block([[covariance, c * covariance], [c * covariance, covariance]])
+            joint = np.block(
+                [[covariance, c * covariance], [c * covariance, covariance]]
+            )
             return multivariate_normal(np.r_[mean, mean], joint)
 
         u, v = prior.sample(rng=rng), prior.sample(rng=rng)
@@ -536,4 +553,9 @@ class TestThePairLaw:
     def test_the_prior_s_is_zero(self, linear, rng):
         _, prior, _, _ = linear
         reference = GaussianReference.from_prior(prior)
-        assert reference.pair_log_density(prior.sample(rng=rng), prior.sample(rng=rng), 0.3) == 0.0
+        assert (
+            reference.pair_log_density(
+                prior.sample(rng=rng), prior.sample(rng=rng), 0.3
+            )
+            == 0.0
+        )

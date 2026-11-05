@@ -109,4 +109,5 @@ __all__ = [
     "PointEstimator",
     "SetEstimator",
     "choose_formalism",
+    "sampling",
 ]

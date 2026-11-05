@@ -561,9 +561,9 @@ class LaplaceApproximation(MeasureEstimator):
 
         sample = None
         if self._hessian is not None:
-            curvature = (prior.precision + self._potential(data).hessian(model)).with_traits(
-                Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
-            )
+            curvature = (
+                prior.precision + self._potential(data).hessian(model)
+            ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
             inverse = resolve_solver(self._solver, curvature)(curvature)
         elif exact:
             curvature = (estimator.hessian(data, model) * 0.5).with_traits(
@@ -630,7 +630,9 @@ class LaplaceApproximation(MeasureEstimator):
         )
         if supplied:
             largest = float(np.max(np.abs(eigenvalues))) if eigenvalues.size else 0.0
-            if eigenvalues.size and float(eigenvalues.min()) < -1e-8 * max(largest, 1.0):
+            if eigenvalues.size and float(eigenvalues.min()) < -1e-8 * max(
+                largest, 1.0
+            ):
                 raise ValueError(
                     "The supplied Hessian has a negative eigenvalue, "
                     f"{float(eigenvalues.min()):.3g}, through the prior's factor: it "
@@ -761,11 +763,15 @@ class LaplaceApproximation(MeasureEstimator):
             vectors, images, gram, noise, _ = _data_chart(
                 linearization.derivative, prior, error, n_jobs=self._n_jobs
             )
-            transform, whitened, whitened_images = _whiten(prior, vectors, images, rtol=1e-10)
+            transform, whitened, whitened_images = _whiten(
+                prior, vectors, images, rtol=1e-10
+            )
             covariance = gram - gram @ np.linalg.solve(gram + noise, gram)
             s = transform @ covariance @ transform.T
         else:
-            curvature, directions, eigenvalues = self._low_rank_parts(model, data, exact)
+            curvature, directions, eigenvalues = self._low_rank_parts(
+                model, data, exact
+            )
             posterior = LowRankGaussianPosterior(
                 prior,
                 model,
@@ -780,7 +786,9 @@ class LaplaceApproximation(MeasureEstimator):
             modes = through.apply_block([unit[:, k] for k in kept], n_jobs=self._n_jobs)
             vectors = curvature.apply_block(modes, n_jobs=self._n_jobs)
             vectors.append(gradient)
-            transform, whitened, whitened_images = _whiten(prior, vectors, None, rtol=1e-10)
+            transform, whitened, whitened_images = _whiten(
+                prior, vectors, None, rtol=1e-10
+            )
             covariance_of = posterior.covariance
             mapped = [covariance_of(w) for w in whitened]
             s = np.array(
@@ -789,9 +797,13 @@ class LaplaceApproximation(MeasureEstimator):
         s = 0.5 * (s + s.T)
         offset = space.subtract(model, prior.expectation)
         z = np.array([space.inner_product(w, offset) for w in whitened])
-        g = np.array([space.inner_product(image, gradient) for image in whitened_images])
+        g = np.array(
+            [space.inner_product(image, gradient) for image in whitened_images]
+        )
         mean = z - s @ z - s @ g
-        return GaussianReference._from_whitened(prior, whitened, whitened_images, mean, s)
+        return GaussianReference._from_whitened(
+            prior, whitened, whitened_images, mean, s
+        )
 
     def _log_normalizer(
         self,
