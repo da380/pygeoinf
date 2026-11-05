@@ -171,8 +171,8 @@ class TestKnownMatrix:
             check_operator(inverse, rng=rng)
 
     def test_an_lu_solver_factorizes_once(self, family, monkeypatch, rng):
-        """The fix for the adjoint reuse factorized *twice*: O(n^3), doubled,
-        for a solver whose point is to do it once (measured 2026-08-29)."""
+        """Reusing the factorization for the adjoint must not factorize
+        *twice*: O(n^3), doubled, for a solver whose point is to do it once."""
         import pygeoinf.numerics.solvers as solvers
 
         calls = {"n": 0}
