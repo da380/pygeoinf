@@ -124,6 +124,8 @@ the scale, each default the full preset's:
                         the model space and the prior (2.0, 0.1 km, 0.0, 0.02)
   --noise-fraction float
                         the noise, as a fraction of the data's rms (0.03)
+  --anomaly-amplitude float
+                        the factor on the true anomalies, in velocity (1.0)
   --level float         the discrepancy level's credibility (0.95)
   --sponge, --sponge-rate
                         the sponge's width and taper (24, 0.008)

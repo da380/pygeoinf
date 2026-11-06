@@ -110,6 +110,9 @@ class Scale:
         prior_std: the prior's pointwise standard deviation, s²/km².
         noise_fraction: the noise's standard deviation, as a fraction of the
             data's root-mean-square.
+        anomaly_amplitude: the factor on the true model's anomalies, in
+            velocity: one leaves them as they are, and a larger one makes the
+            data less linear in the model.
         level: the credibility of the discrepancy level.
         sponge: the sponge's cells beyond the section on the left, the right
             and below.
@@ -156,6 +159,7 @@ class Scale:
     prior_order: float = 2.0
     prior_std: float = 0.02
     noise_fraction: float = 0.03
+    anomaly_amplitude: float = 1.0
     level: float = 0.95
     sponge: int = SPONGE
     sponge_rate: float = SPONGE_RATE
@@ -390,11 +394,25 @@ def background_velocity(survey: Survey) -> np.ndarray:
 
 
 def true_velocity(survey: Survey) -> np.ndarray:
-    """The background and the three anomalies."""
+    """The background and the three anomalies, scaled by the anomaly amplitude.
+
+    Raises:
+        ValueError: if the amplitude leaves a velocity that is not positive,
+            which ``m = 1 / c^2`` would otherwise hide by squaring it.
+    """
     x, z = np.meshgrid(survey.x, survey.z, indexing="ij")
+    amplitude = survey.scale.anomaly_amplitude
     velocity = background_velocity(survey)
     for x0, z0, radius, dc in ANOMALIES:
-        velocity = velocity + dc * np.exp(-((x - x0) ** 2 + (z - z0) ** 2) / radius**2)
+        velocity = velocity + amplitude * dc * np.exp(
+            -((x - x0) ** 2 + (z - z0) ** 2) / radius**2
+        )
+    slowest = float(velocity.min())
+    if slowest <= 0.0:
+        raise ValueError(
+            f"An anomaly amplitude of {amplitude:g} leaves a velocity of "
+            f"{slowest:.3f} km/s, which is not positive."
+        )
     return velocity
 
 

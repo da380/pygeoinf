@@ -270,6 +270,34 @@ def test_every_field_of_the_scale_is_an_option(app, tmp_path):
     )
 
 
+def test_the_anomaly_amplitude_scales_the_true_anomalies(app, tmp_path):
+    survey, inversion = app["survey"], app["inversion"]
+    arguments = app["common"].parse(
+        "",
+        quick=survey.QUICK,
+        full=survey.FULL,
+        argv=["--quick", "--anomaly-amplitude", "2.5", "--outdir", str(tmp_path)],
+    )
+    assert arguments.scale.anomaly_amplitude == 2.5
+
+    grid = survey.Survey(survey.QUICK)
+    background = survey.background_velocity(grid)
+    anomalies = survey.true_velocity(grid) - background
+    scaled = survey.true_velocity(survey.Survey(arguments.scale)) - background
+    assert np.allclose(scaled, 2.5 * anomalies)
+    # A mode saved under one amplitude is never read back under another.
+    assert inversion.modes_path(tmp_path, arguments.scale) != inversion.modes_path(
+        tmp_path, survey.QUICK
+    )
+
+
+def test_an_amplitude_that_stops_the_waves_is_refused(app):
+    survey = app["survey"]
+    scale = dataclasses.replace(survey.QUICK, anomaly_amplitude=20.0)
+    with pytest.raises(ValueError, match="not positive"):
+        survey.true_velocity(survey.Survey(scale))
+
+
 @pytest.fixture(scope="module")
 def results(app, scale, tmp_path_factory):
     """Parts B to E at the quick scale, once, each through its own entry point."""
