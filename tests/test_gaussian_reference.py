@@ -285,15 +285,33 @@ class TestTheChart:
         assert coordinates.mean() == pytest.approx(0.7, abs=5 * np.sqrt(0.2 / 4000))
         assert coordinates.var() == pytest.approx(0.2, rel=0.1)
 
-    def test_a_singular_chart_covariance_is_refused(self, linear, rng):
+    @pytest.mark.parametrize("rank", [2, 3, 5])
+    def test_a_singular_chart_covariance_is_refused(self, linear, rng, rank):
+        """Whitening rounds the zero eigenvalue to either sign, so one chart
+        would pass or fail by chance: every one of many must be refused."""
         space, prior, _, _ = linear
-        with pytest.raises(ValueError, match="positive definite"):
-            GaussianReference(
-                prior,
-                [space.random(rng=rng), space.random(rng=rng)],
-                np.zeros(2),
-                np.diag([1.0, 0.0]),
-            )
+        covariance = np.identity(rank)
+        covariance[-1, -1] = 0.0
+        for _ in range(50):
+            with pytest.raises(ValueError, match="positive definite"):
+                GaussianReference(
+                    prior,
+                    [space.random(rng=rng) for _ in range(rank)],
+                    np.zeros(rank),
+                    covariance,
+                )
+
+    def test_a_sharp_chart_covariance_is_kept(self, linear, rng):
+        """A small eigenvalue well above rounding is a sharply resolved
+        direction, not a singular one."""
+        space, prior, _, _ = linear
+        reference = GaussianReference(
+            prior,
+            [space.random(rng=rng), space.random(rng=rng)],
+            np.zeros(2),
+            np.diag([1.0, 1e-12]),
+        )
+        assert reference.rank == 2
 
     def test_a_mismatched_chart_is_refused(self, linear, rng):
         space, prior, _, _ = linear

@@ -1281,7 +1281,8 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
             the chart's mean or covariance has the wrong shape, or the
             chart's covariance is not positive definite on the directions
             kept, without which the reference is not equivalent to the
-            prior.
+            prior. An eigenvalue within rounding of zero, relative to the
+            largest, counts as zero.
     """
 
     def __init__(
@@ -1324,6 +1325,11 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
     ) -> None:
         """Set the reference up from a chart already whitened under the prior.
 
+        An eigenvalue of ``s`` within rounding of zero, relative to the
+        largest, counts as zero. Forming ``s`` leaves a singular covariance
+        with such an eigenvalue of either sign, and a Cholesky factorization
+        alone would accept the positive ones and divide by the tiny pivot.
+
         Raises:
             ValueError: if the chart's covariance is not positive definite.
         """
@@ -1333,14 +1339,21 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
         space = prior.domain
         prior_covariance = prior.covariance
         rank = len(whitened)
-        try:
-            cholesky = np.linalg.cholesky(s) if rank else np.zeros((0, 0))
-        except np.linalg.LinAlgError:
-            raise ValueError(
+        cholesky = np.zeros((0, 0))
+        if rank:
+            singular = ValueError(
                 "The chart's covariance is not positive definite on the "
                 "directions the prior distinguishes, so the reference would be "
                 "singular to the prior."
-            ) from None
+            )
+            try:
+                values = np.linalg.eigvalsh(s)
+                floor = 10 * rank * np.finfo(float).eps * np.abs(values).max()
+                if not values[0] > floor:
+                    raise singular
+                cholesky = np.linalg.cholesky(s)
+            except np.linalg.LinAlgError:
+                raise singular from None
 
         self._prior = prior
         self._chart = tuple(whitened)
