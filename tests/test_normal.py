@@ -33,7 +33,7 @@ from pygeoinf.numerics.preconditioners import (
     LocalizedPreconditioner,
     WoodburyPreconditioner,
 )
-from pygeoinf.numerics.solvers import CGSolver, CholeskySolver
+from pygeoinf.numerics.solvers import CGSolver, CholeskySolver, ModelSpace
 from pygeoinf.probability.gaussian import GaussianMeasure
 from pygeoinf.traits import Traits
 
@@ -113,7 +113,9 @@ class TestNormalOperator:
         model, data = forward.domain, forward.codomain
         observed = data.random(rng=rng)
         answers = {
-            name: LinearGaussianInversion(problem, prior, formalism=name)(observed)
+            name: LinearGaussianInversion(
+                problem, prior, solver=ModelSpace.wrap(name, None)
+            )(observed)
             for name in ("model_space", "data_space")
         }
         difference = model.subtract(
@@ -340,7 +342,7 @@ class TestPreconditionedInversion:
     def inversion(self, setup):
         forward, prior, error = setup
         problem = LinearForwardProblem(forward, error=error)
-        return LinearGaussianInversion(problem, prior, formalism="data_space")
+        return LinearGaussianInversion(problem, prior)
 
     def test_every_preconditioner_gives_the_same_posterior(
         self, inversion, normal, rng
@@ -452,7 +454,7 @@ class TestSurrogateFamily:
     def inversion(self, setup):
         forward, prior, error = setup
         return LinearGaussianInversion(
-            LinearForwardProblem(forward, error=error), prior, formalism="data_space"
+            LinearForwardProblem(forward, error=error), prior
         )
 
     def test_a_low_rank_surrogate_is_cheap_and_still_positive(self, inversion, rng):
@@ -474,9 +476,7 @@ class TestSurrogateFamily:
 
     def test_low_rank_needs_an_error_measure_to_approximate_one(self, setup):
         forward, prior, _ = setup
-        inversion = LinearGaussianInversion(
-            LinearForwardProblem(forward), prior, formalism="data_space"
-        )
+        inversion = LinearGaussianInversion(LinearForwardProblem(forward), prior)
         with pytest.raises(ValueError, match="no data error measure"):
             inversion.low_rank_surrogate(error_rank=2)
 
@@ -488,10 +488,10 @@ class TestSurrogateFamily:
         problem = LinearForwardProblem(forward)
 
         with pytest.raises(ValueError, match="needs an error measure"):
-            LinearGaussianInversion(problem, prior, formalism="model_space")
-        # And "auto" goes to the data space rather than wandering into it.
+            LinearGaussianInversion(problem, prior, solver=ModelSpace(None))
+        # The default is the data space, where exact data can be written.
         assert (
-            LinearGaussianInversion(problem, prior, formalism="auto").formalism
+            LinearGaussianInversion(problem, prior).normal_operator.formalism
             == "data_space"
         )
 
@@ -547,7 +547,8 @@ class TestInvariantDistancePreconditioner:
     """
 
     @pytest.fixture(scope="class")
-    def sphere(self):
+    @classmethod
+    def sphere(cls):
         pytest.importorskip("pyshtools")
         from pygeoinf.symmetric_space.sphere import Sobolev
 
@@ -619,7 +620,6 @@ class TestInvariantDistancePreconditioner:
         inversion = LinearGaussianInversion(
             LinearForwardProblem(forward, error=error),
             prior,
-            formalism="data_space",
             solver=CholeskySolver(),
         )
         observed = data_space.random(rng=rng)
@@ -937,7 +937,7 @@ class TestTheSharedSolve:
         solver, counter = self.counting()
         return (
             LinearGaussianInversion(
-                problem, prior, solver=solver, formalism=request.param
+                problem, prior, solver=ModelSpace.wrap(request.param, solver)
             ),
             counter,
             data,

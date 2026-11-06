@@ -54,20 +54,18 @@ except ImportError as error:  # pragma: no cover
         "pip install pygeoinf[planetmodel]."
     ) from error
 
-import planetmodel.sampling as _sampling
+import planetmodel.harmonics as _harmonics
 
-# 1.3 is where a grid carries its kind, which the ball's transform checks.
-_grid_fields = getattr(
-    getattr(_sampling, "AngularGrid", None), "__dataclass_fields__", {}
-)
-if (
-    not hasattr(_randomfield, "SpectralBasis") or "kind" not in _grid_fields
+# planetmodel 1.4 holds the batched shell transform the ball calls, and the
+# Galerkin block of another operator family that a prior of its own length
+# scales is built from.
+if not hasattr(_harmonics, "ShellTransform") or not hasattr(
+    getattr(_randomfield, "SpectralBasis", None), "galerkin"
 ):  # pragma: no cover
     raise ImportError(
-        "The spectral-element spaces need planetmodel 1.3 or later, whose grids "
-        "carry their kind: pip install -U planetmodel."
+        "The spectral-element spaces need planetmodel 1.4 or later: "
+        "pip install -U planetmodel."
     )
-del _grid_fields
 
 from .axis import AxisSpace  # noqa: E402
 from .base import Boundary, LengthScale, SpectralElementSpace  # noqa: E402

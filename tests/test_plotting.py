@@ -125,6 +125,41 @@ class TestSphereRenderer:
         values = X.grid_values(field)
         assert np.allclose(drawn[:, 0], values[:, X.grid_shape[1] // 2])
 
+    @pytest.mark.parametrize("grid", ["DH", "GLQ"])
+    def test_gouraud_shading_closes_the_seam_at_the_antimeridian(self, grid):
+        """Smooth shading runs through nodes, so the band is closed by a node
+        at each edge of the map carrying the value across the seam. No strip
+        crosses the cut, so cartopy draws it without its wrapping path, which
+        warns of artifacts under Gouraud shading."""
+        pytest.importorskip("cartopy")
+        import warnings
+
+        from pygeoinf.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8, grid=grid)
+        field = X.project_function(lambda p: np.cos(np.radians(p[1])))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ax, mappable = plotting.plot(X, field, shading="gouraud")
+        corners = mappable.get_coordinates()
+        longitudes = corners[0, :, 0]
+        assert longitudes[0] == pytest.approx(-180.0)
+        assert longitudes[-1] == pytest.approx(180.0)
+        assert np.all(np.diff(longitudes) > 0.0)
+        drawn = mappable.get_array().reshape(corners.shape[:2])
+        # The same value at both edges, and it is cos(180) = -1 to the
+        # accuracy of the linear interpolation across the seam.
+        assert np.allclose(drawn[:, 0], drawn[:, -1])
+        assert np.allclose(drawn[:, 0], -1.0, atol=0.1)
+
+    def test_an_unknown_shading_is_refused(self):
+        pytest.importorskip("cartopy")
+        from pygeoinf.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+        X = SphereLebesgue(8)
+        with pytest.raises(ValueError, match="shading"):
+            plotting.plot(X, X.zero(), shading="nearest")
+
     def test_symmetric_limits_reach_the_mappable(self):
         pytest.importorskip("cartopy")
         from pygeoinf.symmetric_space.sphere import Lebesgue as SphereLebesgue

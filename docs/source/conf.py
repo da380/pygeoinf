@@ -63,8 +63,8 @@ html_static_path = ["_static"]
 # sphinx-apidoc runs from here rather than from .readthedocs.yaml, so that a
 # local build and a Read the Docs build produce the same pages from the same
 # settings. The .rst files it writes are build output, not source, and are
-# gitignored; previously they were committed, went stale, and quietly hid whole
-# modules from anyone building the docs locally.
+# gitignored: a committed copy goes stale and quietly hides whole modules from
+# anyone building the docs locally.
 
 _SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_SOURCE_DIR, "..", ".."))

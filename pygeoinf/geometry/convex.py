@@ -1521,14 +1521,19 @@ class Ball(ConvexSet):
 
         Args:
             x: a vector of the space.
-            rtol: how far outside still counts as inside. Scaled by the set's
-                own size, so it means the same thing whatever the units are.
+            rtol: how far outside still counts as inside, relative to the
+                largest of the radius, ``||x||`` and ``||center||``: the sizes
+                of the quantities compared, so it means the same thing
+                whatever the units are, and a ball of radius zero still
+                contains its own center after rounding.
 
         Returns:
             Whether the set contains the point.
         """
-        offset = self._domain.norm(self._domain.subtract(x, self._center))
-        return offset <= self._radius * (1.0 + rtol)
+        space = self._domain
+        offset = space.norm(space.subtract(x, self._center))
+        scale = max(self._radius, space.norm(x), space.norm(self._center))
+        return offset <= self._radius + rtol * scale
 
     def project(self, x: Any, /) -> Any:
         """Rescale the offset from the center to the radius, if it exceeds it."""

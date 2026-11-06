@@ -1,7 +1,8 @@
 """
 The normal operator, and what it was assembled from.
 
-A linear Gaussian problem has two normal operators, one per formalism:
+A linear Gaussian problem has two normal operators, one per space it can be
+solved in:
 
 .. code-block:: text
 
@@ -43,63 +44,39 @@ __all__ = [
     "FactoredNormalOperator",
     "NormalOperator",
     "Formalism",
-    "choose_formalism",
+    "checked_formalism",
     "DampedNormalOperator",
 ]
 
-Formalism = Literal["auto", "model_space", "data_space"]
+Formalism = Literal["model_space", "data_space"]
+"""Which space a normal operator is assembled in."""
 
 
-def choose_formalism(
-    model_space: HilbertSpace,
-    data_space: HilbertSpace,
-    /,
-    *,
-    formalism: Formalism = "auto",
-) -> Literal["model_space", "data_space"]:
-    """Which space to assemble the normal equations in.
+def checked_formalism(formalism: Any, /) -> Formalism:
+    """The formalism, refused by name unless it is one of the two.
 
-    A purely computational choice — the two give the same answer — so ``auto``
-    takes whichever space is smaller, falling back to the data space when a
-    dimension is unavailable.
-
-    ``auto`` is offered and is *not* the default anywhere. Comparing dimensions
-    says nothing about whether the model-space route is available at all: it
-    needs ``Q^-1``, and a function-space prior often has none. It also reads a
-    discretization's size as though it were the problem's. Data spaces can be
-    large; model spaces are usually larger still, so the data space is where
-    the normal equations belong unless there is a reason otherwise, and the
-    model-space formalism is kept for when there *is* one: an explicitly
-    finite-dimensional problem, overdetermined and with a cheap precision,
-    or a low-dimensional surrogate, which is such a problem by construction.
-    It is not for a model space that discretizes a function space, where
-    its evidence is a difference of log-determinants that have no limit
-    under refinement.
+    Which space the normal equations are assembled in is a choice of linear
+    system, never of answer: the data space, ``A Q A* + R``, is the default
+    everywhere, and the model space, ``Q^-1 + A* R^-1 A``, is for explicitly
+    finite-dimensional problems and low-dimensional surrogates. An estimator
+    is asked for the model space through ``solver=ModelSpace(...)``; the
+    normal operators and families take it here, where assembly is the object
+    itself.
 
     Args:
-        model_space: where the models live.
-        data_space: where the data live.
-        formalism: ``"model_space"``, ``"data_space"``, or ``"auto"`` to pick
-            by dimension. Read the paragraph above before reaching for
-            ``"auto"``: it compares sizes, which is not the question.
+        formalism: ``"model_space"`` or ``"data_space"``.
 
     Returns:
-        The formalism to use.
+        The formalism.
 
     Raises:
-        ValueError: for an unrecognized formalism.
+        ValueError: for anything else.
     """
-    if formalism not in ("auto", "model_space", "data_space"):
+    if formalism not in ("model_space", "data_space"):
         raise ValueError(
-            f"The formalism is 'auto', 'model_space' or 'data_space', got "
-            f"{formalism!r}."
+            f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
         )
-    if formalism != "auto":
-        return formalism
-    try:
-        return "model_space" if model_space.dim <= data_space.dim else "data_space"
-    except (AttributeError, NotImplementedError):  # pragma: no cover
-        return "data_space"
+    return formalism
 
 
 class FactoredNormalOperator(LinearOperator):
@@ -392,16 +369,14 @@ class NormalOperator(FactoredNormalOperator):
             error: the data error measure ``R``. Omitted means the data are
                 exact, which only the data-space formalism can express.
             formalism: which space to assemble in, the data space by default.
-                ``"auto"`` takes the smaller, except that it takes the data
-                space whenever there is no error measure, because that is then
-                the only one available.
 
         Raises:
             ValueError: if the prior or error lives on the wrong space; if the
-                chosen formalism needs a covariance or a precision that was not
-                supplied; or if the model-space formalism is asked for with no
-                error measure.
+                formalism is unknown, or needs a covariance or a precision that
+                was not supplied; or if the model-space formalism is asked for
+                with no error measure.
         """
+        chosen = checked_formalism(formalism)
         if prior.domain != forward.domain:
             raise ValueError(
                 f"The prior lives on {prior.domain!r}, but the forward "
@@ -413,10 +388,10 @@ class NormalOperator(FactoredNormalOperator):
                 f"operator has data space {forward.codomain!r}."
             )
         if error is None:
-            # Exact data has no model-space assembly at all (see the docstring),
-            # so "auto" must not be allowed to wander into one, and an explicit
-            # request has to be refused rather than quietly given R == I.
-            if formalism == "model_space":
+            # Exact data has no model-space assembly at all (see the
+            # docstring), so the request is refused rather than quietly given
+            # R == I.
+            if chosen == "model_space":
                 raise ValueError(
                     "The model-space formalism needs an error measure. Without "
                     "one the data are exact, and 'Q^-1 + A* A' is not that "
@@ -425,11 +400,6 @@ class NormalOperator(FactoredNormalOperator):
                     "expresses exact data as R == 0, or supply the error "
                     "measure you mean."
                 )
-            chosen = "data_space"
-        else:
-            chosen = choose_formalism(
-                forward.domain, forward.codomain, formalism=formalism
-            )
 
         if chosen == "data_space":
             if prior.covariance is None:

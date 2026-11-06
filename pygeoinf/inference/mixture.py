@@ -11,7 +11,7 @@ prior ``sum_k w_k N(m_k, C_k)`` and data ``d = A m + e``:
 
 Each component is updated by the usual Kalman formulas -- one
 :class:`~pygeoinf.inference.gaussian.LinearGaussianInversion` per component,
-with its solver, formalism and preconditioning -- and the weights are reweighted
+with its solver and preconditioning -- and the weights are reweighted
 by each component's *evidence*, which is exactly what
 :meth:`~pygeoinf.inference.gaussian.LinearGaussianInversion.log_evidence`
 computes. Nothing new is needed for the hard part.
@@ -33,7 +33,6 @@ from ..algebra.spaces import HilbertSpace
 from ..probability.mixture import GaussianMixture
 from .estimators import MeasureEstimator, _PushedMeasureEstimator
 from .gaussian import LinearGaussianInversion
-from ..numerics.normal import Formalism
 from .problem import LinearForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -59,7 +58,6 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         /,
         *,
         solver: Any = None,
-        formalism: Formalism = "data_space",
         evidence: Any = None,
         n_jobs: int | None = None,
     ) -> None:
@@ -69,8 +67,8 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
             prior: a Gaussian mixture on the model space.
             solver: how each component's normal operator is inverted. Passed
                 through unchanged, so a factory taking the normal operator
-                works here too and is applied per component.
-            formalism: which space to assemble each component in.
+                works here too and is applied per component, and so does
+                ``ModelSpace(solver)``.
             evidence: keyword arguments for each component's
                 :meth:`~pygeoinf.inference.gaussian.LinearGaussianInversion.log_evidence`,
                 as a dict. The direct determinant, taken by default wherever
@@ -104,9 +102,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         self._evidence = {} if evidence is None else dict(evidence)
         self._n_jobs = n_jobs
         self._inversions = [
-            LinearGaussianInversion(
-                problem, component, solver=solver, formalism=formalism
-            )
+            LinearGaussianInversion(problem, component, solver=solver)
             for component in prior.components
         ]
 

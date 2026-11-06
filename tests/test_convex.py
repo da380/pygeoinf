@@ -446,6 +446,16 @@ class TestTheBundleLearnsFromNullSteps:
         assert result.converged
         assert result.value == pytest.approx(0.0, abs=1e-6)
 
+    def test_its_gap_is_not_a_gradient_tolerance(self):
+        """It stops on its gap, so a change to the gradient or value
+        tolerances, which it would ignore, is refused by name."""
+        from pygeoinf.numerics.convex import ProximalBundleMethod
+
+        method = ProximalBundleMethod(tolerance=1e-6)
+        for knob in ("gtol", "rtol", "ftol"):
+            with pytest.raises(TypeError, match="tolerance="):
+                method.with_tolerance(**{knob: 1e-3})
+
     def test_every_cut_after_the_first_is_taken_at_a_new_point(self, rng):
         """Which is what makes a null step informative."""
         from pygeoinf.numerics.convex import ProximalBundleMethod

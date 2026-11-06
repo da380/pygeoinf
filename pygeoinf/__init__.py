@@ -5,7 +5,8 @@ Vectors are whatever objects a backend provides, and every algorithm works
 through the space's inner product, so the same estimator runs on a Euclidean
 space, a spherical-harmonic field or a finite element space. The subpackages:
 
-* ``algebra`` -- Hilbert spaces, direct sums, linear and nonlinear operators;
+* ``algebra`` -- Hilbert spaces, direct sums and tensor products, linear and
+  nonlinear operators;
 * ``numerics`` -- linear solvers, preconditioners, randomized methods, the
   operator calculus, optimization and convex solvers;
 * ``geometry`` -- convex sets, subsets and subspaces;
@@ -19,11 +20,11 @@ The names a typical workflow needs are also exported here, flat, except
 the spaces, which are reached by geometry: ``symmetric_space.sphere.Sobolev``,
 ``symmetric_space.line.Lebesgue``, ``interval.Sobolev``, and so on, every
 geometry naming its own ``Lebesgue`` and ``Sobolev``.
-``compat``, ``datasets`` and ``testing`` are imported separately.
+``datasets`` and ``testing`` are imported separately.
 """
 
 # The subpackages, so that ``gi.inference.X`` works without a separate import.
-# compat, datasets and testing are deliberately not pulled in.
+# datasets and testing are deliberately not pulled in.
 from . import (
     algebra,
     geometry,
@@ -46,6 +47,7 @@ from .algebra.direct_sum import (
     RowOperator,
 )
 from .algebra.linearization import Linearization, QuadraticModel
+from .algebra.tensor_product import TensorProduct, TensorProductLinearOperator
 from .algebra.operators import (
     AffineOperator,
     EvaluationError,
@@ -147,6 +149,7 @@ from .numerics.solvers import (
     LSQRSolver,
     LUSolver,
     MinResSolver,
+    ModelSpace,
     ProgressCallback,
     SolutionTrackingCallback,
     SolveResult,
@@ -224,6 +227,7 @@ __all__ = [
     "LSQRSolver",
     "LUSolver",
     "MinResSolver",
+    "ModelSpace",
     "NormalDiagonalPreconditioner",
     "ProgressCallback",
     "SolutionTrackingCallback",
@@ -272,6 +276,9 @@ __all__ = [
     # algebra.linearization
     "Linearization",
     "QuadraticModel",
+    # algebra.tensor_product
+    "TensorProduct",
+    "TensorProductLinearOperator",
     # geometry
     "AffineSubspace",
     "Ball",

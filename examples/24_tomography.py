@@ -70,14 +70,13 @@ print()
 # operator is applied, never assembled.
 # ---------------------------------------------------------------------------
 
-# The normal equations go in the data space by default, and here that is also
-# the smaller side. It is the default because it is nearly always the smaller
-# side -- a model space is a discretized function and grows with resolution,
-# while the data are however many observations there are.
+# The normal equations are solved on the data: a model space is a discretized
+# function and grows with resolution, while the data are however many
+# observations there are.
 estimator = LinearGaussianInversion(problem, prior)
 print(
-    f"normal equations formed in the {estimator.formalism}"
-    f" (dim {problem.data_space.dim} rather than {X.dim})"
+    f"normal equations of the data's dimension, {problem.data_space.dim},"
+    f" not the model's, {X.dim}"
 )
 
 posterior = estimator(data)

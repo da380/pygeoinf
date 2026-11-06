@@ -18,6 +18,7 @@ from pygeoinf import (
     GaussianMeasure,
     LinearForwardProblem,
     LinearGaussianInversion,
+    ModelSpace,
     Traits,
     plotting,
 )
@@ -58,35 +59,25 @@ prior = X.heat_measure(0.3, pointwise_std=1.0)
 inversion = LinearGaussianInversion(problem, prior)
 posterior = inversion(data)
 print("the posterior is a", type(posterior).__name__)
-print("its normal equations were solved in the", inversion.formalism)
 
 # %% [markdown]
-# The normal equations can be assembled in the data space, $A Q A^* + R$ on
-# 30 dimensions, or in the model space, $Q^{-1} + A^* R^{-1} A$ on 256. The
-# two give the same posterior. The data space is the default, and not only
-# because it is usually smaller: the model-space form needs the prior's
-# *precision*, $Q^{-1}$, and a function-space prior often has none. This one
-# does not — its spectrum decays so fast that it underflows to zero, which is
-# what a covariance of a smooth field does — and where a precision exists it
-# is badly conditioned, for the same reason.
+# Inside, the posterior comes from the normal equations, solved in the data
+# space: $A Q A^* + R$, on 30 dimensions. Wrapping the solver as
+# `ModelSpace(...)` solves them in the model space instead, $Q^{-1} + A^*
+# R^{-1} A$ on 256. The posterior is the same; only the linear system
+# changes. The model space suits a problem with few unknowns, or a
+# surrogate. It needs the prior's precision, which for a smooth prior is
+# huge at high wavenumbers, so on a function space the data space is the
+# one to use; on 256 dimensions the model-space system is simply factorized.
 
 # %%
-try:
-    LinearGaussianInversion(problem, prior, formalism="model_space")
-except ValueError as error:
-    print("refused:", str(error).split(".")[0] + ".")
-
-# A Sobolev prior has a precision, and there the two formalisms agree. The
-# model-space operator inherits the precision's conditioning -- a smooth
-# prior's precision is huge at high wavenumbers -- so conjugate gradients
-# struggles with it; on 256 dimensions it is simply factorised.
 sobolev = X.sobolev_measure(3.0, 0.3, pointwise_std=1.0)
 in_data = LinearGaussianInversion(problem, sobolev)(data).expectation
 in_model = LinearGaussianInversion(
-    problem, sobolev, formalism="model_space", solver=CholeskySolver()
+    problem, sobolev, solver=ModelSpace(CholeskySolver())
 )(data).expectation
 agreement = X.norm(in_data - in_model) / X.norm(in_data)
-print(f"the two formalisms agree to {agreement:.1e}")
+print(f"the two agree to {agreement:.1e}")
 
 # %% [markdown]
 # A measure is something you can draw from, and a posterior draw is the

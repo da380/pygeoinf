@@ -23,9 +23,14 @@ from pygeoinf.inference import (
     MeasureEstimator,
     MinimumNorm,
     PointEstimator,
-    choose_formalism,
 )
-from pygeoinf.numerics.solvers import CholeskySolver
+from pygeoinf.numerics.normal import NormalOperator
+from pygeoinf.numerics.solvers import (
+    CGSolver,
+    CholeskySolver,
+    ModelSpace,
+    resolve_solver,
+)
 from pygeoinf.probability.gaussian import GaussianMeasure
 from pygeoinf.traits import Traits
 
@@ -230,26 +235,57 @@ class TestForwardProblem:
         assert reduced.has_error
 
 
-class TestFormalism:
-    def test_auto_takes_the_smaller_space(self, problem):
-        assert choose_formalism(problem) in ("model_space", "data_space")
-        smaller = (
-            "model_space"
-            if problem.model_space.dim <= problem.data_space.dim
-            else "data_space"
-        )
-        assert choose_formalism(problem) == smaller
+class TestTheSpaceTheNormalEquationsAreSolvedIn:
+    """A plain solver solves them in the data space; ``ModelSpace(solver)``
+    in the model space. It is a statement about the solve, so it rides on
+    ``solver=`` and nowhere else."""
 
-    def test_an_unknown_formalism_is_refused(self, problem):
-        with pytest.raises(ValueError, match="'auto'"):
-            choose_formalism(problem, formalism="spectral")
+    def test_the_solver_argument_says_which(self, problem, prior):
+        plain = LinearGaussianInversion(problem, prior)
+        wrapped = LinearGaussianInversion(
+            problem, prior, solver=ModelSpace(CholeskySolver())
+        )
+        assert plain.normal_operator.formalism == "data_space"
+        assert wrapped.normal_operator.formalism == "model_space"
+        assert isinstance(wrapped.solver, CholeskySolver)
+        # with_solver decides afresh, from what it is given.
+        assert wrapped.with_solver(CGSolver()).normal_operator.formalism == (
+            "data_space"
+        )
+        assert plain.with_solver(ModelSpace(None)).normal_operator.formalism == (
+            "model_space"
+        )
+
+    def test_the_wrapper_is_not_a_solver(self, problem, prior):
+        normal = LinearGaussianInversion(problem, prior).normal_operator
+        with pytest.raises(TypeError, match="not itself a solver"):
+            resolve_solver(ModelSpace(CGSolver()), normal)
+        with pytest.raises(TypeError, match="twice"):
+            ModelSpace(ModelSpace(None))
+
+    def test_an_unknown_formalism_is_refused(self, problem, prior):
+        with pytest.raises(ValueError, match="'model_space' or 'data_space'"):
+            NormalOperator(
+                problem.forward_operator,
+                prior,
+                error=problem.error_measure,
+                formalism="auto",
+            )
+
+    def test_the_estimators_take_no_formalism(self, problem, prior):
+        with pytest.raises(TypeError):
+            LinearGaussianInversion(problem, prior, formalism="model_space")
+        with pytest.raises(TypeError):
+            LeastSquares(problem, formalism="model_space")
 
 
 class TestBayesian:
     def test_the_two_formalisms_agree(self, problem, prior, rng):
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
         results = {
-            name: LinearGaussianInversion(problem, prior, formalism=name)(data)
+            name: LinearGaussianInversion(
+                problem, prior, solver=ModelSpace.wrap(name, None)
+            )(data)
             for name in ("model_space", "data_space")
         }
         model = problem.model_space
@@ -376,7 +412,9 @@ class TestPointEstimators:
     def test_least_squares_agrees_across_formalisms(self, problem, prior, rng):
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
         results = [
-            LeastSquares(problem, damping=1e-2, formalism=name)(data)
+            LeastSquares(problem, damping=1e-2, solver=ModelSpace.wrap(name, None))(
+                data
+            )
             for name in ("model_space", "data_space")
         ]
         model = problem.model_space
@@ -689,13 +727,15 @@ class TestEvidenceWithoutAssembling:
         return LinearForwardProblem(forward, error=error), prior
 
     def test_sylvesters_identity_gives_the_same_evidence(self, gaussian, rng):
-        """The model-space formalism never forms ``A Q A* + R``, even to take
+        """Solved in the model space it never forms ``A Q A* + R``, even to take
         its determinant: ``|A Q A* + R| == |Q| |R| |Q^-1 + A* R^-1 A|``. Two
         different operators on two different spaces, and one answer."""
         problem, prior = gaussian
         data = problem.data_space.random(rng=rng)
         values = {
-            name: LinearGaussianInversion(problem, prior, formalism=name)
+            name: LinearGaussianInversion(
+                problem, prior, solver=ModelSpace.wrap(name, None)
+            )
             .log_evidence(data, method="dense")
             .value
             for name in ("data_space", "model_space")
@@ -705,7 +745,9 @@ class TestEvidenceWithoutAssembling:
     @pytest.mark.parametrize("formalism", ["data_space", "model_space"])
     def test_the_stochastic_route_agrees_with_the_dense_one(self, gaussian, formalism):
         problem, prior = gaussian
-        estimator = LinearGaussianInversion(problem, prior, formalism=formalism)
+        estimator = LinearGaussianInversion(
+            problem, prior, solver=ModelSpace.wrap(formalism, None)
+        )
         exact = estimator.normal_log_determinant(method="dense")
         estimate = estimator.normal_log_determinant(
             method="stochastic",
@@ -727,12 +769,11 @@ class TestEvidenceWithoutAssembling:
         problem, prior = gaussian
         data = problem.data_space.random(rng=rng)
         direct = LinearGaussianInversion(
-            problem, prior, formalism="data_space", solver=CholeskySolver()
+            problem, prior, solver=CholeskySolver()
         ).mahalanobis(data)
         iterative = LinearGaussianInversion(
             problem,
             prior,
-            formalism="data_space",
             solver=CGSolver(rtol=1e-10).with_preconditioner(JacobiPreconditioner()),
         ).mahalanobis(data)
         assert iterative == pytest.approx(direct, rel=1e-6)
@@ -743,7 +784,9 @@ class TestEvidenceWithoutAssembling:
         problem, prior = gaussian
         data = problem.data_space.random(rng=rng)
         values = [
-            LinearGaussianInversion(problem, prior, formalism=name).mahalanobis(data)
+            LinearGaussianInversion(
+                problem, prior, solver=ModelSpace.wrap(name, None)
+            ).mahalanobis(data)
             for name in ("data_space", "model_space")
         ]
         assert values[0] == pytest.approx(values[1], rel=1e-8)
@@ -752,7 +795,7 @@ class TestEvidenceWithoutAssembling:
         problem, prior = gaussian
         without = LinearForwardProblem(problem.forward_operator)
         # Data space: an error-free problem has no model-space assembly at all.
-        estimator = LinearGaussianInversion(without, prior, formalism="data_space")
+        estimator = LinearGaussianInversion(without, prior)
         with pytest.raises(ValueError, match="data error measure"):
             estimator.mahalanobis(problem.data_space.random(rng=rng))
         with pytest.raises(ValueError, match="data error measure"):
@@ -919,7 +962,9 @@ class TestJointInversionEndToEnd:
     def test_both_formalisms_match_a_dense_reference(self, parts, formalism):
         problems, prior, truth, data = parts
         joint = LinearForwardProblem.from_direct_sum(problems)
-        inversion = LinearGaussianInversion(joint, prior, formalism=formalism)
+        inversion = LinearGaussianInversion(
+            joint, prior, solver=ModelSpace.wrap(formalism, None)
+        )
 
         estimate = inversion(
             joint.data_space.from_components(
@@ -1398,7 +1443,7 @@ class TestANoiseExpectationIsRemoved:
         build = {
             "least_squares": lambda: LeastSquares(problem, damping=0.1, solver=chol),
             "least_squares_in_the_model_space": lambda: LeastSquares(
-                problem, damping=0.1, solver=chol, formalism="model_space"
+                problem, damping=0.1, solver=ModelSpace(chol)
             ),
             "minimum_norm": lambda: MinimumNorm(problem, solver=chol, rtol=1e-12),
             "constrained_least_squares": lambda: ConstrainedLeastSquares(

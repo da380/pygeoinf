@@ -616,8 +616,10 @@ def _thresholded_matrix(
         shape=(dimension, dimension),
     ).tocsr()
     mirrored = thresholded.T.tocsr()
-    missing = mirrored.copy()
-    missing[thresholded.astype(bool)] = 0.0
+    # The mirrored entries where the kept pattern has none. Subtracting the
+    # overlap leaves explicit zeros, which are then dropped: the same matrix
+    # as zeroing the overlap in place, without inserting entries one by one.
+    missing = mirrored - mirrored.multiply(thresholded.astype(bool))
     missing.eliminate_zeros()
     return (thresholded + missing).tocsc()
 
@@ -936,10 +938,11 @@ class WoodburyPreconditioner(FamilySolver):
         N_m^-1 == Q - Q A* (R + A Q A*)^-1 A Q
         N_d^-1 == R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1
 
-    This is the same trade as :func:`~pygeoinf.numerics.normal.choose_formalism`
-    — solve wherever the dimension is smaller — but used as a *preconditioner*
-    rather than as the solve itself, which is what makes it useful when neither
-    space is small enough to settle the matter outright.
+    This is the trade between solving the normal equations in the data space
+    and in the model space — solve wherever the dimension is smaller — but
+    used as a *preconditioner* rather than as the solve itself, which is what
+    makes it useful when neither space is small enough to settle the matter
+    outright.
 
     Two things turn it from an identity into a preconditioner:
 

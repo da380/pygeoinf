@@ -23,6 +23,7 @@ from pygeoinf.numerics.optimization import (
     NewtonCG,
     OptimizationResult,
 )
+from pygeoinf.numerics.solvers import ModelSpace
 from pygeoinf.traits import Traits
 
 from .conftest import make_dense_metric_space
@@ -420,7 +421,7 @@ class TestOccam:
         space, data_space, forward, error, data = linear
         problem = ForwardProblem(forward, error=error)
         fitting = LeastSquares(
-            LinearForwardProblem(forward, error=error), formalism="model_space"
+            LinearForwardProblem(forward, error=error), solver=ModelSpace(None)
         )(data)
         assert problem.chi_squared(fitting, data) < problem.critical_chi_squared()
         estimator = Occam(problem, reference=fitting)

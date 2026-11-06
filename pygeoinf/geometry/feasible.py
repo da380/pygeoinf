@@ -24,7 +24,7 @@ certificate, and one no larger, from an attainable point.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, Callable, Literal, Sequence
 
@@ -35,7 +35,7 @@ from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..numerics.convex import SupportFunction
 from ..numerics.normal import DampedNormalOperator
 from ..numerics.root_find import DampedSolves, Evaluation, RootResult, monotone_root
-from ..numerics.solvers import CGSolver, ConvergenceError, LinearSolver
+from ..numerics.solvers import CGSolver, ConvergenceError, LinearSolver, ModelSpace
 from ..traits import Traits
 from .convex import (
     Ball,
@@ -136,8 +136,10 @@ class InclusionResult:
     evaluations: int
     fitting_model: Any = None
     """The model attaining ``level``, where the algorithm exhibits one."""
-    multiplier: float | None = None
     message: str = ""
+    _multiplier: float | None = field(default=None, repr=False)
+    """The quadratic search's damping at the root, which the level's
+    gradient reads; zero where the data are fitted without a correction."""
 
     def __repr__(self) -> str:
         return (
@@ -228,10 +230,10 @@ def _require_bounded_prior(structure: "FeasibleStructure", what: str) -> None:
         raise ValueError(
             f"{what} needs the prior's covariance, and the prior is an "
             "unbounded ellipsoid: its precision claims only positive "
-            "semidefiniteness and it carries no covariance. The model-space "
-            "formalism works from the precision alone: "
-            "Primal(formalism='model_space') for support values and "
-            "Search(formalism='model_space') for feasibility."
+            "semidefiniteness and it carries no covariance. The model space "
+            "works from the precision alone: "
+            "Primal(solver=ModelSpace(None)) for support values and "
+            "Search(solver=ModelSpace(None)) for feasibility."
         )
 
 
@@ -1303,18 +1305,18 @@ class Search(Algorithm):
         self,
         /,
         *,
-        formalism: Literal["model_space", "data_space"] = "data_space",
         max_iterations: int = 60,
         rtol: float = 1e-6,
-        solver: LinearSolver | None = None,
+        solver: Any = None,
         floor: float = 1e-6,
     ) -> None:
         """
         Args:
-            formalism: which space the feasibility search solves in.
             max_iterations: the root find's budget.
             rtol: the root find's bracket tolerance.
             solver: how the family is inverted; the set's solver if omitted.
+                The family is solved in the data space, or in the model
+                space for ``ModelSpace(solver)``.
             floor: the smallest multiplier the search probes when the
                 data-space family is rank-deficient (more data than the
                 model, or than the model less the property when restricted
@@ -1326,13 +1328,13 @@ class Search(Algorithm):
                 exact to the order of the floor. A family of full rank
                 stays well conditioned as the multiplier vanishes and is
                 walked without a floor.
+
+        Raises:
+            ValueError: if the floor is negative.
         """
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError(
-                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
-            )
         if floor < 0.0:
             raise ValueError(f"The floor must be non-negative, got {floor}.")
+        formalism, solver = ModelSpace.split(solver)
         self._formalism = formalism
         self._max_iterations = max_iterations
         self._rtol = rtol
@@ -1495,7 +1497,7 @@ class Search(Algorithm):
                 algorithm=self.name,
                 evaluations=0,
                 fitting_model=fitting,
-                multiplier=0.0,
+                _multiplier=0.0,
                 message="the data are fitted without a correction",
             )
         if root.exhausted == "low":
@@ -1505,7 +1507,7 @@ class Search(Algorithm):
                 converged=True,
                 algorithm=self.name,
                 evaluations=root.evaluations,
-                multiplier=float(root.argument),
+                _multiplier=float(root.argument),
                 message="no model fits the data",
             )
         # The dual of min f s.t. g <= 1 at multiplier 1/η: f + (g − 1)/η <= min;
@@ -1518,7 +1520,7 @@ class Search(Algorithm):
             algorithm=self.name,
             evaluations=root.evaluations,
             fitting_model=fitting,
-            multiplier=float(root.argument),
+            _multiplier=float(root.argument),
             message="misfit search converged"
             if root.converged
             else "misfit search did not converge",
@@ -1623,7 +1625,6 @@ class Search(Algorithm):
                 algorithm=self.name,
                 evaluations=evaluations,
                 fitting_model=model,
-                multiplier=float("inf"),
                 message="the data constraint is tight",
             )
 
@@ -1657,7 +1658,6 @@ class Search(Algorithm):
             algorithm=self.name,
             evaluations=evaluations + root.inner_iterations,
             fitting_model=model,
-            multiplier=float(root.argument),
             message=(
                 "multiplier search converged"
                 if root.converged
@@ -1729,7 +1729,7 @@ class Search(Algorithm):
         a = structure.prior_center()
         pieces = _kernel_pieces(structure)
         offset = space.to_components(space.subtract(value, T(a)))
-        eta = result.multiplier
+        eta = result._multiplier
         if eta:
             relative = structure.model_space.subtract(result.fitting_model, a)
             residual = structure.data_space.subtract(
@@ -1912,21 +1912,21 @@ class Primal(Algorithm):
         self,
         /,
         *,
-        formalism: Literal["model_space", "data_space"] = "data_space",
         tolerance: float = 1e-4,
         max_iterations: int = 100,
-        solver: LinearSolver | None = None,
+        solver: Any = None,
         floor: float = 1e-6,
     ) -> None:
         """
         Args:
-            formalism: which space the family is solved in.
             tolerance: on ``log γ`` at the minimum. The outer value is
                 stationary there, so its error is second order in this; the
                 inner value's is first order, which is the bracket's width.
             max_iterations: the minimization's budget of evaluations.
             solver: how the family is inverted; the set's solver if omitted.
-            floor: in the data-space formalism, the multiplier at which the
+                The family is solved in the data space, or in the model
+                space for ``ModelSpace(solver)``.
+            floor: in the data space, the multiplier at which the
                 kernel part of a direction is computed, as a fraction of
                 the family's scale ``(A C A* v, v) / (R v, v)``. Zero asks
                 for the undamped member, which a direct or spectral solver
@@ -1936,14 +1936,14 @@ class Primal(Algorithm):
                 also where the walk of the multiplier stops, since the
                 member is singular at zero; a slack prior then gives an
                 outer value above the limit by a few hundred times the
-                floor, and the model-space formalism gives the limit.
+                floor, and the model space gives the limit.
+
+        Raises:
+            ValueError: if the floor is negative.
         """
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError(
-                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
-            )
         if floor < 0.0:
             raise ValueError(f"The floor must be non-negative, got {floor}.")
+        formalism, solver = ModelSpace.split(solver)
         self._formalism = formalism
         self._tolerance = tolerance
         self._max_iterations = max_iterations
@@ -2014,7 +2014,7 @@ class Primal(Algorithm):
                 f"γ = {gamma_floor:.3g}, where a direction's kernel part is "
                 "computed; a preconditioner, the dense spectral solver "
                 "(solver=SpectralFamilySolver()) or "
-                "Primal(formalism='model_space') may be needed."
+                "Primal(solver=ModelSpace(None)) may be needed."
             ) from error
         c = structure.property_operator.adjoint(direction)
         kappa = max(
@@ -2051,7 +2051,7 @@ class Primal(Algorithm):
         )
         # Emptiness, and the fitting model, in this instance's formalism and
         # by its solver.
-        search = Search(formalism=self._formalism, solver=self._solver)
+        search = Search(solver=ModelSpace.wrap(self._formalism, self._solver))
         if feasible.is_empty(via=search):
             raise ValueError("The feasible set is empty; it has no support.")
         A, T = structure.forward, structure.property_operator
@@ -2304,17 +2304,24 @@ class SProcedure(Algorithm):
         self,
         /,
         *,
-        formalism: Literal["model_space", "data_space"] = "model_space",
         tolerance: float = 1e-2,
         max_iterations: int = 60,
-        solver: LinearSolver | None = None,
+        solver: Any = ModelSpace(None),
     ) -> None:
         """
         Args:
-            formalism: which space the family is solved in. The model space
-                by default, accurate at every weight. The data space solves
-                systems of the data's dimension, but evaluates the shape
-                ``T C_θ T*`` as ``(1 + γ)/γ (T C T* − T C A* K(γ)⁻¹ A C T*)``,
+            tolerance: on ``log γ`` at the minimum. The criterion is
+                stationary there, so its error is second order in this,
+                and the ellipsoid is certified whatever the weight.
+            max_iterations: the minimization's budget of evaluations, each
+                ``dim P + 1`` solves.
+            solver: how the family is inverted, and in which space. The
+                default, ``ModelSpace(None)``, solves the model-space family
+                with the set's solver, which is accurate at every weight. A
+                plain solver, or None for the set's, solves the data-space
+                family: systems of the data's dimension, but the shape is
+                evaluated as
+                ``(1 + γ)/γ (T C T* − T C A* K(γ)⁻¹ A C T*)``,
                 a difference that cancels as ``γ`` falls: when the data
                 outnumber the model coefficients and the prior is slack, the
                 weight search walks to small ``γ``, where ``K(γ)`` is
@@ -2322,20 +2329,8 @@ class SProcedure(Algorithm):
                 valid when the data are fewer than the model coefficients
                 or the prior binds; where it is not, the check against the
                 support refuses its ellipsoid.
-            tolerance: on ``log γ`` at the minimum. The criterion is
-                stationary there, so its error is second order in this,
-                and the ellipsoid is certified whatever the weight.
-            max_iterations: the minimization's budget of evaluations, each
-                ``dim P + 1`` solves.
-            solver: how the family is inverted; the set's solver if omitted.
-
-        Raises:
-            ValueError: for an unknown formalism.
         """
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError(
-                f"The formalism is 'model_space' or 'data_space', got {formalism!r}."
-            )
+        formalism, solver = ModelSpace.split(solver)
         self._formalism = formalism
         self._tolerance = tolerance
         self._max_iterations = max_iterations
@@ -2384,7 +2379,7 @@ class SProcedure(Algorithm):
         _check_criterion(criterion)
         structure = feasible.structure
         if feasible.is_empty(
-            via=Search(formalism=self._formalism, solver=self._solver)
+            via=Search(solver=ModelSpace.wrap(self._formalism, self._solver))
         ):
             raise ValueError("The feasible set is empty; nothing contains it.")
         model_space, data_space, space = (
@@ -2546,9 +2541,9 @@ class SProcedure(Algorithm):
 
     def _shortfall_message(self, what: str) -> str:
         advice = (
-            "In the data-space formalism the shape cancels when the data "
+            "In the data space the shape cancels when the data "
             "outnumber the model coefficients and the prior is slack; "
-            "SProcedure(formalism='model_space') is accurate there."
+            "SProcedure() in the model space, its default, is accurate there."
             if self._formalism == "data_space"
             else "The property may not reach every direction of its space, or "
             "the family may need a tighter solver."
@@ -2581,7 +2576,7 @@ class SProcedure(Algorithm):
         halves = [float(np.sqrt(budget * lengths[k])) for k in picks for _ in (0, 1)]
         sweep = feasible.support_sweep(
             directions,
-            via=Primal(formalism=self._formalism, solver=self._solver),
+            via=Primal(solver=ModelSpace.wrap(self._formalism, self._solver)),
             n_jobs=n_jobs,
         )
         ratio = 1.0

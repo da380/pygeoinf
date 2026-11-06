@@ -505,6 +505,13 @@ class TestConvexProjections:
         assert point.contains(center)
         assert not point.contains(elsewhere)
         assert X.norm(X.subtract(point.project(elsewhere), center)) < 1e-12
+        # The center as arithmetic leaves it, a rounding away from the stored
+        # one, is still the point: the tolerance scales with the sizes compared,
+        # not with the radius alone.
+        shift = X.scale(1e3, X.random(rng=rng))
+        rounded = X.subtract(X.add(center, shift), shift)
+        assert X.norm(X.subtract(rounded, center)) > 0.0
+        assert point.contains(rounded)
         # Its support function is the point support (center, y).
         direction = X.random(rng=rng)
         assert point.support_function()(direction) == pytest.approx(

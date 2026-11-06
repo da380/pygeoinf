@@ -1158,6 +1158,39 @@ class ProximalBundleMethod(Optimizer):
         # at the start of each minimization.
         self._cache: tuple[list[int], np.ndarray] = ([], np.empty((0, 0)))
 
+    def with_tolerance(
+        self,
+        /,
+        *,
+        gtol: float | None = None,
+        rtol: float | None = None,
+        ftol: float | None = None,
+    ) -> "ProximalBundleMethod":
+        """Refused: this method stops on its gap, not on a gradient or a value.
+
+        The gap between the model's prediction and the best value is what a
+        nonsmooth objective can be judged by, and it is set once, as
+        ``tolerance=`` at construction. Changing the gradient or value
+        tolerances would change nothing, so it is refused rather than
+        accepted silently.
+
+        Args:
+            gtol: not used by this method.
+            rtol: not used by this method.
+            ftol: not used by this method.
+
+        Returns:
+            Never returns.
+
+        Raises:
+            TypeError: always, naming ``tolerance=``.
+        """
+        raise TypeError(
+            "ProximalBundleMethod stops on its relative gap, not on a gradient "
+            "or a value, so gtol, rtol and ftol do not apply. Build a new one "
+            "with tolerance= instead."
+        )
+
     @property
     def qp_solver(self) -> Any:
         """The subproblem backend, or ``None`` for the built-in method."""

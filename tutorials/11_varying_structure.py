@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf import (
+    CholeskySolver,
     EuclideanSpace,
     GaussianMeasure,
     LinearForwardProblem,
@@ -168,7 +169,9 @@ ax.set_title("Two numbers, mass and moment of inertia, and what they say")
 # The same in three dimensions: a field in the unit ball, written as
 # spherical harmonics in angle (to degree 12) times eigenfunctions of the
 # radial $A$ (eight per degree). Point values need order above 3/2 in three
-# dimensions, so this is $H^2$.
+# dimensions, so this is $H^2$. With sixty data the normal operator is a
+# sixty-by-sixty matrix, so a direct solver is the right tool, where the
+# default conjugate gradients would sit near their iteration cap.
 
 # %%
 Y = BallSobolev(12, 2.0, 0.2, radial_modes=8)
@@ -182,7 +185,9 @@ problem = LinearForwardProblem(
     evaluate, error=GaussianMeasure.from_standard_deviation(evaluate.codomain, 0.05)
 )
 data = problem.synthetic_data(field_truth, rng=rng)
-ball_posterior = LinearGaussianInversion(problem, ball_prior)(data)
+ball_posterior = LinearGaussianInversion(problem, ball_prior, solver=CholeskySolver())(
+    data
+)
 print(f"{len(stations)} stations on the surface")
 
 

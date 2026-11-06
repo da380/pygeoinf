@@ -85,6 +85,7 @@ def _(
     contour: bool = False,
     contour_lines: bool = False,
     levels: Any = None,
+    shading: str = "flat",
     title: str | None = None,
     **kwargs: Any,
 ) -> Any:
@@ -126,13 +127,21 @@ def _(
         contour_lines: overlay contour lines. Can be combined with either.
         levels: the contour levels, or a count. Passed to ``contourf`` and
             ``contour``.
+        shading: how the pcolormesh fills the map: ``"flat"``, one cell per
+            grid point, or ``"gouraud"``, interpolated between the grid
+            points, which smooths a coarse grid.
         title: a title for the axes.
         **kwargs: passed through to whichever of ``pcolormesh``, ``contourf``
             and ``contour`` is drawing.
 
     Returns:
         The ``(axes, mappable)`` pair.
+
+    Raises:
+        ValueError: if *shading* is neither ``"flat"`` nor ``"gouraud"``.
     """
+    if shading not in ("flat", "gouraud"):
+        raise ValueError(f"shading must be 'flat' or 'gouraud', not {shading!r}.")
     crs = _require_cartopy()
     if ax is None:
         _, ax = subplots(space)
@@ -159,6 +168,16 @@ def _(
             latitudes,
             closed_values,
             levels=levels,
+            **common,
+            **kwargs,
+        )
+    elif shading == "gouraud":
+        node_longitudes, node_values = _nodes_across_the_dateline(longitudes, values)
+        mappable = ax.pcolormesh(
+            node_longitudes,
+            latitudes,
+            node_values,
+            shading="gouraud",
             **common,
             **kwargs,
         )
@@ -283,6 +302,38 @@ def _cell_edges_across_the_dateline(
     seam = 0.5 * (longitudes[-1] + longitudes[0]) + 180.0
     edges = np.clip(np.concatenate([[-180.0], inner, [seam, 180.0]]), -180.0, 180.0)
     return edges, np.concatenate([values, values[:, :1]], axis=1)
+
+
+def _nodes_across_the_dateline(
+    longitudes: np.ndarray, values: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Node longitudes that close the seam at the antimeridian itself.
+
+    Gouraud shading interpolates between nodes, so the band has to be closed
+    by nodes rather than cells. Repeating the first column at ``+360`` puts
+    the last strip across the cut, which cartopy can only redraw by its
+    wrapping path, with artifacts. Instead a node is placed at ``-180`` and
+    at ``180``, carrying the value interpolated across the seam between the
+    last column and the first, so that every strip lies inside the map.
+
+    Args:
+        longitudes: the rolled grid longitudes, increasing over ``[-180, 180)``.
+        values: the rolled grid values.
+
+    Returns:
+        The ``(longitudes, values)`` pair to hand ``pcolormesh`` with
+        ``shading="gouraud"``, the longitudes running over ``[-180, 180]``.
+    """
+    gap = longitudes[0] + 360.0 - longitudes[-1]
+    weight = (180.0 - longitudes[-1]) / gap
+    seam = (1.0 - weight) * values[:, -1] + weight * values[:, 0]
+    if longitudes[0] > -180.0:
+        longitudes = np.concatenate([[-180.0], longitudes])
+        values = np.concatenate([seam[:, None], values], axis=1)
+    return (
+        np.concatenate([longitudes, [180.0]]),
+        np.concatenate([values, seam[:, None]], axis=1),
+    )
 
 
 def _gridline_options(given: dict | None, /) -> dict:

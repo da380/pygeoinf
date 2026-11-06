@@ -82,12 +82,10 @@ print("the posterior is a", type(posterior).__name__, "on", posterior.domain)
 
 # %% [markdown]
 # A posterior on a direct sum answers questions about each part through its
-# **marginals**. Summands are reached by position here: the posterior lives
-# on the forward operator's domain, which the row operator built without the
-# prior's labels.
+# **marginals**, reached by the prior's labels or by position.
 
 # %%
-offset = posterior.marginal(1)
+offset = posterior.marginal("offset")
 sd = np.sqrt(offset.covariance.matrix(form="components")[0, 0])
 print(
     f"offset: truth {truth[1][0]:+.3f}, posterior {offset.expectation[0]:+.3f} +/- {sd:.3f}"
@@ -149,7 +147,7 @@ problem = LinearForwardProblem(
 truth, data = problem.synthetic_model_and_data(joint, rng=rng)
 posterior = LinearGaussianInversion(problem, joint)(data)
 
-salinity = posterior.marginal(1)
+salinity = posterior.marginal("salinity")
 grid = X.grid_axes[0]
 spread = np.sqrt(X.pointwise_variance_at(salinity, grid[::4]))
 print(

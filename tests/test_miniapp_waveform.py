@@ -199,6 +199,20 @@ class TestTheProofs:
         assert wave.calls["forward"] == before + experiment.survey.n_shots
         np.testing.assert_array_equal(first, second)
 
+    def test_only_the_cached_fields_are_held(self, proof):
+        """Every field a derivative stores is released once applied: what is
+        left is the forward field of each shot at the cached model."""
+        experiment, wave = proof
+        kernels = experiment.survey.model
+        rng = np.random.default_rng(7)
+        point, direction = experiment.truth, experiment.probes.sample(rng=rng)
+        residual = rng.normal(size=wave.data_space.dim)
+        for _ in range(2):
+            wave.derivative(point).adjoint(residual)
+            wave.second_derivative(point, direction)(direction)
+            wave.second_derivative(point, direction).adjoint(residual)
+        assert kernels.held == experiment.survey.n_shots
+
 
 def test_the_sponge_sends_back_little(app):
     """Against a grid padded by 200 cells, at the quick scale."""

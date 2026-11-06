@@ -58,7 +58,7 @@ noise = GaussianMeasure.from_standard_deviation(A.codomain, 0.05)
 truth = prior.sample(rng=rng)
 data = A(truth) + noise.sample(rng=rng)
 
-N = NormalOperator(A, prior, error=noise, formalism="data_space")
+N = NormalOperator(A, prior, error=noise)
 print(f"N acts on a space of dimension {N.domain.dim}")
 print("its traits:", N.traits)
 
@@ -113,7 +113,7 @@ D = A.codomain
 mixed_A = DiagonalLinearOperator(D, units) @ A
 mixed_noise = GaussianMeasure.from_standard_deviations(D, 0.05 * units)
 mixed_data = mixed_A(truth) + mixed_noise.sample(rng=rng)
-mixed_N = NormalOperator(mixed_A, prior, error=mixed_noise, formalism="data_space")
+mixed_N = NormalOperator(mixed_A, prior, error=mixed_noise)
 
 try:
     CGSolver()(mixed_N).solve(mixed_data)

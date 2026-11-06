@@ -157,16 +157,20 @@ class TestConstruction:
             mu.mahalanobis_squared(X.random(rng=rng))
 
     def test_a_slightly_negative_eigenvalue_is_clipped_with_a_warning(self, rng):
-        """What a semidefinite matrix assembled in floating point looks like."""
+        """What a semidefinite matrix assembled in floating point looks like.
+
+        The negative eigenvalues sit well above the rounding of the rotation
+        (about 1e-16, whose sign is the platform's), so that they are negative
+        on every LAPACK, and well inside the clipping tolerance."""
         X = make_dense_metric_space(5)
         rotation, _ = np.linalg.qr(rng.standard_normal((5, 5)))
-        spectrum = np.array([3.0, 2.0, 1.0, -1e-17, -2e-17])
+        spectrum = np.array([3.0, 2.0, 1.0, -1e-12, -2e-12])
         galerkin = rotation @ np.diag(spectrum) @ rotation.T
 
         with pytest.warns(UserWarning, match="small negative eigenvalues"):
             mu = GaussianMeasure.from_covariance_matrix(X, galerkin, form="galerkin")
         assert mu.covariance.matrix(form="galerkin") == pytest.approx(
-            galerkin, abs=1e-12
+            galerkin, abs=1e-11
         )
 
     def test_a_genuinely_indefinite_matrix_is_still_refused(self, rng):
@@ -1732,6 +1736,51 @@ class TestZeroExpectation:
         )
         assert not explicit.has_zero_expectation
 
+    def test_the_algebra_keeps_a_centred_measure_centred(self, rng):
+        space = make_weighted_space()
+        centred = GaussianMeasure.from_standard_deviation(space, 1.0)
+        operator = LinearOperator.from_matrix(
+            space, space, np.diag(np.arange(1.0, space.dim + 1)), form="components"
+        )
+        assert centred.affine_map(operator).has_zero_expectation
+        assert (2.0 * centred).has_zero_expectation
+        assert (centred + centred).has_zero_expectation
+        shift = space.random(rng=rng)
+        assert not centred.affine_map(operator, translation=shift).has_zero_expectation
+        moved = centred.translate(shift)
+        assert not (2.0 * moved).has_zero_expectation
+        assert not (centred + moved).has_zero_expectation
+        assert not moved.affine_map(operator).has_zero_expectation
+        assert (
+            space.norm(
+                space.subtract(moved.affine_map(operator).expectation, operator(shift))
+            )
+            < 1e-12
+        )
+
+    def test_a_product_of_centred_factors_is_centred(self, rng):
+        space = make_weighted_space()
+        centred = GaussianMeasure.from_standard_deviation(space, 1.0)
+        product = GaussianMeasure.from_product([centred, centred])
+        assert product.has_zero_expectation
+        assert product.marginal(0).has_zero_expectation
+        correlated = GaussianMeasure.from_product(
+            [centred, centred], correlation=np.array([[1.0, 0.5], [0.5, 1.0]])
+        )
+        assert correlated.has_zero_expectation
+        moved = centred.translate(space.random(rng=rng))
+        mixed = GaussianMeasure.from_product([centred, moved])
+        assert not mixed.has_zero_expectation
+        assert not mixed.marginal(1).has_zero_expectation
+
+    def test_a_centred_product_can_be_tensored(self):
+        space = make_weighted_space()
+        centred = GaussianMeasure.from_standard_deviation(space, 1.0)
+        product = GaussianMeasure.from_product([centred, centred])
+        time = GaussianMeasure.from_standard_deviation(EuclideanSpace(4), 1.0)
+        measure = GaussianMeasure.from_tensor_product([product, time])
+        assert measure.has_zero_expectation
+
 
 class TestTheIdentityRefusalKeysOnTheMarker:
     def test_a_function_space_that_is_not_a_module_is_refused(self):
@@ -1752,6 +1801,29 @@ class TestATruncatedSpectrumWarns:
         mu = GaussianMeasure.from_covariance_matrix(X, spd(rng, 20), form="galerkin")
         with pytest.warns(UserWarning, match="of the trace"):
             mu.ambient_ball(level=0.9, method="randomized", rank=3, rng=rng)
+
+    def test_at_full_rank_there_is_nothing_to_warn_of(self):
+        """Every eigenvalue kept means nothing dropped. A spectrum dominated by
+        a few modes is where a 32-probe trace estimate scatters most, and where
+        comparing against it would warn on some seeds."""
+        import warnings
+
+        from pygeoinf.algebra.spaces import EuclideanSpace
+
+        X = EuclideanSpace(64)
+        spectrum = 1.0 / (1.0 + np.arange(64.0)) ** 4
+        mu = GaussianMeasure.from_covariance_matrix(
+            X, np.diag(spectrum), form="components"
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for seed in range(20):
+                mu.ambient_ball(
+                    level=0.9,
+                    method="randomized",
+                    rank=64,
+                    rng=np.random.default_rng(seed),
+                )
 
 
 class TestACorrelatedProduct:

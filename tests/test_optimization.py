@@ -121,6 +121,19 @@ class TestQuadratics:
         }
         assert LBFGS().minimize(phi, space.random(rng=rng)).inner_stops == ()
 
+    @pytest.mark.parametrize("method", [NewtonCG, TrustRegionNewton])
+    def test_the_inner_iteration_takes_a_cap(self, method, spd_problem, rng):
+        """A cap of one leaves every inner solve that neither converged nor
+        met the boundary or negative curvature at its iteration limit, and
+        the outer method still gets to the minimum."""
+        space, phi, offset = spd_problem
+        result = method(max_cg_iterations=1, max_iterations=5000).minimize(
+            phi, space.random(rng=rng)
+        )
+        assert result.converged, result.message
+        assert "iteration limit" in result.inner_stops
+        assert np.allclose(result.minimizer, offset, atol=1e-6)
+
     @pytest.mark.parametrize("method", FIRST_ORDER + SECOND_ORDER)
     def test_it_works_on_a_weighted_space(self, method, rng):
         """Where the metric is not the identity, and the gradient is not the array."""

@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..traits import Traits
-from .normal import FactoredNormalOperator, Formalism, choose_formalism
+from .normal import FactoredNormalOperator, Formalism, checked_formalism
 from .root_find import DampedSolves, Evaluation, RootResult, monotone_root
 from .solvers import InverseOperator, LinearSolver, resolve_solver
 
@@ -68,8 +68,12 @@ class TikhonovNormalOperator(FactoredNormalOperator):
             damping: the Tikhonov parameter ``t``, non-negative.
             error: the data error measure ``R``. Omitted means unweighted
                 least squares.
-            formalism: which space to assemble in, the data space by default;
-                ``"auto"`` takes the smaller.
+            formalism: which space to assemble in, the data space by default.
+
+        Raises:
+            ValueError: if the damping is negative, the error measure lives on
+                the wrong space, or the formalism is unknown or needs a
+                precision the error measure does not carry.
         """
         if damping < 0.0:
             raise ValueError(f"The damping must be non-negative, got {damping}.")
@@ -78,7 +82,7 @@ class TikhonovNormalOperator(FactoredNormalOperator):
                 f"The error measure lives on {error.domain!r}, but the forward "
                 f"operator has data space {forward.codomain!r}."
             )
-        chosen = choose_formalism(forward.domain, forward.codomain, formalism=formalism)
+        chosen = checked_formalism(formalism)
 
         if chosen == "model_space":
             precision = None if error is None else error.precision
@@ -387,9 +391,7 @@ class TikhonovFamily:
         """
         self._forward = forward
         self._error = error
-        self._formalism = choose_formalism(
-            forward.domain, forward.codomain, formalism=formalism
-        )
+        self._formalism = checked_formalism(formalism)
         # Built once, at zero damping, to obtain the two fixed pieces.
         self._template = TikhonovNormalOperator(
             forward, 0.0, error=error, formalism=self._formalism

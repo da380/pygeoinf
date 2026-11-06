@@ -875,3 +875,57 @@ class TestAgainstTheRecordedAnswers:
             assert space.inner_product(result.minimizer, probe) == pytest.approx(
                 mean, rel=1e-5
             )
+
+
+class TestAPosteriorKeepsThePriorsLabels:
+    """A forward operator built from blocks has a domain without labels; the
+    prior's compares equal and carries them. Every Gaussian answer lives on
+    the prior's, so a marginal can be asked for by name whatever the route."""
+
+    @pytest.fixture
+    def labelled(self, rng):
+        field, offset, data_space = (
+            EuclideanSpace(4),
+            EuclideanSpace(1),
+            EuclideanSpace(6),
+        )
+        forward = gi.RowLinearOperator(
+            [
+                LinearOperator.from_matrix(
+                    field, data_space, rng.standard_normal((6, 4)), form="components"
+                ),
+                LinearOperator.from_matrix(
+                    offset, data_space, np.ones((6, 1)), form="components"
+                ),
+            ]
+        )
+        prior = gi.product(
+            [
+                gi.GaussianMeasure.from_standard_deviation(field, 1.0),
+                gi.GaussianMeasure.from_standard_deviation(offset, 0.5),
+            ],
+            labels=("field", "offset"),
+        )
+        error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.1)
+        data = data_space.add(forward(prior.sample(rng=rng)), error.sample(rng=rng))
+        assert forward.domain.labels is None and forward.domain == prior.domain
+        return forward, prior, error, data
+
+    @pytest.mark.parametrize("formalism", ["data_space", "model_space"])
+    def test_the_linear_posterior(self, labelled, formalism):
+        forward, prior, error, data = labelled
+        posterior = LinearGaussianInversion(
+            LinearForwardProblem(forward, error=error),
+            prior,
+            solver=gi.ModelSpace.wrap(formalism, None),
+        )(data)
+        assert posterior.domain.labels == ("field", "offset")
+        assert posterior.marginal("offset").domain.dim == 1
+
+    def test_the_laplace_gaussian(self, labelled):
+        forward, prior, error, data = labelled
+        posterior = LaplaceApproximation.from_problem(
+            ForwardProblem(forward, error=error), prior
+        )(data)
+        assert posterior.domain.labels == ("field", "offset")
+        assert posterior.marginal("offset").domain.dim == 1

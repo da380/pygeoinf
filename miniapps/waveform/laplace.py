@@ -2,7 +2,7 @@
 
 The library's ``LaplaceApproximation`` about the polished mode of part C: a
 Gaussian whose covariance is the inverse of the linearized normal operator
-``P + J* R^-1 J`` there, in the model-space formalism, each application of
+``P + J* R^-1 J`` there, solved in the model space, each application of
 the inverse a conjugate-gradient solve. Pushed through the box means it is a
 Gaussian on four numbers, whose covariance costs four solves; the prior's,
 which costs nothing, is beside it. The boxes are one over each anomaly and

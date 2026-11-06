@@ -33,6 +33,7 @@ from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
+    from ..algebra.tensor_product import TensorProduct
     from ..geometry.convex import Ellipsoid
     from ..numerics.randomized import Estimate
 from .base import ProbabilityMeasure, _require_density
@@ -787,7 +788,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # judged again.
         return cls(
             domain,
-            expectation=tuple(m.expectation for m in measures),
+            expectation=(
+                None
+                if all(m.has_zero_expectation for m in measures)
+                else tuple(m.expectation for m in measures)
+            ),
             covariance=covariance,
             covariance_factor=factor,
             precision=precision,
@@ -869,7 +874,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             )
         product = cls(
             domain,
-            expectation=tuple(m.expectation for m in measures),
+            expectation=(
+                None
+                if all(m.has_zero_expectation for m in measures)
+                else tuple(m.expectation for m in measures)
+            ),
             covariance_factor=factor,
             precision_factor=precision_factor,
             unsafe=True,
@@ -878,6 +887,146 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # from this one does not carry it and is conditioned the general way.
         product._latent_structure = (measures, 0.5 * (correlation + correlation.T))
         return product
+
+    @classmethod
+    def from_tensor_product(
+        cls,
+        measures: Sequence[GaussianMeasure],
+        /,
+        *,
+        domain: TensorProduct | None = None,
+        expectation: np.ndarray | None = None,
+    ) -> GaussianMeasure[np.ndarray]:
+        """The Gaussian on the tensor product of the factors' domains whose
+        covariance is the tensor product of theirs, ``C_1 (x) ... (x) C_n``.
+
+        A separable covariance: the covariance between the values at ``(t,
+        x)`` and ``(s, y)`` of a draw is ``k_1(t, s) k_2(x, y)``, the product
+        of the factors' covariance functions. It is not the law of ``x_1 (x)
+        ... (x) x_n`` for independent draws of the factors, which is not
+        Gaussian; what is tensored is the covariance operators, and a draw is
+        an array of full rank.
+
+        On a product of function spaces the covariance is trace class
+        exactly when every factor's is, so each factor must be a measure on
+        its own space in the full sense. An identity covariance is admitted
+        on a factor that is not a function space, a finite set of parameters
+        say, where it is trace class, and nowhere else: a factor white in
+        time is as ill-defined as one white in space.
+
+        When every covariance is a scaling of components and the product's
+        metric is diagonal, the covariance is a
+        :class:`~pygeoinf.algebra.diagonal.DiagonalLinearOperator` on the
+        product with the outer product of the factors' spectra, and the
+        measure samples in one whitening and carries its precision and both
+        factors. Otherwise the covariance, the covariance factor, the
+        precision and the precision factor are each the tensor product of
+        the factors', whenever every factor has one; the measure samples
+        when every factor has a covariance factor.
+
+        The factors must be centered. The mean is a vector of the product,
+        given as *expectation*; the factors' expectations would make it their
+        tensor product, which is zero as soon as one of them is, and that
+        convention is not taken silently.
+
+        Args:
+            measures: the factors, two or more, each on a coordinate space.
+            domain: the tensor product to put the measure on, when the caller
+                has one already; its factors must be the measures' domains,
+                in order. Built from them if omitted.
+            expectation: the mean, an array of the product's shape. Zero if
+                omitted.
+
+        Returns:
+            The measure on the tensor product of the domains.
+
+        Raises:
+            ValueError: with fewer than two factors, if a factor is not
+                centered or has neither a covariance nor a covariance factor,
+                or if a given domain's factors are not the measures' domains.
+            TypeError: if a factor's domain provides no coordinate map.
+        """
+        from functools import reduce
+
+        from ..algebra.diagonal import DiagonalLinearOperator
+        from ..algebra.tensor_product import (
+            TensorProduct,
+            TensorProductLinearOperator,
+        )
+
+        measures = tuple(measures)
+        if len(measures) < 2:
+            raise ValueError("A tensor product measure needs at least two factors.")
+        for index, measure in enumerate(measures):
+            if not measure.has_zero_expectation:
+                raise ValueError(
+                    f"Factor {index} is not centered; give the product's "
+                    f"expectation instead."
+                )
+            if measure.covariance is None:
+                raise ValueError(
+                    f"Factor {index} has neither a covariance nor a covariance "
+                    f"factor."
+                )
+        if domain is None:
+            domain = TensorProduct([m.domain for m in measures])
+        else:
+            if not isinstance(domain, TensorProduct) or len(domain.factors) != len(
+                measures
+            ):
+                raise ValueError(
+                    f"The domain must be a tensor product of {len(measures)} "
+                    f"factors, got {domain!r}."
+                )
+            for index, (factor, measure) in enumerate(zip(domain.factors, measures)):
+                if factor != measure.domain:
+                    raise ValueError(
+                        f"Factor {index} of the domain is {factor!r}, and the "
+                        f"measure there lives on {measure.domain!r}."
+                    )
+
+        covariances = [m.covariance for m in measures]
+        scalings = [covariance._known_scaling() for covariance in covariances]
+        if domain.has_diagonal_metric and all(s is not None for s in scalings):
+            # Diagonal in the product's basis: the constructor reads off the
+            # factor and the precision, and a draw is one whitening.
+            values = reduce(
+                np.multiply.outer, [np.asarray(s, dtype=float) for s in scalings]
+            ).reshape(-1)
+            return cls(
+                domain,
+                expectation=expectation,
+                covariance=DiagonalLinearOperator(domain, values),
+                unsafe=True,
+            )
+
+        # Each factor claims what a covariance must, so their tensor product
+        # claims it too, and a factor's domain is the product's exactly when
+        # every factor's covariance factor maps into its own domain.
+        factor = None
+        if all(m.covariance_factor is not None for m in measures):
+            factor = TensorProductLinearOperator(
+                [m.covariance_factor for m in measures]
+            )
+        precision = None
+        if all(m.precision is not None for m in measures):
+            precision = TensorProductLinearOperator([m.precision for m in measures])
+        precision_factor = None
+        if all(m.precision_factor is not None for m in measures):
+            precision_factor = TensorProductLinearOperator(
+                [m.precision_factor for m in measures]
+            )
+        # Each factor was gated when it was built; their product is not
+        # judged again.
+        return cls(
+            domain,
+            expectation=expectation,
+            covariance=TensorProductLinearOperator(covariances),
+            covariance_factor=factor,
+            precision=precision,
+            precision_factor=precision_factor,
+            unsafe=True,
+        )
 
     @classmethod
     def from_covariance_matrix(
@@ -2084,6 +2233,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         is the exact one and costs no draws. The draws are summed a block at
         a time, so memory holds a block of fields, not every draw.
 
+        The result is a product formed on the grid, which is not in the span
+        of the basis. Read at a point off the grid, it is read through its
+        components, which project it onto the span and smooth it; on a coarse
+        truncation the value comes out noticeably low. For the variance at
+        chosen points, push the measure forward through the space's
+        point-evaluation operator and read the diagonal of the covariance,
+        or use ``pointwise_variance_at`` where the space has it.
+
         Args:
             samples: how many draws.
             rng: the generator.
@@ -2135,6 +2292,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         n_jobs: int | None = None,
     ) -> X:
         """The pointwise standard deviation field, the square root of the variance.
+
+        A field on the grid, like :meth:`sample_pointwise_variance`, and to be
+        read at its nodes for the same reason.
 
         Args:
             samples: how many draws.
@@ -2389,19 +2549,25 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # The dropped tail is positive, so the radius is a lower bound; a
             # Hutchinson trace, a few dozen applications against the
             # decomposition's hundreds, says how much the kept part carries.
-            trace = self._stochastic_trace(
-                target, samples=32, rtol=None, rng=rng, n_jobs=n_jobs
-            )
-            if trace > 0.0 and float(kept.sum()) < 0.95 * trace:
-                import warnings
+            # At full rank nothing is dropped and there is nothing to check;
+            # below it, the warning allows for the estimate's own scatter,
+            # which is large when a few modes dominate the trace.
+            if kept.size < target.domain.dim:
+                from ..numerics.randomized import random_trace
 
-                warnings.warn(
-                    f"The {kept.size} eigenvalues kept carry about "
-                    f"{100.0 * float(kept.sum()) / trace:.0f}% of the trace "
-                    f"(Hutchinson estimate {trace:.3g}); the radius is a lower "
-                    f"bound by the rest. Raise rank=, or sample.",
-                    stacklevel=2,
-                )
+                estimate = random_trace(target, samples=32, rng=rng, n_jobs=n_jobs)
+                trace = estimate.value - 2.0 * estimate.standard_error
+                if trace > 0.0 and float(kept.sum()) < 0.95 * trace:
+                    import warnings
+
+                    warnings.warn(
+                        f"The {kept.size} eigenvalues kept carry about "
+                        f"{100.0 * float(kept.sum()) / estimate.value:.0f}% of "
+                        f"the trace (Hutchinson estimate {estimate!r}); the "
+                        f"radius is a lower bound by the rest. Raise rank=, or "
+                        f"sample.",
+                        stacklevel=2,
+                    )
             return from_spectrum(kept)
         if method != "dense":
             raise ValueError(f"Unknown method {method!r}.")
@@ -2538,6 +2704,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *,
         noise: "GaussianMeasure | None" = None,
         solver: Any = None,
+        definite: bool = False,
     ) -> "GaussianMeasure[X]":
         """The measure conditioned on ``A x == value``, or on noisy data.
 
@@ -2565,6 +2732,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             solver: how to invert ``A C A* + R`` on the constraint codomain.
                 Conjugate gradients by default; a factory taking the operator
                 is also accepted.
+            definite: claim that ``A C A* + R`` is positive definite where
+                the traits cannot show it. Under an exact constraint they
+                show it only for a definite covariance, but a semidefinite
+                one can do: a masked prior ``P C P*`` under a constraint
+                that does not see the masked part, ``A P == A``, gives
+                ``A C A*``. The claim belongs to neither factor, so it is
+                made here. Like any claim it is not checked; a dense
+                :class:`~pygeoinf.numerics.solvers.CholeskySolver` as
+                *solver* fails loudly if it is false.
 
         Returns:
             The conditioned measure.
@@ -2574,10 +2750,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 ``A C A* + R`` is not known to be invertible: that needs the
                 covariance to claim positive definiteness and, for an exact
                 constraint, the operator to claim ``SURJECTIVE``, or else a
-                noise covariance claiming positive definiteness. A constraint
-                operator with dependent rows has no exact conditioning;
-                drop the dependent rows, or claim the trait where it is
-                known to hold.
+                noise covariance claiming positive definiteness, or else
+                *definite*. A constraint operator with dependent rows has no
+                exact conditioning; drop the dependent rows, or claim the
+                trait where it is known to hold.
         """
         from ..numerics.solvers import resolve_solver
         from ..traits import Traits as _Traits
@@ -2594,6 +2770,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
         if noise is not None:
             normal = normal + noise.covariance
+        if definite:
+            normal = normal.with_traits(_Traits.POSITIVE_DEFINITE)
         if _Traits.POSITIVE_DEFINITE not in normal.traits:
             raise ValueError(
                 "Conditioning needs A C A* + R to be invertible, and it is not "
@@ -2606,7 +2784,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 )
                 + " An exact constraint needs a POSITIVE_DEFINITE covariance and "
                 "an operator claiming SURJECTIVE (with_traits attaches it); a "
-                "noisy one needs a POSITIVE_DEFINITE noise covariance."
+                "noisy one needs a POSITIVE_DEFINITE noise covariance. Where "
+                "A C A* + R is known to be definite although the traits cannot "
+                "show it, as for a semidefinite covariance under a constraint "
+                "definite on its range, pass definite=True."
             )
         inverse = resolve_solver(solver, normal)(normal)
         cross = covariance @ operator.adjoint
@@ -3350,9 +3531,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         the precision across, where the base class's push-forward takes over.
         """
         codomain = operator.codomain
-        mean = operator(self.expectation)
-        if translation is not None:
-            mean = codomain.add(mean, translation)
+        # A centered measure stays centered under a linear map; the mean is
+        # left unstored rather than computed as the image of zero.
+        if self._expectation is None:
+            mean = translation
+        else:
+            mean = operator(self._expectation)
+            if translation is not None:
+                mean = codomain.add(mean, translation)
 
         factor = (
             None
@@ -3464,7 +3650,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             sample = None  # the factor is the better sampler
         return self._rebuild(
             self._domain,
-            expectation=self._domain.add(self.expectation, other.expectation),
+            expectation=(
+                None
+                if self._expectation is None and other.has_zero_expectation
+                else self._domain.add(self.expectation, other.expectation)
+            ),
             covariance=total,
             covariance_factor=factor,
             precision=precision,
@@ -3515,7 +3705,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         return self._rebuild(
             self._domain,
-            expectation=self._domain.scale(alpha, self.expectation),
+            expectation=(
+                None
+                if self._expectation is None
+                else self._domain.scale(alpha, self._expectation)
+            ),
             covariance=covariance,
             covariance_factor=factor,
             precision=precision,

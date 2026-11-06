@@ -427,13 +427,13 @@ class TestImportCost:
 
 
 class TestNothingCitesADecision:
-    """The decision log is a record of why, not a vocabulary.
+    """The code says what it does itself, and cites no planning document.
 
     A docstring, comment, message or test that says "D-131" or points at
-    ``DECISIONS.md`` sends the reader to a planning document to learn what
-    the code does; the code has to say it itself. The rule is checked over
-    the package, its examples, tutorials and tests, in every text file but
-    the planning documents themselves.
+    ``DECISIONS.md`` sends the reader elsewhere, to a numbered decision or a
+    retired document, to learn what the code does. The rule is checked over
+    every text file of the package, its examples, tutorials, mini-apps and
+    tests, their READMEs and walkthroughs included.
     """
 
     PATTERNS = (r"\bD-\d+\b", r"DECISIONS\.md")
@@ -445,7 +445,7 @@ class TestNothingCitesADecision:
         for path in sorted(p for tree in CODE_TREES for p in tree.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
-            if path.suffix in (".md", ".pyc", ".png", ".pdf", ".npz", ".npy"):
+            if path.suffix in (".pyc", ".png", ".pdf", ".npz", ".npy"):
                 continue
             if os.path.getsize(path) > 5_000_000:
                 continue

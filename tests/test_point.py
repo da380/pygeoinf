@@ -34,8 +34,8 @@ from pygeoinf.inference import (
     PointEstimator,
     TikhonovFamily,
     TikhonovNormalOperator,
-    choose_formalism,
 )
+from pygeoinf.numerics.solvers import ModelSpace
 from pygeoinf.numerics.preconditioners import (
     JacobiPreconditioner,
     NormalDiagonalPreconditioner,
@@ -347,9 +347,11 @@ class TestTikhonovNormalOperator:
             precision=damping * LinearOperator.identity(model),
         )
         bayesian = LinearGaussianInversion(
-            problem, isotropic, formalism=formalism, solver=CholeskySolver()
+            problem, isotropic, solver=ModelSpace.wrap(formalism, CholeskySolver())
         )
-        tikhonov = LeastSquares(problem, damping=damping, formalism=formalism)
+        tikhonov = LeastSquares(
+            problem, damping=damping, solver=ModelSpace.wrap(formalism, None)
+        )
         for _ in range(5):
             observed = problem.data_space.random(rng=rng)
             expected = bayesian(observed).expectation
@@ -476,9 +478,9 @@ class TestLeastSquares:
         problem = setup
         model = problem.model_space
         estimator = LeastSquares(problem, damping=0.5, solver=CholeskySolver())
-        other = estimator.with_formalism(
-            "model_space" if estimator.formalism == "data_space" else "data_space"
-        )
+        assert estimator.normal_operator.formalism == "data_space"
+        other = estimator.with_solver(ModelSpace(CholeskySolver()))
+        assert other.normal_operator.formalism == "model_space"
         for _ in range(5):
             observed = problem.data_space.random(rng=rng)
             expected = estimator(observed)
@@ -490,7 +492,7 @@ class TestLeastSquares:
         """It is exposed so that a preconditioner can be built against it; the
         check is that it really is the system the estimate comes out of."""
         problem = setup
-        estimator = LeastSquares(problem, damping=0.7, formalism="data_space")
+        estimator = LeastSquares(problem, damping=0.7)
         normal = estimator.normal_operator
         observed = problem.data_space.random(rng=rng)
         solution = estimator.inverse_normal_operator(
@@ -505,7 +507,7 @@ class TestLeastSquares:
     def test_a_preconditioned_solve_gives_the_same_answer(self, setup, rng):
         problem = setup
         model = problem.model_space
-        estimator = LeastSquares(problem, damping=0.5, formalism="data_space")
+        estimator = LeastSquares(problem, damping=0.5)
         observed = problem.data_space.random(rng=rng)
         reference = estimator(observed)
         solved = estimator.with_solver(
@@ -546,7 +548,7 @@ class TestLeastSquares:
     def test_the_residual_callback_reports_something_falling(self, setup, rng):
         problem = setup
         observed = problem.data_space.random(rng=rng)
-        estimator = LeastSquares(problem, damping=0.5, formalism="data_space")
+        estimator = LeastSquares(problem, damping=0.5)
         seen = []
         callback = estimator.residual_callback(observed, report=seen.append)
         estimator.with_solver(CGSolver(rtol=1e-12, callback=callback))(observed)
@@ -987,11 +989,10 @@ class TestMinimumNorm:
         # The undamped normal operator is invertible in the smaller space
         # only: the data space when the problem is underdetermined, the model
         # space when it is not.
-        formalism = choose_formalism(problem, formalism="auto")
-        estimator = MinimumNorm(problem, solver=CholeskySolver(), formalism=formalism)
-        reference = LeastSquares(
-            problem, damping=0.0, solver=CholeskySolver(), formalism=formalism
-        )
+        space = "model_space" if model.dim <= data.dim else "data_space"
+        solver = ModelSpace.wrap(space, CholeskySolver())
+        estimator = MinimumNorm(problem, solver=solver)
+        reference = LeastSquares(problem, damping=0.0, solver=solver)
         assert np.allclose(
             model.to_components(estimator(observed)),
             model.to_components(reference(observed)),
@@ -1018,8 +1019,8 @@ class TestMinimumNorm:
         model = problem.model_space
         observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
         estimator = MinimumNorm(problem, level=0.9, rtol=1e-10)
-        other = estimator.with_formalism("model_space")
-        assert other.formalism == "model_space"
+        other = estimator.with_solver(ModelSpace(None))
+        assert other.family().formalism == "model_space"
         assert other.level == 0.9
         assert model.norm(
             model.subtract(other(observed), estimator(observed))
@@ -1207,7 +1208,7 @@ class TestConstrained:
             method.parameterized(LinearOperator.identity(setup.model_space)),
             method.data_reduced(LinearOperator.identity(setup.data_space)),
             method.with_solver(CholeskySolver()),
-            method.with_formalism("model_space"),
+            method.with_solver(ModelSpace(None)),
         ]
         for other in [method, *rebuilt]:
             inner = other.reduced

@@ -17,7 +17,7 @@ operator is the identity, so there is one code path.
     property_posterior = post.push_forward(T)(data)    # D -> Measure(P)
 """
 
-from ..numerics.normal import FactoredNormalOperator, Formalism, NormalOperator
+from ..numerics.normal import FactoredNormalOperator, NormalOperator
 from ..numerics.preconditioners import (
     InvariantDistancePreconditioner,
     LocalizedPreconditioner,
@@ -61,7 +61,6 @@ from .point import (
     ConstrainedMinimumNorm,
     LeastSquares,
     MinimumNorm,
-    choose_formalism,
 )
 from .problem import ForwardProblem, LinearForwardProblem
 from . import sampling
@@ -86,7 +85,6 @@ __all__ = [
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
     "FactoredNormalOperator",
-    "Formalism",
     "NormalOperator",
     "NormalDiagonalPreconditioner",
     "LocalizedPreconditioner",
@@ -108,6 +106,5 @@ __all__ = [
     "MinimumNorm",
     "PointEstimator",
     "SetEstimator",
-    "choose_formalism",
     "sampling",
 ]

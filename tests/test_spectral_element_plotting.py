@@ -250,6 +250,149 @@ class TestProfile:
         )
 
 
+def _azimuth(start, latitude, longitude, /):
+    """The azimuth at ``start`` (colatitude, longitude in radians), from north
+    toward east, of the great circle toward a point given in degrees."""
+    theta, phi = start
+    here = np.array(
+        [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+    )
+    lat, lon = np.radians(latitude), np.radians(longitude)
+    there = np.array(
+        [np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)]
+    )
+    toward = there - (there @ here) * here
+    north = np.array(
+        [-np.cos(theta) * np.cos(phi), -np.cos(theta) * np.sin(phi), np.sin(theta)]
+    )
+    east = np.array([-np.sin(phi), np.cos(phi), 0.0])
+    return float(np.arctan2(toward @ east, toward @ north))
+
+
+class TestThroughPlanetmodel:
+    """A field handed to ``planetmodel`` as a model, and drawn by its slices
+    and pictures: the numbers are the space's point evaluation."""
+
+    @pytest.mark.parametrize("which", ["ball", "annulus"])
+    def test_the_model_evaluates_the_field_as_the_space_does(self, which, request, rng):
+        """At random points, given in ``planetmodel``'s radians and
+        colatitudes and broadcast, against the space's evaluation at the same
+        points in degrees and latitudes: measured at 1.6e-15 relative at most
+        over twenty draws, the rounding of the change of angles."""
+        space = request.getfixturevalue(which)
+        x = space.random(rng=rng)
+        model = plotting.planet_model(space, x)
+        assert np.array_equal(
+            model.skeleton.boundaries, [space.inner_radius, space.radius]
+        )
+        field = model.layer(0)["field"]
+        radii = rng.uniform(space.inner_radius, space.radius, size=(6, 1))
+        latitudes = rng.uniform(-90.0, 90.0, size=(1, 7))
+        longitudes = rng.uniform(-180.0, 180.0, size=(1, 7))
+        got = field.evaluate(
+            radii, np.radians(90.0 - latitudes), np.radians(longitudes)
+        )
+        assert got.shape == (6, 7)
+        points = np.stack(
+            [
+                array.ravel()
+                for array in np.broadcast_arrays(radii, latitudes, longitudes)
+            ],
+            axis=-1,
+        )
+        want = space.evaluate(x, points).reshape(6, 7)
+        assert np.max(np.abs(got - want)) <= 1e-13 * np.max(np.abs(want))
+        with pytest.raises(ValueError, match="outside"):
+            field.evaluate(space.radius + 0.1, 1.0, 1.0)
+
+    @pytest.mark.parametrize(
+        "plane", [dict(longitude=30.0), dict(through=((10.0, 20.0), (-40.0, 95.0)))]
+    )
+    @pytest.mark.parametrize("which", ["ball", "annulus"])
+    def test_a_section_through_planetmodel_is_section_values(
+        self, which, plane, request, rng
+    ):
+        """The whole circle from the first direction of ``section_values``
+        toward its second, at every node of the domain, two at a time, so
+        that the points are the same: the directions measured at 1e-15 and
+        the values at 2.6e-15 relative at most, over twenty draws."""
+        from planetmodel import slices
+
+        space = request.getfixturevalue(which)
+        x = space.random(rng=rng)
+        count = 24
+        values, radii, latitudes, longitudes = plotting.section_values(
+            space, x, angles=count, **plane
+        )
+        start = (np.radians(90.0 - latitudes[0]), np.radians(longitudes[0]))
+        azimuth = _azimuth(start, latitudes[1], longitudes[1])
+        model = plotting.planet_model(space, x)
+        lat, lon = np.radians(latitudes), np.radians(longitudes)
+        directions = np.stack(
+            [np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)],
+            axis=-1,
+        )
+        scale = np.max(np.abs(values))
+        for i in range(radii.size - 1):
+            cut = slices.section(
+                model,
+                "field",
+                start,
+                azimuth=azimuth,
+                length=2.0 * np.pi,
+                radii=(radii[i], radii[i + 1]),
+                n=2,
+                m=count + 1,
+            )
+            (layer,) = cut.layers
+            assert np.array_equal(layer.radius[:, 0], radii[i : i + 2])
+            assert np.allclose(cut.path[:-1], directions, atol=1e-12)
+            gap = np.max(np.abs(layer.values[:, :-1] - values[i : i + 2]))
+            assert gap <= 1e-13 * scale
+
+    def test_a_cutaway_of_a_small_annulus(self, annulus, rng):
+        """The wedge, the latitudes cut and the view in degrees, as this module
+        takes angles, give the picture ``planetmodel`` draws from the same in
+        radians and colatitudes, pixel for pixel."""
+        from planetmodel import slices
+        from planetmodel.plotting import cutaway
+
+        x = annulus.random(rng=rng)
+        image = plotting.plot_cutaway(
+            annulus,
+            x,
+            n=48,
+            longitudes=(-30.0, 150.0),
+            latitudes=(0.0, -90.0),
+            view=(20.0, 15.0),
+            inner=0.7,
+            inner_color="0.8",
+            colorbar=True,
+        )
+        assert image.get_array().shape == (48, 48, 4)
+        assert image.axes.get_aspect() == 1.0
+        cut = slices.cutaway(
+            plotting.planet_model(annulus, x),
+            "field",
+            longitudes=(np.radians(-30.0), np.radians(150.0)),
+            colatitudes=(np.radians(90.0), np.radians(180.0)),
+            view=(np.radians(70.0), np.radians(15.0)),
+            inner=0.7,
+            n=48,
+        )
+        _, ax = pyplot.subplots()
+        expected = cutaway(ax, cut, inner="0.8")
+        assert np.array_equal(image.get_array(), expected.get_array())
+        pyplot.close("all")
+
+    def test_a_name_of_planetmodels_vocabulary_carries_no_units(self, ball, rng):
+        from planetmodel import slices
+
+        model = plotting.planet_model(ball, ball.random(rng=rng), name="rho")
+        sphere = slices.sphere(model, "rho", radius=0.5, grid=ball.grid)
+        assert sphere.label == "rho"
+
+
 class TestLayered:
     @pytest.fixture
     def profiles(self):
@@ -337,6 +480,31 @@ class TestLayered:
         assert list(drawn) == [True, False]
         with pytest.raises(TypeError, match="balls"):
             plotting.plot_section(profiles, profiles.random(rng=rng))
+
+    def test_a_model_of_a_layered_ball_gives_each_layer_its_own_side(
+        self, shells, profiles, rng
+    ):
+        """Each layer of the model holds its own layer's field, refuses a
+        radius of the other, and at the interface gives its own side of the
+        jump, the same to the last digit over twenty draws."""
+        x = shells.random(rng=rng)
+        model = plotting.planet_model(shells, x)
+        assert np.array_equal(model.skeleton.boundaries, [0.3, 0.6, 1.0])
+        below, above = (layer["field"] for layer in model.layers)
+        theta, phi = np.radians(80.0), np.radians(20.0)
+        point = [(0.6, 10.0, 20.0)]
+        for field, side in ((below, "below"), (above, "above")):
+            want = shells.evaluate(x, point, side=side)[0]
+            assert field.evaluate(0.6, theta, phi) == pytest.approx(want, rel=1e-13)
+        assert not np.isclose(
+            below.evaluate(0.6, theta, phi), above.evaluate(0.6, theta, phi)
+        )
+        with pytest.raises(ValueError, match="outside"):
+            below.evaluate(0.8, theta, phi)
+        with pytest.raises(ValueError, match="outside"):
+            above.evaluate(0.45, theta, phi)
+        with pytest.raises(TypeError, match="balls"):
+            plotting.planet_model(profiles, profiles.random(rng=rng))
 
 
 class TestANetworkOfPolylines:

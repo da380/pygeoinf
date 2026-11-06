@@ -1,0 +1,63 @@
+name: Newest dependencies
+
+# The fast suite under the newest numpy, scipy, ducc0, planetmodel and
+# extras that the pins in pyproject.toml admit, installed over the locked
+# environment, so that an upstream release breaking the library is seen here
+# before a fresh `pip install pygeoinf` meets it. CI proper tests the lock,
+# which moves only when someone relocks. pip reads the pins from
+# pyproject.toml, so nothing here names a version. On pull requests to main
+# and on main, as CI is, and weekly at an odd minute, so that a release
+# upstream is caught within the week whether or not anything here has
+# changed (GitHub turns schedules off after 60 days without activity in the
+# repository, and a click turns them on).
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Linux and one Python: the question is the libraries' API, not the
+  # platform, which CI covers on the lock.
+  newest-pins:
+    name: Test (newest dependencies the pins admit)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+
+    - name: Install Poetry
+      run: |
+        pip install poetry
+        poetry config virtualenvs.create false
+
+    - name: Install dependencies
+      run: poetry install --with dev --all-extras
+
+    # Every extra but `mfem`, whose one test is in the slow set and so is
+    # not run here; PyMFEM stays at the lock's version.
+    - name: Raise every dependency to the newest the pins admit
+      run: >-
+        pip install --upgrade --upgrade-strategy eager
+        ".[sphere,planetmodel,osqp,clarabel,interactive,plot3d]"
+
+    - name: Report the versions under test
+      run: pip list --format=freeze | grep -iE "^(numpy|scipy|matplotlib|joblib|threadpoolctl|finufft|pyshtools|ducc0|cartopy|shapely|planetmodel|osqp|clarabel|plotly)=="
+
+    - name: Test with pytest
+      run: poetry run pytest

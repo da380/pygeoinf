@@ -441,6 +441,79 @@ class TestMeasures:
         with pytest.raises(ValueError, match="positive"):
             build(1.0).sobolev_measure(1.0, pointwise_std=0.0)
 
+    def test_a_length_scale_of_the_priors_own(self, rng):
+        """The space's own varying scale gives the default measure back,
+        measured to 1e-13; under the natural condition a constant one is the
+        function ``1 + (L' / L)^2 (A - 1)`` of the operator; under the
+        matched one, with every mode kept, it is the default prior of a
+        space of ``L'`` on the same mesh. There is no lateral direction."""
+
+        def gap(space, x, y):
+            return space.norm(space.subtract(x, y)) / space.norm(y)
+
+        space = build(1.0)
+        x = space.random(rng=rng)
+        assert (
+            gap(
+                space,
+                space.sobolev_measure(1.5, length_scale=varying).covariance(x),
+                space.sobolev_measure(1.5).covariance(x),
+            )
+            < 1e-10
+        )
+        natural = build(1.0, length_scale=0.2, boundary=None)
+        want = natural.spectral_measure(
+            (1.0 + 4.0 * (natural.eigenvalues - 1.0)) ** -1.5
+        )
+        got = natural.sobolev_measure(1.5, length_scale=0.4)
+        x = natural.random(rng=rng)
+        assert gap(natural, got.covariance(x), want.covariance(x)) < 1e-10
+        options = {"lower": -1.0, "upper": 2.0, "padding": 0.6, "element_length": 0.25}
+        nodes = Interval(1, length_scale=0.2, **options).nodes.size
+        short = Interval(nodes, length_scale=0.2, **options)
+        long = Interval(nodes, length_scale=0.4, **options)
+        v = rng.normal(size=nodes)
+        assert np.allclose(
+            short.sobolev_measure(1.5, length_scale=0.4).covariance(v),
+            long.sobolev_measure(1.5).covariance(v),
+            rtol=1e-10,
+            atol=1e-10 * np.abs(v).max(),
+        )
+        with pytest.raises(ValueError, match="lateral"):
+            space.sobolev_measure(1.5, lateral_length_scale=0.3)
+        with pytest.raises(ValueError, match="trace class"):
+            space.sobolev_measure(0.5, length_scale=0.3)
+
+    def test_a_matched_condition_and_its_coefficients_given_are_two_spaces(self, rng):
+        """The coefficients ``"robin"`` resolves to, given explicitly on the
+        same mesh, make the same fields and the same default prior (measured
+        identical), but a prior of another scale matches its own condition on
+        the one and keeps the coefficients on the other (measured 10% apart):
+        so the two spaces have different keys."""
+
+        def gap(space, x, y):
+            return space.norm(space.subtract(x, y)) / space.norm(y)
+
+        matched = build(1.0, length_scale=0.2, element_length=0.05)
+        given = build(
+            1.0,
+            length_scale=0.2,
+            element_length=0.05,
+            boundary=matched.robin,
+            padding=matched.padding,
+        )
+        assert np.array_equal(given.nodes, matched.nodes)
+        assert given.robin == matched.robin
+        assert given != matched and not given.shares_vectors_with(matched)
+        x = matched.random(rng=rng)
+        default = (given.sobolev_measure(1.5), matched.sobolev_measure(1.5))
+        assert gap(matched, default[0].covariance(x), default[1].covariance(x)) < 1e-12
+        scaled = (
+            given.sobolev_measure(1.5, length_scale=0.6),
+            matched.sobolev_measure(1.5, length_scale=0.6),
+        )
+        assert gap(matched, scaled[0].covariance(x), scaled[1].covariance(x)) > 0.05
+
     def test_the_padding_keeps_the_boundary_out_of_the_domain(self):
         """The variance on the domain does not care whether the ends of the
         mesh are four length scales away or eight, and does care when they are

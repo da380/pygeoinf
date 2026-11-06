@@ -153,6 +153,62 @@ for n in (32, 128, 512, 2048):
 # points — and refining the grid exposes it. In $d$ dimensions the
 # threshold is $s > d/2$.
 #
+# ## How fine a grid the prior asks for
+#
+# Above the threshold refinement converges, so there is a grid past which
+# it stops paying, and the spectrum says where. `estimate_truncation_degree`
+# walks the degrees upward, summing the spectrum over every mode each degree
+# *would* hold, and stops when the newest degree adds less than `rtol` (by
+# default $10^{-6}$) of the running total. The walk goes past the space it
+# is asked on, so a coarse grid will do for asking, and `with_degree` builds
+# the space at the answer. The spectrum is a callable on the Laplacian
+# eigenvalues, here $k^2$. On $L^2$ it is the variance of each mode; on a
+# host with a metric of its own, divide by the host's weight first, as
+# above, for the walk to count the field's power.
+
+# %%
+coarse = Lebesgue(32)
+print(
+    f"{'order':>6} {'degree':>7} {'grid':>6} {'variance missed':>16}"
+    f" {'power_degree':>13}"
+)
+for order in (1.0, 1.5, 3.0):
+
+    def spectrum(eigenvalues):
+        return (1.0 + 0.1**2 * eigenvalues) ** -order
+
+    degree = coarse.estimate_truncation_degree(spectrum)
+    host, finer = coarse.with_degree(degree), coarse.with_degree(8 * degree)
+    held = spectrum(host.laplacian_eigenvalues).sum()
+    total = spectrum(finer.laplacian_eigenvalues).sum()
+    print(
+        f"{order:6.1f} {degree:7d} {host.dim:6d} {1.0 - held / total:16.1e}"
+        f" {coarse.power_degree(spectrum):13d}"
+    )
+
+# %% [markdown]
+# The fourth column is the share of the variance the grid misses, against a
+# grid eight times finer: on $L^2$ the sum of the spectrum over a grid's
+# modes is the expected squared norm of a draw. It is not `rtol`. The walk
+# stops on the newest degree's share, and a slowly decaying spectrum has a
+# long tail behind that degree: at order 1 the grid misses 0.2% of the
+# variance, at order 3 under two parts in $10^5$. Tighten `rtol` for a
+# rough prior; `min_degree` and `max_degree` put a floor and a ceiling on
+# the answer. `power_degree`, the last column, answers the question about
+# the grid in hand, the lowest degree holding all but a tolerance of the
+# power that grid carries, and cannot look past it: asked on the 32-point
+# grid it says 16, that grid's highest degree, for all three.
+#
+# On the sphere the same walk counts the $2\ell + 1$ modes of each degree,
+# and a slowly decaying spectrum asks for very high degrees there. The
+# sphere's Sobolev space also has a static method,
+# `truncation_degree_for(order, length_scale, radius=...)`, for choosing a
+# truncation before there is a space to ask. It sums one term per degree
+# instead: at order 1.5, length scale 0.5 and its default tolerance of
+# $10^{-8}$ it gives degree 721, where the weighted walk at that tolerance
+# wants 13833. The weighted walk is the one that accounts for the power;
+# the static rule is the one that gives a grid you can afford.
+#
 # ## Push-forwards
 #
 # A linear operator maps a Gaussian measure to a Gaussian measure: the mean

@@ -259,6 +259,36 @@ class TestAlgebraAndMeasures:
         space = build(2.0)
         check_measure(space.sobolev_measure(1.0, pointwise_std=0.3), rng=rng)
 
+    def test_a_length_scale_of_the_priors_own(self, rng):
+        """With every mode of a shell's mesh kept, the prior of scale ``L'``
+        on a space of ``L`` is the default prior of a space of ``L'`` on the
+        same mesh, the Robin coefficients matched to ``L'`` with the
+        curvature of each end; the space's own scale gives its own prior
+        back; and a radius has no lateral direction."""
+        options = {
+            "inner_radius": 0.5,
+            "element_length": 0.25,
+            "padding": 0.3,
+        }
+        nodes = Radial(1, length_scale=0.2, **options).nodes.size
+        short = Radial(nodes, length_scale=0.2, **options)
+        long = Radial(nodes, length_scale=0.35, **options)
+        v = rng.normal(size=nodes)
+        want = long.sobolev_measure(1.5).covariance(v)
+        assert np.allclose(
+            short.sobolev_measure(1.5, length_scale=0.35).covariance(v),
+            want,
+            rtol=0.0,
+            atol=1e-10 * np.abs(want).max(),
+        )
+        space = whole(2.0)
+        x = space.random(rng=rng)
+        own = space.sobolev_measure(1.5, length_scale=0.3).covariance(x)
+        default = space.sobolev_measure(1.5).covariance(x)
+        assert space.norm(space.subtract(own, default)) < 1e-10 * space.norm(default)
+        with pytest.raises(ValueError, match="lateral"):
+            space.sobolev_measure(1.5, lateral_length_scale=0.3)
+
 
 class TestTheIntegralReadsThroughTheComponents:
     @pytest.mark.parametrize("build", [whole, shell])
