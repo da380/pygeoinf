@@ -23,6 +23,8 @@ checkpointing a long run is the callback's business.
 
 from __future__ import annotations
 
+import os
+import warnings
 from typing import Any, Callable, Sequence
 
 import numpy as np
@@ -38,6 +40,10 @@ from .results import Chain, SampledPosterior, WeightedEnsemble
 from .target import State, Target
 
 __all__ = ["Chains", "StepSizeAdaptation", "Tempering"]
+
+_NEAR_THE_MAXIMUM = 0.9
+"""The share of its largest step at which an adapted step is warned of: a step
+still settling hovers just under the maximum rather than on it."""
 
 
 class StepSizeAdaptation:
@@ -60,6 +66,8 @@ class StepSizeAdaptation:
         rate: the gain of the first update.
         decay: how fast the gain falls, in ``(0.5, 1]``.
         maximum: the largest step the adaptation reaches.
+        warns: whether :class:`Chains` warns of a step that reaches about
+            *maximum*; off where that is the step aimed for.
 
     Raises:
         ValueError: for an acceptance outside ``(0, 1)``, a non-positive
@@ -73,6 +81,7 @@ class StepSizeAdaptation:
         rate: float = 1.0,
         decay: float = 0.6,
         maximum: float = float("inf"),
+        warns: bool = True,
     ) -> None:
         if not 0.0 < acceptance < 1.0:
             raise ValueError(f"A target acceptance lies in (0, 1), got {acceptance}.")
@@ -86,6 +95,12 @@ class StepSizeAdaptation:
         self._rate = float(rate)
         self._decay = float(decay)
         self._maximum = float(maximum)
+        self._warns = bool(warns)
+
+    @property
+    def warns(self) -> bool:
+        """Whether a step that reaches about :attr:`maximum` is warned of."""
+        return self._warns
 
     @property
     def acceptance(self) -> float:
@@ -195,6 +210,10 @@ class Chains:
                 evaluated, or a recording map that does not act on the model
                 space.
             TypeError: if the recording map's codomain has no coordinates.
+
+        Warns:
+            UserWarning: if the burn-in's adaptation took a step to about its
+                largest.
         """
         if steps < 1 or burn_in < 0:
             raise ValueError(
@@ -229,6 +248,8 @@ class Chains:
             )
 
         chains = parallel_map(run, list(enumerate(streams)), n_jobs=n_jobs)
+        if burn_in > 0:
+            _warn_near_the_maximum(adapt, chains)
         return SampledPosterior(
             target.prior,
             target.log_density_against_prior(),
@@ -320,6 +341,43 @@ def _run_chain(
         step_sizes[0],
         step_sizes=tuple(step_sizes),
         block_acceptance=blocks,
+    )
+
+
+def _warn_near_the_maximum(adapt: Any, chains: Sequence[Chain], /) -> None:
+    """Warn if the adaptation took a step to about its largest.
+
+    Here rather than in the chain, whose warnings a worker process would lose.
+    There the proposal is nearly independent of the state, and a chain whose
+    reference has tails too narrow for the posterior sticks in them, with
+    nothing in its acceptance or its diagnostics to show for it.
+    """
+    adapters = _adapters(adapt, len(chains[0].step_sizes))
+    if adapters is None:
+        return
+    blocks = [
+        block
+        for block, adapter in enumerate(adapters)
+        if adapter is not None
+        and adapter.warns
+        and any(
+            chain.step_sizes[block] >= _NEAR_THE_MAXIMUM * adapter.maximum
+            for chain in chains
+        )
+    ]
+    if not blocks:
+        return
+    where = f" of blocks {blocks}" if len(adapters) > 1 else ""
+    warnings.warn(
+        f"The burn-in's adaptation took the step{where} to about its largest, "
+        "where a proposal is nearly independent of the state. That is efficient "
+        "if the reference covers the posterior; if its tails are too narrow the "
+        "chain can stick in them without its diagnostics showing it. If in "
+        "doubt, fix a lower step and run the chain for longer.",
+        UserWarning,
+        # The caller's own line, not a preset's: a warning shows once per
+        # line, and a script running several samplers should hear of each.
+        skip_file_prefixes=(os.path.dirname(__file__),),
     )
 
 

@@ -9,6 +9,8 @@ runs on a dense metric, where a component standing in for a vector, or a
 representer for a derivative, would show.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 from scipy.stats import multivariate_normal
@@ -602,6 +604,44 @@ class TestTheAdaptation:
     def test_bad_settings_are_refused(self, keywords):
         with pytest.raises(ValueError):
             StepSizeAdaptation(**keywords)
+
+    def test_a_step_adapted_to_its_maximum_is_warned_of(self, setting):
+        """About the exact posterior every step is accepted, so the step grows
+        until it is stopped."""
+        sampler = GeometricMALA(
+            setting.problem, setting.inversion.reference(setting.data), step=1.0
+        )
+        with pytest.warns(UserWarning, match="about its largest"):
+            sampler(
+                setting.data,
+                steps=4,
+                chains=2,
+                burn_in=200,
+                rng=np.random.default_rng(1),
+            )
+
+    @pytest.mark.parametrize(
+        "build, burn_in",
+        [
+            (lambda s, r: GeometricMALA(s, r, step=1.0, acceptance=None), 200),
+            (lambda s, r: GeometricMALA(s, r, step=1.0), 0),
+            (lambda s, r: GeometricHMC(s, r, step=0.1, length=4), 200),
+        ],
+        ids=["fixed-step", "no-burn-in", "geometric-hmc-at-its-quarter-turn"],
+    )
+    def test_a_step_not_adapted_or_aimed_there_is_not_warned_of(
+        self, setting, build, burn_in
+    ):
+        sampler = build(setting.problem, setting.inversion.reference(setting.data))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            sampler(
+                setting.data,
+                steps=4,
+                chains=2,
+                burn_in=burn_in,
+                rng=np.random.default_rng(1),
+            )
 
 
 class TestTempering:

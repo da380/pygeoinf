@@ -113,6 +113,9 @@ class ChainSampler(MeasureEstimator):
     #: Whether the kernel differentiates the forward operator.
     uses_gradient: bool = False
 
+    #: Whether a step adapted to about its longest is warned of.
+    warns_at_longest_step: bool = True
+
     def __init__(
         self,
         problem: "ForwardProblem",
@@ -150,7 +153,11 @@ class ChainSampler(MeasureEstimator):
         self._adaptation = (
             None
             if acceptance is None
-            else StepSizeAdaptation(acceptance=acceptance, maximum=self._longest_step())
+            else StepSizeAdaptation(
+                acceptance=acceptance,
+                maximum=self._longest_step(),
+                warns=self.warns_at_longest_step,
+            )
         )
         self._constraint = constraint
 
@@ -862,6 +869,9 @@ class GeometricHMC(HMC):
         ValueError: for a length below one, or as for
             :class:`ChainSampler`.
     """
+
+    # A quarter turn is the step this sampler aims for.
+    warns_at_longest_step = False
 
     @classmethod
     def recipe(cls, **options: Any) -> "BlockRecipe":

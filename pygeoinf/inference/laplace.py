@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from ..algebra.operators import Functional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..numerics.normal import NormalOperator
-from ..numerics.optimization import OptimizationResult, Optimizer
+from ..numerics.optimization import NewtonCG, OptimizationResult, Optimizer
 from ..numerics.solvers import LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
@@ -82,18 +82,19 @@ class MaximumAPosteriori(Minimization):
             to supply a derivative, which :meth:`~pygeoinf.algebra.operators.Operator.at`
             provides.
         prior: a Gaussian prior on the model space.
-        optimizer: how to find the mode. L-BFGS with 500 iterations by
-            default, which needs only gradients. A Newton-type optimizer can
-            be passed when the forward operator supplies its second
-            derivative: the objective then carries the exact Hessian, the
-            Gauss-Newton term plus the operator's curvature weighted by the
-            residual; or with ``gauss_newton``, which needs only the
-            derivative. Give such an optimizer the prior covariance as its
-            preconditioner (``NewtonCG(preconditioner=prior.covariance)``):
-            the Hessian is ``P + J* R^-1 J`` in the model space's own inner
-            product, and without it the inner solve has to resolve the
+        optimizer: how to find the mode. By default
+            ``NewtonCG(preconditioner=prior.covariance)`` wherever the
+            objective carries a Hessian: the exact one when the forward
+            operator supplies its second derivative, the Gauss-Newton term
+            plus the operator's curvature weighted by the residual; or with
+            ``gauss_newton``, which needs only the derivative. The Hessian is
+            ``P + J* R^-1 J`` in the model space's own inner product, and
+            without the preconditioner the inner solve has to resolve the
             prior precision's spectrum, which on a Sobolev space spans many
-            decades.
+            decades. A forward operator with only a derivative and no
+            ``gauss_newton`` gets L-BFGS with 500 iterations, which needs only
+            gradients but is unpreconditioned, so on a refined mesh it can
+            stop well short of the mode; read ``converged`` on its result.
         solver: how to invert the Hessian at the mode for the derivative
             with respect to the data: a
             :class:`~pygeoinf.numerics.solvers.LinearSolver`, or a callable
@@ -148,6 +149,10 @@ class MaximumAPosteriori(Minimization):
 
         self._problem = problem
         self._prior = prior
+        if optimizer is None and (
+            gauss_newton or problem.forward_operator.has_second_derivative
+        ):
+            optimizer = NewtonCG(preconditioner=prior.covariance)
         # The prior's domain rather than the forward operator's: the two
         # compare equal, and the prior's carries the labels of its summands,
         # which a block operator's domain does not.
