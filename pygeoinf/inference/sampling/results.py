@@ -552,8 +552,8 @@ def _fit_reference(
         raise ValueError("The chart must act on the model space.")
     unit = np.identity(space.dim)
     vectors = [chart.adjoint(space.from_components(space.solve_gram(e))) for e in unit]
-    centre = space.to_components(chart(prior.expectation))
-    points = np.asarray(values, dtype=float).reshape(-1, space.dim) - centre
+    center = space.to_components(chart(prior.expectation))
+    points = np.asarray(values, dtype=float).reshape(-1, space.dim) - center
     fit = fit_gaussian_mixture(points, components, weights=weights, rng=rng)
     if components == 1:
         return GaussianReference(prior, vectors, fit.means[0], fit.covariances[0])

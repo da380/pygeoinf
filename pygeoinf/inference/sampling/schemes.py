@@ -291,8 +291,8 @@ class SplittingScheme:
         mean = target.component(origin).expectation
         gradient = target.gradient(origin)
         preconditioned = target.preconditioned_gradient(origin)
-        centre = space.axpy(c, space.subtract(origin.position, mean), space.copy(mean))
-        offset = space.subtract(destination.position, centre)
+        center = space.axpy(c, space.subtract(origin.position, mean), space.copy(mean))
+        offset = space.subtract(destination.position, center)
         scale = c * drift_time
         return -(scale / b**2) * space.inner_product(gradient, offset) - (
             scale**2 / (2.0 * b**2)

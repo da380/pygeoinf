@@ -1,8 +1,7 @@
 # The large low-shear-velocity provinces: thermal or chemical?
 
 How the app is built on the library is walked through in
-[IMPLEMENTATION.md](IMPLEMENTATION.md). What is still to come is in
-[PLAN.md](PLAN.md): parts E and G, which wait on the library.
+[IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ## The problem
 
@@ -64,15 +63,15 @@ The parts:
 - **D, Gibbs over the fields** (`gibbs.py`): the whole problem, HMC on the linear
   part and pCN on the level set, against three blocks, other scans and steps per
   visit, and chains from the prior. Its figure: the chains, and those comparisons.
-- **F, the answers** (`answers.py`): from part D's chains, where the provinces are,
+- **E, the answers** (`answers.py`): from part D's chains, where the provinces are,
   whether they are dense, what the shear jump over the compressional is, and how
   many there are. Its figure: the province probability and the marginals, by chain.
 
 Two scales of the same problem. `--quick` is degree 24, 600 arcs, 300 caps and 6
-modes, 1062 data and 2503 unknowns; every part runs in about 13 minutes on 4 workers,
-of which part C takes about 4 and part D about 9. The full scale is degree 48, 3000
-arcs, 1500 caps and 10 modes, 4770 data and 9607 unknowns; every part runs in about 82
-minutes on 4 workers, of which part C takes 20 and part D 60. Its numbers are
+modes, 1062 data and 2503 unknowns; every part runs in about 11 minutes on 4 workers,
+of which part C takes about 4 and part D about 8. The full scale is degree 48, 3000
+arcs, 1500 caps and 10 modes, 4770 data and 9607 unknowns; every part runs in about 64
+minutes on 4 workers, of which part C takes 17 and part D 46. Its numbers are
 [below](#the-full-scale), and its part D has not converged.
 
 ## How to run
@@ -94,8 +93,7 @@ figures go. A part run alone rebuilds the problem from the seed. Figures go to
 Chains run in worker processes (`n_jobs`). Importing `src` sets `OMP_NUM_THREADS`
 to one unless it is already set, since the sphere's transforms decide their threads
 when first imported and at these sizes one is several times faster than one per
-core: on the quick scale in one process, a `GeometricHMC` step takes 0.42 s against
-2.49 s and the reference it needs 3.7 s against 24 s.
+core.
 
 | file | what it is |
 |---|---|
@@ -104,7 +102,7 @@ core: on the quick scale in one process, a `GeometricHMC` step takes 0.42 s agai
 | `src/forward.py` | `Forward`: `T` as a dense matrix, `G(phi)` by quadrature at the nodes and on a fine grid, the map and its derivative |
 | `src/record.py` | what a chain records, nonlinear functions of its state read off the grid |
 | `src/common.py` | the command line built from the scale, the stopwatch, the maps |
-| `proofs.py`, `synthetic.py`, `linear.py`, `gibbs.py`, `answers.py` | parts A to D and F, each a script with a `main()` and a `run()` the others and the test call |
+| `proofs.py`, `synthetic.py`, `linear.py`, `gibbs.py`, `answers.py` | parts A to E, each a script with a `main()` and a `run()` the others and the test call |
 | `run_all.py` | the parts in order |
 
 ## A. The proofs
@@ -113,8 +111,7 @@ core: on the quick scale in one process, a `GeometricHMC` step takes 0.42 s agai
 quick scale, and the map is linear in its contrasts to 9e-16. On a cap about the
 pole, the share of a meridional arc is right to 2.4e-4 and the zonal coefficients of
 degrees 2, 4 and 6 to 4e-3 on the fine grid of degree 128. On the sphere's own grid at
-degree 24 the same coefficients were 25% off at degree 4, a sharp edge falling between
-its rows, which is why the fine one is there. The data of `(t + c, -phi, -c)` and `(t,
+degree 24 a sharp edge falls between the rows, which is why the fine one is there. The data of `(t + c, -phi, -c)` and `(t,
 phi, c)` differ by 6e-15: the model has an exact near-symmetry, `c H(-phi) == c - c
 H(phi)`, broken only by the prior. Each coupled field's conditional matches the dense
 Schur complement to 2e-14, and its variance given the other two is 9% of its marginal's
@@ -146,16 +143,16 @@ Quick scale:
 
 | problem | sampler | step | acceptance | τ, regional means | τ, potential | smallest ESS | R-hat | ESS per 1000 | worst offset, sd | s |
 |---|---|---|---|---|---|---|---|---|---|---|
-| weak | pCN | 0.051 | 0.25 | 609 | 67 | 5 | 1.20 | 1.3 | 0.32 | 8 |
-| | MALA | 0.086 | 0.57 | 34 | 16 | 94 | 1.03 | 24 | 0.20 | 20 |
-| | HMC | 0.196 | 0.95 | 1.9 | 35 | 215 | 1.03 | 54 | 0.22 | 18 |
-| | PreconditionedHMC | 0.299 | 0.81 | 15 | 6.6 | 212 | 1.03 | 53 | 0.15 | 20 |
-| | GeometricHMC, rank 10 | 0.393 | 0.97 | 1.3 | 1.1 | 128 | 1.01 | 159 | 0.09 | 12 |
-| as given | pCN | 2.2e-4 | 0.25 | 3156 | 291 | 1.0 | 2.60 | 0.25 | 0.83 | 8 |
-| | MALA | 3.9e-4 | 0.58 | 3007 | 509 | 1.1 | 2.53 | 0.27 | 0.55 | 22 |
-| | HMC | 0.028 | 0.61 | 259 | 42 | 1.5 | 1.70 | 0.39 | 0.74 | 19 |
-| | PreconditionedHMC | 0.023 | 0.73 | 2082 | 260 | 1.5 | 1.99 | 0.38 | 0.96 | 21 |
-| | GeometricHMC, rank 50 | 0.375 | 0.80 | 8.1 | 24 | 20 | 1.06 | 25 | 0.19 | 42 |
+| weak | pCN | 0.051 | 0.25 | 609 | 67 | 5 | 1.20 | 1.3 | 0.32 | 7 |
+| | MALA | 0.086 | 0.57 | 34 | 16 | 94 | 1.03 | 24 | 0.20 | 18 |
+| | HMC | 0.196 | 0.95 | 1.9 | 35 | 215 | 1.03 | 54 | 0.22 | 14 |
+| | GeneralizedHMC | 0.299 | 0.81 | 15 | 6.6 | 212 | 1.03 | 53 | 0.15 | 17 |
+| | GeometricHMC, rank 10 | 0.393 | 0.97 | 1.3 | 1.1 | 128 | 1.01 | 159 | 0.09 | 11 |
+| as given | pCN | 2.2e-4 | 0.25 | 3156 | 291 | 1.0 | 2.60 | 0.25 | 0.83 | 9 |
+| | MALA | 3.9e-4 | 0.58 | 3007 | 509 | 1.1 | 2.53 | 0.27 | 0.55 | 21 |
+| | HMC | 0.028 | 0.61 | 259 | 42 | 1.5 | 1.70 | 0.39 | 0.74 | 15 |
+| | GeneralizedHMC | 0.023 | 0.73 | 2082 | 260 | 1.5 | 1.99 | 0.38 | 0.96 | 19 |
+| | GeometricHMC, rank 50 | 0.375 | 0.80 | 8.1 | 24 | 20 | 1.06 | 25 | 0.19 | 43 |
 
 `GeometricHMC` gets 100 steps per chain of 4 leapfrog steps, which is 400 evaluations.
 It is the only sampler that is not crawling on the data as given, because its step
@@ -164,21 +161,13 @@ fall with the leading one. Over the same data the exact posterior mean's
 chi-squared is 1253, 4.2 of its standard deviations too many: the misfit of thermal
 fields made to hold the chemistry.
 
-Longer chains on the weak problem, 8 of them at 20 000 evaluations each, reduce the
-worst offsets to 0.013 for MALA, 0.017 for PreconditionedHMC and 0.031 for GeometricHMC
-(at 3600), with standard deviations right to 2%. pCN was not run for as long. HMC's
-worst offset there is 0.041, at 4.0 of its own Monte Carlo errors, and its smallest
-standard deviation ratio 0.958, which is the next paragraph's doing.
-
 HMC's chains are exact too, but its burn-in shows why a single scalar's τ can mislead.
 The adaptation pushes its step to the cap at which a trajectory is a quarter turn,
 `L h == pi / 2`, and the leading direction on the weak problem has frequency
 `sqrt(1 + 16.1) == 4.14`, so that a trajectory turns it through 1.03 full periods and
-brings it almost back. Its potential's τ is then 16 or 143 between seeds, where the
-regional means, which barely see that direction, report 3.3, and their error bars are
-too small. At `h == 0.15`, where the same trajectory turns it through 0.79 periods, the
-potential's τ is 6.3 and 6.5. Both match the exact posterior to 0.02 sd over 20 000
-steps. Hence the column for the potential, and a resonance worth jittering away.
+brings it almost back. Its potential's τ is then 35, where the regional means, which
+barely see that direction, report 1.9, and their error bars are too small. Hence the
+column for the potential, and a resonance worth jittering away.
 
 The ladder, on the weak problem, at each sampler's step from the table and the same
 data at each degree (HMC with three leapfrog steps), and two chains of 100 steps:
@@ -202,7 +191,7 @@ thermal-only posterior mean as the provinces and the linear part's exact conditi
 mean given them: potential 626, the truth's 536, 25% of the sphere in two provinces, and
 contrasts of (−0.53, −0.08, +0.88), the thermal fields holding most of the shear.
 
-At the quick scale, four chains of 200 + 800 sweeps in 248 s, steps of 0.017 and 8e-4,
+At the quick scale, four chains of 200 + 800 sweeps in 209 s, steps of 0.017 and 8e-4,
 acceptances 0.73 and 0.13, mean potential 565. The contrasts reach the truth's size
 within the burn-in. The chains agree on the density contrast and on the ratio of the
 jumps, and not on what depends on exactly where the provinces' edges lie:
@@ -215,27 +204,28 @@ jumps, and not on what depends on exactly where the provinces' edges lie:
 | share of the sphere | 1247 | 2.6 | 1.86 |
 | shear jump over compressional | 97 | 33 | 1.07 |
 
-Against the same forward evaluations per chain, in 100 sweeps from the same start
-(far shorter than these τ, so squared jumps and not effective sample sizes), with the
-potential and `c_s` over the last 50:
+Each variant then runs 100 sweeps from the same start, far shorter than these τ, so
+what is compared is squared jumps and not effective sample sizes. The runs are of equal
+sweeps, not equal cost: each squared jump per sweep is divided by the forward
+evaluations a sweep costs, one per leapfrog step and one per pCN step. The potential
+and `c_s` are over the last 50 sweeps:
 
 | run | evaluations a sweep | squared jump of `c_s` per 1000 | of the share | potential | `c_s` | acceptance |
 |---|---|---|---|---|---|---|
 | 1 pCN step per visit | 17 | 0.51 | 2.0e-4 | 613 | −1.30 | 0.68, 0.08 |
 | 5 | 21 | 0.26 | 9.0e-4 | 596 | −1.31 | 0.73, 0.08 |
 | 20 | 36 | 0.16 | 5.5e-4 | 577 | −1.68 | 0.59, 0.06 |
-| symmetric scan, 5 | 42 | 0.21 | 1.7e-4 | 560 | −1.89 | 0.67, 0.07 |
+| symmetric scan, 5 | 37 | 0.24 | 1.9e-4 | 560 | −1.89 | 0.67, 0.07 |
 | three blocks | 18 | 0.06 | 2.7e-3 | 594 | −0.91 | 0.59, 0.18, 0.62 |
 | two blocks, from the prior | 21 | 0.16 | 1.0e-3 | 629 | +0.36 | 0.66, 0.05 |
 
 Moving the thermal fields and the contrasts apart costs a factor of 4 in how far the
-contrast moves. Over 200 + 600 sweeps run separately, three blocks left `c_s` at −1.29
-with τ 717 where two had reached −1.90. Given the thermal fields a contrast is pinned,
-its step adapting to 2e-4, and it can only follow them along the valley they trade off
-in. Chains from the prior stay well above the guess's in potential, 629 over these
-sweeps: they are holding another arrangement of provinces.
+contrast moves per evaluation: given the thermal fields a contrast is pinned, and it can
+only follow them along the valley they trade off in. Chains from the prior stay well
+above the guess's in potential, 629 over these sweeps against 596, and their `c_s` is
++0.36, of the wrong sign: in 100 sweeps they have not reached the guess's basin.
 
-## F. The answers
+## E. The answers
 
 From the main run's 3200 records and 800 stored states, quick scale:
 
@@ -251,19 +241,21 @@ From the main run's 3200 records and 800 stored states, quick scale:
 | shear jump over compressional | 3.75 | 3.96 ± 0.20 | 3.99, 3.95, 3.87, 4.02 |
 
 - **The provinces are dense:** `P(c_rho > 0) == 1.000`, on every chain, with R-hat
-  1.04, the one answer the chains fully agree on.
+  1.04, the one answer the chains agree on. All four started from the data's guess, so
+  their agreement is agreement within the basins they reached, not convergence.
 - **Where they are:** a point inside the true provinces is inside the sampled ones with
   mean probability 0.95, a point outside with 0.04. All the states hold two provinces.
-- **The chains have not finished:** they fall into two groups. Chains 1 and 2 have a
-  mean potential of 544 and 545, against the truth's 536, and find `c_s == -2`. Chains 3
-  and 4 have 593 and 576, hold a lobe of province over the North Atlantic and Europe, at
-  probability 0.5 on the map, and take −1.5 and −1.6. At this difference of potential
-  the first group should carry nearly all of the weight, and a longer run should find
-  so; `c_s`, `c_p` and the share are not yet answers.
+- **The chains have not finished:** they fall into two groups whose marginals of `c_s`
+  barely overlap. Chains 1 and 2 have a mean potential of 544 and 545, against the truth's 536,
+  and find `c_s` of −2.00 and −1.98. Chains 3 and 4 have 593 and 576, take −1.51 and
+  −1.60, and cover more of the sphere, 0.29 and 0.30 against 0.27; the map's lobe of
+  province over the North Atlantic and Europe, at probability about 0.5, is where the
+  extra share lies. The run cannot say how the posterior divides its weight between the
+  groups; `c_s`, `c_p` and the share are not yet answers.
 - **The ratio does not settle it alone:** the shear jump over the compressional is 3.96
   ± 0.20 against the thermal scaling's 1.90, but thermal fields alone, across the true
   edges, make 3.56 of the same data, which fix the jumps directly. What tells them
-  apart is the misfit of part C and, once built, the evidence of part G.
+  apart is the misfit of part C.
 
 ## The full scale
 
@@ -283,12 +275,12 @@ chi-squared on the data as given is 5506, 7.5 of its standard deviations too man
 | weak | pCN | 0.012 | 0.27 | 1047 | 948 | 3.1 | 1.77 | 0.76 | 0.36 |
 | | MALA | 0.021 | 0.57 | 127 | 82 | 25 | 1.12 | 6.3 | 0.39 |
 | | HMC | 0.195 | 0.72 | 8.7 | 8.3 | 46 | 1.10 | 11 | 0.15 |
-| | PreconditionedHMC | 0.154 | 0.79 | 54 | 19 | 59 | 1.06 | 15 | 0.13 |
+| | GeneralizedHMC | 0.154 | 0.79 | 54 | 19 | 59 | 1.06 | 15 | 0.13 |
 | | GeometricHMC, rank 20 | 0.393 | 0.95 | 1.4 | 0.9 | 115 | 1.02 | 144 | 0.12 |
 | as given | pCN | 1.3e-4 | 0.09 | 1595 | 1457 | 2.0 | 3.18 | 0.50 | 0.97 |
 | | MALA | 9.1e-5 | 0.59 | 1554 | 1406 | 2.1 | 2.64 | 0.51 | 0.93 |
 | | HMC | 0.014 | 0.67 | 189 | 120 | 2.1 | 3.19 | 0.53 | 0.40 |
-| | PreconditionedHMC | 0.011 | 0.78 | 1480 | 311 | 2.2 | 3.11 | 0.54 | 1.07 |
+| | GeneralizedHMC | 0.011 | 0.78 | 1480 | 311 | 2.2 | 3.11 | 0.54 | 1.07 |
 | | GeometricHMC, rank 80 | 0.388 | 0.82 | 2.2 | 1.2 | 72 | 1.03 | 89 | 0.20 |
 
 The ladder, on the weak problem, at each sampler's step from the table and the same data
@@ -303,7 +295,7 @@ at each degree (HMC with three leapfrog steps), with a random walk of size 0.154
 The steps the burn-in settles on are flat over the same degrees: 0.010, 0.0087 and 0.011
 for pCN, 0.024, 0.025 and 0.022 for MALA, 0.222, 0.223 and 0.220 for HMC.
 
-Part D's main run is the quick scale's, four chains of 200 + 800 sweeps, and takes 28
+Part D's main run is the quick scale's, four chains of 200 + 800 sweeps, and takes 22
 minutes, with steps of 0.009 and 4.5e-4 and acceptances 0.62 and 0.07. It has not
 converged. The guess starts at potential 2745, and the chains hold 2582, 2580, 2624 and
 2625 on average, all at least 139 above the truth's 2441, so that what the quick scale's
@@ -330,35 +322,25 @@ chains agree on is not settled here:
 | 1 pCN step per visit | 17 | 0.102 | 8.9e-4 | 2745 | −0.81 | 0.63, 0.15 |
 | 5 | 21 | 0.095 | 3.4e-4 | 2545 | −1.54 | 0.67, 0.07 |
 | 20 | 36 | 0.056 | 1.6e-4 | 2563 | −1.60 | 0.73, 0.03 |
-| symmetric scan, 5 | 42 | 0.044 | 1.5e-4 | 2583 | −1.52 | 0.66, 0.04 |
+| symmetric scan, 5 | 37 | 0.050 | 1.7e-4 | 2583 | −1.52 | 0.66, 0.04 |
 | three blocks | 18 | 0.018 | 1.4e-3 | 2655 | −0.84 | 0.71, 0.08, 0.56 |
 | two blocks, from the prior | 21 | 0.082 | 7.7e-4 | 2788 | 0.00 | 0.58, 0.04 |
 
-Three blocks move the contrast 5 times less far than two, as at the quick scale, by the
-same margin and the same `c_s` left behind. The rows on the level set's visits are not
+Three blocks move the contrast 5 times less far than two, against 4 times at the quick
+scale, and leave `c_s` about as far behind. The rows on the level set's visits are not
 as clean: the share's jump falls steadily with steps per visit here and does not at
 the quick scale.
 
-That the 5-step row sits below the main run in potential, after a tenth of its sweeps, is
-not a benefit of the shorter burn-in. Run separately with the main run's settings and
-another seed, four chains after 200 sweeps of burn-in hold 2474, 2501, 2512 and 2734 over
-the last 50 of 100: the gap between chains of one run is wider than the gap between those
-two runs, and some chains get close to the truth's potential while others do not.
-The level set's step does matter, and not as the adaptation's target suggests. Held
-fixed at 0.002, 0.001, 5e-4 and 2.5e-4 over 150 sweeps, its acceptance is 0.09, 0.17, 0.21
-and 0.40, and the smaller steps end at the higher potentials, the largest step's chains
-holding 2512 to 2601 and the smallest's 2627 to 2765. Acceptance also falls as a chain
-descends, to 0.05 at a step of 6e-4 in that adapted run against 0.21 at 5e-4 from a
-fixed step higher up, and the adaptation's gain has decayed by then, so the block runs
-below its target of a quarter.
 
 ## What the app shows
 
-- A prior can couple function-valued fields mode by mode and still give a sampler its
-  conditionals in closed form, on a nested direct sum.
-- Function-space samplers do not notice refinement: a random walk of pCN's size accepts
-  nothing at any degree, where they keep their acceptance and their step from 507
-  unknowns to 7203.
+- A prior can couple function-valued fields mode by mode and still have each field's
+  conditional in closed form, on a nested direct sum. Part A checks those conditionals
+  against the dense Schur complement; no sampler here splits the coupled fields, so
+  none uses them.
+- Function-space samplers keep their acceptance and their step from 507 unknowns to
+  7203. A random walk of pCN's size accepts nothing even at the coarsest degree, so the
+  ladder shows no trend for it; example 38 shows the trend, on a circle.
 - Being exact is not being fast. Every sampler here is exact, and on the data as given
   only the one whose reference holds the leading directions mixes in this many
   evaluations. An exact posterior is what lets that be said with numbers.
@@ -366,6 +348,7 @@ below its target of a quarter.
   the thermal fields and the contrasts apart, walks a valley the other cut does not see.
 - A sharp level set is sampled, with a derivative zero in it, by a block that
   needs none, and it is the slowest part of the run, in chains R-hat duly reports as
-  unfinished. What they already agree on is an answer, and what they do not is not.
+  unfinished. What they disagree on is not an answer; what they agree on is a
+  candidate, since every chain started in the one basin.
   Refinement leaves the steps alone and not this: the same number of sweeps that nearly
   settles the density contrast at degree 24 settles only its sign at degree 48.

@@ -60,12 +60,14 @@ NEEDS_COASTLINES = {
 
 
 # Examples whose *cost is the point*: an iteration count on a badly-scaled
-# problem, a posterior covariance formed block by block. Shrinking them would
-# make them demonstrate something else, so they are marked slow instead and run
-# occasionally rather than on every invocation.
+# problem, a posterior covariance formed block by block, an integrator's error
+# measured over ever shorter steps. Shrinking them would make them demonstrate
+# something else, so they are marked slow instead and run occasionally rather
+# than on every invocation.
 SLOW = {
     "27_coupled_fields",
     "28_preconditioning",
+    "39_splitting_schemes",
 }
 
 

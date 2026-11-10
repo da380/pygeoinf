@@ -291,7 +291,9 @@ def gibbs_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
         state,
         f"symmetric scan, {scale.level_steps} pCN",
         two_blocks(state, level_steps=scale.level_steps, order="symmetric"),
-        2 * (linear_evaluations + scale.level_steps),
+        # There and back, linear then level set then linear: the level set,
+        # in the middle, is visited once.
+        2 * linear_evaluations + scale.level_steps,
         measure,
         rng=rng.spawn(1)[0],
     )

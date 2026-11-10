@@ -9,9 +9,9 @@ data force, which is all the step error comes from. That is what makes the
 samplers built from them well defined on a function space: no step error is
 committed on the reference's infinitely many modes.
 
-Each flow declares what it touches, which measure it preserves exactly,
-whether it is deterministic and reversible under a velocity flip, whether it
-needs the gradient, and the angle a time step turns into. Its
+Each flow declares which measure it preserves exactly, whether it is
+deterministic and reversible under a velocity flip, whether it needs the
+gradient, and the angle a time step turns into. Its
 :meth:`Flow.apply` returns the new state and the change it makes to the
 reference's Gaussian energy ``(|u - m|_K^2 + |v|_K^2) / 2``: infinite at a
 typical point, finite in its changes, and zero for every flow that preserves
@@ -52,10 +52,7 @@ __all__ = [
     "time_from_pcn_beta",
 ]
 
-#: Names for what a flow can touch and preserve.
-POSITION = "position"
-VELOCITY = "velocity"
-LABEL = "label"
+#: Names for what a flow can preserve.
 REFERENCE = "reference"
 TARGET = "target"
 
@@ -65,8 +62,6 @@ class Flow(ABC):
 
     Subclasses declare:
 
-    * ``touches``: the parts of the state it changes, ``"position"``,
-      ``"velocity"`` or both;
     * ``preserves``: the measures it leaves exactly invariant, from
       ``"reference"`` (the reference Gaussian, with an independent ``N(0,
       K)`` velocity where there is one) and ``"target"``;
@@ -79,7 +74,6 @@ class Flow(ABC):
             and, for the data force, the gradient.
     """
 
-    touches: frozenset[str] = frozenset()
     preserves: frozenset[str] = frozenset()
     deterministic: bool = True
     reversible: bool = False
@@ -138,7 +132,6 @@ class PriorRotation(Flow):
     The angle is the time.
     """
 
-    touches = frozenset({POSITION, VELOCITY})
     preserves = frozenset({REFERENCE})
     deterministic = True
     reversible = True
@@ -177,7 +170,6 @@ class LikelihoodKick(Flow):
     time.
     """
 
-    touches = frozenset({VELOCITY})
     preserves = frozenset()
     deterministic = True
     reversible = True
@@ -199,7 +191,7 @@ class LikelihoodKick(Flow):
             evaluated.
         """
         target = self._target
-        if target.value(state) == float("inf"):
+        if target.value(state, gradient=True) == float("inf"):
             return state, float("inf")
         space = target.model_space
         gradient = target.gradient(state)
@@ -237,7 +229,6 @@ class MomentumRefresh(Flow):
         ValueError: for a friction that is not positive.
     """
 
-    touches = frozenset({VELOCITY})
     preserves = frozenset({REFERENCE, TARGET})
     deterministic = False
     reversible = False
@@ -301,7 +292,6 @@ class PriorOU(Flow):
     pCN's ``beta`` is ``sin(a) == sqrt(1 - exp(-2 t))``.
     """
 
-    touches = frozenset({POSITION})
     preserves = frozenset({REFERENCE})
     deterministic = False
     reversible = False
@@ -353,7 +343,6 @@ class GradientDrift(Flow):
     proposal's transition density, never inside a deterministic block.
     """
 
-    touches = frozenset({POSITION})
     preserves = frozenset()
     deterministic = True
     reversible = False
@@ -374,7 +363,7 @@ class GradientDrift(Flow):
             unchanged where the potential cannot be evaluated.
         """
         target = self._target
-        if target.value(state) == float("inf"):
+        if target.value(state, gradient=True) == float("inf"):
             return state, float("inf")
         space = target.model_space
         position = space.axpy(
@@ -400,17 +389,26 @@ class LabelJump(Flow):
     the posterior, a jump between modes is accepted as readily as the fit is
     good. It preserves the target, and so the reference when there is no
     likelihood; the time step plays no part.
+
+    Args:
+        target: the target, over a mixture reference.
+        gradient: evaluate the gradient with the proposal's value, for a
+            dynamics whose next flow needs it there: one forward evaluation
+            then serves both.
+
+    Raises:
+        ValueError: for a target whose reference is not a mixture.
     """
 
-    touches = frozenset({POSITION, VELOCITY, LABEL})
     preserves = frozenset({REFERENCE, TARGET})
     deterministic = False
     reversible = False
 
-    def __init__(self, target: Target, /) -> None:
+    def __init__(self, target: Target, /, *, gradient: bool = False) -> None:
         if not target.is_mixture:
             raise ValueError("A label jump needs a mixture reference.")
         super().__init__(target)
+        self._gradient = bool(gradient)
 
     def apply(
         self, state: State, time: float, /, *, rng: Generator | None = None
@@ -441,7 +439,7 @@ class LabelJump(Flow):
             velocity = mixture.transport(velocity, source, destination, centered=True)
         proposal = State(position, velocity, label=destination)
         current = target.value(state)
-        proposed = target.value(proposal)
+        proposed = target.value(proposal, gradient=self._gradient)
         if proposed == float("inf"):
             return state, None
         if np.log(rng.random()) < current - proposed:
@@ -459,7 +457,6 @@ class KernelFlow(Flow):
     target.
     """
 
-    touches = frozenset({POSITION})
     preserves = frozenset({REFERENCE, TARGET})
     deterministic = False
     reversible = False

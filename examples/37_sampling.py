@@ -3,7 +3,7 @@
 
 This example highlights the essential differences between the sampling
 presets on a simple nonlinear problem whose posterior is known: the quadratic
-scalar problem, ``d == m^2 + eta``, with ``eta`` Gaussian noise and a centred
+scalar problem, ``d == m^2 + eta``, with ``eta`` Gaussian noise and a centered
 Gaussian prior. The sign of ``m`` is invisible to the data, so the posterior
 is a double well, symmetric with a mode at each of ``m == +-sqrt(d)``, more
 or less, and a barrier between them at ``m == 0``. In one dimension it can be
@@ -17,12 +17,12 @@ the diagnostics are what tell a reader whether to believe them.
 The presets, each a measure estimator built on the problem and the prior and
 called on the data:
 
-* ``PCN`` proposes from the prior, rotated a little towards the current
-  point; no gradient.
+* ``PCN`` proposes the current point rotated a little towards a fresh draw
+  from the prior; no gradient.
 * ``MALA`` drifts down the gradient before the same step.
 * ``HMC`` runs a trajectory of leapfrog steps, refreshing the velocity in full
   between them.
-* ``PreconditionedHMC`` refreshes the velocity only in part, so a chain keeps
+* ``GeneralizedHMC`` refreshes the velocity only in part, so a chain keeps
   its direction.
 * ``GeometricHMC`` is HMC about a Gaussian fitted to the posterior, here the
   Laplace approximation at one of the modes.
@@ -52,14 +52,15 @@ from pygeoinf import (
     EuclideanSpace,
     ForwardProblem,
     GaussianMeasure,
+    GeneralizedHMC,
     GeometricHMC,
     GeometricMALA,
     LaplaceApproximation,
     LinearOperator,
     Operator,
-    PreconditionedHMC,
     plotting,
 )
+from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 
 rng = np.random.default_rng(37)
 
@@ -114,7 +115,11 @@ print(
     f"exact posterior: mean 0 by symmetry, E[m^2] = {second_moment:.4f}, "
     f"log Z = {np.log(evidence):.4f}"
 )
-print(f"  the barrier at m = 0 is {phi[2000] - phi.min():.1f} nats above the modes")
+# The barrier is the posterior's: its negative log density against the
+# Lebesgue measure, Phi plus the prior's m^2 / 2, at m == 0 above its minimum.
+negative_log_density = phi + 0.5 * grid**2
+barrier = negative_log_density[np.argmin(np.abs(grid))] - negative_log_density.min()
+print(f"  the posterior's barrier at m = 0 is {barrier:.1f} nats above its modes")
 print(f"  the potential averages {mean_potential:.3f} under the posterior")
 print()
 
@@ -130,9 +135,17 @@ print()
 #
 # The local MALA is given the estimator instead, and builds the Laplace
 # Gaussian afresh at every state: at m the curvature is that of the data's
-# 2m, so anywhere near a mode the proposal is narrow and centred on that mode.
+# 2m, so anywhere near a mode the proposal is narrow and centered on that mode.
 # It would widen to the prior near the barrier, where the data say nothing
 # about m, but a chain proposing so well within its mode never goes there.
+#
+# Its step is fixed rather than adapted. The proposal is a step of the Laplace
+# Gaussian's own Ornstein-Uhlenbeck process, and where that Gaussian fits the
+# posterior a long step is accepted nearly always: left to adapt, the step
+# would climb to its cap and the run warn that its proposals are nearly
+# independent of the state, which a reference too narrow in its tails would
+# make dangerous. Here that is the point, so the step is set long, h == 3,
+# where exp(-3) of the old point is left.
 
 laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
 mode = laplace.solve(data, start=np.array([0.5])).model
@@ -142,9 +155,9 @@ samplers = {
     "PCN": PCN(problem, prior, step=0.1),
     "MALA": MALA(problem, prior, step=0.05),
     "HMC": HMC(problem, prior, step=0.1, length=5),
-    "PreconditionedHMC": PreconditionedHMC(problem, prior, step=0.1, friction=0.5),
+    "GeneralizedHMC": GeneralizedHMC(problem, prior, step=0.1, friction=0.5),
     "GeometricHMC": GeometricHMC(problem, reference, step=0.3, length=3),
-    "MALA, local": GeometricMALA(problem, laplace, step=1.0),
+    "MALA, local": GeometricMALA(problem, laplace, step=3.0, acceptance=None),
 }
 
 # Record m itself at every step: a linear map to a small coordinate space, here
@@ -195,9 +208,12 @@ def run(name: str, sampler) -> None:
     posteriors[name] = posterior
     m = posterior.scalars()[1]
     results[name] = m.ravel()
+    # The error of E[m^2] needs the autocorrelation time of m^2 itself, which
+    # does not see the sign: a chain stuck in one well has a long time for m
+    # and a short one for m^2.
     squared = m**2
     error_of_mean = squared.std() * np.sqrt(
-        posterior.diagnostics().autocorrelation_time[1] / squared.size
+        integrated_autocorrelation_time(squared) / squared.size
     )
     crossings = int(np.sum(np.diff(np.sign(m), axis=1) != 0))
     rhat = posterior.diagnostics().rhat[1]
@@ -263,7 +279,7 @@ print(
     f"{np.round([c.expectation[0] for c in mixture.components], 3)}"
 )
 print(header)
-run("MALA, mixture", GeometricMALA(problem, mixture, step=1.0))
+run("MALA, mixture", GeometricMALA(problem, mixture, step=3.0, acceptance=None))
 run("HMC, mixture", GeometricHMC(problem, mixture, step=0.3, length=3))
 
 # And fresh draws: each a short chain of the pCN kernel started from the
@@ -384,11 +400,11 @@ figure.tight_layout()
 # Phi does not see the sign of m, so it is blind to what the paths show.
 
 edges = np.unique(np.geomspace(1, burn_in + steps + 1, 40).astype(int))
-centres = np.sqrt(edges[:-1] * edges[1:])
+centers = np.sqrt(edges[:-1] * edges[1:])
 figure, axis = plt.subplots(figsize=(8, 4.5))
 for name, values in potential_traces.items():
     binned = [values[:, a - 1 : b - 1].mean() for a, b in zip(edges[:-1], edges[1:])]
-    axis.plot(centres, binned, marker="o", markersize=3, linewidth=1, label=name)
+    axis.plot(centers, binned, marker="o", markersize=3, linewidth=1, label=name)
 axis.axhline(
     mean_potential,
     color="black",
@@ -399,7 +415,7 @@ axis.axhline(
 axis.axvline(burn_in, color="0.6", linewidth=0.8)
 axis.set_xscale("log")
 axis.set_yscale("log")
-axis.set_xlabel("step (burn-in ends at the grey line)")
+axis.set_xlabel("step (burn-in ends at the gray line)")
 axis.set_ylabel("Phi, averaged over the chains")
 axis.set_title(
     "convergence: the likelihood potential from the prior draws to the posterior"

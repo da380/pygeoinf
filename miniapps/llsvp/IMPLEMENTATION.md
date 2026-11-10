@@ -75,8 +75,7 @@ own, and to 7e-6 on the caps, whose operator is exact where the quadrature is no
 
 The modes' coefficients of the indicator are integrated on a fine grid of one degree at
 every truncation, 128: `phi` is lifted by `degree_transfer_operator`, thresholded on that
-grid and analysed. The coarse grid will not do: a sharp edge falls between its rows, and
-at degree 24 a zonal coefficient of the cap in part A comes out 25% off.
+grid and analysed. The coarse grid will not do: a sharp edge falls between its rows.
 
 The last `G(phi)` is kept against the grid's bytes, since the linear block holds `phi`
 through its whole trajectory and each gradient asks for it. A worker holds its own.
@@ -103,9 +102,9 @@ be blind to the provinces' edges, which is why no such block is built.
 
 `linear.pose` builds `LinearGaussianInversion(problem, thermal, solver=CGSolver(rtol=))`:
 one solve per posterior mean, one per column of the recorded map's covariance, and one
-for a draw of the posterior by randomize-then-optimize. Against a Cholesky solve the means
-agree to 1e-9. The chains start from `start=posterior`, a measure each chain draws from:
-stationary from the first step, so the burn-in only adapts the step.
+for a draw of the posterior by randomize-then-optimize. The chains start from
+`start=posterior`, a measure each chain draws from: stationary from the first step, so
+the burn-in only adapts the step.
 
 ```python
 reference = inversion.reference(data, rank=rank, rng=rng)
@@ -113,9 +112,8 @@ GeometricHMC(problem, reference, step=scale.ghmc_step, length=scale.ghmc_length)
 ```
 
 The reference's cost is why `GeometricHMC` has its own count of steps. It pairs a state
-with each chart vector by the space's inner product (`coordinates`, `_apply_covariance`),
-and on the sphere each pairing runs two spherical-harmonic analyses per field. At rank 50
-that is nine tenths of a 0.42 s step.
+with each chart vector by the space's inner product, and on the sphere each pairing runs
+two spherical-harmonic analyses per field, so its cost grows with the reference's rank.
 
 A sampler's `evals` column counts forward evaluations, to compare samplers on equal
 terms, and a row's `|z|` means nothing above R-hat 1.1: a chain's own error bar on a

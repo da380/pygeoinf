@@ -107,9 +107,9 @@ from .presets import (
     BlockRecipe,
     ChainSampler,
     Gibbs,
+    GeneralizedHMC,
     GeometricHMC,
     GeometricMALA,
-    PreconditionedHMC,
 )
 from .results import Chain, ChainDiagnostics, SampledPosterior, WeightedEnsemble
 from .schemes import SplittingScheme
@@ -124,6 +124,7 @@ __all__ = [
     "Chains",
     "Dynamics",
     "Flow",
+    "GeneralizedHMC",
     "GeometricHMC",
     "GeometricMALA",
     "Gibbs",
@@ -141,7 +142,6 @@ __all__ = [
     "MomentumRefresh",
     "Overdamped",
     "PCN",
-    "PreconditionedHMC",
     "PreconditionedOU",
     "PriorOU",
     "PriorRotation",

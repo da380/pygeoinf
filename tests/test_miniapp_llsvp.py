@@ -4,9 +4,9 @@ The LLSVP mini-app keeps working.
 ``miniapps/llsvp`` samples the base of the mantle: three coupled thermal fields
 on a thin shell, a level set whose positive part is the provinces, and the
 chemical contrasts inside them, from synthetic travel times and normal-mode
-coefficients. The small scale of the parts built so far is run here, each part
-through its own script's entry point, and what must hold is asserted: the forward
-map's proofs, the coupled prior's correlation, every sampler against the exact
+coefficients. The small scale of every part is run here, each part through its
+own script's entry point, and what must hold is asserted: the forward map's
+proofs, the coupled prior's correlation, every sampler against the exact
 posterior of the thermal-only problem wherever its chains have mixed, and on the
 whole problem Gibbs moving towards the truth and the answers recovering the
 chemistry.
@@ -131,7 +131,7 @@ def results(app, scale, tmp_path_factory):
         state = results["b"]["setup"]
         results["c"] = app["linear"].run(scale, outdir=outdir, state=state)
         results["d"] = app["gibbs"].run(scale, outdir=outdir, state=state)
-        results["f"] = app["answers"].run(
+        results["e"] = app["answers"].run(
             scale, outdir=outdir, state=state, gibbs=results["d"]
         )
     finally:
@@ -287,7 +287,7 @@ def test_moving_the_coupled_block_together_moves_the_contrast_further(results):
 
 
 def test_the_answers_recover_the_chemistry(results):
-    part = results[0]["f"]
+    part = results[0]["e"]
     # Dense piles, as in the truth, wherever the chains have got to.
     assert part["dense"] > 0.9
     assert part["rows"]["ratio"]["mean"] > part["thermal"]

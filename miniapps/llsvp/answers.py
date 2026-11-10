@@ -1,4 +1,4 @@
-"""Part F: the answers, from the chains of part D.
+"""Part E: the answers, from the chains of part D.
 
 Everything asked of the model here is nonlinear in it, which is why a sampler and
 not a Gaussian about a mode: where the provinces are, as the probability that a
@@ -229,8 +229,8 @@ def draw(
     save(
         fig,
         outdir / "answers.png",
-        title="LLSVP, part F: where the provinces are and what they are made of, "
-        "each chain its own colour",
+        title="LLSVP, part E: where the provinces are and what they are made of, "
+        "each chain its own color",
     )
 
 
@@ -243,13 +243,13 @@ def run(
     gibbs: dict | None = None,
 ) -> dict:
     started = time.perf_counter()
-    print(f"\n=== F. The answers ({scale.name} scale) ===")
+    print(f"\n=== E. The answers ({scale.name} scale) ===")
     if state is None:
         state = setup(scale)
     if gibbs is None:
         gibbs = part_d.run(scale, outdir=outdir, state=state)
     result = answers(state, gibbs["main"], outdir=outdir)
-    print(f"F took {time.perf_counter() - started:.1f} s")
+    print(f"E took {time.perf_counter() - started:.1f} s")
     return result
 
 

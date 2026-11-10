@@ -63,9 +63,10 @@ The parts:
 Two scales of the same section. `--quick` puts it on 100 by 40 cells of
 20 m, in a grid of 148 by 64 with the sponge, with 50 receivers, a 2.5 Hz
 wavelet and 400 steps of 3.6 ms; parts A to E run in about 70 s in all, and
-it is what the test runs; part G, at this scale only, adds about five minutes. The full scale is 200 by 80 cells of 10 m, in a
-grid of 248 by 104, with 67 receivers, a 5 Hz wavelet and 600 steps of
-1.8 ms; each part runs in under two minutes. In both, the shortest wavelength
+it is what the test runs; part G, at this scale only, adds about five
+minutes. The full scale is 200 by 80 cells of 10 m, in a grid of 248 by 104,
+with 67 receivers, a 5 Hz wavelet and 600 steps of 1.8 ms; each part runs in
+under two minutes. In both, the shortest wavelength
 that matters, at two and a half times the peak frequency in the slowest
 rock, spans at least fourteen cells. Below the section the velocity stops
 increasing: it levels off within about 0.2 km, below 2.4 km/s, so that the
@@ -531,7 +532,7 @@ chains can show; it is not a ranking.
 
 At 3% noise the posterior on the box means is the full-rank Laplace
 Gaussian's to within the chains' Monte Carlo error in its spread, and close
-to it in its centre: the sampled means lie within a fifth of a standard
+to it in its center: the sampled means lie within a fifth of a standard
 deviation of the mode but in the background box, where they lie a quarter of
 one above it, five Monte Carlo errors. The rank-60 references are wider, by
 a factor of about 1.6 on the box means and 1.5 on the velocity's pointwise

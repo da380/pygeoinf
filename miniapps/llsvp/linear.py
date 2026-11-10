@@ -39,6 +39,7 @@ import numpy as np
 
 from pygeoinf import (
     GaussianMeasure,
+    GeneralizedHMC,
     GeometricHMC,
     HMC,
     LinearForwardProblem,
@@ -46,8 +47,8 @@ from pygeoinf import (
     LowRankGaussianPosterior,
     MALA,
     PCN,
-    PreconditionedHMC,
 )
+from pygeoinf.inference.sampling import pcn_beta
 from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 from pygeoinf.numerics.solvers import CGSolver
 
@@ -62,7 +63,7 @@ COLORS = {
     "PCN": "#2a78d6",
     "MALA": "#eb6834",
     "HMC": "#1baf7a",
-    "PreconditionedHMC": "#eda100",
+    "GeneralizedHMC": "#eda100",
     "GeometricHMC": "#e87ba4",
     "random walk": "#6b6b66",
 }
@@ -154,8 +155,8 @@ def samplers(scale: Scale, posed: Posed, reference: Any, /) -> dict:
             HMC(problem, prior, step=scale.hmc_step, length=scale.hmc_length),
             scale.hmc_length,
         ),
-        "PreconditionedHMC": (
-            PreconditionedHMC(problem, prior, step=scale.hmc_step),
+        "GeneralizedHMC": (
+            GeneralizedHMC(problem, prior, step=scale.hmc_step),
             1,
         ),
         "GeometricHMC": (
@@ -328,7 +329,7 @@ def ladder(
     error = GaussianMeasure.from_standard_deviations(
         state.forward.data_space, factor * state.noise
     )
-    walk_step = float(np.sqrt(1.0 - np.exp(-2.0 * steps["PCN"])))
+    walk_step = pcn_beta(steps["PCN"])
     results: dict[str, dict] = {
         name: {"acceptance": [], "error": [], "step": []}
         for name in ("PCN", "MALA", "HMC", "random walk")
@@ -337,7 +338,7 @@ def ladder(
     for degree in scale.ladder:
         watch = Stopwatch()
         space = sphere(scale, degree)
-        forward = Forward(space, state.network, scale)
+        forward = Forward(space, state.network, scale, n_jobs=scale.n_jobs)
         prior = thermal_prior(scale, space)
         problem = LinearForwardProblem(forward.thermal, error=error)
         start = LinearGaussianInversion(
@@ -420,7 +421,7 @@ def linear_answer(state: Setup, /, *, outdir: pathlib.Path) -> dict:
     weak_rows = run_problem(state, weak, scale.weak_rank, rng=rng.spawn(1)[0])
     given_rows = run_problem(state, given, scale.reference_rank, rng=rng.spawn(1)[0])
     steps = {name: weak_rows["rows"][name]["step"] for name in ("PCN", "MALA", "HMC")}
-    walk_step = float(np.sqrt(1.0 - np.exp(-2.0 * steps["PCN"])))
+    walk_step = pcn_beta(steps["PCN"])
     print(
         f"the ladder, on the weak problem: at pCN's step {steps['PCN']:.2e}, "
         f"MALA's {steps['MALA']:.2e} and HMC's {steps['HMC']:.2e} x {LADDER_LENGTH}, "

@@ -74,7 +74,7 @@ def level_set_prior(scale: Scale, space: Sobolev, /) -> GaussianMeasure:
 
 
 def chemistry_prior(scale: Scale, /) -> GaussianMeasure:
-    """The contrasts inside the provinces, independent and centred on none."""
+    """The contrasts inside the provinces, independent and centered on none."""
     return GaussianMeasure.from_standard_deviations(
         EuclideanSpace(len(FIELDS)), np.array(scale.chemistry_std)
     )

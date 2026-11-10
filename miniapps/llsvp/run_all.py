@@ -1,4 +1,4 @@
-"""Every part built so far in order, on one problem: A to D, and F.
+"""Every part in order, on one problem: A to E.
 
 ``python run_all.py`` for the full scale, ``--quick`` for the small one; the
 scale's fields are options, applied to the preset and passed to every part.
@@ -26,7 +26,7 @@ def run_all(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
     state = results["b"]["setup"]
     results["c"] = linear.run(scale, outdir=outdir, state=state)
     results["d"] = gibbs.run(scale, outdir=outdir, state=state)
-    results["f"] = answers.run(scale, outdir=outdir, state=state, gibbs=results["d"])
+    results["e"] = answers.run(scale, outdir=outdir, state=state, gibbs=results["d"])
     print(f"\ntotal {time.perf_counter() - started:.1f} s; figures in {outdir}")
     return results
 

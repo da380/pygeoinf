@@ -31,6 +31,7 @@ from src.prior import (
     thermal_prior,
     true_level_set,
 )
+from src.record import area_weights
 from src.shell import (
     FIELDS,
     FULL,
@@ -161,12 +162,6 @@ def setup(scale: Scale, /, *, quiet: bool = False) -> Setup:
         grouped_problem,
         thermal_problem,
     )
-
-
-def area_weights(space: Any, /) -> np.ndarray:
-    """``cos(latitude)`` per grid cell, for area-weighted statistics of a map."""
-    weights = np.cos(np.radians(90.0 - np.degrees(space.colatitudes)))
-    return np.repeat(weights[:, None], space.longitudes.size, axis=1)
 
 
 def weighted_correlation(fields: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
@@ -303,7 +298,8 @@ def arc_density(state: Setup, /) -> np.ndarray:
             np.abs(((longitudes[:, None] - points[:, 1] + 180.0) % 360.0) - 180.0)
         ).argmin(axis=0)
         np.add.at(counts, (rows, columns), weights)
-    return counts / np.maximum(area_weights(space), 0.05)
+    area = area_weights(space)
+    return counts / np.maximum(area / area.max(), 0.05)
 
 
 def draw_prior(

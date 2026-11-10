@@ -10,7 +10,8 @@ library's check ladder, dot tests and central differences falling as the
 square of the step -- what the sponge sends back is measured at the quick
 scale against a grid too big to reflect, and the quick scale of parts B to E
 is run through the scripts' entry points, with what must hold of each
-asserted.
+asserted. Part G, whose chains take minutes at the quick scale, is run for a
+few steps about a low-rank reference, to show that it runs.
 
 The extension is built in a temporary directory when it is not already built
 into the app's ``src/``. Without cmake and a working compiler the tests skip and
@@ -40,7 +41,7 @@ MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "waveform"
 # import each other and the package by their plain names. Other mini-apps
 # use the same names.
 MODULES = ("src.survey", "src.wave_operator", "src.common", "src.inversion")
-SCRIPTS = ("proofs", "synthetic", "newton", "occam", "laplace")
+SCRIPTS = ("proofs", "synthetic", "newton", "occam", "laplace", "hmc")
 # What the app's build is made from, in its cpp/.
 BUILD = ("acoustic.cpp", "CMakeLists.txt", "build.py")
 
@@ -361,6 +362,30 @@ def test_the_laplace_gaussian_holds_the_truth(results):
 def test_the_figures_were_written(results):
     outdir = results[1]
     for name in ("data", "map", "occam", "laplace"):
+        assert (outdir / f"{name}.png").exists(), name
+
+
+def test_part_g_runs_a_few_steps(app, scale, results):
+    """GeometricHMC about both Laplace references, through the script's own
+    entry point, at rank 4 and on chains of 2 + 4 steps: it runs, its chains
+    stay finite, and it draws its figures. The scripts read the scale from the
+    survey, which takes the shortened one for the run."""
+    parts, outdir = results
+    state = parts["b"]["setup"]
+    mode = parts["c"]["runs"]["polish"]["model"]
+    survey = state.experiment.survey
+    short = dataclasses.replace(
+        survey.scale, laplace_rank=4, hmc_length=2, hmc_burn_in=2, hmc_steps=4
+    )
+    original, survey.scale = survey.scale, short
+    try:
+        part = app["hmc"].run(short, outdir=outdir, state=state, mode=mode)
+    finally:
+        survey.scale = original
+    for name, run in part["runs"].items():
+        assert np.all(np.isfinite(run["posterior"].scalars())), name
+        assert run["gradients"] > 0, name
+    for name in ("hmc_convergence", "hmc_posterior"):
         assert (outdir / f"{name}.png").exists(), name
 
 

@@ -1728,6 +1728,7 @@ def check_scheme(
     /,
     *,
     rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
     samples: int = 4000,
     rtol: float = 0.1,
     atol: float = 0.0,
@@ -1745,11 +1746,13 @@ def check_scheme(
       however large, must map the reference (with an independent ``N(0,
       K)`` velocity, for an inertial dynamics) to itself. Over a mixture
       reference the state carries a component, drawn from its share of the
-      density, and the velocity is drawn from that component's covariance. The sample mean
-      and covariance of the position, and of the velocity, along a few
-      probe directions are compared with the reference's, as
+      density, and the velocity is drawn from that component's covariance.
+      The sample mean and covariance of the position, and of the velocity,
+      along a few probe directions are compared with the reference's, as
       :func:`check_measure` compares them, and so is the cross-covariance
-      of position and velocity, which must vanish.
+      of position and velocity, which must vanish. The probes are draws of
+      the reference, which weight its modes as it does, unless *measure* is
+      given.
     * **A deterministic word is reversed by a velocity flip.** Applying it,
       flipping, applying it again and flipping must return the start, on
       the scheme's own target, likelihood included.
@@ -1762,6 +1765,8 @@ def check_scheme(
         scheme: the :class:`~pygeoinf.inference.sampling.SplittingScheme`
             to check.
         rng: the generator. Seed it.
+        measure: a measure on the model space to draw the probe directions
+            from, in place of the reference; see the module docstring.
         samples: how many draws the invariance check takes.
         rtol: the statistical agreement required of the moments, as in
             :func:`check_measure`.
@@ -1779,6 +1784,7 @@ def check_scheme(
     Raises:
         AssertionError: if the reference is not left invariant or a
             deterministic word is not reversed by the flip.
+        ValueError: if *measure* lives on another space.
     """
     from .inference.sampling.target import Target
 
@@ -1788,10 +1794,8 @@ def check_scheme(
     reference = dynamics.reference
     space = reference.domain
     free = scheme.with_dynamics(dynamics.with_target(Target.from_reference(reference)))
-    if isinstance(space, CoordinateSpace):
-        probes = [space.basis_vector(i) for i in range(min(space.dim, directions))]
-    else:
-        probes = [space.random(rng=rng) for _ in range(min(space.dim, directions))]
+    source = reference if measure is None else measure
+    probes = [_draw(space, rng, source) for _ in range(min(space.dim, directions))]
     count = len(probes)
 
     rows = []

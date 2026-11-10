@@ -462,6 +462,10 @@ class MetropolisHastings(Kernel):
         self._local = local
         self._scheme = scheme
         self._proposal = proposal
+        # The reverse transition density of a gradient proposal needs the
+        # gradient at the proposal: asked for with its value, one forward
+        # evaluation serves both.
+        self._gradient = any(flow.uses_gradient for flow, _ in proposal.flows)
         self._before: list[tuple[Flow, float]] = list(flows[:first])
         self._after: list[tuple[Flow, float]] = list(flows[last:])
 
@@ -509,7 +513,7 @@ class MetropolisHastings(Kernel):
         target = self.dynamics.target
         state = self._run(self._before, state, rng)
         proposal, _ = self._proposal.apply(state, rng=rng)
-        proposed = target.value(proposal)
+        proposed = target.value(proposal, gradient=self._gradient)
         if proposed == float("inf"):
             error = float("inf")
         elif self._local:

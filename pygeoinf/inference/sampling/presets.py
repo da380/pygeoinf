@@ -11,7 +11,7 @@ problem and a prior, and called on data, it returns the sampled posterior.
     PCN                 PreconditionedOU   "O"                    Metropolis-Hastings
     MALA                Overdamped         "BO"                   Metropolis-Hastings
     HMC                 Hamiltonian        "OBAB", "BAB" x L      Metropolized block
-    PreconditionedHMC   Underdamped        "OBAB", "BAB" x L      Metropolized block, flip
+    GeneralizedHMC      Underdamped        "OBAB", "BAB" x L      Metropolized block, flip
     GeometricMALA       as MALA, about a GaussianReference
     GeometricHMC        as HMC, about a GaussianReference
     SMC                 a chain preset's kernel, moved along the tempering path
@@ -71,13 +71,13 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "BlockRecipe",
     "ChainSampler",
+    "GeneralizedHMC",
     "GeometricHMC",
     "GeometricMALA",
     "Gibbs",
     "HMC",
     "MALA",
     "PCN",
-    "PreconditionedHMC",
     "SMC",
 ]
 
@@ -345,7 +345,7 @@ class PCN(ChainSampler):
     """Preconditioned Crank-Nicolson: the reference's Ornstein-Uhlenbeck step.
 
     The proposal ``m + cos(theta) (u - m) + sin(theta) xi``, with ``xi`` a
-    centred draw of the reference and ``cos(theta) == exp(-h)``, accepted on
+    centered draw of the reference and ``cos(theta) == exp(-h)``, accepted on
     the residual potential alone. Needs no gradient. In the literature's
     parameter, ``beta == sqrt(1 - exp(-2 h))``.
 
@@ -596,15 +596,18 @@ class HMC(ChainSampler):
         return f"{type(self).__name__}(step={self._step:g}, length={self._length})"
 
 
-class PreconditionedHMC(ChainSampler):
+class GeneralizedHMC(ChainSampler):
     """HMC with a partial velocity refresh: underdamped Langevin, Metropolized.
 
-    Before each trajectory the velocity is rotated towards a fresh draw by
-    the angle ``arccos(exp(-gamma h))``, rather than redrawn, and a rejected
-    trajectory reverses the velocity, so the chain keeps its direction
-    between trajectories. The refresh acts once per trajectory, for one
-    step: with the default single leapfrog step the chain is a discretised
-    underdamped Langevin dynamics, exact by its correction.
+    Generalized HMC, in Horowitz's (1991) name. Before each trajectory the
+    velocity is rotated towards a fresh draw by the angle
+    ``arccos(exp(-gamma h))``, rather than redrawn, and a rejected trajectory
+    reverses the velocity, so the chain keeps its direction between
+    trajectories. The refresh acts once per trajectory, for one step: with
+    the default single leapfrog step the chain is a discretized underdamped
+    Langevin dynamics, exact by its correction. Like every sampler here it
+    is preconditioned by its reference; what sets it apart is the partial
+    refresh.
 
     Args:
         problem: the forward problem, with a Gaussian error measure and a
@@ -726,7 +729,7 @@ class PreconditionedHMC(ChainSampler):
         )
 
     def _kernel(self, target: Target, /) -> Kernel:
-        return PreconditionedHMC._build(target, self._step, **self._options())
+        return GeneralizedHMC._build(target, self._step, **self._options())
 
     def __repr__(self) -> str:
         return (
@@ -747,7 +750,7 @@ class GeometricMALA(MALA):
     Given a :class:`~pygeoinf.inference.laplace.LaplaceApproximation`, the
     local MALA: at every state the reference is the Laplace Gaussian there,
     ``K == (C^-1 + H(u))^-1`` with ``H`` the Gauss-Newton or a supplied
-    Hessian, centred on the Newton step from ``u``. That Gaussian is the
+    Hessian, centered on the Newton step from ``u``. That Gaussian is the
     posterior's quadratic model at ``u``, so the drift vanishes and the
     proposal is its Ornstein-Uhlenbeck step,
     ``v == m_u + cos(a) (u - m_u) + sin(a) xi`` with ``xi ~ N(0, K_u)``; the

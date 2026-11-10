@@ -3,7 +3,7 @@ Sampling dynamics: SDEs whose exact pieces a splitting scheme composes.
 
 Each dynamics is written in its function-space form, with the reference
 covariance ``K`` as its preconditioner and the reference mean ``m`` as the
-centre of its linear force, so that the reference's part is solved exactly
+center of its linear force, so that the reference's part is solved exactly
 and never split:
 
 .. code-block:: text
@@ -98,7 +98,10 @@ class Dynamics(ABC):
         self._target = target
         self._flows = self._build_flows()
         if target.is_mixture:
-            self._flows["L"] = LabelJump(target)
+            self._flows["L"] = LabelJump(
+                target,
+                gradient=any(flow.uses_gradient for flow in self._flows.values()),
+            )
         if not target.has_gradient:
             needing = [
                 letter for letter, flow in self._flows.items() if flow.uses_gradient

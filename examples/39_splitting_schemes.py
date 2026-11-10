@@ -179,7 +179,12 @@ def build(name: str, cost: int, duration: float):
 
 
 def run(name: str, cost: int, duration: float, chains: int, burn_in: int, steps: int):
-    """Chains of one word; the sampled posterior and the gradients spent."""
+    """Chains of one word; the sampled posterior and the gradients spent.
+
+    The seed is the cost's, shared by the three words: at each cost they
+    start from the same velocities and meet the same uniforms, so that what
+    differs between their rows is the word.
+    """
     gradients[0] = 0
     posterior = Chains(chains)(
         build(name, cost, duration),
@@ -255,12 +260,14 @@ print(
     f"{energy['BAB, the preset'][-1] / energy['two-stage'][-1]:.0f} times smaller "
     "than leapfrog's,"
 )
-print(
-    "  and ABA's is leapfrog's to within fifteen percent. With long steps the order is"
+closest = max(
+    abs(aba / bab - 1.0)
+    for aba, bab in zip(energy["ABA"], energy["BAB, the preset"], strict=True)
 )
-print("  reversed: at 16 gradients a trajectory leapfrog keeps to an error of")
+print(f"  and ABA's is leapfrog's to within {closest:.0%} at every cost. With long")
+print("  steps the order is reversed: at 16 gradients a trajectory leapfrog keeps")
 print(
-    f"  {energy['BAB, the preset'][1]:.2f} costs the two-stage step "
+    f"  to an error of {energy['BAB, the preset'][1]:.2f} costs the two-stage step "
     f"{energy['two-stage'][1]:.0f}. It takes the longer step per gradient, and"
 )
 print("  its stable range per gradient is the shorter.")
@@ -301,11 +308,27 @@ for cost in chain_costs:
         )
 print(f"  ({time.perf_counter() - started:.1f} s)")
 print()
+lowest = min(
+    acceptance
+    for name in words
+    for acceptance in mixing[name]["acceptance"][chain_costs.index(24) :]
+)
 print("At 16 gradients only the leapfrog words' trajectories are stable, and the")
-print("  two-stage chains barely move; R-hat says so. From 24 every word accepts")
-print("  nearly every trajectory, and the two-stage step's smaller error has")
-print("  nothing left to buy: its chains mix no better than leapfrog's, and at")
-print("  24 a little worse. The means agree within their errors wherever the")
+print(
+    "  two-stage chains barely move, accepting "
+    f"{mixing['two-stage']['acceptance'][0]:.0%} of their trajectories; R-hat says"
+)
+print(f"  so. From 24 every word accepts at least {lowest:.0%} of them, and the")
+print("  two-stage step's smaller error has nothing left to buy: its worst ESS")
+print(
+    f"  per thousand gradients is {mixing['two-stage']['ess'][1]:.1f} at 24 and "
+    f"{mixing['two-stage']['ess'][2]:.1f} at 48, against leapfrog's "
+    f"{mixing['BAB, the preset']['ess'][1]:.1f} and"
+)
+print(
+    f"  {mixing['BAB, the preset']['ess'][2]:.1f}. The means agree within their "
+    "errors wherever the"
+)
 print("  chains have mixed, since every word is corrected and so exact: the word")
 print("  decides the cost of a sample, never its law. A smaller error constant")
 print("  can pay where the energy error is what holds the acceptance down at a")

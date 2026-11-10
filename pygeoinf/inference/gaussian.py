@@ -1580,8 +1580,8 @@ class GaussianReference(GaussianMeasure, AbsolutelyContinuousMeasure):
         zx, zy = self.coordinates(x), self.coordinates(y)
         p = (zx + zy) / np.sqrt(2.0 * (1.0 + correlation))
         q = (zx - zy) / np.sqrt(2.0 * (1.0 - correlation))
-        centre = self._chart_mean * np.sqrt(2.0 / (1.0 + correlation))
-        dp = solve_triangular(self._cholesky, p - centre, lower=True)
+        center = self._chart_mean * np.sqrt(2.0 / (1.0 + correlation))
+        dp = solve_triangular(self._cholesky, p - center, lower=True)
         dq = solve_triangular(self._cholesky, q, lower=True)
         return float(
             -0.5 * (dp @ dp + dq @ dq)

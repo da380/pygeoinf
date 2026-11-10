@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import pathlib
 import time
+import warnings
 from typing import Any
 
 import joblib
@@ -49,6 +50,7 @@ from synthetic import Setup, setup
 COLORS = {"gauss-newton": "#2a78d6", "exact": "#eb6834"}
 DASHES = {"gauss-newton": "--", "exact": ":"}
 LABELS = {"gauss-newton": "Gauss-Newton Hessian", "exact": "exact Hessian"}
+SHORT = {"gauss-newton": "Gauss-Newton", "exact": "exact"}
 
 
 def references(state: Setup, mode: np.ndarray, /, *, rng: np.random.Generator) -> dict:
@@ -150,10 +152,22 @@ def chains(
     }
 
 
-def velocity_spread(models: list, /) -> tuple[np.ndarray, np.ndarray]:
-    """The pointwise mean and standard deviation of the velocity over models."""
-    velocity = 1.0 / np.sqrt(np.stack([np.asarray(m) for m in models]))
-    return velocity.mean(axis=0), velocity.std(axis=0, ddof=1)
+def velocity_spread(models: list, /) -> tuple[np.ndarray, np.ndarray, int]:
+    """The pointwise mean and standard deviation of the velocity over models,
+    and how many of the models are not slownesses squared everywhere.
+
+    A Gaussian's draw of ``m`` can fall to zero or below where the posterior
+    is wide, and has no velocity there; each cell's statistics are over the
+    models that have one, and are NaN where none does."""
+    m = np.stack([np.asarray(model) for model in models])
+    physical = m > 0.0
+    velocity = np.where(physical, 1.0 / np.sqrt(np.where(physical, m, 1.0)), np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mean = np.nanmean(velocity, axis=0)
+        spread = np.nanstd(velocity, axis=0, ddof=1)
+    unphysical = int(np.sum(~physical.reshape(len(models), -1).all(axis=1)))
+    return mean, spread, unphysical
 
 
 def hmc_answer(
@@ -247,20 +261,27 @@ def hmc_answer(
     for (name, run), stream in zip(runs.items(), draw_rng.spawn(len(runs))):
         stored = list(run["posterior"].stored_positions)
         draws = built[name]["reference"].samples(len(stored), rng=stream)
-        mean, spread = velocity_spread(stored)
-        _, laplace_spread = velocity_spread(draws)
+        mean, spread, _ = velocity_spread(stored)
+        _, laplace_spread, unphysical = velocity_spread(draws)
         shift = mean - 1.0 / np.sqrt(mode)
         fields[name] = {"laplace": laplace_spread, "sampled": spread, "shift": shift}
         ratio = spread[inside] / laplace_spread[inside]
+        ratio = ratio[np.isfinite(ratio)]
         print(
             f"  the velocity's pointwise sd over the section, HMC about the "
             f"{LABELS[name]} reference over its Laplace Gaussian's, from "
             f"{len(stored)} states and draws each: median {np.median(ratio):.2f}, "
             f"5-95% {np.percentile(ratio, 5):.2f}-{np.percentile(ratio, 95):.2f}; "
             f"the sampled mean less the MAP velocity, rms "
-            f"{1000 * np.sqrt(np.mean(shift[inside] ** 2)):.1f} m/s against a "
-            f"median sd of {1000 * np.median(spread[inside]):.1f} m/s"
+            f"{1000 * np.sqrt(np.nanmean(shift[inside] ** 2)):.1f} m/s against a "
+            f"median sd of {1000 * np.nanmedian(spread[inside]):.1f} m/s"
         )
+        if unphysical:
+            print(
+                f"  {unphysical} of the {len(draws)} Laplace draws have m <= 0 in "
+                "some cell, which has no velocity; each cell's sd is over the "
+                "draws that have one"
+            )
 
     draw_convergence(runs, outdir=outdir)
     draw_posterior(
@@ -391,18 +412,13 @@ def draw_posterior(
             fig.legend(frameon=False, fontsize=8, ncols=4, loc="outside lower center")
     for row, (name, field) in enumerate(fields.items(), start=1):
         spread_limit = 1000 * max(
-            float(field[key][survey.window].max()) for key in ("laplace", "sampled")
+            float(np.nanmax(field[key][survey.window]))
+            for key in ("laplace", "sampled")
         )
-        shift_limit = 1000 * float(np.abs(field["shift"][survey.window]).max())
+        shift_limit = 1000 * float(np.nanmax(np.abs(field["shift"][survey.window])))
         panels = (
-            ("laplace", f"Laplace sd, {LABELS[name]}", "magma", 0.0, spread_limit),
-            (
-                "sampled",
-                f"sampled sd, {LABELS[name]} reference",
-                "magma",
-                0.0,
-                spread_limit,
-            ),
+            ("laplace", f"Laplace sd, {SHORT[name]}", "magma", 0.0, spread_limit),
+            ("sampled", f"sampled sd, {SHORT[name]}", "magma", 0.0, spread_limit),
             (
                 "shift",
                 "sampled mean less the MAP velocity",
@@ -421,9 +437,9 @@ def draw_posterior(
         ax = fig.add_subplot(grid[row, 3])
         inside = survey.interior()
         ratio = field["sampled"][inside] / field["laplace"][inside]
-        ax.hist(ratio, bins=40, color=COLORS[name])
+        ax.hist(ratio[np.isfinite(ratio)], bins=40, color=COLORS[name])
         ax.axvline(1.0, color="k", lw=1.0)
-        ax.set_xlabel("sampled sd over Laplace sd, per cell")
+        ax.set_xlabel("sampled sd / Laplace sd, per cell")
         ax.set_yticks([])
     save(
         fig,

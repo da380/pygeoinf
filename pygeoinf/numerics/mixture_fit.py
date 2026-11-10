@@ -88,8 +88,8 @@ def fit_gaussian_mixture(
     w = w / w.sum()
     generator = resolve_rng(rng)
 
-    centred = x - w @ x
-    spread = float(np.sum(w @ centred**2)) / dimension
+    centered = x - w @ x
+    spread = float(np.sum(w @ centered**2)) / dimension
     floor = ridge * (spread if spread > 0.0 else 1.0) * np.identity(dimension)
 
     means = _seed(x, w, components, generator)
@@ -126,11 +126,11 @@ def fit_gaussian_mixture(
 
 
 def _seed(x: np.ndarray, w: np.ndarray, components: int, rng: Generator) -> np.ndarray:
-    """k-means++ centres: each next one drawn in proportion to its weighted
+    """k-means++ centers: each next one drawn in proportion to its weighted
     squared distance from the nearest already chosen."""
     chosen = [x[rng.choice(x.shape[0], p=w)]]
     for _ in range(components - 1):
-        nearest = np.min([((x - centre) ** 2).sum(axis=1) for centre in chosen], axis=0)
+        nearest = np.min([((x - center) ** 2).sum(axis=1) for center in chosen], axis=0)
         score = w * nearest
         total = score.sum()
         probabilities = score / total if total > 0.0 else w

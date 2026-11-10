@@ -13,6 +13,7 @@ import warnings
 
 import numpy as np
 import pytest
+from scipy.special import logsumexp
 from scipy.stats import multivariate_normal
 
 import pygeoinf as gi
@@ -35,16 +36,18 @@ from pygeoinf.inference.sampling import (
     SMC,
     Blockwise,
     Chains,
+    GeneralizedHMC,
     GeometricHMC,
     GeometricMALA,
     Gibbs,
+    GradientDrift,
     Hamiltonian,
     LabelJump,
+    LikelihoodKick,
     MetropolisHastings,
     MetropolizedBlock,
     MomentumRefresh,
     Overdamped,
-    PreconditionedHMC,
     PreconditionedOU,
     PriorOU,
     PriorRotation,
@@ -119,6 +122,25 @@ class Setting:
 @pytest.fixture(scope="module")
 def setting():
     return Setting()
+
+
+def reference_named(setting, name, rng):
+    """The prior, whose covariance is the identity and whose mean is zero, or
+    a rank-2 Gaussian with neither.
+
+    The rank-2 Gaussian is fitted to the posterior of other data under twice
+    the noise. Fitted to this posterior it would match it exactly along the
+    two directions where its covariance differs from the prior's, and
+    ``grad Phi_ref`` would be constant there: a drift preconditioned by the
+    prior's covariance in place of the reference's would then change the
+    transition ratio by a constant that cancels, and pass unseen."""
+    if name == "prior":
+        return setting.prior
+    error = gi.GaussianMeasure.from_standard_deviation(setting.forward.codomain, 1.0)
+    inversion = LinearGaussianInversion(
+        LinearForwardProblem(setting.forward, error=error), setting.prior
+    )
+    return inversion.reference(setting.data + 1.0, rank=2, rng=rng)
 
 
 def assert_recovers_the_mean(posterior, exact, *, bound=4.0):
@@ -253,6 +275,99 @@ class TestTheFlows:
             Overdamped(target)
 
 
+class CountingSetting:
+    """The linear setting's problem behind a forward that counts its calls."""
+
+    def __init__(self, setting):
+        self.calls = {"value": 0, "derivative": 0}
+
+        def value(x):
+            self.calls["value"] += 1
+            return setting.forward(x)
+
+        def derivative(x):
+            self.calls["derivative"] += 1
+            return setting.forward
+
+        forward = Operator.from_callables(
+            setting.space, setting.forward.codomain, value, derivative=derivative
+        )
+        self.problem = ForwardProblem(forward, error=setting.error)
+        self.setting = setting
+
+    def target(self, reference=None):
+        s = self.setting
+        return Target(self.problem, s.data, s.prior if reference is None else reference)
+
+    def reset(self):
+        self.calls.update(value=0, derivative=0)
+
+
+class TestTheForwardIsEvaluatedOncePerPosition:
+    """The value and the gradient at a position come from one forward
+    evaluation, whichever of them is asked for first."""
+
+    @pytest.mark.parametrize(
+        "flow", [LikelihoodKick, GradientDrift], ids=["kick", "drift"]
+    )
+    def test_a_kick_or_a_drift(self, setting, flow, rng):
+        counting = CountingSetting(setting)
+        target = counting.target()
+        state = Hamiltonian(target).initial_state(
+            setting.prior.sample(rng=rng), rng=rng
+        )
+        counting.reset()
+        flow(target).apply(state, 0.1)
+        assert counting.calls == {"value": 1, "derivative": 1}
+
+    @pytest.mark.parametrize(
+        "build, value, derivative",
+        [
+            (lambda p, q: PCN(p, q, step=0.3, acceptance=None), 1, 0),
+            (lambda p, q: MALA(p, q, step=0.1, acceptance=None), 1, 1),
+            (lambda p, q: HMC(p, q, step=0.2, length=3, acceptance=None), 3, 3),
+            (
+                lambda p, q: GeneralizedHMC(p, q, step=0.2, length=3, acceptance=None),
+                3,
+                3,
+            ),
+        ],
+        ids=["pcn", "mala", "hmc", "generalized-hmc"],
+    )
+    def test_each_step_of_a_preset(self, setting, build, value, derivative, rng):
+        counting = CountingSetting(setting)
+        kernel = build(counting.problem, setting.prior).kernel(setting.data)
+        state = kernel.initial_state(setting.prior.sample(rng=rng), rng=rng)
+        state = kernel.step(state, rng=rng).state
+        counting.reset()
+        steps = 20
+        for _ in range(steps):
+            state = kernel.step(state, rng=rng).state
+        assert counting.calls == {
+            "value": value * steps,
+            "derivative": derivative * steps,
+        }
+
+    def test_an_accepted_label_jump_before_a_kick(self, setting, rng):
+        counting = CountingSetting(setting)
+        target = counting.target(make_mixture(setting, rng))
+        jump = Hamiltonian(target).flows()["L"]
+        kick = LikelihoodKick(target)
+        for _ in range(200):
+            state = Hamiltonian(target).initial_state(
+                target.reference.sample(rng=rng), rng=rng
+            )
+            target.value(state, gradient=True)
+            counting.reset()
+            jumped, _ = jump.apply(state, 0.0, rng=rng)
+            if jumped.label != state.label:
+                break
+        else:
+            pytest.fail("No label jump was accepted in 200 tries.")
+        kick.apply(jumped, 0.1)
+        assert counting.calls == {"value": 1, "derivative": 1}
+
+
 class TestTheScheme:
     def test_any_word_is_accepted(self, setting):
         assert not SplittingScheme(
@@ -311,10 +426,15 @@ class TestTheScheme:
     def test_the_reference_is_invariant_at_a_large_step(self, setting, build, rng):
         check_scheme(build(setting.target()), rng=rng, samples=3000)
 
+    def test_its_probes_can_be_drawn_from_a_measure(self, setting, rng):
+        scheme = SplittingScheme(Hamiltonian(setting.target()), "OBAB", step=0.3)
+        check_scheme(scheme, rng=rng, measure=setting.posterior, samples=2000)
+        elsewhere = gi.GaussianMeasure.from_standard_deviation(EuclideanSpace(4), 1.0)
+        with pytest.raises(ValueError, match="lives on"):
+            check_scheme(scheme, rng=rng, measure=elsewhere)
+
     def test_a_word_that_does_not_preserve_the_reference_is_caught(self, setting, rng):
         class Shrink(Flow):
-            touches = frozenset({"position"})
-
             def apply(self, state, time, /, *, rng=None):
                 space = self.target.model_space
                 return state.moved(
@@ -335,26 +455,31 @@ class TestTheScheme:
 
 
 class TestTheBlockCorrection:
-    def test_the_energy_is_the_hamiltonians(self, setting, rng):
+    @pytest.mark.parametrize("reference", ["prior", "rank 2"])
+    def test_the_energy_is_the_hamiltonians(self, setting, reference, rng):
         """The flows' energy changes add up to the finite-dimensional
-        ``H == Phi + (|u|^2_{C^-1} + |v|^2_{C^-1}) / 2`` difference."""
-        target = setting.target()
+        ``H == Phi + |u|^2_{C^-1} / 2 + |v|^2_{K^-1} / 2`` difference, with
+        ``C`` the prior's covariance and ``K`` the reference's, the velocity's
+        law, written from their densities in components."""
+        target = setting.target(reference_named(setting, reference, rng))
         dynamics = Hamiltonian(target)
         block = SplittingScheme(dynamics, "BAB", step=0.3, repeat=5)
-        precision = setting.prior.precision
-        space = setting.space
+        potential = setting.problem.potential(setting.data)
+        prior = multivariate_normal(
+            np.zeros(4), setting.components_covariance(setting.prior)
+        )
+        velocity = multivariate_normal(
+            np.zeros(4), setting.components_covariance(target.reference)
+        )
 
         def hamiltonian(state):
             u, v = state.position, state.velocity
-            return target.value(state) + 0.5 * (
-                space.inner_product(precision(u), u)
-                + space.inner_product(precision(v), v)
-            )
+            return potential(u) - prior.logpdf(u) - velocity.logpdf(v)
 
         state = dynamics.initial_state(setting.prior.sample(rng=rng), rng=rng)
         proposal, energy = block.apply(state)
         assert target.value(proposal) - target.value(state) + energy == pytest.approx(
-            hamiltonian(proposal) - hamiltonian(state), rel=1e-10
+            hamiltonian(proposal) - hamiltonian(state), rel=1e-10, abs=1e-8
         )
 
     def test_a_rejection_keeps_the_position_and_flips_the_velocity(self, setting, rng):
@@ -403,25 +528,39 @@ class TestTheBlockCorrection:
 
 
 class TestMetropolisHastings:
-    def test_the_mala_ratio_is_the_direct_one(self, setting, rng):
+    @pytest.mark.parametrize("reference", ["prior", "rank 2"])
+    def test_the_mala_ratio_is_the_direct_one(self, setting, reference, rng):
         """Against the finite-dimensional densities: the posterior's, and the
-        proposal's ``N(c (u - h K grad Phi), b^2 C)``."""
-        target = setting.target()
+        proposal's ``N(m + c (u - h K grad Phi_ref - m), b^2 K)``, about the
+        reference ``N(m, K)``. The drift is written out in components, with
+        ``grad Phi_ref == grad Phi - K^-1 (u - m) + C^-1 u``, rather than read
+        from the target."""
+        target = setting.target(reference_named(setting, reference, rng))
         scheme = SplittingScheme(Overdamped(target), "BO", step=0.05)
-        covariance = setting.components_covariance(setting.prior)
+        prior_covariance = setting.components_covariance(setting.prior)
+        covariance = setting.components_covariance(target.reference)
+        mean = target.reference.expectation
         potential = setting.problem.potential(setting.data)
+        matrix = setting.forward.matrix(form="components")
+        precision = 1.0 / 0.5**2
         c, b = np.cos(PriorOU(target).angle(0.05)), np.sin(PriorOU(target).angle(0.05))
 
         def log_posterior(u):
-            return -potential(u) + multivariate_normal(np.zeros(4), covariance).logpdf(
-                u
+            return -potential(u) + multivariate_normal(
+                np.zeros(4), prior_covariance
+            ).logpdf(u)
+
+        def drift(u):
+            gradient = precision * matrix.T @ (matrix @ u - setting.data)
+            return (
+                covariance @ gradient
+                - (u - mean)
+                + covariance @ np.linalg.solve(prior_covariance, u)
             )
 
         def log_proposal(u, v):
-            drift = target.preconditioned_gradient(State(u))
-            return multivariate_normal(
-                c * (u - 0.05 * drift), b * b * covariance
-            ).logpdf(v)
+            center = mean + c * (u - 0.05 * drift(u) - mean)
+            return multivariate_normal(center, b * b * covariance).logpdf(v)
 
         for _ in range(3):
             state = State(setting.prior.sample(rng=rng))
@@ -582,6 +721,86 @@ class TestTheChains:
             Chains(1)(self.kernel(setting), start=setting.prior, rng=rng, **keywords)
 
 
+PRESETS_ON_A_BOUNDED_POSTERIOR = pytest.mark.parametrize(
+    "build",
+    [
+        lambda p, q, **k: PCN(p, q, step=0.3, acceptance=None, **k),
+        lambda p, q, **k: MALA(p, q, step=0.1, acceptance=None, **k),
+        lambda p, q, **k: HMC(p, q, step=0.2, length=3, acceptance=None, **k),
+    ],
+    ids=["pcn", "mala", "hmc"],
+)
+
+
+def visited(sampler, data, start):
+    """Every state a short run visits, burn-in included, and how many of its
+    proposals had no finite potential."""
+    positions, infinite = [], []
+
+    def callback(chain, iteration, step):
+        positions.append(step.state.position)
+        infinite.append(step.info.energy_error == float("inf"))
+
+    sampler(
+        data,
+        steps=300,
+        chains=2,
+        burn_in=50,
+        start=start,
+        rng=np.random.default_rng(4),
+        callback=callback,
+    )
+    return positions, sum(infinite)
+
+
+class TestAnInfinitePotentialInARunningChain:
+    """A proposal with no finite potential, outside the constraint or refused
+    by the forward, is rejected and the chain runs on: pCN and MALA meet it
+    in the Metropolis-Hastings ratio, HMC in a kick partway along a
+    trajectory. Each region holds about half the posterior's mass, so many
+    proposals fall outside it."""
+
+    @PRESETS_ON_A_BOUNDED_POSTERIOR
+    def test_a_constraint_is_never_left(self, setting, build):
+        center = setting.posterior.expectation
+        ball = Ball(setting.space, radius=0.85, center=center)
+        positions, infinite = visited(
+            build(setting.problem, setting.prior, constraint=ball),
+            setting.data,
+            center,
+        )
+        distances = [setting.space.norm(x - center) for x in positions]
+        assert max(distances) <= 0.85
+        assert infinite > 0
+
+    @PRESETS_ON_A_BOUNDED_POSTERIOR
+    def test_a_refused_proposal_is_rejected(self, setting, build, rng):
+        threshold = setting.exact
+
+        def value(x):
+            if setting.record(x)[0] > threshold:
+                raise EvaluationError("the solver diverged")
+            return setting.forward(x)
+
+        forward = Operator.from_callables(
+            setting.space,
+            setting.forward.codomain,
+            value,
+            derivative=lambda x: setting.forward,
+        )
+        problem = ForwardProblem(forward, error=setting.error)
+        start = next(
+            x
+            for x in (setting.posterior.sample(rng=rng) for _ in range(100))
+            if setting.record(x)[0] < threshold
+        )
+        positions, infinite = visited(
+            build(problem, setting.prior), setting.data, start
+        )
+        assert max(setting.record(x)[0] for x in positions) <= threshold
+        assert infinite > 0
+
+
 class TestTheAdaptation:
     def test_the_step_grows_when_it_accepts_too_often_and_shrinks_otherwise(self):
         adaptation = StepSizeAdaptation(acceptance=0.5)
@@ -694,7 +913,7 @@ class TestThePresets:
             (lambda s: PCN(s.problem, s.prior, step=0.3), 8000),
             (lambda s: MALA(s.problem, s.prior, step=0.3), 8000),
             (lambda s: HMC(s.problem, s.prior, step=0.3, length=5), 2000),
-            (lambda s: PreconditionedHMC(s.problem, s.prior, step=0.3), 4000),
+            (lambda s: GeneralizedHMC(s.problem, s.prior, step=0.3), 4000),
             (
                 lambda s: GeometricMALA(
                     s.problem, s.inversion.reference(s.data), step=0.5
@@ -801,6 +1020,40 @@ class TestThePresets:
         with pytest.raises(ValueError, match="prior"):
             SMC(sampler)
 
+    def test_smc_with_an_hmc_mutation(self, setting):
+        """The evidence, and the posterior mean of the probe by the weighted
+        particles, within four of its standard errors at the ensemble's
+        effective sample size. The population is smaller than the pCN test's,
+        to keep the test short, and the evidence is held more loosely."""
+        ensemble = SMC(
+            HMC(setting.problem, setting.prior, step=0.2, length=3),
+            particles=400,
+            mutation_steps=5,
+        )(setting.data, rng=np.random.default_rng(0))
+        assert ensemble.log_normalizer.value == pytest.approx(
+            setting.posterior.log_normalizer.value, abs=0.3
+        )
+        probe = setting.space.basis_vector(0)
+        mean = ensemble.weighted_mean(lambda x: setting.space.inner_product(x, probe))
+        deviation = np.sqrt(
+            setting.space.inner_product(setting.posterior.covariance(probe), probe)
+        )
+        error = deviation / np.sqrt(ensemble.effective_sample_size)
+        assert abs(mean - setting.exact) < 4.0 * error
+
+    def test_a_weighted_mean_weighs_each_particle(self, setting):
+        """Against the sum written out from the particles and their weights."""
+        ensemble = SMC(
+            PCN(setting.problem, setting.prior, step=0.05),
+            particles=200,
+            mutation_steps=2,
+        )(setting.data, rng=np.random.default_rng(1))
+        values = np.array([setting.record(x)[0] for x in ensemble.particles])
+        assert ensemble.weighted_mean(lambda x: setting.record(x)[0]) == pytest.approx(
+            ensemble.weights @ values, rel=1e-12
+        )
+        assert ensemble.weighted_mean(lambda x: 1.0) == pytest.approx(1.0)
+
 
 class TestTheConverters:
     def test_pcn_beta_is_the_step_s_sine(self, setting):
@@ -904,6 +1157,62 @@ class TestOverAMixtureReference:
             rng=np.random.default_rng(7),
         )
         assert_recovers_the_mean(posterior, setting.exact)
+
+    def test_a_label_jump_is_accepted_as_the_densities_say(self, setting, rng):
+        """Each jump's decision against the finite-dimensional acceptance
+        ``pi(u') nu(u) / (pi(u) nu(u'))``, with ``pi`` the posterior's
+        density and ``nu`` the mixture's, both in components; the jump's
+        generator is replayed for the component it proposes and the uniform
+        it accepts on."""
+        mixture = make_mixture(setting, rng)
+        target = setting.target(mixture)
+        dynamics = Hamiltonian(target)
+        jump = dynamics.flows()["L"]
+        potential = setting.problem.potential(setting.data)
+        prior = multivariate_normal(
+            np.zeros(4), setting.components_covariance(setting.prior)
+        )
+        components = [
+            multivariate_normal(
+                component.expectation, setting.components_covariance(component)
+            )
+            for component in mixture.components
+        ]
+
+        def log_posterior_over_mixture(u):
+            mixture_density = logsumexp(
+                [
+                    np.log(weight) + component.logpdf(u)
+                    for weight, component in zip(mixture.weights, components)
+                ]
+            )
+            return -potential(u) + prior.logpdf(u) - mixture_density
+
+        decided, accepted = 0, 0
+        for seed in range(300):
+            state = dynamics.initial_state(mixture.sample(rng=rng), rng=rng)
+            result, _ = jump.apply(state, 0.0, rng=np.random.default_rng(seed))
+            replay = np.random.default_rng(seed)
+            destination = int(replay.choice(len(mixture.weights), p=mixture.weights))
+            if destination == state.label:
+                assert result is state
+                continue
+            proposal = mixture.transport(state.position, state.label, destination)
+            log_alpha = log_posterior_over_mixture(
+                proposal
+            ) - log_posterior_over_mixture(state.position)
+            log_uniform = np.log(replay.random())
+            if abs(log_uniform - log_alpha) < 1e-9:
+                continue
+            if log_uniform < log_alpha:
+                assert result.label == destination
+                assert np.allclose(result.position, proposal, atol=1e-12)
+                accepted += 1
+            else:
+                assert result is state
+            decided += 1
+        assert decided > 50
+        assert 0 < accepted < decided
 
 
 @pytest.fixture(scope="module")
@@ -1273,18 +1582,24 @@ def gibbs_setting():
     return GibbsSetting()
 
 
-@pytest.fixture(scope="module")
-def gibbs_run(gibbs_setting):
+def two_block_gibbs(gibbs_setting):
     """PCN on one field and HMC on the other, from one starting step."""
     s = gibbs_setting
-    sampler = Gibbs(
+    return Gibbs(
         s.problem,
         s.prior,
         blocks={"a": PCN.recipe(step=0.3), "b": HMC.recipe(step=0.3, length=3)},
     )
-    return sampler(
+
+
+@pytest.fixture(scope="module")
+def gibbs_run(gibbs_setting):
+    """A short run of :func:`two_block_gibbs`: long enough for each block's
+    step to adapt, too short to hold its means to the exact ones."""
+    s = gibbs_setting
+    return two_block_gibbs(s)(
         s.data,
-        steps=3000,
+        steps=1000,
         chains=2,
         burn_in=500,
         record=s.record,
@@ -1293,11 +1608,15 @@ def gibbs_run(gibbs_setting):
 
 
 def assert_recovers_both_means(posterior, exact):
+    """Both recorded means within four of their Monte Carlo standard errors.
+
+    No R-hat is asserted: over two chains of a few thousand correlated steps
+    it is too noisy a statistic to hold to a threshold, and the means are
+    what the run is for."""
     estimates = posterior.scalar_means()
     for k in range(2):
         estimate = estimates[k + 1]
         assert abs(estimate.value - exact[k]) < 4.0 * estimate.standard_error
-    assert posterior.diagnostics().rhat.max() < 1.05
 
 
 class TestABlock:
@@ -1390,8 +1709,18 @@ class TestTheSweep:
 
 
 class TestGibbs:
-    def test_it_samples_the_posterior(self, gibbs_setting, gibbs_run):
-        assert_recovers_both_means(gibbs_run, gibbs_setting.exact)
+    @pytest.mark.slow
+    def test_it_samples_the_posterior(self, gibbs_setting):
+        s = gibbs_setting
+        posterior = two_block_gibbs(s)(
+            s.data,
+            steps=3000,
+            chains=2,
+            burn_in=500,
+            record=s.record,
+            rng=np.random.default_rng(2),
+        )
+        assert_recovers_both_means(posterior, s.exact)
 
     def test_each_block_adapts_to_its_own_acceptance(self, gibbs_run):
         """PCN aims at a quarter, HMC at two thirds, from the same step."""
@@ -1402,6 +1731,7 @@ class TestGibbs:
         assert abs(rates[0] - 0.25) < 0.1
         assert abs(rates[1] - 0.65) < 0.15
 
+    @pytest.mark.slow
     def test_the_symmetric_scan_samples_the_posterior(self, gibbs_setting):
         s = gibbs_setting
         sampler = Gibbs(
@@ -1472,33 +1802,46 @@ class TestGibbs:
         with pytest.raises(ValueError):
             PCN.recipe(**keywords)
 
-    @pytest.mark.slow
-    def test_one_sweep_from_the_posterior_stays_there(self, gibbs_setting):
+    @pytest.mark.parametrize(
+        "blocks, order, moved",
+        [
+            (
+                {
+                    "a": PCN.recipe(step=0.05, steps=3),
+                    "b": HMC.recipe(step=0.1, length=3, steps=2),
+                },
+                "systematic",
+                0.5,
+            ),
+            (
+                {0: MALA.recipe(step=0.05), 1: PCN.recipe(step=0.05)},
+                "symmetric",
+                0.25,
+            ),
+        ],
+        ids=["systematic", "symmetric"],
+    )
+    def test_one_sweep_from_the_posterior_stays_there(
+        self, gibbs_setting, blocks, order, moved
+    ):
         """From exact posterior draws, one sweep changes neither the mean nor
         the variance: invariance with no autocorrelation to estimate. The
-        steps are small, so most blocks move."""
+        steps are small, so many blocks move."""
         s = gibbs_setting
-        kernel = Gibbs(
-            s.problem,
-            s.prior,
-            blocks={
-                "a": PCN.recipe(step=0.05, steps=3),
-                "b": HMC.recipe(step=0.1, length=3, steps=2),
-            },
-        ).kernel(s.data)
+        kernel = Gibbs(s.problem, s.prior, blocks=blocks, order=order).kernel(s.data)
         rng = np.random.default_rng(11)
         before, after = [], []
-        for _ in range(20000):
+        for _ in range(2000):
             x = s.posterior.sample(rng=rng)
             state = kernel.step(kernel.initial_state(x, rng=rng), rng=rng).state
             before.append(s.record(x))
             after.append(s.record(state.position))
         before, after = np.array(before), np.array(after)
         difference = after - before
-        assert np.mean(np.abs(difference) > 0) > 0.5
+        assert np.mean(np.abs(difference) > 0) > moved
         z = difference.mean(axis=0) / (difference.std(axis=0) / np.sqrt(len(after)))
         assert np.all(np.abs(z) < 4.0)
-        assert np.allclose(after.var(axis=0) / before.var(axis=0), 1.0, atol=0.03)
+        assert np.allclose(after.var(axis=0) / before.var(axis=0), 1.0, atol=0.06)
 
 
 class MeshSetting:

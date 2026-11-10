@@ -1,9 +1,7 @@
 __pycache__
 .ipynb_checkpoints
 *~
-.vscode
 dist/*
-.claude
 # Scratch figures only. work/correlated.py writes its PNGs into whatever
 # directory it is run from, which is normally the repository root; the anchor
 # keeps that noise out without hiding deliberate figures such as
@@ -36,7 +34,3 @@ docs/source/pygeoinf*.rst
 miniapps/**/*.so
 miniapps/**/*.pyd
 miniapps/*/results/
-
-#   Briefs and Notes
-*.pdf
-*.tex

@@ -6,9 +6,11 @@ C records; the same functionals rebuilt from the quadratures that the indicator
 is integrated by; the indicator itself, on a level set whose province is a cap,
 against what can be worked out by hand along meridians and for the zonal
 harmonics; the two identities the sharp map obeys in its contrasts and its level
-set, and its derivative, which is zero in the level set; and the conditionals of the coupled prior, which ``Gibbs`` reads in closed
-form, against ``condition`` by brute force. The figure is the network, the
-modes' kernels, and what a province does to one wave's data.
+set, and its derivative, which is zero in the level set; and each coupled
+thermal field's conditional given the others, in closed form from
+``GaussianMeasure.conditional``, against the dense Schur complement. The figure
+is the network, the modes' kernels, and what a province does to one wave's
+data.
 """
 
 from __future__ import annotations
@@ -192,8 +194,10 @@ def conditionals_by_brute_force(scale: Scale, /, *, rng: Any) -> dict:
     for index, name in enumerate(FIELDS):
         own = np.arange(index * dim, (index + 1) * dim)
         rest = np.setdiff1d(np.arange(covariance.shape[0]), own)
+        # C_or C_rr^-1, written without assuming the component matrix is
+        # symmetric, which on a non-diagonal metric it need not be.
         gain = np.linalg.solve(
-            covariance[np.ix_(rest, rest)], covariance[np.ix_(rest, own)]
+            covariance[np.ix_(rest, rest)].T, covariance[np.ix_(own, rest)].T
         ).T
         mean = gain @ values[rest]
         schur = covariance[np.ix_(own, own)] - gain @ covariance[np.ix_(rest, own)]
@@ -214,7 +218,7 @@ def prove(scale: Scale, /, *, rng: Any) -> dict:
     """Every check at one scale, printed."""
     grid = network(scale)
     space = sphere(scale)
-    forward = Forward(space, grid, scale)
+    forward = Forward(space, grid, scale, n_jobs=scale.n_jobs)
     thermal = thermal_prior(scale, space)
     print(
         f"{scale.name} scale: degree {space.lmax}, {forward.data_space.dim} data, "

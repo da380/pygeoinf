@@ -5,12 +5,14 @@ A field on a circle is represented on a grid of a few dozen points or a few
 thousand, and its posterior is the same measure either way, the finer grid
 only resolving it better. A sampler should behave the same way: with the same
 step, the same acceptance rate at every resolution. Most finite-dimensional
-samplers do not. A random walk in the field's grid values proposes a small
-step in every one of its unknowns, and the more unknowns there are, the less
-likely a proposal is to be accepted; refined far enough, it accepts nothing.
-The reason is Feldman-Hajek: two Gaussians on a function space are either
-equivalent or singular, and a proposal that perturbs every mode by a
-comparable amount is singular to the prior in the limit.
+samplers do not. A random walk proposes ``m + s xi``, with ``xi`` a draw
+from the prior: a proposal shaped like the prior and as large as pCN's, but
+without pCN's contraction of ``m`` towards the prior mean. The finer the grid,
+the less likely its proposal is to be accepted; refined far enough, it accepts
+nothing. The reason is Feldman-Hajek: two Gaussians on a function space are
+either equivalent or singular, and a random-walk proposal made from a draw
+of the prior is Gaussian with the prior's covariance inflated by ``1 + s^2``,
+a measure singular to the prior in the limit.
 
 Every sampler in this library is built to have a limit. Its reference is the
 prior (or a Gaussian equivalent to it), the part of its dynamics the prior
@@ -46,7 +48,7 @@ from pygeoinf import (
     Operator,
     plotting,
 )
-from pygeoinf.inference.sampling import StepSizeAdaptation
+from pygeoinf.inference.sampling import StepSizeAdaptation, pcn_beta
 from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 from pygeoinf.symmetric_space import circle
 
@@ -145,11 +147,12 @@ def mean_and_error(probabilities: np.ndarray) -> tuple[float, float]:
 #
 # Each grid's chains start at its MAP model, so that what is measured is the
 # acceptance at equilibrium rather than on the way there, and run 100 steps
-# before the 300 that are kept. The steps are times (example 37); pCN's
-# h == 0.005 is a proposal of relative size 0.1, the random walk's s.
+# before the 300 that are kept. The steps are the dynamics' time steps h,
+# not proposal sizes; pCN's h == 0.005 is a proposal of relative size
+# pcn_beta(h) == 0.1, which is the random walk's s.
 
 steps = {"pCN": 0.005, "MALA": 0.005, "HMC": 0.08}
-walk_step = np.sqrt(1.0 - np.exp(-2.0 * steps["pCN"]))
+walk_step = pcn_beta(steps["pCN"])
 names = ["pCN", "MALA", "HMC", "random walk"]
 
 acceptance = {name: [] for name in names}
@@ -279,15 +282,20 @@ axis.set_xlabel("grid points")
 axis.set_ylabel("acceptance rate")
 axis.set_title("at a fixed step (two standard errors)")
 
+# The samplers' steps are times and the random walk's a proposal size, so
+# each curve is drawn against its own value on the coarsest grid: a sampler
+# with a limit stays at one.
 axis = axes[1]
 for name in names:
-    axis.plot(levels, adapted[name], marker=markers[name], label=name)
+    relative = np.array(adapted[name]) / adapted[name][0]
+    axis.plot(levels, relative, marker=markers[name], label=name)
+axis.axhline(1.0, color="0.6", linewidth=0.8)
 axis.set_xscale("log")
-axis.set_yscale("log")
+axis.set_ylim(bottom=0.0)
 axis.set_xticks(levels, [str(n) for n in levels])
 axis.set_xlabel("grid points")
-axis.set_ylabel("adapted step")
-axis.set_title("the step adaptation settles on")
+axis.set_ylabel(f"adapted step / its value at {levels[0]} points")
+axis.set_title("the adapted step, against the coarsest grid's")
 
 axis = axes[2]
 shades = plt.get_cmap("viridis")

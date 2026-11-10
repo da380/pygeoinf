@@ -471,16 +471,21 @@ class Target:
         """
         return self._likelihood(state, gradient=False).value
 
-    def value(self, state: State, /) -> float:
+    def value(self, state: State, /, *, gradient: bool = False) -> float:
         """``Phi_ref`` at the state's position.
 
         Args:
             state: the chain's state.
+            gradient: also evaluate the likelihood's gradient and cache it on
+                the state. One forward evaluation serves both, so a caller
+                that needs the value and then the gradient asks here first;
+                asking for the value alone and the gradient after costs two.
+                Ignored where the target has no gradient.
 
         Returns:
             The residual potential, ``+inf`` where the likelihood is.
         """
-        phi = self._likelihood(state, gradient=False).value
+        phi = self._likelihood(state, gradient=gradient and self._has_gradient).value
         if phi == float("inf"):
             return phi
         return phi / self._temperature + self._density(state).value

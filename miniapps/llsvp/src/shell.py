@@ -30,7 +30,7 @@ from cartopy.io import shapereader
 # The three thermal fields, in the order of every block and column below.
 FIELDS = ("vs", "vp", "rho")
 # Plate boundaries, as polylines of (latitude, longitude) in degrees, coarse
-# and hand-placed: subduction zones for the most part, as the catalogue is,
+# and hand-placed: subduction zones for the most part, as the catalog is,
 # then the Alpine-Himalayan belt and the longest ridges.
 BOUNDARIES = (
     ((-15, -173), (-22, -175), (-30, -178), (-38, 178)),
@@ -390,8 +390,8 @@ class Network:
         stations: the stations, likewise.
         s_arcs: the Sdiff arcs on the shell, ``(start, end)`` pairs.
         p_arcs: the Pdiff arcs.
-        s_caps: the centres of the ScS caps, an array of points.
-        p_caps: the centres of the PcP caps.
+        s_caps: the centers of the ScS caps, an array of points.
+        p_caps: the centers of the PcP caps.
         kernels: the modes' weights, one row per mode, on (vs, vp, rho).
     """
 
