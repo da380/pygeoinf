@@ -313,6 +313,42 @@ a Gaussian on four numbers whose covariance matrix costs four solves; the
 prior's push-forward beside it costs nothing. Figure `laplace.png` draws
 each mean's two standard deviations before and after, with the truth.
 
+**The measure, sampled** (part G, `hmc.py`), on each Hessian in turn:
+
+```python
+laplace = LaplaceApproximation.from_problem(
+    problem, prior, gauss_newton=gauss_newton, rank=scale.laplace_rank, ...
+)
+reference = laplace.reference(state.data, at=mode)
+target = Target(state.problem.potential(state.data), reference)
+sampler = Chains(
+    HMC(step=scale.hmc_step, length=scale.hmc_length),
+    steps=scale.hmc_steps, burn_in=scale.hmc_burn_in, chains=scale.hmc_chains,
+    callback=trace, ...
+)
+posterior = sampler(target, record=boxes, ...)
+```
+
+`reference` is the Laplace Gaussian at the saved mode in the low-rank chart
+form: the prior, with its law along the curvature's leading directions
+replaced by the curvature's. Only building it needs the Hessian, the
+Gauss-Newton one from the first derivative or the exact one from the second;
+the chains need only the gradient, from one adjoint per leapfrog step. The
+reference sets how fast a chain mixes and the Metropolis step makes it exact,
+so both samplers sample the same posterior.
+`MonteCarloEstimator(state.problem, prior, sampler=sampler, reference=reference)`
+would build the target and run the chains in one go; the app builds the
+target itself and calls the sampler on it, so that the callback can read the
+potential the target has already cached at each state and trace the burn-in
+at no cost. The chains run one after another in this process: the operator
+holds the C++ solver, which a worker process cannot be sent, and its cache
+holds one model. `record=boxes` keeps the four box means at every step, from
+which `posterior.diagnostics()` gives each one's autocorrelation time,
+effective sample size and R-hat. The velocity's pointwise spread is taken
+over the stored states and over as many draws of the reference, leaving out
+a draw's cells where its `m` is not positive. Figures `hmc_convergence.png`
+and `hmc_posterior.png` draw the chains and what they find.
+
 **No set.** A nonlinear forward's set answer in the library is the feasible
 set of the problem linearized about a model, `BackusGilbertParker(...,
 model=mode)` (tutorial 14); this app does not run it.

@@ -84,6 +84,14 @@ failing test rather than a surprise later.
 | 35 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
 | 36 | `layered_planet` | fields that are smooth in each layer and jump between them: a direct sum of spaces that knows its layers are adjacent, data of three kinds at once, and continuity by conditioning |
 
+**Sampling**
+
+| | | |
+|---|---|---|
+| 37 | `sampling` | the sampling moves, run by the Monte Carlo estimator, on a posterior with two modes: which chains cross the barrier, how the diagnostics say so, and tempering's evidence |
+| 38 | `sampling_discretization_invariance` | one nonlinear problem on four grids: pCN, MALA and HMC accept at the same rate and settle on the same step on every one, while a random walk stops moving as the grid is refined |
+| 39 | `splitting_schemes` | `HMC` taken apart into its dynamics, splitting scheme and correction, the same chains by hand, and two other words for the same dynamics: all second order, with error constants and stability ranges that decide what a gradient buys |
+
 ## The ones with optional dependencies
 
 Each skips without what it needs. The list is the one `tests/test_examples.py`

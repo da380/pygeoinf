@@ -55,6 +55,7 @@ __all__ = [
     "check_projection",
     "check_convexity",
     "check_affine",
+    "check_scheme",
 ]
 
 
@@ -1720,3 +1721,169 @@ def check_affine(
     for axiom, defect in nested.defects.items():
         _record(defects, axiom, defect)
     return CheckReport("check_affine", defects)
+
+
+def check_scheme(
+    scheme: object,
+    /,
+    *,
+    rng: Generator | None = None,
+    measure: ProbabilityMeasure | None = None,
+    samples: int = 4000,
+    rtol: float = 0.1,
+    atol: float = 0.0,
+    directions: int = 3,
+    reversibility_rtol: float = 1e-8,
+) -> CheckReport:
+    """Check a splitting scheme against what its construction promises.
+
+    Two properties a scheme of a function-space sampler has by design, and
+    which an ordering or sign error breaks:
+
+    * **The reference is invariant at any step.** With the likelihood
+      removed, every flow left is an exact solve of the reference's own
+      dynamics, so one application of the word, at the scheme's own step
+      however large, must map the reference (with an independent ``N(0,
+      K)`` velocity, for an inertial dynamics) to itself. Over a mixture
+      reference the state carries a component, drawn from its share of the
+      density, and the velocity is drawn from that component's covariance.
+      The sample mean and covariance of the position, and of the velocity,
+      along a few probe directions are compared with the reference's, as
+      :func:`check_measure` compares them, and so is the cross-covariance
+      of position and velocity, which must vanish. The probes are draws of
+      the reference, which weight its modes as it does, unless *measure* is
+      given.
+    * **A deterministic word is reversed by a velocity flip.** Applying it,
+      flipping, applying it again and flipping must return the start, on
+      the scheme's own target, likelihood included.
+
+    Whether acceptance stays flat under mesh refinement is the other test
+    the theory asks for; it takes two schemes on two meshes and is the
+    caller's to arrange.
+
+    Args:
+        scheme: the :class:`~pygeoinf.sampling.SplittingScheme`
+            to check.
+        rng: the generator. Seed it.
+        measure: a measure on the model space to draw the probe directions
+            from, in place of the reference; see the module docstring.
+        samples: how many draws the invariance check takes.
+        rtol: the statistical agreement required of the moments, as in
+            :func:`check_measure`.
+        atol: an absolute allowance added to every moment comparison.
+        directions: how many probe directions the moments are compared
+            along.
+        reversibility_rtol: the agreement required of the round trip,
+            relative to the size of the state.
+
+    Returns:
+        The report: the mean's worst deviation in standard errors, the
+        covariances' worst deviation as the fraction *rtol* bounds, and the
+        round trip's worst relative defect.
+
+    Raises:
+        AssertionError: if the reference is not left invariant or a
+            deterministic word is not reversed by the flip.
+        ValueError: if *measure* lives on another space.
+    """
+    from .sampling.target import Target
+
+    rng = resolve_rng(rng)
+    defects: dict[str, float] = {}
+    dynamics = scheme.dynamics
+    reference = dynamics.reference
+    space = reference.domain
+    free = scheme.with_dynamics(dynamics.with_target(Target.from_reference(reference)))
+    source = reference if measure is None else measure
+    probes = [_draw(space, rng, source) for _ in range(min(space.dim, directions))]
+    count = len(probes)
+
+    rows = []
+    for _ in range(samples):
+        state = free.dynamics.initial_state(reference.sample(rng=rng), rng=rng)
+        state, _ = free.apply(state, rng=rng)
+        row = [space.inner_product(state.position, u) for u in probes]
+        if state.velocity is not None:
+            row += [space.inner_product(state.velocity, u) for u in probes]
+        rows.append(row)
+    projections = np.array(rows)
+    parts = 2 if projections.shape[1] > count else 1
+    mean = reference.expectation
+    expected_mean = [space.inner_product(mean, u) for u in probes] + [0.0] * (
+        count if parts == 2 else 0
+    )
+    spread = np.std(projections, axis=0)
+    for i, expected in enumerate(expected_mean):
+        observed = float(projections[:, i].mean())
+        standard_error = spread[i] / np.sqrt(samples) + 1e-300
+        _record(
+            defects,
+            "the reference's mean is invariant",
+            abs(observed - expected) / standard_error,
+        )
+        if abs(observed - expected) > atol + 6.0 * standard_error + 1e-12:
+            _fail(
+                "the reference's mean is invariant",
+                f"a projection's mean is {observed:g} after one step, "
+                f"{expected:g} before, beyond six standard errors",
+            )
+
+    def gram(covariance):
+        images = [covariance(u) for u in probes]
+        return np.array(
+            [[space.inner_product(image, v) for v in probes] for image in images]
+        )
+
+    block = gram(reference.covariance)
+    expected_cov = np.zeros((parts * count, parts * count))
+    expected_cov[:count, :count] = block
+    if parts == 2:
+        # Over a mixture the velocity is N(0, K_j) given the component, so
+        # its covariance is the weighted sum of the components'.
+        if dynamics.target.is_mixture:
+            velocity_block = sum(
+                weight * gram(component.covariance)
+                for weight, component in zip(reference.weights, reference.components)
+            )
+        else:
+            velocity_block = block
+        expected_cov[count:, count:] = velocity_block
+    centered = projections - projections.mean(axis=0, keepdims=True)
+    empirical = centered.T @ centered / (samples - 1)
+    diagonal = np.diag(expected_cov)
+    for i in range(parts * count):
+        for j in range(parts * count):
+            scale = np.sqrt(max(diagonal[i], 0.0) * max(diagonal[j], 0.0))
+            residual = abs(empirical[i, j] - expected_cov[i, j])
+            _record(
+                defects,
+                "the reference's covariance is invariant",
+                residual / max(scale, 1e-12),
+            )
+            if residual > atol + rtol * max(scale, 1e-12):
+                _fail(
+                    "the reference's covariance is invariant",
+                    f"entry ({i}, {j}) is {empirical[i, j]:g} after one step and "
+                    f"{expected_cov[i, j]:g} before, beyond {rtol * scale:g}",
+                )
+
+    if scheme.is_deterministic and dynamics.has_velocity:
+        for _ in range(3):
+            start = dynamics.initial_state(reference.sample(rng=rng), rng=rng)
+            forward, _ = scheme.apply(start, rng=rng)
+            back, _ = scheme.apply(dynamics.flip(forward), rng=rng)
+            back = dynamics.flip(back)
+            for name, a, b in (
+                ("position", back.position, start.position),
+                ("velocity", back.velocity, start.velocity),
+            ):
+                _assert_close(
+                    space,
+                    a,
+                    b,
+                    f"a flip reverses the word ({name})",
+                    rtol=reversibility_rtol,
+                    atol=atol,
+                    record=defects,
+                )
+    return CheckReport("check_scheme", defects)

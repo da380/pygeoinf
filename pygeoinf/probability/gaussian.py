@@ -872,7 +872,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     whitening, domain=domain, codomain=domain if seated else None
                 )
             )
-        return cls(
+        product = cls(
             domain,
             expectation=(
                 None
@@ -883,6 +883,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             precision_factor=precision_factor,
             unsafe=True,
         )
+        # The structure a conditional reads in closed form; a measure derived
+        # from this one does not carry it and is conditioned the general way.
+        product._latent_structure = (measures, 0.5 * (correlation + correlation.T))
+        return product
 
     @classmethod
     def from_tensor_product(
@@ -2945,6 +2949,229 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             sample=sample,
             unsafe=True,
         )
+
+    def translate(self, vector: X) -> "GaussianMeasure[X]":
+        """The law of ``X + v``, keeping what a conditional reads in closed
+        form: a translation changes the means alone.
+
+        Args:
+            vector: the shift ``v``.
+
+        Returns:
+            The translated measure.
+        """
+        result = super().translate(vector)
+        structure = getattr(self, "_latent_structure", None)
+        if structure is not None and isinstance(result, GaussianMeasure):
+            result._latent_structure = structure
+        return result
+
+    def conditional(
+        self, key: int | str, given: Any, /, *, solver: Any = None
+    ) -> "GaussianMeasure":
+        """The law of one summand given the others, for a measure on a direct sum.
+
+        The conditional of summand ``i`` given the others' values ``x_o``:
+        Gaussian, with a mean that moves linearly with ``x_o`` and a fixed
+        covariance, the Schur complement ``C_ii - C_io C_oo^-1 C_oi``, which
+        is never formed as a matrix. Read in closed form where the measure's
+        structure allows:
+
+        * an independent product: the marginal, the others telling nothing;
+        * a measure from
+          :meth:`~pygeoinf.symmetric_space.base.SymmetricSpace.correlated_measure`,
+          whose covariance is a small matrix per spectral mode: the Schur
+          complement mode by mode, a diagonal covariance and a regression
+          coefficient per mode;
+        * a product correlated through its latent noises
+          (:meth:`from_product` with ``correlation=R``): the Schur complement
+          of ``R``, ``x_i == m_i + L_i (sum_j b_j eta_j) + s L_i xi`` with
+          ``eta_j == L_j^-1 (x_j - m_j)``, where every factor's latent
+          whitening is known;
+
+        and otherwise by :meth:`condition` on the others' exact values,
+        marginalized, a solve per application of its covariance.
+
+        On a function space, the conditionals for two different values of
+        the others are singular to one another when the correlation does not
+        decay with scale, a constant ``R`` say: each is a Gaussian on the
+        summand's space, but no move may compare two of them.
+
+        Args:
+            key: the summand, by position or by label.
+            given: a vector of the direct sum, from which the other summands'
+                values are read; its own summand ``key`` is ignored.
+            solver: how the general route inverts ``C_oo``; see
+                :meth:`condition`.
+
+        Returns:
+            The conditional measure, on the summand's space.
+
+        Raises:
+            ValueError: if this measure is not on a direct sum, or, on the
+                general route, as for :meth:`condition`.
+        """
+        from ..algebra.direct_sum import BlockDiagonalLinearOperator
+
+        domain = self._require_direct_sum("A conditional")
+        index = domain.index(key)
+        count = len(domain.subspaces)
+        if count == 1:
+            return self.marginal(index)
+        if isinstance(self._covariance, BlockDiagonalLinearOperator) or isinstance(
+            self._covariance_factor, BlockDiagonalLinearOperator
+        ):
+            return self.marginal(index)
+        slices = self._spectral_slices()
+        space = domain.subspace(index)
+        if (
+            slices is not None
+            and slices.shape[1] == count
+            and space.has_diagonal_metric
+        ):
+            return self._spectral_conditional(slices, domain, index, given)
+        structure = getattr(self, "_latent_structure", None)
+        if structure is not None:
+            conditional = self._latent_conditional(structure, domain, index, given)
+            if conditional is not None:
+                return conditional
+        return self._general_conditional(domain, index, given, solver)
+
+    def _offsets(self, domain: "DirectSum", given: Any, /) -> list[Any]:
+        """Each summand of ``given`` less the expectation's."""
+        if self.has_zero_expectation:
+            return list(given)
+        return [
+            space.subtract(value, mean)
+            for space, value, mean in zip(domain.subspaces, given, self._expectation)
+        ]
+
+    def _summand_mean(self, domain: "DirectSum", index: int, /) -> Any:
+        """The expectation's summand ``index``."""
+        space = domain.subspace(index)
+        if self.has_zero_expectation:
+            return space.zero()
+        return domain.component(self._expectation, index)
+
+    def _spectral_conditional(
+        self, slices: np.ndarray, domain: "DirectSum", index: int, given: Any, /
+    ) -> "GaussianMeasure":
+        """The slice-wise Schur complement of a spectrally block-diagonal
+        covariance: the components are those the slices act on, and the
+        copies' common diagonal metric cancels from the regression."""
+        from ..algebra.diagonal import DiagonalLinearOperator
+
+        others = [j for j in range(slices.shape[1]) if j != index]
+        within = slices[:, others][:, :, others]
+        across = slices[:, index, others]
+        coefficient = np.einsum("kl,klm->km", across, np.linalg.pinv(within))
+        variance = np.clip(
+            slices[:, index, index] - np.einsum("kl,kl->k", coefficient, across),
+            0.0,
+            None,
+        )
+        space = domain.subspace(index)
+        offsets = self._offsets(domain, given)
+        shift = np.zeros(space.dim)
+        for column, j in enumerate(others):
+            shift += coefficient[:, column] * domain.subspace(j).to_components(
+                offsets[j]
+            )
+        mean = space.add(
+            self._summand_mean(domain, index), space.from_components(shift)
+        )
+        covariance = DiagonalLinearOperator(space, variance)
+        precision = None
+        if np.all(variance > 0.0):
+            precision = DiagonalLinearOperator(space, 1.0 / variance)
+        return GaussianMeasure(
+            space,
+            covariance=covariance,
+            covariance_factor=covariance.sqrt,
+            precision=precision,
+            expectation=mean,
+            unsafe=True,
+        )
+
+    def _latent_conditional(
+        self, structure: tuple, domain: "DirectSum", index: int, given: Any, /
+    ) -> "GaussianMeasure | None":
+        """The Schur complement of the latent correlation, or ``None`` when a
+        factor's latent whitening is not known."""
+        measures, correlation = structure
+        others = [j for j in range(len(measures)) if j != index]
+        whitening = [_latent_whitening(measures[j]) for j in others]
+        if any(w is None for w in whitening):
+            return None
+        coefficient = correlation[index, others] @ np.linalg.pinv(
+            correlation[np.ix_(others, others)]
+        )
+        variance = float(
+            correlation[index, index] - coefficient @ correlation[others, index]
+        )
+        spread = float(np.sqrt(max(variance, 0.0)))
+        factor = measures[index].covariance_factor
+        latent = factor.domain
+        offsets = self._offsets(domain, given)
+        combination = latent.zero()
+        for weight, j, whiten in zip(coefficient, others, whitening):
+            combination = latent.axpy(float(weight), whiten(offsets[j]), combination)
+        space = domain.subspace(index)
+        mean = space.add(self._summand_mean(domain, index), factor(combination))
+        precision = None
+        if spread > 0.0 and measures[index].precision is not None:
+            precision = measures[index].precision * (1.0 / variance)
+        return GaussianMeasure(
+            space,
+            covariance_factor=factor * spread,
+            precision=precision,
+            expectation=mean,
+            unsafe=True,
+        )
+
+    def _general_conditional(
+        self, domain: "DirectSum", index: int, given: Any, solver: Any, /
+    ) -> "GaussianMeasure":
+        """:meth:`condition` on the other summands' values, marginalized."""
+        from ..algebra.direct_sum import DirectSum
+        from ..traits import Traits as _Traits
+
+        others = [j for j in range(len(domain.subspaces)) if j != index]
+        spaces = domain.subspaces
+        if len(others) == 1:
+            (j,) = others
+            codomain = spaces[j]
+
+            def value(x: tuple) -> Any:
+                return x[j]
+
+            def adjoint(y: Any) -> tuple:
+                return tuple(
+                    y if k == j else spaces[k].zero() for k in range(len(spaces))
+                )
+
+            observed = given[j]
+        else:
+            labels = (
+                None if domain.labels is None else [domain.labels[k] for k in others]
+            )
+            codomain = DirectSum([spaces[k] for k in others], labels=labels)
+
+            def value(x: tuple) -> tuple:
+                return tuple(x[k] for k in others)
+
+            def adjoint(y: tuple) -> tuple:
+                parts = dict(zip(others, y))
+                return tuple(
+                    parts[k] if k in parts else spaces[k].zero()
+                    for k in range(len(spaces))
+                )
+
+            observed = tuple(given[k] for k in others)
+        projection = LinearOperator.from_callables(
+            domain, codomain, value, adjoint=adjoint, traits=_Traits.SURJECTIVE
+        )
+        return self.condition(projection, observed, solver=solver).marginal(index)
 
     def cross_covariance(
         self, first: int | str, second: int | str, /

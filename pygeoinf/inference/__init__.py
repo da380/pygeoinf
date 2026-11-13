@@ -60,6 +60,7 @@ from .point import (
     LeastSquares,
     MinimumNorm,
 )
+from .monte_carlo import MonteCarloEstimator
 from .problem import ForwardProblem, LinearForwardProblem
 
 
@@ -79,6 +80,7 @@ __all__ = [
     "LowRankGaussianPosterior",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
+    "MonteCarloEstimator",
     "FactoredNormalOperator",
     "NormalOperator",
     "NormalDiagonalPreconditioner",

@@ -45,6 +45,7 @@ from ..probability.absolutely_continuous import (
 )
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
+from ..probability.reference import GaussianReference
 from ..traits import Traits
 from .estimators import GaussianEstimator
 from .problem import LinearForwardProblem
@@ -54,7 +55,11 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.spaces import HilbertSpace
     from ..numerics.randomized import Estimate
 
-__all__ = ["GaussianPosterior", "LinearGaussianInversion", "LowRankGaussianPosterior"]
+__all__ = [
+    "GaussianPosterior",
+    "LinearGaussianInversion",
+    "LowRankGaussianPosterior",
+]
 
 
 class GaussianPosterior(GaussianMeasure, AbsolutelyContinuousMeasure):
@@ -763,6 +768,71 @@ class LinearGaussianInversion(GaussianEstimator):
         constant = mahalanobis + dimension * np.log(2.0 * np.pi)
         return combine_log_normalizer([(-0.5, float(constant)), (-0.5, volume)])
 
+    def reference(
+        self,
+        data: Any,
+        /,
+        *,
+        rank: int | None = None,
+        rng: Generator | None = None,
+        n_jobs: int | None = None,
+    ) -> "GaussianReference":
+        """The posterior as a reference for a sampler, in chart form.
+
+        At full rank (*rank* omitted) the chart is the data themselves,
+        ``l(u) == A (u - m_0)`` read through the data space's components,
+        and the reference *is* the posterior: a linear-Gaussian posterior
+        differs from the prior only through ``A u``. It costs one adjoint
+        and one prior-covariance application per datum, and a dense
+        factorization of the data dimension. With *rank*, the chart is the
+        leading directions the data inform, those of the
+        :class:`LowRankGaussianPosterior`, and the reference is that
+        measure: the prior corrected in ``rank`` directions.
+
+        Args:
+            data: the observations.
+            rank: how many directions to keep; the full data chart if
+                omitted.
+            rng: the generator for the randomized eigendecomposition behind
+                *rank*.
+            n_jobs: workers for the chart's applications.
+
+        Returns:
+            The reference.
+
+        Raises:
+            ValueError: if the problem has no error measure, the posterior
+                then being singular to the prior.
+        """
+        problem = self._problem
+        prior = self._prior
+        if not problem.has_error:
+            raise ValueError(
+                "Exact data condition the prior onto the models that fit "
+                "them, which is singular to it; a reference needs an error "
+                "measure."
+            )
+        forward = problem.forward_operator
+        if rank is None:
+            vectors, images, gram, noise, data_space = _data_chart(
+                forward, prior, problem.error_measure, n_jobs=n_jobs
+            )
+            residual = data_space.to_components(
+                data_space.subtract(data, self._data_shift(problem, prior))
+            )
+            combined = gram + noise
+            mean = gram @ np.linalg.solve(combined, residual)
+            covariance = gram - gram @ np.linalg.solve(combined, gram)
+            return GaussianReference(prior, vectors, mean, covariance, images=images)
+        posterior = LowRankGaussianPosterior.from_linear_problem(
+            problem, prior, data, rank=rank, rng=rng, n_jobs=n_jobs
+        )
+        misfit = forward.adjoint @ problem.error_measure.precision @ forward
+        vectors = misfit.apply_block(posterior.modes(n_jobs=n_jobs), n_jobs=n_jobs)
+        return GaussianReference.from_gaussian(
+            prior, vectors, mean=posterior.expectation, covariance=posterior.covariance
+        )
+
     @staticmethod
     def _prior_and_noise_can_be_drawn(
         problem: LinearForwardProblem, prior: GaussianMeasure
@@ -812,6 +882,7 @@ def _information_eigenpairs(
     rng: Generator | None,
     n_jobs: int | None,
     semidefinite: bool = True,
+    clip: bool = True,
 ) -> tuple[LinearOperator, np.ndarray]:
     """The leading eigenpairs of ``L* M L``, the misfit Hessian ``M`` seen
     through the prior's factor ``L``: an isometry from ``R^r`` into the
@@ -822,7 +893,8 @@ def _information_eigenpairs(
     curvature weighted by the residual, need not be (*semidefinite* False):
     its eigenpairs are taken by magnitude and the negative eigenvalues are
     clipped at zero, so the directions in which the curvature would widen
-    the prior keep the prior instead."""
+    the prior keep the prior instead; with *clip* False they are returned
+    as they are, for a caller that refuses them."""
     from ..numerics.randomized import random_eig
 
     factor = prior.covariance_factor
@@ -833,7 +905,9 @@ def _information_eigenpairs(
         traits |= Traits.POSITIVE_SEMIDEFINITE
     hessian = (factor.adjoint @ misfit_hessian @ factor).with_traits(traits)
     decomposition = random_eig(hessian, rank=rank, rng=rng, n_jobs=n_jobs)
-    eigenvalues = np.clip(np.asarray(decomposition.eigenvalues, dtype=float), 0.0, None)
+    eigenvalues = np.asarray(decomposition.eigenvalues, dtype=float)
+    if clip:
+        eigenvalues = np.clip(eigenvalues, 0.0, None)
     return decomposition.factor, eigenvalues
 
 
@@ -1144,3 +1218,58 @@ class LowRankGaussianPosterior(GaussianPosterior):
         for weight, mode in zip(shrink, self.modes(n_jobs=n_jobs)):
             total = space.axpy(float(weight), space.multiply(mode, mode), total)
         return total
+
+
+def _data_chart(
+    jacobian: LinearOperator,
+    prior: GaussianMeasure,
+    error: GaussianMeasure,
+    /,
+    *,
+    n_jobs: int | None,
+) -> tuple[list[Any], list[Any], np.ndarray, np.ndarray, Any]:
+    """The chart ``l(u) == E J (u - m_0)`` through a data space's components.
+
+    ``E`` is the data space's coordinate map, so the chart vectors are
+    ``J* E* e_j``, one adjoint application per datum, and their images
+    under the prior covariance one application of it each. Returns the
+    vectors, their images, the prior's chart covariance ``K_l``, the
+    error's covariance in the same coordinates, ``E R E*``, and the data
+    space.
+
+    Raises:
+        TypeError: if the data space has no coordinates, which the chart's
+            coordinates are.
+        ValueError: if the error measure has no covariance.
+    """
+    from ..algebra.spaces import CoordinateSpace
+
+    data_space = jacobian.codomain
+    if not isinstance(data_space, CoordinateSpace):
+        raise TypeError(
+            "A full-rank data chart reads the data through their components, "
+            f"and {type(data_space).__name__} has none; use rank= instead."
+        )
+    if error.covariance is None:
+        raise ValueError("The error measure needs a covariance.")
+    count = data_space.dim
+    unit = np.identity(count)
+    duals = [
+        data_space.from_components(data_space.solve_gram(unit[j])) for j in range(count)
+    ]
+    vectors = jacobian.adjoint.apply_block(duals, n_jobs=n_jobs)
+    images = prior.covariance.apply_block(vectors, n_jobs=n_jobs)
+    space = prior.domain
+    gram = np.array(
+        [[space.inner_product(w, image) for image in images] for w in vectors]
+    )
+    noise = np.column_stack(
+        [data_space.to_components(error.covariance(dual)) for dual in duals]
+    )
+    return (
+        list(vectors),
+        list(images),
+        0.5 * (gram + gram.T),
+        0.5 * (noise + noise.T),
+        data_space,
+    )

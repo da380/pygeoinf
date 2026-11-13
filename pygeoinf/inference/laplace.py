@@ -37,14 +37,15 @@ to the prior beside its Gaussian approximation.
 
 from __future__ import annotations
 
+import numpy as np
 from numpy.random import Generator
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..algebra.operators import Functional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..numerics.normal import NormalOperator
-from ..numerics.optimization import OptimizationResult, Optimizer
+from ..numerics.optimization import NewtonCG, OptimizationResult, Optimizer
 from ..numerics.solvers import LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
@@ -54,6 +55,7 @@ from .minimization import _mixed_derivative as _misfit_mixed_derivative
 from .problem import ForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..probability.reference import GaussianReference
     from .gaussian import GaussianPosterior
 
 __all__ = ["MaximumAPosteriori", "LaplaceApproximation", "LaplaceResult"]
@@ -81,18 +83,19 @@ class MaximumAPosteriori(Minimization):
             to supply a derivative, which :meth:`~pygeoinf.algebra.operators.Operator.at`
             provides.
         prior: a Gaussian prior on the model space.
-        optimizer: how to find the mode. L-BFGS with 500 iterations by
-            default, which needs only gradients. A Newton-type optimizer can
-            be passed when the forward operator supplies its second
-            derivative: the objective then carries the exact Hessian, the
-            Gauss-Newton term plus the operator's curvature weighted by the
-            residual; or with ``gauss_newton``, which needs only the
-            derivative. Give such an optimizer the prior covariance as its
-            preconditioner (``NewtonCG(preconditioner=prior.covariance)``):
-            the Hessian is ``P + J* R^-1 J`` in the model space's own inner
-            product, and without it the inner solve has to resolve the
+        optimizer: how to find the mode. By default
+            ``NewtonCG(preconditioner=prior.covariance)`` wherever the
+            objective carries a Hessian: the exact one when the forward
+            operator supplies its second derivative, the Gauss-Newton term
+            plus the operator's curvature weighted by the residual; or with
+            ``gauss_newton``, which needs only the derivative. The Hessian is
+            ``P + J* R^-1 J`` in the model space's own inner product, and
+            without the preconditioner the inner solve has to resolve the
             prior precision's spectrum, which on a Sobolev space spans many
-            decades.
+            decades. A forward operator with only a derivative and no
+            ``gauss_newton`` gets L-BFGS with 500 iterations, which needs only
+            gradients but is unpreconditioned, so on a refined mesh it can
+            stop well short of the mode; read ``converged`` on its result.
         solver: how to invert the Hessian at the mode for the derivative
             with respect to the data: a
             :class:`~pygeoinf.numerics.solvers.LinearSolver`, or a callable
@@ -147,6 +150,10 @@ class MaximumAPosteriori(Minimization):
 
         self._problem = problem
         self._prior = prior
+        if optimizer is None and (
+            gauss_newton or problem.forward_operator.has_second_derivative
+        ):
+            optimizer = NewtonCG(preconditioner=prior.covariance)
         # The prior's domain rather than the forward operator's: the two
         # compare equal, and the prior's carries the labels of its summands,
         # which a block operator's domain does not.
@@ -404,6 +411,7 @@ class LaplaceApproximation(MeasureEstimator):
         *,
         solver: LinearSolver | None = None,
         rank: int | None = None,
+        hessian: Callable[[Any], Functional] | None = None,
         rng: Generator | None = None,
         n_jobs: int | None = None,
     ) -> None:
@@ -422,8 +430,20 @@ class LaplaceApproximation(MeasureEstimator):
                 rank-``rank`` corrections, no solve behind the covariance,
                 and the Laplace evidence in closed form. The full Gaussian,
                 through the solver, if omitted.
+            hessian: the likelihood's full Hessian, for a user who can
+                compute it, by second-order adjoints say: a function of the
+                data returning the likelihood potential ``Phi`` as a
+                :class:`~pygeoinf.algebra.operators.Functional` that carries
+                its Hessian. Its Hessian then replaces the estimator's in
+                the curvature, ``P + Hess Phi``, of the Gaussian and of the
+                reference. It must be positive semi-definite, its negative
+                eigenvalues zeroed by the user; the low-rank route, which
+                computes its eigenvalues, raises where one is negative.
             rng: the generator for the randomized eigendecomposition behind
-                *rank*.
+                *rank*. One seed is drawn from it here and every
+                decomposition uses it, so the low-rank Gaussian and
+                reference are fixed functions of the model, which a sampler
+                whose reference follows its state needs.
             n_jobs: workers for it.
 
         Raises:
@@ -434,10 +454,13 @@ class LaplaceApproximation(MeasureEstimator):
                 "A Laplace approximation is built on a MaximumAPosteriori "
                 f"estimator, not a {type(estimator).__name__}."
             )
+        from ..algebra.spaces import resolve_rng
+
         self._estimator = estimator
         self._solver = solver
         self._rank = rank
-        self._rng = rng
+        self._hessian = hessian
+        self._seed = int(resolve_rng(rng).integers(2**62))
         self._n_jobs = n_jobs
 
     @classmethod
@@ -451,6 +474,7 @@ class LaplaceApproximation(MeasureEstimator):
         solver: LinearSolver | None = None,
         gauss_newton: bool = False,
         rank: int | None = None,
+        hessian: Callable[[Any], Functional] | None = None,
         rng: Generator | None = None,
         n_jobs: int | None = None,
     ) -> "LaplaceApproximation":
@@ -467,6 +491,7 @@ class LaplaceApproximation(MeasureEstimator):
                 :class:`MaximumAPosteriori`. It is then the curvature of the
                 approximation too.
             rank: the low-rank form; see the constructor.
+            hessian: the likelihood's full Hessian; see the constructor.
             rng: the generator for its eigendecomposition.
             n_jobs: workers for it.
 
@@ -483,6 +508,7 @@ class LaplaceApproximation(MeasureEstimator):
             ),
             solver=solver,
             rank=rank,
+            hessian=hessian,
             rng=rng,
             n_jobs=n_jobs,
         )
@@ -537,13 +563,18 @@ class LaplaceApproximation(MeasureEstimator):
         estimator = self._estimator
         problem = estimator.forward_problem
         prior = estimator.prior
-        exact = _exact_hessian(estimator)
+        exact = self._exact()
         relative_log_density = -problem.potential(data)
         if self._rank is not None:
             return self._low_rank(model, data, exact, relative_log_density)
 
         sample = None
-        if exact:
+        if self._hessian is not None:
+            curvature = (
+                prior.precision + self._potential(data).hessian(model)
+            ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+            inverse = resolve_solver(self._solver, curvature)(curvature)
+        elif exact:
             curvature = (estimator.hessian(data, model) * 0.5).with_traits(
                 Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
             )
@@ -573,15 +604,18 @@ class LaplaceApproximation(MeasureEstimator):
             ),
         )
 
-    def _low_rank(
-        self, model: Any, data: Any, exact: bool, relative_log_density: Functional, /
-    ) -> "GaussianPosterior":
-        """The low-rank route of :meth:`at`."""
-        from .gaussian import LowRankGaussianPosterior, _information_eigenpairs
+    def _low_rank_parts(
+        self, model: Any, data: Any, exact: bool, /
+    ) -> tuple[LinearOperator, LinearOperator, Any]:
+        """The misfit's curvature at a model, and its leading eigenpairs seen
+        through the prior's factor: the pieces of the low-rank route."""
+        from .gaussian import _information_eigenpairs
 
         estimator = self._estimator
         problem = estimator.forward_problem
-        if exact:
+        if self._hessian is not None:
+            curvature = self._potential(data).hessian(model)
+        elif exact:
             # Half the misfit's own Hessian: the Gauss-Newton term and the
             # forward operator's curvature weighted by the residual, built
             # without the prior's precision rather than by subtracting it.
@@ -593,20 +627,197 @@ class LaplaceApproximation(MeasureEstimator):
                 raise ValueError("The error measure needs a precision.")
             jacobian = problem.forward_operator.derivative(model)
             curvature = jacobian.adjoint @ error_precision @ jacobian
+        supplied = self._hessian is not None
         directions, eigenvalues = _information_eigenpairs(
             curvature,
             estimator.prior,
             rank=self._rank,
-            rng=self._rng,
+            rng=np.random.default_rng(self._seed),
             n_jobs=self._n_jobs,
             semidefinite=not exact,
+            clip=not supplied,
         )
+        if supplied:
+            largest = float(np.max(np.abs(eigenvalues))) if eigenvalues.size else 0.0
+            if eigenvalues.size and float(eigenvalues.min()) < -1e-8 * max(
+                largest, 1.0
+            ):
+                raise ValueError(
+                    "The supplied Hessian has a negative eigenvalue, "
+                    f"{float(eigenvalues.min()):.3g}, through the prior's factor: it "
+                    "must be positive semi-definite, its negative eigenvalues zeroed."
+                )
+            eigenvalues = np.clip(eigenvalues, 0.0, None)
+        return curvature, directions, eigenvalues
+
+    def _exact(self) -> bool:
+        """Whether the curvature is other than Gauss-Newton: a supplied
+        Hessian, or the estimator's exact one."""
+        return self._hessian is not None or _exact_hessian(self._estimator)
+
+    def _potential(self, data: Any, /) -> Functional:
+        """The supplied likelihood potential for the data, with its Hessian.
+
+        Raises:
+            TypeError: if it is not a functional carrying a Hessian.
+            ValueError: if it does not act on the model space.
+        """
+        potential = self._hessian(data)
+        if not isinstance(potential, Functional) or not potential.has_hessian:
+            raise TypeError(
+                "hessian= returns the likelihood potential as a Functional "
+                f"carrying its Hessian; got {type(potential).__name__}."
+            )
+        if potential.domain != self.model_space:
+            raise ValueError("The supplied potential must act on the model space.")
+        return potential
+
+    def _low_rank(
+        self, model: Any, data: Any, exact: bool, relative_log_density: Functional, /
+    ) -> "GaussianPosterior":
+        """The low-rank route of :meth:`at`."""
+        from .gaussian import LowRankGaussianPosterior
+
+        _, directions, eigenvalues = self._low_rank_parts(model, data, exact)
         return LowRankGaussianPosterior(
-            estimator.prior,
+            self._estimator.prior,
             model,
             eigenvalues,
             directions,
             relative_log_density=relative_log_density,
+        )
+
+    def reference(
+        self, data: Any, /, *, at: Any = None, start: Any = None
+    ) -> "GaussianReference":
+        """The Laplace Gaussian as a reference for a sampler: at the mode, or
+        at a model.
+
+        The reference is in chart form, the prior with the law of a few
+        functionals replaced, so it is equivalent to the prior by
+        construction and needs no prior precision. Its covariance is the
+        curvature's at the model *at*, ``(C^-1 + H)^-1``, and its mean is the
+        Newton step from it,
+
+        .. code-block:: text
+
+            m == at - K (grad Phi + C^-1 (at - m_0))
+              == m_0 - K grad Phi + C W (I - S) l(at - m_0)
+
+        the second line in the whitened chart, which is why no precision is
+        needed. Without *at* the mode is found first, from *start*, and the
+        mean is the mode itself; elsewhere it is the posterior mean of the
+        problem linearized at *at*, for the Gauss-Newton curvature, a
+        sensible Gaussian anywhere. It is a fixed function of the model, the
+        low-rank routes reusing one seed, so a sampler can rebuild it at
+        every state: what a
+        :class:`~pygeoinf.inference.monte_carlo.MonteCarloEstimator` does for
+        a move that follows the state.
+
+        * Without ``rank`` (the estimator's), the chart is the data,
+          ``l(u) == J (u - m_0)`` read through the data space's components,
+          and the reference is the Gauss-Newton Laplace Gaussian exactly. It
+          costs one adjoint and one prior-covariance application per datum
+          and a dense factorization of the data dimension; at many data,
+          ``rank=`` is the affordable route.
+        * With ``rank``, the chart is the leading directions of the
+          likelihood's curvature seen through the prior's factor, together
+          with the potential's gradient, and the reference is the low-rank
+          Laplace Gaussian in chart form. The exact Hessian is accepted
+          here, its negative eigenvalues clipped; a supplied Hessian is
+          checked to have none.
+
+        Args:
+            data: the observations.
+            at: where to place it; the MAP model, found for the data, if
+                omitted.
+            start: where the search for the mode begins, when *at* is
+                omitted; the prior's expectation by default.
+
+        Returns:
+            The reference.
+
+        Raises:
+            ValueError: on the full-rank route with the exact or a supplied
+                Hessian, whose curvature is not of finite rank, so that the
+                Gaussian is not of chart form: pass ``gauss_newton=True`` to
+                the estimator, or a ``rank``. Also if the error measure has
+                no precision, or a supplied Hessian has a negative
+                eigenvalue.
+        """
+        from ..probability.reference import GaussianReference, _whiten
+        from .gaussian import LowRankGaussianPosterior, _data_chart
+
+        model = self.solve(data, start=start).model if at is None else at
+        estimator = self._estimator
+        problem = estimator.forward_problem
+        prior = estimator.prior
+        space = self.model_space
+        error = problem.error_measure
+        if error.precision is None:
+            raise ValueError("The error measure needs a precision.")
+        exact = self._exact()
+        data_space = problem.data_space
+        linearization = problem.forward_operator.at(model)
+        residual = data_space.subtract(
+            data_space.subtract(data, linearization.value), error.expectation
+        )
+        gradient = space.negative(
+            linearization.derivative.adjoint(error.precision(residual))
+        )
+
+        if self._rank is None:
+            if exact:
+                raise ValueError(
+                    "The full-rank Laplace Gaussian with the exact or a supplied "
+                    "Hessian is not a reference: the forward operator's "
+                    "curvature weighted by the residual is not of finite rank. "
+                    "Build the estimator with gauss_newton=True, or give it a "
+                    "rank."
+                )
+            vectors, images, gram, noise, _ = _data_chart(
+                linearization.derivative, prior, error, n_jobs=self._n_jobs
+            )
+            transform, whitened, whitened_images = _whiten(
+                prior, vectors, images, rtol=1e-10
+            )
+            covariance = gram - gram @ np.linalg.solve(gram + noise, gram)
+            s = transform @ covariance @ transform.T
+        else:
+            curvature, directions, eigenvalues = self._low_rank_parts(
+                model, data, exact
+            )
+            posterior = LowRankGaussianPosterior(
+                prior,
+                model,
+                eigenvalues,
+                directions,
+                relative_log_density=-problem.potential(data),
+                penalized_misfit=0.0,
+            )
+            kept = [k for k, value in enumerate(eigenvalues) if value > 0.0]
+            unit = np.identity(len(eigenvalues))
+            through = prior.covariance_factor @ directions
+            modes = through.apply_block([unit[:, k] for k in kept], n_jobs=self._n_jobs)
+            vectors = curvature.apply_block(modes, n_jobs=self._n_jobs)
+            vectors.append(gradient)
+            transform, whitened, whitened_images = _whiten(
+                prior, vectors, None, rtol=1e-10
+            )
+            covariance_of = posterior.covariance
+            mapped = [covariance_of(w) for w in whitened]
+            s = np.array(
+                [[space.inner_product(w, image) for image in mapped] for w in whitened]
+            ).reshape(len(whitened), len(whitened))
+        s = 0.5 * (s + s.T)
+        offset = space.subtract(model, prior.expectation)
+        z = np.array([space.inner_product(w, offset) for w in whitened])
+        g = np.array(
+            [space.inner_product(image, gradient) for image in whitened_images]
+        )
+        mean = z - s @ z - s @ g
+        return GaussianReference._from_whitened(
+            prior, whitened, whitened_images, mean, s
         )
 
     def _log_normalizer(

@@ -18,9 +18,11 @@ three kinds, each the same thing whatever the discretization:
   posteriori model or Occam's inversion for a nonlinear one, found by
   Newton or quasi-Newton methods that work in the space's own metric;
 - **a measure**: the posterior, exactly for a linear problem and as a
-  Laplace approximation at the mode otherwise, to be drawn from, pushed
-  forward to a property, compared by its evidence, or hardened into a
-  credible region;
+  Laplace approximation at the mode otherwise, or sampled exactly by
+  Markov chains and tempered sequential Monte Carlo built for function
+  spaces, whose acceptance does not fall as the mesh is refined; to be
+  drawn from, pushed forward to a property, compared by its evidence, or
+  hardened into a credible region;
 - **a set**: the models consistent with bounded errors and a bounded
   prior, and the range of any property over them, with no probability
   assumed at all; linearized about a model when the forward operator is

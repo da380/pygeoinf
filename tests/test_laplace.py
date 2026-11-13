@@ -16,6 +16,7 @@ from pygeoinf.inference.laplace import (
 from pygeoinf.inference.minimization import Minimization, NonlinearLeastSquares
 from pygeoinf.inference.problem import ForwardProblem, LinearForwardProblem
 from pygeoinf.numerics.optimization import LBFGS, NewtonCG, OptimizationResult
+from pygeoinf.symmetric_space import circle
 from pygeoinf.testing import check_measure
 
 from .conftest import make_dense_metric_space
@@ -60,6 +61,58 @@ def nonlinear_setting(rng):
     truth = prior.sample(rng=rng)
     data = data_space.add(forward(truth), error.sample(rng=rng))
     return forward, prior, error, truth, data
+
+
+class TestTheDefaultOptimizer:
+    @staticmethod
+    def attenuation(points):
+        """``exp(-P m)`` along two arcs of a circle, with no second derivative."""
+        space = circle.Sobolev(points, 1.0, 0.3)
+        arcs = [(np.array([0.0]), np.array([1.5])), (np.array([1.0]), np.array([2.5]))]
+        paths = space.path_integral_operator(arcs, dense=True)
+        data_space = paths.codomain
+
+        def derivative(m):
+            weights = LinearOperator.from_matrix(
+                data_space, data_space, np.diag(-np.exp(-paths(m))), form="components"
+            )
+            return weights @ paths
+
+        forward = Operator.from_callables(
+            space, data_space, lambda m: np.exp(-paths(m)), derivative=derivative
+        )
+        error = gi.GaussianMeasure.from_standard_deviation(data_space, 0.05)
+        prior = space.sobolev_measure(2.0, 0.3)
+        return ForwardProblem(forward, error=error), prior, paths
+
+    def test_it_is_newton_where_the_objective_carries_a_hessian(self):
+        problem, prior, _ = self.attenuation(32)
+        estimator = MaximumAPosteriori(problem, prior, gauss_newton=True)
+        assert isinstance(estimator.optimizer, NewtonCG)
+
+    def test_it_is_lbfgs_where_only_a_gradient_is_available(self):
+        problem, prior, _ = self.attenuation(32)
+        assert isinstance(MaximumAPosteriori(problem, prior).optimizer, LBFGS)
+
+    def test_an_optimizer_given_is_kept(self):
+        problem, prior, _ = self.attenuation(32)
+        optimizer = LBFGS(max_iterations=3)
+        estimator = MaximumAPosteriori(
+            problem, prior, optimizer=optimizer, gauss_newton=True
+        )
+        assert estimator.optimizer is optimizer
+
+    def test_it_finds_the_same_mode_on_a_refined_mesh(self):
+        """L-BFGS stopped short of the mode here, and further short the finer
+        the mesh."""
+        data = np.array([1.3, 0.7])
+        modes = []
+        for points in (128, 2048):
+            problem, prior, paths = self.attenuation(points)
+            found = MaximumAPosteriori(problem, prior, gauss_newton=True).solve(data)
+            assert found.converged
+            modes.append(paths(found.minimizer))
+        assert modes[1] == pytest.approx(modes[0], abs=1e-3)
 
 
 class TestItIsExactWhenTheProblemIsLinear:
