@@ -1,5 +1,5 @@
 """
-pygeoinf 2.0: inference on Hilbert spaces.
+pygeoinf 2.2.3: inference on Hilbert spaces.
 
 Vectors are whatever objects a backend provides, and every algorithm works
 through the space's inner product, so the same estimator runs on a Euclidean
