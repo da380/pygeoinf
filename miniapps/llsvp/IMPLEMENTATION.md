@@ -108,10 +108,13 @@ the burn-in only adapts the step.
 
 ```python
 reference = inversion.reference(data, rank=rank, rng=rng)
-GeometricHMC(problem, reference, step=scale.ghmc_step, length=scale.ghmc_length)
+sampler = Chains(HMC(step=scale.ghmc_step, length=scale.ghmc_length), steps=..., ...)
+MonteCarloEstimator(problem, prior, sampler=sampler, reference=reference, record=...)
 ```
 
-The reference's cost is why `GeometricHMC` has its own count of steps. It pairs a state
+Every sampler of the part is that estimator with another move: `PCN`, `MALA`, `HMC`
+and `GeneralizedHMC` about the prior, and `HMC` again about the reference. The
+reference's cost is why that last run has its own count of steps. It pairs a state
 with each chart vector by the space's inner product, and on the sphere each pairing runs
 two spherical-harmonic analyses per field, so its cost grows with the reference's rank.
 
@@ -129,25 +132,25 @@ and which the library does not offer.
 ## 6. Gibbs
 
 ```python
-Gibbs(
-    state.grouped_problem,
-    state.grouped,
-    blocks={
-        "linear": HMC.recipe(step=scale.linear_step, length=scale.linear_length),
-        "level_set": PCN.recipe(step=scale.level_step, steps=level_steps),
+move = Gibbs(
+    {
+        "linear": HMC(step=scale.linear_step, length=scale.linear_length),
+        "level_set": PCN(step=scale.level_step),
     },
     order=order,
+    repeat={"level_set": level_steps},
 )
+MonteCarloEstimator(state.grouped_problem, state.grouped, sampler=Chains(move, ...), ...)
 ```
 
 A block is a summand of the top-level sum, however nested. Each visit builds the
-block's target against `prior.conditional`, runs the recipe's kernel and writes the
-summand back; each block's step adapts to its own acceptance during burn-in, and
+block's target against `prior.conditional`, runs the block's move for its `repeat`
+steps and writes the summand back; each block's step adapts to its own acceptance during burn-in, and
 `posterior.block_acceptance_rates` reports it. The nesting here is what the measurements
 ask for: three blocks are one `gibbs.three_blocks` away on the ungrouped sum, and they
 creep. `run_chains` picks the recording map to suit the sum it is on.
 
-`Chains(n_jobs=)` runs the chains in worker processes: the sphere's objects, the
+`Chains(..., n_jobs=)` runs the chains in worker processes: the sphere's objects, the
 operators' closures and the stored `SHGrid`s all pickle, and joblib hands the workers the
 parent's `sys.path`, so they import `src` by its plain name. A chain's records and stored
 states come back when it ends, and the library's rule of one thread to a worker applies.

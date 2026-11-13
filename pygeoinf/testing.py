@@ -1762,7 +1762,7 @@ def check_scheme(
     caller's to arrange.
 
     Args:
-        scheme: the :class:`~pygeoinf.inference.sampling.SplittingScheme`
+        scheme: the :class:`~pygeoinf.sampling.SplittingScheme`
             to check.
         rng: the generator. Seed it.
         measure: a measure on the model space to draw the probe directions
@@ -1786,7 +1786,7 @@ def check_scheme(
             deterministic word is not reversed by the flip.
         ValueError: if *measure* lives on another space.
     """
-    from .inference.sampling.target import Target
+    from .sampling.target import Target
 
     rng = resolve_rng(rng)
     defects: dict[str, float] = {}

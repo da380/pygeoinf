@@ -319,14 +319,14 @@ each mean's two standard deviations before and after, with the truth.
 laplace = LaplaceApproximation.from_problem(
     problem, prior, gauss_newton=gauss_newton, rank=scale.laplace_rank, ...
 )
-reference = laplace.reference(mode, state.data)
-sampler = GeometricHMC(state.problem, reference, step=scale.hmc_step,
-                       length=scale.hmc_length)
-kernel = sampler.kernel(state.data)
-posterior = Chains(scale.hmc_chains)(
-    kernel, start=reference, steps=scale.hmc_steps, burn_in=scale.hmc_burn_in,
-    adapt=sampler.adaptation, record=boxes, callback=trace, ...
+reference = laplace.reference(state.data, at=mode)
+target = Target(state.problem.potential(state.data), reference)
+sampler = Chains(
+    HMC(step=scale.hmc_step, length=scale.hmc_length),
+    steps=scale.hmc_steps, burn_in=scale.hmc_burn_in, chains=scale.hmc_chains,
+    callback=trace, ...
 )
+posterior = sampler(target, record=boxes, ...)
 ```
 
 `reference` is the Laplace Gaussian at the saved mode in the low-rank chart
@@ -335,11 +335,12 @@ replaced by the curvature's. Only building it needs the Hessian, the
 Gauss-Newton one from the first derivative or the exact one from the second;
 the chains need only the gradient, from one adjoint per leapfrog step. The
 reference sets how fast a chain mixes and the Metropolis step makes it exact,
-so both samplers sample the same posterior. Calling the preset would build
-the kernel and run the chains in one go; the app builds the kernel itself
-and hands it to `Chains`, so that the callback can read the potential the
-kernel's target has already cached at each state and trace the burn-in at
-no cost. The chains run one after another in this process: the operator
+so both samplers sample the same posterior.
+`MonteCarloEstimator(state.problem, prior, sampler=sampler, reference=reference)`
+would build the target and run the chains in one go; the app builds the
+target itself and calls the sampler on it, so that the callback can read the
+potential the target has already cached at each state and trace the burn-in
+at no cost. The chains run one after another in this process: the operator
 holds the C++ solver, which a worker process cannot be sent, and its cache
 holds one model. `record=boxes` keeps the four box means at every step, from
 which `posterior.diagnostics()` gives each one's autocorrelation time,

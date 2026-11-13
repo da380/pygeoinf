@@ -147,17 +147,18 @@ Quick scale:
 | | MALA | 0.086 | 0.57 | 34 | 16 | 94 | 1.03 | 24 | 0.20 | 18 |
 | | HMC | 0.196 | 0.95 | 1.9 | 35 | 215 | 1.03 | 54 | 0.22 | 14 |
 | | GeneralizedHMC | 0.299 | 0.81 | 15 | 6.6 | 212 | 1.03 | 53 | 0.15 | 17 |
-| | GeometricHMC, rank 10 | 0.393 | 0.97 | 1.3 | 1.1 | 128 | 1.01 | 159 | 0.09 | 11 |
+| | HMC, reference of rank 10 | 0.393 | 0.97 | 1.3 | 1.1 | 128 | 1.01 | 159 | 0.09 | 11 |
 | as given | pCN | 2.2e-4 | 0.25 | 3156 | 291 | 1.0 | 2.60 | 0.25 | 0.83 | 9 |
 | | MALA | 3.9e-4 | 0.58 | 3007 | 509 | 1.1 | 2.53 | 0.27 | 0.55 | 21 |
 | | HMC | 0.028 | 0.61 | 259 | 42 | 1.5 | 1.70 | 0.39 | 0.74 | 15 |
 | | GeneralizedHMC | 0.023 | 0.73 | 2082 | 260 | 1.5 | 1.99 | 0.38 | 0.96 | 19 |
-| | GeometricHMC, rank 50 | 0.375 | 0.80 | 8.1 | 24 | 20 | 1.06 | 25 | 0.19 | 43 |
+| | HMC, reference of rank 50 | 0.375 | 0.80 | 8.1 | 24 | 20 | 1.06 | 25 | 0.19 | 43 |
 
-`GeometricHMC` gets 100 steps per chain of 4 leapfrog steps, which is 400 evaluations.
-It is the only sampler that is not crawling on the data as given, because its step
-does not depend on the eigenvalues it has taken into its reference, where the others'
-fall with the leading one. Over the same data the exact posterior mean's
+The last row of each problem is HMC about a low-rank reference fitted to the exact
+posterior, the same move run by the same estimator with `reference=`. It gets 100 steps
+per chain of 4 leapfrog steps, which is 400 evaluations. It is the only sampler that is
+not crawling on the data as given, because its step does not depend on the eigenvalues
+it has taken into its reference, where the others' fall with the leading one. Over the same data the exact posterior mean's
 chi-squared is 1253, 4.2 of its standard deviations too many: the misfit of thermal
 fields made to hold the chemistry.
 
@@ -265,8 +266,8 @@ chi-squared is 4882 on 4770 data, and its thermal part alone 36308. The truth's 
 draw is not the same field at the two scales, so neither are the numbers that read it,
 such as its ratio of jumps.
 
-Part C, on 4 chains of 1000 forward evaluations each, `GeometricHMC` with 40 steps of 4
-leapfrog steps. The curvature runs from 1.5e4 to 4.7 by the 80th eigenvalue on the data
+Part C, on 4 chains of 1000 forward evaluations each, HMC about the reference with 40
+steps of 4 leapfrog steps. The curvature runs from 1.5e4 to 4.7 by the 80th eigenvalue on the data
 as given, and from 66 to 2.6 by the 10th on the weak problem. The exact posterior mean's
 chi-squared on the data as given is 5506, 7.5 of its standard deviations too many.
 
@@ -276,12 +277,12 @@ chi-squared on the data as given is 5506, 7.5 of its standard deviations too man
 | | MALA | 0.021 | 0.57 | 127 | 82 | 25 | 1.12 | 6.3 | 0.39 |
 | | HMC | 0.195 | 0.72 | 8.7 | 8.3 | 46 | 1.10 | 11 | 0.15 |
 | | GeneralizedHMC | 0.154 | 0.79 | 54 | 19 | 59 | 1.06 | 15 | 0.13 |
-| | GeometricHMC, rank 20 | 0.393 | 0.95 | 1.4 | 0.9 | 115 | 1.02 | 144 | 0.12 |
+| | HMC, reference of rank 20 | 0.393 | 0.95 | 1.4 | 0.9 | 115 | 1.02 | 144 | 0.12 |
 | as given | pCN | 1.3e-4 | 0.09 | 1595 | 1457 | 2.0 | 3.18 | 0.50 | 0.97 |
 | | MALA | 9.1e-5 | 0.59 | 1554 | 1406 | 2.1 | 2.64 | 0.51 | 0.93 |
 | | HMC | 0.014 | 0.67 | 189 | 120 | 2.1 | 3.19 | 0.53 | 0.40 |
 | | GeneralizedHMC | 0.011 | 0.78 | 1480 | 311 | 2.2 | 3.11 | 0.54 | 1.07 |
-| | GeometricHMC, rank 80 | 0.388 | 0.82 | 2.2 | 1.2 | 72 | 1.03 | 89 | 0.20 |
+| | HMC, reference of rank 80 | 0.388 | 0.82 | 2.2 | 1.2 | 72 | 1.03 | 89 | 0.20 |
 
 The ladder, on the weak problem, at each sampler's step from the table and the same data
 at each degree (HMC with three leapfrog steps), with a random walk of size 0.154:

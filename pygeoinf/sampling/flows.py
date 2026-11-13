@@ -382,7 +382,7 @@ class LabelJump(Flow):
     well apart, since the label is then all but fixed by the position. This
     move proposes a new component ``k`` from the mixture's weights and
     carries the state to it by
-    :meth:`~pygeoinf.inference.gaussian.MixtureReference.transport`, which
+    :meth:`~pygeoinf.probability.reference.MixtureReference.transport`, which
     maps component ``j`` onto ``k`` exactly, the velocity with it. The map's
     pushforward is exact and the label is proposed from the weights, so the
     acceptance is ``exp(Phi_ref(u) - Phi_ref(u'))``: where the mixture fits
@@ -424,7 +424,7 @@ class LabelJump(Flow):
             The new state, or the old one on a rejection, and no energy
             change.
         """
-        from ...algebra.spaces import resolve_rng
+        from ..algebra.spaces import resolve_rng
 
         rng = resolve_rng(rng)
         target = self._target
@@ -451,7 +451,7 @@ class KernelFlow(Flow):
     """A flow that runs a kernel: any update that leaves the target invariant.
 
     Stochastic and target-preserving, so it sits outside every correction,
-    in a word that a :class:`~pygeoinf.inference.sampling.corrections.Sweep`
+    in a word that a :class:`~pygeoinf.sampling.corrections.Sweep`
     applies as it stands. A subclass says which kernel runs and on what;
     :class:`GibbsBlock` is the first, a kernel on one summand's conditional
     target.
@@ -467,9 +467,9 @@ class GibbsBlock(KernelFlow):
     Gibbs block.
 
     At each application the block's target is built from the state
-    (:meth:`~pygeoinf.inference.sampling.target.Target.block`), its kernel is
-    built from the recipe at the block's step and run for the recipe's
-    number of steps, and the summand is written back. Every kernel leaves
+    (:meth:`~pygeoinf.sampling.target.Target.block`), its kernel is built
+    from the block's move at the block's step and run for *repeat* steps,
+    and the summand is written back. Every kernel leaves
     its target invariant, so the block leaves the conditional, and so the
     whole target, invariant; with no likelihood, the reference's conditional
     and so the reference. A velocity, for an inertial block sampler, is drawn
@@ -481,26 +481,37 @@ class GibbsBlock(KernelFlow):
     Args:
         target: the whole target, on a direct sum.
         key: the summand, by position or by label.
-        recipe: what samples the block: a
-            :class:`~pygeoinf.inference.sampling.presets.BlockRecipe`, or any
-            object with ``kernel(target, step)``, ``steps`` and
-            ``uses_gradient``.
+        move: what samples the block: a
+            :class:`~pygeoinf.sampling.moves.Move`, or any object with
+            ``kernel(target, step=)`` and ``uses_gradient``.
         step: the block kernel's time step.
+        repeat: the kernel's steps at each visit.
 
     Raises:
-        ValueError: for a step that is not positive and finite.
+        ValueError: for a step that is not positive and finite, or a repeat
+            below one.
     """
 
     def __init__(
-        self, target: Target, key: int | str, recipe: Any, /, *, step: float
+        self,
+        target: Target,
+        key: int | str,
+        move: Any,
+        /,
+        *,
+        step: float,
+        repeat: int = 1,
     ) -> None:
         if not 0.0 < step < float("inf"):
             raise ValueError(f"A step is positive and finite, got {step}.")
+        if int(repeat) != repeat or repeat < 1:
+            raise ValueError(f"A block takes at least one step a visit, got {repeat}.")
         super().__init__(target)
         self._index = target.model_space.index(key)
-        self._recipe = recipe
+        self._move = move
         self._step = float(step)
-        self.uses_gradient = bool(recipe.uses_gradient)
+        self._repeat = int(repeat)
+        self.uses_gradient = bool(move.uses_gradient)
 
     @property
     def index(self) -> int:
@@ -508,14 +519,19 @@ class GibbsBlock(KernelFlow):
         return self._index
 
     @property
-    def recipe(self) -> Any:
+    def move(self) -> Any:
         """What samples the block."""
-        return self._recipe
+        return self._move
 
     @property
     def step(self) -> float:
         """The block kernel's time step."""
         return self._step
+
+    @property
+    def repeat(self) -> int:
+        """The kernel's steps at each visit."""
+        return self._repeat
 
     def apply(
         self, state: State, time: float, /, *, rng: Generator | None = None
@@ -530,18 +546,18 @@ class GibbsBlock(KernelFlow):
         Returns:
             The new state, and no energy change.
         """
-        from ...algebra.spaces import resolve_rng
+        from ..algebra.spaces import resolve_rng
 
         rng = resolve_rng(rng)
         target = self._target
         block = target.block(self._index, state)
-        kernel = self._recipe.kernel(block, self._step)
+        kernel = self._move.kernel(block, step=self._step)
         summand = target.model_space.component(state.position, self._index)
         inner = kernel.initial_state(summand, rng=rng)
         enter_block(target, block, self._index, state, inner)
         acceptances = []
         moved = False
-        for _ in range(int(self._recipe.steps)):
+        for _ in range(self._repeat):
             step = kernel.step(inner, rng=rng)
             inner = step.state
             acceptances.append(step.info.acceptance)

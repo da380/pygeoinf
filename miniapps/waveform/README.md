@@ -54,7 +54,7 @@ The parts:
   distributed operator against the serial one, the check ladder through it,
   the time of each kind of application, and part C's Gauss-Newton MAP.
 - **G, the posterior sampled** (`hmc.py`, at the quick scale only, on the
-  serial solver): the library's `GeometricHMC` about the low-rank Laplace
+  serial solver): the library's `HMC` about the low-rank Laplace
   Gaussian at the mode, once on the Gauss-Newton Hessian and once on the
   exact one. Its figures: how the two samplers' chains converge, and what
   they find against the Laplace Gaussians, on the four box means and on the
@@ -178,7 +178,7 @@ wrapper builds it (set `MPICXX` to choose one).
 | `src/inversion.py` | a Newton-CG that logs its gradient norms, the saved mode |
 | `src/common.py` | the command line built from the scale, the stopwatch, the section plots |
 | `proofs.py`, `synthetic.py`, `newton.py`, `occam.py`, `laplace.py` | parts A to E, each a script with a `main()` and a `run()` the others and the test call; `proofs.reflection`, what the sponge sends back |
-| `hmc.py` | part G, the posterior sampled by `GeometricHMC` about the Laplace Gaussians, at the quick scale |
+| `hmc.py` | part G, the posterior sampled by `HMC` about the Laplace Gaussians, at the quick scale |
 | `run_all.py` | parts A to E in order, and G at the quick scale |
 | `mpi_run.py` | part F, run by every rank under `mpiexec` |
 | `results/` | what a run writes: the figures, the saved modes and part F's numbers, `results/quick/` at the quick scale |
@@ -491,8 +491,8 @@ three ranks and 46 s on six.
 
 ## G. The posterior sampled (quick scale)
 
-`hmc.py` samples the posterior itself with the library's `GeometricHMC`,
-whose reference is the Laplace Gaussian at the polished mode in the low-rank
+`hmc.py` samples the posterior itself with the library's `HMC`, whose
+reference is the Laplace Gaussian at the polished mode in the low-rank
 chart form of `LaplaceApproximation.reference`, rank `laplace_rank` (60):
 once on the Gauss-Newton Hessian and once on the exact one, the forward
 operator's curvature weighted by the residual added by second-order adjoints
@@ -636,7 +636,7 @@ the bottom corners, where the survey sees least.
   spectrum of many decades. A randomized eigendecomposition of that operator
   seen through the prior's covariance factor, once, turns four solves that
   reach a cap of 120 iterations into four of 17.
-- The Laplace Gaussian is a reference, not an answer: `GeometricHMC` about it
+- The Laplace Gaussian is a reference, not an answer: `HMC` about it
   samples the posterior exactly, on the same operator, and at 3% noise
   confirms the full-rank Laplace spread on the box means; a rank-60
   reference is too wide by half, which the sampler corrects.

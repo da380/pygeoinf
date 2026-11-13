@@ -240,8 +240,8 @@ def test_a_reference_buys_what_the_data_take_away(results):
     # own, which is fitted to them.
     assert given["PCN"]["step"] < 0.2 * weak["PCN"]["step"]
     assert given["HMC"]["step"] < 0.5 * weak["HMC"]["step"]
-    assert given["GeometricHMC"]["step"] > 0.15
-    assert given["GeometricHMC"]["ess_rate"] > given["HMC"]["ess_rate"]
+    assert given["HMC, reference"]["step"] > 0.15
+    assert given["HMC, reference"]["ess_rate"] > given["HMC"]["ess_rate"]
 
 
 def test_the_samplers_do_not_notice_the_refinement(results):

@@ -37,7 +37,7 @@ from typing import Any
 import numpy as np
 from numpy.random import Generator
 
-from ...algebra.spaces import resolve_rng
+from ..algebra.spaces import resolve_rng
 from .dynamics import Dynamics
 from .flows import TARGET, Flow
 from .schemes import SplittingScheme, _locate
@@ -197,7 +197,7 @@ class MetropolizedBlock:
     Args:
         block: a scheme of deterministic flows each reversible under a
             velocity flip, with a palindromic word; from
-            :meth:`~pygeoinf.inference.sampling.schemes.SplittingScheme.block`.
+            :meth:`~pygeoinf.sampling.schemes.SplittingScheme.block`.
         flip: reverse the velocity on a rejection. Needed for exactness
             whenever the velocity is kept between steps.
 
@@ -592,7 +592,7 @@ class Sweep(Kernel):
 
     Every letter already leaves the target invariant, so the word does too
     and nothing is corrected: the Gibbs blocks of a
-    :class:`~pygeoinf.inference.sampling.dynamics.Blockwise` dynamics, each
+    :class:`~pygeoinf.sampling.dynamics.Blockwise` dynamics, each
     an exact kernel on its summand's conditional. A palindromic word, the
     symmetric scan, is reversible. Over a ``Blockwise`` dynamics the kernel
     has one step per block, and each step reports each block's acceptance.

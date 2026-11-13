@@ -18,7 +18,7 @@ Both results fit a reference to what they hold: a Gaussian, or a Gaussian
 mixture with as many components as the caller asks for, over a chart of a
 few functionals, the run's recorded scalars or a map the caller gives. A
 fitted reference is equivalent to the prior by construction, so it serves a
-further run as its reference, the geometric presets' say, and it is where
+further run as its reference, an estimator's say, and it is where
 :meth:`SampledPosterior.sample` starts its short chains.
 """
 
@@ -30,18 +30,18 @@ from typing import TYPE_CHECKING, Any, Sequence
 import numpy as np
 from numpy.random import Generator
 
-from ...algebra.operators import Functional, LinearOperator, Operator
-from ...algebra.spaces import CoordinateSpace, resolve_rng
-from ...numerics.chain_diagnostics import (
+from ..algebra.operators import Functional, LinearOperator, Operator
+from ..algebra.spaces import CoordinateSpace, resolve_rng
+from ..numerics.chain_diagnostics import (
     effective_sample_size,
     integrated_autocorrelation_time,
     split_rhat,
 )
-from ...numerics.mixture_fit import fit_gaussian_mixture
-from ...numerics.randomized import Estimate
-from ...probability.absolutely_continuous import AbsolutelyContinuousMeasure
-from ...probability.gaussian import GaussianMeasure
-from ..gaussian import GaussianReference, MixtureReference
+from ..numerics.mixture_fit import fit_gaussian_mixture
+from ..numerics.randomized import Estimate
+from ..probability.absolutely_continuous import AbsolutelyContinuousMeasure
+from ..probability.gaussian import GaussianMeasure
+from ..probability.reference import GaussianReference, MixtureReference
 
 if TYPE_CHECKING:  # pragma: no cover
     from .corrections import Kernel
@@ -272,7 +272,7 @@ class SampledPosterior(AbsolutelyContinuousMeasure):
 
         Args:
             components: how many Gaussians in the chart's law; more than one
-                gives a :class:`~pygeoinf.inference.gaussian.MixtureReference`,
+                gives a :class:`~pygeoinf.probability.reference.MixtureReference`,
                 one per mode.
             chart: a linear map from the model space to a small space with
                 coordinates; the run's recorded map if omitted.

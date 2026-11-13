@@ -10,7 +10,10 @@ space, a spherical-harmonic field or a finite element space. The subpackages:
 * ``numerics`` -- linear solvers, preconditioners, randomized methods, the
   operator calculus, optimization and convex solvers;
 * ``geometry`` -- convex sets, subsets and subspaces;
-* ``probability`` -- measures, Gaussian and otherwise;
+* ``probability`` -- measures, Gaussian and otherwise, and the references a
+  sampler is built on;
+* ``sampling`` -- function-space Markov chain Monte Carlo: moves, and the
+  chains and tempered populations that run them;
 * ``inference`` -- forward problems and the estimators built on them;
 * ``symmetric_space``, ``interval``, ``ball`` and ``disk`` -- concrete function
   spaces, the last three on the ``spectral_element`` core;
@@ -32,6 +35,7 @@ from . import (
     numerics,
     plotting,
     probability,
+    sampling,
     symmetric_space,
 )
 from .algebra.diagonal import DiagonalLinearOperator
@@ -111,6 +115,7 @@ from .inference import (
     LinearGaussianMixtureInversion,
     MaximumAPosteriori,
     Minimization,
+    MonteCarloEstimator,
     NonlinearLeastSquares,
     Occam,
     MinimumNorm,
@@ -119,14 +124,13 @@ from .inference import (
     TikhonovFamily,
     TikhonovNormalOperator,
 )
-from .inference.sampling import (
+from .sampling import (
     HMC,
     MALA,
     PCN,
     SMC,
+    Chains,
     GeneralizedHMC,
-    GeometricHMC,
-    GeometricMALA,
     Gibbs,
     SampledPosterior,
     WeightedEnsemble,
@@ -175,6 +179,7 @@ __all__ = [
     "numerics",
     "plotting",
     "probability",
+    "sampling",
     "symmetric_space",
     # inference: the workflow, flat
     "BackusGilbert",
@@ -195,6 +200,7 @@ __all__ = [
     "LinearGaussianInversion",
     "MaximumAPosteriori",
     "Minimization",
+    "MonteCarloEstimator",
     "NonlinearLeastSquares",
     "Occam",
     "LinearGaussianMixtureInversion",
@@ -202,10 +208,9 @@ __all__ = [
     "NormalOperator",
     "TikhonovFamily",
     "TikhonovNormalOperator",
-    # sampling: the presets and what they return
+    # sampling: the moves, the runs and what they return
+    "Chains",
     "GeneralizedHMC",
-    "GeometricHMC",
-    "GeometricMALA",
     "Gibbs",
     "HMC",
     "MALA",

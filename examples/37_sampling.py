@@ -14,8 +14,9 @@ differs is how long "long enough" is, and here that means one question above
 all, how often a chain crosses the barrier. Four chains are run for each, and
 the diagnostics are what tell a reader whether to believe them.
 
-The presets, each a measure estimator built on the problem and the prior and
-called on the data:
+One estimator, ``MonteCarloEstimator``, built on the problem and the prior
+and called on the data, samples the posterior; the move it runs, as four
+chains, is how:
 
 * ``PCN`` proposes the current point rotated a little towards a fresh draw
   from the prior; no gradient.
@@ -24,10 +25,10 @@ called on the data:
   between them.
 * ``GeneralizedHMC`` refreshes the velocity only in part, so a chain keeps
   its direction.
-* ``GeometricHMC`` is HMC about a Gaussian fitted to the posterior, here the
-  Laplace approximation at one of the modes.
-* ``GeometricMALA``, given the Laplace approximation itself rather than one
-  of its Gaussians, is the local MALA: at every state it proposes from the
+* HMC again, about a Gaussian fitted to the posterior, here the Laplace
+  approximation at one of the modes, given as the estimator's reference.
+* ``MALA(local=True)``, given the Laplace approximation itself as the
+  reference, is the local MALA: at every state it proposes from the
   Laplace Gaussian there, so its proposal follows the posterior's shape.
 * ``SMC`` moves a population from the prior to the posterior through a
   sequence of tempered measures, and estimates the evidence on the way.
@@ -49,14 +50,14 @@ from pygeoinf import (
     MALA,
     PCN,
     SMC,
+    Chains,
     EuclideanSpace,
     ForwardProblem,
     GaussianMeasure,
     GeneralizedHMC,
-    GeometricHMC,
-    GeometricMALA,
     LaplaceApproximation,
     LinearOperator,
+    MonteCarloEstimator,
     Operator,
     plotting,
 )
@@ -129,12 +130,12 @@ print()
 #
 # The Laplace approximation needs a mode: start the search on the positive
 # side, and it finds that one. The reference it gives is a Gaussian on that
-# mode alone, so GeometricHMC proposes well within it and is no help with the
+# mode alone, so HMC about it proposes well within it and is no help with the
 # other. Its chain is exact all the same: a reference makes a sampler fast or
 # slow, never wrong.
 #
-# The local MALA is given the estimator instead, and builds the Laplace
-# Gaussian afresh at every state: at m the curvature is that of the data's
+# The local MALA is given the Laplace approximation itself as the reference,
+# and the estimator builds the Laplace Gaussian afresh at every state: at m the curvature is that of the data's
 # 2m, so anywhere near a mode the proposal is narrow and centered on that mode.
 # It would widen to the prior near the barrier, where the data say nothing
 # about m, but a chain proposing so well within its mode never goes there.
@@ -148,16 +149,16 @@ print()
 # where exp(-3) of the old point is left.
 
 laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
-mode = laplace.solve(data, start=np.array([0.5])).model
-reference = laplace.reference(mode, data)
+reference = laplace.reference(data, start=np.array([0.5]))
 
-samplers = {
-    "PCN": PCN(problem, prior, step=0.1),
-    "MALA": MALA(problem, prior, step=0.05),
-    "HMC": HMC(problem, prior, step=0.1, length=5),
-    "GeneralizedHMC": GeneralizedHMC(problem, prior, step=0.1, friction=0.5),
-    "GeometricHMC": GeometricHMC(problem, reference, step=0.3, length=3),
-    "MALA, local": GeometricMALA(problem, laplace, step=3.0, acceptance=None),
+# Each move with the reference it moves about; None is the prior.
+moves = {
+    "PCN": (PCN(step=0.1), None),
+    "MALA": (MALA(step=0.05), None),
+    "HMC": (HMC(step=0.1, length=5), None),
+    "GeneralizedHMC": (GeneralizedHMC(step=0.1, friction=0.5), None),
+    "HMC, Laplace": (HMC(step=0.3, length=3), reference),
+    "MALA, local": (MALA(step=3.0, acceptance=None, local=True), laplace),
 }
 
 # Record m itself at every step: a linear map to a small coordinate space, here
@@ -188,22 +189,28 @@ potential_traces = {}
 posteriors = {}
 
 
-def run(name: str, sampler) -> None:
-    """Run a sampler's chains, keep what the figures need, and print its row."""
+def run(name: str, move, reference=None) -> None:
+    """Run a move's chains, keep what the figures need, and print its row."""
     traces[name] = np.empty((chains, burn_in + steps))
     potential_traces[name] = np.empty((chains, burn_in + steps))
     started = time.perf_counter()
-    posterior = sampler(
-        data,
+    sampler = Chains(
+        move,
         steps=steps,
-        chains=chains,
         burn_in=burn_in,
-        start=prior,
-        record=record,
-        record_names=["m"],
+        chains=chains,
         rng=rng,
         callback=watcher(traces[name], potential_traces[name]),
     )
+    estimator = MonteCarloEstimator(
+        problem,
+        prior,
+        sampler=sampler,
+        reference=reference,
+        record=record,
+        record_names=["m"],
+    )
+    posterior = estimator(data, start=prior)
     elapsed = time.perf_counter() - started
     posteriors[name] = posterior
     m = posterior.scalars()[1]
@@ -230,8 +237,8 @@ header = (
     f"{'crossings':>9s} {'R-hat(m)':>8s} {'seconds':>7s}"
 )
 print(header)
-for name, sampler in samplers.items():
-    run(name, sampler)
+for name, (move, reference) in moves.items():
+    run(name, move, reference)
 
 print()
 print("E[m^2] does not see the sign, so every sampler gets it, within its own")
@@ -248,9 +255,9 @@ print("  accepted. MALA follows the gradient, which points into the well it is")
 print("  in, and takes the short steps its drift allows. HMC's trajectories are")
 print("  long enough to carry some chains over, and its partially refreshed")
 print("  version keeps going the way it was going, which here means staying put.")
-print("  GeometricHMC proposes about the positive mode alone. A gradient helps")
-print("  a sampler move within a mode, quickly in many dimensions; it is no")
-print("  help in getting from one mode to another.")
+print("  HMC about the Laplace Gaussian proposes about the positive mode alone.")
+print("  A gradient helps a sampler move within a mode, quickly in many")
+print("  dimensions; it is no help in getting from one mode to another.")
 print()
 print("The local MALA is the extreme of that: its proposal is the Laplace")
 print("  Gaussian where it stands, accepted nearly always at a step long enough")
@@ -279,8 +286,8 @@ print(
     f"{np.round([c.expectation[0] for c in mixture.components], 3)}"
 )
 print(header)
-run("MALA, mixture", GeometricMALA(problem, mixture, step=3.0, acceptance=None))
-run("HMC, mixture", GeometricHMC(problem, mixture, step=0.3, length=3))
+run("MALA, mixture", MALA(step=3.0, acceptance=None), mixture)
+run("HMC, mixture", HMC(step=0.3, length=3), mixture)
 
 # And fresh draws: each a short chain of the pCN kernel started from the
 # mixture, independent of the others and of the stored states.
@@ -308,9 +315,8 @@ print()
 # recover from, and draws a path worth looking at.
 
 started = time.perf_counter()
-ensemble = SMC(
-    PCN(problem, prior, step=0.05), particles=500, mutation_steps=10, ess_fraction=0.9
-)(data, rng=rng)
+smc = SMC(PCN(step=0.05), particles=500, mutation_steps=10, ess_fraction=0.9, rng=rng)
+ensemble = MonteCarloEstimator(problem, prior, sampler=smc)(data)
 elapsed = time.perf_counter() - started
 particles = np.array([x[0] for x in ensemble.particles])
 weights = ensemble.weights

@@ -3,12 +3,15 @@
 A linear problem with a Gaussian prior has a Gaussian posterior in closed
 form, so every sampler can be held to it: each layer is checked for what its
 construction promises (the reference invariant at any step, a block's energy
-the Hamiltonian's, a transition density the proposal's), and each assembled
-sampler for the posterior mean within its own Monte Carlo error. Everything
+the Hamiltonian's, a transition density the proposal's), and each move, run
+by the Monte Carlo estimator, for the posterior mean within its own Monte
+Carlo error. Everything
 runs on a dense metric, where a component standing in for a vector, or a
 representer for a derivative, would show.
 """
 
+import ast
+import pathlib
 import warnings
 
 import numpy as np
@@ -22,14 +25,14 @@ from pygeoinf.algebra.spaces import EuclideanSpace
 from pygeoinf.geometry import Ball
 from pygeoinf.inference import (
     ForwardProblem,
-    GaussianReference,
     LaplaceApproximation,
     LinearForwardProblem,
     LinearGaussianInversion,
-    MixtureReference,
+    MonteCarloEstimator,
 )
 from pygeoinf.inference.estimators import MeasureEstimator
-from pygeoinf.inference.sampling import (
+from pygeoinf.probability import GaussianReference, MixtureReference
+from pygeoinf.sampling import (
     HMC,
     MALA,
     PCN,
@@ -37,8 +40,6 @@ from pygeoinf.inference.sampling import (
     Blockwise,
     Chains,
     GeneralizedHMC,
-    GeometricHMC,
-    GeometricMALA,
     Gibbs,
     GradientDrift,
     Hamiltonian,
@@ -57,12 +58,11 @@ from pygeoinf.inference.sampling import (
     StepSizeAdaptation,
     Sweep,
     Target,
-    Tempering,
     Underdamped,
     WeightedEnsemble,
 )
 from pygeoinf.inference.laplace import MaximumAPosteriori
-from pygeoinf.inference.sampling.flows import (
+from pygeoinf.sampling.flows import (
     Flow,
     crank_nicolson_delta,
     pcn_beta,
@@ -107,7 +107,8 @@ class Setting:
 
     def target(self, reference=None):
         return Target(
-            self.problem, self.data, self.prior if reference is None else reference
+            self.problem.potential(self.data),
+            self.prior if reference is None else reference,
         )
 
     def components_covariance(self, measure):
@@ -141,6 +142,30 @@ def reference_named(setting, name, rng):
         LinearForwardProblem(setting.forward, error=error), setting.prior
     )
     return inversion.reference(setting.data + 1.0, rank=2, rng=rng)
+
+
+def sample(
+    setting,
+    move,
+    /,
+    *,
+    reference=None,
+    constraint=None,
+    record=None,
+    start=None,
+    **budget,
+):
+    """The setting's posterior sampled by a move, through the estimator, its
+    probe recorded unless another map is given."""
+    estimator = MonteCarloEstimator(
+        setting.problem,
+        setting.prior,
+        sampler=Chains(move, **budget),
+        reference=reference,
+        constraint=constraint,
+        record=setting.record if record is None else record,
+    )
+    return estimator(setting.data, start=start)
 
 
 def assert_recovers_the_mean(posterior, exact, *, bound=4.0):
@@ -197,7 +222,8 @@ class TestTheTarget:
             ),
         )
         target = Target(
-            ForwardProblem(forward, error=setting.error), setting.data, setting.prior
+            ForwardProblem(forward, error=setting.error).potential(setting.data),
+            setting.prior,
         )
         state = State(setting.prior.sample(rng=rng))
         target.gradient(state)
@@ -207,8 +233,7 @@ class TestTheTarget:
 
     def test_a_point_outside_the_constraint_is_infinite_unevaluated(self, setting, rng):
         target = Target(
-            setting.problem,
-            setting.data,
+            setting.problem.potential(setting.data),
             setting.prior,
             constraint=Ball(setting.space, radius=1e-3),
         )
@@ -223,7 +248,8 @@ class TestTheTarget:
             setting.space, setting.forward.codomain, value
         )
         target = Target(
-            ForwardProblem(forward, error=setting.error), setting.data, setting.prior
+            ForwardProblem(forward, error=setting.error).potential(setting.data),
+            setting.prior,
         )
         assert target.value(State(setting.prior.sample(rng=rng))) == float("inf")
 
@@ -234,11 +260,19 @@ class TestTheTarget:
         assert setting.space.norm(target.gradient(state)) == 0.0
 
     def test_a_reference_on_another_space_is_refused(self, setting):
-        with pytest.raises(ValueError, match="model space"):
+        with pytest.raises(ValueError, match="domain"):
             Target(
-                setting.problem,
-                setting.data,
+                setting.problem.potential(setting.data),
                 gi.GaussianMeasure.from_standard_deviation(EuclideanSpace(4), 1.0),
+            )
+
+    def test_a_local_reference_is_built_over_the_prior(self, setting, rng):
+        reference = setting.inversion.reference(setting.data, rank=2, rng=rng)
+        with pytest.raises(ValueError, match="prior"):
+            Target(
+                setting.problem.potential(setting.data),
+                reference,
+                local=lambda u: reference,
             )
 
 
@@ -268,7 +302,8 @@ class TestTheFlows:
             setting.space, setting.forward.codomain, lambda x: setting.forward(x)
         )
         target = Target(
-            ForwardProblem(forward, error=setting.error), setting.data, setting.prior
+            ForwardProblem(forward, error=setting.error).potential(setting.data),
+            setting.prior,
         )
         PreconditionedOU(target)
         with pytest.raises(ValueError, match="gradient"):
@@ -297,7 +332,9 @@ class CountingSetting:
 
     def target(self, reference=None):
         s = self.setting
-        return Target(self.problem, s.data, s.prior if reference is None else reference)
+        return Target(
+            self.problem.potential(s.data), s.prior if reference is None else reference
+        )
 
     def reset(self):
         self.calls.update(value=0, derivative=0)
@@ -321,22 +358,18 @@ class TestTheForwardIsEvaluatedOncePerPosition:
         assert counting.calls == {"value": 1, "derivative": 1}
 
     @pytest.mark.parametrize(
-        "build, value, derivative",
+        "move, value, derivative",
         [
-            (lambda p, q: PCN(p, q, step=0.3, acceptance=None), 1, 0),
-            (lambda p, q: MALA(p, q, step=0.1, acceptance=None), 1, 1),
-            (lambda p, q: HMC(p, q, step=0.2, length=3, acceptance=None), 3, 3),
-            (
-                lambda p, q: GeneralizedHMC(p, q, step=0.2, length=3, acceptance=None),
-                3,
-                3,
-            ),
+            (PCN(step=0.3, acceptance=None), 1, 0),
+            (MALA(step=0.1, acceptance=None), 1, 1),
+            (HMC(step=0.2, length=3, acceptance=None), 3, 3),
+            (GeneralizedHMC(step=0.2, length=3, acceptance=None), 3, 3),
         ],
         ids=["pcn", "mala", "hmc", "generalized-hmc"],
     )
-    def test_each_step_of_a_preset(self, setting, build, value, derivative, rng):
+    def test_each_step_of_a_move(self, setting, move, value, derivative, rng):
         counting = CountingSetting(setting)
-        kernel = build(counting.problem, setting.prior).kernel(setting.data)
+        kernel = move.kernel(counting.target())
         state = kernel.initial_state(setting.prior.sample(rng=rng), rng=rng)
         state = kernel.step(state, rng=rng).state
         counting.reset()
@@ -600,62 +633,60 @@ class TestMetropolisHastings:
 
 
 class TestTheChains:
+    """Chains of a kernel built by hand, which runs at its own step on the
+    target it is called on."""
+
     def kernel(self, setting, step=0.3):
         return MetropolisHastings(
             SplittingScheme(PreconditionedOU(setting.target()), "O", step=step)
         )
 
     def test_hmc_by_hand_samples_the_posterior(self, setting):
-        dynamics = Hamiltonian(setting.target())
-        scheme = SplittingScheme(dynamics, "OBAB", step=0.3)
+        target = setting.target()
+        dynamics = Hamiltonian(target)
+        scheme = SplittingScheme(dynamics, "OBAB", step=0.1)
         kernel = MetropolizedBlock(scheme.block("BAB", repeat=5)).within(scheme)
-        posterior = Chains(2)(
-            kernel,
-            start=setting.prior,
-            steps=2000,
-            burn_in=500,
-            adapt=StepSizeAdaptation(acceptance=0.7),
-            record=setting.record,
-            rng=np.random.default_rng(7),
-        )
+        posterior = Chains(
+            kernel, steps=2000, burn_in=500, chains=2, rng=np.random.default_rng(7)
+        )(target, start=setting.prior, record=setting.record)
         assert isinstance(posterior, SampledPosterior)
         assert_recovers_the_mean(posterior, setting.exact)
 
+    def test_a_kernel_runs_on_the_target_it_is_called_on(self, setting, rng):
+        kernel = self.kernel(setting)
+        tempered = kernel.target.with_temperature(2.0)
+        posterior = Chains(kernel, steps=5, chains=1, rng=rng)(tempered)
+        assert posterior.kernel.target is tempered
+        assert posterior.kernel.step_size == kernel.step_size
+
     def test_a_result_does_not_depend_on_the_workers(self, setting):
-        run = lambda n_jobs: Chains(2)(
-            self.kernel(setting),
-            start=setting.prior,
-            steps=200,
-            rng=np.random.default_rng(5),
-            n_jobs=n_jobs,
-        )
+        kernel = self.kernel(setting)
+        run = lambda n_jobs: Chains(
+            kernel, steps=200, chains=2, rng=np.random.default_rng(5), n_jobs=n_jobs
+        )(kernel.target, start=setting.prior)
         serial, parallel = run(None), run(2)
         for a, b in zip(serial.chains, parallel.chains):
             assert np.array_equal(a.potential, b.potential)
 
     def test_the_thinned_states_are_stored_and_drawn(self, setting, rng):
-        posterior = Chains(2)(
-            self.kernel(setting), start=setting.prior, steps=100, thin=25, rng=rng
+        kernel = self.kernel(setting)
+        posterior = Chains(kernel, steps=100, chains=2, thin=25, rng=rng)(
+            kernel.target, start=setting.prior
         )
         assert len(posterior.stored_positions) == 8
         drawn = posterior.sample_thinned(rng=rng)
         assert any(drawn is x for x in posterior.stored_positions)
 
     def test_without_thinning_nothing_is_stored(self, setting, rng):
-        posterior = Chains(1)(
-            self.kernel(setting), start=setting.prior, steps=20, rng=rng
-        )
+        kernel = self.kernel(setting)
+        posterior = Chains(kernel, steps=20, chains=1, rng=rng)(kernel.target)
         with pytest.raises(ValueError, match="thin"):
             posterior.sample_thinned(rng=rng)
 
     def test_the_records_are_named_and_shaped(self, setting, rng):
-        posterior = Chains(3)(
-            self.kernel(setting),
-            start=setting.prior,
-            steps=40,
-            record=setting.record,
-            record_names=["first"],
-            rng=rng,
+        kernel = self.kernel(setting)
+        posterior = Chains(kernel, steps=40, chains=3, rng=rng)(
+            kernel.target, record=setting.record, record_names=["first"]
         )
         assert posterior.scalars().shape == (2, 3, 40)
         assert posterior.diagnostics().names == ("potential", "first")
@@ -666,14 +697,9 @@ class TestTheChains:
         squared = Operator.from_callables(
             space, EuclideanSpace(1), lambda x: np.array([space.squared_norm(x)])
         )
-        posterior = Chains(2)(
-            self.kernel(setting),
-            start=setting.prior,
-            steps=30,
-            thin=1,
-            record=squared,
-            record_names=["squared norm"],
-            rng=rng,
+        kernel = self.kernel(setting)
+        posterior = Chains(kernel, steps=30, chains=2, thin=1, rng=rng)(
+            kernel.target, record=squared, record_names=["squared norm"]
         )
         recorded = posterior.scalars()[1]
         stored = np.array([space.squared_norm(x) for x in posterior.stored_positions])
@@ -683,22 +709,30 @@ class TestTheChains:
         with pytest.raises(ValueError, match="nonlinear"):
             posterior.fitted_reference()
 
+    def test_a_record_off_the_model_space_is_refused(self, setting, rng):
+        kernel = self.kernel(setting)
+        other = LinearOperator.from_matrix(
+            EuclideanSpace(4), EuclideanSpace(1), np.ones((1, 4)), form="components"
+        )
+        with pytest.raises(ValueError, match="model space"):
+            Chains(kernel, steps=5, rng=rng)(kernel.target, record=other)
+
     def test_the_callback_sees_every_step(self, setting, rng):
         seen = []
-        Chains(2)(
-            self.kernel(setting),
-            start=setting.prior,
+        kernel = self.kernel(setting)
+        Chains(
+            kernel,
             steps=10,
             burn_in=5,
+            chains=2,
             rng=rng,
             callback=lambda chain, iteration, step: seen.append((chain, iteration)),
-        )
+        )(kernel.target)
         assert sorted(seen) == [(c, i) for c in range(2) for i in range(15)]
 
     def test_a_start_of_infinite_potential_is_refused(self, setting, rng):
         target = Target(
-            setting.problem,
-            setting.data,
+            setting.problem.potential(setting.data),
             setting.prior,
             constraint=Ball(setting.space, radius=1e-3),
         )
@@ -706,33 +740,36 @@ class TestTheChains:
             SplittingScheme(PreconditionedOU(target), "O", step=0.3)
         )
         with pytest.raises(ValueError):
-            Chains(1)(
-                kernel,
-                start=setting.space.from_components(np.ones(4)),
-                steps=5,
-                rng=rng,
+            Chains(kernel, steps=5, chains=1, rng=rng)(
+                target, start=setting.space.from_components(np.ones(4))
             )
 
     @pytest.mark.parametrize(
-        "keywords", [{"steps": 0}, {"steps": 5, "burn_in": -1}, {"steps": 5, "thin": 0}]
+        "keywords",
+        [
+            {"steps": 0},
+            {"steps": 5, "burn_in": -1},
+            {"steps": 5, "thin": 0},
+            {"steps": 5, "chains": 0},
+        ],
     )
-    def test_bad_lengths_are_refused(self, setting, rng, keywords):
+    def test_bad_lengths_are_refused(self, setting, keywords):
         with pytest.raises(ValueError):
-            Chains(1)(self.kernel(setting), start=setting.prior, rng=rng, **keywords)
+            Chains(self.kernel(setting), **keywords)
 
 
-PRESETS_ON_A_BOUNDED_POSTERIOR = pytest.mark.parametrize(
-    "build",
+MOVES_ON_A_BOUNDED_POSTERIOR = pytest.mark.parametrize(
+    "move",
     [
-        lambda p, q, **k: PCN(p, q, step=0.3, acceptance=None, **k),
-        lambda p, q, **k: MALA(p, q, step=0.1, acceptance=None, **k),
-        lambda p, q, **k: HMC(p, q, step=0.2, length=3, acceptance=None, **k),
+        PCN(step=0.3, acceptance=None),
+        MALA(step=0.1, acceptance=None),
+        HMC(step=0.2, length=3, acceptance=None),
     ],
     ids=["pcn", "mala", "hmc"],
 )
 
 
-def visited(sampler, data, start):
+def visited(problem, prior, move, data, start, *, constraint=None):
     """Every state a short run visits, burn-in included, and how many of its
     proposals had no finite potential."""
     positions, infinite = [], []
@@ -741,14 +778,16 @@ def visited(sampler, data, start):
         positions.append(step.state.position)
         infinite.append(step.info.energy_error == float("inf"))
 
-    sampler(
-        data,
+    sampler = Chains(
+        move,
         steps=300,
         chains=2,
         burn_in=50,
-        start=start,
         rng=np.random.default_rng(4),
         callback=callback,
+    )
+    MonteCarloEstimator(problem, prior, sampler=sampler, constraint=constraint)(
+        data, start=start
     )
     return positions, sum(infinite)
 
@@ -760,21 +799,19 @@ class TestAnInfinitePotentialInARunningChain:
     trajectory. Each region holds about half the posterior's mass, so many
     proposals fall outside it."""
 
-    @PRESETS_ON_A_BOUNDED_POSTERIOR
-    def test_a_constraint_is_never_left(self, setting, build):
+    @MOVES_ON_A_BOUNDED_POSTERIOR
+    def test_a_constraint_is_never_left(self, setting, move):
         center = setting.posterior.expectation
         ball = Ball(setting.space, radius=0.85, center=center)
         positions, infinite = visited(
-            build(setting.problem, setting.prior, constraint=ball),
-            setting.data,
-            center,
+            setting.problem, setting.prior, move, setting.data, center, constraint=ball
         )
         distances = [setting.space.norm(x - center) for x in positions]
         assert max(distances) <= 0.85
         assert infinite > 0
 
-    @PRESETS_ON_A_BOUNDED_POSTERIOR
-    def test_a_refused_proposal_is_rejected(self, setting, build, rng):
+    @MOVES_ON_A_BOUNDED_POSTERIOR
+    def test_a_refused_proposal_is_rejected(self, setting, move, rng):
         threshold = setting.exact
 
         def value(x):
@@ -794,9 +831,7 @@ class TestAnInfinitePotentialInARunningChain:
             for x in (setting.posterior.sample(rng=rng) for _ in range(100))
             if setting.record(x)[0] < threshold
         )
-        positions, infinite = visited(
-            build(problem, setting.prior), setting.data, start
-        )
+        positions, infinite = visited(problem, setting.prior, move, setting.data, start)
         assert max(setting.record(x)[0] for x in positions) <= threshold
         assert infinite > 0
 
@@ -824,54 +859,82 @@ class TestTheAdaptation:
         with pytest.raises(ValueError):
             StepSizeAdaptation(**keywords)
 
+    def test_a_move_adapts_its_step_during_burn_in(self, setting):
+        posterior = sample(
+            setting,
+            HMC(step=0.01, length=3, acceptance=0.7),
+            steps=50,
+            burn_in=300,
+            chains=2,
+            rng=np.random.default_rng(3),
+        )
+        assert all(chain.step_size > 0.05 for chain in posterior.chains)
+
     def test_a_step_adapted_to_its_maximum_is_warned_of(self, setting):
         """About the exact posterior every step is accepted, so the step grows
-        until it is stopped."""
-        sampler = GeometricMALA(
-            setting.problem, setting.inversion.reference(setting.data), step=1.0
-        )
-        with pytest.warns(UserWarning, match="about its largest"):
-            sampler(
-                setting.data,
+        until it is stopped; the warning names the caller's line."""
+        with pytest.warns(UserWarning, match="about its largest") as caught:
+            sample(
+                setting,
+                MALA(step=1.0),
+                reference=setting.inversion.reference(setting.data),
                 steps=4,
                 chains=2,
                 burn_in=200,
                 rng=np.random.default_rng(1),
             )
+        assert caught[0].filename == __file__
 
     @pytest.mark.parametrize(
-        "build, burn_in",
+        "move, burn_in",
         [
-            (lambda s, r: GeometricMALA(s, r, step=1.0, acceptance=None), 200),
-            (lambda s, r: GeometricMALA(s, r, step=1.0), 0),
-            (lambda s, r: GeometricHMC(s, r, step=0.1, length=4), 200),
+            (MALA(step=1.0, acceptance=None), 200),
+            (MALA(step=1.0), 0),
+            (HMC(step=0.1, length=4), 200),
         ],
-        ids=["fixed-step", "no-burn-in", "geometric-hmc-at-its-quarter-turn"],
+        ids=["fixed-step", "no-burn-in", "hmc-about-a-reference-at-its-quarter-turn"],
     )
     def test_a_step_not_adapted_or_aimed_there_is_not_warned_of(
-        self, setting, build, burn_in
+        self, setting, move, burn_in
     ):
-        sampler = build(setting.problem, setting.inversion.reference(setting.data))
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            sampler(
-                setting.data,
+            sample(
+                setting,
+                move,
+                reference=setting.inversion.reference(setting.data),
                 steps=4,
                 chains=2,
                 burn_in=burn_in,
                 rng=np.random.default_rng(1),
             )
 
+    def test_hmc_over_the_prior_is_warned_of_at_its_quarter_turn(self):
+        """Over the prior a quarter turn is no aim: the data's force is what
+        a trajectory is for."""
+        target = Target.from_reference(
+            gi.GaussianMeasure.from_standard_deviation(make_dense_metric_space(4), 1.0)
+        )
+        assert HMC(step=0.1, length=4).adaptation(target).warns
+        assert PCN(step=0.1).adaptation(target).warns
+
 
 class TestTempering:
+    """SMC on a target directly, its mutation a kernel built by hand."""
+
+    def mutation(self, target, step=0.05):
+        return MetropolisHastings(
+            SplittingScheme(PreconditionedOU(target), "O", step=step)
+        )
+
     def test_it_estimates_the_evidence(self, setting):
         target = setting.target()
-        mutation = MetropolisHastings(
-            SplittingScheme(PreconditionedOU(target), "O", step=0.05)
-        )
-        ensemble = Tempering(1000, mutation=mutation, mutation_steps=20)(
-            target, rng=np.random.default_rng(0)
-        )
+        ensemble = SMC(
+            self.mutation(target),
+            particles=1000,
+            mutation_steps=20,
+            rng=np.random.default_rng(0),
+        )(target)
         assert isinstance(ensemble, WeightedEnsemble)
         assert ensemble.log_normalizer.value == pytest.approx(
             setting.posterior.log_normalizer.value, abs=0.15
@@ -882,154 +945,217 @@ class TestTempering:
 
     def test_a_reference_other_than_the_prior_is_refused(self, setting, rng):
         target = setting.target(setting.inversion.reference(setting.data))
-        mutation = MetropolisHastings(
-            SplittingScheme(PreconditionedOU(target), "O", step=0.05)
-        )
         with pytest.raises(ValueError, match="prior"):
-            Tempering(10, mutation=mutation)(target, rng=rng)
+            SMC(self.mutation(target), particles=10, rng=rng)(target)
+
+    def test_a_start_or_a_record_is_refused(self, setting, rng):
+        target = setting.target()
+        smc = SMC(self.mutation(target), particles=10, rng=rng)
+        with pytest.raises(ValueError, match="prior"):
+            smc(target, start=setting.prior)
+        with pytest.raises(ValueError, match="forward"):
+            smc(target, record=setting.record)
 
     @pytest.mark.parametrize(
         "keywords",
-        [
-            {"particles": 1},
-            {"schedule": "linear"},
-            {"ess_fraction": 1.0},
-            {"mutation_steps": 0},
-        ],
+        [{"particles": 1}, {"ess_fraction": 1.0}, {"mutation_steps": 0}],
     )
     def test_bad_settings_are_refused(self, setting, keywords):
-        mutation = MetropolisHastings(
-            SplittingScheme(PreconditionedOU(setting.target()), "O", step=0.05)
-        )
-        particles = keywords.pop("particles", 10)
         with pytest.raises(ValueError):
-            Tempering(particles, mutation=mutation, **keywords)
+            SMC(self.mutation(setting.target()), **keywords)
 
 
-class TestThePresets:
+class TestTheMoves:
     @pytest.mark.parametrize(
-        "build, steps",
+        "move, reference, steps",
         [
-            (lambda s: PCN(s.problem, s.prior, step=0.3), 8000),
-            (lambda s: MALA(s.problem, s.prior, step=0.3), 8000),
-            (lambda s: HMC(s.problem, s.prior, step=0.3, length=5), 2000),
-            (lambda s: GeneralizedHMC(s.problem, s.prior, step=0.3), 4000),
-            (
-                lambda s: GeometricMALA(
-                    s.problem, s.inversion.reference(s.data), step=0.5
-                ),
-                2000,
-            ),
-            (
-                lambda s: GeometricHMC(
-                    s.problem, s.inversion.reference(s.data), step=0.4, length=4
-                ),
-                1000,
-            ),
+            (PCN(step=0.3), None, 8000),
+            (MALA(step=0.3), None, 8000),
+            (HMC(step=0.3, length=5), None, 2000),
+            (GeneralizedHMC(step=0.3), None, 4000),
+            (MALA(step=0.5), "exact", 2000),
+            (HMC(step=0.4, length=4), "exact", 1000),
         ],
         ids=[
             "pcn",
             "mala",
             "hmc",
-            "preconditioned-hmc",
-            "geometric-mala",
-            "geometric-hmc",
+            "generalized-hmc",
+            "mala-about-the-posterior",
+            "hmc-about-the-posterior",
         ],
     )
-    def test_each_samples_the_posterior(self, setting, build, steps):
-        """The slow samplers on the prior's reference run longer to reach the
-        same Monte Carlo error; the geometric ones, about the exact posterior,
-        draw nearly independent states."""
-        sampler = build(setting)
-        posterior = sampler(
-            setting.data,
+    def test_each_samples_the_posterior(self, setting, move, reference, steps):
+        """The moves about the prior run longer to reach the same Monte Carlo
+        error; about the exact posterior, they draw nearly independent
+        states."""
+        posterior = sample(
+            setting,
+            move,
+            reference=setting.inversion if reference == "exact" else None,
             steps=steps,
             chains=2,
             burn_in=800,
-            record=setting.record,
             rng=np.random.default_rng(7),
         )
         assert_recovers_the_mean(posterior, setting.exact)
 
-    def test_a_preset_is_its_hand_assembled_kernel(self, setting):
-        kernel = HMC(setting.problem, setting.prior, step=0.2, length=3).kernel(
-            setting.data
-        )
+    def test_a_move_is_its_hand_assembled_kernel(self, setting):
+        kernel = HMC(step=0.2, length=3).kernel(setting.target())
         assert isinstance(kernel.dynamics, Hamiltonian)
         assert kernel.block.repeat == 3
         assert kernel.step_size == 0.2
+        assert (
+            HMC(step=0.2, length=3).kernel(setting.target(), step=0.4).step_size == 0.4
+        )
 
     def test_an_exact_reference_stops_the_step_at_a_quarter_turn(self, setting):
-        sampler = GeometricHMC(
-            setting.problem,
-            setting.inversion.reference(setting.data),
-            step=0.1,
-            length=4,
-        )
-        posterior = sampler(
-            setting.data, steps=10, chains=1, burn_in=200, rng=np.random.default_rng(1)
+        posterior = sample(
+            setting,
+            HMC(step=0.1, length=4),
+            reference=setting.inversion.reference(setting.data),
+            steps=10,
+            chains=1,
+            burn_in=200,
+            rng=np.random.default_rng(1),
         )
         assert posterior.chains[0].step_size == pytest.approx(np.pi / 8)
 
-    def test_a_gradient_sampler_needs_a_derivative(self, setting):
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: PCN(step=0.0),
+            lambda: PCN(step=0.1, acceptance=1.0),
+            lambda: HMC(step=0.1, length=0),
+            lambda: GeneralizedHMC(step=0.1, friction=0.0),
+        ],
+        ids=["step", "acceptance", "length", "friction"],
+    )
+    def test_bad_settings_are_refused(self, build):
+        with pytest.raises(ValueError):
+            build()
+
+
+class TestTheEstimator:
+    def test_it_is_a_measure_estimator(self, setting):
+        estimator = MonteCarloEstimator(
+            setting.problem, setting.prior, sampler=Chains(PCN(step=0.1), steps=10)
+        )
+        assert isinstance(estimator, MeasureEstimator)
+        assert estimator.data_space == setting.problem.data_space
+        assert estimator.property_space == setting.problem.model_space
+        assert (
+            estimator.push_forward(setting.record).property_space
+            == setting.record.codomain
+        )
+
+    def test_its_target_is_the_problem_s_against_the_reference(self, setting, rng):
+        reference = setting.inversion.reference(setting.data, rank=2, rng=rng)
+        estimator = MonteCarloEstimator(
+            setting.problem,
+            setting.prior,
+            sampler=Chains(PCN(step=0.1), steps=10),
+            reference=reference,
+        )
+        target = estimator.target(setting.data)
+        u = setting.prior.sample(rng=rng)
+        assert target.reference is reference
+        assert target.value(State(u)) == pytest.approx(
+            setting.target(reference).value(State(u)), rel=1e-12
+        )
+
+    def test_an_estimator_as_reference_is_fitted_to_the_data(self, setting):
+        estimator = MonteCarloEstimator(
+            setting.problem,
+            setting.prior,
+            sampler=Chains(PCN(step=0.1), steps=10),
+            reference=setting.inversion,
+        )
+        built = estimator.target(setting.data).reference
+        x = setting.space.basis_vector(1)
+        assert np.allclose(built.expectation, setting.posterior.expectation)
+        assert np.allclose(built.covariance(x), setting.posterior.covariance(x))
+
+    def test_a_gradient_move_needs_a_derivative(self, setting):
         forward = Operator.from_callables(
             setting.space, setting.forward.codomain, lambda x: setting.forward(x)
         )
         problem = ForwardProblem(forward, error=setting.error)
-        PCN(problem, setting.prior, step=0.1)
+        MonteCarloEstimator(
+            problem, setting.prior, sampler=Chains(PCN(step=0.1), steps=5)
+        )
         with pytest.raises(ValueError, match="gradient"):
-            MALA(problem, setting.prior, step=0.1)
-
-    def test_a_geometric_preset_takes_a_reference(self, setting):
-        with pytest.raises(TypeError, match="GaussianReference"):
-            GeometricHMC(setting.problem, setting.prior, step=0.1, length=2)
+            MonteCarloEstimator(
+                problem, setting.prior, sampler=Chains(MALA(step=0.1), steps=5)
+            )
 
     def test_a_reference_over_another_prior_is_refused(self, setting):
         other = GaussianReference.from_prior(
             gi.GaussianMeasure.from_standard_deviation(setting.space, 2.0)
         )
         with pytest.raises(ValueError, match="prior"):
-            HMC(setting.problem, setting.prior, step=0.1, length=2, reference=other)
+            MonteCarloEstimator(
+                setting.problem,
+                setting.prior,
+                sampler=Chains(HMC(step=0.1, length=2), steps=5),
+                reference=other,
+            )
 
-    def test_a_preset_is_a_measure_estimator(self, setting):
-        sampler = PCN(setting.problem, setting.prior, step=0.1)
-        assert isinstance(sampler, MeasureEstimator)
-        assert sampler.data_space == setting.problem.data_space
-        assert (
-            sampler.push_forward(setting.record).property_space
-            == setting.record.codomain
-        )
+    def test_a_reference_of_another_kind_is_refused(self, setting):
+        with pytest.raises(TypeError, match="GaussianReference"):
+            MonteCarloEstimator(
+                setting.problem,
+                setting.prior,
+                sampler=Chains(PCN(step=0.1), steps=5),
+                reference=gi.GaussianMeasure.from_standard_deviation(
+                    setting.space, 2.0
+                ),
+            )
+
+    def test_a_move_is_not_a_sampler(self, setting):
+        with pytest.raises(TypeError, match="Chains"):
+            MonteCarloEstimator(setting.problem, setting.prior, sampler=PCN(step=0.1))
 
     def test_smc_estimates_the_evidence(self, setting):
-        ensemble = SMC(
-            PCN(setting.problem, setting.prior, step=0.05),
-            particles=1000,
-            mutation_steps=20,
-        )(setting.data, rng=np.random.default_rng(0))
+        ensemble = MonteCarloEstimator(
+            setting.problem,
+            setting.prior,
+            sampler=SMC(
+                PCN(step=0.05),
+                particles=1000,
+                mutation_steps=20,
+                rng=np.random.default_rng(0),
+            ),
+        )(setting.data)
         assert ensemble.log_normalizer.value == pytest.approx(
             setting.posterior.log_normalizer.value, abs=0.15
         )
 
     def test_smc_starts_from_the_prior(self, setting):
-        sampler = PCN(
+        estimator = MonteCarloEstimator(
             setting.problem,
             setting.prior,
-            step=0.05,
+            sampler=SMC(PCN(step=0.05), particles=10),
             reference=setting.inversion.reference(setting.data),
         )
         with pytest.raises(ValueError, match="prior"):
-            SMC(sampler)
+            estimator(setting.data)
 
     def test_smc_with_an_hmc_mutation(self, setting):
         """The evidence, and the posterior mean of the probe by the weighted
         particles, within four of its standard errors at the ensemble's
         effective sample size. The population is smaller than the pCN test's,
         to keep the test short, and the evidence is held more loosely."""
-        ensemble = SMC(
-            HMC(setting.problem, setting.prior, step=0.2, length=3),
-            particles=400,
-            mutation_steps=5,
-        )(setting.data, rng=np.random.default_rng(0))
+        ensemble = MonteCarloEstimator(
+            setting.problem,
+            setting.prior,
+            sampler=SMC(
+                HMC(step=0.2, length=3),
+                particles=400,
+                mutation_steps=5,
+                rng=np.random.default_rng(0),
+            ),
+        )(setting.data)
         assert ensemble.log_normalizer.value == pytest.approx(
             setting.posterior.log_normalizer.value, abs=0.3
         )
@@ -1043,11 +1169,16 @@ class TestThePresets:
 
     def test_a_weighted_mean_weighs_each_particle(self, setting):
         """Against the sum written out from the particles and their weights."""
-        ensemble = SMC(
-            PCN(setting.problem, setting.prior, step=0.05),
-            particles=200,
-            mutation_steps=2,
-        )(setting.data, rng=np.random.default_rng(1))
+        ensemble = MonteCarloEstimator(
+            setting.problem,
+            setting.prior,
+            sampler=SMC(
+                PCN(step=0.05),
+                particles=200,
+                mutation_steps=2,
+                rng=np.random.default_rng(1),
+            ),
+        )(setting.data)
         values = np.array([setting.record(x)[0] for x in ensemble.particles])
         assert ensemble.weighted_mean(lambda x: setting.record(x)[0]) == pytest.approx(
             ensemble.weights @ values, rel=1e-12
@@ -1137,23 +1268,24 @@ class TestOverAMixtureReference:
             LabelJump(setting.target())
 
     @pytest.mark.parametrize(
-        "build, steps",
+        "move, steps",
         [
-            (lambda s, r: PCN(s.problem, s.prior, step=0.3, reference=r), 6000),
-            (lambda s, r: MALA(s.problem, s.prior, step=0.1, reference=r), 4000),
-            (lambda s, r: GeometricHMC(s.problem, r, step=0.3, length=3), 2000),
+            (PCN(step=0.3), 6000),
+            (MALA(step=0.1), 4000),
+            (HMC(step=0.3, length=3), 2000),
         ],
         ids=["pcn", "mala", "hmc"],
     )
-    def test_each_preset_samples_the_posterior(self, setting, build, steps, rng):
+    def test_each_move_samples_the_posterior(self, setting, move, steps, rng):
         """Any mixture over the prior leaves a chain exact; this one is not
         fitted to the posterior at all."""
-        posterior = build(setting, make_mixture(setting, rng))(
-            setting.data,
+        posterior = sample(
+            setting,
+            move,
+            reference=make_mixture(setting, rng),
             steps=steps,
             chains=2,
             burn_in=500,
-            record=setting.record,
             rng=np.random.default_rng(7),
         )
         assert_recovers_the_mean(posterior, setting.exact)
@@ -1222,12 +1354,13 @@ def recorded_run(setting):
     record = LinearOperator.from_matrix(
         space, EuclideanSpace(4), np.eye(4), form="components"
     )
-    return HMC(setting.problem, setting.prior, step=0.3, length=5)(
-        setting.data,
+    return sample(
+        setting,
+        HMC(step=0.3, length=5),
+        record=record,
         steps=3000,
         chains=2,
         burn_in=500,
-        record=record,
         thin=50,
         rng=np.random.default_rng(11),
     )
@@ -1236,12 +1369,12 @@ def recorded_run(setting):
 @pytest.fixture(scope="module")
 def pcn_run(setting):
     """A pCN run recording the probe."""
-    return PCN(setting.problem, setting.prior, step=0.3)(
-        setting.data,
+    return sample(
+        setting,
+        PCN(step=0.3),
         steps=2000,
         chains=2,
         burn_in=500,
-        record=setting.record,
         rng=np.random.default_rng(5),
     )
 
@@ -1272,18 +1405,23 @@ class TestTheFittedReference:
         kernel = MetropolisHastings(
             SplittingScheme(PreconditionedOU(setting.target()), "O", step=0.3)
         )
-        posterior = Chains(1)(kernel, start=setting.prior, steps=20, rng=rng)
+        posterior = Chains(kernel, steps=20, chains=1, rng=rng)(kernel.target)
         with pytest.raises(ValueError, match="record="):
             posterior.fitted_reference()
         with pytest.raises(ValueError, match="thin="):
             posterior.fitted_reference(chart=setting.record)
 
     def test_a_weighted_ensemble_fits_one_too(self, setting):
-        ensemble = SMC(
-            PCN(setting.problem, setting.prior, step=0.05),
-            particles=500,
-            mutation_steps=10,
-        )(setting.data, rng=np.random.default_rng(0))
+        ensemble = MonteCarloEstimator(
+            setting.problem,
+            setting.prior,
+            sampler=SMC(
+                PCN(step=0.05),
+                particles=500,
+                mutation_steps=10,
+                rng=np.random.default_rng(0),
+            ),
+        )(setting.data)
         reference = ensemble.fitted_reference(setting.record)
         assert reference.rank == 1
         assert setting.space.inner_product(
@@ -1344,13 +1482,15 @@ class TestAPosteriorWithTwoModes:
             space, EuclideanSpace(1), np.eye(1), form="components"
         )
         rng = np.random.default_rng(37)
-        run = PCN(problem, prior, step=0.1)(
-            data, steps=1000, chains=4, burn_in=300, record=record, rng=rng
-        )
-        mixture = run.fitted_reference(components=2, rng=rng)
-        posterior = GeometricHMC(problem, mixture, step=0.3, length=3)(
-            data, steps=1000, chains=4, burn_in=300, record=record, rng=rng
-        )
+
+        def run(move, reference=None):
+            sampler = Chains(move, steps=1000, chains=4, burn_in=300, rng=rng)
+            return MonteCarloEstimator(
+                problem, prior, sampler=sampler, reference=reference, record=record
+            )(data)
+
+        mixture = run(PCN(step=0.1)).fitted_reference(components=2, rng=rng)
+        posterior = run(HMC(step=0.3, length=3), mixture)
         m = posterior.scalars()[1]
         crossings = int(np.sum(np.diff(np.sign(m), axis=1) != 0))
         assert crossings > 500
@@ -1395,7 +1535,7 @@ class NonlinearSetting:
             adjoint=lambda c: c[0] * probe,
         )
         mode = self.laplace.solve(self.data).model
-        proposal = self.laplace.reference(mode, self.data)
+        proposal = self.laplace.reference(self.data, at=mode)
         potential = self.problem.potential(self.data)
         draws = [proposal.sample(rng=rng) for _ in range(20000)]
         log_weights = np.array(
@@ -1415,6 +1555,19 @@ def nonlinear_setting():
     return NonlinearSetting()
 
 
+def local_mala(s, /, **budget):
+    """The estimator running a local MALA about the setting's Laplace
+    approximation."""
+    move = MALA(step=budget.pop("step", 1.0), local=True)
+    return MonteCarloEstimator(
+        s.problem,
+        s.prior,
+        sampler=Chains(move, **budget),
+        reference=s.laplace,
+        record=s.record,
+    )
+
+
 class TestTheLocalMALA:
     """MALA about the Laplace Gaussian at each state: the proposal is that
     Gaussian's Ornstein-Uhlenbeck step, and the acceptance compares the
@@ -1425,7 +1578,7 @@ class TestTheLocalMALA:
         each proposal's ``N(m_x + c (x - m_x), s^2 K_x)``."""
         s = nonlinear_setting
         space, prior, laplace = s.space, s.prior, s.laplace
-        target = Target(s.problem, s.data, laplace)
+        target = local_mala(s, steps=1).target(s.data)
         scheme = SplittingScheme(PreconditionedOU(target), "O", step=0.4)
         kernel = MetropolisHastings(scheme)
         c = np.exp(-0.4)
@@ -1446,7 +1599,7 @@ class TestTheLocalMALA:
             ).logpdf(x)
 
         def log_proposal(x, y):
-            local = laplace.reference(x, s.data)
+            local = laplace.reference(s.data, at=x)
             mean = local.expectation
             return multivariate_normal(
                 mean + c * (x - mean), (1 - c * c) * covariance(local)
@@ -1475,35 +1628,35 @@ class TestTheLocalMALA:
         laplace = LaplaceApproximation.from_problem(
             setting.problem, setting.prior, gauss_newton=True
         )
-        posterior = GeometricMALA(setting.problem, laplace, step=3.0, acceptance=None)(
-            setting.data, steps=100, chains=1, rng=np.random.default_rng(3)
+        posterior = sample(
+            setting,
+            MALA(step=3.0, acceptance=None, local=True),
+            reference=laplace,
+            steps=100,
+            chains=1,
+            rng=np.random.default_rng(3),
         )
         assert posterior.chains[0].acceptance.min() == pytest.approx(1.0, abs=1e-10)
 
     def test_it_samples_a_nonlinear_posterior(self, nonlinear_setting):
         s = nonlinear_setting
-        posterior = GeometricMALA(s.problem, s.laplace, step=1.0)(
-            s.data,
-            steps=1500,
-            chains=2,
-            burn_in=300,
-            record=s.record,
-            rng=np.random.default_rng(2),
-        )
+        posterior = local_mala(
+            s, steps=1500, chains=2, burn_in=300, rng=np.random.default_rng(2)
+        )(s.data)
         estimate = posterior.scalar_means()[1]
         assert abs(estimate.value - s.exact) < 4.0 * np.hypot(
             estimate.standard_error, s.exact_error
         )
         assert posterior.diagnostics().rhat.max() < 1.05
 
-    def test_the_preset_says_it_is_local(self, nonlinear_setting):
-        s = nonlinear_setting
-        assert GeometricMALA(s.problem, s.laplace, step=1.0).is_local
-        assert not MALA(s.problem, s.prior, step=1.0).is_local
+    def test_the_move_says_it_is_local(self):
+        assert MALA(step=1.0, local=True).is_local
+        assert Chains(MALA(step=1.0, local=True), steps=1).is_local
+        assert not MALA(step=1.0).is_local
 
     def test_only_the_ou_word_is_offered(self, nonlinear_setting):
         s = nonlinear_setting
-        target = Target(s.problem, s.data, s.laplace)
+        target = local_mala(s, steps=1).target(s.data)
         with pytest.raises(ValueError, match="'O'"):
             MetropolisHastings(
                 SplittingScheme(PreconditionedOU(target), "OO", step=0.4)
@@ -1515,21 +1668,27 @@ class TestTheLocalMALA:
 
     def test_tempering_refuses_it(self, nonlinear_setting, rng):
         s = nonlinear_setting
-        local = GeometricMALA(s.problem, s.laplace, step=1.0)
+        move = MALA(step=1.0, local=True)
+        estimator = MonteCarloEstimator(
+            s.problem, s.prior, sampler=SMC(move, particles=10), reference=s.laplace
+        )
         with pytest.raises(ValueError, match="prior"):
-            SMC(local)
-        kernel = local.kernel(s.data)
+            estimator(s.data)
+        target = estimator.target(s.data)
         with pytest.raises(ValueError, match="prior"):
-            Tempering(10, mutation=kernel)(kernel.target, rng=rng)
+            SMC(move.kernel(target), particles=10, rng=rng)(target)
 
-    def test_a_laplace_approximation_of_another_problem_is_refused(
-        self, nonlinear_setting, setting
-    ):
+    def test_it_needs_a_laplace_approximation(self, nonlinear_setting, setting):
         s = nonlinear_setting
-        with pytest.raises(ValueError, match="forward problem"):
-            GeometricMALA(setting.problem, s.laplace, step=1.0)
-        with pytest.raises(ValueError, match="forward problem"):
-            Target(setting.problem, setting.data, s.laplace)
+        sampler = Chains(MALA(step=1.0, local=True), steps=5)
+        with pytest.raises(ValueError, match="LaplaceApproximation"):
+            MonteCarloEstimator(s.problem, s.prior, sampler=sampler)
+        with pytest.raises(ValueError, match="prior"):
+            MonteCarloEstimator(
+                setting.problem, setting.prior, sampler=sampler, reference=s.laplace
+            )
+        with pytest.raises(ValueError, match="follows the state"):
+            MALA(step=1.0, local=True).kernel(setting.target())
 
 
 class GibbsSetting:
@@ -1574,7 +1733,7 @@ class GibbsSetting:
         self.exact = self.record(self.posterior.expectation)
 
     def target(self, problem=None):
-        return Target(problem or self.problem, self.data, self.prior)
+        return Target((problem or self.problem).potential(self.data), self.prior)
 
 
 @pytest.fixture(scope="module")
@@ -1582,13 +1741,17 @@ def gibbs_setting():
     return GibbsSetting()
 
 
-def two_block_gibbs(gibbs_setting):
+def two_block_gibbs():
     """PCN on one field and HMC on the other, from one starting step."""
-    s = gibbs_setting
-    return Gibbs(
-        s.problem,
-        s.prior,
-        blocks={"a": PCN.recipe(step=0.3), "b": HMC.recipe(step=0.3, length=3)},
+    return Gibbs({"a": PCN(step=0.3), "b": HMC(step=0.3, length=3)})
+
+
+def gibbs_sample(s, move, /, **budget):
+    """The Gibbs setting's posterior sampled by a move, its two probes
+    recorded."""
+    sampler = Chains(move, **budget)
+    return MonteCarloEstimator(s.problem, s.prior, sampler=sampler, record=s.record)(
+        s.data
     )
 
 
@@ -1596,13 +1759,12 @@ def two_block_gibbs(gibbs_setting):
 def gibbs_run(gibbs_setting):
     """A short run of :func:`two_block_gibbs`: long enough for each block's
     step to adapt, too short to hold its means to the exact ones."""
-    s = gibbs_setting
-    return two_block_gibbs(s)(
-        s.data,
+    return gibbs_sample(
+        gibbs_setting,
+        two_block_gibbs(),
         steps=1000,
         chains=2,
         burn_in=500,
-        record=s.record,
         rng=np.random.default_rng(2),
     )
 
@@ -1644,7 +1806,7 @@ class TestABlock:
         reference = LinearGaussianInversion(s.problem, s.prior).reference(
             s.data, rank=2, rng=rng
         )
-        target = Target(s.problem, s.data, reference)
+        target = Target(s.problem.potential(s.data), reference)
         with pytest.raises(ValueError, match="conditional"):
             target.block(0, State(s.prior.sample(rng=rng)))
 
@@ -1654,14 +1816,11 @@ class TestABlock:
 
 
 class TestTheSweep:
-    def test_the_preset_is_a_sweep_of_blockwise_dynamics(self, gibbs_setting):
+    def test_the_move_is_a_sweep_of_blockwise_dynamics(self, gibbs_setting):
         s = gibbs_setting
         kernel = Gibbs(
-            s.problem,
-            s.prior,
-            blocks={"b": MALA.recipe(step=0.2), "a": PCN.recipe(step=0.3)},
-            order="symmetric",
-        ).kernel(s.data)
+            {"b": MALA(step=0.2), "a": PCN(step=0.3)}, order="symmetric"
+        ).kernel(s.target())
         assert isinstance(kernel, Sweep) and isinstance(kernel.dynamics, Blockwise)
         assert kernel.step_sizes == (0.3, 0.2)
         flows = [flow.index for flow, _ in kernel.scheme.flows]
@@ -1671,11 +1830,8 @@ class TestTheSweep:
     def test_it_leaves_the_reference_invariant(self, gibbs_setting, order, rng):
         s = gibbs_setting
         kernel = Gibbs(
-            s.problem,
-            s.prior,
-            blocks={"a": PCN.recipe(step=0.5), "b": HMC.recipe(step=0.5, length=3)},
-            order=order,
-        ).kernel(s.data)
+            {"a": PCN(step=0.5), "b": HMC(step=0.5, length=3)}, order=order
+        ).kernel(s.target())
         check_scheme(kernel.scheme, rng=rng, samples=2000)
 
     def test_a_sweep_evaluates_the_forward_once_per_proposal(self, gibbs_setting, rng):
@@ -1693,10 +1849,8 @@ class TestTheSweep:
         )
         problem = ForwardProblem(forward, error=s.error)
         kernel = Gibbs(
-            problem,
-            s.prior,
-            blocks={"a": PCN.recipe(step=0.1), "b": PCN.recipe(step=0.1, steps=2)},
-        ).kernel(s.data)
+            {"a": PCN(step=0.1), "b": PCN(step=0.1)}, repeat={"b": 2}
+        ).kernel(s.target(problem))
         state = kernel.initial_state(s.prior.sample(rng=rng), rng=rng)
         kernel.target.value(state)
         calls.clear()
@@ -1711,16 +1865,15 @@ class TestTheSweep:
 class TestGibbs:
     @pytest.mark.slow
     def test_it_samples_the_posterior(self, gibbs_setting):
-        s = gibbs_setting
-        posterior = two_block_gibbs(s)(
-            s.data,
+        posterior = gibbs_sample(
+            gibbs_setting,
+            two_block_gibbs(),
             steps=3000,
             chains=2,
             burn_in=500,
-            record=s.record,
             rng=np.random.default_rng(2),
         )
-        assert_recovers_both_means(posterior, s.exact)
+        assert_recovers_both_means(posterior, gibbs_setting.exact)
 
     def test_each_block_adapts_to_its_own_acceptance(self, gibbs_run):
         """PCN aims at a quarter, HMC at two thirds, from the same step."""
@@ -1733,25 +1886,20 @@ class TestGibbs:
 
     @pytest.mark.slow
     def test_the_symmetric_scan_samples_the_posterior(self, gibbs_setting):
-        s = gibbs_setting
-        sampler = Gibbs(
-            s.problem,
-            s.prior,
-            blocks={
-                0: MALA.recipe(step=0.2, steps=4),
-                1: PCN.recipe(step=0.3, steps=4),
-            },
+        move = Gibbs(
+            {0: MALA(step=0.2), 1: PCN(step=0.3)},
             order="symmetric",
+            repeat={0: 4, 1: 4},
         )
-        posterior = sampler(
-            s.data,
+        posterior = gibbs_sample(
+            gibbs_setting,
+            move,
             steps=1500,
             chains=2,
             burn_in=500,
-            record=s.record,
             rng=np.random.default_rng(3),
         )
-        assert_recovers_both_means(posterior, s.exact)
+        assert_recovers_both_means(posterior, gibbs_setting.exact)
 
     def test_fresh_draws_are_whole_models(self, gibbs_setting, gibbs_run):
         draws = gibbs_run.samples(4, rng=np.random.default_rng(5))
@@ -1759,76 +1907,79 @@ class TestGibbs:
         assert all(np.all(np.isfinite(gibbs_setting.record(x))) for x in draws)
 
     @pytest.mark.parametrize(
+        "blocks, match",
+        [
+            ({"a": PCN(step=0.1)}, "needs a block"),
+            ({"a": PCN(step=0.1), 0: PCN(step=0.1)}, "two blocks"),
+        ],
+        ids=["missing", "duplicate"],
+    )
+    def test_blocks_that_do_not_cover_the_summands_once_are_refused(
+        self, gibbs_setting, blocks, match
+    ):
+        with pytest.raises(ValueError, match=match):
+            Gibbs(blocks).kernel(gibbs_setting.target())
+
+    @pytest.mark.parametrize(
         "blocks, keywords, error, match",
         [
-            ({"a": PCN.recipe(step=0.1)}, {}, ValueError, "needs a block"),
+            ({"a": PCN, "b": PCN(step=0.1)}, {}, TypeError, "move with one step"),
             (
-                {"a": PCN.recipe(step=0.1), 0: PCN.recipe(step=0.1)},
+                {"a": Gibbs({"x": PCN(step=0.1)}), "b": PCN(step=0.1)},
+                {},
+                TypeError,
+                "move with one step",
+            ),
+            (
+                {"a": MALA(step=0.1, local=True), "b": PCN(step=0.1)},
                 {},
                 ValueError,
-                "two blocks",
+                "conditional",
             ),
-            ({"a": PCN, "b": PCN.recipe(step=0.1)}, {}, TypeError, "recipe"),
             (
-                {"a": PCN.recipe(step=0.1), "b": PCN.recipe(step=0.1)},
+                {"a": PCN(step=0.1), "b": PCN(step=0.1)},
                 {"order": "random"},
                 ValueError,
                 "scan",
             ),
+            (
+                {"a": PCN(step=0.1), "b": PCN(step=0.1)},
+                {"repeat": {"a": 0}},
+                ValueError,
+                "at least one",
+            ),
         ],
-        ids=["missing", "duplicate", "not-a-recipe", "unknown-order"],
+        ids=["not-a-move", "nested", "local", "unknown-order", "no-repeat"],
     )
-    def test_bad_blocks_are_refused(
-        self, gibbs_setting, blocks, keywords, error, match
-    ):
-        s = gibbs_setting
+    def test_bad_blocks_are_refused(self, blocks, keywords, error, match):
         with pytest.raises(error, match=match):
-            Gibbs(s.problem, s.prior, blocks=blocks, **keywords)
+            Gibbs(blocks, **keywords)
 
     def test_a_model_off_a_direct_sum_is_refused(self, setting):
         with pytest.raises(ValueError, match="direct sum"):
-            Gibbs(setting.problem, setting.prior, blocks={0: PCN.recipe(step=0.1)})
-
-    @pytest.mark.parametrize("preset", [GeometricMALA, GeometricHMC])
-    def test_a_geometric_preset_offers_no_recipe(self, preset):
-        with pytest.raises(TypeError, match="conditional"):
-            preset.recipe(step=0.1)
+            Gibbs({0: PCN(step=0.1)}).kernel(setting.target())
 
     @pytest.mark.parametrize(
-        "keywords",
-        [{"step": 0.0}, {"step": 0.1, "acceptance": 1.0}, {"step": 0.1, "steps": 0}],
-    )
-    def test_bad_recipes_are_refused(self, keywords):
-        with pytest.raises(ValueError):
-            PCN.recipe(**keywords)
-
-    @pytest.mark.parametrize(
-        "blocks, order, moved",
+        "blocks, repeat, order, moved",
         [
             (
-                {
-                    "a": PCN.recipe(step=0.05, steps=3),
-                    "b": HMC.recipe(step=0.1, length=3, steps=2),
-                },
+                {"a": PCN(step=0.05), "b": HMC(step=0.1, length=3)},
+                {"a": 3, "b": 2},
                 "systematic",
                 0.5,
             ),
-            (
-                {0: MALA.recipe(step=0.05), 1: PCN.recipe(step=0.05)},
-                "symmetric",
-                0.25,
-            ),
+            ({0: MALA(step=0.05), 1: PCN(step=0.05)}, None, "symmetric", 0.25),
         ],
         ids=["systematic", "symmetric"],
     )
     def test_one_sweep_from_the_posterior_stays_there(
-        self, gibbs_setting, blocks, order, moved
+        self, gibbs_setting, blocks, repeat, order, moved
     ):
         """From exact posterior draws, one sweep changes neither the mean nor
         the variance: invariance with no autocorrelation to estimate. The
         steps are small, so many blocks move."""
         s = gibbs_setting
-        kernel = Gibbs(s.problem, s.prior, blocks=blocks, order=order).kernel(s.data)
+        kernel = Gibbs(blocks, order=order, repeat=repeat).kernel(s.target())
         rng = np.random.default_rng(11)
         before, after = [], []
         for _ in range(2000):
@@ -1908,33 +2059,29 @@ class TestTheMeshDoesNotMatter:
     grid is refined."""
 
     @pytest.mark.parametrize(
-        "build",
+        "move",
         [
-            lambda problem, prior: PCN(problem, prior, step=0.005, acceptance=None),
-            lambda problem, prior: MALA(problem, prior, step=0.005, acceptance=None),
-            lambda problem, prior: HMC(
-                problem, prior, step=0.08, length=3, acceptance=None
-            ),
-            lambda problem, prior: GeometricMALA(
-                problem,
-                LaplaceApproximation.from_problem(problem, prior, gauss_newton=True),
-                step=1.0,
-                acceptance=None,
-            ),
+            PCN(step=0.005, acceptance=None),
+            MALA(step=0.005, acceptance=None),
+            HMC(step=0.08, length=3, acceptance=None),
+            MALA(step=1.0, acceptance=None, local=True),
         ],
         ids=["pcn", "mala", "hmc", "local-mala"],
     )
-    def test_the_acceptance_rate_is_flat_under_refinement(self, mesh_setting, build):
+    def test_the_acceptance_rate_is_flat_under_refinement(self, mesh_setting, move):
         rates = []
         for space, prior, problem, start in mesh_setting.grids.values():
-            posterior = build(problem, prior)(
-                mesh_setting.data,
-                steps=400,
-                chains=2,
-                burn_in=100,
-                start=start,
-                rng=np.random.default_rng(1),
+            reference = None
+            if move.is_local:
+                reference = LaplaceApproximation.from_problem(
+                    problem, prior, gauss_newton=True
+                )
+            sampler = Chains(
+                move, steps=400, chains=2, burn_in=100, rng=np.random.default_rng(1)
             )
+            posterior = MonteCarloEstimator(
+                problem, prior, sampler=sampler, reference=reference
+            )(mesh_setting.data, start=start)
             rates.append(
                 mean_acceptance(np.stack([c.acceptance for c in posterior.chains]))
             )
@@ -1955,9 +2102,15 @@ class TestTheMeshDoesNotMatter:
         paths = []
         evidence = []
         for space, prior, problem, start in mesh_setting.grids.values():
-            ensemble = SMC(
-                PCN(problem, prior, step=0.005), particles=300, mutation_steps=10
-            )(mesh_setting.data, rng=np.random.default_rng(0))
+            sampler = SMC(
+                PCN(step=0.005),
+                particles=300,
+                mutation_steps=10,
+                rng=np.random.default_rng(0),
+            )
+            ensemble = MonteCarloEstimator(problem, prior, sampler=sampler)(
+                mesh_setting.data
+            )
             paths.append(ensemble.temperatures)
             evidence.append(ensemble.log_normalizer.value)
         coarse = paths[0]
@@ -1992,3 +2145,19 @@ class TestTheMeshDoesNotMatter:
             rates.append(mean_acceptance(probabilities)[0])
         assert rates[0] > 0.15
         assert rates[-1] < 0.3 * rates[0]
+
+
+def test_sampling_imports_nothing_from_inference():
+    """The engine sits below the estimators: a target is a potential and a
+    reference, and a sampler is called on a target, so nothing in
+    ``pygeoinf.sampling`` reaches into ``pygeoinf.inference``."""
+    package = pathlib.Path(gi.sampling.__file__).parent
+    offenders = []
+    for path in sorted(package.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module is not None:
+                if node.level == 2 and node.module.split(".")[0] == "inference":
+                    offenders.append(f"{path.name}: from ..{node.module}")
+                if node.module.startswith("pygeoinf.inference"):
+                    offenders.append(f"{path.name}: from {node.module}")
+    assert offenders == []

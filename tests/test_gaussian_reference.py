@@ -14,12 +14,11 @@ from pygeoinf.algebra.operators import Functional, LinearOperator, Operator
 from pygeoinf.algebra.spaces import EuclideanSpace
 from pygeoinf.inference import (
     ForwardProblem,
-    GaussianReference,
     LaplaceApproximation,
     LinearForwardProblem,
     LinearGaussianInversion,
-    MixtureReference,
 )
+from pygeoinf.probability import GaussianReference, MixtureReference
 from pygeoinf.inference.minimization import _misfit_plus_quadratic
 from pygeoinf.testing import check_gradient, check_measure
 
@@ -191,7 +190,7 @@ class TestTheLaplaceReference:
         space, prior, problem, data = linear
         posterior = LinearGaussianInversion(problem, prior)(data)
         laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
-        reference = laplace.reference(posterior.expectation, data)
+        reference = laplace.reference(data, at=posterior.expectation)
         assert np.allclose(reference.expectation, posterior.expectation, atol=1e-10)
         assert np.allclose(
             covariance_matrix(reference, space),
@@ -203,7 +202,7 @@ class TestTheLaplaceReference:
         space, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
         model = prior.sample(rng=rng)
-        reference = laplace.reference(model, data)
+        reference = laplace.reference(data, at=model)
         approximation = laplace.at(model, data)
         assert np.allclose(
             covariance_matrix(reference, space),
@@ -215,7 +214,7 @@ class TestTheLaplaceReference:
         space, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
         mode = laplace.solve(data).model
-        reference = laplace.reference(mode, data)
+        reference = laplace.reference(data, at=mode)
         assert space.norm(space.subtract(reference.expectation, mode)) < 1e-5
 
     def test_the_low_rank_route_at_the_data_count_matches_the_full_one(
@@ -227,7 +226,7 @@ class TestTheLaplaceReference:
         low = LaplaceApproximation.from_problem(
             problem, prior, gauss_newton=True, rank=3, rng=rng
         )
-        a, b = full.reference(model, data), low.reference(model, data)
+        a, b = full.reference(data, at=model), low.reference(data, at=model)
         assert np.allclose(a.expectation, b.expectation, atol=1e-8)
         assert np.allclose(
             covariance_matrix(a, space), covariance_matrix(b, space), atol=1e-8
@@ -237,14 +236,23 @@ class TestTheLaplaceReference:
         _, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(problem, prior)
         with pytest.raises(ValueError, match="gauss_newton"):
-            laplace.reference(prior.sample(rng=rng), data)
+            laplace.reference(data, at=prior.sample(rng=rng))
 
     def test_the_low_rank_exact_hessian_is_a_reference(self, nonlinear, rng):
         _, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(problem, prior, rank=2, rng=rng)
-        reference = laplace.reference(laplace.solve(data).model, data)
+        reference = laplace.reference(data, at=laplace.solve(data).model)
         assert 1 <= reference.rank <= 3
         check_measure(reference, rng=rng)
+
+    def test_without_a_model_it_is_placed_at_the_mode(self, nonlinear, rng):
+        _, prior, problem, data = nonlinear
+        laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
+        at_mode = laplace.reference(data, at=laplace.solve(data).model)
+        found = laplace.reference(data)
+        x = prior.sample(rng=rng)
+        assert np.allclose(found.expectation, at_mode.expectation)
+        assert np.allclose(found.covariance(x), at_mode.covariance(x))
 
 
 class TestTheChart:
@@ -414,7 +422,7 @@ class TestTheNewtonMean:
         space, prior, problem, data = linear
         posterior = LinearGaussianInversion(problem, prior)(data)
         laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
-        reference = laplace.reference(prior.sample(rng=rng), data)
+        reference = laplace.reference(data, at=prior.sample(rng=rng))
         assert np.allclose(reference.expectation, posterior.expectation, atol=1e-10)
 
     @pytest.mark.parametrize("rank", [None, 3])
@@ -426,7 +434,7 @@ class TestTheNewtonMean:
             problem, prior, gauss_newton=True, rank=rank, rng=rng
         )
         model = prior.sample(rng=rng)
-        reference = laplace.reference(model, data)
+        reference = laplace.reference(data, at=model)
         gram = space.gram_matrix()
         covariance = components_covariance(reference, space)
         prior_covariance = components_covariance(prior, space)
@@ -447,7 +455,10 @@ class TestTheNewtonMean:
             problem, prior, gauss_newton=True, rank=2, rng=rng
         )
         model = prior.sample(rng=rng)
-        first, second = laplace.reference(model, data), laplace.reference(model, data)
+        first, second = (
+            laplace.reference(data, at=model),
+            laplace.reference(data, at=model),
+        )
         assert np.array_equal(first.expectation, second.expectation)
         assert np.array_equal(first.chart_covariance, second.chart_covariance)
 
@@ -484,7 +495,7 @@ class TestASuppliedHessian:
             hessian=with_hessian(problem),
             rng=np.random.default_rng(1),
         )
-        a, b = exact.reference(mode, data), supplied.reference(mode, data)
+        a, b = exact.reference(data, at=mode), supplied.reference(data, at=mode)
         assert np.allclose(a.expectation, b.expectation, atol=1e-12)
         assert np.allclose(
             covariance_matrix(a, space), covariance_matrix(b, space), atol=1e-12
@@ -520,7 +531,7 @@ class TestASuppliedHessian:
             problem, prior, gauss_newton=True, rank=3, hessian=negative, rng=rng
         )
         with pytest.raises(ValueError, match="negative eigenvalue"):
-            laplace.reference(prior.sample(rng=rng), data)
+            laplace.reference(data, at=prior.sample(rng=rng))
 
     def test_the_full_rank_reference_is_refused(self, nonlinear, rng):
         _, prior, problem, data = nonlinear
@@ -528,7 +539,7 @@ class TestASuppliedHessian:
             problem, prior, gauss_newton=True, hessian=with_hessian(problem)
         )
         with pytest.raises(ValueError, match="rank"):
-            laplace.reference(prior.sample(rng=rng), data)
+            laplace.reference(data, at=prior.sample(rng=rng))
 
     def test_a_potential_without_a_hessian_is_refused(self, nonlinear, rng):
         _, prior, problem, data = nonlinear
@@ -541,7 +552,7 @@ class TestASuppliedHessian:
             rng=rng,
         )
         with pytest.raises(TypeError, match="Hessian"):
-            laplace.reference(prior.sample(rng=rng), data)
+            laplace.reference(data, at=prior.sample(rng=rng))
 
 
 class TestThePairLaw:
@@ -551,7 +562,7 @@ class TestThePairLaw:
 
         space, prior, problem, data = nonlinear
         laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
-        reference = laplace.reference(prior.sample(rng=rng), data)
+        reference = laplace.reference(data, at=prior.sample(rng=rng))
         c = 0.6
 
         def pair(mean, covariance):

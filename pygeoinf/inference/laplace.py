@@ -55,7 +55,8 @@ from .minimization import _mixed_derivative as _misfit_mixed_derivative
 from .problem import ForwardProblem
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .gaussian import GaussianPosterior, GaussianReference
+    from ..probability.reference import GaussianReference
+    from .gaussian import GaussianPosterior
 
 __all__ = ["MaximumAPosteriori", "LaplaceApproximation", "LaplaceResult"]
 
@@ -686,26 +687,32 @@ class LaplaceApproximation(MeasureEstimator):
             relative_log_density=relative_log_density,
         )
 
-    def reference(self, model: Any, data: Any, /) -> "GaussianReference":
-        """The Laplace Gaussian at a model as a reference for a sampler.
+    def reference(
+        self, data: Any, /, *, at: Any = None, start: Any = None
+    ) -> "GaussianReference":
+        """The Laplace Gaussian as a reference for a sampler: at the mode, or
+        at a model.
 
         The reference is in chart form, the prior with the law of a few
         functionals replaced, so it is equivalent to the prior by
         construction and needs no prior precision. Its covariance is the
-        curvature's at *model*, ``(C^-1 + H)^-1``, and its mean is the Newton
-        step from *model*,
+        curvature's at the model *at*, ``(C^-1 + H)^-1``, and its mean is the
+        Newton step from it,
 
         .. code-block:: text
 
-            m == model - K (grad Phi + C^-1 (model - m_0))
-              == m_0 - K grad Phi + C W (I - S) l(model - m_0)
+            m == at - K (grad Phi + C^-1 (at - m_0))
+              == m_0 - K grad Phi + C W (I - S) l(at - m_0)
 
         the second line in the whitened chart, which is why no precision is
-        needed. At a stationary MAP point that is the mode itself; elsewhere
-        it is the posterior mean of the problem linearized at *model*, for the
-        Gauss-Newton curvature, a sensible Gaussian anywhere. It is a fixed
-        function of the model, the low-rank routes reusing one seed, so a
-        sampler can rebuild it at every state.
+        needed. Without *at* the mode is found first, from *start*, and the
+        mean is the mode itself; elsewhere it is the posterior mean of the
+        problem linearized at *at*, for the Gauss-Newton curvature, a
+        sensible Gaussian anywhere. It is a fixed function of the model, the
+        low-rank routes reusing one seed, so a sampler can rebuild it at
+        every state: what a
+        :class:`~pygeoinf.inference.monte_carlo.MonteCarloEstimator` does for
+        a move that follows the state.
 
         * Without ``rank`` (the estimator's), the chart is the data,
           ``l(u) == J (u - m_0)`` read through the data space's components,
@@ -721,8 +728,11 @@ class LaplaceApproximation(MeasureEstimator):
           checked to have none.
 
         Args:
-            model: where to place it, usually the MAP model.
             data: the observations.
+            at: where to place it; the MAP model, found for the data, if
+                omitted.
+            start: where the search for the mode begins, when *at* is
+                omitted; the prior's expectation by default.
 
         Returns:
             The reference.
@@ -735,13 +745,10 @@ class LaplaceApproximation(MeasureEstimator):
                 no precision, or a supplied Hessian has a negative
                 eigenvalue.
         """
-        from .gaussian import (
-            GaussianReference,
-            LowRankGaussianPosterior,
-            _data_chart,
-            _whiten,
-        )
+        from ..probability.reference import GaussianReference, _whiten
+        from .gaussian import LowRankGaussianPosterior, _data_chart
 
+        model = self.solve(data, start=start).model if at is None else at
         estimator = self._estimator
         problem = estimator.forward_problem
         prior = estimator.prior

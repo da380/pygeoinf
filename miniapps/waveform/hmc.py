@@ -1,10 +1,9 @@
-"""Part G: GeometricHMC about the Laplace Gaussian, on the Gauss-Newton and the exact Hessian.
+"""Part G: HMC about the Laplace Gaussian, on the Gauss-Newton and the exact Hessian.
 
-The library's ``GeometricHMC`` samples the posterior itself, not an
-approximation of it: its reference is a Gaussian equivalent to the prior,
-whose part of the dynamics is solved exactly, and the Metropolis step
-corrects the rest, so the reference decides how fast the chains mix and
-never what they converge to. Here the reference is the Laplace Gaussian at
+The library's ``HMC`` samples the posterior itself, not an approximation of
+it: its reference is a Gaussian equivalent to the prior, whose part of the
+dynamics is solved exactly, and the Metropolis step corrects the rest, so the
+reference decides how fast the chains mix and never what they converge to. Here the reference is the Laplace Gaussian at
 the polished mode of part C, in the low-rank chart form that
 ``LaplaceApproximation.reference`` builds: the prior with the law of the
 leading directions of the misfit's curvature, seen through the prior's
@@ -38,8 +37,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator
 
-from pygeoinf import LaplaceApproximation
-from pygeoinf.inference.sampling import Chains, GeometricHMC
+from pygeoinf import HMC, Chains, LaplaceApproximation
+from pygeoinf.sampling import Target
 from pygeoinf.numerics.chain_diagnostics import autocorrelation
 
 from src.common import Stopwatch, describe, parse, part_rng, save, section
@@ -78,7 +77,7 @@ def references(state: Setup, mode: np.ndarray, /, *, rng: np.random.Generator) -
         # The probes are applications at the one model, run on threads as
         # part E runs its own.
         with joblib.parallel_config(backend="threading"):
-            reference = laplace.reference(mode, state.data)
+            reference = laplace.reference(state.data, at=mode)
         seconds, calls = watch.lap()
         print(
             f"the {LABELS[name]} reference, rank {scale.laplace_rank}, chart of "
@@ -92,42 +91,37 @@ def references(state: Setup, mode: np.ndarray, /, *, rng: np.random.Generator) -
 def chains(
     state: Setup, reference: Any, /, *, rng: np.random.Generator, name: str
 ) -> dict:
-    """GeometricHMC about one reference: the sampled posterior and its traces."""
+    """HMC about one reference: the sampled posterior and its traces."""
     experiment, wave = state.experiment, state.wave
     scale = experiment.survey.scale
     boxes = box_average_operator(experiment.space, experiment.survey)
-    sampler = GeometricHMC(
-        state.problem, reference, step=scale.hmc_step, length=scale.hmc_length
-    )
-    # What calling the preset does, with its kernel kept: the callback reads
-    # the potential its target has already evaluated at each state, so that
-    # the burn-in is traced at no cost.
-    kernel = sampler.kernel(state.data)
+    # What the Monte Carlo estimator does, with the target kept: the callback
+    # reads the potential the target has already evaluated at each state, so
+    # that the burn-in is traced at no cost.
+    target = Target(state.problem.potential(state.data), reference)
     total = scale.hmc_burn_in + scale.hmc_steps
     traces = np.full((scale.hmc_chains, total), np.nan)
 
     def trace(chain: int, iteration: int, step: Any) -> None:
-        traces[chain, iteration] = kernel.target.potential(step.state)
+        traces[chain, iteration] = target.potential(step.state)
 
-    watch = Stopwatch(wave.calls)
-    posterior = Chains(scale.hmc_chains)(
-        kernel,
-        start=reference,
+    sampler = Chains(
+        HMC(step=scale.hmc_step, length=scale.hmc_length),
         steps=scale.hmc_steps,
         burn_in=scale.hmc_burn_in,
-        adapt=sampler.adaptation,
+        chains=scale.hmc_chains,
         thin=1,
-        record=boxes,
-        record_names=[box for box, _ in BOXES],
         rng=rng,
         callback=trace,
     )
+    watch = Stopwatch(wave.calls)
+    posterior = sampler(target, record=boxes, record_names=[box for box, _ in BOXES])
     seconds, calls = watch.lap()
     gradients = calls["adjoint"] // experiment.survey.n_shots
     diagnostics = posterior.diagnostics()
     step = float(np.mean([chain.step_size for chain in posterior.chains]))
     print(
-        f"GeometricHMC about the {LABELS[name]} reference: {scale.hmc_chains} chains "
+        f"HMC about the {LABELS[name]} reference: {scale.hmc_chains} chains "
         f"of {scale.hmc_burn_in} + {scale.hmc_steps} steps of {scale.hmc_length} "
         f"leapfrog steps, step {step:.3f} after burn-in, acceptance "
         f"{posterior.acceptance_rate:.2f}; {gradients} gradients in {seconds:.1f} s, "
@@ -337,7 +331,7 @@ def draw_convergence(runs: dict, /, *, outdir: pathlib.Path) -> None:
     save(
         fig,
         outdir / "hmc_convergence.png",
-        title="Waveform, part G: GeometricHMC about the Laplace Gaussian on the "
+        title="Waveform, part G: HMC about the Laplace Gaussian on the "
         "Gauss-Newton and on the exact Hessian",
     )
 
@@ -467,7 +461,7 @@ def run(
     if scale.name != QUICK.name:
         raise ValueError(f"Part G runs at the quick scale only, not the {scale.name}.")
     started = time.perf_counter()
-    print(f"\n=== G. GeometricHMC about the Laplace Gaussian ({scale.name} scale) ===")
+    print(f"\n=== G. HMC about the Laplace Gaussian ({scale.name} scale) ===")
     if state is None:
         state = setup(scale)
     if state.experiment.survey.backend is not None:

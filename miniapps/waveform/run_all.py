@@ -1,9 +1,10 @@
 """Every serial part in order, on one problem: A to E, and G at the quick scale.
 
 ``python run_all.py --quick`` for the small scale, which runs A to E in well
-under two minutes and then part G, the posterior sampled by GeometricHMC, in
-about five more; the full scale runs each part for about a minute or two, so run
-its scripts one at a time, C before D and E (both read the mode C saves).
+under two minutes and then part G, the posterior sampled by HMC about the
+Laplace Gaussian, in about five more; the full scale runs each part for about a
+minute or two, so run its scripts one at a time, C before D and E (both read the
+mode C saves).
 Part F runs under ``mpiexec``. The scale's fields are options, applied to
 the preset and passed to every part.
 """

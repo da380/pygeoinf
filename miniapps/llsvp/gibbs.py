@@ -1,7 +1,8 @@
 """Part D: Gibbs over the fields, on the whole problem.
 
-The library's ``Gibbs``, one sampler to each summand of the model space, each
-against its conditional under the coupled prior. The main run has two blocks.
+The library's ``Gibbs``, one move to each summand of the model space, each
+against its conditional under the coupled prior, run as chains by the Monte
+Carlo estimator. The main run has two blocks.
 HMC moves the part of the model the forward map is linear in, the coupled thermal
 fields and the contrasts inside the provinces, as one summand of a nested direct
 sum; pCN moves the level set, which needs no gradient and has none. Each block's
@@ -33,20 +34,23 @@ from __future__ import annotations
 
 import pathlib
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf import (
+    HMC,
+    MALA,
+    PCN,
+    Chains,
+    ForwardProblem,
     GaussianMeasure,
     Gibbs,
-    HMC,
     LinearForwardProblem,
     LinearGaussianInversion,
     LinearOperator,
-    MALA,
-    PCN,
+    MonteCarloEstimator,
 )
 from pygeoinf.algebra.direct_sum import RowLinearOperator
 from pygeoinf.numerics.solvers import CGSolver
@@ -111,42 +115,48 @@ def start_measure(
     )
 
 
+class Blocks(NamedTuple):
+    """A Gibbs move with the problem and prior on the sum its blocks cut."""
+
+    problem: ForwardProblem
+    prior: GaussianMeasure
+    move: Gibbs
+
+
 def two_blocks(
     state: Setup, /, *, level_steps: int, order: str = "systematic"
-) -> Gibbs:
+) -> Blocks:
     """Gibbs on the grouped sum: HMC on the linear part, pCN on the level set."""
     scale = state.scale
-    return Gibbs(
-        state.grouped_problem,
-        state.grouped,
-        blocks={
-            "linear": HMC.recipe(step=scale.linear_step, length=scale.linear_length),
-            "level_set": PCN.recipe(step=scale.level_step, steps=level_steps),
+    move = Gibbs(
+        {
+            "linear": HMC(step=scale.linear_step, length=scale.linear_length),
+            "level_set": PCN(step=scale.level_step),
         },
         order=order,
+        repeat={"level_set": level_steps},
     )
+    return Blocks(state.grouped_problem, state.grouped, move)
 
 
-def three_blocks(state: Setup, /) -> Gibbs:
+def three_blocks(state: Setup, /) -> Blocks:
     """Gibbs on the fields as the model names them: the thermal triple, the
     level set and the contrasts each its own block."""
     scale = state.scale
-    return Gibbs(
-        state.problem,
-        state.prior,
-        blocks={
-            "thermal": HMC.recipe(step=scale.thermal_step, length=scale.thermal_length),
-            "level_set": PCN.recipe(step=scale.level_step, steps=scale.level_steps),
-            "chemistry": MALA.recipe(
-                step=scale.contrast_step, steps=scale.contrast_steps
-            ),
+    move = Gibbs(
+        {
+            "thermal": HMC(step=scale.thermal_step, length=scale.thermal_length),
+            "level_set": PCN(step=scale.level_step),
+            "chemistry": MALA(step=scale.contrast_step),
         },
+        repeat={"level_set": scale.level_steps, "chemistry": scale.contrast_steps},
     )
+    return Blocks(state.problem, state.prior, move)
 
 
 def run_chains(
     state: Setup,
-    sampler: Gibbs,
+    blocks: Blocks,
     /,
     *,
     start: Any,
@@ -156,20 +166,25 @@ def run_chains(
     thin: int | None = None,
 ) -> Any:
     """A Gibbs run recording :data:`~src.record.NAMES`, whichever sum it is on."""
-    domain = sampler.forward_problem.model_space
+    domain = blocks.problem.model_space
     read = ungrouped if domain == state.grouped.domain else tuple
-    return sampler(
-        state.data,
+    sampler = Chains(
+        blocks.move,
         steps=steps,
-        chains=state.scale.gibbs_chains,
         burn_in=burn_in,
-        start=start,
+        chains=state.scale.gibbs_chains,
         thin=thin,
-        record=record_operator(state.space, domain, read=read),
-        record_names=list(NAMES),
         rng=rng,
         n_jobs=state.scale.n_jobs,
     )
+    estimator = MonteCarloEstimator(
+        blocks.problem,
+        blocks.prior,
+        sampler=sampler,
+        record=record_operator(state.space, domain, read=read),
+        record_names=list(NAMES),
+    )
+    return estimator(state.data, start=start)
 
 
 def jump_rates(posterior: Any, evaluations: int, /) -> np.ndarray:
@@ -184,7 +199,7 @@ def jump_rates(posterior: Any, evaluations: int, /) -> np.ndarray:
 def compare(
     state: Setup,
     label: str,
-    sampler: Gibbs,
+    blocks: Blocks,
     evaluations: int,
     start: Any,
     /,
@@ -196,7 +211,7 @@ def compare(
     watch = Stopwatch()
     posterior = run_chains(
         state,
-        sampler,
+        blocks,
         start=start,
         steps=scale.compare_steps,
         burn_in=scale.compare_burn_in,

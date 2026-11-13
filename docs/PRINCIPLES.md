@@ -99,7 +99,9 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 ### Structure and practice
 
 13. **Layering runs one way.** `algebra`, `numerics` and `geometry` never
-    import `probability` or `inference`.
+    import `probability` or `inference`, and `sampling` never imports
+    `inference`: it samples a target, a potential against a reference, and
+    the estimators build the target for a problem's data.
 14. **Optional dependencies are extras**, and the core works without them.
 15. **Names.** Use American spelling in identifiers, and one name per
     concept: `max_iterations` is a budget going in and `iterations` a count
@@ -121,9 +123,9 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 | `traits` | the trait flags and their propagation rules |
 | `numerics` | linear solvers and preconditioners, the normal operators and the Tikhonov family, randomized linear algebra, the operator calculus and log-determinants, optimization and line searches, convex methods, quadratic programming, root finding, weighted chi-square distributions, Markov chain diagnostics, Gaussian mixture fitting |
 | `geometry` | convex sets, level and sublevel sets, subspaces and projectors, support functions, the feasible property set and its algorithms |
-| `probability` | `ProbabilityMeasure`, `GaussianMeasure`, `GaussianMixture`, `AbsolutelyContinuousMeasure`; products, push-forwards, conditioning, credible sets |
-| `inference` | forward problems and their likelihood potential; point, measure and set estimators, linear and nonlinear; Gaussian and mixture references for a posterior |
-| `inference.sampling` | function-space samplers: the target and its exact flows, the dynamics and splitting schemes they compose into, Metropolis corrections, the chain presets (`PCN`, `MALA`, `HMC`, `GeneralizedHMC`, `GeometricMALA`, `GeometricHMC`, `Gibbs`), tempered `SMC`, and the sampled posterior with its diagnostics |
+| `probability` | `ProbabilityMeasure`, `GaussianMeasure`, `GaussianMixture`, `AbsolutelyContinuousMeasure`, and the references a sampler is built on, `GaussianReference` and `MixtureReference`; products, push-forwards, conditioning, credible sets |
+| `sampling` | function-space Markov chain Monte Carlo: the target and its exact flows, the dynamics and splitting schemes they compose into, Metropolis corrections, the moves (`PCN`, `MALA`, `HMC`, `GeneralizedHMC`, `Gibbs`), the runs that apply them (`Chains`, tempered `SMC`), and the sampled posterior with its diagnostics |
+| `inference` | forward problems and their likelihood potential; point, measure and set estimators, linear and nonlinear, among them `MonteCarloEstimator`, the posterior sampled by a run of `sampling`; the reference constructors for a posterior |
 | `symmetric_space` | spaces in the eigenbasis of the Laplacian: the sphere; the periodic box (circle, torus); the bounded box (line, plane); scattered evaluation, gradients at points, the ray travel-time operator |
 | `spectral_element`, `interval`, `ball`, `disk` | spaces in the eigenbasis of `1 − div(L² grad)` on a padded spectral-element mesh, for a varying length scale: an interval (and radial profiles), a ball or shell, a disk or annulus, each with a `Layered` form; `spectral_element` is the shared core over `planetmodel` |
 | `plotting` | figures of fields, points, paths, sets and distributions on every geometry |

@@ -366,7 +366,7 @@ def test_the_figures_were_written(results):
 
 
 def test_part_g_runs_a_few_steps(app, scale, results):
-    """GeometricHMC about both Laplace references, through the script's own
+    """HMC about both Laplace references, through the script's own
     entry point, at rank 4 and on chains of 2 + 4 steps: it runs, its chains
     stay finite, and it draws its figures. The scripts read the scale from the
     survey, which takes the shortened one for the run."""

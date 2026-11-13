@@ -1,12 +1,12 @@
 """
 39. Sampling: a splitting scheme written by hand.
 
-The presets of example 37 are each a few lines over the sampling package's
+The moves of example 37 are each a few lines over the sampling package's
 lower layers: a dynamics, whose exact flows are its letters; a splitting
 scheme, a word over those letters applied with a time step; and a correction,
 which makes the scheme exact whatever its step. This example takes ``HMC``
-apart into those layers, checks that the parts give the preset's chains to
-the last bit, and then changes the one thing a preset fixes, the word.
+apart into those layers, checks that the parts give the move's chains to the
+last bit, and then changes the one thing a move fixes, the word.
 
 ``Hamiltonian`` dynamics has three letters, each solved exactly:
 
@@ -40,15 +40,16 @@ import numpy as np
 
 from pygeoinf import (
     HMC,
+    Chains,
     ForwardProblem,
     GaussianMeasure,
     LinearOperator,
     MaximumAPosteriori,
+    MonteCarloEstimator,
     Operator,
     plotting,
 )
-from pygeoinf.inference.sampling import (
-    Chains,
+from pygeoinf.sampling import (
     Hamiltonian,
     MetropolizedBlock,
     SplittingScheme,
@@ -104,35 +105,37 @@ data = value(truth) + sigma * rng.standard_normal(len(arcs))
 start = MaximumAPosteriori(problem, prior).solve(data).minimizer
 
 # ------------------------------------------------------------------ #
-# The preset, and the same sampler by hand                           #
+# The move, and the same sampler by hand                             #
 # ------------------------------------------------------------------ #
 #
 # The by-hand kernel is built in the package's order: the target, the
 # residual potential against the reference, here the prior; the dynamics on
 # it, which supplies the letters; the scheme, a word over them at a step;
 # and the correction, which Metropolizes the block and runs the rest of the
-# word, the refresh, as it stands. Chains then runs it as the preset would.
-# With the step held fixed and the same generator, the two give the same
-# chains exactly.
+# word, the refresh, as it stands. Chains then runs it as it runs the move,
+# which the estimator builds on its own target for the data. With the step
+# held fixed and the same generator, the two give the same chains exactly.
 
 step, length = 0.1, 6
-preset = HMC(problem, prior, step=step, length=length, acceptance=None)(
-    data, steps=200, chains=2, start=start, record=paths, rng=np.random.default_rng(1)
+move = HMC(step=step, length=length, acceptance=None)
+sampler = Chains(move, steps=200, chains=2, rng=np.random.default_rng(1))
+estimated = MonteCarloEstimator(problem, prior, sampler=sampler, record=paths)(
+    data, start=start
 )
 
-target = Target(problem, data, prior)
+target = Target(problem.potential(data), prior)
 dynamics = Hamiltonian(target)
 scheme = SplittingScheme(dynamics, "OBAB", step=step)
 kernel = MetropolizedBlock(scheme.block("BAB", repeat=length)).within(scheme)
-by_hand = Chains(2)(
-    kernel, start=start, steps=200, record=paths, rng=np.random.default_rng(1)
+by_hand = Chains(kernel, steps=200, chains=2, rng=np.random.default_rng(1))(
+    target, start=start, record=paths
 )
 
 print(f"the Hamiltonian dynamics' letters: {dynamics.flows()}")
-print(f"the preset's kernel: {scheme!r} with the block {kernel!r}")
+print(f"the move's kernel: {scheme!r} with the block {kernel!r}")
 print(
-    "the preset and the kernel by hand give the same chains: "
-    f"{np.array_equal(preset.scalars(), by_hand.scalars())}"
+    "the move and the kernel by hand give the same chains: "
+    f"{np.array_equal(estimated.scalars(), by_hand.scalars())}"
 )
 print()
 
@@ -162,7 +165,7 @@ print()
 b = 0.1932
 two_stage = [("B", b), ("A", 0.5), ("B", 1.0 - 2.0 * b), ("A", 0.5), ("B", b)]
 words = {
-    "BAB, the preset": ("OBAB", "BAB", 1),
+    "BAB, as HMC": ("OBAB", "BAB", 1),
     "ABA": ("OABA", "ABA", 1),
     "two-stage": ([("O", 1.0)] + two_stage, two_stage, 2),
 }
@@ -186,14 +189,15 @@ def run(name: str, cost: int, duration: float, chains: int, burn_in: int, steps:
     differs between their rows is the word.
     """
     gradients[0] = 0
-    posterior = Chains(chains)(
-        build(name, cost, duration),
-        start=start,
+    kernel = build(name, cost, duration)
+    sampler = Chains(
+        kernel,
         steps=steps,
         burn_in=burn_in,
-        record=paths,
+        chains=chains,
         rng=np.random.default_rng(cost),
     )
+    posterior = sampler(kernel.target, start=start, record=paths)
     return posterior, gradients[0]
 
 
@@ -207,15 +211,22 @@ def run(name: str, cost: int, duration: float, chains: int, burn_in: int, steps:
 # Gaussian energy, which the flows report as they run. A block is itself a
 # scheme, and applying it to a state is one trajectory with no correction,
 # so the error can be measured on the same states and velocities for every
-# word and every step: eighty states from a run of the preset, each with a
+# word and every step: eighty states from a run of HMC, each with a
 # velocity from N(0, K). On a log-log plot against the gradients per
 # trajectory a second-order scheme is a line of slope -2, once its step is
 # short enough to be stable.
 
 duration = 1.2
 costs = [12, 16, 24, 32, 48, 96, 192]
-states = HMC(problem, prior, step=0.05, length=24, acceptance=None)(
-    data, steps=200, chains=4, start=start, thin=10, rng=np.random.default_rng(2)
+sampler = Chains(
+    HMC(step=0.05, length=24, acceptance=None),
+    steps=200,
+    chains=4,
+    thin=10,
+    rng=np.random.default_rng(2),
+)
+states = MonteCarloEstimator(problem, prior, sampler=sampler)(
+    data, start=start
 ).stored_positions
 velocities = np.random.default_rng(3)
 states = [dynamics.initial_state(position, rng=velocities) for position in states]
@@ -257,17 +268,17 @@ print(
 print("  second order, all three, as a palindrome with positive fractions must be.")
 print(
     "  At the same cost the two-stage step's error is "
-    f"{energy['BAB, the preset'][-1] / energy['two-stage'][-1]:.0f} times smaller "
+    f"{energy['BAB, as HMC'][-1] / energy['two-stage'][-1]:.0f} times smaller "
     "than leapfrog's,"
 )
 closest = max(
     abs(aba / bab - 1.0)
-    for aba, bab in zip(energy["ABA"], energy["BAB, the preset"], strict=True)
+    for aba, bab in zip(energy["ABA"], energy["BAB, as HMC"], strict=True)
 )
 print(f"  and ABA's is leapfrog's to within {closest:.0%} at every cost. With long")
 print("  steps the order is reversed: at 16 gradients a trajectory leapfrog keeps")
 print(
-    f"  to an error of {energy['BAB, the preset'][1]:.2f} costs the two-stage step "
+    f"  to an error of {energy['BAB, as HMC'][1]:.2f} costs the two-stage step "
     f"{energy['two-stage'][1]:.0f}. It takes the longer step per gradient, and"
 )
 print("  its stable range per gradient is the shorter.")
@@ -323,10 +334,10 @@ print("  two-stage step's smaller error has nothing left to buy: its worst ESS")
 print(
     f"  per thousand gradients is {mixing['two-stage']['ess'][1]:.1f} at 24 and "
     f"{mixing['two-stage']['ess'][2]:.1f} at 48, against leapfrog's "
-    f"{mixing['BAB, the preset']['ess'][1]:.1f} and"
+    f"{mixing['BAB, as HMC']['ess'][1]:.1f} and"
 )
 print(
-    f"  {mixing['BAB, the preset']['ess'][2]:.1f}. The means agree within their "
+    f"  {mixing['BAB, as HMC']['ess'][2]:.1f}. The means agree within their "
     "errors wherever the"
 )
 print("  chains have mixed, since every word is corrected and so exact: the word")
@@ -346,7 +357,7 @@ axis = axes[0]
 for name in words:
     axis.plot(costs, energy[name], "o-", color=colors[name], label=name)
 # A guide of slope -2, set below the leapfrog line so that both show.
-reference = 0.3 * energy["BAB, the preset"][-1] * (costs[-1] / np.array(costs[3:])) ** 2
+reference = 0.3 * energy["BAB, as HMC"][-1] * (costs[-1] / np.array(costs[3:])) ** 2
 axis.plot(costs[3:], reference, color="0.6", linestyle="--", label="slope -2")
 axis.set_xscale("log")
 axis.set_yscale("log")

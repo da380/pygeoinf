@@ -10,7 +10,7 @@ What must be one is a Metropolized block, which a velocity flip has to
 invert, and the correction checks that.
 
 A scheme is not a sampler on its own: it is biased by its step, and only a
-correction (:mod:`~pygeoinf.inference.sampling.corrections`) turns it into a
+correction (:mod:`~pygeoinf.sampling.corrections`) turns it into a
 kernel a population can run. Unadjusted schemes are not offered.
 
 Adjacent kicks need no merging for cost: the gradient one computes is cached

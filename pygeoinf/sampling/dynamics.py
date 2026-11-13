@@ -47,10 +47,10 @@ from typing import Any
 
 from numpy.random import Generator
 
-from ...algebra.direct_sum import DirectSum
-from ...algebra.spaces import HilbertSpace
-from ...probability.base import ProbabilityMeasure, ProductMeasure
-from ...probability.gaussian import GaussianMeasure
+from ..algebra.direct_sum import DirectSum
+from ..algebra.spaces import HilbertSpace
+from ..probability.base import ProbabilityMeasure, ProductMeasure
+from ..probability.gaussian import GaussianMeasure
 from .flows import (
     Flow,
     GibbsBlock,
@@ -182,7 +182,7 @@ class Dynamics(ABC):
         Returns:
             The state.
         """
-        from ...algebra.spaces import resolve_rng
+        from ..algebra.spaces import resolve_rng
 
         rng = resolve_rng(rng)
         label = None
@@ -363,18 +363,20 @@ class Blockwise(Dynamics):
     """Gibbs sampling over the summands of a direct sum, one block at a time.
 
     Each summand is a letter, a :class:`~.flows.GibbsBlock` that updates it
-    against its conditional target with its own sampler and step, the others
+    against its conditional target with its own move and step, the others
     held. Every letter preserves the target, so a word over them, a
     systematic scan or its palindrome, needs no correction and is applied
-    by a :class:`~pygeoinf.inference.sampling.corrections.Sweep`. The
+    by a :class:`~pygeoinf.sampling.corrections.Sweep`. The
     letters are the summands' labels, or their positions where the direct
     sum has none.
 
     Args:
         target: the target, on a direct sum, its reference the prior.
         blocks: what samples each summand: a mapping from the summand (by
-            position or label) to its recipe, covering every summand once.
-        steps: each block's time step, by summand; the recipe's if omitted.
+            position or label) to its move, covering every summand once.
+        steps: each block's time step, by summand; the move's if omitted.
+        repeat: each block's kernel steps at each visit, by summand; one if
+            omitted.
 
     Raises:
         ValueError: if the model space is not a direct sum, the reference is
@@ -389,6 +391,7 @@ class Blockwise(Dynamics):
         /,
         *,
         steps: Any = None,
+        repeat: Any = None,
     ) -> None:
         space = target.model_space
         if not isinstance(space, DirectSum):
@@ -400,13 +403,13 @@ class Blockwise(Dynamics):
                 "A Gibbs block's reference is the prior's conditional law, so "
                 "the target's reference must be the prior."
             )
-        recipes: dict[int, Any] = {}
-        for key, recipe in dict(blocks).items():
+        moves: dict[int, Any] = {}
+        for key, move in dict(blocks).items():
             index = space.index(key)
-            if index in recipes:
+            if index in moves:
                 raise ValueError(f"Summand {key!r} has two blocks.")
-            recipes[index] = recipe
-        missing = [i for i in range(len(space.subspaces)) if i not in recipes]
+            moves[index] = move
+        missing = [i for i in range(len(space.subspaces)) if i not in moves]
         if missing:
             raise ValueError(
                 f"Every summand needs a block, or it never moves; {missing} have none."
@@ -414,10 +417,16 @@ class Blockwise(Dynamics):
         given = (
             {} if steps is None else {space.index(k): v for k, v in dict(steps).items()}
         )
-        self._recipes = tuple(recipes[i] for i in range(len(space.subspaces)))
-        self._steps = tuple(
-            float(given.get(i, recipe.step)) for i, recipe in enumerate(self._recipes)
+        repeats = (
+            {}
+            if repeat is None
+            else {space.index(k): v for k, v in dict(repeat).items()}
         )
+        self._moves = tuple(moves[i] for i in range(len(space.subspaces)))
+        self._steps = tuple(
+            float(given.get(i, move.step)) for i, move in enumerate(self._moves)
+        )
+        self._repeat = tuple(int(repeats.get(i, 1)) for i in range(len(self._moves)))
         labels = space.labels
         self._letters = tuple(
             str(i) if labels is None else labels[i] for i in range(len(space.subspaces))
@@ -430,9 +439,14 @@ class Blockwise(Dynamics):
         return self._letters
 
     @property
-    def recipes(self) -> tuple[Any, ...]:
-        """The blocks' recipes, in summand order."""
-        return self._recipes
+    def moves(self) -> tuple[Any, ...]:
+        """The blocks' moves, in summand order."""
+        return self._moves
+
+    @property
+    def repeat(self) -> tuple[int, ...]:
+        """The blocks' kernel steps at each visit, in summand order."""
+        return self._repeat
 
     @property
     def block_steps(self) -> tuple[float, ...]:
@@ -441,9 +455,9 @@ class Blockwise(Dynamics):
 
     def _build_flows(self) -> dict[str, Flow]:
         return {
-            letter: GibbsBlock(self._target, index, recipe, step=step)
-            for index, (letter, recipe, step) in enumerate(
-                zip(self._letters, self._recipes, self._steps)
+            letter: GibbsBlock(self._target, index, move, step=step, repeat=repeat)
+            for index, (letter, move, step, repeat) in enumerate(
+                zip(self._letters, self._moves, self._steps, self._repeat)
             )
         }
 
@@ -481,8 +495,9 @@ class Blockwise(Dynamics):
         """
         return Blockwise(
             self._target,
-            dict(enumerate(self._recipes)),
+            dict(enumerate(self._moves)),
             steps=dict(enumerate(steps)),
+            repeat=dict(enumerate(self._repeat)),
         )
 
     def with_target(self, target: Target, /) -> "Blockwise":
@@ -495,7 +510,10 @@ class Blockwise(Dynamics):
             The dynamics.
         """
         return Blockwise(
-            target, dict(enumerate(self._recipes)), steps=dict(enumerate(self._steps))
+            target,
+            dict(enumerate(self._moves)),
+            steps=dict(enumerate(self._steps)),
+            repeat=dict(enumerate(self._repeat)),
         )
 
 

@@ -41,14 +41,16 @@ from pygeoinf import (
     HMC,
     MALA,
     PCN,
+    Chains,
     ForwardProblem,
     GaussianMeasure,
     LinearOperator,
     MaximumAPosteriori,
+    MonteCarloEstimator,
     Operator,
     plotting,
 )
-from pygeoinf.inference.sampling import StepSizeAdaptation, pcn_beta
+from pygeoinf.sampling import StepSizeAdaptation, pcn_beta
 from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 from pygeoinf.symmetric_space import circle
 
@@ -164,25 +166,29 @@ print(
     f"HMC h = {steps['HMC']} x 3, random walk s = {walk_step:.3f}"
 )
 print(f"{'points':>6s}" + "".join(f"{name:>16s}" for name in names))
+# The moves are built once: they know nothing of the grid, and one move is
+# run on every discretization.
+moves = {
+    "pCN": PCN(step=steps["pCN"], acceptance=None),
+    "MALA": MALA(step=steps["MALA"], acceptance=None),
+    "HMC": HMC(step=steps["HMC"], length=3, acceptance=None),
+}
 for points in levels:
     space, prior, problem = build(points)
     start = MaximumAPosteriori(problem, prior).solve(data).minimizer
     starts[points] = start
-    samplers = {
-        "pCN": PCN(problem, prior, step=steps["pCN"], acceptance=None),
-        "MALA": MALA(problem, prior, step=steps["MALA"], acceptance=None),
-        "HMC": HMC(problem, prior, step=steps["HMC"], length=3, acceptance=None),
-    }
     row = f"{points:6d}"
-    for name, sampler in samplers.items():
-        posterior = sampler(
-            data,
+    for name, move in moves.items():
+        sampler = Chains(
+            move,
             steps=300,
-            chains=2,
             burn_in=100,
-            start=start,
+            chains=2,
             thin=10,
             rng=np.random.default_rng(1),
+        )
+        posterior = MonteCarloEstimator(problem, prior, sampler=sampler)(
+            data, start=start
         )
         value, error = mean_and_error(
             np.stack([c.acceptance for c in posterior.chains])
@@ -221,23 +227,21 @@ adapted = {name: [] for name in names}
 started = time.perf_counter()
 print("the step each settles on, adapted during burn-in")
 print(f"{'points':>6s}" + "".join(f"{name:>16s}" for name in names))
+moves = {
+    "pCN": PCN(step=0.01),
+    "MALA": MALA(step=0.01),
+    "HMC": HMC(step=0.1, length=3),
+}
 for points in levels:
     space, prior, problem = build(points)
     start = starts[points]
-    samplers = {
-        "pCN": PCN(problem, prior, step=0.01),
-        "MALA": MALA(problem, prior, step=0.01),
-        "HMC": HMC(problem, prior, step=0.1, length=3),
-    }
     row = f"{points:6d}"
-    for name, sampler in samplers.items():
-        posterior = sampler(
-            data,
-            steps=10,
-            chains=2,
-            burn_in=300,
-            start=start,
-            rng=np.random.default_rng(3),
+    for name, move in moves.items():
+        sampler = Chains(
+            move, steps=10, burn_in=300, chains=2, rng=np.random.default_rng(3)
+        )
+        posterior = MonteCarloEstimator(problem, prior, sampler=sampler)(
+            data, start=start
         )
         settled = float(np.mean([chain.step_size for chain in posterior.chains]))
         adapted[name].append(settled)

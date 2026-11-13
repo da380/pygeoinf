@@ -132,10 +132,10 @@ class Scale:
         occam_iterations: Occam's outer iterations.
         occam_newton_iterations: the Newton iterations of each of Occam's.
         occam_cg_iterations: the inner iterations of Occam's Newton steps.
-        hmc_step: the time step GeometricHMC's burn-in starts its adaptation
+        hmc_step: the time step HMC's burn-in starts its adaptation
             from.
-        hmc_length: the leapfrog steps of a GeometricHMC trajectory.
-        hmc_chains: the chains each GeometricHMC runs, one after another.
+        hmc_length: the leapfrog steps of an HMC trajectory.
+        hmc_chains: the chains each HMC run has, one after another.
         hmc_burn_in: the steps each chain takes and discards first.
         hmc_steps: the steps each chain keeps.
         probe_jobs: the threads of the spectral preconditioner's probes.

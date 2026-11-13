@@ -128,8 +128,9 @@ class Scale:
         budget: the forward evaluations of each chain of a sampler whose
             reference is the prior.
         burn_share: the share of those a chain takes first and discards.
-        geometric_steps: the steps each chain of GeometricHMC keeps, which
-            are counted apart since its reference is what it spends time on.
+        geometric_steps: the steps each chain of HMC about the reference
+            keeps, counted apart since its reference is what it spends time
+            on.
         geometric_burn_in: the steps it takes first and discards.
         reference_rank: the rank of the low-rank reference on the data as
             given.
@@ -138,8 +139,10 @@ class Scale:
         mala_step: the time step MALA's burn-in starts from.
         hmc_step: the time step HMC's burn-in starts from.
         hmc_length: the leapfrog steps of an HMC trajectory.
-        ghmc_step: the time step GeometricHMC's burn-in starts from.
-        ghmc_length: the leapfrog steps of a GeometricHMC trajectory.
+        ghmc_step: the time step HMC about the reference starts its burn-in
+            from.
+        ghmc_length: the leapfrog steps of a trajectory of HMC about the
+            reference.
         ladder: the degrees of part C's ladder.
         ladder_steps: the steps each chain keeps on the ladder.
         start_share: the share of the sphere inside the provinces of part D's

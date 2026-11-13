@@ -43,8 +43,6 @@ from .estimators import (
 )
 from .gaussian import (
     GaussianPosterior,
-    GaussianReference,
-    MixtureReference,
     LinearGaussianInversion,
     LowRankGaussianPosterior,
 )
@@ -62,8 +60,8 @@ from .point import (
     LeastSquares,
     MinimumNorm,
 )
+from .monte_carlo import MonteCarloEstimator
 from .problem import ForwardProblem, LinearForwardProblem
-from . import sampling
 
 
 __all__ = [
@@ -79,11 +77,10 @@ __all__ = [
     "LinearizedFeasiblePropertySet",
     "FeasiblePropertySet",
     "GaussianPosterior",
-    "GaussianReference",
     "LowRankGaussianPosterior",
-    "MixtureReference",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
+    "MonteCarloEstimator",
     "FactoredNormalOperator",
     "NormalOperator",
     "NormalDiagonalPreconditioner",
@@ -106,5 +103,4 @@ __all__ = [
     "MinimumNorm",
     "PointEstimator",
     "SetEstimator",
-    "sampling",
 ]

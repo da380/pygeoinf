@@ -20,11 +20,12 @@ the acceptance at a fixed step and the step the burn-in settles on, against
 a plain random walk with pCN's proposal size. Every sampler of the library is
 defined on the function space, and so does not notice the refinement.
 
-Each prior-reference sampler gets the same forward evaluations per chain.
-``GeometricHMC`` gets its own count of steps: its reference pairs every state
-with every chart vector by the space's inner product, whose cost on the sphere
-is two spherical-harmonic transforms a field, and that, not the forward map, is
-what it spends its time on.
+Each sampler about the prior gets the same forward evaluations per chain.
+HMC about a low-rank reference fitted to the exact posterior gets its own
+count of steps: the reference pairs every state with every chart vector by the
+space's inner product, whose cost on the sphere is two spherical-harmonic
+transforms a field, and that, not the forward map, is what it spends its time
+on.
 """
 
 from __future__ import annotations
@@ -38,17 +39,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf import (
+    HMC,
+    MALA,
+    PCN,
+    Chains,
     GaussianMeasure,
     GeneralizedHMC,
-    GeometricHMC,
-    HMC,
     LinearForwardProblem,
     LinearGaussianInversion,
     LowRankGaussianPosterior,
-    MALA,
-    PCN,
+    MonteCarloEstimator,
 )
-from pygeoinf.inference.sampling import pcn_beta
+from pygeoinf.sampling import pcn_beta
 from pygeoinf.numerics.chain_diagnostics import integrated_autocorrelation_time
 from pygeoinf.numerics.solvers import CGSolver
 
@@ -64,7 +66,7 @@ COLORS = {
     "MALA": "#eb6834",
     "HMC": "#1baf7a",
     "GeneralizedHMC": "#eda100",
-    "GeometricHMC": "#e87ba4",
+    "HMC, reference": "#e87ba4",
     "random walk": "#6b6b66",
 }
 # The ladder's trajectories are short: it measures an acceptance, not mixing.
@@ -145,24 +147,21 @@ def pose(
     )
 
 
-def samplers(scale: Scale, posed: Posed, reference: Any, /) -> dict:
-    """Every sampler on a problem, with the forward evaluations of its step."""
-    problem, prior = posed.problem, posed.inversion.prior
+def samplers(scale: Scale, reference: Any, /) -> dict:
+    """Every move, with the reference it moves about (``None`` for the prior)
+    and the forward evaluations of its step."""
     return {
-        "PCN": (PCN(problem, prior, step=scale.pcn_step), 1),
-        "MALA": (MALA(problem, prior, step=scale.mala_step), 1),
+        "PCN": (PCN(step=scale.pcn_step), None, 1),
+        "MALA": (MALA(step=scale.mala_step), None, 1),
         "HMC": (
-            HMC(problem, prior, step=scale.hmc_step, length=scale.hmc_length),
+            HMC(step=scale.hmc_step, length=scale.hmc_length),
+            None,
             scale.hmc_length,
         ),
-        "GeneralizedHMC": (
-            GeneralizedHMC(problem, prior, step=scale.hmc_step),
-            1,
-        ),
-        "GeometricHMC": (
-            GeometricHMC(
-                problem, reference, step=scale.ghmc_step, length=scale.ghmc_length
-            ),
+        "GeneralizedHMC": (GeneralizedHMC(step=scale.hmc_step), None, 1),
+        "HMC, reference": (
+            HMC(step=scale.ghmc_step, length=scale.ghmc_length),
+            reference,
             scale.ghmc_length,
         ),
     }
@@ -171,33 +170,39 @@ def samplers(scale: Scale, posed: Posed, reference: Any, /) -> dict:
 def run_sampler(
     state: Setup,
     posed: Posed,
-    name: str,
-    sampler: Any,
+    move: Any,
+    reference: Any,
     per_step: int,
     /,
     *,
     rng: np.random.Generator,
 ) -> dict:
-    """One sampler's chains from exact draws, marked against the exact answer."""
+    """One move's chains from exact draws, marked against the exact answer."""
     scale = state.scale
-    if name == "GeometricHMC":
+    if reference is not None:
         steps, burn_in = scale.geometric_steps, scale.geometric_burn_in
     else:
         total = scale.budget // per_step
         burn_in = int(scale.burn_share * total)
         steps = total - burn_in
     watch = Stopwatch()
-    posterior = sampler(
-        posed.data,
+    sampler = Chains(
+        move,
         steps=steps,
-        chains=scale.chains,
         burn_in=burn_in,
-        start=posed.posterior,
-        record=record_operator(scale, state.space),
-        record_names=names(),
+        chains=scale.chains,
         rng=rng,
         n_jobs=scale.n_jobs,
     )
+    estimator = MonteCarloEstimator(
+        posed.problem,
+        posed.inversion.prior,
+        sampler=sampler,
+        reference=reference,
+        record=record_operator(scale, state.space),
+        record_names=names(),
+    )
+    posterior = estimator(posed.data, start=posed.posterior)
     seconds = watch.lap()
     diagnostics = posterior.diagnostics()
     values = posterior.scalars()[1:]
@@ -250,10 +255,10 @@ def run_problem(
         f"{'sd ratio':>11s} {'s':>6s}"
     )
     rows = {}
-    for (name, (sampler, per_step)), stream in zip(
-        samplers(scale, posed, reference).items(), rng.spawn(5)
+    for (name, (move, reference_of, per_step)), stream in zip(
+        samplers(scale, reference).items(), rng.spawn(5)
     ):
-        row = run_sampler(state, posed, name, sampler, per_step, rng=stream)
+        row = run_sampler(state, posed, move, reference_of, per_step, rng=stream)
         rows[name] = row
         print(
             f"  {name:<18s} {row['evaluations']:6d} {row['step']:9.2e} "
@@ -345,44 +350,36 @@ def ladder(
             problem, prior, solver=CGSolver(rtol=SOLVER_RTOL)
         )(weak.data).expectation
         fixed = {
-            "PCN": PCN(problem, prior, step=steps["PCN"], acceptance=None),
-            "MALA": MALA(problem, prior, step=steps["MALA"], acceptance=None),
-            "HMC": HMC(
-                problem,
-                prior,
-                step=steps["HMC"],
-                length=LADDER_LENGTH,
-                acceptance=None,
-            ),
+            "PCN": PCN(step=steps["PCN"], acceptance=None),
+            "MALA": MALA(step=steps["MALA"], acceptance=None),
+            "HMC": HMC(step=steps["HMC"], length=LADDER_LENGTH, acceptance=None),
         }
         adapted = {
-            "PCN": PCN(problem, prior, step=steps["PCN"]),
-            "MALA": MALA(problem, prior, step=steps["MALA"]),
-            "HMC": HMC(problem, prior, step=steps["HMC"], length=LADDER_LENGTH),
+            "PCN": PCN(step=steps["PCN"]),
+            "MALA": MALA(step=steps["MALA"]),
+            "HMC": HMC(step=steps["HMC"], length=LADDER_LENGTH),
         }
-        row = f"  {degree:6d} {prior.domain.dim:6d}"
-        for name in fixed:
-            posterior = fixed[name](
-                weak.data,
-                steps=n,
+
+        def sampled(move: Any, kept: int, burn_in: int) -> Any:
+            sampler = Chains(
+                move,
+                steps=kept,
+                burn_in=burn_in,
                 chains=2,
-                burn_in=n // 4,
-                start=start,
                 rng=rng.spawn(1)[0],
                 n_jobs=scale.n_jobs,
             )
+            return MonteCarloEstimator(problem, prior, sampler=sampler)(
+                weak.data, start=start
+            )
+
+        row = f"  {degree:6d} {prior.domain.dim:6d}"
+        for name in fixed:
+            posterior = sampled(fixed[name], n, n // 4)
             value, spread = mean_and_error(
                 np.stack([chain.acceptance for chain in posterior.chains])
             )
-            settled = adapted[name](
-                weak.data,
-                steps=n // 4,
-                chains=2,
-                burn_in=n,
-                start=start,
-                rng=rng.spawn(1)[0],
-                n_jobs=scale.n_jobs,
-            )
+            settled = sampled(adapted[name], n // 4, n)
             step = float(np.mean([chain.step_size for chain in settled.chains]))
             results[name]["acceptance"].append(value)
             results[name]["error"].append(spread)

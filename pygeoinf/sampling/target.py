@@ -10,10 +10,10 @@ against a reference Gaussian equivalent to the prior,
 
     d mu / d nu (u) == exp(-Phi_ref(u)) / Z,    Phi_ref == Phi / T + log d nu / d mu_0
 
-with ``Phi`` the likelihood potential of the forward problem and ``T`` a
-temperature. The reference is solved exactly by the dynamics; ``Phi_ref`` is
-all the integrator and the Metropolis step are left with. :class:`Target`
-holds it and is the only caller of the forward operator.
+with ``Phi`` the likelihood potential and ``T`` a temperature. The reference
+is solved exactly by the dynamics; ``Phi_ref`` is all the integrator and the
+Metropolis step are left with. :class:`Target` holds it and is the only
+caller of the potential, and so of the forward operator.
 
 :class:`State` is the chain's position and, for the inertial dynamics, its
 velocity, with the evaluations at the position cached on the record itself:
@@ -26,24 +26,20 @@ next, and a rejection costs nothing to undo.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any, Callable
 
-from ...algebra.linearization import QuadraticModel
-from ...algebra.direct_sum import DirectSum
-from ...algebra.operators import (
+from ..algebra.linearization import QuadraticModel
+from ..algebra.direct_sum import DirectSum
+from ..algebra.operators import (
     AffineOperator,
     EvaluationError,
     Functional,
     LinearFunctional,
 )
-from ...geometry.sets import Subset
-from ...probability.absolutely_continuous import AbsolutelyContinuousMeasure
-from ...probability.gaussian import GaussianMeasure
-from ..gaussian import GaussianReference, MixtureReference
-from ..laplace import LaplaceApproximation
-
-if TYPE_CHECKING:  # pragma: no cover
-    from ..problem import ForwardProblem
+from ..geometry.sets import Subset
+from ..probability.absolutely_continuous import AbsolutelyContinuousMeasure
+from ..probability.gaussian import GaussianMeasure
+from ..probability.reference import GaussianReference, MixtureReference
 
 __all__ = ["State", "Target"]
 
@@ -132,14 +128,16 @@ class _Evaluation:
 class Target:
     """The residual potential ``Phi_ref == Phi / T + log d nu / d mu_0``.
 
-    Built from a forward problem, the data and a reference. The likelihood
-    potential is the problem's (:meth:`~pygeoinf.inference.problem.ForwardProblem.potential`),
-    evaluated through one ``forward.at`` wherever a gradient is wanted, so
-    that value and derivative cost one forward evaluation together; where
-    only the value is wanted, the forward's value alone is computed. A
-    forward that raises :class:`~pygeoinf.algebra.operators.EvaluationError`,
-    or a position outside ``constraint``, has potential ``+inf``, so a
-    proposal there is rejected rather than the run being lost.
+    Built from the likelihood potential ``Phi``, a functional on the model
+    space, and a reference. For a forward problem and its data the potential
+    is :meth:`~pygeoinf.inference.problem.ForwardProblem.potential`, which
+    :class:`~pygeoinf.inference.monte_carlo.MonteCarloEstimator` builds; it is
+    evaluated through one linearization wherever a gradient is wanted, so
+    that value and derivative cost one forward evaluation together, and
+    through its value alone otherwise. A potential that raises
+    :class:`~pygeoinf.algebra.operators.EvaluationError`, or a position
+    outside ``constraint``, has potential ``+inf``, so a proposal there is
+    rejected rather than the run being lost.
 
     Evaluations are cached on the :class:`State`: the likelihood's at
     temperature one, shared by every tempered copy made by
@@ -148,69 +146,60 @@ class Target:
     gradient per target.
 
     Args:
-        problem: the forward problem, with a Gaussian error measure.
-        data: the observations.
-        reference: a :class:`~pygeoinf.inference.gaussian.GaussianReference`
-            or :class:`~pygeoinf.inference.gaussian.MixtureReference` on the
+        potential: the likelihood potential ``Phi``, a functional on the
+            model space; with a derivative for the samplers that follow the
+            gradient.
+        reference: a :class:`~pygeoinf.probability.reference.GaussianReference`
+            or :class:`~pygeoinf.probability.reference.MixtureReference` on the
             model space, or a Gaussian prior, which is taken as its own
-            reference; or a
-            :class:`~pygeoinf.inference.laplace.LaplaceApproximation` on the
-            same problem, for a reference that follows the state: the
-            Laplace reference at each position, built on first use and
-            cached on the state.
+            reference.
         temperature: divides the likelihood potential. One is the posterior.
         constraint: a subset of the model space outside which the potential
-            is ``+inf``, checked before the forward is called.
+            is ``+inf``, checked before the potential is evaluated.
+        local: for a reference that follows the state, a callable from a
+            model to the Gaussian reference there, the Laplace Gaussian at
+            each position say, built on first use and cached on the state;
+            *reference* is then the prior those references are built over.
 
     Raises:
-        ValueError: if the reference does not live on the model space, a
-            Laplace approximation is of another problem, or for a
-            non-positive temperature.
+        ValueError: if the reference does not live on the potential's
+            domain, a local reference is given over a reference other than
+            the prior, or for a non-positive temperature.
         TypeError: if the reference is not a ``GaussianReference``, a
-            ``MixtureReference``, a ``GaussianMeasure`` or a
-            ``LaplaceApproximation``.
+            ``MixtureReference`` or a ``GaussianMeasure``.
     """
 
     def __init__(
         self,
-        problem: "ForwardProblem",
-        data: Any,
-        reference: (
-            GaussianReference
-            | MixtureReference
-            | GaussianMeasure
-            | LaplaceApproximation
-        ),
+        potential: Functional,
+        reference: GaussianReference | MixtureReference | GaussianMeasure,
         /,
         *,
         temperature: float = 1.0,
         constraint: "Subset | None" = None,
+        local: Callable[[Any], GaussianReference] | None = None,
     ) -> None:
-        local = None
-        if isinstance(reference, LaplaceApproximation):
-            if reference.estimator.forward_problem is not problem:
-                raise ValueError(
-                    "The Laplace approximation must be built on the target's "
-                    "forward problem."
-                )
-            local = reference
-            reference = reference.estimator.prior
         reference = _as_reference(reference)
-        if reference.domain != problem.model_space:
+        if reference.domain != potential.domain:
             raise ValueError(
                 f"The reference lives on {reference.domain!r}, not on the "
-                f"model space {problem.model_space!r}."
+                f"potential's domain {potential.domain!r}."
             )
-        potential = problem.potential(data)
+        if local is not None and (
+            isinstance(reference, MixtureReference) or reference.rank != 0
+        ):
+            raise ValueError(
+                "A reference that follows the state is built over the prior, so "
+                "the target's reference must be the prior."
+            )
         self._init(
             potential,
             reference,
             temperature=temperature,
             constraint=constraint,
-            has_gradient=problem.forward_operator.has_derivative,
+            has_gradient=potential.has_derivative,
             source=_Source(potential),
             local=local,
-            data=data,
         )
 
     def _init(
@@ -223,13 +212,11 @@ class Target:
         constraint: "Subset | None",
         has_gradient: bool,
         source: "_Source",
-        local: LaplaceApproximation | None = None,
-        data: Any = None,
+        local: Callable[[Any], GaussianReference] | None = None,
     ) -> None:
         if not temperature > 0.0:
             raise ValueError(f"A temperature is positive, got {temperature}.")
         self._local = local
-        self._data = data
         self._potential = potential
         self._reference = reference
         self._temperature = float(temperature)
@@ -298,13 +285,14 @@ class Target:
 
     @property
     def is_local(self) -> bool:
-        """Whether the reference follows the state: the Laplace reference at
-        each position, :attr:`reference` being the prior."""
+        """Whether the reference follows the state, :attr:`reference` being
+        the prior."""
         return self._local is not None
 
     @property
-    def local(self) -> LaplaceApproximation | None:
-        """The Laplace approximation a local reference is built from."""
+    def local(self) -> Callable[[Any], GaussianReference] | None:
+        """The map from a model to the reference there, for a reference that
+        follows the state."""
         return self._local
 
     def component(self, state: State, /) -> GaussianReference:
@@ -325,7 +313,7 @@ class Target:
             key = ("local", self._source)
             cached = state.cache.get(key)
             if cached is None:
-                cached = self._local.reference(state.position, self._data)
+                cached = self._local(state.position)
                 state.cache[key] = cached
             return cached
         if not isinstance(self._reference, MixtureReference):
@@ -354,7 +342,7 @@ class Target:
 
     @property
     def has_gradient(self) -> bool:
-        """Whether the forward operator supplies a derivative."""
+        """Whether the potential has a derivative."""
         return self._has_gradient
 
     @property
@@ -381,7 +369,6 @@ class Target:
             has_gradient=self._has_gradient,
             source=self._source,
             local=self._local,
-            data=self._data,
         )
         return target
 
@@ -500,13 +487,13 @@ class Target:
             A vector of the model space.
 
         Raises:
-            ValueError: if the forward operator has no derivative, or the
+            ValueError: if the potential has no derivative, or the
                 potential is infinite at the position, where it has none.
         """
         if not self._has_gradient:
             raise ValueError(
-                "The forward operator supplies no derivative, so this target "
-                "has no gradient; use a sampler that needs none."
+                "The potential has no derivative, so this target has no "
+                "gradient; use a sampler that needs none."
             )
         likelihood = self._likelihood(state, gradient=True)
         if likelihood.gradient is None:
