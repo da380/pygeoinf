@@ -369,7 +369,8 @@ class TestSpacesAreReachedByGeometry:
         assert name in symmetric_space.__all__
 
     def test_the_shell_transform_is_not_public(self):
-        spectral_element = pytest.importorskip("pygeoinf.spectral_element")
+        from pygeoinf import spectral_element
+
         assert "ShellTransform" not in spectral_element.__all__
         assert not hasattr(spectral_element, "ShellTransform")
 

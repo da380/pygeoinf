@@ -54,7 +54,7 @@ jobs:
     - name: Raise every dependency to the newest the pins admit
       run: >-
         pip install --upgrade --upgrade-strategy eager
-        ".[sphere,planetmodel,osqp,clarabel,interactive,plot3d]"
+        ".[sphere,osqp,clarabel,interactive,plot3d]"
 
     - name: Report the versions under test
       run: pip list --format=freeze | grep -iE "^(numpy|scipy|matplotlib|joblib|threadpoolctl|finufft|pyshtools|ducc0|cartopy|shapely|planetmodel|osqp|clarabel|plotly)=="

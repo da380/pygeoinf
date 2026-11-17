@@ -30,10 +30,7 @@ def test_the_tutorials_are_discovered():
 
 # Tutorials that need an optional dependency, and the module that provides it,
 # or the modules where there are several.
-OPTIONAL: dict[str, str | tuple[str, ...]] = {
-    "10_coupled_problems": "planetmodel",
-    "11_varying_structure": "planetmodel",
-}
+OPTIONAL: dict[str, str | tuple[str, ...]] = {}
 
 # Tutorials whose cost is part of the lesson, run with the slow marker.
 # Whole-notebook runs that take a minute or more at their own scale; they

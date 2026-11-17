@@ -17,8 +17,6 @@ it, given a field -- without touching the correlation structure.
 This is an interval of the *line*: the measure is ``dx``, the coordinate is a
 position and not a radius, and the mesh is padded at both ends. A function of
 radius in a planet, under ``r^2 dr``, is example 35.
-
-Needs planetmodel, which comes with the 'planetmodel' extra.
 """
 
 import numpy as np

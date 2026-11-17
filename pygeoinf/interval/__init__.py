@@ -33,8 +33,8 @@ a product is left on the nodes, untruncated; point evaluation is refused at
 or below the order that admits it, which is one half.
 
 The numerics are ``planetmodel.randomfield``'s: ``padded_mesh``,
-``RadialOperatorFamily`` under its plain measure, and the ``SpectralBasis`` of
-degree zero, which is reachable as ``basis``.
+``SeparableOperatorFamily`` under its plain measure, and the ``SpectralBasis``
+of degree zero, which is reachable as ``basis``.
 """
 
 from . import radial

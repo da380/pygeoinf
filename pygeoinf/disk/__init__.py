@@ -37,11 +37,10 @@ the centre: a standard deviation, a multiplier or a mean given as a profile
 in ``r`` is of order zero and must be even in ``r``. In an annulus there is no
 centre and nothing to it.
 
-The numerics are ``planetmodel``'s spectral elements under the ``r dr``
-measure, which ``planetmodel`` does not offer: its radial operator family
-with the assembly changed, one ``planetmodel`` ``SpectralBasis`` per order
-held in a :class:`~pygeoinf.spectral_element._cylindrical.PolarBasis`
-(reachable as :attr:`Disk.basis`), and a real FFT round each ring.
+The numerics are ``planetmodel``'s: ``SeparableOperatorFamily`` under the
+``r dr`` measure and indexed by order, one ``SpectralBasis`` per order held
+in a :class:`~pygeoinf.spectral_element._cylindrical.PolarBasis` (reachable
+as :attr:`Disk.basis`), and a real FFT round each ring.
 """
 
 from .layered import Layered

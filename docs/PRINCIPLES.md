@@ -136,8 +136,7 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 Subpackages and the common workflow names are importable from the top level.
 Spaces are reached by geometry (`symmetric_space.sphere.Sobolev`,
 `interval.Sobolev`), and each geometry exports its own `Lebesgue` and
-`Sobolev`. `testing` and `datasets` are imported explicitly. The
-spectral-element packages need the `planetmodel` extra.
+`Sobolev`. `testing` and `datasets` are imported explicitly.
 
 ## 4. Conventions that bite
 

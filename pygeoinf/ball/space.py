@@ -10,7 +10,7 @@ from numpy.random import Generator
 from planetmodel import harmonics
 from planetmodel.harmonics import ShellTransform
 from planetmodel.randomfield import (
-    RadialOperatorFamily,
+    SeparableOperatorFamily,
     SpectralBasis,
     SphericalBasis,
     padded_mesh,
@@ -163,7 +163,7 @@ class Ball(SpectralElementSpace):
         mesh = padded_mesh(
             inner, outer, pad=pads, weight="r2", ngll=ngll, drmax=element_length
         )
-        family = RadialOperatorFamily(
+        family = SeparableOperatorFamily(
             mesh, kappa=lambda r: clamped(r) ** 2, weight="r2", robin=robin
         )
         physical = restriction(mesh, inner, outer)
@@ -173,7 +173,7 @@ class Ball(SpectralElementSpace):
             if max_eigenvalue is None:
                 # From the domain proper and not the padded mesh, whose first
                 # mode of degree lmax is longer by the ratio of the two radii.
-                bare = RadialOperatorFamily(
+                bare = SeparableOperatorFamily(
                     padded_mesh(
                         inner,
                         outer,
@@ -685,7 +685,7 @@ class Ball(SpectralElementSpace):
         lateral: Callable[[np.ndarray], np.ndarray] | None,
         probe: np.ndarray,
         /,
-    ) -> RadialOperatorFamily:
+    ) -> SeparableOperatorFamily:
         """``A'`` on this space's radial mesh under ``r^2 dr``, its radial
         coefficient ``radial^2`` and its angular one ``lateral^2``. Under
         ``boundary="robin"`` its Robin coefficients are matched to the
@@ -697,7 +697,7 @@ class Ball(SpectralElementSpace):
             inner, outer = self._radii
             ends = (inner - self._padding[0], outer + self._padding[1])
             robin = _resolved_boundary("robin", probe, ends)
-        return RadialOperatorFamily(
+        return SeparableOperatorFamily(
             self._basis.family.mesh,
             kappa=lambda r: radial(r) ** 2,
             kappa_h=None if lateral is None else (lambda r: lateral(r) ** 2),

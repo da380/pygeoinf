@@ -1,6 +1,6 @@
 """The spectral-element ball and annulus: the space, its operators, its priors.
 
-Needs ``planetmodel`` 1.4. The independent routes
+The independent routes
 are the grid against the point: values synthesized on the
 grid through ``planetmodel.harmonics`` and the nodal eigenfunctions, against the same field
 evaluated through scipy's harmonics and the element polynomials; and
@@ -15,14 +15,12 @@ transformed together they take five seconds and run with the rest.
 import numpy as np
 import pytest
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
-if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-    pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
+from planetmodel import randomfield
 
-from pygeoinf import Traits  # noqa: E402
-from pygeoinf.algebra.operators import LinearOperator  # noqa: E402
-from pygeoinf.ball import Ball, Lebesgue, Sobolev  # noqa: E402
-from pygeoinf.testing import (  # noqa: E402
+from pygeoinf import Traits
+from pygeoinf.algebra.operators import LinearOperator
+from pygeoinf.ball import Ball, Lebesgue, Sobolev
+from pygeoinf.testing import (
     check_coordinates,
     check_measure,
     check_operator,
@@ -743,7 +741,7 @@ class TestScalesOfThePriorsOwn:
         options = {"lmax": 3, "element_length": 0.25, "padding": 0.3, "boundary": None}
         shell = annulus(0.0, **options)
         space = annulus(0.0, radial_modes=shell.radii.size, **options)
-        family = randomfield.RadialOperatorFamily(
+        family = randomfield.SeparableOperatorFamily(
             space.basis.family.mesh, kappa=0.3**2, kappa_h=0.6**2, weight="r2"
         )
         # Order one, so that the covariance is one solve with the family; a

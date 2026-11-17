@@ -18,8 +18,6 @@ The space is ``interval.radial``: functions of radius under the volume
 measure, the part of degree zero of a ball. It is not the interval of example
 32, whose measure is ``dx`` -- there the mass would be ``int rho dx``, and a
 shell at the surface would count for no more than one at the centre.
-
-Needs planetmodel, which comes with the 'planetmodel' extra.
 """
 
 import numpy as np

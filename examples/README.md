@@ -101,11 +101,9 @@ enforces, so it cannot drift from what actually runs.
 |---|---|
 | `pyshtools` | 20, 26, 28, 34 |
 | `cartopy` | 21, 24, 27, 30, 34 |
-| `planetmodel` | 32, 33, 34, 35, 36 |
 
 ```
 poetry install --extras sphere
-poetry install --extras planetmodel
 ```
 
 Examples 21, 24, 27 and 30 draw coastlines, which makes cartopy fetch a

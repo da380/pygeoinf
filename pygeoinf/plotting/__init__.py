@@ -17,8 +17,7 @@ there), ``plot_section`` by any plane through the centre, ``plot_profile``
 along a ray and ``plot_cutaway`` with a wedge cut from it, with
 ``section_values`` for the numbers and ``plot_section_points`` for the
 stations in a section's plane; ``planet_model`` hands a field to
-``planetmodel``'s own slices and pictures. They are here when ``planetmodel``
-is installed.
+``planetmodel``'s own slices and pictures.
 """
 
 from .base import (
@@ -37,20 +36,17 @@ from .fourier import plot_error_bounds
 from .sets import plot_set
 from . import sphere as _sphere  # noqa: F401  (registers the sphere renderers)
 
-try:  # The interval, ball and disk spaces need planetmodel, an optional extra.
-    from . import interval as _interval  # noqa: F401  (registers the interval renderers)
-    from . import disk as _disk  # noqa: F401  (registers the disk renderers)
-    from .ball import (
-        planet_model,
-        plot_cutaway,
-        plot_profile,
-        plot_section,
-        plot_section_points,
-        plot_shell,
-        section_values,
-    )
-except ImportError:  # pragma: no cover
-    pass
+from . import interval as _interval  # noqa: F401  (registers the interval renderers)
+from . import disk as _disk  # noqa: F401  (registers the disk renderers)
+from .ball import (
+    planet_model,
+    plot_cutaway,
+    plot_profile,
+    plot_section,
+    plot_section_points,
+    plot_shell,
+    section_values,
+)
 
 __all__ = [
     "plot_error_bounds",
@@ -66,14 +62,11 @@ __all__ = [
     "plot_densities",
     "plot_corner",
     "moments",
+    "plot_shell",
+    "plot_section",
+    "plot_section_points",
+    "plot_profile",
+    "plot_cutaway",
+    "planet_model",
+    "section_values",
 ]
-if "plot_section" in globals():
-    __all__ += [
-        "plot_shell",
-        "plot_section",
-        "plot_section_points",
-        "plot_profile",
-        "plot_cutaway",
-        "planet_model",
-        "section_values",
-    ]

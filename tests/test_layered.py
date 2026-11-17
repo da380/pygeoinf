@@ -1,6 +1,6 @@
 """Piecewise-continuous fields: a direct sum of layers that are adjacent.
 
-Needs ``planetmodel`` 1.2. The independent routes are the
+The independent routes are the
 layers themselves, which a layered space must agree with piece by piece, the
 plain direct sum it claims to be, and closed forms for a layered polynomial.
 """
@@ -8,17 +8,13 @@ plain direct sum it claims to be, and closed forms for a layered polynomial.
 import numpy as np
 import pytest
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
-if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-    pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
-
-from pygeoinf import ball, interval, spectral_element  # noqa: E402
-from pygeoinf.algebra.direct_sum import DirectSum  # noqa: E402
-from pygeoinf.ball import Ball  # noqa: E402
-from pygeoinf.interval import Interval, radial  # noqa: E402
-from pygeoinf.interval.radial import Radial  # noqa: E402
-from pygeoinf.spectral_element import Layered  # noqa: E402
-from pygeoinf.testing import (  # noqa: E402
+from pygeoinf import ball, interval, spectral_element
+from pygeoinf.algebra.direct_sum import DirectSum
+from pygeoinf.ball import Ball
+from pygeoinf.interval import Interval, radial
+from pygeoinf.interval.radial import Radial
+from pygeoinf.spectral_element import Layered
+from pygeoinf.testing import (
     check_coordinates,
     check_measure,
     check_operator,

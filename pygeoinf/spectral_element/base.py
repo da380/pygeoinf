@@ -39,7 +39,7 @@ from ..traits import Traits
 from ._points import LocalEvaluation
 
 if TYPE_CHECKING:
-    from planetmodel.randomfield import RadialOperatorFamily, SpectralBasis
+    from planetmodel.randomfield import SeparableOperatorFamily, SpectralBasis
 
 __all__ = ["Boundary", "LengthScale", "SpectralElementSpace"]
 
@@ -557,7 +557,7 @@ class SpectralElementSpace(
         lateral: Callable[[np.ndarray], np.ndarray] | None,
         probe: np.ndarray,
         /,
-    ) -> RadialOperatorFamily:
+    ) -> SeparableOperatorFamily:
         """The operator family of ``A' = 1 - div(kappa grad)`` on this space's
         mesh and under its measure, with ``kappa = radial^2`` along the mesh
         and ``lateral^2`` across it, ``radial^2`` if ``lateral`` is ``None``.

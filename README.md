@@ -40,19 +40,19 @@ the number of iterations it takes.
 pip install pygeoinf
 ```
 
-Python 3.12 or later. The core needs NumPy, SciPy, Matplotlib, joblib and
-finufft. The extras add function spaces and backends:
+Python 3.12 or later. The core needs NumPy, SciPy, Matplotlib, joblib,
+finufft and planetmodel, on which the spaces on intervals, radial profiles,
+disks and balls are built. The extras add function spaces and backends:
 
 | extra | what it brings |
 |---|---|
 | `sphere` | functions on the two-sphere, with spherical harmonics and map plotting |
-| `planetmodel` | spaces on intervals, radial profiles, disks and balls whose correlation length varies, including layered planets |
 | `plot3d` | three-dimensional sets drawn as figures that can be turned by hand |
 | `osqp`, `clarabel` | alternative backends for the convex solvers |
 | `mfem` | PyMFEM, for the finite element mini-app, on Linux |
 
 ```
-pip install "pygeoinf[sphere,planetmodel]"
+pip install "pygeoinf[sphere]"
 ```
 
 ## A first inversion

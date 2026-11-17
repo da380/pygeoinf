@@ -13,9 +13,6 @@ import matplotlib.pyplot as pyplot  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
-if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-    pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
 pytest.importorskip("pyshtools")
 
 from pygeoinf import plotting  # noqa: E402

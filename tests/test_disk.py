@@ -1,6 +1,6 @@
 """The spectral-element disk and annulus: the family, the space, its priors.
 
-Needs ``planetmodel`` 1.4. The independent routes are the cylindrical Bessel
+The independent routes are the cylindrical Bessel
 functions, against which the radial family of a disk is held order by order;
 a finite-volume solve of the same radial eigenproblem on an annulus, which
 shares nothing with the spectral elements but the equation; the grid against
@@ -12,24 +12,25 @@ evaluated through the element polynomials and closed-form cosines; and
 import numpy as np
 import pytest
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
-if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-    pytest.skip("needs planetmodel 1.3 or later", allow_module_level=True)
+from planetmodel.randomfield import (
+    SeparableOperatorFamily,
+    SpectralBasis,
+    padded_mesh,
+)
+from planetmodel.testing import check_spectral_basis
+from scipy.special import jnp_zeros, jv
 
-from planetmodel.randomfield import SpectralBasis, padded_mesh  # noqa: E402
-from scipy.special import jnp_zeros, jv  # noqa: E402
-
-from pygeoinf import Traits, spectral_element  # noqa: E402
-from pygeoinf import disk as disk_module  # noqa: E402
-from pygeoinf.algebra.direct_sum import DirectSum  # noqa: E402
-from pygeoinf.algebra.operators import LinearOperator  # noqa: E402
-from pygeoinf.disk import Disk, Lebesgue, Sobolev  # noqa: E402
-from pygeoinf.spectral_element._cylindrical import (  # noqa: E402
-    CylindricalOperatorFamily,
+from pygeoinf import Traits, spectral_element
+from pygeoinf import disk as disk_module
+from pygeoinf.algebra.direct_sum import DirectSum
+from pygeoinf.algebra.operators import LinearOperator
+from pygeoinf.disk import Disk, Lebesgue, Sobolev
+from pygeoinf.spectral_element._cylindrical import (
+    PolarBasis,
     RingTransform,
     circular_harmonics,
 )
-from pygeoinf.testing import (  # noqa: E402
+from pygeoinf.testing import (
     check_coordinates,
     check_measure,
     check_operator,
@@ -37,6 +38,12 @@ from pygeoinf.testing import (  # noqa: E402
     check_traits,
     check_white_noise,
 )
+
+
+def disk_family(mesh, /, **options):
+    """``planetmodel``'s family under ``r dr``, its members indexed by order:
+    that of a disk or a plane annulus, as the disk space builds it."""
+    return SeparableOperatorFamily(mesh, weight="r", index="order", **options)
 
 
 def first_zeros(m, count, /):
@@ -56,8 +63,8 @@ class TestTheFamily:
         modes of order ``m`` are ``J_m(k r)``, ``k`` the zeros of ``J_m'``,
         and their eigenvalues ``1 + L^2 k^2``; closed forms from scipy."""
         length = 0.3
-        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.05)
-        family = CylindricalOperatorFamily(mesh, kappa=length**2)
+        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r", ngll=5, drmax=0.05)
+        family = disk_family(mesh, kappa=length**2)
         zeros = first_zeros(m, 8)
         theta, _ = family.eig(m, count=8)
         assert np.allclose(theta, 1.0 + length**2 * zeros**2, rtol=1e-6)
@@ -75,8 +82,8 @@ class TestTheFamily:
     def test_the_modes_are_orthonormal_under_r_dr(self, m):
         """``int phi_i phi_j r dr = delta_ij`` by the quadrature of the
         domain's elements, which a mesh without padding has to itself."""
-        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.1)
-        family = CylindricalOperatorFamily(mesh, kappa=0.04)
+        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r", ngll=5, drmax=0.1)
+        family = disk_family(mesh, kappa=0.04)
         basis = SpectralBasis(family, m, nmodes=6)
         nodal = basis.synthesise(np.identity(6))
         gram = nodal.T @ (basis.weights()[:, None] * nodal)
@@ -85,9 +92,9 @@ class TestTheFamily:
         assert basis.weights() @ basis.r == pytest.approx(1.0 / 3.0, rel=1e-12)
 
     def test_the_centre_is_condensed_at_order_zero_and_dropped_above(self):
-        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.1)
-        family = CylindricalOperatorFamily(mesh, kappa=0.04)
-        assert family.is_ball
+        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r", ngll=5, drmax=0.1)
+        family = disk_family(mesh, kappa=0.04)
+        assert family.has_centre
         assert family.ndof(0) == family.ndof(2) == mesh.nglob - 1
         zero, two = (
             SpectralBasis(family, 0, nmodes=3),
@@ -95,14 +102,14 @@ class TestTheFamily:
         )
         assert np.all(two.modes()[0] == 0.0)
         assert np.all(np.abs(zero.modes()[0]) > 0.1)
-        shell = CylindricalOperatorFamily(
-            padded_mesh(0.5, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.1), kappa=0.04
+        shell = disk_family(
+            padded_mesh(0.5, 1.0, pad=0.0, weight="r", ngll=5, drmax=0.1), kappa=0.04
         )
-        assert not shell.is_ball and shell.ndof(2) == shell.mesh.nglob
+        assert not shell.has_centre and shell.ndof(2) == shell.mesh.nglob
 
     def test_a_mode_of_order_m_goes_like_r_to_the_m(self):
-        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.05)
-        family = CylindricalOperatorFamily(mesh, kappa=0.09)
+        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r", ngll=5, drmax=0.05)
+        family = disk_family(mesh, kappa=0.09)
         near = np.array([0.01, 0.04])
         for m in (1, 2, 3):
             first = SpectralBasis(family, m, nmodes=1).evaluate(near)[:, 0]
@@ -111,8 +118,8 @@ class TestTheFamily:
             )
 
     def test_the_banded_solve_inverts_the_operator(self, rng):
-        mesh = padded_mesh(0.3, 1.0, pad=(0.3, 0.4), weight="r2", ngll=5, drmax=0.1)
-        family = CylindricalOperatorFamily(mesh, kappa=0.04, robin=(None, 3.0))
+        mesh = padded_mesh(0.3, 1.0, pad=(0.3, 0.4), weight="r", ngll=5, drmax=0.1)
+        family = disk_family(mesh, kappa=0.04, robin=(None, 3.0))
         for m in (0, 4):
             v = rng.normal(size=family.ndof(m))
             assert np.allclose(family.apply(m, family.solve(m, v)), v)
@@ -121,15 +128,22 @@ class TestTheFamily:
     def test_bad_meshes_and_coefficients_are_refused(self):
         from planetmodel.mesh1d import Mesh1D
 
-        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.1)
+        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r", ngll=5, drmax=0.1)
         with pytest.raises(TypeError, match="Mesh1D"):
-            CylindricalOperatorFamily(np.linspace(0.0, 1.0, 5))
+            disk_family(np.linspace(0.0, 1.0, 5))
         with pytest.raises(ValueError, match="r >= 0"):
-            CylindricalOperatorFamily(Mesh1D([-1.0, 1.0], ngll=5))
+            disk_family(Mesh1D([-1.0, 1.0], ngll=5))
         with pytest.raises(ValueError, match="kappa"):
-            CylindricalOperatorFamily(mesh, kappa=-1.0)
+            disk_family(mesh, kappa=-1.0)
         with pytest.raises(ValueError, match="non-negative"):
-            CylindricalOperatorFamily(mesh, robin=-1.0)
+            disk_family(mesh, robin=-1.0)
+
+    def test_a_polar_basis_is_of_a_family_indexed_by_order(self):
+        """The bases of a ball's family, indexed by degree, are refused."""
+        mesh = padded_mesh(0.0, 1.0, pad=0.0, weight="r2", ngll=5, drmax=0.1)
+        ball = SeparableOperatorFamily(mesh, kappa=0.04)
+        with pytest.raises(ValueError, match="order"):
+            PolarBasis([SpectralBasis(ball, m, nmodes=3) for m in range(2)])
 
 
 class TestTheRingTransform:
@@ -234,6 +248,19 @@ class TestTheSpace:
         space = build(order)
         check_space(space, rng=rng, rebuild=lambda: build(order))
         check_coordinates(space, rng=rng)
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_the_bases_hold_planetmodels_contract(self, build, rng):
+        """Every order's basis, by ``planetmodel``'s own check of a basis of
+        a family: orthonormal eigenfunctions of the operator under ``r dr``,
+        zero at a centre above order zero, weights that integrate over the
+        domain."""
+        space = build(0.0)
+        assert space.basis.family.weight == "r"
+        assert space.basis.family.index == "order"
+        assert space.basis.family.has_centre == (space.inner_radius == 0.0)
+        for basis in space.basis:
+            check_spectral_basis(basis, rng=rng)
 
     def test_with_order_names_the_subclass_and_shares_the_basis(self):
         sobolev = disk(2.0)
@@ -825,14 +852,12 @@ class TestScalesOfThePriorsOwn:
 
     def test_with_every_mode_kept_it_is_the_banded_solve(self, rng):
         """Nothing truncated, the covariance ``A'^-1``, anisotropic, against a
-        Cholesky solve of the cylindrical family of ``A'`` on the same mesh,
+        Cholesky solve of the disk's family of ``A'`` on the same mesh,
         mode by mode; measured at 7e-14."""
         options = {"mmax": 3, "element_length": 0.25, "padding": 0.3, "boundary": None}
         ring = annulus(0.0, **options)
         space = annulus(0.0, radial_modes=ring.radii.size, **options)
-        family = CylindricalOperatorFamily(
-            space.basis.family.mesh, kappa=0.3**2, kappa_h=0.6**2
-        )
+        family = disk_family(space.basis.family.mesh, kappa=0.3**2, kappa_h=0.6**2)
         covariance = space.sobolev_measure(
             1.0, length_scale=0.3, lateral_length_scale=0.6, unsafe=True
         ).covariance

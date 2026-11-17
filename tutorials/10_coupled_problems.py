@@ -8,8 +8,7 @@
 # are tuples — and build the operators and the prior on it from their parts.
 # Nothing downstream changes: the inversion of tutorial 7 runs as it is.
 #
-# Three cases, in rising order of structure. The last needs `planetmodel`
-# (`poetry install --extras planetmodel`).
+# Three cases, in rising order of structure.
 
 # %%
 import matplotlib.pyplot as plt
@@ -176,8 +175,7 @@ print(
 # its own correlation length.
 
 # %%
-# The layered spaces are built on planetmodel's spectral elements, an optional
-# extra, so they are imported only where they are used.
+# The layered spaces are built on planetmodel's spectral elements.
 from pygeoinf.interval import Layered  # noqa: E402
 
 L = Layered(

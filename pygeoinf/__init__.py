@@ -30,12 +30,16 @@ geometry naming its own ``Lebesgue`` and ``Sobolev``.
 # datasets and testing are deliberately not pulled in.
 from . import (
     algebra,
+    ball,
+    disk,
     geometry,
     inference,
+    interval,
     numerics,
     plotting,
     probability,
     sampling,
+    spectral_element,
     symmetric_space,
 )
 from .algebra.diagonal import DiagonalLinearOperator
@@ -181,6 +185,10 @@ __all__ = [
     "probability",
     "sampling",
     "symmetric_space",
+    "spectral_element",
+    "interval",
+    "ball",
+    "disk",
     # inference: the workflow, flat
     "BackusGilbert",
     "BackusGilbertParker",
@@ -315,13 +323,3 @@ __all__ = [
     # traits
     "Traits",
 ]
-
-# The spectral-element spaces need the optional ``planetmodel`` extra. They
-# are loaded, when it is installed, by the plotting registry above; they are
-# listed among the subpackages exactly when that succeeded.
-try:
-    from . import ball, disk, interval, spectral_element  # noqa: F401
-except ImportError:  # pragma: no cover - depends on the installed extras
-    pass
-else:
-    __all__ += ["spectral_element", "interval", "ball", "disk"]

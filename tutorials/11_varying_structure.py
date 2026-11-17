@@ -18,8 +18,7 @@
 # for a length scale $L(x)$ *you* choose, computed on a spectral-element
 # mesh. Everything else is as before: priors are built from $A$'s spectrum,
 # point evaluation and integrals are operators, and the inversions of
-# tutorials 6 to 10 run unchanged. Needs `planetmodel`
-# (`poetry install --extras planetmodel`).
+# tutorials 6 to 10 run unchanged.
 
 # %%
 import matplotlib.pyplot as plt
