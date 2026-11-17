@@ -4590,4 +4590,4 @@ sphere = ["Cartopy", "ducc0", "pyshtools", "shapely"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "b9c03a5a2dc7bf702b17e70d72b30abb84bbd9ba64de587a7175926e731aeaa2"
+content-hash = "50e8d10cf7342fd388185cdceee5fae3296080e0ba5c75e92fbfecc14a032bd6"
