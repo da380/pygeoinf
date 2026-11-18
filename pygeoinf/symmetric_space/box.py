@@ -242,19 +242,18 @@ class Box(PeriodicBox):
         from ..parallel import parallel_map
 
         prepared = self.prepare_points(points)
-        lengths = np.asarray(self._lengths, dtype=float)
-        enclosed = np.column_stack(prepared.data) * lengths / (2.0 * np.pi)
         # The enclosing box's basis, by name rather than as ``super()``'s
         # bound method, which a worker process would rebind to this class.
         at = partial(PeriodicBox.basis_at, self)
-        return np.stack(parallel_map(at, list(enclosed), n_jobs=n_jobs))
+        return np.stack(parallel_map(at, list(prepared.data), n_jobs=n_jobs))
 
     def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
-        """The points as angles, through the same seam :meth:`basis_at` uses.
+        """The points moved into the enclosing box, through the same seam
+        :meth:`basis_at` uses.
 
         The enclosing box's grid does not start where the domain does -- the
         padding sits in between -- so a point has to be moved into the
-        enclosing coordinates before it becomes an angle. This is the map
+        enclosing coordinates before the transform takes it. This is the map
         :meth:`basis_at` applies, so the non-uniform FFT route and the direct
         route evaluate at the same place.
 
@@ -266,7 +265,8 @@ class Box(PeriodicBox):
             points: points of the domain, or an already prepared set.
 
         Returns:
-            The prepared points, carrying one angle array per axis.
+            The prepared points, carrying their coordinates in the enclosing
+            box as an array of shape ``(len(points), spatial_dimension)``.
 
         Raises:
             ValueError: if a point lies outside the domain, which the

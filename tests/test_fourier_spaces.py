@@ -362,7 +362,7 @@ class TestNonUniformFFT:
         and right for every point on it — so a grid-only test would pass.
         """
         X = Lebesgue((8, 8), lengths=(1.0, 1.0))
-        wavenumbers = X._packing.wavenumbers
+        wavenumbers = X.wavevectors
         offending = np.flatnonzero(wavenumbers[0] == 4)
         assert offending.size, "this shape was chosen to have such a mode"
 
@@ -397,7 +397,7 @@ class TestNonUniformFFT:
     def test_four_dimensions_fall_back(self, rng):
         """finufft stops at three; the answer must not."""
         X = Lebesgue((6, 6, 6, 6))
-        assert X._nufft_layout is None
+        assert X._point_transform is None
         points = [rng.uniform(0.0, 1.0, 4) for _ in range(5)]
         x = X.random(rng=rng)
         assert np.allclose(X.evaluate(x, points), SymmetricSpace.evaluate(X, x, points))

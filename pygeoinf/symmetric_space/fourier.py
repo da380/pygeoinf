@@ -10,12 +10,15 @@ matrix. The Sobolev space is the
 same coordinate map with the Sobolev symbol as its metric, so it is a
 ``DiagonalMetricSpace`` too and no mass-weighted construction is needed.
 
-The one delicate part is packing ``rfftn`` output into real components in more
-than one dimension: a mode and its conjugate must be counted once, and which
-modes are self-conjugate depends on the parity of every axis length. Rather
-than derive that, the conjugate orbits are enumerated once at construction and
-the result is checked by test — round trip, Parseval, and the orthonormality of
-the explicit basis functions.
+The basis, its packing and the transforms are those of
+``planetmodel.fourier``, a box of the space's periods from the origin: each
+conjugate orbit of the grid's modes is one component if it is a fixed point
+of conjugation and two, a cosine and a sine, if it is a genuine pair; the
+self-conjugate modes come first, in the flat order of ``rfftn``'s half
+spectrum, then each pair's cosine and sine together. A pair contributes
+``sqrt(2/V) cos(k.r)`` and ``-sqrt(2/V) sin(k.r)``, a self-conjugate mode
+``cos(k.r) / sqrt(V)``, with ``k`` the physical wavevector and ``V`` the
+volume.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from typing import Any, Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
+from planetmodel.fourier import Transform
 from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
@@ -32,75 +36,6 @@ from ..algebra.spaces import ArrayVectorMixin, resolve_rng
 from .base import PreparedPoints, SymmetricSpace, _gauss_legendre, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
-
-
-class _FourierPacking:
-    """The map between ``rfftn`` output and real orthonormal components.
-
-    Built once per grid. Each conjugate orbit of Fourier modes contributes one
-    component if it is a fixed point of conjugation and two — a cosine and a
-    sine — if it is a genuine pair. The counts must come to exactly the number
-    of grid points, since a real field has that many degrees of freedom; that
-    identity is asserted here and is the first thing to fail if the enumeration
-    is wrong.
-    """
-
-    def __init__(self, shape: tuple[int, ...]) -> None:
-        self.shape = shape
-        self.rfft_shape = shape[:-1] + (shape[-1] // 2 + 1,)
-        self.size = int(np.prod(shape))
-
-        grids = np.meshgrid(*[np.arange(n) for n in self.rfft_shape], indexing="ij")
-        flat = [g.ravel() for g in grids]
-        conjugate = [(-k) % n for k, n in zip(flat, shape)]
-
-        # A conjugate partner is inside the retained half exactly when its last
-        # index is. In one dimension that is only the zero and Nyquist modes;
-        # in more, whole slices of the array pair up internally, which is what
-        # makes the packing worth enumerating rather than deriving.
-        inside = conjugate[-1] < self.rfft_shape[-1]
-        linear = np.ravel_multi_index(flat, self.rfft_shape)
-
-        partner = np.full(linear.size, -1, dtype=int)
-        if np.any(inside):
-            indices = [c[inside] for c in conjugate]
-            partner[inside] = np.ravel_multi_index(indices, self.rfft_shape)
-
-        fixed = partner == linear
-        # Keep one representative per pair: the lower index when both members
-        # are retained, and the entry itself when its partner was dropped.
-        paired = (~fixed) & ((partner < 0) | (linear < partner))
-
-        self.fixed_indices = np.flatnonzero(fixed)
-        self.paired_indices = np.flatnonzero(paired)
-        self.paired_partners = partner[self.paired_indices]
-        self.dim = self.fixed_indices.size + 2 * self.paired_indices.size
-
-        if self.dim != self.size:
-            raise AssertionError(
-                f"Fourier packing produced {self.dim} components for "
-                f"{self.size} grid points; the conjugate orbits were "
-                f"enumerated incorrectly for shape {shape}."
-            )
-
-        signed = [np.where(k > n // 2, k - n, k) for k, n in zip(flat, shape)]
-        self.wavenumbers = np.stack(
-            [
-                np.concatenate(
-                    [w[self.fixed_indices], np.repeat(w[self.paired_indices], 2)]
-                )
-                for w in signed
-            ]
-        )
-        # Which half of a conjugate pair each component is: 0 for a cosine or a
-        # fixed point, 1 for a sine. Together with the wavevector this names a
-        # component uniquely, which is what lets two grids be matched up.
-        self.phases = np.concatenate(
-            [
-                np.zeros(self.fixed_indices.size, dtype=int),
-                np.tile(np.array([0, 1]), self.paired_indices.size),
-            ]
-        )
 
 
 class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
@@ -152,13 +87,18 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         self._lengths = lengths
         self._order = float(order)
         self._length_scale = float(length_scale)
-        self._packing = _FourierPacking(shape)
+        # The periods from the origin: a torus, whose box is exactly these
+        # lengths. A bounded box moves its points into it.
+        self._transform = Transform(shape, lengths)
+        self._packing = self._transform.packing
         self._volume = float(np.prod(lengths))
 
-        eigenvalues = self._compute_eigenvalues()
+        # The space's own copy: what it hands out stays writable, as the
+        # transform's shared tables are not.
+        eigenvalues = np.array(self._transform.laplacian_eigenvalues)
         self._laplacian_eigenvalues = eigenvalues
         metric = (
-            np.ones(self._packing.dim)
+            np.ones(self._packing.size)
             if order == 0.0
             else (1.0 + self._length_scale**2 * eigenvalues) ** self._order
         )
@@ -191,12 +131,9 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         :meth:`power_spectrum` and a band limit by degree inherit that. The
         physical wavenumbers are in :attr:`laplacian_eigenvalues`.
         """
-        wavenumbers = self._packing.wavenumbers
-        return np.floor(np.sqrt(np.sum(wavenumbers.astype(float) ** 2, axis=0))).astype(
-            int
-        )
+        return np.array(self._packing.degrees)
 
-    @property
+    @cached_property
     def wavevectors(self) -> np.ndarray:
         """The integer wavevector of each component, one column per component.
 
@@ -206,29 +143,12 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         differ in :attr:`phases`. With that array this is the packing made
         public, as :attr:`degrees` is its magnitude rounded down.
         """
-        return self._packing.wavenumbers
-
-    @property
-    def phases(self) -> np.ndarray:
-        """Zero for a cosine (or a self-conjugate mode), one for a sine."""
-        return self._packing.phases
+        return np.array(self._packing.wavevectors)
 
     @cached_property
-    def _label_keys(self) -> tuple[np.ndarray, np.ndarray]:
-        """Each component's label as one integer, sorted, with the sorting."""
-        keys = self._label_key(self._packing.wavenumbers, self._packing.phases)
-        order = np.argsort(keys)
-        return keys[order], order
-
-    def _label_key(self, wavevector: np.ndarray, phase: np.ndarray) -> np.ndarray:
-        shape = self._packing.shape
-        reduced = [
-            np.mod(np.asarray(wavevector[axis], dtype=int), n)
-            for axis, n in enumerate(shape)
-        ]
-        return np.ravel_multi_index(
-            [*reduced, np.asarray(phase, dtype=int)], (*shape, 2)
-        )
+    def phases(self) -> np.ndarray:
+        """Zero for a cosine (or a self-conjugate mode), one for a sine."""
+        return np.array(self._packing.phases)
 
     def component_of(self, wavevector: Any, /, *, phase: Any = 0) -> Any:
         """The position of the component with a given wavevector and phase.
@@ -257,18 +177,13 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"A wavevector on this box has {len(self._packing.shape)} "
                 f"components, got shape {wavevector.shape}."
             )
-        phase = np.broadcast_to(np.asarray(phase, dtype=int), wavevector.shape[1:])
-        keys = self._label_key(wavevector, phase)
-        sorted_keys, order = self._label_keys
-        found = np.searchsorted(sorted_keys, keys)
-        found = np.minimum(found, sorted_keys.size - 1)
-        if np.any(sorted_keys[found] != keys):
+        try:
+            return self._packing.component_of(wavevector, phase=phase)
+        except ValueError:
             raise ValueError(
                 "No component has that wavevector and phase; a self-conjugate "
                 "mode has no sine, and a wavevector outside the grid aliases."
-            )
-        position = order[found]
-        return int(position) if position.ndim == 0 else position
+            ) from None
 
     @property
     def gaussian_curvature(self) -> float:
@@ -336,81 +251,25 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         boxes must share for a field to move between them by its modes."""
         return ("periodic_box", self._lengths)
 
-    def _compute_eigenvalues(self) -> np.ndarray:
-        """``sum_i (2 pi k_i / L_i)^2`` for each component."""
-        wavenumbers = self._packing.wavenumbers
-        squared = np.zeros(self._packing.dim)
-        for axis, length in enumerate(self._lengths):
-            squared += (2.0 * np.pi * wavenumbers[axis] / length) ** 2
-        return squared
-
     # ----------------------------------------------------------------- #
     #                             Coordinates                           #
     # ----------------------------------------------------------------- #
 
-    @cached_property
-    def _component_scale(self) -> float:
-        """Turns ``rfftn`` output into orthonormal coefficients.
-
-        With ``X = rfftn(x)``, Parseval on the grid gives
-        ``integral |x|^2 == (V / N^2) sum_all_k |X_k|^2``, so a fixed-point
-        mode contributes ``sqrt(V)/N times Re(X)`` and a conjugate pair
-        contributes ``sqrt(2V)/N`` times each of its real and imaginary parts.
-        """
-        return float(np.sqrt(self._volume) / self._packing.size)
-
-    @cached_property
-    def _mode_measure(self) -> np.ndarray:
-        """Per component, the squared norm of the grid function ``cos(k.r)``
-        (or ``sin``) a unit coefficient divides by, as a fraction of the
-        volume: one for a fixed point of conjugation, a half for a member of
-        a conjugate pair.
-
-        The inner product is the grid's quadrature, exact for every product
-        of two modes except at the Nyquist wavenumber of an even axis, where
-        ``cos^2`` aliases onto a constant: that cosine, stored once by the
-        real FFT, counts with squared norm ``V`` on this grid where its
-        continuous norm is ``V/2``. The convention is the grid's, so that a
-        pointwise product of two grid functions is exactly self-adjoint and
-        the module structure every nonlinear forward leans on is exact; the
-        one place the two conventions meet, the transfer of a Nyquist mode to
-        a grid where it is a pair, carries their ratio.
-        """
-        count = self._packing.fixed_indices.size
-        return np.concatenate([np.ones(count), np.full(self._packing.dim - count, 0.5)])
-
     def to_components(self, x: np.ndarray) -> np.ndarray:
-        """Spectral coefficients of a field, orthonormal in L2."""
-        transform = rfftn(np.asarray(x, dtype=float), s=self._shape).ravel()
-        packing = self._packing
-        fixed = transform[packing.fixed_indices].real * self._component_scale
-        paired = transform[packing.paired_indices] * (
-            self._component_scale * np.sqrt(2.0)
-        )
-        return np.concatenate(
-            [fixed, np.stack([paired.real, paired.imag], axis=1).ravel()]
+        """Spectral coefficients of a field, orthonormal in L2.
+
+        With ``X = rfftn(x)``, Parseval on the grid gives ``integral |x|^2 ==
+        (V / N^2) sum_all_k |X_k|^2``, so a self-conjugate mode's component
+        is ``sqrt(V)/N`` times ``Re(X)`` and a conjugate pair's are
+        ``sqrt(2V)/N`` times its real and imaginary parts.
+        """
+        return self._transform.from_rfft(
+            rfftn(np.asarray(x, dtype=float), s=self._shape)
         )
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
         """The field with the given spectral coefficients."""
-        c = np.asarray(c, dtype=float)
-        packing = self._packing
-        transform = np.zeros(packing.rfft_shape, dtype=complex).ravel()
-
-        count = packing.fixed_indices.size
-        transform[packing.fixed_indices] = c[:count] / self._component_scale
-
-        rest = c[count:].reshape(-1, 2) / (self._component_scale * np.sqrt(2.0))
-        values = rest[:, 0] + 1j * rest[:, 1]
-        transform[packing.paired_indices] = values
-
-        # Partners retained inside the half must be filled in explicitly:
-        # irfftn imposes Hermitian symmetry across the dropped half only, not
-        # within the slices it keeps.
-        retained = packing.paired_partners >= 0
-        transform[packing.paired_partners[retained]] = np.conjugate(values[retained])
-
-        return irfftn(transform.reshape(packing.rfft_shape), s=self._shape)
+        return self._transform.synthesise_grid(c)
 
     # ----------------------------------------------------------------- #
     #                          Points and grids                         #
@@ -451,91 +310,63 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"A point needs {self.spatial_dimension} coordinates, got "
                 f"{position.shape}."
             )
-        packing = self._packing
-        phase = np.zeros(packing.dim)
-        for axis, length in enumerate(self._lengths):
-            phase += 2.0 * np.pi * packing.wavenumbers[axis] * position[axis] / length
-
         # A conjugate pair contributes a cosine and a sine of amplitude
         # sqrt(2/V); a fixed point of conjugation -- the constant mode, and the
         # Nyquist modes on even axes -- contributes a single cosine of
         # amplitude 1/sqrt(V), because it appears once in the spectrum rather
         # than twice.
-        count = packing.fixed_indices.size
-        values = np.empty(packing.dim)
-        values[:count] = np.cos(phase[:count]) / np.sqrt(self._volume)
-
-        pair_amplitude = np.sqrt(2.0 / self._volume)
-        values[count::2] = pair_amplitude * np.cos(phase[count::2])
-        values[count + 1 :: 2] = -pair_amplitude * np.sin(phase[count + 1 :: 2])
-        return values
+        return self._transform.basis(position)
 
     # ----------------------------------------------------------------- #
     #                     Evaluation by non-uniform FFT                 #
     # ----------------------------------------------------------------- #
 
     @cached_property
-    def _nufft_layout(
-        self,
-    ) -> tuple[tuple[int, ...], np.ndarray, np.ndarray, np.ndarray, int] | None:
-        """Where each component sits in a full complex spectrum, and its size.
+    def _point_transform(self) -> Transform | None:
+        """The transform that evaluates at scattered points through finufft.
 
         ``None`` above three dimensions, which is as far as finufft goes, and
         also ``None`` when finufft is not installed. Both send
-        :meth:`evaluate` back to the direct sum, which is slower but identical.
+        :meth:`evaluate` and :meth:`accumulate` back to the direct sum, which
+        is slower but identical, and :meth:`evaluate_gradient` to central
+        differences.
 
-        The spectrum is **two larger than the grid along every axis**. That is
-        not padding for accuracy: a Nyquist wavenumber is ``+n/2``, which lies
-        outside the mode range ``[-N/2, N/2-1]`` that finufft indexes, and
-        folding it back to ``-n/2`` changes the sign of its phase on every axis
-        it appears. Widening the spectrum instead lets ``+k`` and ``-k`` be
-        distinct slots for every mode, so fixed points of conjugation and
-        genuine pairs need no separate handling at all.
+        finufft's spectrum is **two larger than the grid along every axis**.
+        That is not padding for accuracy: a Nyquist wavenumber is ``+n/2``,
+        which lies outside the mode range ``[-N/2, N/2-1]`` that finufft
+        indexes, and folding it back to ``-n/2`` changes the sign of its phase
+        on every axis it appears. Widened, ``+k`` and ``-k`` are distinct
+        entries for every mode, so fixed points of conjugation and genuine
+        pairs need no separate handling at all.
         """
-        dimension = self.spatial_dimension
-        if dimension > 3:
+        if self.spatial_dimension > 3:
             return None
         try:
             import finufft  # noqa: F401
         except ImportError:  # pragma: no cover - depends on the install
             return None
+        return self._transform
 
-        packing = self._packing
-        sizes = tuple(n + 2 for n in self._shape)
-        offsets = [n // 2 for n in sizes]
-        fixed = packing.fixed_indices.size
-        unique = np.concatenate([np.arange(fixed), np.arange(fixed, packing.dim, 2)])
-        wavenumbers = packing.wavenumbers[:, unique]
-
-        plus = np.ravel_multi_index(
-            [wavenumbers[axis] + offsets[axis] for axis in range(dimension)], sizes
-        )
-        minus = np.ravel_multi_index(
-            [offsets[axis] - wavenumbers[axis] for axis in range(dimension)], sizes
-        )
-        amplitude = np.concatenate(
-            [
-                np.full(fixed, 1.0 / np.sqrt(self._volume)),
-                np.full(unique.size - fixed, np.sqrt(2.0 / self._volume)),
-            ]
-        )
-        return sizes, plus, minus, amplitude, fixed
-
-    def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
-        """Points as one contiguous array of angles per axis."""
+    def _positions(self, points: Sequence[Any]) -> np.ndarray:
+        """Points as an array of rows in the periodic box's coordinates."""
         return self.prepare_points(points).data
 
     def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
-        """The points as one contiguous array of angles per axis.
+        """The points as one contiguous array of rows, one per point.
 
-        The conversion the non-uniform FFT starts with, done once for an
-        operator rather than once per application.
+        The conversion the non-uniform FFT starts with, a Python loop over
+        the points unless they come as an array of rows, done once for an
+        operator rather than once per application. The transform takes each
+        coordinate to its angle ``2 pi x / L`` on the way in; a coordinate
+        outside ``[0, L)`` is the same point of the periodic box as its image
+        inside.
 
         Args:
             points: points of the box, or an already prepared set.
 
         Returns:
-            The prepared points, carrying one angle array per axis.
+            The prepared points, carrying their coordinates as an array of
+            shape ``(len(points), spatial_dimension)``.
 
         Raises:
             ValueError: if the points do not have this box's number of
@@ -558,11 +389,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"Points need {self.spatial_dimension} coordinates each, got "
                 f"shape {positions.shape}."
             )
-        angles = [
-            np.ascontiguousarray(2.0 * np.pi * positions[:, axis] / self._lengths[axis])
-            for axis in range(self.spatial_dimension)
-        ]
-        return PreparedPoints(points, data=angles)
+        return PreparedPoints(points, data=np.array(positions, dtype=float, order="C"))
 
     def evaluate(
         self,
@@ -589,46 +416,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 default is every core, which at these transform sizes costs
                 more in threading than it saves in work. Pass zero for it.
         """
-        layout = self._nufft_layout
-        if layout is None:
+        transform = self._point_transform
+        if transform is None:
             return super().evaluate(x, points)
-
-        import finufft
-
-        sizes, plus, minus, amplitude, fixed = layout
-
-        components = self.to_components(x)
-        real = np.concatenate([components[:fixed], components[fixed::2]])
-        imaginary = np.concatenate([np.zeros(fixed), components[fixed + 1 :: 2]])
-        weights = amplitude * (real + 1j * imaginary)
-
-        spectrum = np.zeros(int(np.prod(sizes)), dtype=complex)
-        np.add.at(spectrum, plus, 0.5 * weights)
-        np.add.at(spectrum, minus, 0.5 * np.conj(weights))
-
-        transform = (finufft.nufft1d2, finufft.nufft2d2, finufft.nufft3d2)[
-            self.spatial_dimension - 1
-        ]
-        values = transform(
-            *self._angles(points),
-            spectrum.reshape(sizes),
-            isign=+1,
-            eps=eps,
+        values = transform.synthesise(
+            self.to_components(x),
+            self._positions(points),
+            epsilon=eps,
             nthreads=nthreads,
         )
-        return np.ascontiguousarray(np.atleast_1d(values).real)
-
-    def _spectrum(self, x: np.ndarray, /) -> np.ndarray:
-        """The full complex spectrum the non-uniform transform synthesizes from."""
-        sizes, plus, minus, amplitude, fixed = self._nufft_layout
-        components = self.to_components(x)
-        real = np.concatenate([components[:fixed], components[fixed::2]])
-        imaginary = np.concatenate([np.zeros(fixed), components[fixed + 1 :: 2]])
-        weights = amplitude * (real + 1j * imaginary)
-        spectrum = np.zeros(int(np.prod(sizes)), dtype=complex)
-        np.add.at(spectrum, plus, 0.5 * weights)
-        np.add.at(spectrum, minus, 0.5 * np.conj(weights))
-        return spectrum.reshape(sizes)
+        return np.ascontiguousarray(values)
 
     def evaluate_gradient(
         self,
@@ -656,33 +453,17 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         Returns:
             An array of shape ``(len(points), spatial_dimension)``.
         """
-        layout = self._nufft_layout
+        transform = self._point_transform
         points = self.prepare_points(points)
-        if layout is None:
+        if transform is None:
             return self._gradient_by_differences(x, points)
-        import finufft
-
-        sizes = layout[0]
-        spectrum = self._spectrum(x)
-        dimension = self.spatial_dimension
-        stacked = np.empty((dimension, *sizes), dtype=complex)
-        for axis in range(dimension):
-            wavenumbers = np.arange(sizes[axis]) - sizes[axis] // 2
-            shape = [1] * dimension
-            shape[axis] = sizes[axis]
-            factor = (1j * 2.0 * np.pi / self._lengths[axis]) * wavenumbers
-            stacked[axis] = spectrum * factor.reshape(shape)
-        transform = (finufft.nufft1d2, finufft.nufft2d2, finufft.nufft3d2)[
-            dimension - 1
-        ]
-        values = transform(
-            *points.data,
-            stacked,
-            isign=+1,
-            eps=1.0e-12 if eps is None else eps,
+        values = transform.synthesise_gradient(
+            self.to_components(x),
+            points.data,
+            epsilon=1.0e-12 if eps is None else eps,
             nthreads=1 if nthreads is None else nthreads,
         )
-        return np.ascontiguousarray(np.atleast_2d(values).real.T)
+        return np.ascontiguousarray(values)
 
     def _gradient_by_differences(self, x: np.ndarray, points: Any) -> np.ndarray:
         """Central differences along each axis, for a box without the transform."""
@@ -724,34 +505,12 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         Returns:
             The derivative components.
         """
-        layout = self._nufft_layout
-        if layout is None:
+        transform = self._point_transform
+        if transform is None:
             return super().accumulate(weights, points)
-
-        import finufft
-
-        sizes, plus, _, amplitude, fixed = layout
-
-        transform = (finufft.nufft1d1, finufft.nufft2d1, finufft.nufft3d1)[
-            self.spatial_dimension - 1
-        ]
-        spectrum = transform(
-            *self._angles(points),
-            np.ascontiguousarray(np.asarray(weights, dtype=complex)),
-            sizes,
-            isign=-1,
-            eps=eps,
-            nthreads=nthreads,
+        return transform.accumulate(
+            weights, self._positions(points), epsilon=eps, nthreads=nthreads
         )
-        at_plus = spectrum.reshape(-1)[plus]
-
-        components = np.empty(self.dim)
-        components[:fixed] = amplitude[:fixed] * at_plus[:fixed].real
-        components[fixed::2] = amplitude[fixed:] * at_plus[fixed:].real
-        # phi carries -sin, and a type-1 transform returns -sum y sin as its
-        # imaginary part, so the two negations cancel.
-        components[fixed + 1 :: 2] = amplitude[fixed:] * at_plus[fixed:].imag
-        return components
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid.
@@ -970,17 +729,6 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             raise ValueError(f"The degree must be positive, got {degree}.")
         return self.with_shape((2 * int(degree),) * self.spatial_dimension)
 
-    def _component_index(self) -> dict:
-        """Where each ``(wavevector, phase)`` label sits in the components."""
-        packing = self._packing
-        return {
-            (
-                tuple(int(k) for k in packing.wavenumbers[:, i]),
-                int(packing.phases[i]),
-            ): i
-            for i in range(self.dim)
-        }
-
     def degree_transfer_operator(self, target: "PeriodicBox", /) -> LinearOperator:
         """Truncation to, or prolongation into, another grid.
 
@@ -1013,18 +761,23 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"the domain of {self!r}."
             )
 
-        here = self._component_index()
-        there = target._component_index()
-        shared = [(here[label], there[label]) for label in here if label in there]
-        keep = np.array([a for a, _ in shared], dtype=int)
-        place = np.array([b for _, b in shared], dtype=int)
-        # A mode at the Nyquist wavenumber of one grid is a conjugate pair on
-        # a finer one, and the same cosine ``a cos(k.r)`` has coefficient
-        # ``a sqrt(V)`` as a fixed point of conjugation and ``a sqrt(V/2)`` as
-        # the cosine member of a pair (see ``_component_scale``). Copying the
-        # coefficient would scale the function by ``sqrt(2)``; the ratio of
-        # the two conventions is carried instead, so the function is kept.
-        scale = np.sqrt(target._mode_measure[place] / self._mode_measure[keep])
+        # Matched by signed wavevector and phase. A mode at the Nyquist
+        # wavenumber of one grid is a conjugate pair on a finer one, and the
+        # same cosine ``a cos(k.r)`` has coefficient ``a sqrt(V)`` as a fixed
+        # point of conjugation and ``a sqrt(V/2)`` as the cosine member of a
+        # pair. Copying the coefficient would scale the function by
+        # ``sqrt(2)``; the scale carries the ratio of the two, so the
+        # function is kept.
+        #
+        # That ratio is the grid's convention for a Nyquist cosine: the
+        # inner product is the grid's quadrature, exact for every product of
+        # two modes except at the Nyquist wavenumber of an even axis, where
+        # ``cos^2`` aliases onto a constant, so the cosine stored once by the
+        # real FFT has squared norm ``V`` on the grid where its continuous
+        # norm is ``V/2``. The grid's convention is kept so that a pointwise
+        # product of two grid functions is exactly self-adjoint and the
+        # module structure every nonlinear forward leans on is exact.
+        keep, place, scale = self._packing.matching(target._packing)
 
         def value(x: np.ndarray) -> np.ndarray:
             components = np.zeros(target.dim)
@@ -1181,28 +934,17 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 self.with_order(0.0).derivative_operator(axis=axis), self
             )
 
-        packing = self._packing
-        fixed = packing.fixed_indices.size
-        rate = (
-            2.0
-            * np.pi
-            * packing.wavenumbers[axis][fixed::2].astype(float)
-            / self._lengths[axis]
-        )
-
-        def apply(components: np.ndarray, sign: float) -> np.ndarray:
-            result = np.zeros(self.dim)
-            cosines = components[fixed::2]
-            sines = components[fixed + 1 :: 2]
-            result[fixed::2] = -sign * rate * sines
-            result[fixed + 1 :: 2] = sign * rate * cosines
-            return result
+        transform = self._transform
 
         def value(x: np.ndarray) -> np.ndarray:
-            return self.from_components(apply(self.to_components(x), 1.0))
+            return self.from_components(
+                transform.derivative(self.to_components(x), axis)
+            )
 
         def adjoint(y: np.ndarray) -> np.ndarray:
-            return self.from_components(apply(self.to_components(y), -1.0))
+            return self.from_components(
+                -transform.derivative(self.to_components(y), axis)
+            )
 
         return LinearOperator.from_callables(self, self, value, adjoint=adjoint)
 
