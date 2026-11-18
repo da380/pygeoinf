@@ -13,7 +13,8 @@ prior, calibrated to a standard deviation that depends on depth, is drawn as
 a depth section, and conditioned on a line of stations at the surface: the
 data reach a correlation length or two down, and no further. On the slab the
 same prior is drawn as two lateral maps, one near the surface and one at
-depth, where the same field is visibly smoother.
+depth, where the same field is visibly smoother, then cut by a vertical plane
+and drawn as a depth section, with a profile beneath one point.
 
 Needs matplotlib.
 """
@@ -97,39 +98,24 @@ for depth in (0.0, 0.1, 0.25, 0.5, 1.0, BASE):
 print("the surface data reach a correlation length or two down, and no further")
 
 # ---------------------------------------------------------------------------
-# Depth sections: the layer alone, depth increasing downward.
+# Depth sections: the layer alone, depth increasing downward. On a strip,
+# plot draws the field over x and depth from its values on the grid, the
+# period closed.
 # ---------------------------------------------------------------------------
 
-
-def section(axis, field, /, *, title, **options):
-    """One depth section of a strip's field, its padding left out."""
-    image = axis.pcolormesh(
-        X.x, X.interior_depths, X.interior_values(field), shading="gouraud", **options
-    )
-    axis.set_ylim(BASE, 0.0)
-    axis.set_aspect("equal")
-    axis.set_ylabel("depth")
-    axis.set_title(title)
-    return image
-
-
 limit = float(np.max(np.abs(X.interior_values(truth))))
-shared = dict(cmap="RdBu", vmin=-limit, vmax=limit)
-figure, panels = pyplot.subplots(3, 1, figsize=(9.0, 8.0), layout="constrained")
-image = section(panels[0], truth, title="Truth", **shared)
-panels[0].scatter(
-    [x for _, x in stations], [0.0] * len(stations), s=10.0, c="k", clip_on=False
-)
-section(panels[1], posterior.expectation, title="Posterior mean", **shared)
-figure.colorbar(image, ax=panels[:2], label="field")
-removed = section(
-    panels[2],
+shared = dict(vmin=-limit, vmax=limit, colorbar_label="field")
+figure, panels = plotting.subplots(X, rows=3, figsize=(9.0, 8.0))
+plotting.plot(X, truth, ax=panels[0], title="Truth", **shared)
+plotting.plot_points(X, stations, ax=panels[0], size=10.0, clip_on=False)
+plotting.plot(X, posterior.expectation, ax=panels[1], title="Posterior mean", **shared)
+plotting.plot(
+    X,
     posterior.pointwise_variance_reduction(),
-    title="Variance the data removed",
+    ax=panels[2],
     cmap="viridis",
+    title="Variance the data removed",
 )
-figure.colorbar(removed, ax=panels[2])
-panels[2].set_xlabel("x")
 print()
 print("three depth sections drawn")
 
@@ -150,24 +136,43 @@ draw = Y.sobolev_measure(
     2.0, pointwise_std=Y.project_function(deviation, extension="constant")
 ).sample(rng=rng)
 
-# A lateral map at any depth is an evaluation at the points of a level.
+# A lateral map at any depth is an evaluation at the points of a level, and is
+# what plot draws on a slab: at its top, or at the depth= given.
 x, y = np.meshgrid(Y.x, Y.y, indexing="ij")
 limit = float(np.max(np.abs(Y.interior_values(draw))))
-figure, maps = pyplot.subplots(1, 2, figsize=(10.0, 4.4), layout="constrained")
+shared = dict(vmin=-limit, vmax=limit, colorbar_label="field")
+figure, maps = plotting.subplots(Y, columns=2, figsize=(10.0, 4.4))
 for axis, depth in zip(maps, (0.05, 1.5)):
-    points = np.column_stack([np.full(x.size, depth), x.ravel(), y.ravel()])
-    values = Y.evaluate(draw, points).reshape(x.shape)
-    image = axis.pcolormesh(
-        x, y, values, shading="gouraud", cmap="RdBu", vmin=-limit, vmax=limit
+    plotting.plot(
+        Y,
+        draw,
+        depth=depth,
+        ax=axis,
+        title=f"A draw of the prior at depth {depth:g}",
+        **shared,
     )
-    axis.set_aspect("equal")
-    axis.set_xlabel("x")
-    axis.set_title(f"A draw of the prior at depth {depth:g}")
+    points = np.column_stack([np.full(x.size, depth), x.ravel(), y.ravel()])
+    values = Y.evaluate(draw, points)
     print(
         f"   depth {depth:.2f}: length scale {length_scale(depth):.2f}, "
         f"standard deviation of the draw across the map {values.std():.2f}"
     )
-maps[0].set_ylabel("y")
-figure.colorbar(image, ax=maps, label="field")
 print("two lateral maps drawn")
+
+# ---------------------------------------------------------------------------
+# The slab cut the other way: a depth section through the same draw, where
+# the correlation length is seen to grow downward, and a profile beneath one
+# point of it.
+# ---------------------------------------------------------------------------
+
+figure, (cut, beneath) = pyplot.subplots(
+    1, 2, figsize=(11.0, 3.6), layout="constrained", width_ratios=(3, 1)
+)
+plotting.plot_section(
+    Y, draw, y=2.0, ax=cut, title="The same draw, along x at y = 2", **shared
+)
+plotting.plot_profile(Y, draw, 1.0, 2.0, ax=beneath, color="black")
+beneath.axvline(0.0, color="0.6", linewidth=0.6)
+beneath.set_title("Beneath (1, 2)")
+print("a depth section and a profile drawn")
 plotting.show()

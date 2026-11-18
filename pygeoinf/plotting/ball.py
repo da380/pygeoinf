@@ -5,7 +5,10 @@ cuts: a **shell** at one radius, drawn as a map by the sphere's own renderer;
 a **section** by a plane through the centre, which meets the ball in a great
 circle and is named by that circle's pole, by two points it passes through,
 or -- the common case -- by a longitude; and a **profile** along one ray.
-``plot`` on a ball is the shell at its surface.
+``plot`` on a ball is the shell at its surface, and the section and the
+profile are what ``plot_section`` and ``plot_profile`` draw there: both
+dispatch on the space, as ``plot`` does, and the ball's renderers of them are
+registered here.
 
 No rotation is involved in a section. The field is a sum of harmonics times
 radial coefficient functions, so its values on a plane are the harmonics
@@ -38,8 +41,17 @@ import numpy as np
 
 from ..ball import Ball
 from ..spectral_element import Layered
-from .base import color_limits, plot, plot_points, subplots
+from .base import (
+    color_limits,
+    plot,
+    plot_points,
+    plot_profile,
+    plot_section,
+    subplots,
+)
 
+# plot_section and plot_profile are the dispatching functions of .base, under
+# which this module registers the ball's renderers.
 __all__ = [
     "planet_model",
     "plot_cutaway",
@@ -201,9 +213,9 @@ def _shells(space: Ball | Layered, field: Any, /) -> tuple[list[Ball], list[Any]
     if isinstance(space, Layered):
         if not issubclass(space.geometry, Ball):
             raise TypeError(
-                f"Only layers that are balls have shells and sections: these "
-                f"are {space.geometry.__name__}s, for which no renderer is "
-                f"registered."
+                f"Only layers that are balls have shells, sections through a "
+                f"centre, profiles along a ray and planet models: these are "
+                f"{space.geometry.__name__}s."
             )
         return list(space.layers), list(field)
     return [space], [field]
@@ -326,7 +338,9 @@ def section_values(
     return values, radii, 90.0 - np.degrees(colatitude), np.degrees(east)
 
 
-def plot_section(
+@plot_section.register(Ball)
+@plot_section.register(Layered)
+def _(
     space: Ball | Layered,
     field: np.ndarray,
     /,
@@ -516,7 +530,9 @@ def plot_section_points(
     return scatter, near
 
 
-def plot_profile(
+@plot_profile.register(Ball)
+@plot_profile.register(Layered)
+def _(
     space: Ball | Layered,
     field: np.ndarray,
     latitude: float,

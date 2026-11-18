@@ -71,6 +71,40 @@ class TestBoxRenderer:
         assert axes.shape == (2, 3)
 
 
+class TestSectionsAndProfiles:
+    """``plot_section`` and ``plot_profile`` dispatch on the space, as
+    ``plot`` does; the renderers are checked with their spaces."""
+
+    @pytest.mark.parametrize(
+        "build, name",
+        [
+            (lambda: Interval(16, lower=0.0, upper=1.0), "Box"),
+            (lambda: _sphere(4), "Lebesgue"),
+        ],
+        ids=["interval", "sphere"],
+    )
+    def test_a_space_with_no_renderer_is_refused_by_name(self, build, name):
+        space = build()
+        with pytest.raises(NotImplementedError, match=f"plot_section .* {name}"):
+            plotting.plot_section(space, np.zeros(space.dim))
+        with pytest.raises(NotImplementedError, match=f"plot_profile .* {name}"):
+            plotting.plot_profile(space, np.zeros(space.dim), 0.0, 0.0)
+
+    def test_one_function_under_each_name(self):
+        from pygeoinf.plotting import ball, base
+
+        assert plotting.plot_section is base.plot_section is ball.plot_section
+        assert plotting.plot_profile is base.plot_profile is ball.plot_profile
+
+
+def _sphere(lmax, /):
+    """A sphere, which has a map and no section."""
+    pytest.importorskip("pyshtools")
+    from pygeoinf.symmetric_space.sphere import Lebesgue as SphereLebesgue
+
+    return SphereLebesgue(lmax)
+
+
 class TestSphereRenderer:
     def test_it_needs_a_registered_space(self):
         from pygeoinf.algebra.spaces import EuclideanSpace

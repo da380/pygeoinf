@@ -15,7 +15,14 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["plot", "subplots", "color_limits", "show"]
+__all__ = [
+    "plot",
+    "plot_section",
+    "plot_profile",
+    "subplots",
+    "color_limits",
+    "show",
+]
 
 
 def show() -> bool:
@@ -91,6 +98,75 @@ def plot(space: Any, field: Any, /, **kwargs: Any) -> Any:
         NotImplementedError: for a space with no registered renderer.
     """
     raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
+
+
+@singledispatch
+def plot_section(space: Any, field: Any, /, **kwargs: Any) -> Any:
+    """Draw a field of this space on a plane through it.
+
+    Dispatches on the space's type, as :func:`plot` does. The plane is named
+    in the space's own terms, so the keywords differ by space: a ball's
+    section is by a plane through its centre, named by ``longitude=``,
+    ``pole=`` or ``through=``; a slab's is by a vertical plane, along ``x``
+    at ``y=`` or along ``y`` at ``x=``; a strip, a vertical section already,
+    takes neither and is drawn whole. A layered space of balls, strips or
+    slabs is drawn layer by layer on one color scale. The keywords that style
+    the picture are common to all: ``ax=``, ``cmap=``, ``symmetric=``,
+    ``vmin=``, ``vmax=``, ``colorbar=``, ``colorbar_label=``, ``outline=``,
+    ``padding=`` and ``title=``. See the registered implementations for the
+    rest.
+
+    Args:
+        space: the space the field belongs to.
+        field: the field to draw.
+        **kwargs: renderer-specific; see the registered implementations.
+
+    Returns:
+        An ``(axes, mappable)`` pair.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer. A
+            layered space whose layers have no section, intervals or disks,
+            reaches the renderer of layered balls, which refuses it with a
+            ``TypeError``.
+    """
+    raise NotImplementedError(
+        f"No plot_section renderer is registered for {type(space).__name__}."
+    )
+
+
+@singledispatch
+def plot_profile(space: Any, field: Any, /, *position: Any, **kwargs: Any) -> Any:
+    """Draw a field of this space along one line through it, against the
+    coordinate along that line.
+
+    Dispatches on the space's type, as :func:`plot` does. The line is named
+    positionally, after the field, in the space's own coordinates, so they
+    differ by space: a ball's profile is along the ray at ``latitude,
+    longitude`` in degrees, against radius; a strip's is beneath one ``x``
+    and a slab's beneath one ``x, y``, against depth drawn downward. A
+    layered space is one line per layer in one color, with a break at every
+    jump. All take ``ax=`` and ``points=``, the number of evaluations, and
+    pass the rest to ``Axes.plot``.
+
+    Args:
+        space: the space the field belongs to.
+        field: the field to draw.
+        *position: where the line is, in the space's own coordinates.
+        **kwargs: renderer-specific; see the registered implementations.
+
+    Returns:
+        An ``(axes, line)`` pair, the line being the last layer's.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer. A
+            layered space whose layers have no profile, intervals or disks,
+            reaches the renderer of layered balls, which refuses it with a
+            ``TypeError``.
+    """
+    raise NotImplementedError(
+        f"No plot_profile renderer is registered for {type(space).__name__}."
+    )
 
 
 def color_limits(

@@ -721,3 +721,290 @@ class TestAlgebraAndMeasures:
             space.sobolev_measure([2.0] * (count + 1))
         with pytest.raises(ValueError, match="layer by layer"):
             space.sobolev_measure(2.0, lateral_length_scale=[0.3] * (count + 1))
+
+
+# ------------------------------------------------------------------------- #
+#                                 Plotting                                  #
+# ------------------------------------------------------------------------- #
+
+
+def drawn(mesh, /):
+    """The coordinates and values of a gouraud mesh: ``(rows, columns, 2)``
+    and ``(rows, columns)``."""
+    where = np.asarray(mesh.get_coordinates())
+    return where, np.asarray(mesh.get_array()).reshape(where.shape[:2])
+
+
+def meshes(ax, /):
+    """The color meshes on the axes, in the order drawn."""
+    return [c for c in ax.collections if hasattr(c, "get_clim")]
+
+
+def grid_index(layer, axis, coordinates, /):
+    """Which point of the lateral grid along an axis each coordinate is, one
+    period on read as the period's first point."""
+    grid = layer.lateral_axes[axis]
+    offset = (np.asarray(coordinates)[:, None] - grid[None, :]) / (
+        layer.lateral_domain.lengths[axis]
+    )
+    gaps = np.abs(offset - np.round(offset))
+    index = np.argmin(gaps, axis=1)
+    assert np.max(gaps[np.arange(index.size), index]) < 1e-12
+    return index
+
+
+def bound_columns(layer, axis, coordinates, /):
+    """Which of the coordinates drawn along a lateral axis are the bounds of
+    a bounded domain, and not points of the grid. No bound of these
+    fixtures is a point of the grid, so along a bounded axis they are the
+    first coordinate and the last, and they are the bounds."""
+    coordinates = np.asarray(coordinates)
+    edges = np.zeros(coordinates.size, dtype=bool)
+    if layer.lateral_domain.padding[axis] > 0.0:
+        bounds = layer.lateral_domain.bounds[axis]
+        assert tuple(coordinates[[0, -1]]) == tuple(bounds)
+        gaps = np.abs(layer.lateral_axes[axis][:, None] - np.asarray(bounds)[None, :])
+        assert np.min(gaps) > 1e-3
+        edges[[0, -1]] = True
+    return edges
+
+
+def interior_rows(layer, /):
+    """The rows of a layer's grid array that are its domain's nodes in depth."""
+    lateral = tuple(range(1, layer.interior_mask.ndim))
+    return np.flatnonzero(layer.interior_mask.any(axis=lateral))
+
+
+def jumping(space, /):
+    """A field that jumps at every interface, by a known amount."""
+    if space.spatial_dimension == 2:
+        return space.project_function(STRIP_PIECES[: len(space.layers)])
+    return space.project_function(SLAB_PIECES[: len(space.layers)])
+
+
+class TestPlotting:
+    """Each layer drawn from its own values on one color scale, so that the
+    jump at an interface is drawn as one: the two rows at the interface's
+    depth hold the two sides of it, which differ by what the jump operator
+    says, a second route."""
+
+    @pytest.fixture(autouse=True)
+    def _headless(self):
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as pyplot
+
+        yield
+        pyplot.close("all")
+
+    @pytest.mark.parametrize("build", [strips, bounded_strips])
+    def test_a_layered_strip_is_drawn_layer_by_layer(self, build):
+        """Each layer from its own grid values, and across a bounded domain
+        a column at each bound evaluated from the layer's own values: the
+        jump at an interface is as sharp in those columns as in the rest,
+        the jump operator's there too."""
+        from pygeoinf import plotting
+
+        space = build()
+        x = jumping(space)
+        ax, mappable = plotting.plot(space, x, colorbar_label="field")
+        drawn_meshes = meshes(ax)
+        assert len(drawn_meshes) == len(space.layers)
+        assert len({mesh.get_clim() for mesh in drawn_meshes}) == 1
+        assert mappable is drawn_meshes[-1]
+        pictures = [drawn(mesh) for mesh in drawn_meshes]
+        for (where, values), layer, part in zip(pictures, space.layers, x):
+            depths, across = where[:, 0, 1], where[0, :, 0]
+            assert np.array_equal(depths, layer.interior_depths)
+            edges = bound_columns(layer, 0, across)
+            columns = grid_index(layer, 0, across[~edges])
+            expected = part[np.ix_(interior_rows(layer), columns)]
+            assert np.array_equal(values[:, ~edges], expected)
+            assert edges.any() == (build is bounded_strips)
+            if edges.any():
+                points = [(depth, a) for depth in depths for a in across[edges]]
+                evaluated = layer.evaluate(part, points).reshape(depths.size, -1)
+                scale = np.max(np.abs(evaluated))
+                assert np.max(np.abs(values[:, edges] - evaluated)) <= 1e-12 * scale
+        for i, depth in enumerate(space.interfaces):
+            (upper, above), (lower, below) = pictures[i], pictures[i + 1]
+            assert upper[-1, 0, 1] == lower[0, 0, 1] == pytest.approx(depth)
+            positions = upper[-1, :, 0]
+            jump = space.jump_operator(i, positions=positions)(x)
+            scale = np.max(np.abs(jump))
+            assert np.max(np.abs(above[-1] - below[0] - jump)) <= 1e-12 * scale
+            # Not smeared: the whole jump is there, at the interface, the
+            # columns at the bounds of a bounded domain included.
+            assert np.min(np.abs(jump)) > 0.5
+            points = at_depth(depth, positions)
+            sides = [space.evaluate(x, points, side=s) for s in ("above", "below")]
+            scale = np.max(np.abs(sides))
+            assert np.max(np.abs(above[-1] - sides[0])) <= 1e-12 * scale
+            assert np.max(np.abs(below[0] - sides[1])) <= 1e-12 * scale
+        # Depth downward, over the medium, with every boundary marked once.
+        ends = space.layer_bounds
+        assert ax.yaxis_inverted() and ax.get_ylim() == (ends[-1][1], ends[0][0])
+        across = sorted(
+            line.get_ydata()[0]
+            for line in ax.lines
+            if line.get_ydata()[0] == line.get_ydata()[1]
+        )
+        assert across == sorted({end for pair in ends for end in pair})
+
+    def test_the_interfaces_are_marked_on_request(self):
+        from pygeoinf import plotting
+
+        space = strips()
+        x = jumping(space)
+        ax, _ = plotting.plot(space, x, outline=False)
+        assert not ax.lines
+        with pytest.raises(ValueError, match="padding"):
+            plotting.plot(space, x, padding=True)
+        with pytest.raises(ValueError, match="parts"):
+            plotting.plot(space, x[:2])
+
+    @pytest.mark.parametrize("build", [slabs, bounded_slabs])
+    def test_a_section_of_layered_slabs_is_sharp_at_the_interface(self, build):
+        """Along x at a y of the grid: each layer evaluated on that line, the
+        grid's values there to rounding, at the bounds of a bounded domain
+        the layer's field there, and the jump between the two rows at the
+        interface the jump operator's."""
+        from pygeoinf import plotting
+
+        space = build()
+        x = jumping(space)
+        first = space.layers[0]
+        j = 2
+        ax, _ = plotting.plot_section(space, x, y=first.y[j], symmetric=True)
+        drawn_meshes = meshes(ax)
+        assert len(drawn_meshes) == 2
+        assert len({mesh.get_clim() for mesh in drawn_meshes}) == 1
+        pictures = [drawn(mesh) for mesh in drawn_meshes]
+        for (where, values), layer, part in zip(pictures, space.layers, x):
+            depths, across = where[:, 0, 1], where[0, :, 0]
+            assert np.array_equal(depths, layer.interior_depths)
+            edges = bound_columns(layer, 0, across)
+            columns = grid_index(layer, 0, across[~edges])
+            expected = part[:, :, j][np.ix_(interior_rows(layer), columns)]
+            scale = np.max(np.abs(expected))
+            assert np.max(np.abs(values[:, ~edges] - expected)) <= 1e-12 * scale
+            assert edges.any() == (build is bounded_slabs)
+            if edges.any():
+                points = [(d, a, first.y[j]) for d in depths for a in across[edges]]
+                evaluated = layer.evaluate(part, points).reshape(depths.size, -1)
+                scale = np.max(np.abs(evaluated))
+                assert np.max(np.abs(values[:, edges] - evaluated)) <= 1e-12 * scale
+        (upper, above), (lower, below) = pictures
+        (depth,) = space.interfaces
+        assert upper[-1, 0, 1] == lower[0, 0, 1] == pytest.approx(depth)
+        positions = np.column_stack(
+            [upper[-1, :, 0], np.full(upper.shape[1], first.y[j])]
+        )
+        jump = space.jump_operator(0, positions=positions)(x)
+        scale = np.max(np.abs(jump))
+        assert np.max(np.abs(above[-1] - below[0] - jump)) <= 1e-12 * scale
+        assert np.min(np.abs(jump)) > 0.3
+        across = {
+            line.get_ydata()[0]
+            for line in ax.lines
+            if line.get_ydata()[0] == line.get_ydata()[1]
+        }
+        assert across == {end for pair in space.layer_bounds for end in pair}
+
+    @pytest.mark.parametrize("build", [slabs, bounded_slabs])
+    def test_a_map_at_an_interface_takes_the_side_named(self, build):
+        """Above is the shallower layer: its map at the interface is that
+        layer's base on its grid, below is the deeper layer's top; with no
+        side named the map is refused, and with none given it is the top of
+        the medium."""
+        from pygeoinf import plotting
+
+        space = build()
+        x = jumping(space)
+        (depth,) = space.interfaces
+        with pytest.raises(ValueError, match="interface"):
+            plotting.plot(space, x, depth=depth)
+        rows = {
+            "above": (0, interior_rows(space.layers[0])[-1]),
+            "below": (1, interior_rows(space.layers[1])[0]),
+        }
+        maps = {}
+        for side, (i, row) in rows.items():
+            _, mesh = plotting.plot(space, x, depth=depth, side=side)
+            where, values = drawn(mesh)
+            layer = space.layers[i]
+            # Bounded along x or not at all: the bounds are the first and last
+            # columns, evaluated on the side named.
+            edges = bound_columns(layer, 0, where[:, 0, 0])
+            index = np.ix_(
+                grid_index(layer, 0, where[~edges, 0, 0]),
+                grid_index(layer, 1, where[0, :, 1]),
+            )
+            expected = x[i][row][index]
+            scale = np.max(np.abs(expected))
+            assert np.max(np.abs(values[~edges] - expected)) <= 1e-12 * scale
+            if edges.any():
+                points = at_depth(depth, where[edges].reshape(-1, 2))
+                evaluated = space.evaluate(x, points, side=side)
+                scale = np.max(np.abs(evaluated))
+                difference = values[edges].ravel() - evaluated
+                assert np.max(np.abs(difference)) <= 1e-12 * scale
+            maps[side] = values
+        assert np.min(np.abs(maps["above"] - maps["below"])) > 0.3
+        _, mesh = plotting.plot(space, x)
+        where, values = drawn(mesh)
+        top = x[0][interior_rows(space.layers[0])[0]]
+        layer = space.layers[0]
+        on = ~bound_columns(layer, 0, where[:, 0, 0])
+        index = np.ix_(
+            grid_index(layer, 0, where[on, 0, 0]), grid_index(layer, 1, where[0, :, 1])
+        )
+        assert np.max(np.abs(values[on] - top[index])) <= 1e-12 * np.max(np.abs(top))
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_a_profile_breaks_at_every_jump(self, build, rng):
+        from pygeoinf import plotting
+
+        space = build()
+        x = space.random(rng=rng)
+        position = np.atleast_1d(lateral_positions(space, 1, rng)[0])
+        ax, _ = plotting.plot_profile(space, x, *position, label="a field")
+        assert len(ax.lines) == len(space.layers)
+        assert len({line.get_color() for line in ax.lines}) == 1
+        assert [line.get_label() for line in ax.lines].count("a field") == 1
+        for upper, lower, depth in zip(ax.lines[:-1], ax.lines[1:], space.interfaces):
+            assert upper.get_ydata()[-1] == pytest.approx(depth)
+            assert lower.get_ydata()[0] == pytest.approx(depth)
+            point = [(depth, *position)]
+            assert upper.get_xdata()[-1] == pytest.approx(
+                space.evaluate(x, point, side="above")[0]
+            )
+            assert lower.get_xdata()[0] == pytest.approx(
+                space.evaluate(x, point, side="below")[0]
+            )
+        ends = space.layer_bounds
+        assert ax.get_ylim() == (ends[-1][1], ends[0][0])
+
+    def test_points_and_axes(self):
+        from pygeoinf import plotting
+
+        ax, collection = plotting.plot_points(strips(), [(0.4, 2.5)])
+        assert np.allclose(collection.get_offsets(), [[0.5, 0.4]])
+        assert ax.yaxis_inverted()
+        _, collection = plotting.plot_points(slabs(), [(0.4, 0.5, 2.0)])
+        assert np.allclose(collection.get_offsets(), [[0.5, 0.5]])
+        figure, axes = plotting.subplots(slabs(), columns=2)
+        assert len(axes) == 2 and not hasattr(axes[0], "projection")
+
+    def test_a_balls_own_pictures_are_refused(self):
+        """A shell and a planet model are a ball's: a layered slab has
+        neither, and is refused naming what has them."""
+        from pygeoinf import plotting
+
+        space = slabs()
+        x = jumping(space)
+        with pytest.raises(TypeError, match="balls"):
+            plotting.plot_shell(space, x)
+        with pytest.raises(TypeError, match="balls"):
+            plotting.planet_model(space, x)

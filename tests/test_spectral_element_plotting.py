@@ -235,6 +235,24 @@ class TestSection:
         assert len(ax.lines) == (2 if space.inner_radius > 0.0 else 1)
         assert ax.get_title() == "a section"
 
+    @pytest.mark.parametrize("which", ["ball", "annulus"])
+    def test_the_mesh_is_the_section_values_closed(self, which, request, rng):
+        """Through the dispatching name: the values drawn are the section's
+        own, the first direction drawn again to close the circle, each at
+        its radius and its angle round the circle."""
+        space = request.getfixturevalue(which)
+        x = space.random(rng=rng)
+        plane = dict(pole=(25.0, -70.0))
+        _, mappable = plotting.plot_section(space, x, angles=36, **plane)
+        values, radii, _, _ = plotting.section_values(space, x, angles=36, **plane)
+        closed = np.concatenate([values, values[:, :1]], axis=1)
+        drawn = np.asarray(mappable.get_array()).reshape(closed.shape)
+        assert np.allclose(drawn, closed, rtol=0.0, atol=1e-14 * np.abs(closed).max())
+        psi = 2.0 * np.pi * np.arange(37) / 36
+        where = np.asarray(mappable.get_coordinates())
+        assert np.allclose(where[..., 0], radii[:, None] * np.cos(psi), atol=1e-15)
+        assert np.allclose(where[..., 1], radii[:, None] * np.sin(psi), atol=1e-15)
+
 
 class TestProfile:
     def test_the_line_is_the_field_along_the_ray(self, annulus, rng):

@@ -17,7 +17,8 @@ Here a soft sediment over a basement, the sediment's length scale the
 shorter. Stations at the surface inform the sediment. Under the independent
 prior they say nothing whatever of the basement; with the two layers welded
 at their interface they reach into it. On a slab the interface is a plane,
-and the jump is taken at ``(x, y)`` positions.
+and the jump is taken at ``(x, y)`` positions; a draw is cut by a vertical
+plane, and mapped on either side of the interface.
 
 Needs matplotlib.
 """
@@ -113,7 +114,9 @@ for (depth, side), lone, joined in zip(levels, *removed.values()):
 print("independent, the basement learns nothing; welded, the data reach into it")
 
 # ---------------------------------------------------------------------------
-# Depth sections of the two draws, layer by layer.
+# Depth sections of the two draws. plot draws a layered strip layer by layer,
+# each layer from its own values and all on one color scale, so that a jump
+# at the interface, which is marked, is drawn as one and not smeared.
 # ---------------------------------------------------------------------------
 
 limit = max(
@@ -123,20 +126,16 @@ limit = max(
 )
 figure, panels = pyplot.subplots(3, 1, figsize=(9.0, 8.0), layout="constrained")
 for axis, (name, draw) in zip(panels, draws.items()):
-    for layer, part in zip(X.layers, draw):
-        image = axis.pcolormesh(
-            layer.x,
-            layer.interior_depths,
-            layer.interior_values(part),
-            shading="gouraud",
-            cmap="RdBu",
-            vmin=-limit,
-            vmax=limit,
-        )
-    axis.axhline(INTERFACE, color="k", linewidth=0.8, linestyle="--")
-    axis.set_ylim(BASE, 0.0)
-    axis.set_ylabel("depth")
-    axis.set_title(f"A draw of the {name} prior")
+    _, image = plotting.plot(
+        X,
+        draw,
+        ax=axis,
+        vmin=-limit,
+        vmax=limit,
+        aspect="auto",
+        colorbar=False,
+        title=f"A draw of the {name} prior",
+    )
 figure.colorbar(image, ax=panels[:2], label="field")
 depths = [depth for depth, _ in levels]
 for name, values in removed.items():
@@ -167,9 +166,31 @@ x, y = np.meshgrid(*Y.layers[0].lateral_axes, indexing="ij")
 plane = Y.jump_operator(0, positions=np.column_stack([x.ravel(), y.ravel()]))
 joined = box.condition(plane, np.zeros(x.size), solver=CholeskySolver())
 scattered = Y.jump_operator(0, positions=rng.uniform(0.0, 3.0, (200, 2)))
+boxed = {}
 for name, measure in (("independent", box), ("welded", joined)):
+    boxed[name] = measure.sample(rng=rng)
     print(
         f"   {name:12s} largest jump of a draw at 200 positions "
-        f"{np.abs(scattered(measure.sample(rng=rng))).max():.1e}"
+        f"{np.abs(scattered(boxed[name])).max():.1e}"
     )
+
+# Each draw cut by a vertical plane, along x through the middle of the box,
+# and the independent one's two lateral maps at the interface: a map at the
+# depth of an interface says which side it means, above the shallower layer.
+figure, panels = plotting.subplots(Y, rows=2, columns=2, figsize=(10.0, 7.0))
+for axis, (name, draw) in zip(panels[0], boxed.items()):
+    plotting.plot_section(
+        Y, draw, y=1.5, ax=axis, symmetric=True, title=f"The {name} draw at y = 1.5"
+    )
+for axis, side in zip(panels[1], ("above", "below")):
+    plotting.plot(
+        Y,
+        boxed["independent"],
+        depth=INTERFACE,
+        side=side,
+        ax=axis,
+        symmetric=True,
+        title=f"The independent draw just {side} the interface",
+    )
+print("a layered slab drawn: two depth sections, and the two sides of its interface")
 plotting.show()

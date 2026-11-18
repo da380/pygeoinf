@@ -1038,3 +1038,381 @@ class TestWhatAFunctionSpaceRefuses:
         with pytest.raises(ValueError, match="positive"):
             space.sobolev_measure(2.0, pointwise_std=-1.0)
         assert space.sobolev_measure(2.0).precision is not None
+
+
+# ------------------------------------------------------------------------- #
+#                                 Plotting                                  #
+# ------------------------------------------------------------------------- #
+
+
+def drawn(mesh, /):
+    """The coordinates and values of a gouraud mesh: ``(rows, columns, 2)``
+    and ``(rows, columns)``."""
+    where = np.asarray(mesh.get_coordinates())
+    return where, np.asarray(mesh.get_array()).reshape(where.shape[:2])
+
+
+def grid_index(space, axis, coordinates, /):
+    """Which point of the lateral grid along an axis each coordinate is, one
+    period on read as the period's first point."""
+    grid = space.lateral_axes[axis]
+    period = space.lateral_domain.lengths[axis]
+    offset = (np.asarray(coordinates)[:, None] - grid[None, :]) / period
+    gaps = np.abs(offset - np.round(offset))
+    index = np.argmin(gaps, axis=1)
+    # Every coordinate is a point of the grid, or one a period on.
+    assert np.max(gaps[np.arange(index.size), index]) < 1e-12
+    return index
+
+
+def bound_columns(space, axis, coordinates, /):
+    """Which of the coordinates drawn along a lateral axis are the bounds of
+    a bounded domain, and not points of the grid. No bound of these
+    fixtures is a point of the grid, so along a bounded axis they are the
+    first coordinate and the last, and they are the bounds."""
+    coordinates = np.asarray(coordinates)
+    edges = np.zeros(coordinates.size, dtype=bool)
+    if space.lateral_domain.padding[axis] > 0.0:
+        bounds = space.lateral_domain.bounds[axis]
+        assert tuple(coordinates[[0, -1]]) == tuple(bounds)
+        gaps = np.abs(space.lateral_axes[axis][:, None] - np.asarray(bounds)[None, :])
+        assert np.min(gaps) > 1e-3
+        edges[[0, -1]] = True
+    return edges
+
+
+def interior_rows(space, /):
+    """The rows of a grid array that are the domain's nodes in depth."""
+    lateral = tuple(range(1, space.interior_mask.ndim))
+    return np.flatnonzero(space.interior_mask.any(axis=lateral))
+
+
+class TestPlotting:
+    """The pictures are checked through their numbers: the values handed to
+    matplotlib against the vector's own grid values and the space's own
+    point evaluation, and the axes against the domain, depth downward."""
+
+    @pytest.fixture(autouse=True)
+    def _headless(self):
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as pyplot
+
+        yield
+        pyplot.close("all")
+
+    @pytest.mark.parametrize("build", [strip, bounded_strip])
+    def test_a_strip_is_its_grid_with_depth_downward(self, build, rng):
+        """The values drawn are the vector's on the domain's part of the grid,
+        read back at the coordinates drawn, and the field the space
+        evaluates there to rounding: 4e-15 relative at most measured. The
+        columns at the bounds of a bounded domain are evaluated, and are the
+        field there too."""
+        from pygeoinf import plotting
+
+        space = build(2.0)
+        x = space.random(rng=rng)
+        ax, mesh = plotting.plot(space, x, symmetric=True)
+        where, values = drawn(mesh)
+        depths, across = where[:, 0, 1], where[0, :, 0]
+        assert np.array_equal(depths, space.interior_depths)
+        assert np.array_equal(
+            where[..., 1], np.broadcast_to(depths[:, None], values.shape)
+        )
+        # Shallow at the top: the depth axis runs downward, over the domain.
+        assert ax.yaxis_inverted()
+        assert ax.get_ylim() == (space.bottom, space.top)
+        assert ax.get_ylabel() == "depth" and ax.get_xlabel() == "x"
+        assert ax.get_aspect() == 1.0
+        on = ~bound_columns(space, 0, across)
+        columns = grid_index(space, 0, across[on])
+        assert np.array_equal(values[:, on], x[np.ix_(interior_rows(space), columns)])
+        points = [(depth, a) for depth in depths for a in across]
+        evaluated = space.evaluate(x, points).reshape(values.shape)
+        scale = np.max(np.abs(evaluated))
+        assert np.max(np.abs(values - evaluated)) <= 1e-12 * scale
+        low, high = mesh.get_clim()
+        assert low == pytest.approx(-high)
+        # plot on a strip is its section, whole.
+        _, same = plotting.plot_section(space, x, symmetric=True)
+        assert np.array_equal(drawn(same)[0], where)
+        assert np.array_equal(drawn(same)[1], values)
+
+    def test_a_periodic_strip_spans_its_period(self, rng):
+        space = strip(2.0)
+        from pygeoinf import plotting
+
+        x = space.random(rng=rng)
+        ax, mesh = plotting.plot(space, x)
+        where, values = drawn(mesh)
+        assert np.allclose(where[0, :, 0], np.append(space.x, 2.0))
+        assert np.array_equal(values[:, -1], values[:, 0])
+        assert ax.get_xlim() == (0.0, 2.0)
+
+    def test_a_bounded_strip_fills_its_bounds(self, rng):
+        """Neither bound is a point of the grid: a column at each is
+        evaluated, the projection onto the kept modes, and the rest are the
+        grid values as they stand. Shown on an array off the span of the
+        kept modes, where the two differ."""
+        from pygeoinf import plotting
+
+        space = bounded_strip(2.0)
+        x = rng.standard_normal(space.grid_shape)
+        ax, mesh = plotting.plot(space, x)
+        where, values = drawn(mesh)
+        depths, across = where[:, 0, 1], where[0, :, 0]
+        inside = np.flatnonzero(space.transform.mask)
+        assert np.array_equal(across, np.concatenate([[0.5], space.x[inside], [2.0]]))
+        assert ax.get_xlim() == (0.5, 2.0)
+        rows = interior_rows(space)
+        assert np.array_equal(values[:, 1:-1], x[np.ix_(rows, inside)])
+        points = [(depth, bound) for depth in depths for bound in (0.5, 2.0)]
+        evaluated = space.evaluate(x, points).reshape(depths.size, 2)
+        scale = np.max(np.abs(evaluated))
+        assert np.max(np.abs(values[:, [0, -1]] - evaluated)) <= 1e-12 * scale
+        # The projection is not the grid's values: at the nearest points of
+        # the grid it differs from them by much more than rounding.
+        nearest = x[np.ix_(rows, inside[[0, -1]])]
+        assert np.max(np.abs(values[:, [0, -1]] - nearest)) > 0.1
+
+    def test_a_bound_on_the_grid_adds_no_column(self, rng):
+        """Bounds that are points of the grid, the upper one to rounding: the
+        picture of a strip is its grid values alone, and a slab's map is
+        evaluated at the grid's points alone."""
+        from pygeoinf import plotting
+
+        domain = PaddedDomain([(0.3, 1.0)], padding=0.1)
+        space = bounded_strip(2.0, shape=9, lateral=domain)
+        inside = np.flatnonzero(space.transform.mask)
+        # The upper bound is a point of the grid to rounding, not exactly.
+        assert space.x[inside[0]] == 0.3 and space.x[inside[-1]] != 1.0
+        x = rng.standard_normal(space.grid_shape)
+        ax, mesh = plotting.plot(space, x)
+        where, values = drawn(mesh)
+        assert np.array_equal(where[0, :, 0], space.x[inside])
+        assert np.array_equal(values, x[np.ix_(interior_rows(space), inside)])
+        assert ax.get_xlim() == (0.3, 1.0)
+        box = bounded_slab(
+            2.0,
+            shape=(9, 5),
+            lateral=PaddedDomain([(0.3, 1.0), (0.0, 1.0)], padding=(0.1, 0.0)),
+        )
+        _, mesh = plotting.plot(box, box.random(rng=rng))
+        where, _ = drawn(mesh)
+        along_x = np.flatnonzero(box.transform.mask.any(axis=1))
+        assert np.array_equal(where[:, 0, 0], box.x[along_x])
+
+    def test_the_padding_is_drawn_on_request(self, rng):
+        """The whole grid, closed across, with the domain outlined: the top
+        and the base across, the lateral bounds down."""
+        from pygeoinf import plotting
+
+        space = bounded_strip(2.0)
+        x = space.random(rng=rng)
+        ax, mesh = plotting.plot(space, x, padding=True)
+        where, values = drawn(mesh)
+        assert np.array_equal(where[:, 0, 1], space.depths)
+        assert ax.get_ylim() == (space.depths[-1], space.depths[0])
+        period = space.lateral_domain.lengths[0]
+        assert np.allclose(where[0, :, 0], np.append(space.x, space.x[0] + period))
+        assert np.array_equal(values[:, :-1], x)
+        assert np.array_equal(values[:, -1], x[:, 0])
+        across = {
+            line.get_ydata()[0]
+            for line in ax.lines
+            if line.get_ydata()[0] == line.get_ydata()[1]
+        }
+        down = {
+            line.get_xdata()[0]
+            for line in ax.lines
+            if line.get_xdata()[0] == line.get_xdata()[1]
+        }
+        assert across == {0.2, 1.0}
+        assert down == {0.5, 2.0}
+
+    def test_a_vertical_exaggeration(self, rng):
+        from pygeoinf import plotting
+
+        space = strip(2.0)
+        ax, _ = plotting.plot(space, space.random(rng=rng), aspect=5.0, title="t")
+        assert ax.get_aspect() == 5.0
+        assert ax.get_title() == "t"
+
+    @pytest.mark.parametrize("build", [slab, bounded_slab])
+    def test_plot_on_a_slab_is_a_map_at_its_top(self, build, rng):
+        """At the top, a node of the grid in depth, the evaluated map is the
+        grid's top level, a second route to the same numbers; at the bounds
+        of a bounded domain, the field evaluated there."""
+        from pygeoinf import plotting
+
+        space = build(2.0)
+        x = space.random(rng=rng)
+        ax, mesh = plotting.plot(space, x, colorbar_label="field")
+        where, values = drawn(mesh)
+        xs, ys = where[:, 0, 0], where[0, :, 1]
+        # x across and y up.
+        assert np.array_equal(where[..., 0], np.broadcast_to(xs[:, None], values.shape))
+        assert np.array_equal(where[..., 1], np.broadcast_to(ys[None, :], values.shape))
+        assert (ax.get_xlabel(), ax.get_ylabel()) == ("x", "y")
+        assert ax.get_aspect() == 1.0
+        edges = [bound_columns(space, 0, xs), bound_columns(space, 1, ys)]
+        on = np.ix_(~edges[0], ~edges[1])
+        top = x[interior_rows(space)[0]]
+        expected = top[
+            np.ix_(
+                grid_index(space, 0, xs[~edges[0]]), grid_index(space, 1, ys[~edges[1]])
+            )
+        ]
+        assert np.max(np.abs(values[on] - expected)) <= 1e-12 * np.max(np.abs(expected))
+        rim = edges[0][:, None] | edges[1][None, :]
+        assert rim.any() == (build is bounded_slab)
+        if rim.any():
+            points = [(space.top, a, b) for a, b in where[rim]]
+            evaluated = space.evaluate(x, points)
+            scale = np.max(np.abs(evaluated))
+            assert np.max(np.abs(values[rim] - evaluated)) <= 1e-12 * scale
+        for axis, limits in enumerate((ax.get_xlim(), ax.get_ylim())):
+            low, high = space.lateral_domain.bounds[axis]
+            if space.lateral_domain.padding[axis] == 0.0:
+                high = low + space.lateral_domain.lengths[axis]
+            assert limits == (low, high)
+
+    def test_a_map_at_any_depth_is_the_field_there(self, rng):
+        from pygeoinf import plotting
+
+        space = bounded_slab(2.0)
+        x = space.random(rng=rng)
+        node = interior_rows(space)[3]
+        _, mesh = plotting.plot(space, x, depth=space.depths[node])
+        where, values = drawn(mesh)
+        # Bounded along x: the first and last columns are at the bounds.
+        on = ~bound_columns(space, 0, where[:, 0, 0])
+        level = x[node]
+        expected = level[
+            np.ix_(
+                grid_index(space, 0, where[on, 0, 0]),
+                grid_index(space, 1, where[0, :, 1]),
+            )
+        ]
+        assert np.max(np.abs(values[on] - expected)) <= 1e-12 * np.max(np.abs(expected))
+        _, mesh = plotting.plot(space, x, depth=0.37)
+        where, values = drawn(mesh)
+        points = [(0.37, *p) for p in where.reshape(-1, 2)]
+        assert np.allclose(
+            values.ravel(), space.evaluate(x, points), rtol=0, atol=1e-13
+        )
+        with pytest.raises(ValueError, match="domain"):
+            plotting.plot(space, x, depth=1.5)
+
+    @pytest.mark.parametrize("build", [slab, bounded_slab])
+    def test_a_slab_section_on_a_grid_line_is_the_grid_there(self, build, rng):
+        """Along x at a y of the grid and along y at an x of it: evaluated,
+        and the vector's values on that line of the grid to rounding; at the
+        bounds of a bounded domain, the field evaluated there."""
+        from pygeoinf import plotting
+
+        space = build(2.0)
+        x = space.random(rng=rng)
+        inside = [np.flatnonzero(space.transform.mask.any(axis=1 - a)) for a in (0, 1)]
+        rows = interior_rows(space)
+        j, i = inside[1][1], inside[0][1]
+        for name, at, along in (("y", space.y[j], 0), ("x", space.x[i], 1)):
+            ax, mesh = plotting.plot_section(space, x, **{name: at})
+            where, values = drawn(mesh)
+            depths, across = where[:, 0, 1], where[0, :, 0]
+            assert np.array_equal(depths, space.interior_depths)
+            assert ax.yaxis_inverted() and ax.get_ylim() == (space.bottom, space.top)
+            assert ax.get_xlabel() == ("x", "y")[along]
+            edges = bound_columns(space, along, across)
+            columns = grid_index(space, along, across[~edges])
+            plane = x[:, :, j] if along == 0 else x[:, i, :]
+            expected = plane[np.ix_(rows, columns)]
+            scale = np.max(np.abs(expected))
+            assert np.max(np.abs(values[:, ~edges] - expected)) <= 1e-12 * scale
+            if edges.any():
+                lateral = [(a, at) if along == 0 else (at, a) for a in across[edges]]
+                points = [(depth, *p) for depth in depths for p in lateral]
+                evaluated = space.evaluate(x, points).reshape(depths.size, -1)
+                scale = np.max(np.abs(evaluated))
+                assert np.max(np.abs(values[:, edges] - evaluated)) <= 1e-12 * scale
+
+    def test_a_section_with_no_plane_named_is_through_the_middle(self, rng):
+        from pygeoinf import plotting
+
+        space = bounded_slab(2.0)
+        x = space.random(rng=rng)
+        _, mesh = plotting.plot_section(space, x)
+        where, values = drawn(mesh)
+        middle = -0.25  # of the bounds in y, (-1, 0.5)
+        points = [(d, a, middle) for d, a in where.reshape(-1, 2)[:, ::-1]]
+        assert np.allclose(
+            values.ravel(), space.evaluate(x, points), rtol=0, atol=1e-13
+        )
+
+    @pytest.mark.parametrize("build", GEOMETRIES)
+    def test_a_profile_is_the_field_beneath_a_position(self, build, rng):
+        from pygeoinf import plotting
+
+        space = build(2.0)
+        x = space.random(rng=rng)
+        position = space.random_point(rng=rng)[1:]
+        ax, line = plotting.plot_profile(space, x, *position, points=17)
+        depths = np.linspace(space.top, space.bottom, 17)
+        assert np.allclose(line.get_ydata(), depths)
+        points = [(depth, *position) for depth in depths]
+        assert np.allclose(line.get_xdata(), space.evaluate(x, points))
+        assert ax.get_ylim() == (space.bottom, space.top)
+
+    def test_points_go_where_the_picture_puts_them(self):
+        """Depth down in a strip, and the depth set aside on a slab's map;
+        reduced into the period across a periodic axis and not across a
+        bounded one."""
+        from pygeoinf import plotting
+
+        ax, collection = plotting.plot_points(
+            strip(2.0), [(0.0, 0.5), (0.3, 2.5)], data=[1.0, 2.0], colorbar_label="v"
+        )
+        assert np.allclose(collection.get_offsets(), [[0.5, 0.0], [0.5, 0.3]])
+        assert ax.yaxis_inverted()
+        _, collection = plotting.plot_points(slab(2.0), [(0.4, -0.5, 2.0)])
+        assert np.allclose(collection.get_offsets(), [[1.5, 0.5]])
+        _, collection = plotting.plot_points(bounded_slab(2.0), [(0.4, 1.4, 0.7)])
+        assert np.allclose(collection.get_offsets(), [[1.4, -0.8]])
+        with pytest.raises(ValueError, match="values"):
+            plotting.plot_points(strip(2.0), [(0.0, 0.5)], data=[1.0, 2.0])
+
+    def test_subplots_are_plain_axes(self):
+        from pygeoinf import plotting
+
+        figure, axes = plotting.subplots(strip(2.0), columns=2)
+        assert len(axes) == 2 and not hasattr(axes[0], "projection")
+        assert tuple(figure.get_size_inches()) == (12.0, 3.2)
+
+    def test_what_is_not_drawn_is_refused(self, rng):
+        from pygeoinf import plotting
+
+        flat, box = strip(2.0), slab(2.0)
+        with pytest.raises(ValueError, match="shape"):
+            plotting.plot(flat, np.zeros(3))
+        with pytest.raises(ValueError, match="slab"):
+            plotting.plot_section(flat, flat.random(rng=rng), x=0.5)
+        x = box.random(rng=rng)
+        with pytest.raises(ValueError, match="one of"):
+            plotting.plot_section(box, x, x=0.5, y=0.5)
+        with pytest.raises(ValueError, match="padding"):
+            plotting.plot_section(box, x, padding=True)
+        with pytest.raises(ValueError, match="domain"):
+            plotting.plot_section(bounded_slab(2.0), bounded_slab(2.0).zero(), x=1.5)
+        with pytest.raises(ValueError, match="x, y"):
+            plotting.plot_profile(box, x, 0.5)
+        # A map at one depth is of a slab: on a strip, plot refuses one.
+        with pytest.raises(TypeError, match="line"):
+            plotting.plot(flat, flat.random(rng=rng), depth=0.5)
+        with pytest.raises(TypeError, match="line"):
+            plotting.plot(flat, flat.random(rng=rng), side="above")
+        # A disk has no renderer of a section or a profile.
+        with pytest.raises(NotImplementedError, match="plot_section .* Lebesgue"):
+            plotting.plot_section(disk.Lebesgue(4, length_scale=0.3), np.zeros(3))
+        with pytest.raises(NotImplementedError, match="plot_profile .* Lebesgue"):
+            plotting.plot_profile(disk.Lebesgue(4, length_scale=0.3), np.zeros(3), 0.5)
