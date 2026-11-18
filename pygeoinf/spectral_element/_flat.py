@@ -21,6 +21,9 @@ Fourier components.
 :class:`FlatSpace` is the space built on them, for any number of lateral
 axes; :mod:`pygeoinf.strip` names it with one, a field of ``(depth, x)``, and
 :mod:`pygeoinf.slab` with two, a field of ``(depth, x, y)``.
+:class:`FlatLayered` is the direct sum of such layers stacked in depth, over
+one lateral box and grid, which :class:`pygeoinf.strip.Layered` and
+:class:`pygeoinf.slab.Layered` name.
 """
 
 from __future__ import annotations
@@ -41,8 +44,10 @@ from planetmodel.randomfield import (
 
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import EuclideanSpace, resolve_rng
+from ..traits import Traits
 from . import base as _base
 from ._points import _POSITION_RTOL, LocalEvaluation
+from .layered import Layered, _LayeredEvaluation, layers_between
 from .base import (
     _EXTENSIONS,
     _NODES_PER_MODE,
@@ -61,7 +66,7 @@ from .base import (
     _sampled_with_extension,
 )
 
-__all__ = ["FlatSpace", "LateralDomain"]
+__all__ = ["FlatLayered", "FlatSpace", "LateralDomain"]
 
 #: The lateral box: the periods from the origin, one number per axis (one
 #: number alone, for one axis), when the domain is the whole period; or a
@@ -1020,4 +1025,317 @@ class FlatSpace(SpectralElementSpace):
             lateral="one",
             index="value",
             robin=robin,
+        )
+
+
+# --------------------------------------------------------------------------- #
+#                         Flat layers stacked in depth                        #
+# --------------------------------------------------------------------------- #
+
+#: The side of an interface as the shared :class:`Layered` names it, along
+#: its coordinate, for each side named in depth. Depth increases downward, so
+#: the side above an interface, the shallower, is the side of the smaller
+#: coordinate, which the shared class calls ``"below"``.
+_SIDE_ALONG_THE_COORDINATE = {"above": "below", "below": "above"}
+
+
+def _require_one_lateral_grid(layers: Sequence[FlatSpace], /) -> None:
+    """Refuse flat layers that do not all have the first one's lateral grid
+    and lateral box.
+
+    Raises:
+        ValueError: naming the first layer whose grid or box differs.
+    """
+    first = layers[0]
+    for i, layer in enumerate(layers[1:], start=1):
+        if layer.lateral_shape != first.lateral_shape:
+            raise ValueError(
+                f"The layers must share one lateral grid: layer {i} has the "
+                f"shape {layer.lateral_shape} and layer 0 {first.lateral_shape}."
+            )
+        if layer.lateral_domain != first.lateral_domain:
+            raise ValueError(
+                f"The layers must share one lateral box: layer {i} has "
+                f"{layer.lateral_domain!r} and layer 0 {first.lateral_domain!r}."
+            )
+
+
+class FlatLayered(Layered):
+    """Piecewise-continuous fields in flat layers stacked in depth: a
+    :class:`FlatSpace` in each, all over one lateral box and one lateral grid.
+
+    What :class:`pygeoinf.strip.Layered` and :class:`pygeoinf.slab.Layered`
+    share, each naming the class of its layers as ``_layer_kind``. To the
+    shared :class:`~pygeoinf.spectral_element.Layered` it adds three things.
+    The sides of an interface are named in depth, which increases downward:
+    ``"above"`` is the shallower side, the layer that comes first, and
+    ``"below"`` the deeper. The jump across an interface, a horizontal line
+    or plane, is taken at given lateral positions. And point evaluation has
+    the flat layers' route by non-uniform FFT, which ``"auto"`` takes where
+    the dense matrix would not fit.
+    """
+
+    #: The class of the layers, which each geometry's own class names; the
+    #: shared class refuses flat layers to a class that does not name theirs.
+    _layer_kind: type
+
+    def __init__(
+        self,
+        boundaries: Sequence[float],
+        shape: int | Sequence[int],
+        /,
+        *,
+        lateral: LateralDomain | None = None,
+        labels: Sequence[str] | None = None,
+        **options: Any,
+    ) -> None:
+        """
+        Args:
+            boundaries: the depths bounding the layers, ascending: the top
+                of the first layer, the interfaces in order of depth, and the
+                base of the last.
+            shape: the points of the lateral grid along each axis, one
+                number for a single axis. The same for every layer, and never
+                read layer by layer.
+            lateral: the lateral box, the same for every layer: the periods
+                from the origin, or a ``planetmodel.fourier.PaddedDomain``
+                for a bounded domain inside a wider period. A unit period on
+                every axis if omitted.
+            labels: names for the layers, so one can be reached by name.
+            **options: the other keyword arguments of the layers' class --
+                ``order``, ``length_scale``, ``depth_modes``,
+                ``max_eigenvalue``, ``padding``, ``boundary``, ``ngll``,
+                ``element_length`` -- each given once for all layers or, as a
+                list, layer by layer. A tuple, such as a padding pair, is one
+                value.
+
+        Raises:
+            ValueError: for fewer than two boundaries, a list of the wrong
+                length, or what the layers' class refuses.
+        """
+        # One lateral grid and box for every layer: a list of numbers is one
+        # shape or one box here, and not a value for each layer.
+        if isinstance(shape, list):
+            shape = tuple(shape)
+        if isinstance(lateral, list):
+            lateral = tuple(lateral)
+        super().__init__(
+            layers_between(
+                self._layer_kind,
+                boundaries,
+                shape,
+                ("top", "bottom"),
+                {**options, "lateral": lateral},
+            ),
+            labels=labels,
+        )
+
+    @classmethod
+    def from_layers(
+        cls,
+        layers: Sequence[SpectralElementSpace],
+        /,
+        *,
+        labels: Sequence[str] | None = None,
+    ) -> "FlatLayered":
+        """A layered space of this class over flat layers built by hand.
+
+        Args:
+            layers: the layers, in order of depth, all of this class's
+                geometry and all on one lateral grid and box.
+            labels: names for the layers.
+
+        Returns:
+            The layered space, an instance of this class.
+
+        Raises:
+            TypeError: if the layers are not all of this class's geometry.
+            ValueError: if there are none, they are out of order or overlap,
+                or they do not share one lateral grid and box: the same
+                shape, and the same bounds and padding.
+        """
+        space = super().from_layers(layers, labels=labels)
+        _require_one_lateral_grid(space.layers)
+        return space
+
+    def layer_index(self, point: Any, /, *, side: str | None = None) -> int:
+        """Which layer a point belongs to.
+
+        Args:
+            point: ``(depth, x)`` in a strip or ``(depth, x, y)`` in a slab,
+                of which only the depth is read.
+            side: for a point on an interface, which has two layers:
+                ``"above"``, the shallower, which comes first among
+                :attr:`layers`, or ``"below"``, the deeper. Ignored anywhere
+                else.
+
+        Returns:
+            The layer's position among :attr:`layers`.
+
+        Raises:
+            ValueError: if the point is in no layer -- above the first, below
+                the last, or in a gap -- or on an interface with no side
+                named, or *side* is not ``"above"``, ``"below"`` or ``None``.
+        """
+        return super().layer_index(
+            point, side=_SIDE_ALONG_THE_COORDINATE.get(side, side)
+        )
+
+    def point_evaluation_operator(
+        self,
+        points: Sequence[Any],
+        /,
+        *,
+        side: str | None = None,
+        route: Literal["auto", "dense", "local", "nufft"] = "auto",
+        unsafe: bool = False,
+        epsilon: float = 1e-12,
+    ) -> LinearOperator:
+        """Evaluation at points anywhere in the layers, as an operator into a
+        Euclidean space.
+
+        By the layers' own routes, each at the points in its layer; see
+        :meth:`FlatSpace.point_evaluation_operator`. ``"dense"`` assembles
+        :meth:`basis_matrix`, eight bytes per point per component of the
+        whole. ``"local"`` sums the lateral Fourier functions directly at
+        each point. ``"nufft"`` takes the lateral sums by non-uniform FFT,
+        and agrees with the others to ``epsilon`` of the field's size and
+        not to rounding. ``"auto"``, the default, is the dense route while
+        its matrix fits 256 MB, and ``"nufft"`` beyond: never ``"local"``,
+        as in a single layer.
+
+        Args:
+            points: where to evaluate, each ``(depth, x)`` or ``(depth, x,
+                y)``.
+            side: which value is meant at the points on an interface:
+                ``"above"``, the shallower layer's, or ``"below"``, the
+                deeper's.
+            route: ``"auto"``, ``"dense"``, ``"local"`` or ``"nufft"``.
+            unsafe: build it even in layers too rough to admit it.
+            epsilon: the relative accuracy asked of the non-uniform
+                transforms, under ``"nufft"``.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if no points are given, one is in no layer, on an
+                interface with no side named or outside a bounded lateral
+                domain, the route is none of the four, or a layer's order is
+                too low and *unsafe* is not set.
+        """
+        points = list(points)
+        if route == "auto" and points:
+            fits = 8 * len(points) * self.dim <= _base._DENSE_EVALUATION_LIMIT
+            route = "dense" if fits else "nufft"
+        if route != "nufft":
+            return super().point_evaluation_operator(
+                points, side=side, route=route, unsafe=unsafe
+            )
+        if not points:
+            raise ValueError("At least one point is needed.")
+        self._require_point_evaluation(
+            "A point evaluation operator", points=points, side=side, unsafe=unsafe
+        )
+        pieces = [
+            (
+                self.columns(i),
+                where,
+                _NufftEvaluation(
+                    self.layers[i],
+                    self.layers[i]._checked_points(inside),
+                    epsilon=epsilon,
+                ),
+            )
+            for i, where, inside in self._grouped(points, side)
+        ]
+        return _local_operator(
+            self, EuclideanSpace(len(points)), _LayeredEvaluation(pieces, self.dim)
+        )
+
+    def jump_operator(
+        self,
+        interface: int,
+        /,
+        *,
+        positions: Sequence[Any] | None = None,
+        unsafe: bool = False,
+    ) -> LinearOperator:
+        """The jump of the field across an interface: its value just above,
+        less its value just below, at given lateral positions.
+
+        Depth increases downward, so this is the value in the shallower
+        layer less the value in the deeper, at the interface's depth: the
+        sign a ball gives the same interface, outer less inner. The
+        interface is a horizontal line of a strip or a horizontal plane of a
+        slab, and the jump is taken at points of it named by their lateral
+        coordinates.
+
+        What a reflection coefficient sees, and what a prior on a
+        discontinuity is a statement about. Conditioning on its vanishing is
+        how two layers are made continuous at the positions named. The
+        layers share their lateral grid, so the jump is a lateral Fourier
+        series with as many terms as the grid has points; conditioned to
+        vanish at every point of the grid, it vanishes at every position
+        across.
+
+        Args:
+            interface: which interface, by position among :attr:`interfaces`,
+                in order of depth.
+            positions: the lateral positions at which the jump is taken:
+                ``x`` coordinates along a strip, ``(x, y)`` pairs in a slab.
+            unsafe: build it even in layers too rough to admit it.
+
+        Returns:
+            The operator into a Euclidean space of one dimension per
+            position. It claims to be onto while there are no more positions
+            than points of the lateral grid, the lateral Fourier functions,
+            which holds for positions that tell those functions apart, such
+            as distinct points of the grid. Positions repeated, or in a slab
+            more on one line than the grid has points along it, make
+            dependent rows, on which an exact conditioning is singular.
+
+        Raises:
+            ValueError: if no positions are given, a slab's are not pairs,
+                one lies outside a bounded lateral domain, or a layer's
+                order is too low and *unsafe* is not set.
+            IndexError: if there is no such interface.
+        """
+        depth = self.interfaces[interface]
+        if positions is None:
+            raise ValueError(
+                "Across a flat interface the jump is taken at given lateral "
+                "positions: pass positions=."
+            )
+        axes = self.spatial_dimension - 1
+        lateral = np.asarray(positions, dtype=float)
+        if axes == 1:
+            lateral = lateral.reshape(-1, 1)
+        elif lateral.ndim != 2 or lateral.shape[1] != axes:
+            raise ValueError(
+                f"The positions in a slab are (x, y) pairs; got an array of "
+                f"shape {lateral.shape}."
+            )
+        if lateral.shape[0] == 0:
+            raise ValueError("At least one position is needed.")
+        points = [(depth, *row) for row in lateral]
+        for side in ("above", "below"):
+            self._require_point_evaluation(
+                "A jump operator", points=points, side=side, unsafe=unsafe
+            )
+        matrix = self.basis_matrix(points, side="above") - self.basis_matrix(
+            points, side="below"
+        )
+        # The jump at a position is the lateral Fourier functions there
+        # against each one's jump in depth, and those are independent, each
+        # coefficient being free in both layers. So the rows are as
+        # independent as the functions at the positions, which more
+        # positions than functions cannot be.
+        onto = len(points) <= self.layers[0].transform.size
+        return LinearOperator.from_matrix(
+            self,
+            EuclideanSpace(len(points)),
+            matrix,
+            form="galerkin",
+            traits=Traits.SURJECTIVE if onto else Traits.NONE,
         )

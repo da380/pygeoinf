@@ -50,6 +50,14 @@ the variance between its points therefore dips below the calibrated value by
 that mode's share, the smallest of the spectrum; a grid of odd size has no
 such mode, and is exact everywhere across.
 
+**Layers are stacked in depth** by :class:`Layered`: a strip in each layer
+between consecutive depths, each with its own length scale and truncation in
+depth, all over one lateral period and grid, the field smooth within a layer
+and free to jump between them. Depth is positive downward and the sides of
+an interface keep their physical sense: *above* is the shallower layer,
+*below* the deeper, and the jump across an interface, a horizontal line, is
+the value above less the value below, taken at given positions ``x``.
+
 The numerics are ``planetmodel``'s: ``SeparableOperatorFamily`` under the
 plain measure and indexed by the lateral eigenvalue, one ``SpectralBasis``
 per distinct ``k^2`` held in a ``planetmodel.cartesian.LayerBasis``
@@ -57,6 +65,7 @@ per distinct ``k^2`` held in a ``planetmodel.cartesian.LayerBasis``
 ``planetmodel.fourier`` (:attr:`Strip.transform`).
 """
 
+from .layered import Layered
 from .space import Lebesgue, Sobolev, Strip
 
-__all__ = ["Lebesgue", "Sobolev", "Strip"]
+__all__ = ["Layered", "Lebesgue", "Sobolev", "Strip"]

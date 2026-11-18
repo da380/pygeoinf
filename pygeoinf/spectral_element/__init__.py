@@ -35,9 +35,10 @@ where they matter.
     fields of ``(depth, x, y)`` in a flat layer, under ``dz`` and the Fourier
     modes of two lateral axes, the Cartesian counterpart of the ball.
 
-Each exports ``Lebesgue`` and ``Sobolev``, and the first three a ``Layered``
-space of piecewise-continuous fields over layers of its geometry that are
-adjacent in space. What is here is what they share and what a backend author may build
+Each exports ``Lebesgue`` and ``Sobolev``, and a ``Layered`` space of
+piecewise-continuous fields over layers of its geometry that are adjacent in
+space: shells of a ball or rings of a disk outward, flat layers stacked in
+depth. What is here is what they share and what a backend author may build
 on: :class:`SpectralElementSpace`, the Sobolev scale, the pointwise algebra,
 point evaluation and the Gaussian measures of any such space;
 :class:`AxisSpace`, a space of functions of one coordinate on a padded mesh;

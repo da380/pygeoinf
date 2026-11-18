@@ -127,7 +127,7 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 | `sampling` | function-space Markov chain Monte Carlo: the target and its exact flows, the dynamics and splitting schemes they compose into, Metropolis corrections, the moves (`PCN`, `MALA`, `HMC`, `GeneralizedHMC`, `Gibbs`), the runs that apply them (`Chains`, tempered `SMC`), and the sampled posterior with its diagnostics |
 | `inference` | forward problems and their likelihood potential; point, measure and set estimators, linear and nonlinear, among them `MonteCarloEstimator`, the posterior sampled by a run of `sampling`; the reference constructors for a posterior |
 | `symmetric_space` | spaces in the eigenbasis of the Laplacian: the sphere; the periodic box (circle, torus); the bounded box (line, plane); scattered evaluation, gradients at points, the ray travel-time operator |
-| `spectral_element`, `interval`, `ball`, `disk`, `slab`, `strip` | spaces in the eigenbasis of `1 − div(L² grad)` on a padded spectral-element mesh, for a varying length scale: an interval (and radial profiles), a ball or shell, a disk or annulus, each with a `Layered` form; and a flat layer, Fourier across and spectral elements in depth, over one lateral axis (a strip) or two (a slab); `spectral_element` is the shared core over `planetmodel` |
+| `spectral_element`, `interval`, `ball`, `disk`, `slab`, `strip` | spaces in the eigenbasis of `1 − div(L² grad)` on a padded spectral-element mesh, for a varying length scale: an interval (and radial profiles), a ball or shell, a disk or annulus, and a flat layer, Fourier across and spectral elements in depth, over one lateral axis (a strip) or two (a slab), each with a `Layered` form; `spectral_element` is the shared core over `planetmodel` |
 | `plotting` | figures of fields, points, paths, sets and distributions on every geometry |
 | `testing` | the `check_*` functions, from the space axioms to affine operators and splitting schemes, each returning a `CheckReport` |
 | `datasets` | shipped station and earthquake tables and their explicit downloads |
@@ -156,6 +156,11 @@ Spaces are reached by geometry (`symmetric_space.sphere.Sobolev`,
   without the Condon-Shortley phase.
 - **`power_measure(p)` takes the `L²` spectrum** on every space;
   `invariant_measure` takes eigenvalues in the space's own metric.
+- **Above an interface is the side of the larger coordinate** in a layered
+  space -- the larger radius, or the larger position on a line -- and the
+  jump is the value above less the value below. In flat layers depth is the
+  coordinate and increases downward, and above is still the shallower side,
+  so the jump has the sign a ball gives the same interface.
 - **A flat layer is periodic across.** Its domain is the whole lateral
   period unless a padded domain is given, and a prior's pointwise variance
   is exact at the lateral grid's points; between them it is exact on a grid

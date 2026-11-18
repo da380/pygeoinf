@@ -84,6 +84,7 @@ failing test rather than a surprise later.
 | 35 | `density_profile` | a function of radius under `r² dr`: a planet's density from its mass and moment of inertia, and why they say nothing of the centre |
 | 36 | `layered_planet` | fields that are smooth in each layer and jump between them: a direct sum of spaces that knows its layers are adjacent, data of three kinds at once, and continuity by conditioning |
 | 40 | `flat_layers` | the disk and the ball laid flat: a strip and a slab, Fourier across and spectral elements in depth, a prior drawn as a depth section and as lateral maps, and how far down surface data reach |
+| 41 | `layered_flat` | flat layers stacked in depth: a sediment over a basement, independent and so free to jump, then welded by conditioning on a vanishing jump; surface data say nothing of the basement until the layers are welded |
 
 **Sampling**
 

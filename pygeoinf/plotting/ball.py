@@ -200,7 +200,11 @@ def _shells(space: Ball | Layered, field: Any, /) -> tuple[list[Ball], list[Any]
     """
     if isinstance(space, Layered):
         if not issubclass(space.geometry, Ball):
-            raise TypeError("Only layers that are balls have shells and sections.")
+            raise TypeError(
+                f"Only layers that are balls have shells and sections: these "
+                f"are {space.geometry.__name__}s, for which no renderer is "
+                f"registered."
+            )
         return list(space.layers), list(field)
     return [space], [field]
 
