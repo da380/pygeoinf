@@ -18,6 +18,14 @@ them unless the padding is wide compared with its correlation length, and too
 little padding is the usual cause of a spurious correlation between the two
 ends of an interval. :meth:`Box.project_function` rolls a sampled function off
 to zero across the padding, and :meth:`Box.support_projection` zeroes it.
+
+The geometry is that of ``planetmodel.fourier.PaddedDomain``: the enclosing
+box is the bounds widened by the padding on each side, its periods and lower
+corner are that box's, and the grid runs from the corner. A point lies in the
+domain when on every axis it is past neither bound by more than
+``POSITION_RTOL`` (``1e-12``) times the axis's width; the same test puts a grid
+point in :attr:`Box.interior_mask`, so the mask and the points the space
+accepts agree. A point with a NaN coordinate lies nowhere, and is refused.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from typing import Any, Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
+from planetmodel.fourier import POSITION_RTOL, PaddedDomain
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import resolve_rng
@@ -35,10 +44,6 @@ from .base import PreparedPoints
 from .fourier import PeriodicBox
 
 __all__ = ["Box", "Interval", "Lebesgue", "Sobolev"]
-
-#: Relative allowance on the boundary of the domain: a point this close
-#: outside counts as on it, and one further out is refused.
-_POSITION_RTOL = 1e-12
 
 
 class Box(PeriodicBox):
@@ -84,11 +89,12 @@ class Box(PeriodicBox):
         if any(p < 0.0 for p in padding):
             raise ValueError("Padding must be non-negative.")
 
-        self._bounds = bounds
-        self._padding = padding
+        # The domain proper, its padding and the periodic box they make: the
+        # periods, the grid, the mask, the taper and the domain check are its.
+        self._padded_domain = PaddedDomain(bounds, padding=padding)
         super().__init__(
             shape,
-            lengths=tuple(e + 2.0 * p for e, p in zip(extents, padding)),
+            lengths=self._padded_domain.lengths,
             order=order,
             length_scale=length_scale,
         )
@@ -100,23 +106,23 @@ class Box(PeriodicBox):
     @property
     def bounds(self) -> tuple[tuple[float, float], ...]:
         """The domain's extent on each axis, padding excluded."""
-        return self._bounds
+        return self._padded_domain.bounds
 
     @property
     def padding(self) -> tuple[float, ...]:
         """The periodic padding added on each side of each axis."""
-        return self._padding
+        return self._padded_domain.padding
 
     @property
     def domain_volume(self) -> float:
         """The measure of the domain proper, excluding the padding."""
-        return float(np.prod([b - a for a, b in self._bounds]))
+        return self._padded_domain.domain_volume
 
     def _key(self) -> Hashable:
         return (
             self._shape,
-            self._bounds,
-            self._padding,
+            self.bounds,
+            self.padding,
             self._order,
             # The length scale enters the metric only above order zero.
             self._length_scale if self._order != 0.0 else None,
@@ -132,43 +138,47 @@ class Box(PeriodicBox):
         a bounded box and its enclosing periodic one share a grid but not an
         idea of where a grid index sits.
         """
-        return ("box", self._shape, self._bounds, self._padding)
+        return ("box", self._shape, self.bounds, self.padding)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
-        return f"Box({self._shape}, bounds={self._bounds}, {kind})"
+        return f"Box({self._shape}, bounds={self.bounds}, {kind})"
 
     def _domain_key(self) -> Hashable:
         """The bounds and the padding, which place the domain in the
         enclosing box: two boxes of one period on different bounds hold
         different fields under the same modes."""
-        return ("box", self._bounds, self._padding)
+        return ("box", self.bounds, self.padding)
 
     def _require_inside(self, positions: np.ndarray, /) -> None:
-        """Refuse any row of *positions* that lies outside the domain.
+        """Refuse any row of *positions* that is not a point of the domain.
 
         The padding is a numerical device, not part of the domain, and a
         point beyond it would be wrapped round the enclosing period onto
         another point altogether; either way the value read there is not the
-        field's at the point asked for. A point within a relative ``1e-12``
-        of the boundary counts as on it.
+        field's at the point asked for. Membership is that of
+        ``PaddedDomain.contains``: a point past a bound by no more than
+        ``POSITION_RTOL`` (``1e-12``) times the axis's width counts as on it,
+        and a point with a NaN coordinate is not in the domain.
 
         Raises:
-            ValueError: naming the domain and the first point outside it.
+            ValueError: naming the domain and the first point outside it,
+                ``nan`` where that is the coordinate.
         """
-        lower = np.array([a for a, _ in self._bounds])
-        upper = np.array([b for _, b in self._bounds])
-        slack = _POSITION_RTOL * (upper - lower)
-        outside = np.any(
-            (positions < lower - slack) | (positions > upper + slack), axis=1
-        )
+        outside = ~self._padded_domain.contains(positions)
         if np.any(outside):
-            domain = " x ".join(f"[{a:g}, {b:g}]" for a, b in self._bounds)
+            domain = " x ".join(f"[{a:g}, {b:g}]" for a, b in self.bounds)
             point = ", ".join(f"{c:g}" for c in positions[outside][0])
             raise ValueError(
                 f"Every point must lie in the domain, {domain}; one is at "
                 f"({point})."
             )
+
+    def _into_enclosing(self, positions: np.ndarray, /) -> np.ndarray:
+        """Coordinates of the domain as those of the enclosing periodic box,
+        whose transform counts from its lower corner: the domain's
+        coordinates less ``PaddedDomain.origin``."""
+        return positions - np.asarray(self._padded_domain.origin)
 
     def _to_enclosing(self, point: Any, /, *, check: bool = True) -> np.ndarray:
         """Map a point of the domain into the enclosing periodic box.
@@ -186,8 +196,7 @@ class Box(PeriodicBox):
             )
         if check:
             self._require_inside(position[None, :])
-        lower = np.array([a for a, _ in self._bounds])
-        return position - lower + np.asarray(self._padding)
+        return self._into_enclosing(position)
 
     @cached_property
     def grid_axes(self) -> tuple[np.ndarray, ...]:
@@ -196,12 +205,7 @@ class Box(PeriodicBox):
         These run from ``lower - padding`` to just short of ``upper + padding``,
         so the domain proper occupies the middle of each axis.
         """
-        return tuple(
-            (a - p) + np.arange(n) * length / n
-            for (a, _), p, n, length in zip(
-                self._bounds, self._padding, self._shape, self._lengths
-            )
-        )
+        return self._padded_domain.grid_axes(self._shape)
 
     @property
     def reference_point(self) -> np.ndarray:
@@ -211,8 +215,8 @@ class Box(PeriodicBox):
         domain, where evaluation is allowed.
         """
         corner = []
-        for axis, (lower, upper) in zip(self.grid_axes, self._bounds):
-            inside = axis[axis >= lower - _POSITION_RTOL * (upper - lower)]
+        for axis, (lower, upper) in zip(self.grid_axes, self.bounds):
+            inside = axis[axis >= lower - POSITION_RTOL * (upper - lower)]
             corner.append(float(np.min(inside)))
         return np.array(corner)
 
@@ -280,14 +284,12 @@ class Box(PeriodicBox):
         quadratures that step into the padding on purpose."""
         if isinstance(points, PreparedPoints):
             return points
-        lower = np.array([a for a, _ in self._bounds])
-        shift = np.asarray(self._padding) - lower
         if isinstance(points, np.ndarray) and points.ndim == 2:
             # An array of rows moves into the enclosing box in one step.
             rows = np.asarray(points, dtype=float)
             if rows.shape[1] == self.spatial_dimension and check:
                 self._require_inside(rows)
-            inside = rows + shift
+            inside = self._into_enclosing(rows)
         else:
             points = tuple(points)
             inside = [self._to_enclosing(point, check=check) for point in points]
@@ -302,7 +304,7 @@ class Box(PeriodicBox):
         """A point drawn uniformly from the domain, never from the padding."""
         generator = resolve_rng(rng)
         return np.array(
-            [generator.uniform(lower, upper) for lower, upper in self._bounds]
+            [generator.uniform(lower, upper) for lower, upper in self.bounds]
         )
 
     def _separation(self, start: Any, end: Any, /) -> np.ndarray:
@@ -415,8 +417,8 @@ class Box(PeriodicBox):
         order = self._order if order is None else float(order)
         scale = self._length_scale if length_scale is None else float(length_scale)
         if order == 0.0:
-            return Lebesgue(shape, bounds=self._bounds, padding=self._padding)
-        return Sobolev(shape, order, scale, bounds=self._bounds, padding=self._padding)
+            return Lebesgue(shape, bounds=self.bounds, padding=self.padding)
+        return Sobolev(shape, order, scale, bounds=self.bounds, padding=self.padding)
 
     # ----------------------------------------------------------------- #
     #                              Support                              #
@@ -424,45 +426,23 @@ class Box(PeriodicBox):
 
     @cached_property
     def interior_mask(self) -> np.ndarray:
-        """A boolean grid array, true on the domain and false on the padding."""
-        masks = [
-            (axis >= lower - 1e-12) & (axis <= upper + 1e-12)
-            for axis, (lower, upper) in zip(self.grid_axes, self._bounds)
-        ]
-        mask = masks[0]
-        for extra in masks[1:]:
-            mask = np.logical_and.outer(mask, extra)
-        return mask.reshape(self._shape)
+        """A boolean grid array, true on the domain and false on the padding.
+
+        A grid point is in the domain by the same test as any other point:
+        past neither bound of any axis by more than ``POSITION_RTOL`` times
+        the axis's width.
+        """
+        return self._padded_domain.mask(self._shape)
 
     @cached_property
     def _taper(self) -> np.ndarray:
         """A raised-cosine window: one on the domain, zero past the padding.
 
         The product of a per-axis window, each going smoothly from one at the
-        boundary to zero at the edge of the padding.
+        boundary to zero at the edge of the padding: ``0.5 (1 + cos(pi s))``,
+        with ``s`` the distance from the nearer bound over the padding.
         """
-        windows = []
-        for axis, (lower, upper), pad in zip(
-            self.grid_axes, self._bounds, self._padding
-        ):
-            window = np.ones_like(axis)
-            if pad > 0.0:
-                below = axis < lower
-                above = axis > upper
-                # Distance into the padding, as a fraction of its width. The
-                # grid is periodic, so a point past the far edge is also
-                # "before" the near one; both are handled by measuring from
-                # whichever boundary it fell off.
-                left = np.clip((lower - axis[below]) / pad, 0.0, 1.0)
-                right = np.clip((axis[above] - upper) / pad, 0.0, 1.0)
-                window[below] = 0.5 * (1.0 + np.cos(np.pi * left))
-                window[above] = 0.5 * (1.0 + np.cos(np.pi * right))
-            windows.append(window)
-
-        taper = windows[0]
-        for extra in windows[1:]:
-            taper = np.multiply.outer(taper, extra)
-        return taper.reshape(self._shape)
+        return self._padded_domain.taper(self._shape)
 
     def project_function(
         self, function: Callable[[Any], float], /, *, taper: bool = True
@@ -504,8 +484,8 @@ class Box(PeriodicBox):
         # Clamp each coordinate into the domain, so a padding point is given
         # the value of the nearest point of the domain and `function` is never
         # asked about anywhere else.
-        lower = np.array([a for a, _ in self._bounds])
-        upper = np.array([b for _, b in self._bounds])
+        lower = np.array([a for a, _ in self.bounds])
+        upper = np.array([b for _, b in self.bounds])
         clamped = np.clip(points, lower, upper)
         values = np.array(
             [
