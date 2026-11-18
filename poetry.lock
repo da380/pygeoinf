@@ -2903,14 +2903,14 @@ xmp = ["defusedxml"]
 
 [[package]]
 name = "planetmodel"
-version = "2.0.0"
+version = "2.1.0"
 description = "Spherically layered planetary models: reference bodies, fields, mappings and meshes"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "planetmodel-2.0.0-py3-none-any.whl", hash = "sha256:db1a6f77d4c40fc8dd27d9442bd81eae69bc262318c8fd44971cbe0b80130626"},
-    {file = "planetmodel-2.0.0.tar.gz", hash = "sha256:8032adfd21bdd3d3b76286f7803f372ff7203639dd6e5ce8b31dd93d27bfc3c5"},
+    {file = "planetmodel-2.1.0-py3-none-any.whl", hash = "sha256:c7e891341b8b58963d5b6a58978a3a9f9f738bf462774b84ca2aac457876c622"},
+    {file = "planetmodel-2.1.0.tar.gz", hash = "sha256:7599b8143fe3352bfad7251d424afb91c7fb06c07d7d9580ff2256287508c9e0"},
 ]
 
 [package.dependencies]
@@ -4588,4 +4588,4 @@ sphere = ["Cartopy", "ducc0", "pyshtools", "shapely"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "4b736eeb082ad208f2dc726f75a7aee87cc397a4dd0619737238d1ece1199f79"
+content-hash = "0057b9c6aa1f4bd5a5e1c56dbbefc8f6e8ccb0e58653cd3e84392fd649135c58"

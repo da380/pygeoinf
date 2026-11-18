@@ -92,14 +92,17 @@ class _NufftEvaluation:
     The same contractions as :class:`LocalEvaluation`, to the same
     interface, with the product of the lateral basis at the points and the
     coefficient functions at an element's nodes taken by ``finufft``
-    through ``planetmodel``'s ``Transform.synthesise``, and its transpose
-    by ``Transform.accumulate``: one batched transform per element of the
-    depth mesh that holds a point, of cost the lateral grid's and the
-    points' and not their product. Nothing is held per point but its
-    element and its ``ngll`` Lagrange weights. On a slab of 64 by 64 lateral
-    points and 101 nodes in depth, on two threads, an application at 20 000
-    points took 0.04 s against 0.9 s by the direct sums, and at 2000 points
-    0.03 s against 0.06 s.
+    through ``planetmodel``'s ``PointTransform``, and its transpose by its
+    ``accumulate``: one batched transform per element of the depth mesh
+    that holds a point, of cost the lateral grid's and the points' and not
+    their product. Each such element has its own ``PointTransform``, made
+    here from the lateral positions of its points, which keeps their angles
+    in the lateral box and, from its first application, finufft's plan of
+    each type of transform, the points sorted. Nothing else is held per
+    point but its element and its ``ngll`` Lagrange weights. On a slab of
+    64 by 64 lateral points and 101 nodes in depth, on two threads, an
+    application at 20 000 points took 0.04 s against 0.9 s by the direct
+    sums, and at 2000 points 0.03 s against 0.06 s.
     """
 
     def __init__(
@@ -134,16 +137,20 @@ class _NufftEvaluation:
         order = np.argsort(elements, kind="stable")
         self._order = order
         self._weights = weights[order]
-        self._lateral = points[order, 1:]
+        lateral = points[order, 1:]
         inside = elements[order]
         cuts = [0, *(np.flatnonzero(np.diff(inside)) + 1), order.size]
         self._runs = [
-            (mesh.gmap[int(inside[a])], int(a), int(b))
+            (
+                mesh.gmap[int(inside[a])],
+                int(a),
+                int(b),
+                space.transform.at(lateral[a:b], epsilon=float(epsilon)),
+            )
             for a, b in zip(cuts[:-1], cuts[1:])
         ]
         self._nglob = mesh.nglob
         self._space = space
-        self._epsilon = float(epsilon)
 
     @property
     def size(self) -> int:
@@ -162,10 +169,8 @@ class _NufftEvaluation:
         space = self._space
         functions = space._nodal_functions(components)
         ordered = np.empty(self.size)
-        for nodes, a, b in self._runs:
-            local = space.transform.synthesise(
-                functions[:, nodes].T, self._lateral[a:b], epsilon=self._epsilon
-            )
+        for nodes, a, b, lateral in self._runs:
+            local = lateral.synthesise(functions[:, nodes].T)
             ordered[a:b] = np.einsum("ji,ij->i", local, self._weights[a:b])
         out = np.empty(self.size)
         out[self._order] = ordered
@@ -185,10 +190,8 @@ class _NufftEvaluation:
         data = np.asarray(data, dtype=float).reshape(-1)
         weighted = self._weights * data[self._order][:, None]
         functions = np.zeros((space.transform.size, self._nglob))
-        for nodes, a, b in self._runs:
-            functions[:, nodes] += space.transform.accumulate(
-                weighted[a:b].T, self._lateral[a:b], epsilon=self._epsilon
-            ).T
+        for nodes, a, b, lateral in self._runs:
+            functions[:, nodes] += lateral.accumulate(weighted[a:b].T).T
         return space._nodal_projection(functions)
 
 

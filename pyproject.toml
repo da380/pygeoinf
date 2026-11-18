@@ -23,7 +23,7 @@ dependencies = [
     # transform under the flat ones; its harmonics run on ducc0, which
     # arrives with it. Drawing a ball's shells as maps still goes through the
     # sphere renderer, which is the sphere extra.
-    "planetmodel>=2.0.0",
+    "planetmodel>=2.1.0",
 ]
 
 [project.optional-dependencies]

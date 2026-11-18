@@ -88,13 +88,20 @@ class PreparedPoints:
     back to ``prepare_points`` is free, which is what lets every route accept
     either without asking which it got.
 
+    What a geometry builds from the converted form for one setting of its
+    transform is kept with the points as well, built on its first use: the
+    periodic box keeps ``planetmodel``'s transform at them for each accuracy
+    and thread count it is applied with. The converted form is therefore
+    taken as fixed once prepared. A copy or a pickle takes what is kept
+    along with the points.
+
     Attributes:
         points: the points themselves, as a tuple.
         data: whatever the geometry precomputed, or ``None`` where it has
             nothing to precompute. Its shape is that geometry's business.
     """
 
-    __slots__ = ("points", "data")
+    __slots__ = ("points", "data", "_kept")
 
     def __init__(self, points: Sequence[Any], /, *, data: Any = None) -> None:
         """
@@ -104,6 +111,25 @@ class PreparedPoints:
         """
         self.points = tuple(points)
         self.data = data
+        self._kept: dict[Hashable, Any] = {}
+
+    def _cached(self, key: Hashable, build: Callable[[], Any], /) -> Any:
+        """What a geometry builds from :attr:`data`, built on first use and
+        kept with the points under ``key``.
+
+        Args:
+            key: hashable: the geometry's name first, then every setting
+                what is built depends on.
+            build: called if the key is new. Two threads asking at once may
+                both call it; the first result stored is the one kept.
+
+        Returns:
+            What was built, now or before.
+        """
+        kept = self._kept.get(key)
+        if kept is None:
+            kept = self._kept.setdefault(key, build())
+        return kept
 
     def __len__(self) -> int:
         """How many points there are."""

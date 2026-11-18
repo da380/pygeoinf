@@ -577,6 +577,111 @@ class TestPointEvaluation:
         assert points.mean(axis=0) == pytest.approx([1.25, 0.5, -0.25], abs=0.04)
 
 
+def nufft_with_the_points_given(space, points, /):
+    """The non-uniform route's values and its transpose, with the lateral
+    points handed to ``planetmodel``'s transform at every application: per
+    element of the depth mesh, the coefficient functions at its nodes
+    synthesised at the lateral positions of its points and weighted by
+    their Lagrange weights in depth."""
+    points = np.asarray(points, dtype=float)
+    mesh = space.basis.family.mesh
+    elements, weights = mesh.interpolation_weights(points[:, 0])
+    transform = space.transform
+
+    def values(components):
+        functions = space._nodal_functions(components)
+        out = np.empty(len(points))
+        for element in np.unique(elements):
+            here = elements == element
+            local = transform.synthesise(
+                functions[:, mesh.gmap[element]].T, points[here, 1:]
+            )
+            out[here] = np.einsum("ji,ij->i", local, weights[here])
+        return out
+
+    def derivative_components(data):
+        functions = np.zeros((transform.size, mesh.nglob))
+        for element in np.unique(elements):
+            here = elements == element
+            weighted = weights[here] * data[here][:, None]
+            functions[:, mesh.gmap[element]] += transform.accumulate(
+                weighted.T, points[here, 1:]
+            ).T
+        return space._nodal_projection(functions)
+
+    return values, derivative_components
+
+
+class TestTheNonUniformRouteKeepsItsTransforms:
+    """The non-uniform route prepares the lateral points of each element of
+    the depth mesh once, ``planetmodel``'s transform at them, and applies
+    it at every application: the results are those of the transform with
+    the points given, to rounding, however often it is applied."""
+
+    @staticmethod
+    def close(actual, expected):
+        scale = np.abs(expected).max()
+        return np.allclose(actual, expected, rtol=0.0, atol=1e-13 * scale)
+
+    @pytest.mark.parametrize("build", [bounded_strip, slab])
+    def test_repeated_applications_are_the_transform_with_the_points_given(
+        self, build, rng
+    ):
+        space = build(2.0)
+        points = np.array([space.random_point(rng=rng) for _ in range(60)])
+        operator = space.point_evaluation_operator(points, route="nufft")
+        values, derivative_components = nufft_with_the_points_given(space, points)
+        x = space.random(rng=rng)
+        y = rng.normal(size=60)
+        expected = values(space.to_components(x))
+        spread = space.from_components(space.solve_gram(derivative_components(y)))
+        for _ in range(3):
+            assert self.close(operator(x), expected)
+            assert self.close(operator.adjoint(y), spread)
+
+    def test_each_element_is_prepared_once(self, rng, monkeypatch):
+        from planetmodel.fourier import Transform
+
+        made = []
+        at = Transform.at
+
+        def counting(transform, points, /, **options):
+            made.append(len(points))
+            return at(transform, points, **options)
+
+        monkeypatch.setattr(Transform, "at", counting)
+        space = slab(2.0)
+        points = np.array([space.random_point(rng=rng) for _ in range(60)])
+        operator = space.point_evaluation_operator(points, route="nufft")
+        elements, _ = space.basis.family.mesh.interpolation_weights(points[:, 0])
+        assert sorted(made) == sorted(np.bincount(elements)[np.unique(elements)])
+        x = space.random(rng=rng)
+        for _ in range(3):
+            operator(x)
+            operator.adjoint(rng.normal(size=60))
+        assert len(made) == np.unique(elements).size
+
+    def test_a_copy_or_a_pickle_applies_as_the_original(self, rng):
+        import copy
+
+        from joblib.externals import cloudpickle
+
+        space = bounded_slab(2.0)
+        points = [space.random_point(rng=rng) for _ in range(30)]
+        operator = space.point_evaluation_operator(points, route="nufft")
+        x = space.random(rng=rng)
+        y = rng.normal(size=30)
+        values = operator(x)
+        adjoint = space.to_components(operator.adjoint(y))
+        for copied in (
+            cloudpickle.loads(cloudpickle.dumps(operator)),
+            copy.deepcopy(operator),
+        ):
+            assert self.close(copied(x), values)
+            assert self.close(space.to_components(copied.adjoint(y)), adjoint)
+        assert self.close(operator(x), values)
+
+
 class TestProjection:
     @pytest.mark.parametrize("build", GEOMETRIES)
     def test_a_fit_over_the_domain_is_right_on_it(self, build):

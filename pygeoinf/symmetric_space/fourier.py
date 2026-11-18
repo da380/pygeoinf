@@ -28,7 +28,7 @@ from typing import Any, Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
-from planetmodel.fourier import Transform
+from planetmodel.fourier import PointTransform, Transform
 from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
@@ -347,19 +347,33 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             return None
         return self._transform
 
-    def _positions(self, points: Sequence[Any]) -> np.ndarray:
-        """Points as an array of rows in the periodic box's coordinates."""
-        return self.prepare_points(points).data
+    def _at(self, points: Sequence[Any], eps: float, nthreads: int) -> PointTransform:
+        """``planetmodel``'s transform at the points, to ``eps`` with
+        ``nthreads`` threads: built on first use and kept with the prepared
+        points, for this grid and box, accuracy and thread count."""
+        prepared = self.prepare_points(points)
+        transform = self._point_transform
+        key = ("fourier", transform.shape, transform.domain, eps, nthreads)
+        return prepared._cached(
+            key,
+            lambda: transform.at(prepared.data, epsilon=eps, nthreads=nthreads),
+        )
 
     def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
         """The points as one contiguous array of rows, one per point.
 
         The conversion the non-uniform FFT starts with, a Python loop over
         the points unless they come as an array of rows, done once for an
-        operator rather than once per application. The transform takes each
-        coordinate to its angle ``2 pi x / L`` on the way in; a coordinate
-        outside ``[0, L)`` is the same point of the periodic box as its image
+        operator rather than once per application. A coordinate outside
+        ``[0, L)`` is the same point of the periodic box as its image
         inside.
+
+        The prepared points also keep ``planetmodel``'s transform at them,
+        ``Transform.at``, one for each accuracy and thread count they are
+        evaluated with, built at the first evaluation: each coordinate taken
+        to its angle ``2 pi x / L`` once, and finufft's plan of each type of
+        transform, the points sorted, made at its first application and
+        reused at every later one.
 
         Args:
             points: points of the box, or an already prepared set.
@@ -419,12 +433,8 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         transform = self._point_transform
         if transform is None:
             return super().evaluate(x, points)
-        values = transform.synthesise(
-            self.to_components(x),
-            self._positions(points),
-            epsilon=eps,
-            nthreads=nthreads,
-        )
+        components = self.to_components(x)
+        values = self._at(points, eps, nthreads).synthesise(components)
         return np.ascontiguousarray(values)
 
     def evaluate_gradient(
@@ -457,12 +467,12 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         points = self.prepare_points(points)
         if transform is None:
             return self._gradient_by_differences(x, points)
-        values = transform.synthesise_gradient(
-            self.to_components(x),
-            points.data,
-            epsilon=1.0e-12 if eps is None else eps,
-            nthreads=1 if nthreads is None else nthreads,
-        )
+        components = self.to_components(x)
+        values = self._at(
+            points,
+            1.0e-12 if eps is None else eps,
+            1 if nthreads is None else nthreads,
+        ).synthesise_gradient(components)
         return np.ascontiguousarray(values)
 
     def _gradient_by_differences(self, x: np.ndarray, points: Any) -> np.ndarray:
@@ -508,9 +518,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         transform = self._point_transform
         if transform is None:
             return super().accumulate(weights, points)
-        return transform.accumulate(
-            weights, self._positions(points), epsilon=eps, nthreads=nthreads
-        )
+        return self._at(points, eps, nthreads).accumulate(weights)
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid.
