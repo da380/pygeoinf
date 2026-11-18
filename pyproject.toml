@@ -17,8 +17,10 @@ dependencies = [
     "threadpoolctl>=3.6.0",
     "finufft>=2.5.1",
     # The numerics of the spaces on a spectral-element mesh (pygeoinf.interval,
-    # pygeoinf.ball, pygeoinf.disk and the pygeoinf.spectral_element core they
-    # share) are planetmodel.randomfield's; its harmonics run on ducc0, which
+    # pygeoinf.ball, pygeoinf.disk, pygeoinf.slab, pygeoinf.strip and the
+    # pygeoinf.spectral_element core they share) are planetmodel.randomfield's,
+    # with planetmodel.cartesian's layer basis and planetmodel.fourier's lateral
+    # transform under the flat ones; its harmonics run on ducc0, which
     # arrives with it. Drawing a ball's shells as maps still goes through the
     # sphere renderer, which is the sphere extra.
     "planetmodel>=2.0.0",

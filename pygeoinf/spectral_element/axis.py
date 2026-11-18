@@ -392,7 +392,7 @@ class AxisSpace(SpectralElementSpace):
         """One group, every component: a field of one coordinate has no
         angular functions, and its components are ``scale`` times the
         modes' coefficients."""
-        return [_RadialGroup(self._basis, 0, 1, 1.0 / self._scale**2)]
+        return [_RadialGroup.consecutive(self._basis, 0, 1, 1.0 / self._scale**2)]
 
     def _scaled_family(
         self,

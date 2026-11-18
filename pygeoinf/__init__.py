@@ -15,8 +15,9 @@ space, a spherical-harmonic field or a finite element space. The subpackages:
 * ``sampling`` -- function-space Markov chain Monte Carlo: moves, and the
   chains and tempered populations that run them;
 * ``inference`` -- forward problems and the estimators built on them;
-* ``symmetric_space``, ``interval``, ``ball`` and ``disk`` -- concrete function
-  spaces, the last three on the ``spectral_element`` core;
+* ``symmetric_space``, ``interval``, ``ball``, ``disk``, ``slab`` and ``strip``
+  -- concrete function spaces, all but the first on the ``spectral_element``
+  core;
 * ``plotting`` -- figures for fields, measures and sets.
 
 The names a typical workflow needs are also exported here, flat, except
@@ -39,7 +40,9 @@ from . import (
     plotting,
     probability,
     sampling,
+    slab,
     spectral_element,
+    strip,
     symmetric_space,
 )
 from .algebra.diagonal import DiagonalLinearOperator
@@ -189,6 +192,8 @@ __all__ = [
     "interval",
     "ball",
     "disk",
+    "strip",
+    "slab",
     # inference: the workflow, flat
     "BackusGilbert",
     "BackusGilbertParker",

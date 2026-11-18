@@ -29,7 +29,7 @@ three kinds, each the same thing whatever the discretization:
   nonlinear.
 
 The same code runs on a function on a circle, a sphere, a disk or a ball,
-on a layered planet, on a finite element space, or on a vector type a C++
+in a flat layer, on a layered planet, on a finite element space, or on a vector type a C++
 code owns, because nothing in it reaches past the space's own arithmetic.
 Refining the grid changes the answer only as the discretization does, not
 the number of iterations it takes.
@@ -42,7 +42,7 @@ pip install pygeoinf
 
 Python 3.12 or later. The core needs NumPy, SciPy, Matplotlib, joblib,
 finufft and planetmodel, on which the spaces on intervals, radial profiles,
-disks and balls are built. The extras add function spaces and backends:
+disks, balls and flat layers are built. The extras add function spaces and backends:
 
 | extra | what it brings |
 |---|---|

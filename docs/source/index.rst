@@ -25,7 +25,7 @@ three kinds, each the same thing whatever the discretization:
   nonlinear.
 
 The same code runs on a function on a circle, a sphere, a disk or a ball,
-on a layered planet, on a finite element space, or on a vector type a C++
+in a flat layer, on a layered planet, on a finite element space, or on a vector type a C++
 code owns, because nothing in it reaches past the space's own arithmetic.
 
 Installation

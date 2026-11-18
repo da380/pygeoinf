@@ -670,7 +670,7 @@ class Ball(SpectralElementSpace):
         modes of degree ``l``, and their squares sum to ``(2 l + 1) / 4 pi``
         at every point."""
         return [
-            _RadialGroup(
+            _RadialGroup.consecutive(
                 radial,
                 self._basis.block(0, degree, 0).start,
                 2 * degree + 1,

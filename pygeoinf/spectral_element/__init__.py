@@ -28,10 +28,16 @@ where they matter.
 :mod:`pygeoinf.ball`
     fields of position in a ball or an annulus, under ``r^2 dr`` and the area
     of the sphere.
+:mod:`pygeoinf.strip`
+    fields of ``(depth, x)`` in a flat layer, under ``dz`` and the Fourier
+    modes of one lateral axis, the Cartesian counterpart of the disk.
+:mod:`pygeoinf.slab`
+    fields of ``(depth, x, y)`` in a flat layer, under ``dz`` and the Fourier
+    modes of two lateral axes, the Cartesian counterpart of the ball.
 
-Each exports ``Lebesgue`` and ``Sobolev``, and a ``Layered`` space of
-piecewise-continuous fields over layers of its geometry that are adjacent in
-space. What is here is what they share and what a backend author may build
+Each exports ``Lebesgue`` and ``Sobolev``, and the first three a ``Layered``
+space of piecewise-continuous fields over layers of its geometry that are
+adjacent in space. What is here is what they share and what a backend author may build
 on: :class:`SpectralElementSpace`, the Sobolev scale, the pointwise algebra,
 point evaluation and the Gaussian measures of any such space;
 :class:`AxisSpace`, a space of functions of one coordinate on a padded mesh;

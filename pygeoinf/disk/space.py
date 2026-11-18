@@ -648,7 +648,7 @@ class Disk(SpectralElementSpace):
         sine mode share the radial modes of the order, and their squares sum
         to ``1 / 2 pi`` at order zero and ``1 / pi`` above."""
         return [
-            _RadialGroup(
+            _RadialGroup.consecutive(
                 radial,
                 self._basis.block(0, m).start,
                 1 if m == 0 else 2,
