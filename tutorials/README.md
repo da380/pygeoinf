@@ -42,6 +42,4 @@ the two agree.
 
 ## What they need
 
-Tutorials 1 to 9 and 12 to 14 need only the core library. Tutorials 10 and 11
-need `planetmodel` (`poetry install --extras planetmodel`), tutorial 10 for its
-last section only; each says so at the top.
+Every tutorial needs only the core library.

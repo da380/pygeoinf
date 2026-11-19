@@ -1,6 +1,6 @@
 """Radial profiles: functions of radius under ``r^2 dr``.
 
-Needs ``planetmodel`` 1.2. The independent routes are the
+The independent routes are the
 ball, of which this space is the part of degree zero and with which it must
 agree component for component; ``planetmodel``'s banded solve; and the closed
 forms a constant length scale allows.
@@ -9,13 +9,9 @@ forms a constant length scale allows.
 import numpy as np
 import pytest
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
-if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-    pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
-
-from pygeoinf.ball import Ball  # noqa: E402
-from pygeoinf.interval.radial import Lebesgue, Radial, Sobolev  # noqa: E402
-from pygeoinf.testing import (  # noqa: E402
+from pygeoinf.ball import Ball
+from pygeoinf.interval.radial import Lebesgue, Radial, Sobolev
+from pygeoinf.testing import (
     check_coordinates,
     check_measure,
     check_operator,

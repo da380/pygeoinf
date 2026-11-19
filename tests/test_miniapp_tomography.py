@@ -10,8 +10,7 @@ composition of point evaluation with the path weights, and its adjoint by the
 library's check; the shooting tracer of the bent rays against the radial
 one, and the bent forward's derivative against finite differences; and the
 quick scale of every part, through its script's entry point, with what must
-hold. Needs planetmodel, which the disk and the
-ball are built on; without it the tests skip.
+hold.
 """
 
 from __future__ import annotations
@@ -23,8 +22,6 @@ import sys
 
 import numpy as np
 import pytest
-
-pytest.importorskip("planetmodel")
 
 MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "tomography"
 

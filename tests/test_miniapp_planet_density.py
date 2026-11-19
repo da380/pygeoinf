@@ -16,9 +16,6 @@ two posterior standard deviations, the wide answers are wider, the MAP
 model's boundary displacements recover the truth's to within two Laplace
 standard deviations, and Occam's model meets the level in two norms, each
 answer the smaller change in its own norm.
-
-Needs planetmodel, for PREM and the layered space; without it the tests skip
-and say so.
 """
 
 from __future__ import annotations
@@ -30,8 +27,6 @@ import sys
 
 import numpy as np
 import pytest
-
-pytest.importorskip("planetmodel")
 
 MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "planet_density"
 

@@ -25,7 +25,7 @@ three kinds, each the same thing whatever the discretization:
   nonlinear.
 
 The same code runs on a function on a circle, a sphere, a disk or a ball,
-on a layered planet, on a finite element space, or on a vector type a C++
+in a flat layer, on a layered planet, on a finite element space, or on a vector type a C++
 code owns, because nothing in it reaches past the space's own arithmetic.
 
 Installation
@@ -34,11 +34,10 @@ Installation
 .. code-block:: bash
 
    pip install pygeoinf
-   pip install "pygeoinf[sphere,planetmodel]"
+   pip install "pygeoinf[sphere]"
 
 Python 3.12 or later. The extras: ``sphere`` for functions on the
-two-sphere, ``planetmodel`` for intervals, radial profiles, disks, balls
-and layered planets, ``plot3d`` for three-dimensional sets, ``osqp`` and
+two-sphere, ``plot3d`` for three-dimensional sets, ``osqp`` and
 ``clarabel`` for alternative convex backends, and ``mfem`` for the finite
 element mini-app on Linux.
 

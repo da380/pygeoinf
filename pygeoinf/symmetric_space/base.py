@@ -24,6 +24,7 @@ the value of each basis function at a point.
 
 from __future__ import annotations
 
+import copy
 from abc import abstractmethod
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable, Hashable, Literal, Sequence
@@ -88,13 +89,25 @@ class PreparedPoints:
     back to ``prepare_points`` is free, which is what lets every route accept
     either without asking which it got.
 
+    What a geometry builds from the converted form for one setting of its
+    transform is kept with the points as well, built on its first use: the
+    periodic box keeps ``planetmodel``'s transform at them for each accuracy
+    and thread count it is applied with, and the sphere the same on the band
+    grid of its double Fourier sphere. The converted form is therefore taken
+    as fixed once prepared. A copy takes what is kept along with the points,
+    a shallow one sharing it and a deep one copying it. A pickle carries the
+    points and the converted form alone, what is kept being built again at
+    its first use after: ``planetmodel``'s transform leaves finufft's plans
+    behind when pickled, so carrying it would save little and enlarge the
+    pickle.
+
     Attributes:
         points: the points themselves, as a tuple.
         data: whatever the geometry precomputed, or ``None`` where it has
             nothing to precompute. Its shape is that geometry's business.
     """
 
-    __slots__ = ("points", "data")
+    __slots__ = ("points", "data", "_kept")
 
     def __init__(self, points: Sequence[Any], /, *, data: Any = None) -> None:
         """
@@ -104,6 +117,53 @@ class PreparedPoints:
         """
         self.points = tuple(points)
         self.data = data
+        self._kept: dict[Hashable, Any] = {}
+
+    def _cached(self, key: Hashable, build: Callable[[], Any], /) -> Any:
+        """What a geometry builds from :attr:`data`, built on first use and
+        kept with the points under ``key``.
+
+        Args:
+            key: hashable: the geometry's name first, then every setting
+                what is built depends on.
+            build: called if the key is new. Two threads asking at once may
+                both call it; the first result stored is the one kept.
+
+        Returns:
+            What was built, now or before.
+        """
+        kept = self._kept.get(key)
+        if kept is None:
+            kept = self._kept.setdefault(key, build())
+        return kept
+
+    def __getstate__(self) -> dict[str, Any]:
+        """What a pickle carries: the points and the converted form, and
+        nothing that is kept."""
+        return {"points": self.points, "data": self.data}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """The points and the converted form restored, with nothing kept
+        yet."""
+        self.points = state["points"]
+        self.data = state["data"]
+        self._kept = {}
+
+    def __copy__(self) -> PreparedPoints:
+        """A copy over the same points, converted form and kept things, the
+        last shared with the original."""
+        copied = type(self).__new__(type(self))
+        copied.points, copied.data, copied._kept = self.points, self.data, self._kept
+        return copied
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> PreparedPoints:
+        """The points, the converted form and the kept things, each copied."""
+        copied = type(self).__new__(type(self))
+        memo[id(self)] = copied
+        copied.points = copy.deepcopy(self.points, memo)
+        copied.data = copy.deepcopy(self.data, memo)
+        copied._kept = copy.deepcopy(self._kept, memo)
+        return copied
 
     def __len__(self) -> int:
         """How many points there are."""

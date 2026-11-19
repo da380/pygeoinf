@@ -162,6 +162,91 @@ class TestBoundedDomains:
         on_the_boundary = np.array([b for _, b in space.bounds])
         assert space.basis_at(on_the_boundary).shape == (space.dim,)
 
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: line.Sobolev(64, 1.0, 0.05, lower=0.0, upper=1.0),
+            lambda: plane.Sobolev((16, 16), 2.0, 0.1, bounds=[(0.0, 1.0), (5.0, 6.0)]),
+            lambda: Box(
+                (16, 12),
+                bounds=((0.0, 1.0), (-1.0, 1.0)),
+                order=2.0,
+                length_scale=0.2,
+            ),
+        ],
+        ids=["line", "plane", "box"],
+    )
+    def test_a_point_with_a_nan_coordinate_is_refused(self, make):
+        """NaN is no place in the domain, so every route refuses it, and the
+        message names it, rather than reading NaN out of the transform."""
+        space = make()
+        point = np.array([0.5 * (a + b) for a, b in space.bounds])
+        point[-1] = np.nan
+        message = r"Every point must lie in the domain, .*; one is at \(.*nan\)"
+        with pytest.raises(ValueError, match=message):
+            space.basis_at(point)
+        with pytest.raises(ValueError, match=message):
+            space.dirac(point)
+        with pytest.raises(ValueError, match=message):
+            space.point_evaluation_operator([point])
+        with pytest.raises(ValueError, match=message):
+            space.point_evaluation_operator([point], route="dense")
+        with pytest.raises(ValueError, match=message):
+            space.prepare_points(point[None, :])
+
+    def test_a_grid_point_on_a_bound_far_from_the_origin_is_in_the_domain(self):
+        """Coordinates in metres are near a million, where rounding is near
+        1e-10. The padding is three grid spacings on the first axis and four
+        on the second, which puts grid points on the bounds; rounding leaves
+        the first axis's upper one about 1e-10 above its bound, and the
+        tolerance, relative to the axis's width, keeps it in the domain."""
+        space = Box(
+            (12, 12),
+            bounds=((512345.6, 912346.3), (750000.1, 950000.1)),
+            padding=(200000.35, 200000.0),
+        )
+        first, second = space.grid_axes
+        assert first[3] == pytest.approx(512345.6, rel=1e-15)
+        assert first[9] == pytest.approx(912346.3, rel=1e-15)
+        assert second[4] == pytest.approx(750000.1, rel=1e-15)
+        assert second[8] == pytest.approx(950000.1, rel=1e-15)
+        expected = np.zeros((12, 12), dtype=bool)
+        expected[3:10, 4:9] = True
+        assert np.array_equal(space.interior_mask, expected)
+        corner = np.array([first[9], second[8]])
+        assert space.basis_at(corner).shape == (space.dim,)
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: Interval(48, lower=0.1, upper=0.7, padding=0.15),
+            lambda: Interval(12, lower=512345.6, upper=912346.3, padding=200000.35),
+            lambda: Box(
+                (12, 12),
+                bounds=((512345.6, 912346.3), (750000.1, 950000.1)),
+                padding=(200000.35, 200000.0),
+            ),
+            lambda: Box(
+                (10, 6, 8),
+                bounds=((2440063.436, 6631945.4561), (0.0, 1.0), (-1.0, 0.5)),
+                padding=(82193.7651, 0.25, 0.1),
+            ),
+        ],
+        ids=["interval", "interval-metres", "box-metres", "box-3d"],
+    )
+    def test_the_mask_and_the_domain_check_agree_on_the_grid(self, make):
+        """A grid point is in the interior mask exactly when the space
+        accepts it as a point of the domain: one test decides both."""
+        space = make()
+        mesh = np.meshgrid(*space.grid_axes, indexing="ij")
+        points = np.stack([m.ravel() for m in mesh], axis=1)
+        mask = space.interior_mask.ravel()
+        assert mask.any() and not mask.all()
+        space.prepare_points(points[mask])
+        for point in points[~mask]:
+            with pytest.raises(ValueError, match="Every point must lie"):
+                space.basis_at(point)
+
     def test_a_ball_leaving_the_domain_is_refused(self):
         space = Interval(64, lower=0.0, upper=1.0, order=1.0, length_scale=0.05)
         with pytest.raises(ValueError, match="leaves the domain"):

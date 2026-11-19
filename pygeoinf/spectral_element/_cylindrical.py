@@ -1,4 +1,4 @@
-"""The radial operators of a disk or an annulus, and the circle's transform.
+"""The circle's transform and the polar basis of a disk or an annulus.
 
 ``A = 1 - div(kappa grad)`` in the plane, with ``kappa = kappa(r)``, commutes
 with rotations about the centre, and in polar coordinates block-diagonalizes
@@ -6,23 +6,14 @@ over the circle's Fourier modes into the family of radial operators
 
     A_m f = f - r^-1 (kappa r f')' + kappa m^2 r^-2 f,
 
-one per order ``m >= 0``, each self-adjoint on ``L^2(r dr)``. That is the
-cylindrical counterpart of ``planetmodel``'s ``RadialOperatorFamily``, whose
-measures are ``r^2 dr`` (a ball) and ``dr`` (an interval of the line), and
-:class:`CylindricalOperatorFamily` is that family with the measure changed:
-the mass is ``int phi_i phi_j r dr``, the radial stiffness ``int kappa phi_i'
-phi_j' r dr`` and the angular term ``m^2 int kappa phi_i phi_j / r dr``, all by
-the Gauss-Lobatto-Legendre quadrature of the elements, so the mass and the
-angular term are diagonal and the stiffness is banded.
-
-The centre needs care but no condition, exactly as a ball's does. A field
-regular there has a part of order ``m`` going like ``r^m``, so for ``m >= 1``
-the centre's node is dropped and the field held to zero there, which also
-keeps the ``1 / r`` of the angular term off the one node where it is
-infinite; for ``m = 0`` the centre's value is genuine but carries no mass,
-and is eliminated by static condensation. ``planetmodel`` does both for its
-ball: its bookkeeping of the dropped node is inherited here, and its
-condensation copied with the assembly.
+one per order ``m >= 0``, each self-adjoint on ``L^2(r dr)``. That family is
+``planetmodel``'s ``SeparableOperatorFamily`` under the measure ``r dr`` and
+indexed by order, ``weight="r", index="order"``: the cylindrical counterpart
+of the family of a ball, whose measure is ``r^2 dr`` and whose members are
+indexed by degree. At the centre of a disk it does what a ball's does: for
+``m >= 1`` the centre's node is dropped and the field held to zero there, and
+for ``m = 0`` the centre's value, which carries no mass, is eliminated by
+static condensation.
 
 :class:`RingTransform` goes between the coefficient functions of the circle's
 modes and values on equally spaced angles, every ring at once, by a real FFT.
@@ -34,244 +25,18 @@ the coefficients as one vector.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike
-from planetmodel.mesh1d import Mesh1D
-from planetmodel.randomfield import RadialOperatorFamily, SpectralBasis
+from planetmodel.randomfield import SeparableOperatorFamily, SpectralBasis
 from planetmodel.randomfield.mesh import Restriction
 
 __all__ = [
-    "CylindricalOperatorFamily",
     "PolarBasis",
     "RingTransform",
     "circular_harmonics",
 ]
-
-#: The coefficient of a member of the family: a number, a function of radius,
-#: or nodal values of the mesh's shape ``(nspec, ngll)``.
-type Coefficient = ArrayLike | Callable[[np.ndarray], ArrayLike]
-
-#: Robin coefficients at the ends of the mesh: ``None`` for the natural
-#: condition at both, one number for both, or an ``(inner, outer)`` pair with
-#: ``None`` for a natural end.
-type Robin = float | tuple[float | None, float | None] | None
-
-
-def _nodal_coefficient(mesh: Mesh1D, c: Coefficient, /) -> np.ndarray:
-    """A coefficient as nodal values of shape ``(nspec, ngll)``.
-
-    Raises:
-        ValueError: for an array of the wrong shape, or a value that is not
-            finite.
-    """
-    if callable(c):
-        out = np.asarray(c(mesh.r), dtype=float)
-        out = np.broadcast_to(out, mesh.r.shape).copy()
-    elif np.ndim(c) == 0:
-        out = np.full_like(mesh.r, float(c))
-    else:
-        out = np.asarray(c, dtype=float)
-        if out.shape != mesh.r.shape:
-            raise ValueError(
-                f"A coefficient array must have the nodal shape {mesh.r.shape}, "
-                f"got {out.shape}."
-            )
-        out = out.copy()
-    if not np.all(np.isfinite(out)):
-        raise ValueError("A coefficient must be finite everywhere on the mesh.")
-    return out
-
-
-def _robin_pair(robin: Robin, /) -> tuple[float, float]:
-    """``(inner, outer)`` Robin coefficients from ``None``, one number, or a
-    pair with ``None`` for a natural end.
-
-    Raises:
-        ValueError: for a negative coefficient.
-    """
-    if robin is None:
-        return 0.0, 0.0
-    if np.ndim(robin) == 0:
-        inner = outer = float(robin)
-    else:
-        inner, outer = robin
-        inner = 0.0 if inner is None else float(inner)
-        outer = 0.0 if outer is None else float(outer)
-    if inner < 0.0 or outer < 0.0:
-        raise ValueError("Robin coefficients must be non-negative.")
-    return inner, outer
-
-
-class CylindricalOperatorFamily(RadialOperatorFamily):
-    """The order-indexed radial operators ``A_m`` of a disk or annulus on a
-    one-dimensional GLL mesh, under the measure ``r dr``.
-
-    A ``planetmodel`` ``RadialOperatorFamily`` in every respect but the
-    assembly, so that ``planetmodel``'s ``SpectralBasis``, which accepts that
-    class and no other, takes it as it is. The assembly is the parent's with
-    the measure ``r dr`` in place of ``r^2 dr`` and the angular term ``m^2 /
-    r^2`` in place of ``l (l + 1) / r^2``; :meth:`pencil` is the parent's with
-    the second change. Everything else -- the spectrum and its cache, the
-    eigenpairs by value or by count, the application, solution, powers and
-    white noise, the bookkeeping of the dropped centre -- is inherited, and
-    reads the arrays assembled here.
-
-    The order ``m`` is passed wherever the parent takes a degree: ``eig(m)``,
-    ``eigvalsh(m)``, ``mass(m)``, ``embed(m, values)`` and the rest.
-    """
-
-    def __init__(
-        self,
-        mesh: Mesh1D,
-        /,
-        *,
-        kappa: Coefficient = 1.0,
-        kappa_h: Coefficient | None = None,
-        robin: Robin = None,
-    ) -> None:
-        """
-        Args:
-            mesh: a ``planetmodel`` ``Mesh1D`` in ``r >= 0``. One that starts
-                at the centre is a disk's, and is padded inwards no further.
-            kappa: the radial coefficient, ``L^2`` for ``A = 1 - div(L^2
-                grad)``: a number, a function of radius, or nodal values.
-            kappa_h: the coefficient of the angular term, ``kappa`` if
-                omitted.
-            robin: Robin coefficients at the ends of the mesh, ``f' -+ gamma
-                f = 0``: ``None`` for the natural condition at both, one
-                number for both, or an ``(inner, outer)`` pair with ``None``
-                for a natural end. An inner one is ignored at the centre.
-
-        Raises:
-            TypeError: if the mesh is not a ``Mesh1D``.
-            ValueError: if the mesh reaches below ``r = 0``, a coefficient is
-                not finite, ``kappa`` is not positive or ``kappa_h`` is
-                negative, or a Robin coefficient is negative.
-            RuntimeError: if a node other than the centre has no mass.
-        """
-        if not isinstance(mesh, Mesh1D):
-            raise TypeError("The mesh must be a planetmodel Mesh1D.")
-        if mesh.rglob[0] < 0.0:
-            raise ValueError("The r dr measure needs a mesh in r >= 0.")
-
-        self.mesh = mesh
-        self.weight = "r"
-        # The names the inherited methods read: a mesh from the centre drops
-        # it above order zero and condenses it out at order zero, as a ball's
-        # does; no order is refused.
-        self._ball = bool(mesh.rglob[0] == 0.0)
-        self._degree_zero_only = False
-
-        kr = _nodal_coefficient(mesh, kappa)
-        kh = kr if kappa_h is None else _nodal_coefficient(mesh, kappa_h)
-        if np.any(kr <= 0.0) or np.any(kh < 0.0):
-            raise ValueError("kappa must be positive and kappa_h non-negative.")
-
-        r, jac, wq = mesh.r, mesh.jac, mesh.w
-        derivative, gmap = mesh.deriv, mesh.gmap
-        n, q = mesh.nglob, mesh.ngll - 1
-        measure = r
-
-        element_mass = wq[None, :] * jac[:, None] * measure
-        element_mass.setflags(write=False)
-        mass = np.zeros(n)
-        np.add.at(mass, gmap, element_mass)
-        # m^2 int kappa phi_i phi_j / r dr, lumped. The centre's entry is set
-        # to zero: the node is dropped wherever it would be multiplied.
-        safe = np.where(r != 0.0, r, 1.0)
-        angular = np.zeros(n)
-        np.add.at(
-            angular, gmap, kh * (wq[None, :] * jac[:, None]) * (measure / safe**2)
-        )
-
-        # The radial stiffness, banded, upper symmetric storage:
-        # band[q + i - j, j] = K[i, j] for i <= j.
-        coefficient = wq[None, :] * kr * measure / jac[:, None]
-        stiffness = np.einsum("qi,eq,qj->eij", derivative, coefficient, derivative)
-        band = np.zeros((q + 1, n))
-        rows_of, columns_of = gmap[:, :, None], gmap[:, None, :]
-        upper = rows_of <= columns_of
-        rows = np.broadcast_to(q + rows_of - columns_of, stiffness.shape)
-        columns = np.broadcast_to(columns_of, stiffness.shape)
-        np.add.at(band, (rows[upper], columns[upper]), stiffness[upper])
-
-        inner, outer = _robin_pair(robin)
-        if outer > 0.0:
-            band[q, -1] += outer * kr[-1, -1] * measure[-1, -1]
-        if inner > 0.0 and not self._ball:
-            band[q, 0] += inner * kr[0, 0] * measure[0, 0]
-
-        # Static condensation of the massless centre at order zero, whose row
-        # reads d f_0 + a . f_(1..q) = 0.
-        if self._ball:
-            self._axis_a = np.array([band[q - j, j] for j in range(1, q + 1)])
-            self._axis_d = float(band[q, 0])
-            self._axis_c = -self._axis_a / self._axis_d
-        if np.any(mass[1 if self._ball else 0 :] <= 0.0):
-            raise RuntimeError("A node has no mass: the mesh is degenerate.")
-
-        self._Me = element_mass
-        self._M, self._Kh, self._Kr, self._q = mass, angular, band, q
-        self._vals: dict[int, np.ndarray] = {}
-        self._pairs: dict[int, tuple[np.ndarray, np.ndarray, float]] = {}
-        self._pencils: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-
-    @property
-    def is_ball(self) -> bool:
-        """Whether the mesh starts at the centre: the family of a disk, and
-        not of an annulus. Named as ``planetmodel``'s family names it, whose
-        bookkeeping of the centre this shares."""
-        return self._ball
-
-    def pencil(self, m: int, /) -> tuple[np.ndarray, np.ndarray]:
-        """The banded ``A_m`` (upper storage) and the diagonal mass, on the
-        active nodes of order ``m``.
-
-        On a disk the centre is removed at every order: for ``m >= 1`` its
-        couplings are discarded, holding the field to zero there; at ``m =
-        0`` the exact Schur complement of its massless row is folded into the
-        first element, so that the reduced pencil has the finite spectrum of
-        the singular one.
-
-        Args:
-            m: the order, non-negative.
-
-        Returns:
-            The band, read-only, and the mass.
-
-        Raises:
-            ValueError: for a negative order.
-        """
-        if m in self._pencils:
-            return self._pencils[m]
-        n0, q = self._n0(m), self._q
-        band = self._Kr.copy()
-        if n0 and m == 0:
-            a, d = self._axis_a, self._axis_d
-            for i in range(1, q + 1):
-                for j in range(i, q + 1):
-                    band[q + i - j, j] -= a[i - 1] * a[j - 1] / d
-        band = band[:, n0:]
-        if n0:
-            for row in range(q):
-                column = q - 1 - row
-                if column < band.shape[1]:
-                    band[row, column] = 0.0
-        mass = self._M[n0:]
-        band[q] += mass + float(m) ** 2 * self._Kh[n0:]
-        band.setflags(write=False)
-        self._pencils[m] = (band, mass)
-        return band, mass
-
-    def __repr__(self) -> str:
-        kind = "disk" if self._ball else "annulus"
-        cached = sorted(set(self._vals) | set(self._pairs))
-        return (
-            f"CylindricalOperatorFamily({kind}, {self.mesh.nglob} nodes, "
-            f"cached orders: {cached})"
-        )
 
 
 def circular_harmonics(mmax: int, angles: ArrayLike, /) -> np.ndarray:
@@ -410,8 +175,9 @@ class PolarBasis:
             bases: the bases of orders ``0, 1, ... mmax``, in that order.
 
         Raises:
-            ValueError: if there are none, one is of the wrong order, or they
-                do not share one family and one restriction.
+            ValueError: if there are none, one is of the wrong order, they do
+                not share one family and one restriction, or the family is
+                not indexed by order.
             TypeError: if one is not a ``SpectralBasis``.
         """
         bases = tuple(bases)
@@ -425,6 +191,11 @@ class PolarBasis:
                 raise ValueError(f"bases[{m}] has order {basis.degree}.")
             if basis.family is not first.family:
                 raise ValueError("The bases must share one family.")
+            if basis.family.index != "order":
+                raise ValueError(
+                    "A polar basis is of a family indexed by 'order', not by "
+                    f"{basis.family.index!r}."
+                )
             if (
                 basis.restriction.interval != first.restriction.interval
                 or basis.restriction.nodes != first.restriction.nodes
@@ -469,7 +240,7 @@ class PolarBasis:
         return self._bases[0].r
 
     @property
-    def family(self) -> CylindricalOperatorFamily:
+    def family(self) -> SeparableOperatorFamily:
         """The family the bases are of."""
         return self._bases[0].family
 

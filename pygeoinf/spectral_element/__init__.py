@@ -8,11 +8,11 @@ buys is what the Fourier interval cannot do: a correlation length that
 changes across the domain, a mesh refined where it needs to be, and -- in the
 ball and the annulus, which no periodic box embeds -- the ``r^2 dr`` measure.
 
-The numerics are those of ``planetmodel.randomfield``, an optional dependency
-(``pip install pygeoinf[planetmodel]``); this package wraps them as spaces,
-operators and Gaussian measures. The domain is reached by restriction: the mesh
-extends past it by a padding, so that the boundary conditions ``A`` needs act
-at a distance and leave no mark on the fields where they matter.
+The numerics are those of ``planetmodel.randomfield``; this package wraps
+them as spaces, operators and Gaussian measures. The domain is reached by
+restriction: the mesh extends past it by a padding, so that the boundary
+conditions ``A`` needs act at a distance and leave no mark on the fields
+where they matter.
 
 **A user reaches the spaces by geometry**, and never imports this package:
 
@@ -28,10 +28,17 @@ at a distance and leave no mark on the fields where they matter.
 :mod:`pygeoinf.ball`
     fields of position in a ball or an annulus, under ``r^2 dr`` and the area
     of the sphere.
+:mod:`pygeoinf.strip`
+    fields of ``(depth, x)`` in a flat layer, under ``dz`` and the Fourier
+    modes of one lateral axis, the Cartesian counterpart of the disk.
+:mod:`pygeoinf.slab`
+    fields of ``(depth, x, y)`` in a flat layer, under ``dz`` and the Fourier
+    modes of two lateral axes, the Cartesian counterpart of the ball.
 
 Each exports ``Lebesgue`` and ``Sobolev``, and a ``Layered`` space of
 piecewise-continuous fields over layers of its geometry that are adjacent in
-space. What is here is what they share and what a backend author may build
+space: shells of a ball or rings of a disk outward, flat layers stacked in
+depth. What is here is what they share and what a backend author may build
 on: :class:`SpectralElementSpace`, the Sobolev scale, the pointwise algebra,
 point evaluation and the Gaussian measures of any such space;
 :class:`AxisSpace`, a space of functions of one coordinate on a padded mesh;
@@ -46,30 +53,9 @@ nodal values across it, the first being what keeps a standard deviation
 positive there.
 """
 
-try:
-    import planetmodel.randomfield as _randomfield
-except ImportError as error:  # pragma: no cover
-    raise ImportError(
-        "The spectral-element spaces need planetmodel, an optional dependency: "
-        "pip install pygeoinf[planetmodel]."
-    ) from error
-
-import planetmodel.harmonics as _harmonics
-
-# planetmodel 1.4 holds the batched shell transform the ball calls, and the
-# Galerkin block of another operator family that a prior of its own length
-# scales is built from.
-if not hasattr(_harmonics, "ShellTransform") or not hasattr(
-    getattr(_randomfield, "SpectralBasis", None), "galerkin"
-):  # pragma: no cover
-    raise ImportError(
-        "The spectral-element spaces need planetmodel 1.4 or later: "
-        "pip install -U planetmodel."
-    )
-
-from .axis import AxisSpace  # noqa: E402
-from .base import Boundary, LengthScale, SpectralElementSpace  # noqa: E402
-from .layered import Layered  # noqa: E402
+from .axis import AxisSpace
+from .base import Boundary, LengthScale, SpectralElementSpace
+from .layered import Layered
 
 __all__ = [
     "AxisSpace",

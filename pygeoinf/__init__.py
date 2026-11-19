@@ -15,8 +15,9 @@ space, a spherical-harmonic field or a finite element space. The subpackages:
 * ``sampling`` -- function-space Markov chain Monte Carlo: moves, and the
   chains and tempered populations that run them;
 * ``inference`` -- forward problems and the estimators built on them;
-* ``symmetric_space``, ``interval``, ``ball`` and ``disk`` -- concrete function
-  spaces, the last three on the ``spectral_element`` core;
+* ``symmetric_space``, ``interval``, ``ball``, ``disk``, ``slab`` and ``strip``
+  -- concrete function spaces, all but the first on the ``spectral_element``
+  core;
 * ``plotting`` -- figures for fields, measures and sets.
 
 The names a typical workflow needs are also exported here, flat, except
@@ -30,12 +31,18 @@ geometry naming its own ``Lebesgue`` and ``Sobolev``.
 # datasets and testing are deliberately not pulled in.
 from . import (
     algebra,
+    ball,
+    disk,
     geometry,
     inference,
+    interval,
     numerics,
     plotting,
     probability,
     sampling,
+    slab,
+    spectral_element,
+    strip,
     symmetric_space,
 )
 from .algebra.diagonal import DiagonalLinearOperator
@@ -181,6 +188,12 @@ __all__ = [
     "probability",
     "sampling",
     "symmetric_space",
+    "spectral_element",
+    "interval",
+    "ball",
+    "disk",
+    "strip",
+    "slab",
     # inference: the workflow, flat
     "BackusGilbert",
     "BackusGilbertParker",
@@ -315,13 +328,3 @@ __all__ = [
     # traits
     "Traits",
 ]
-
-# The spectral-element spaces need the optional ``planetmodel`` extra. They
-# are loaded, when it is installed, by the plotting registry above; they are
-# listed among the subpackages exactly when that succeeded.
-try:
-    from . import ball, disk, interval, spectral_element  # noqa: F401
-except ImportError:  # pragma: no cover - depends on the installed extras
-    pass
-else:
-    __all__ += ["spectral_element", "interval", "ball", "disk"]

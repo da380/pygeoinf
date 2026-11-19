@@ -40,11 +40,7 @@ OPTIONAL = {
     "27_coupled_fields": "cartopy",
     "28_preconditioning": "pyshtools",
     "30_feasible_set": "cartopy",
-    "32_varying_length_scale": "planetmodel",
-    "33_disk": "planetmodel",
-    "34_mantle": ("planetmodel", "pyshtools", "cartopy"),
-    "35_density_profile": "planetmodel",
-    "36_layered_planet": "planetmodel",
+    "34_mantle": ("pyshtools", "cartopy"),
 }
 
 

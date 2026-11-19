@@ -127,7 +127,7 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 | `sampling` | function-space Markov chain Monte Carlo: the target and its exact flows, the dynamics and splitting schemes they compose into, Metropolis corrections, the moves (`PCN`, `MALA`, `HMC`, `GeneralizedHMC`, `Gibbs`), the runs that apply them (`Chains`, tempered `SMC`), and the sampled posterior with its diagnostics |
 | `inference` | forward problems and their likelihood potential; point, measure and set estimators, linear and nonlinear, among them `MonteCarloEstimator`, the posterior sampled by a run of `sampling`; the reference constructors for a posterior |
 | `symmetric_space` | spaces in the eigenbasis of the Laplacian: the sphere; the periodic box (circle, torus); the bounded box (line, plane); scattered evaluation, gradients at points, the ray travel-time operator |
-| `spectral_element`, `interval`, `ball`, `disk` | spaces in the eigenbasis of `1 − div(L² grad)` on a padded spectral-element mesh, for a varying length scale: an interval (and radial profiles), a ball or shell, a disk or annulus, each with a `Layered` form; `spectral_element` is the shared core over `planetmodel` |
+| `spectral_element`, `interval`, `ball`, `disk`, `slab`, `strip` | spaces in the eigenbasis of `1 − div(L² grad)` on a padded spectral-element mesh, for a varying length scale: an interval (and radial profiles), a ball or shell, a disk or annulus, and a flat layer, Fourier across and spectral elements in depth, over one lateral axis (a strip) or two (a slab), each with a `Layered` form; `spectral_element` is the shared core over `planetmodel` |
 | `plotting` | figures of fields, points, paths, sets and distributions on every geometry |
 | `testing` | the `check_*` functions, from the space axioms to affine operators and splitting schemes, each returning a `CheckReport` |
 | `datasets` | shipped station and earthquake tables and their explicit downloads |
@@ -136,14 +136,15 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 Subpackages and the common workflow names are importable from the top level.
 Spaces are reached by geometry (`symmetric_space.sphere.Sobolev`,
 `interval.Sobolev`), and each geometry exports its own `Lebesgue` and
-`Sobolev`. `testing` and `datasets` are imported explicitly. The
-spectral-element packages need the `planetmodel` extra.
+`Sobolev`. `testing` and `datasets` are imported explicitly.
 
 ## 4. Conventions that bite
 
 - **Points.** On a sphere they are `(latitude, longitude)` in degrees. In a
   disk they are `(radius, angle)` with the angle in degrees anticlockwise
-  from the `x` axis. Lengths are physical; a circle or torus is unit by
+  from the `x` axis. In a flat layer they are `(depth, x)` or `(depth, x,
+  y)`, depth positive downward and first, as a radius is. Lengths are
+  physical; a circle or torus is unit by
   default, so its coordinate is the angle.
 - **Vectors.** A sphere's are `pyshtools.SHGrid` objects, a box's are arrays,
   a spectral-element space's are values on the padded grid with the
@@ -155,6 +156,15 @@ spectral-element packages need the `planetmodel` extra.
   without the Condon-Shortley phase.
 - **`power_measure(p)` takes the `L²` spectrum** on every space;
   `invariant_measure` takes eigenvalues in the space's own metric.
+- **Above an interface is the side of the larger coordinate** in a layered
+  space -- the larger radius, or the larger position on a line -- and the
+  jump is the value above less the value below. In flat layers depth is the
+  coordinate and increases downward, and above is still the shallower side,
+  so the jump has the sign a ball gives the same interface.
+- **A flat layer is periodic across.** Its domain is the whole lateral
+  period unless a padded domain is given, and a prior's pointwise variance
+  is exact at the lateral grid's points; between them it is exact on a grid
+  of odd sizes, and short by the Nyquist cosines' share on an even one.
 - **A function given to a ball must be regular at its centre**: its
   degree-`l` part goes like `r^l`, so a radial profile is even.
 - **An inference result carries its reference measure.** A Bayesian update

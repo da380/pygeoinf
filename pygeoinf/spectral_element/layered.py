@@ -31,14 +31,26 @@ in no layer.
 
 The layers are all of one geometry, and each geometry has its own
 ``Layered``: :class:`pygeoinf.interval.Layered`,
-:class:`pygeoinf.interval.radial.Layered`, :class:`pygeoinf.ball.Layered` and
-:class:`pygeoinf.disk.Layered` are subclasses of this one whose constructors
+:class:`pygeoinf.interval.radial.Layered`, :class:`pygeoinf.ball.Layered`,
+:class:`pygeoinf.disk.Layered`, :class:`pygeoinf.strip.Layered` and
+:class:`pygeoinf.slab.Layered` are subclasses of this one whose constructors
 build the layers from the boundaries, with every other argument given once
 for all layers or, as a *list*, layer by layer. This class takes layers
 already built, of one geometry, and is what the subclasses share;
 :meth:`Layered.from_layers` makes a geometry's own from layers built by hand.
-Disks are the exception: their jumps are taken at angles, which only
-:class:`pygeoinf.disk.Layered` knows, so disk layers go there.
+Disks, strips and slabs are the exceptions, and go to their own class: a
+disk's jumps are taken at angles, which only :class:`pygeoinf.disk.Layered`
+knows; flat layers are stacked in depth, which increases downward, so their
+sides are named the other way round along the coordinate and their jumps are
+taken at lateral positions, which only :class:`pygeoinf.strip.Layered` and
+:class:`pygeoinf.slab.Layered` know.
+
+**The sides of an interface are named along the coordinate**, which increases
+upward in a radius and to the right on a line: ``"below"`` is the side of the
+smaller coordinate and ``"above"`` the side of the larger, and the jump is the
+value above less the value below. The flat layers' classes keep the words and
+their physical sense -- above is shallower -- and so take ``"above"`` as the
+side of the smaller depth.
 """
 
 from __future__ import annotations
@@ -67,6 +79,9 @@ __all__ = ["Layered"]
 #: interface, and a point to an interface to be on it.
 _INTERFACE_RTOL = 1e-12
 
+#: The tags of the flat geometries, whose layers only their own class takes.
+_FLAT_GEOMETRIES = ("strip", "slab")
+
 
 def _per_layer(value: Any, count: int, name: str, /) -> list:
     """An argument for each layer: a list is layer by layer, anything else is
@@ -89,7 +104,8 @@ def _per_layer(value: Any, count: int, name: str, /) -> list:
 def _geometry_of(layer: SpectralElementSpace, /) -> type:
     """The class that names a layer's geometry: the nearest ancestor that
     declares a ``_geometry`` tag of its own, which is the interval, the radial
-    profile or the ball, and not the ``Lebesgue`` or ``Sobolev`` view of it."""
+    profile, the ball, the disk, the strip or the slab, and not the
+    ``Lebesgue`` or ``Sobolev`` view of it."""
     return next(cls for cls in type(layer).__mro__ if "_geometry" in vars(cls))
 
 
@@ -150,13 +166,15 @@ class _LayeredEvaluation:
     as one evaluation on the components of the whole."""
 
     def __init__(
-        self, pieces: list[tuple[slice, np.ndarray, LocalEvaluation]], dim: int, /
+        self, pieces: list[tuple[slice, np.ndarray, LocalEvaluation | Any]], dim: int, /
     ) -> None:
         """
         Args:
             pieces: for each layer holding points, its columns among the
                 components, which of the points it holds, and its evaluation
-                at them.
+                at them: a :class:`LocalEvaluation`, or anything with its
+                ``values`` and ``derivative_components``, such as a flat
+                layer's evaluation by non-uniform FFT.
             dim: the dimension of the whole.
         """
         self._pieces = pieces
@@ -211,8 +229,11 @@ class Layered(CoordinateDirectSum, HilbertModule):
 
         Raises:
             TypeError: if the layers are not all intervals, all radial
-                profiles, all balls or all disks, or are disks given to a
-                class other than :class:`pygeoinf.disk.Layered`.
+                profiles, all balls, all disks, all strips or all slabs; or
+                are disks given to a class other than
+                :class:`pygeoinf.disk.Layered`, strips or slabs given to a
+                class other than their own, or anything else given to the
+                class of strips or slabs.
             ValueError: if there are none, or they are out of order or
                 overlap.
         """
@@ -223,16 +244,29 @@ class Layered(CoordinateDirectSum, HilbertModule):
         if not all(isinstance(layer, kind) for layer in layers):
             raise TypeError(
                 "The layers must all be intervals, all radial profiles, all "
-                "balls or all disks."
+                "balls, all disks, all strips or all slabs."
             )
-        if (
-            getattr(kind, "_geometry", None) == "disk"
-            and type(self).jump_operator is Layered.jump_operator
-        ):
+        tag = getattr(kind, "_geometry", None)
+        if tag == "disk" and type(self).jump_operator is Layered.jump_operator:
             raise TypeError(
                 "Disks are layered by pygeoinf.disk.Layered, whose jumps are "
                 "taken at angles: build it from boundaries, or use "
                 "pygeoinf.disk.Layered.from_layers(layers)."
+            )
+        # The class of strips or of slabs names the layers it takes; no other
+        # class takes them, since only it names their sides in depth.
+        own = getattr(type(self), "_layer_kind", None)
+        if tag in _FLAT_GEOMETRIES and own is not kind:
+            raise TypeError(
+                f"{kind.__name__}s are layered by pygeoinf.{tag}.Layered, whose "
+                f"sides are named in depth and whose jumps are taken at lateral "
+                f"positions: build it from boundaries, or use "
+                f"pygeoinf.{tag}.Layered.from_layers(layers)."
+            )
+        if own is not None and own is not kind:
+            raise TypeError(
+                f"pygeoinf.{own._geometry}.Layered takes {own.__name__}s as its "
+                f"layers, and these are {kind.__name__}s."
             )
         self._kind = kind
         # On an axis an interface is a point; in a ball it is a sphere.
@@ -322,8 +356,8 @@ class Layered(CoordinateDirectSum, HilbertModule):
     @property
     def geometry(self) -> type:
         """The class that names what the layers all are: the interval, the
-        radial profile or the ball, and not the ``Lebesgue`` or ``Sobolev``
-        view of it."""
+        radial profile, the ball, the disk, the strip or the slab, and not the
+        ``Lebesgue`` or ``Sobolev`` view of it."""
         return self._kind
 
     @property
@@ -384,8 +418,9 @@ class Layered(CoordinateDirectSum, HilbertModule):
 
     def _coordinate(self, point: Any, /) -> float:
         """A point's position along the layered coordinate: the point itself
-        on an axis, the radius of a ``(radius, latitude, longitude)`` triple
-        in a ball."""
+        on an axis, its first entry otherwise -- the radius of a ``(radius,
+        latitude, longitude)`` triple in a ball, the depth of a ``(depth, x)``
+        pair in a strip."""
         return float(np.asarray(point, dtype=float).reshape(-1)[0])
 
     def layer_index(self, point: Any, /, *, side: str | None = None) -> int:
@@ -395,7 +430,8 @@ class Layered(CoordinateDirectSum, HilbertModule):
             point: a position, or a radius, or ``(radius, latitude,
                 longitude)``, as the layers take them.
             side: for a point on an interface, which has two layers:
-                ``"below"`` or ``"above"``. Ignored anywhere else.
+                ``"below"``, the side of the smaller coordinate, or
+                ``"above"``, the larger. Ignored anywhere else.
 
         Returns:
             The layer's position among :attr:`layers`.
@@ -744,7 +780,7 @@ class Layered(CoordinateDirectSum, HilbertModule):
                 ``None`` for a layer's own; see the layers'
                 ``sobolev_measure``.
             lateral_length_scale: the prior's lateral length scale,
-                likewise, in a ball or a disk.
+                likewise, in a ball, a disk, a strip or a slab.
             expectation: the mean, a vector of this space. Zero if omitted.
             pointwise_std: calibrate each layer by its pointwise standard
                 deviation: one number for all, a list of numbers or fields

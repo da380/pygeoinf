@@ -16,6 +16,14 @@ dependencies = [
     "joblib>=1.5.3",
     "threadpoolctl>=3.6.0",
     "finufft>=2.5.1",
+    # The numerics of the spaces on a spectral-element mesh (pygeoinf.interval,
+    # pygeoinf.ball, pygeoinf.disk, pygeoinf.slab, pygeoinf.strip and the
+    # pygeoinf.spectral_element core they share) are planetmodel.randomfield's,
+    # with planetmodel.cartesian's layer basis and planetmodel.fourier's lateral
+    # transform under the flat ones; its harmonics run on ducc0, which
+    # arrives with it. Drawing a ball's shells as maps still goes through the
+    # sphere renderer, which is the sphere extra.
+    "planetmodel>=2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -23,16 +31,6 @@ dependencies = [
 # ducc0 is the fast transform backend; pyshtools selects it by default when it
 # is importable, so nothing in the code refers to it.
 sphere = ["pyshtools>=4.14.1", "ducc0>=0.15", "Cartopy>=0.25.0", "shapely>=2.0.0"]
-# Spaces on intervals, radial profiles, annuli and balls in the eigenbasis of
-# an elliptic operator on a spectral-element mesh (pygeoinf.interval,
-# pygeoinf.ball and the pygeoinf.spectral_element core they share):
-# the numerics are planetmodel.randomfield's. From 1.3 planetmodel's
-# harmonics run on ducc0 as a core dependency, so there is no extra to name
-# and pyshtools no longer arrives through it; drawing a ball's shells as
-# maps still goes through the sphere renderer, which is the sphere extra.
-# The disk's operator family is built on the internals of planetmodel 1.x's
-# radial family, so the next major version is excluded.
-planetmodel = ["planetmodel>=1.4.1,<2"]
 # Alternative QP backends for the convex-analysis solvers.
 osqp = ["osqp>=1.0.0"]
 clarabel = ["clarabel>=0.9.0"]

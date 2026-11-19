@@ -379,9 +379,6 @@ class TestFieldsThroughTime:
 
     @pytest.fixture(scope="class")
     def spaces(self):
-        randomfield = pytest.importorskip("planetmodel.randomfield")
-        if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-            pytest.skip("needs planetmodel 1.2 or later")
         from pygeoinf.interval import Lebesgue as TimeLebesgue
         from pygeoinf.interval import Sobolev as TimeSobolev
         from pygeoinf.symmetric_space.sphere import Lebesgue as SphereLebesgue

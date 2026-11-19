@@ -19,8 +19,6 @@ few densities in the mantle.
 
 Last, the converse. Two layers made continuous across the interface they share
 are the prior *conditioned* on the jump vanishing there.
-
-Needs planetmodel, which comes with the 'planetmodel' extra.
 """
 
 import numpy as np

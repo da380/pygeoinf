@@ -26,8 +26,7 @@ falling as the prior lengthens; the cut-away's view of the ray; and the
 figures and tables of parts A, B, C and D and of the priors, and every
 part in order. The quick scale's priors are smoke values, long enough for
 its degree of 16. The dynamic ray tracing behind the kernel is checked with
-the tracer, in ``test_miniapp_raytracer.py``. Needs planetmodel, which the
-ball is built on; without it the tests skip.
+the tracer, in ``test_miniapp_raytracer.py``.
 """
 
 from __future__ import annotations
@@ -40,8 +39,6 @@ import time
 
 import numpy as np
 import pytest
-
-pytest.importorskip("planetmodel")
 
 MINIAPP = pathlib.Path(__file__).resolve().parents[1] / "miniapps" / "banana_doughnut"
 

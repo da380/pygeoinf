@@ -37,7 +37,7 @@ zero and must be even in ``r``. One linear in ``r`` is a cone, and converges
 at the centre only at first order, where a profile in ``r^2`` converges
 quickly. In an annulus there is no centre and nothing to it.
 
-The numerics are ``planetmodel``'s: ``RadialOperatorFamily`` under the
+The numerics are ``planetmodel``'s: ``SeparableOperatorFamily`` under the
 ``r^2`` measure, one ``SpectralBasis`` per degree held in a
 ``SphericalBasis`` (reachable as :attr:`Ball.basis`), and its harmonics. The
 transform between coefficients and the grid takes all the radial shells at

@@ -77,7 +77,7 @@ class Line(Box):
         shape = self._shape if shape is None else tuple(int(n) for n in shape)
         order = self._order if order is None else float(order)
         scale = self._length_scale if length_scale is None else float(length_scale)
-        (lower, upper), padding = self._bounds[0], self._padding[0]
+        (lower, upper), padding = self.bounds[0], self.padding[0]
         if order == 0.0:
             return Lebesgue(shape[0], lower=lower, upper=upper, padding=padding)
         return Sobolev(

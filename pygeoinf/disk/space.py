@@ -7,12 +7,16 @@ from typing import Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
-from planetmodel.randomfield import SpectralBasis, padded_mesh, restriction
+from planetmodel.randomfield import (
+    SeparableOperatorFamily,
+    SpectralBasis,
+    padded_mesh,
+    restriction,
+)
 
 from ..algebra.operators import LinearFunctional
 from ..algebra.spaces import resolve_rng
 from ..spectral_element._cylindrical import (
-    CylindricalOperatorFamily,
     PolarBasis,
     RingTransform,
     circular_harmonics,
@@ -174,13 +178,15 @@ class Disk(SpectralElementSpace):
         if element_length <= 0.0:
             raise ValueError("The element length must be positive.")
 
-        # The r^2 mesh geometry is the one wanted: its inner pad stops at the
-        # centre. The measure is the family's.
         mesh = padded_mesh(
-            inner, outer, pad=pads, weight="r2", ngll=ngll, drmax=element_length
+            inner, outer, pad=pads, weight="r", ngll=ngll, drmax=element_length
         )
-        family = CylindricalOperatorFamily(
-            mesh, kappa=lambda r: clamped(r) ** 2, robin=robin
+        family = SeparableOperatorFamily(
+            mesh,
+            kappa=lambda r: clamped(r) ** 2,
+            weight="r",
+            index="order",
+            robin=robin,
         )
         physical = restriction(mesh, inner, outer)
         if radial_modes is not None:
@@ -191,16 +197,18 @@ class Disk(SpectralElementSpace):
                 # mode of order mmax is longer by the ratio of the two radii;
                 # and no lower than the padded mesh's own, so that every order
                 # keeps one: first eigenvalues rise with the order.
-                bare = CylindricalOperatorFamily(
+                bare = SeparableOperatorFamily(
                     padded_mesh(
                         inner,
                         outer,
                         pad=0.0,
-                        weight="r2",
+                        weight="r",
                         ngll=ngll,
                         drmax=element_length,
                     ),
                     kappa=lambda r: clamped(r) ** 2,
+                    weight="r",
+                    index="order",
                 )
                 max_eigenvalue = max(
                     float(bare.eigvalsh(mmax)[0]), float(family.eigvalsh(mmax)[0])
@@ -640,7 +648,7 @@ class Disk(SpectralElementSpace):
         sine mode share the radial modes of the order, and their squares sum
         to ``1 / 2 pi`` at order zero and ``1 / pi`` above."""
         return [
-            _RadialGroup(
+            _RadialGroup.consecutive(
                 radial,
                 self._basis.block(0, m).start,
                 1 if m == 0 else 2,
@@ -655,7 +663,7 @@ class Disk(SpectralElementSpace):
         lateral: Callable[[np.ndarray], np.ndarray] | None,
         probe: np.ndarray,
         /,
-    ) -> CylindricalOperatorFamily:
+    ) -> SeparableOperatorFamily:
         """``A'`` on this space's radial mesh under ``r dr``, its radial
         coefficient ``radial^2`` and its angular one ``lateral^2``. Under
         ``boundary="robin"`` its Robin coefficients are matched to the
@@ -667,10 +675,12 @@ class Disk(SpectralElementSpace):
             inner, outer = self._radii
             ends = (inner - self._padding[0], outer + self._padding[1])
             robin = _matched_robin("robin", probe, ends)
-        return CylindricalOperatorFamily(
+        return SeparableOperatorFamily(
             self._basis.family.mesh,
             kappa=lambda r: radial(r) ** 2,
             kappa_h=None if lateral is None else (lambda r: lateral(r) ** 2),
+            weight="r",
+            index="order",
             robin=robin,
         )
 

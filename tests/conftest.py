@@ -261,3 +261,14 @@ def coastlines_are_cached() -> bool:
         except Exception:
             return False
     return True
+
+
+def joblib_cloudpickle():
+    """The pickler joblib ships work to its workers with: a package of its
+    own that joblib depends on from 1.6, and a copy carried inside joblib
+    before that. A test of what a worker receives pickles with this."""
+    try:
+        import cloudpickle
+    except ImportError:
+        from joblib.externals import cloudpickle
+    return cloudpickle

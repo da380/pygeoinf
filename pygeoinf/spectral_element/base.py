@@ -39,7 +39,7 @@ from ..traits import Traits
 from ._points import LocalEvaluation
 
 if TYPE_CHECKING:
-    from planetmodel.randomfield import RadialOperatorFamily, SpectralBasis
+    from planetmodel.randomfield import SeparableOperatorFamily, SpectralBasis
 
 __all__ = ["Boundary", "LengthScale", "SpectralElementSpace"]
 
@@ -365,18 +365,23 @@ def _local_operator(
 
 class _RadialGroup(NamedTuple):
     """The components that share one radial operator: those of one degree of
-    a ball, of one order of a disk, or all of a space of one coordinate.
+    a ball, of one order of a disk, of one lateral wavenumber of a flat
+    layer, or all of a space of one coordinate.
 
-    They are ``count`` consecutive runs of ``basis.nmodes`` components from
-    ``start``, one run per angular function of the group, each holding the
-    coefficients of the same radial modes.
+    They are ``count`` runs of ``basis.nmodes`` components, one run per
+    angular function of the group, each holding the coefficients of the same
+    radial modes. Where the runs follow one another among the components the
+    group is a slice of them, :meth:`consecutive`; where they are scattered
+    it is the array of their indices, :meth:`scattered`.
     """
 
     #: ``planetmodel``'s ``SpectralBasis`` of the group: the radial modes,
     #: M-orthonormal, and the degree of the operator they are modes of.
     basis: SpectralBasis
-    #: Where the first run begins among the components.
-    start: int
+    #: The group's components: a slice of ``count * basis.nmodes`` of them,
+    #: run after run, or an integer array of shape ``(count, basis.nmodes)``,
+    #: a row per run.
+    entries: slice | np.ndarray
     #: How many runs: ``2 l + 1`` for degree ``l`` of a ball, one or two
     #: for an order of a disk, one on a space of one coordinate.
     count: int
@@ -386,6 +391,53 @@ class _RadialGroup(NamedTuple):
     #: whose components are ``scale`` times the modes' coefficients, it is
     #: ``1 / scale^2``.
     angular_weight: float
+
+    @classmethod
+    def consecutive(
+        cls, basis: SpectralBasis, start: int, count: int, angular_weight: float, /
+    ) -> "_RadialGroup":
+        """The group of ``count`` runs that follow one another from
+        component ``start``."""
+        run = slice(int(start), int(start) + int(count) * basis.nmodes)
+        return cls(basis, run, int(count), angular_weight)
+
+    @classmethod
+    def scattered(
+        cls, basis: SpectralBasis, entries: np.ndarray, angular_weight: float, /
+    ) -> "_RadialGroup":
+        """The group whose runs are the rows of ``entries``, the indices of
+        their components, shape ``(runs, basis.nmodes)``.
+
+        Raises:
+            ValueError: for entries of another shape.
+        """
+        entries = np.asarray(entries, dtype=np.intp)
+        if entries.ndim != 2 or entries.shape[1] != basis.nmodes:
+            raise ValueError(
+                f"A group's entries are (runs, {basis.nmodes}), got {entries.shape}."
+            )
+        return cls(basis, entries, int(entries.shape[0]), angular_weight)
+
+    @property
+    def first(self) -> slice | np.ndarray:
+        """The components of the group's first run, on which a quantity the
+        runs share, the metric among them, is read."""
+        if isinstance(self.entries, slice):
+            return slice(self.entries.start, self.entries.start + self.basis.nmodes)
+        return self.entries[0]
+
+    def rows(self, c: np.ndarray, /) -> np.ndarray:
+        """The group's part of a component array, shape ``(count,
+        basis.nmodes)``: a view where the runs are consecutive."""
+        return c[self.entries].reshape(self.count, -1)
+
+    def assign(self, out: np.ndarray, rows: np.ndarray, /) -> None:
+        """Write ``rows``, shape ``(count, basis.nmodes)``, to the group's
+        part of a component array."""
+        if isinstance(self.entries, slice):
+            out[self.entries] = rows.reshape(-1)
+        else:
+            out[self.entries] = rows
 
 
 class _RadialBlockOperator(LinearOperator):
@@ -418,9 +470,7 @@ class _RadialBlockOperator(LinearOperator):
         self._groups = space._radial_groups()
         self._matrices = []
         for group, matrix in zip(self._groups, symmetric, strict=True):
-            root = np.sqrt(
-                space.metric_values[group.start : group.start + group.basis.nmodes]
-            )
+            root = np.sqrt(space.metric_values[group.first])
             self._matrices.append(matrix / root[:, None] * root[None, :])
 
     def _apply(self, c: np.ndarray, /) -> np.ndarray:
@@ -428,8 +478,7 @@ class _RadialBlockOperator(LinearOperator):
         c = np.asarray(c, dtype=float)
         out = np.empty_like(c)
         for group, matrix in zip(self._groups, self._matrices):
-            run = slice(group.start, group.start + group.count * matrix.shape[0])
-            out[run] = (c[run].reshape(group.count, -1) @ matrix.T).reshape(-1)
+            group.assign(out, group.rows(c) @ matrix.T)
         return out
 
     def _value(self, x: np.ndarray) -> np.ndarray:
@@ -548,7 +597,8 @@ class SpectralElementSpace(
     @abstractmethod
     def _radial_groups(self) -> list[_RadialGroup]:
         """The components grouped by the radial operator whose modes they
-        are coefficients of, in order, every component in one group."""
+        are coefficients of, every component in one group. The groups need
+        not follow one another among the components, nor a group's runs."""
 
     @abstractmethod
     def _scaled_family(
@@ -557,7 +607,7 @@ class SpectralElementSpace(
         lateral: Callable[[np.ndarray], np.ndarray] | None,
         probe: np.ndarray,
         /,
-    ) -> RadialOperatorFamily:
+    ) -> SeparableOperatorFamily:
         """The operator family of ``A' = 1 - div(kappa grad)`` on this space's
         mesh and under its measure, with ``kappa = radial^2`` along the mesh
         and ``lateral^2`` across it, ``radial^2`` if ``lateral`` is ``None``.
@@ -1050,9 +1100,7 @@ class SpectralElementSpace(
         for group, (_, vectors), spectrum in zip(
             self._radial_groups(), pairs, spectra, strict=True
         ):
-            root = np.sqrt(
-                self.metric_values[group.start : group.start + group.basis.nmodes]
-            )
+            root = np.sqrt(self.metric_values[group.first])
             functions = group.basis.modes() @ (vectors / root[:, None])
             profile += group.angular_weight * ((functions**2) @ spectrum)
         shape = self.grid_shape

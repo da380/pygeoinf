@@ -15,7 +15,7 @@ from typing import Callable, Hashable, Sequence
 
 import numpy as np
 from planetmodel.randomfield import (
-    RadialOperatorFamily,
+    SeparableOperatorFamily,
     SpectralBasis,
     padded_mesh,
     restriction,
@@ -134,7 +134,7 @@ class AxisSpace(SpectralElementSpace):
                 f"A mesh of {mesh.nglob} nodes cannot hold {modes} modes; "
                 f"shorten element_length."
             )
-        family = RadialOperatorFamily(
+        family = SeparableOperatorFamily(
             mesh, kappa=lambda x: clamped(x) ** 2, weight=self._weight, robin=robin
         )
         self._basis = SpectralBasis(
@@ -392,7 +392,7 @@ class AxisSpace(SpectralElementSpace):
         """One group, every component: a field of one coordinate has no
         angular functions, and its components are ``scale`` times the
         modes' coefficients."""
-        return [_RadialGroup(self._basis, 0, 1, 1.0 / self._scale**2)]
+        return [_RadialGroup.consecutive(self._basis, 0, 1, 1.0 / self._scale**2)]
 
     def _scaled_family(
         self,
@@ -400,7 +400,7 @@ class AxisSpace(SpectralElementSpace):
         lateral: Callable[[np.ndarray], np.ndarray] | None,
         probe: np.ndarray,
         /,
-    ) -> RadialOperatorFamily:
+    ) -> SeparableOperatorFamily:
         """``A'`` on this space's mesh under its measure, its coefficient
         ``radial^2``. Under ``boundary="robin"`` its Robin coefficients are
         matched to the scale at the ends of the domain, ``probe[0]`` and
@@ -423,7 +423,7 @@ class AxisSpace(SpectralElementSpace):
                 else (lower - self._padding[0], upper + self._padding[1])
             )
             robin = _resolved_boundary("robin", probe, ends)
-        return RadialOperatorFamily(
+        return SeparableOperatorFamily(
             self._basis.family.mesh,
             kappa=lambda x: radial(x) ** 2,
             weight=self._weight,

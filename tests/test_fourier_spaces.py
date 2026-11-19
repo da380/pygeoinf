@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from planetmodel.fourier import Transform
 
 from pygeoinf import LinearOperator, Traits
 from pygeoinf.algebra.diagonal import DiagonalLinearOperator
@@ -362,7 +363,7 @@ class TestNonUniformFFT:
         and right for every point on it — so a grid-only test would pass.
         """
         X = Lebesgue((8, 8), lengths=(1.0, 1.0))
-        wavenumbers = X._packing.wavenumbers
+        wavenumbers = X.wavevectors
         offending = np.flatnonzero(wavenumbers[0] == 4)
         assert offending.size, "this shape was chosen to have such a mode"
 
@@ -397,7 +398,7 @@ class TestNonUniformFFT:
     def test_four_dimensions_fall_back(self, rng):
         """finufft stops at three; the answer must not."""
         X = Lebesgue((6, 6, 6, 6))
-        assert X._nufft_layout is None
+        assert X._point_transform is None
         points = [rng.uniform(0.0, 1.0, 4) for _ in range(5)]
         x = X.random(rng=rng)
         assert np.allclose(X.evaluate(x, points), SymmetricSpace.evaluate(X, x, points))
@@ -621,3 +622,120 @@ class TestThePointEvaluationRoute:
         assert np.allclose(local(x), dense(x), atol=1e-10)
         with pytest.raises(ValueError, match="route"):
             space.point_evaluation_operator(points, route="sparse")
+
+
+class TestTheTransformIsKeptWithThePoints:
+    """Points prepared once keep ``planetmodel``'s transform at them, so an
+    operator applied many times takes their angles once and makes finufft's
+    plans at its first application. Its results are those of the transform
+    with the points given, to rounding; a copy or a pickle applies as the
+    original does; and point sets, grids and accuracies are kept apart."""
+
+    @staticmethod
+    def space():
+        return Sobolev((24, 21), 2.0, 0.1, lengths=(1.0, 2.0))
+
+    @staticmethod
+    def close(actual, expected):
+        """Equal to rounding, against the size of the expected values."""
+        scale = np.abs(expected).max()
+        return np.allclose(actual, expected, rtol=0.0, atol=1e-13 * scale)
+
+    def test_repeated_applications_are_the_transform_with_the_points_given(self, rng):
+        X = self.space()
+        points = X.prepare_points(rng.uniform(0.0, 1.0, (200, 2)) * [1.0, 2.0])
+        A = X.point_evaluation_operator(points)
+        given = Transform(X.shape, X.lengths)
+        x = X.random(rng=rng)
+        y = rng.normal(size=len(points))
+        c = X.to_components(x)
+        values = given.synthesise(c, points.data, epsilon=1e-12, nthreads=1)
+        sums = given.accumulate(y, points.data, epsilon=1e-12, nthreads=1)
+        gradient = given.synthesise_gradient(c, points.data, epsilon=1e-12, nthreads=1)
+        adjoint = X.to_components(A.adjoint(y))
+        for _ in range(3):
+            assert self.close(A(x), values)
+            assert self.close(X.evaluate(x, points), values)
+            assert self.close(X.accumulate(y, points), sums)
+            assert self.close(X.evaluate_gradient(x, points), gradient)
+            assert self.close(X.to_components(A.adjoint(y)), adjoint)
+
+    def test_the_points_are_prepared_once(self, rng, monkeypatch):
+        """``Transform.at`` is what every application at points goes
+        through, the transform's own methods included; counted, it is
+        called once for an operator however often it is applied, and once
+        more for another accuracy."""
+        made = []
+        at = Transform.at
+
+        def counting(transform, points, /, **options):
+            made.append(options)
+            return at(transform, points, **options)
+
+        monkeypatch.setattr(Transform, "at", counting)
+        X = self.space()
+        points = X.prepare_points(rng.uniform(0.0, 1.0, (30, 2)))
+        A = X.point_evaluation_operator(points)
+        x = X.random(rng=rng)
+        for _ in range(4):
+            A(x)
+            A.adjoint(rng.normal(size=30))
+            X.evaluate_gradient(x, points)
+        assert len(made) == 1
+        X.evaluate(x, points, eps=1e-6)
+        X.evaluate(x, points, eps=1e-6)
+        assert len(made) == 2
+
+    def test_a_copy_or_a_pickle_applies_as_the_original(self, rng):
+        import copy
+        import pickle
+
+        from .conftest import joblib_cloudpickle
+
+        cloudpickle = joblib_cloudpickle()
+
+        from pygeoinf.symmetric_space.plane import Plane
+
+        X = Plane((20, 18), bounds=[(0.0, 1.0), (-1.0, 1.0)], order=2.0)
+        points = X.prepare_points(
+            np.column_stack([rng.uniform(0, 1, 40), rng.uniform(-1, 1, 40)])
+        )
+        A = X.point_evaluation_operator(points)
+        x = X.random(rng=rng)
+        y = rng.normal(size=40)
+        values, adjoint = A(x), X.to_components(A.adjoint(y))
+        for B in (cloudpickle.loads(cloudpickle.dumps(A)), copy.deepcopy(A)):
+            assert self.close(B(x), values)
+            assert self.close(B.domain.to_components(B.adjoint(y)), adjoint)
+        Y, prepared = pickle.loads(pickle.dumps((X, points)))
+        assert self.close(Y.evaluate(x, prepared), values)
+        assert self.close(Y.evaluate(x, copy.copy(points)), values)
+        assert self.close(Y.accumulate(y, prepared), X.accumulate(y, points))
+        assert self.close(A(x), values)
+
+    def test_points_grids_and_accuracies_are_kept_apart(self, rng):
+        X = self.space()
+        given = Transform(X.shape, X.lengths)
+        first = X.prepare_points(rng.uniform(0.0, 1.0, (40, 2)))
+        second = X.prepare_points(rng.uniform(0.0, 1.0, (25, 2)))
+        A = X.point_evaluation_operator(first)
+        B = X.point_evaluation_operator(second)
+        x = X.random(rng=rng)
+        c = X.to_components(x)
+        for _ in range(2):
+            assert self.close(A(x), given.synthesise(c, first.data))
+            assert self.close(B(x), given.synthesise(c, second.data))
+        # The same points on another grid are read through that grid's
+        # transform, and the first grid's is left as it was.
+        Z = Sobolev((16, 18), 2.0, 0.1, lengths=(1.0, 2.0))
+        z = Z.random(rng=rng)
+        other = Transform(Z.shape, Z.lengths)
+        assert self.close(
+            Z.evaluate(z, first), other.synthesise(Z.to_components(z), first.data)
+        )
+        assert self.close(A(x), given.synthesise(c, first.data))
+        # Another accuracy is its own preparation, and looser.
+        loose = X.evaluate(x, first, eps=1e-4)
+        assert self.close(loose, given.synthesise(c, first.data, epsilon=1e-4))
+        assert np.abs(loose - A(x)).max() > 1e-10 * np.abs(A(x)).max()
+        assert self.close(A(x), given.synthesise(c, first.data))

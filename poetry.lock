@@ -988,10 +988,9 @@ files = [
 name = "ducc0"
 version = "0.42.0"
 description = "Distinctly useful code collection: contains efficient algorithms for Fast Fourier (and related) transforms, spherical harmonic transforms involving very general spherical grids, gridding/degridding tools for radio interferometry, 4pi spherical convolution operators and much more."
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"sphere\" or extra == \"planetmodel\""
 files = [
     {file = "ducc0-0.42.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:262d31f4db22d34ff94d6c38cbad17770885dab88826bd32ef4b69f1ddde5c70"},
     {file = "ducc0-0.42.0-cp310-cp310-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:be8a17f4fa457ac81987f1ec110b198a46e253fe98446ed568f012c10863695a"},
@@ -2904,19 +2903,19 @@ xmp = ["defusedxml"]
 
 [[package]]
 name = "planetmodel"
-version = "1.4.1"
+version = "2.1.0"
 description = "Spherically layered planetary models: reference bodies, fields, mappings and meshes"
-optional = true
+optional = false
 python-versions = ">=3.12"
 groups = ["main"]
-markers = "extra == \"planetmodel\""
 files = [
-    {file = "planetmodel-1.4.1-py3-none-any.whl", hash = "sha256:a94c33b19eaddd2b6fdc3c94750aa3a79a9dc7551d2c76cee691ea1ed11e0334"},
-    {file = "planetmodel-1.4.1.tar.gz", hash = "sha256:8921575fcb1107aa28283fcca8aecc6599c69e0adeb51ec75b85129cb25c50fb"},
+    {file = "planetmodel-2.1.0-py3-none-any.whl", hash = "sha256:c7e891341b8b58963d5b6a58978a3a9f9f738bf462774b84ca2aac457876c622"},
+    {file = "planetmodel-2.1.0.tar.gz", hash = "sha256:7599b8143fe3352bfad7251d424afb91c7fb06c07d7d9580ff2256287508c9e0"},
 ]
 
 [package.dependencies]
 ducc0 = ">=0.41,<1"
+finufft = ">=2.3,<3"
 numpy = ">=2.0,<3"
 scipy = ">=1.15,<2"
 
@@ -4583,11 +4582,10 @@ clarabel = ["clarabel"]
 interactive = ["plotly"]
 mfem = ["mfem"]
 osqp = ["osqp"]
-planetmodel = ["planetmodel"]
 plot3d = ["plotly"]
 sphere = ["Cartopy", "ducc0", "pyshtools", "shapely"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "50e8d10cf7342fd388185cdceee5fae3296080e0ba5c75e92fbfecc14a032bd6"
+content-hash = "0057b9c6aa1f4bd5a5e1c56dbbefc8f6e8ccb0e58653cd3e84392fd649135c58"

@@ -58,10 +58,7 @@ if "google.colab" in sys.modules:
 
 # The extras each tutorial installs on Colab. Every one takes the sphere
 # extra, since the plotting layer draws maps through it.
-EXTRAS = {
-    "10_coupled_problems": "sphere,planetmodel",
-    "11_varying_structure": "sphere,planetmodel",
-}
+EXTRAS: dict[str, str] = {}
 DEFAULT_EXTRAS = "sphere"
 
 # What a Colab install cannot provide, said in the cell.

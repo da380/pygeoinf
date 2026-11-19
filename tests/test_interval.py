@@ -1,6 +1,6 @@
 """The spectral-element interval: the space, its operators and its priors.
 
-Needs ``planetmodel`` 1.2, whose ``randomfield`` surface does the numerics.
+``planetmodel``'s ``randomfield`` surface does the numerics.
 The independent routes are that library's *direct*
 methods -- the banded bilinear form and the banded Cholesky solve -- against
 the eigenbasis this space works in, and closed forms where there is one.
@@ -9,13 +9,9 @@ the eigenbasis this space works in, and closed forms where there is one.
 import numpy as np
 import pytest
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
-if not hasattr(randomfield, "SpectralBasis"):  # pragma: no cover
-    pytest.skip("needs planetmodel 1.2 or later", allow_module_level=True)
-
-from pygeoinf import Traits  # noqa: E402
-from pygeoinf.interval import Interval, Lebesgue, Sobolev  # noqa: E402
-from pygeoinf.testing import (  # noqa: E402
+from pygeoinf import Traits
+from pygeoinf.interval import Interval, Lebesgue, Sobolev
+from pygeoinf.testing import (
     check_coordinates,
     check_measure,
     check_operator,

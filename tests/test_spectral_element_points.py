@@ -7,21 +7,17 @@ and sums its own harmonics. The two share the components and nothing else,
 and must agree forward and adjoint to rounding on every geometry; the
 matrix-free one must also pass the adjoint check on its own, against each
 space's Sobolev measure.
-
-Needs ``planetmodel`` 1.4.
 """
 
 import numpy as np
 import pytest
 
-randomfield = pytest.importorskip("planetmodel.randomfield")
+from planetmodel import harmonics
 
-from planetmodel import harmonics  # noqa: E402
-
-from pygeoinf import ball, disk, interval  # noqa: E402
-from pygeoinf.interval import radial  # noqa: E402
-from pygeoinf.spectral_element import _points, base  # noqa: E402
-from pygeoinf.testing import check_operator  # noqa: E402
+from pygeoinf import ball, disk, interval
+from pygeoinf.interval import radial
+from pygeoinf.spectral_element import _points, base
+from pygeoinf.testing import check_operator
 
 TOLERANCE = 1e-12
 

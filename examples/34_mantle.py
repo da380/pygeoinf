@@ -18,7 +18,7 @@ length, and by the core-mantle boundary is close to that of knowing nothing;
 the section through two stations shows where the data stop and the prior
 takes over.
 
-Needs planetmodel and cartopy: the 'planetmodel' and 'sphere' extras.
+Needs cartopy, which comes with the 'sphere' extra.
 """
 
 import matplotlib.pyplot as pyplot

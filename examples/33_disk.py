@@ -11,8 +11,6 @@ Unlike the ball of example 34, a field on it is drawn whole, and so is what
 the data did: the posterior is the low-rank one of example 25, whose
 ``pointwise_variance_reduction`` is a field, the variance the data removed,
 at no cost beyond the eigenpairs.
-
-Needs planetmodel, which comes with the 'planetmodel' extra.
 """
 
 import numpy as np
