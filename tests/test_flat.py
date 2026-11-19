@@ -664,7 +664,9 @@ class TestTheNonUniformRouteKeepsItsTransforms:
     def test_a_copy_or_a_pickle_applies_as_the_original(self, rng):
         import copy
 
-        from joblib.externals import cloudpickle
+        from .conftest import joblib_cloudpickle
+
+        cloudpickle = joblib_cloudpickle()
 
         space = bounded_slab(2.0)
         points = [space.random_point(rng=rng) for _ in range(30)]

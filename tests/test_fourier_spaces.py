@@ -690,7 +690,9 @@ class TestTheTransformIsKeptWithThePoints:
         import copy
         import pickle
 
-        from joblib.externals import cloudpickle
+        from .conftest import joblib_cloudpickle
+
+        cloudpickle = joblib_cloudpickle()
 
         from pygeoinf.symmetric_space.plane import Plane
 
