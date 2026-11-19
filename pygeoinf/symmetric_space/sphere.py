@@ -39,6 +39,7 @@ from typing import Any, Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
+from planetmodel.fourier import PointTransform, Transform
 
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import resolve_rng
@@ -283,6 +284,72 @@ def _legendre_indices_for(lmax: int) -> np.ndarray:
     indices = degrees * (degrees + 1) // 2 + orders
     indices.flags.writeable = False
     return indices
+
+
+class _DoubleFourier:
+    """The torus transforms behind the fast point evaluation on a
+    Driscoll-Healy grid.
+
+    The doubled field (:meth:`Sphere._double`) is a real periodic field on
+    ``[0, 2 pi) x [0, 2 pi)`` in colatitude and longitude, sampled on a
+    ``(2 rows, columns)`` grid whose points are ``planetmodel``'s for that
+    shape and those periods, ``j 2 pi / n`` along each axis; ``doubled`` is
+    its transform. A field of the space is band-limited at ``lmax``, so its
+    doubled field has no torus wavenumber above ``lmax`` on either axis, and
+    ``band``, the ``(2 lmax + 2, 2 lmax + 2)`` grid, holds every one it has.
+    The transform at points is made on the band grid, half the size of the
+    doubled one on the square grid and a quarter on the wide one. The
+    matching of the two packings, most of the cost of ``Transform.transfer``,
+    is made here once.
+    """
+
+    def __init__(self, rows: int, columns: int, lmax: int) -> None:
+        """
+        Args:
+            rows: the Driscoll-Healy grid's rows, which the doubling doubles.
+            columns: its columns.
+            lmax: the truncation, which sets the band grid.
+        """
+        periods = (2.0 * np.pi, 2.0 * np.pi)
+        self.doubled = Transform((2 * rows, columns), periods)
+        self.band = Transform((2 * lmax + 2, 2 * lmax + 2), periods)
+        here, there, scale = self.doubled.packing.matching(self.band.packing)
+        for table in (here, there, scale):
+            table.flags.writeable = False
+        self._here, self._there, self._scale = here, there, scale
+        # The doubled grid's basis is orthonormal under its quadrature, V / N
+        # times the sum over the grid, so its analysis is V / N times the
+        # transpose of its synthesis.
+        self._cell = self.doubled.volume / self.doubled.size
+
+    def to_band(self, doubled: np.ndarray, /) -> np.ndarray:
+        """The band grid's components of the doubled grid's series: the
+        doubled grid analysed, and the components the band grid holds
+        carried over keeping their functions, the rest dropped."""
+        components = self.doubled.analyse_grid(doubled)
+        band = np.zeros(self.band.size)
+        band[self._there] = self._scale * components[self._here]
+        return band
+
+    def to_band_transpose(self, band: np.ndarray, /) -> np.ndarray:
+        """The transpose of :meth:`to_band`: the band components put back in
+        the doubled grid's places, then the transpose of the analysis, ``V /
+        N`` times the synthesis."""
+        components = np.zeros(self.doubled.size)
+        components[self._here] = self._scale * band[self._there]
+        return self._cell * self.doubled.synthesise_grid(components)
+
+
+@lru_cache(maxsize=8)
+def _double_fourier_for(rows: int, columns: int, lmax: int) -> _DoubleFourier:
+    """The torus transforms of a Driscoll-Healy grid, built once per grid and
+    shared by every space on it.
+
+    Kept here rather than on the space or on its :class:`_Grid`, either of
+    which a pickle of the space would carry: the two packings come to tens of
+    megabytes at ``lmax`` 256.
+    """
+    return _DoubleFourier(rows, columns, lmax)
 
 
 @lru_cache(maxsize=4)
@@ -1300,7 +1367,8 @@ class Sphere(SymmetricSpace[Any]):
         )
 
     def _angles(self, points: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
-        """Points as two contiguous arrays of radians, for the NUFFT."""
+        """Points as two contiguous arrays of radians, colatitude and
+        longitude, for the gradient's transform."""
         positions = self.prepare_points(points).data
         return (
             np.ascontiguousarray(positions[:, 0]),
@@ -1315,6 +1383,13 @@ class Sphere(SymmetricSpace[Any]):
         pair. Preparing a fixed set of points once saves redoing the
         conversion on every application.
 
+        The prepared points also keep ``planetmodel``'s transform at them on
+        the band grid of :meth:`evaluate`, ``Transform.at``, one for each
+        truncation, accuracy and thread count they are evaluated with, built
+        at the first application of the transform route: the angles taken
+        once, and finufft's plan of each type of transform, the points sorted,
+        made at its first application and reused at every later one.
+
         Args:
             points: ``(latitude, longitude)`` pairs in degrees, or an already
                 prepared set.
@@ -1327,6 +1402,21 @@ class Sphere(SymmetricSpace[Any]):
         points = tuple(points)
         positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
         return PreparedPoints(points, data=positions)
+
+    def _band_at(
+        self, points: Sequence[Any], band: Transform, eps: float, nthreads: int
+    ) -> PointTransform:
+        """``planetmodel``'s transform at the points on the band grid, to
+        ``eps`` with ``nthreads`` threads: built on first use and kept with
+        the prepared points, for this band grid, accuracy and thread count.
+        The ``(colatitude, longitude)`` radians are the torus coordinates, so
+        the prepared data is what it takes. Every space of one truncation
+        shares it, whatever its grid's sampling or extension."""
+        prepared = self.prepare_points(points)
+        key = ("sphere", band.shape, eps, nthreads)
+        return prepared._cached(
+            key, lambda: band.at(prepared.data, epsilon=eps, nthreads=nthreads)
+        )
 
     def _use_transform(self, count: int) -> bool:
         """Whether the transform route is cheaper than summing the basis.
@@ -1354,10 +1444,24 @@ class Sphere(SymmetricSpace[Any]):
     ) -> np.ndarray:
         """Field values at scattered points.
 
-        Above a size threshold this goes through the double Fourier sphere and
-        a type-2 non-uniform FFT, which costs ``O(dim log dim + n)`` against the
-        direct sum's ``O(n dim)``. Below it, the fixed cost of the transforms is
-        not worth paying and the basis is summed directly.
+        Above a size threshold this goes through the double Fourier sphere:
+        the field doubled onto the torus (:meth:`_double`), one real FFT of
+        the doubled grid, its components carried to the band grid, ``(2 lmax
+        + 2, 2 lmax + 2)``, which holds every torus wavenumber a field of the
+        space has, and a type-2 non-uniform FFT there, prepared at the points
+        once and kept with them (see :meth:`prepare_points`). That costs
+        ``O(dim log dim + n)`` against the direct sum's ``O(n dim)``. Below
+        the threshold, the fixed cost of the transforms is not worth paying
+        and the basis is summed directly.
+
+        The routes agree on the space. A grid of values that is not
+        band-limited at ``lmax`` -- not a field of the space, though one of
+        the right shape is accepted -- is another matter: the direct sum, and
+        the transform route on a Gauss-Legendre grid, which analyses first,
+        project it onto the harmonics, while on a Driscoll-Healy grid the
+        transform route truncates the doubled grid's torus spectrum to the
+        band grid's, wavenumbers up to ``lmax`` on each axis and some at
+        ``lmax + 1``.
 
         Args:
             x: a field of this space.
@@ -1390,20 +1494,10 @@ class Sphere(SymmetricSpace[Any]):
                 eps=eps,
                 nthreads=nthreads,
             )
-        import finufft
-
-        rows, columns = self._core_shape
-        coefficients = np.fft.fft2(self._double(x)) / (2 * rows * columns)
-        colatitudes, longitudes = self._angles(points)
-        values = finufft.nufft2d2(
-            colatitudes,
-            longitudes,
-            np.ascontiguousarray(np.fft.fftshift(coefficients)),
-            isign=+1,
-            eps=eps,
-            nthreads=nthreads,
-        )
-        return np.ascontiguousarray(np.atleast_1d(values).real)
+        fourier = _double_fourier_for(*self._core_shape, self._lmax)
+        components = fourier.to_band(self._double(x))
+        at = self._band_at(points, fourier.band, eps, nthreads)
+        return np.ascontiguousarray(at.synthesise(components))
 
     def _complex_coefficients(self, x: Any, /) -> np.ndarray:
         """The field's coefficients as complex ``a_lm`` in ``m``-major order."""
@@ -1470,10 +1564,12 @@ class Sphere(SymmetricSpace[Any]):
     ) -> np.ndarray:
         """The derivative components of ``x -> sum_i y_i x(r_i)``.
 
-        The transpose of :meth:`evaluate`, step for step: a type-1 NUFFT where
-        that used a type-2, the same FFT — the discrete Fourier matrix is
-        symmetric, so it is its own transpose — and then the transposes of the
-        fold and of synthesis onto the grid.
+        The transpose of :meth:`evaluate`, step for step: the type-1 NUFFT at
+        the points where that used a type-2, kept with the prepared points as
+        that is; the band components put back in the doubled grid's places;
+        the transpose of the doubled grid's analysis, which is its synthesis
+        times the cell area, ``(2 pi)^2`` over the number of grid points;
+        and then the transposes of the fold and of synthesis onto the grid.
 
         Args:
             weights: one per point.
@@ -1508,21 +1604,9 @@ class Sphere(SymmetricSpace[Any]):
             return self._driscoll_healy.accumulate(
                 weights, points, eps=eps, nthreads=nthreads
             )
-        import finufft
-
-        rows, columns = self._core_shape
-        colatitudes, longitudes = self._angles(points)
-        spectrum = finufft.nufft2d1(
-            colatitudes,
-            longitudes,
-            np.ascontiguousarray(values.astype(complex)),
-            (2 * rows, columns),
-            isign=+1,
-            eps=eps,
-            nthreads=nthreads,
-        )
-        doubled = np.fft.fft2(np.fft.ifftshift(spectrum)) / (2 * rows * columns)
-        return self._double_adjoint(doubled.real)
+        fourier = _double_fourier_for(*self._core_shape, self._lmax)
+        sums = self._band_at(points, fourier.band, eps, nthreads).accumulate(values)
+        return self._double_adjoint(fourier.to_band_transpose(sums))
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid.

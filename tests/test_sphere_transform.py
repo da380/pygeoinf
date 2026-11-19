@@ -10,6 +10,7 @@ the pole the grid does not sample — carry a negative control.
 
 import numpy as np
 import pytest
+from planetmodel.fourier import Transform
 
 from .conftest import coastlines_are_cached
 
@@ -590,3 +591,210 @@ class TestDomainMask:
         # Roughly three tenths of the area is land.
         fraction = float(np.mean(land))
         assert 0.15 < fraction < 0.45
+
+
+# Every grid the constructor offers: kind, sampling and extension.
+GRIDS = [
+    pytest.param({}, id="DH"),
+    pytest.param({"extend": True}, id="DH-extended"),
+    pytest.param({"sampling": 2}, id="DH-wide"),
+    pytest.param({"sampling": 2, "extend": True}, id="DH-wide-extended"),
+    pytest.param({"grid": "GLQ"}, id="GLQ"),
+    pytest.param({"grid": "GLQ", "extend": True}, id="GLQ-extended"),
+]
+
+
+class TestTheTransformRouteAtPoints:
+    """The transform route carries the doubled field's components to the band
+    grid, ``(2 lmax + 2, 2 lmax + 2)``, and evaluates them there with
+    ``planetmodel``'s transform, prepared at the points once and kept with
+    them. On every grid it is the basis summed at the points to the accuracy
+    asked for, and the transpose of its own evaluation to rounding; it is
+    prepared once for a set of points however often it is applied, and once
+    more for another accuracy, thread count or truncation; and a pickle of
+    the points carries none of it."""
+
+    @staticmethod
+    def points(space, rng):
+        """Random points, with the poles and the seam among them."""
+        special = [
+            [90.0, 0.0],
+            [-90.0, 0.0],
+            [0.0, 180.0],
+            [0.0, -180.0],
+            [45.0, 360.0],
+        ]
+        return space.prepare_points(
+            space.random_points(300, rng=rng) + [np.array(p) for p in special]
+        )
+
+    @staticmethod
+    def close(actual, expected):
+        """Equal to rounding, against the size of the expected values."""
+        scale = np.abs(expected).max()
+        return np.allclose(actual, expected, rtol=0.0, atol=1e-13 * scale)
+
+    @pytest.mark.parametrize("options", GRIDS)
+    @pytest.mark.parametrize("eps", [1e-6, 1e-12])
+    def test_it_is_the_basis_summed_to_the_accuracy_asked(self, options, eps, rng):
+        X = Lebesgue(21, **options)
+        c = rng.normal(size=X.dim)
+        x = X.from_components(c)
+        points = self.points(X, rng)
+        weights = rng.normal(size=len(points))
+        basis = X.basis_matrix(points)
+        values, sums = basis @ c, basis.T @ weights
+        with forced(transform=True):
+            evaluated = X.evaluate(x, points, eps=eps)
+            accumulated = X.accumulate(weights, points, eps=eps)
+        assert np.abs(evaluated - values).max() <= 10 * eps * np.abs(values).max()
+        assert np.abs(accumulated - sums).max() <= 10 * eps * np.abs(sums).max()
+
+    @pytest.mark.parametrize("options", GRIDS)
+    def test_it_is_the_transpose_of_its_evaluation_to_rounding(self, options, rng):
+        """At any accuracy: the type-1 transform is the exact transpose of
+        the type 2, and every other step is transposed exactly."""
+        X = Lebesgue(21, **options)
+        c = rng.normal(size=X.dim)
+        x = X.from_components(c)
+        points = self.points(X, rng)
+        weights = rng.normal(size=len(points))
+        with forced(transform=True):
+            for eps in (1e-6, 1e-12):
+                values = X.evaluate(x, points, eps=eps)
+                sums = X.accumulate(weights, points, eps=eps)
+                scale = np.linalg.norm(weights) * np.linalg.norm(values)
+                assert np.dot(weights, values) == pytest.approx(
+                    np.dot(sums, c), rel=0.0, abs=1e-13 * scale
+                )
+
+    def test_the_points_are_prepared_once(self, rng, monkeypatch):
+        """``Transform.at`` is called once for an operator however often it
+        is applied, and finufft makes one plan of each type there; every
+        space of the truncation shares them, the Gauss-Legendre one through
+        its Driscoll-Healy sibling; another accuracy, thread count or
+        truncation is one more preparation each."""
+        made = []
+        at = Transform.at
+
+        def counting(transform, points, /, **options):
+            made.append((transform.shape, options))
+            return at(transform, points, **options)
+
+        plans = []
+        plan = finufft.Plan
+
+        def counting_plan(kind, *args, **kwargs):
+            plans.append(kind)
+            return plan(kind, *args, **kwargs)
+
+        monkeypatch.setattr(Transform, "at", counting)
+        monkeypatch.setattr(finufft, "Plan", counting_plan)
+        X = Sobolev(24, 2.0, 0.2)
+        points = self.points(X, rng)
+        A = X.point_evaluation_operator(points)
+        x = X.random(rng=rng)
+        c = X.to_components(x)
+        with forced(transform=True):
+            for _ in range(4):
+                A(x)
+                A.adjoint(rng.normal(size=len(points)))
+            assert len(made) == 1
+            assert sorted(plans) == [1, 2]
+            for Y in (
+                Lebesgue(24),
+                Lebesgue(24, sampling=2, extend=True),
+                Lebesgue(24, grid="GLQ"),
+                Sobolev(24, 2.0, 0.2, grid="GLQ", extend=True),
+            ):
+                Y.evaluate(Y.from_components(c), points)
+                Y.accumulate(rng.normal(size=len(points)), points)
+            assert len(made) == 1
+            assert sorted(plans) == [1, 2]
+            for _ in range(2):
+                X.evaluate(x, points, eps=1e-6)
+            assert len(made) == 2
+            for _ in range(2):
+                X.evaluate(x, points, nthreads=2)
+            assert len(made) == 3
+            Lebesgue(30).evaluate(Lebesgue(30).random(rng=rng), points)
+            assert len(made) == 4
+        assert [shape for shape, _ in made] == [(50, 50)] * 3 + [(62, 62)]
+        assert [options for _, options in made[:3]] == [
+            {"epsilon": 1e-10, "nthreads": 1},
+            {"epsilon": 1e-6, "nthreads": 1},
+            {"epsilon": 1e-10, "nthreads": 2},
+        ]
+
+    def test_another_accuracy_is_its_own_and_looser(self, rng):
+        X = Lebesgue(24)
+        x = X.random(rng=rng)
+        points = self.points(X, rng)
+        with forced(transform=True):
+            tight = X.evaluate(x, points)
+            loose = X.evaluate(x, points, eps=1e-6)
+            again = X.evaluate(x, points)
+        assert np.abs(loose - tight).max() > 1e-10 * np.abs(tight).max()
+        assert self.close(again, tight)
+
+    def test_the_torus_transforms_are_built_once_per_grid(self, rng, monkeypatch):
+        """Another space of the grid, of another order or extended, builds
+        none of its own."""
+        X = Lebesgue(24, sampling=2)
+        points = self.points(X, rng)
+        with forced(transform=True):
+            X.evaluate(X.random(rng=rng), points)
+
+            def refuse(*args, **kwargs):
+                raise AssertionError("the torus transforms were built again")
+
+            monkeypatch.setattr(sphere_module, "_DoubleFourier", refuse)
+            for Y in (
+                Lebesgue(24, sampling=2),
+                Sobolev(24, 2.0, 0.2, sampling=2, extend=True),
+                X.with_order(1.5),
+            ):
+                Y.evaluate(Y.random(rng=rng), points)
+                Y.accumulate(rng.normal(size=len(points)), points)
+
+    def test_a_pickle_of_the_points_carries_nothing_kept(self, rng):
+        import copy
+        import pickle
+
+        from joblib.externals import cloudpickle
+
+        from pygeoinf.symmetric_space.base import PreparedPoints
+
+        X = Sobolev(24, 2.0, 0.2)
+        x = X.random(rng=rng)
+        points = self.points(X, rng)
+        weights = rng.normal(size=len(points))
+        with forced(transform=True):
+            A = X.point_evaluation_operator(points)
+            values, sums = A(x), X.accumulate(weights, points)
+            adjoint = X.to_components(A.adjoint(weights))
+            assert points._kept
+            dumped = pickle.dumps(points)
+            fresh = PreparedPoints(points.points, data=points.data)
+            assert len(dumped) == len(pickle.dumps(fresh))
+            assert b"PointTransform" not in dumped
+            restored = pickle.loads(dumped)
+            assert restored._kept == {}
+            assert len(restored) == len(points)
+            assert self.close(X.evaluate(x, restored), values)
+            assert self.close(X.accumulate(weights, restored), sums)
+            assert set(restored._kept) == set(points._kept)
+            # A copy keeps what is kept: a shallow one shares it, a deep one
+            # copies it.
+            shallow, deep = copy.copy(points), copy.deepcopy(points)
+            assert shallow._kept is points._kept
+            assert set(deep._kept) == set(points._kept)
+            assert deep._kept is not points._kept
+            for copied in (shallow, deep):
+                assert self.close(X.evaluate(x, copied), values)
+                assert self.close(X.accumulate(weights, copied), sums)
+            # An operator shipped whole, as joblib ships it, applies as the
+            # original.
+            B = cloudpickle.loads(cloudpickle.dumps(A))
+            assert self.close(B(x), values)
+            assert self.close(B.domain.to_components(B.adjoint(weights)), adjoint)
