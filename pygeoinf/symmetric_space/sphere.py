@@ -53,15 +53,15 @@ _ORTHONORMAL = 4
 # so a chunk is about 30 MB whatever the truncation.
 _CHUNK_ENTRIES = 4_000_000
 
-# When the transform route wins. Its cost is fixed in the number of points --
-# one analysis, one FFT, one NUFFT -- while the direct sum costs one basis
-# evaluation per point per component, so the crossover is a threshold on both.
-# With single-threaded NUFFTs (see Sphere.evaluate) the transform wins from
-# about 200 points once the dimension is a few hundred. Below dim 256 the two
-# are within a millisecond of each other either way, so the dimension
-# threshold avoids paying the fixed cost for nothing.
+# When the transform route wins. Its cost is nearly fixed in the number of
+# points -- one FFT of the doubled grid and one NUFFT on the band grid -- while
+# the direct sum costs one basis evaluation per point per component, so the
+# crossover is a number of points. With single-threaded NUFFTs (see
+# Sphere.evaluate) and the transform kept with prepared points, it wins from
+# about 200 points at every truncation: several times over on points it has
+# met before, and level with the direct sum on a set it must first prepare.
+# Below that the two are within half a millisecond of each other either way.
 _TRANSFORM_MIN_POINTS = 200
-_TRANSFORM_MIN_DIM = 256
 
 # pyshtools spells "leave the Condon-Shortley phase out" as csphase=1.
 _NO_CONDON_SHORTLEY = 1
@@ -1421,17 +1421,17 @@ class Sphere(SymmetricSpace[Any]):
     def _use_transform(self, count: int) -> bool:
         """Whether the transform route is cheaper than summing the basis.
 
-        The transform costs a fixed amount — one analysis, one FFT, one NUFFT —
-        while the direct sum costs one basis evaluation per point per
-        component. So both sides of the crossover matter: a large truncation
-        makes the direct sum expensive per point, and a small one makes the
-        transform's fixed cost not worth paying however many points there are.
+        The transform costs a nearly fixed amount — one FFT of the doubled
+        grid, one NUFFT on the band grid — while the direct sum costs one
+        basis evaluation per point per component. Both grow with the
+        truncation, the direct sum the faster, so the crossover is a number
+        of points, the same at every truncation.
         """
         try:
             import finufft  # noqa: F401
         except ImportError:  # pragma: no cover - depends on the install
             return False
-        return count >= _TRANSFORM_MIN_POINTS and self.dim >= _TRANSFORM_MIN_DIM
+        return count >= _TRANSFORM_MIN_POINTS
 
     def evaluate(
         self,

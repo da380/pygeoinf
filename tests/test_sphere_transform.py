@@ -32,15 +32,11 @@ class forced:
 
     def __enter__(self):
         self.points = sphere_module._TRANSFORM_MIN_POINTS
-        self.dimension = sphere_module._TRANSFORM_MIN_DIM
-        value = 0 if self.transform else 10**18
-        sphere_module._TRANSFORM_MIN_POINTS = value
-        sphere_module._TRANSFORM_MIN_DIM = value
+        sphere_module._TRANSFORM_MIN_POINTS = 0 if self.transform else 10**18
         return self
 
     def __exit__(self, *args):
         sphere_module._TRANSFORM_MIN_POINTS = self.points
-        sphere_module._TRANSFORM_MIN_DIM = self.dimension
 
 
 class TestQuadratureWeights:
@@ -287,11 +283,12 @@ class TestBothRoutesAgree:
             through = X.path_average_operator(paths, count=10)(field)
         assert np.allclose(direct, through, atol=1e-9)
 
-    def test_the_route_is_chosen_by_size(self):
-        small, large = Lebesgue(4), Lebesgue(32)
-        assert not small._use_transform(10_000)  # too few components
-        assert not large._use_transform(10)  # too few points
-        assert large._use_transform(10_000)
+    def test_the_route_is_chosen_by_the_number_of_points(self):
+        """At every truncation alike: the transform's cost and the direct
+        sum's both grow with it."""
+        for space in (Lebesgue(4), Lebesgue(32)):
+            assert not space._use_transform(10)  # too few points
+            assert space._use_transform(10_000)
 
     def test_a_mismatched_weight_count_is_refused(self, rng):
         X = Lebesgue(8)
