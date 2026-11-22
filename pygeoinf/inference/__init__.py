@@ -21,6 +21,7 @@ from ..numerics.normal import FactoredNormalOperator, NormalOperator
 from ..numerics.preconditioners import (
     InvariantDistancePreconditioner,
     LocalizedPreconditioner,
+    NearestNeighbourPreconditioner,
     NormalDiagonalPreconditioner,
     WoodburyPreconditioner,
     gaspari_cohn,
@@ -86,6 +87,7 @@ __all__ = [
     "NormalDiagonalPreconditioner",
     "LocalizedPreconditioner",
     "InvariantDistancePreconditioner",
+    "NearestNeighbourPreconditioner",
     "WoodburyPreconditioner",
     "gaspari_cohn",
     "ConstrainedLeastSquares",

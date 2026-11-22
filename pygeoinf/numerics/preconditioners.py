@@ -13,6 +13,12 @@ diagonal (:class:`JacobiPreconditioner`), a band
 (:class:`ColumnThresholdedPreconditioner`). :class:`SpectralPreconditioner`
 resolves the leading eigenmodes, and :class:`WoodburyPreconditioner` inverts
 a normal operator through the other space.
+
+For point data and an invariant prior the matrix is a function of the
+distances between the points and nothing has to be read at all:
+:class:`InvariantDistancePreconditioner` tapers it and factorizes, and
+:class:`NearestNeighbourPreconditioner` builds a sparse inverse from each
+point's nearest neighbours, with nothing cut off.
 """
 
 from __future__ import annotations
@@ -59,6 +65,7 @@ __all__ = [
     "NormalDiagonalPreconditioner",
     "LocalizedPreconditioner",
     "InvariantDistancePreconditioner",
+    "NearestNeighbourPreconditioner",
     "gaspari_cohn",
 ]
 
@@ -2186,6 +2193,306 @@ class InvariantDistancePreconditioner(LinearSolver):
             weighted = data_space.apply_gram(data_space.to_components(y))
             return SolveResult(
                 data_space.from_components(factorized.solve(weighted)), 0, 0.0, True
+            )
+
+        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+
+def _squared_separations(
+    first: np.ndarray, second: np.ndarray, boxsize: Any, /
+) -> np.ndarray:
+    """Squared embedded distances between two sets of points, wrapped in a
+    periodic box where there is one: ``(a, d)`` and ``(b, d)`` to ``(a, b)``.
+
+    One axis at a time, so that nothing of shape ``(a, b, d)`` is made.
+    """
+    dimension = first.shape[1]
+    lengths = (
+        None
+        if boxsize is None
+        else np.broadcast_to(np.asarray(boxsize, dtype=float), (dimension,))
+    )
+    total = np.zeros((first.shape[0], second.shape[0]))
+    for axis in range(dimension):
+        offsets = first[:, None, axis] - second[None, :, axis]
+        if lengths is not None:
+            offsets -= lengths[axis] * np.round(offsets / lengths[axis])
+        total += offsets * offsets
+    return total
+
+
+def _maximin_order(vectors: np.ndarray, boxsize: Any, /) -> np.ndarray:
+    """The maximin order of embedded points: the first as given, and each
+    after it the one farthest from all those before.
+
+    The early points then cover the domain coarsely and the later ones fill
+    it in, which is the order in which a regression on nearest earlier
+    neighbours sees the long wavelengths first.
+    """
+    count = vectors.shape[0]
+    order = np.empty(count, dtype=int)
+    order[0] = 0
+    nearest = _squared_separations(vectors, vectors[:1], boxsize)[:, 0]
+    nearest[0] = -np.inf
+    for index in range(1, count):
+        chosen = int(np.argmax(nearest))
+        order[index] = chosen
+        np.minimum(
+            nearest,
+            _squared_separations(vectors, vectors[chosen : chosen + 1], boxsize)[:, 0],
+            out=nearest,
+        )
+        nearest[chosen] = -np.inf
+    return order
+
+
+def _earlier_neighbours(vectors: np.ndarray, boxsize: Any, count: int, /) -> np.ndarray:
+    """For points in their order, the indices of the ``count`` nearest of
+    those before each, ``-1`` where there are fewer: an ``(n, count)`` array.
+
+    A direct search, in blocks of rows that keep a table of distances to a
+    few million entries: its work grows with the square of the number of
+    points, which is seconds for the tens of thousands this is used with.
+    """
+    total = vectors.shape[0]
+    result = np.full((total, count), -1, dtype=int)
+    block = max(1, 4_000_000 // total)
+    for start in range(1, total, block):
+        stop = min(start + block, total)
+        separations = _squared_separations(vectors[start:stop], vectors[:stop], boxsize)
+        rows = np.arange(start, stop)
+        # A point's neighbours come before it.
+        separations[np.arange(stop)[None, :] >= rows[:, None]] = np.inf
+        keep = min(count, stop - 1)
+        nearest = np.argpartition(separations, keep - 1, axis=1)[:, :keep]
+        found = np.take_along_axis(separations, nearest, axis=1)
+        nearest[~np.isfinite(found)] = -1
+        # Those found first, so that a row's entries are its leading ones.
+        nearest = np.take_along_axis(
+            nearest, np.argsort(nearest < 0, axis=1, kind="stable"), axis=1
+        )
+        result[start:stop, :keep] = nearest
+    return result
+
+
+class NearestNeighbourPreconditioner(LinearSolver):
+    """``A Q A* + R`` for point data and an invariant prior, inverted through
+    each point's nearest neighbours.
+
+    The same setting as :class:`InvariantDistancePreconditioner`, and the
+    same table: the matrix is ``k(d(p_i, p_j))`` plus the noise, written
+    down from distances with no application of the forward operator or of
+    the prior. What differs is how it is made sparse. There the covariance
+    is tapered to nothing beyond a distance and the result factorized; here
+    nothing is cut off, and it is the *inverse* that is sparse.
+
+    The points are put in an order and each is regressed on the
+    ``neighbours`` nearest of those before it,
+
+    .. code-block:: text
+
+        x_i == sum_j B_ij x_j + e_i,    var(e_i) == f_i,
+
+    with the coefficients and the variance from the small block of the
+    matrix on those neighbours alone. Then
+
+    .. code-block:: text
+
+        (K + D)^-1  ~  (1 - B)^T F^-1 (1 - B),
+
+    with ``B`` strictly lower triangular, ``neighbours`` entries to a row,
+    and ``F`` diagonal: Vecchia's approximation (Vecchia, 1988), in the form
+    of a factor of the inverse (Schäfer, Katzfuss and Owhadi, 2021). The
+    order is the maximin one, each point the farthest from all before it.
+
+    It is positive definite by construction, whatever the number of
+    neighbours, so there is no taper to choose and nothing a truncation can
+    break; with every earlier point as a neighbour it is exact. A smooth
+    covariance has a long range and a tapered one must either keep many
+    entries or distort it, while the regression needs only as many
+    neighbours as the field has local degrees of freedom: a few tens do
+    for a covariance several times longer than the spacing of the points.
+    Building it is one small dense solve per point, applying it two sparse
+    products, and there is no factorization to fill in.
+
+    Only the diagonal of the error covariance is used. A part of it that
+    couples many data -- a common mode, a low-rank correction's error --
+    is not local and has to be handled around this, by a low-rank update.
+
+    As for :class:`InvariantDistancePreconditioner`, the caller asserts
+    that the forward operator is evaluation at *points*, in that order, and
+    that the prior is invariant; nothing fails loudly if not.
+
+    The search for neighbours is direct, and its work grows with the square
+    of the number of points.
+    """
+
+    requires: ClassVar[Traits] = Traits.NONE
+    requires_coordinates: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        space: "SymmetricSpace",
+        points: Sequence[Any],
+        /,
+        *,
+        neighbours: int = 30,
+        n_jobs: int | None = None,
+    ) -> None:
+        """
+        Args:
+            space: the symmetric space the model lives on, which supplies the
+                distances and the covariance function.
+            points: the observation points, in the order the data are in.
+            neighbours: how many earlier points each is regressed on. The
+                cost of building grows with its cube and of applying with
+                it; the iterations fall as it grows.
+            n_jobs: workers for the error covariance's diagonal, where it
+                must be probed. Serial by default.
+
+        Raises:
+            ValueError: if *neighbours* is not positive.
+        """
+        if neighbours < 1:
+            raise ValueError(f"At least one neighbour is needed, got {neighbours}.")
+        self._space = space
+        self._points = list(points)
+        self._neighbours = int(neighbours)
+        self._n_jobs = n_jobs
+
+    def _regression(
+        self, kernel: Callable[[np.ndarray], np.ndarray], nugget: np.ndarray, /
+    ) -> tuple[np.ndarray, sparse.csr_matrix, np.ndarray]:
+        """The order, ``1 - B`` and ``F`` for the kernel and a nugget a point.
+
+        Points with the same number of neighbours are solved together, in
+        batches that bound the memory of their small matrices. The kernel is
+        evaluated once for each pair, the blocks being symmetric.
+        """
+        space = self._space
+        vectors, boxsize = space._embedding(self._points)
+        count = vectors.shape[0]
+        order = _maximin_order(vectors, boxsize)
+        vectors, nugget = vectors[order], nugget[order]
+        variance = float(kernel(np.zeros(1))[0])
+        conditional = np.empty(count)
+        conditional[0] = variance + nugget[0]
+        empty = np.zeros(0, dtype=int)
+        rows, columns, values = [empty], [empty], [np.zeros(0)]
+        dimension = vectors.shape[1]
+        lengths = (
+            None
+            if boxsize is None
+            else np.broadcast_to(np.asarray(boxsize, dtype=float), (dimension,))
+        )
+        if count > 1:
+            sets = _earlier_neighbours(
+                vectors, boxsize, min(self._neighbours, count - 1)
+            )
+            sizes = (sets >= 0).sum(axis=1)
+            for size in np.unique(sizes[1:]):
+                group = np.flatnonzero(sizes == size)
+                group = group[group > 0]
+                batch = max(1, 2_000_000 // (size * size))
+                pairs = np.triu_indices(size + 1, 1)
+                diagonal = np.arange(size)
+                for start in range(0, group.size, batch):
+                    members = group[start : start + batch]
+                    index = sets[members, :size]
+                    near = vectors[index]
+                    # Each member's own point is put last, so that one table
+                    # of separations holds its neighbours' and its own.
+                    stacked = np.concatenate([near, vectors[members][:, None]], axis=1)
+                    squared = np.zeros((members.size, size + 1, size + 1))
+                    for axis in range(dimension):
+                        offsets = stacked[:, :, None, axis] - stacked[:, None, :, axis]
+                        if lengths is not None:
+                            offsets -= lengths[axis] * np.round(offsets / lengths[axis])
+                        squared += offsets * offsets
+                    table = np.empty_like(squared)
+                    evaluated = kernel(
+                        space._geodesic_from_embedded(
+                            np.sqrt(squared[:, pairs[0], pairs[1]])
+                        ).ravel()
+                    ).reshape(members.size, -1)
+                    table[:, pairs[0], pairs[1]] = evaluated
+                    table[:, pairs[1], pairs[0]] = evaluated
+                    among = table[:, :size, :size]
+                    among[:, diagonal, diagonal] = variance + nugget[index]
+                    cross = table[:, :size, size]
+                    weights = np.linalg.solve(among, cross[:, :, None])[:, :, 0]
+                    conditional[members] = (
+                        variance
+                        + nugget[members]
+                        - np.einsum("ni,ni->n", cross, weights)
+                    )
+                    rows.append(np.repeat(members, size))
+                    columns.append(index.ravel())
+                    values.append(weights.ravel())
+        if np.any(conditional <= 0.0):
+            raise ValueError(
+                "A conditional variance is not positive: the covariance "
+                "between the points is singular to rounding. Two points "
+                "coincide, or there is no noise and the points are closer "
+                "than the prior can tell apart."
+            )
+        regression = sparse.csr_matrix(
+            (np.concatenate(values), (np.concatenate(rows), np.concatenate(columns))),
+            shape=(count, count),
+        )
+        residual = (sparse.identity(count, format="csr") - regression).tocsr()
+        return order, residual, conditional
+
+    def _invert(self, operator: LinearOperator) -> InverseOperator:
+        normal = _require_normal(operator, type(self).__name__)
+        if not isinstance(normal, NormalOperator):
+            raise TypeError(
+                f"{type(self).__name__} reads the covariance function of the "
+                f"prior *measure*, which only a NormalOperator built from a "
+                f"Gaussian prior carries; a {type(normal).__name__} holds a "
+                f"covariance operator and no measure. Use "
+                f"NormalDiagonalPreconditioner or LocalizedPreconditioner for "
+                f"it, which read the factors."
+            )
+        data_space = normal.data_space
+        require_coordinates(data_space, data_space)
+        dimension = data_space.dim
+        if len(self._points) != dimension:
+            raise ValueError(
+                f"{len(self._points)} points were given for a data space of "
+                f"dimension {dimension}. The points are the data, in order."
+            )
+
+        error_covariance = normal.error_covariance
+        noise = (
+            np.zeros(dimension)
+            if error_covariance is None
+            else error_covariance.diagonals(
+                offsets=(0,), form="galerkin", n_jobs=self._n_jobs
+            )[0]
+        )
+        # The Galerkin matrix is ``scale (G K G + D)``, with ``K`` the table of
+        # the kernel, ``G`` the data space's diagonal metric and ``D`` the
+        # noise (see InvariantDistancePreconditioner). That is
+        # ``scale G (K + G^-1 D G^-1) G``, so the regression is made for the
+        # kernel with the nugget ``D / G^2`` and the metric applied around it.
+        metric = _metric_diagonal(data_space, type(self).__name__)
+        prior = normal.prior
+        order, residual, conditional = self._regression(
+            lambda distances: self._space.covariance_function(prior, distances),
+            noise / (metric * metric),
+        )
+        transpose = residual.T.tocsr()
+        scaling = 1.0 / (normal.scale * metric)
+
+        def solve_fn(y: Any, x0: Any) -> SolveResult:
+            # ``N_gal^-1 G c`` is ``G^-1 V c / scale``, with ``V`` the
+            # approximate inverse of ``K + G^-1 D G^-1``.
+            ordered = data_space.to_components(y)[order]
+            solved = np.empty(dimension)
+            solved[order] = transpose @ ((residual @ ordered) / conditional)
+            return SolveResult(
+                data_space.from_components(scaling * solved), 0, 0.0, True
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)

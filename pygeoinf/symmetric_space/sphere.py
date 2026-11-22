@@ -30,6 +30,14 @@ it.
 An *angle* on the sphere is likewise in degrees — the half-angle of a cap, for
 instance. A *distance* is in the units of :attr:`Sphere.radius`, and every
 argument that takes one says so.
+
+The transforms between a field and its components run on ducc0 directly when
+that is the backend pyshtools is using, which it is by default when ducc0 is
+installed. pyshtools' own route to ducc0 repacks and renormalizes the
+coefficients in Python on every call; going straight there, with the packing
+tabulated once per truncation, gives the same numbers to rounding in half the
+time at low truncation and about a fifth less at ``lmax`` 256. With pyshtools'
+Fortran backend selected the transforms go through pyshtools as before.
 """
 
 from __future__ import annotations
@@ -198,6 +206,76 @@ class _Grid:
             extend=extend,
         )
 
+    def analysis_components(self, field: np.ndarray, /) -> np.ndarray:
+        """Core grid values to the packed components on the unit sphere.
+
+        :meth:`analysis` and the packing in one step. On ducc0 it is one
+        call and two gathers: ducc0's complex coefficients are read straight
+        into the packed real ones (:func:`_transform_layout_for`), with no
+        ``(2, lmax + 1, lmax + 1)`` array between.
+        """
+        backend = _ducc_backend()
+        if backend is None:
+            parts, degrees, orders = _packing_for(self.lmax)
+            return self.analysis(field)[parts, degrees, orders]
+        ducc0, threads = backend
+        real, sine, _, inverse = _transform_layout_for(self.lmax)
+        alm = ducc0.sht.experimental.analysis_2d(
+            map=np.ascontiguousarray(field, dtype=float)[None],
+            spin=0,
+            lmax=self.lmax,
+            geometry="DH" if self.kind == "DH" else "GL",
+            nthreads=threads,
+        )[0]
+        zonal = self.lmax + 1
+        components = np.empty((self.lmax + 1) ** 2)
+        components[real] = alm.real * inverse
+        components[sine] = alm.imag[zonal:] * -inverse[zonal:]
+        return components
+
+    def synthesis_components(
+        self, components: np.ndarray, extend: bool, /
+    ) -> np.ndarray:
+        """Packed components on the unit sphere to grid values, extended or
+        not: the packing and :meth:`synthesis` in one step, as
+        :meth:`analysis_components` is for the other direction.
+
+        Extended, ducc0 synthesizes onto the grid with the south-pole row
+        where there is one (its Clenshaw-Curtis rows are Driscoll-Healy's
+        and the pole), and the wrap column is copied from the first.
+        """
+        backend = _ducc_backend()
+        if backend is None:
+            coefficients = np.zeros((2, self.lmax + 1, self.lmax + 1))
+            parts, degrees, orders = _packing_for(self.lmax)
+            coefficients[parts, degrees, orders] = components
+            return self.synthesis(coefficients, extend)
+        ducc0, threads = backend
+        real, sine, scale, _ = _transform_layout_for(self.lmax)
+        zonal = self.lmax + 1
+        alm = np.empty(real.size, dtype=np.complex128)
+        alm.real = components[real] * scale
+        alm.imag[:zonal] = 0.0
+        alm.imag[zonal:] = components[sine] * -scale[zonal:]
+        rows, columns = self.shape(extend)
+        values = np.empty((rows, columns))
+        if self.kind == "DH":
+            geometry = "CC" if extend else "DH"
+        else:
+            geometry = "GL"
+        core = values[:, : columns - 1] if extend else values
+        ducc0.sht.experimental.synthesis_2d(
+            alm=alm[None],
+            map=core[None],
+            spin=0,
+            lmax=self.lmax,
+            geometry=geometry,
+            nthreads=threads,
+        )
+        if extend:
+            values[:, -1] = values[:, 0]
+        return values
+
     def row_weights(self, radius: float, /) -> np.ndarray | None:
         """The quadrature's row weights in closed form, where the grid has
         them: Gauss-Legendre's ``w_j`` times the longitude spacing times the
@@ -270,6 +348,46 @@ def _complex_layout_for(
     for table in tables:
         table.flags.writeable = False
     return tables
+
+
+@lru_cache(maxsize=8)
+def _transform_layout_for(
+    lmax: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """The tables of :func:`_complex_layout_for` in the form the grid
+    transforms use on every call.
+
+    In ``m``-major order the first ``lmax + 1`` complex entries are those of
+    ``m == 0``, which have no sine part, so the entries with one are a slice
+    and need no mask. Returned as the component each entry's real part is,
+    the component the imaginary part of each entry past the first ``lmax + 1``
+    is, the factor taking a component to its complex entry, and its inverse.
+    The imaginary parts take the factors with the opposite sign.
+    """
+    real, imaginary, scale, _ = _complex_layout_for(lmax)
+    sine = np.ascontiguousarray(imaginary[lmax + 1 :])
+    inverse = 1.0 / scale
+    tables = (real, sine, scale, inverse)
+    for table in tables:
+        table.flags.writeable = False
+    return tables
+
+
+def _ducc_backend() -> tuple[Any, int] | None:
+    """ducc0 and the thread count pyshtools holds for it, when ducc0 is the
+    backend pyshtools is using; ``None`` when it is not.
+
+    Asked on every transform rather than once, since the backend and its
+    threads are pyshtools' settings and a caller may change them at any
+    time: ``pyshtools.backends.select_preferred_backend`` is how the thread
+    count of these transforms is set, here as through pyshtools.
+    """
+    from pyshtools import backends
+
+    if backends.preferred_backend() != "ducc":
+        return None
+    wrapper = backends.ducc0_wrapper
+    return wrapper.ducc0, wrapper.nthreads
 
 
 @lru_cache(maxsize=8)
@@ -882,9 +1000,7 @@ class Sphere(SymmetricSpace[Any]):
         Raises:
             ValueError: if the grid is not this sphere's shape.
         """
-        coefficients = self._grid.analysis(self._core_values(x))
-        parts, degrees, orders = self._packing
-        return self._radius * coefficients[parts, degrees, orders]
+        return self._radius * self._grid.analysis_components(self._core_values(x))
 
     def from_components(self, c: np.ndarray) -> Any:
         """The field with the given harmonic coefficients.
@@ -901,10 +1017,9 @@ class Sphere(SymmetricSpace[Any]):
         components = np.asarray(c, dtype=float)
         if components.shape != (self.dim,):
             raise ValueError(f"Expected {self.dim} components, got {components.shape}.")
-        coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
-        parts, degrees, orders = self._packing
-        coefficients[parts, degrees, orders] = components / self._radius
-        return self._own_grid_values(self._grid.synthesis(coefficients, self._extend))
+        return self._own_grid_values(
+            self._grid.synthesis_components(components / self._radius, self._extend)
+        )
 
     @staticmethod
     def truncation_degree_for(
