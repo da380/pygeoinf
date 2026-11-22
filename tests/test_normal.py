@@ -710,6 +710,246 @@ class TestInvariantDistancePreconditioner:
             InvariantDistancePreconditioner(space, points, 0.3)(normal)
 
 
+class TestNearestNeighbourPreconditioner:
+    """The same table of distances, made sparse in its inverse.
+
+    Three claims, each checkable exactly: with every earlier point as a
+    neighbour it is the inverse itself; with few it is still symmetric and
+    positive definite, with no taper; and it is a better preconditioner
+    than the tapered matrix for a covariance much longer than the spacing
+    of the points, which is the case it is for.
+    """
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def sphere(cls):
+        pytest.importorskip("pyshtools")
+        from pygeoinf.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(32, 2.0, 0.1)
+        points = space.random_points(150, rng=np.random.default_rng(11))
+        forward = space.point_evaluation_operator(points, route="dense")
+        prior = space.heat_measure(0.14, pointwise_std=1.0)
+        error = GaussianMeasure.from_standard_deviations(
+            forward.codomain, np.linspace(0.03, 0.08, len(points))
+        )
+        normal = NormalOperator(forward, prior, error=error, formalism="data_space")
+        return space, points, forward, prior, error, normal
+
+    @staticmethod
+    def iterations(normal, preconditioner, vector):
+        from pygeoinf.numerics.solvers import ProgressCallback
+
+        progress = ProgressCallback()
+        solver = CGSolver(rtol=1e-8, max_iterations=2000, callback=progress)
+        if preconditioner is not None:
+            solver = solver.with_preconditioner(preconditioner)
+        solver(normal)(vector)
+        return len(progress.residuals) - 1
+
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_with_every_earlier_point_it_is_the_inverse(self, sphere, weighted, rng):
+        """Each point regressed on all those before it is a Cholesky
+        factorization of the inverse, so applying it to ``N y`` returns
+        ``y``: on a weighted data space too, where the kernel's table, the
+        noise and the metric each have to go in the right place."""
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, forward, prior, _, _ = sphere
+        if weighted:
+            metric = rng.uniform(0.5, 4.0, forward.codomain.dim)
+            data_space = WeightedSpace(metric)
+            forward = LinearOperator.from_callables(
+                forward.domain,
+                data_space,
+                lambda x, e=forward: e(x),
+                adjoint=lambda y, e=forward, g=metric: e.adjoint(g * y),
+            )
+        data_space = forward.codomain
+        error = GaussianMeasure.from_standard_deviations(
+            data_space, rng.uniform(0.03, 0.08, data_space.dim)
+        )
+        normal = NormalOperator(forward, prior, error=error, formalism="data_space")
+        preconditioner = NearestNeighbourPreconditioner(
+            space, points, neighbours=len(points)
+        )(normal)
+        vector = data_space.random(rng=rng)
+        recovered = preconditioner(normal(vector))
+        assert data_space.norm(
+            data_space.subtract(recovered, vector)
+        ) < 1e-8 * data_space.norm(vector)
+
+    @pytest.mark.parametrize("neighbours", [1, 5, 20])
+    def test_it_is_symmetric_and_positive_definite(self, sphere, neighbours):
+        """By construction, whatever the number of neighbours: the property a
+        truncated covariance loses and a taper is needed to restore."""
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, forward, _, _, normal = sphere
+        preconditioner = NearestNeighbourPreconditioner(
+            space, points, neighbours=neighbours
+        )(normal)
+        matrix = preconditioner.matrix(form="galerkin")
+        assert np.abs(matrix - matrix.T).max() < 1e-10 * np.abs(matrix).max()
+        assert np.linalg.eigvalsh(0.5 * (matrix + matrix.T)).min() > 0.0
+
+    def test_it_preconditions_without_changing_the_answer(self, sphere, rng):
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, forward, prior, error, _ = sphere
+        data_space = forward.codomain
+        inversion = LinearGaussianInversion(
+            LinearForwardProblem(forward, error=error),
+            prior,
+            solver=CholeskySolver(),
+        )
+        observed = data_space.random(rng=rng)
+        reference = inversion(observed).expectation
+        solved = inversion.with_solver(
+            CGSolver(rtol=1e-10, max_iterations=4000).with_preconditioner(
+                NearestNeighbourPreconditioner(space, points, neighbours=10)
+            )
+        )(observed).expectation
+        assert space.norm(space.subtract(solved, reference)) == pytest.approx(
+            0.0, abs=1e-6 * space.norm(reference)
+        )
+
+    def test_it_beats_the_tapered_matrix_on_a_long_covariance(self, sphere, rng):
+        """The covariance here reaches several spacings of the points. A
+        taper short enough to be sparse distorts it; twenty neighbours do
+        not. Fewer iterations than the taper, and far fewer than none."""
+        from pygeoinf.inference import (
+            InvariantDistancePreconditioner,
+            NearestNeighbourPreconditioner,
+        )
+
+        space, points, forward, _, _, normal = sphere
+        vector = forward.codomain.random(rng=rng)
+        plain = self.iterations(normal, None, vector)
+        tapered = self.iterations(
+            normal, InvariantDistancePreconditioner(space, points, 0.3), vector
+        )
+        nearest = self.iterations(
+            normal, NearestNeighbourPreconditioner(space, points, neighbours=20), vector
+        )
+        assert nearest < tapered < plain
+        assert 4 * nearest < plain
+
+    def test_more_neighbours_do_not_cost_iterations(self, sphere, rng):
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, forward, _, _, normal = sphere
+        vector = forward.codomain.random(rng=rng)
+        counts = [
+            self.iterations(
+                normal,
+                NearestNeighbourPreconditioner(space, points, neighbours=k),
+                vector,
+            )
+            for k in (3, 12, 48)
+        ]
+        assert counts[0] >= counts[1] >= counts[2]
+        assert counts[2] < counts[0]
+
+    def test_a_periodic_domain_wraps(self, rng):
+        """Neighbours across the seam of a circle are neighbours. With all
+        of them the inverse is exact, which it is not if a distance is
+        measured the long way round."""
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+        from pygeoinf.symmetric_space.circle import Sobolev
+
+        space = Sobolev(128, 2.0, 0.1)
+        points = list(np.sort(rng.uniform(0.0, 2.0 * np.pi, 40)))
+        forward = space.point_evaluation_operator(points)
+        prior = space.heat_measure(0.3, pointwise_std=1.0)
+        error = GaussianMeasure.from_standard_deviation(forward.codomain, 0.05)
+        normal = NormalOperator(forward, prior, error=error, formalism="data_space")
+        preconditioner = NearestNeighbourPreconditioner(
+            space, points, neighbours=len(points)
+        )(normal)
+        vector = forward.codomain.random(rng=rng)
+        recovered = preconditioner(normal(vector))
+        assert forward.codomain.norm(
+            forward.codomain.subtract(recovered, vector)
+        ) < 1e-8 * forward.codomain.norm(vector)
+
+    def test_the_neighbours_come_before_and_are_the_nearest(self, rng):
+        from pygeoinf.numerics.preconditioners import (
+            _earlier_neighbours,
+            _maximin_order,
+            _squared_separations,
+        )
+
+        vectors = rng.uniform(0.0, 1.0, (60, 2))
+        for boxsize in (None, 1.0):
+            order = _maximin_order(vectors, boxsize)
+            assert sorted(order) == list(range(60))
+            ordered = vectors[order]
+            separations = _squared_separations(ordered, ordered, boxsize)
+            # Maximin: each point's distance to those before it is no larger
+            # than the one before's was.
+            reach = [separations[i, :i].min() for i in range(1, 60)]
+            assert all(a >= b - 1e-15 for a, b in zip(reach, reach[1:]))
+            sets = _earlier_neighbours(ordered, boxsize, 5)
+            assert np.all(sets[0] == -1)
+            for index in range(1, 60):
+                found = sets[index][sets[index] >= 0]
+                assert found.size == min(5, index) and np.all(found < index)
+                expected = np.argsort(separations[index, :index])[: found.size]
+                assert set(found) == set(expected)
+
+    def test_the_points_must_be_the_data(self, sphere):
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, _, _, _, normal = sphere
+        with pytest.raises(ValueError, match="points are the data"):
+            NearestNeighbourPreconditioner(space, points[:-1])(normal)
+
+    def test_it_needs_a_neighbour(self, sphere):
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, _, _, _, _ = sphere
+        with pytest.raises(ValueError, match="At least one neighbour"):
+            NearestNeighbourPreconditioner(space, points, neighbours=0)
+
+    def test_coincident_points_without_noise_are_refused(self, sphere):
+        """The covariance is then singular, and it says so rather than
+        dividing by a conditional variance of zero."""
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        space, points, _, prior, _, _ = sphere
+        doubled = list(points[:20]) + [points[0]]
+        forward = space.point_evaluation_operator(doubled, route="dense")
+        normal = NormalOperator(forward, prior, formalism="data_space")
+        with pytest.raises(ValueError, match="conditional variance"):
+            NearestNeighbourPreconditioner(space, doubled, neighbours=5)(normal)
+
+    def test_a_full_gram_data_space_is_refused(self, sphere):
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+
+        from .conftest import DenseMetricSpace
+
+        space, points, forward, prior, _, _ = sphere
+        size = forward.codomain.dim
+        root = np.tril(np.ones((size, size))) * 0.01 + np.identity(size)
+        dense = DenseMetricSpace(root @ root.T)
+        shifted = LinearOperator.from_callables(
+            forward.domain, dense, lambda x, e=forward: e(x)
+        )
+        normal = NormalOperator(shifted, prior, formalism="data_space")
+        with pytest.raises(ValueError, match="diagonal metric"):
+            NearestNeighbourPreconditioner(space, points)(normal)
+
+    def test_a_member_without_a_measure_is_refused_by_name(self, sphere):
+        from pygeoinf.inference import NearestNeighbourPreconditioner
+        from pygeoinf.numerics.normal import DampedNormalOperator
+
+        space, points, forward, prior, error, _ = sphere
+        member = DampedNormalOperator(forward, prior.covariance, error.covariance, 0.5)
+        with pytest.raises(TypeError, match="prior \\*measure\\*"):
+            NearestNeighbourPreconditioner(space, points)(member)
+
+
 class TestGaspariCohn:
     """The taper itself, which is what makes truncation legitimate."""
 

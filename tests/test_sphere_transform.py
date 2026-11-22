@@ -797,3 +797,77 @@ class TestTheTransformRouteAtPoints:
             B = cloudpickle.loads(cloudpickle.dumps(A))
             assert self.close(B(x), values)
             assert self.close(B.domain.to_components(B.adjoint(weights)), adjoint)
+
+
+class TestTheTransformsOnDuccDirectly:
+    """The transforms between a field and its components go straight to
+    ducc0 when that is pyshtools' backend. The route through pyshtools is
+    the reference: it is what the conventions were pinned against, and what
+    runs when the backend is pyshtools' own."""
+
+    GRIDS = [
+        dict(),
+        dict(extend=True),
+        dict(sampling=2),
+        dict(sampling=2, extend=True),
+        dict(grid="GLQ"),
+        dict(grid="GLQ", extend=True),
+    ]
+
+    @pytest.fixture(params=GRIDS, ids=lambda options: repr(sorted(options.items())))
+    def space(self, request):
+        return Sobolev(11, 1.5, 0.3, radius=2.0, **request.param)
+
+    @staticmethod
+    def through_pyshtools(monkeypatch):
+        monkeypatch.setattr(sphere_module, "_ducc_backend", lambda: None)
+
+    def test_ducc_is_what_runs_here(self):
+        """Otherwise the comparisons below compare pyshtools with itself."""
+        backend = sphere_module._ducc_backend()
+        assert backend is not None
+        ducc0, threads = backend
+        assert hasattr(ducc0.sht.experimental, "analysis_2d")
+        assert threads == pyshtools.backends.ducc0_wrapper.nthreads
+
+    def test_synthesis_agrees_with_pyshtools(self, space, rng, monkeypatch):
+        components = rng.standard_normal(space.dim)
+        direct = space.grid_values(space.from_components(components)).copy()
+        self.through_pyshtools(monkeypatch)
+        reference = space.grid_values(space.from_components(components))
+        assert direct.shape == reference.shape == space.grid_shape
+        np.testing.assert_allclose(direct, reference, rtol=0.0, atol=1e-12)
+
+    def test_analysis_agrees_with_pyshtools(self, space, rng, monkeypatch):
+        field = space.from_components(rng.standard_normal(space.dim))
+        direct = space.to_components(field)
+        self.through_pyshtools(monkeypatch)
+        reference = space.to_components(field)
+        np.testing.assert_allclose(direct, reference, rtol=0.0, atol=1e-12)
+
+    def test_the_round_trip_is_the_identity(self, space, rng):
+        components = rng.standard_normal(space.dim)
+        returned = space.to_components(space.from_components(components))
+        np.testing.assert_allclose(returned, components, rtol=0.0, atol=1e-12)
+
+    def test_analysis_of_a_field_that_is_not_band_limited(self, rng, monkeypatch):
+        """Agreement on the grid's own fields could hide a difference in
+        what the two routes do with the rest; a random grid has plenty."""
+        space = Lebesgue(9)
+        values = rng.standard_normal(space.grid_shape)
+        direct = space.to_components(values)
+        self.through_pyshtools(monkeypatch)
+        np.testing.assert_allclose(
+            direct, space.to_components(values), rtol=0.0, atol=1e-12
+        )
+
+    def test_the_fortran_backend_is_left_to_pyshtools(self, monkeypatch):
+        monkeypatch.setattr(pyshtools.backends, "preferred_backend", lambda: "shtools")
+        assert sphere_module._ducc_backend() is None
+
+    def test_the_thread_count_is_pyshtools_own(self, monkeypatch):
+        """Read on every call, so that a change made through pyshtools
+        reaches the transforms."""
+        wrapper = pyshtools.backends.ducc0_wrapper
+        monkeypatch.setattr(wrapper, "nthreads", 3)
+        assert sphere_module._ducc_backend()[1] == 3
