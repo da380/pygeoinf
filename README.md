@@ -119,4 +119,4 @@ and Monte Carlo estimates that take minutes each. See
 
 ## Licence
 
-BSD 3-Clause. Written by David Al-Attar, Dan Heathcote and Adrian Mag.
+BSD 3-Clause. Written by David Al-Attar, Dan Heathcote, Adrian Mag, and Oscar Humphreys
