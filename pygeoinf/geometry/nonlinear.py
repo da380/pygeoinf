@@ -43,6 +43,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import (
     AffineOperator,
+    EvaluationError,
     Functional,
     LinearFunctional,
     LinearOperator,
@@ -610,14 +611,24 @@ class ComponentwiseRemainder(RemainderBound):
 class SampledRemainder(RemainderBound):
     """The remainder estimated from evaluations of the forward operator: not certified.
 
-    The remainder is computed at models of the cell, at the ends of each
-    slab, at the corners where they are few, and at random points between,
-    all displaced from the center within the span of the slab directions.
-    The estimate is the box, over the data space's basis, of the
-    coefficients seen, widened by a safety factor and taken to include the
-    origin. Nothing proves the box holds the remainder elsewhere in the
-    cell, and in particular nothing is learned of curvature across the
-    slabs, so a bound built on this is an estimate and says so.
+    The remainder is computed at models of the cell and the estimate is the
+    box, over the data space's basis, of the coefficients seen, widened by
+    a safety factor and taken to include the origin. Nothing proves the box
+    holds the remainder elsewhere in the cell, so a bound built on this is
+    an estimate and says so.
+
+    Along the slabs the models are at the ends of each slab, at the corners
+    where the slabs are few, and at random points between. Across the
+    slabs a cell is as wide as the constraint set, and there the models
+    move by perturbations the caller supplies through ``across``, a draw
+    from a prior measure say, taken with their part along the slabs removed
+    and scaled out to the cell's radius: without them nothing is learned of
+    how the operator curves in the directions the slabs do not span, and
+    the estimate is of a cell that is thin in every direction.
+
+    The same perturbations and the same points of the slabs are used for
+    every cell, so the estimate is a fixed function of the cell, and two
+    cells can be compared by it.
     """
 
     def __init__(
@@ -628,6 +639,9 @@ class SampledRemainder(RemainderBound):
         samples: int = 32,
         safety: float = 2.0,
         rng: Generator | None = None,
+        across: Callable[[], Any] | None = None,
+        within: Subset | None = None,
+        shape: str = "box",
     ) -> None:
         """
         Args:
@@ -636,47 +650,118 @@ class SampledRemainder(RemainderBound):
                 the slabs and their corners.
             safety: the factor the observed ranges are widened by; at least
                 one.
-            rng: the generator for the random models.
+            shape: ``"box"`` for the box of the coefficients seen over the
+                data space's basis, or ``"ball"`` for the ball about the
+                origin that holds the remainders seen. The box keeps a
+                remainder's sign, and is the tighter where each datum's
+                remainder has one; with many data and no such structure its
+                corners lie far beyond any remainder seen, and the ball is
+                the tighter by far.
+            rng: the generator for the random points of the slabs.
+            across: called with no arguments and returning a model-space
+                perturbation; ``samples`` of them are drawn, once. Each
+                sampled model is then also moved across the slabs by one
+                of them.
+            within: a set with a projection, the constraint set, that each
+                sampled model is brought into, so that the models sampled
+                are models the cell and the set both allow.
 
         Raises:
-            ValueError: if the safety factor is below one.
+            ValueError: if the safety factor is below one, or the shape is
+                neither of the two.
         """
         super().__init__(certified=False)
         if safety < 1.0:
             raise ValueError("The safety factor must be at least one.")
+        if shape not in ("box", "ball"):
+            raise ValueError(f'The shape is "box" or "ball", got {shape!r}.')
         self._forward = forward
         self._samples = int(samples)
         self._safety = float(safety)
         self._rng = resolve_rng(rng)
+        self._within = within
+        self._shape = shape
+        self._across = (
+            None if across is None else [across() for _ in range(self._samples)]
+        )
+        self._patterns: dict[int, np.ndarray] = {}
 
-    def remainder_set(self, cell: Cell, /) -> Zonotope:
-        """The widened box of the remainder's coefficients over the sampled models.
+    def _slab_points(self, count: int) -> np.ndarray:
+        """Where along the slabs to sample, as multiples of the half-widths; fixed per slab count."""
+        if count not in self._patterns:
+            points = [np.zeros(count)]
+            points += [
+                np.eye(count)[j] * sign for j in range(count) for sign in (-1.0, 1.0)
+            ]
+            if 0 < count <= 6:
+                points += [
+                    np.array([1.0 if (index >> j) & 1 else -1.0 for j in range(count)])
+                    for index in range(2**count)
+                ]
+            points += list(self._rng.uniform(-1.0, 1.0, size=(self._samples, count)))
+            self._patterns[count] = np.array(points).reshape(len(points), count)
+        return self._patterns[count]
+
+    def remainder_set(self, cell: Cell, /) -> ConvexSet:
+        """The widened box, or ball, of the remainders at the sampled models.
+
+        A model the forward operator refuses, by raising
+        :class:`~pygeoinf.algebra.operators.EvaluationError`, is passed
+        over: it is no model of the feasible set.
 
         Raises:
-            ValueError: if the cell has no slabs to sample along.
+            ValueError: if the cell has neither slabs to sample along nor
+                perturbations to sample across them with, has no finite
+                radius to scale those perturbations to, or holds no
+                sampled model the forward operator evaluates.
         """
         count = len(cell.directions)
-        if count == 0:
+        if count == 0 and self._across is None:
             raise ValueError(
-                "A sampled remainder needs a cell with slabs to sample along."
+                "A sampled remainder needs a cell with slabs to sample along, "
+                "or perturbations to sample across them with."
             )
-        data_space = self._forward.codomain
+        if self._across is not None and not np.isfinite(cell.radius):
+            raise ValueError(
+                "Sampling across the slabs needs a cell of finite radius to "
+                "scale the perturbations to."
+            )
+        space, data_space = self._forward.domain, self._forward.codomain
         linearization = self._forward.at(cell.center)
-        signs = [np.eye(count)[j] * sign for j in range(count) for sign in (-1.0, 1.0)]
-        if count <= 6:
-            signs += [
-                np.array([1.0 if (index >> j) & 1 else -1.0 for j in range(count)])
-                for index in range(2**count)
-            ]
-        signs += list(self._rng.uniform(-1.0, 1.0, size=(self._samples, count)))
-        coefficients = []
-        for sign in signs:
-            model = cell.point(sign * cell.half_widths)
-            coefficients.append(
-                data_space.to_components(
-                    _remainder(self._forward, linearization, model)
+        coefficients, sizes = [], []
+        for index, multiples in enumerate(self._slab_points(count)):
+            model = cell.point(multiples * cell.half_widths)
+            if self._across is not None:
+                step = self._across[index % len(self._across)]
+                # Its part along the slabs removed, and out to the radius.
+                step = space.subtract(
+                    step,
+                    space.subtract(
+                        cell.point(cell.offsets(space.add(cell.center, step))),
+                        cell.center,
+                    ),
                 )
+                along = space.norm(space.subtract(model, cell.center))
+                room = max(cell.radius**2 - along**2, 0.0) ** 0.5
+                size = space.norm(step)
+                if size > 0.0 and room > 0.0:
+                    model = space.axpy(room / size, step, model)
+            if self._within is not None:
+                model = self._within.project(model)
+            try:
+                departure = _remainder(self._forward, linearization, model)
+            except EvaluationError:
+                # Where the operator cannot evaluate there is no model to
+                # fit the data, and nothing for the remainder to bound.
+                continue
+            coefficients.append(data_space.to_components(departure))
+            sizes.append(float(data_space.norm(departure)))
+        if not coefficients:
+            raise ValueError(
+                "The forward operator evaluated at none of the sampled models."
             )
+        if self._shape == "ball":
+            return Ball(data_space, radius=self._safety * max(sizes))
         coefficients = np.array(coefficients)
         return Zonotope(
             data_space,
@@ -1144,7 +1229,10 @@ class BranchAndPrune:
             nonlocal best, attained, refuted, evaluations
             if model is None or not prior.contains(model, rtol=0.0):
                 return
-            predicted = forward(model)
+            try:
+                predicted = forward(model)
+            except EvaluationError:
+                return
             evaluations += 1
             if entry is not None and entry["cell"].contains(model, rtol=0.0):
                 if _departs(
@@ -1663,9 +1751,10 @@ class LocalSearch:
             stepped = feasible._linearized_step(direction, start)
         else:
             constraints += _slab_constraints(cell, self._margin)
-        result = self._method(inequalities=constraints).minimize(
-            objective, start if stepped is None else stepped
-        )
+        # Where the forward operator cannot be evaluated a search cannot
+        # begin; the next place is tried, a cell's center last.
+        origins = [stepped, start] + ([] if cell is None else [cell.center])
+        result = self._begun(self._method(inequalities=constraints), objective, origins)
 
         def along(model: Any) -> float:
             return float(space.inner_product(pulled, model))
@@ -1675,12 +1764,24 @@ class LocalSearch:
                 return False
             return feasible.is_feasible(model)
 
+        found = None if result is None else result.minimizer
         best, inner = None, float("-inf")
-        for candidate in (start, stepped, result.minimizer):
+        for candidate in (start, stepped, found):
             if candidate is None:
                 continue
             if checked(candidate) and along(candidate) > inner:
                 best, inner = candidate, along(candidate)
+        if result is None:
+            return SupportResult(
+                value=float("inf"),
+                inner=inner,
+                converged=False,
+                algorithm=self.name,
+                evaluations=0,
+                extremal_model=best,
+                message="the forward operator could not be evaluated where the "
+                "search was to begin",
+            )
         at_result = best is result.minimizer
         message = result.message
         if best is None:
@@ -1703,6 +1804,20 @@ class LocalSearch:
             ),
             message=message,
         )
+
+    @staticmethod
+    def _begun(
+        method: AugmentedLagrangian, objective: Functional, origins: Sequence[Any]
+    ) -> Any:
+        """The method's result from the first origin the forward operator evaluates at, or None."""
+        for origin in origins:
+            if origin is None:
+                continue
+            try:
+                return method.minimize(objective, origin)
+            except EvaluationError:
+                continue
+        return None
 
     def feasibility(
         self, feasible: "NonlinearFeasiblePropertySet", start: Any, /
@@ -1784,15 +1899,29 @@ class LocalSearch:
         if through is not None:
             objective = objective @ through
             constraints = tuple(constraint @ through for constraint in constraints)
-        result = self._method(inequalities=constraints).minimize(objective, start)
+        origins = [start] + ([] if cell is None else [cell.center])
+        result = self._begun(self._method(inequalities=constraints), objective, origins)
         best, level = None, float("inf")
-        for candidate in (start, result.minimizer):
+        for candidate in (start, None if result is None else result.minimizer):
+            if candidate is None:
+                continue
             if through is not None:
                 candidate = through(candidate)
             if cell is not None and not cell.contains(candidate, rtol=0.0):
                 continue
             if feasible.fits(candidate) and float(prior_level(candidate)) < level:
                 best, level = candidate, float(prior_level(candidate))
+        if result is None:
+            return InclusionResult(
+                level=level,
+                lower_bound=float("-inf"),
+                converged=False,
+                algorithm=self.name,
+                evaluations=0,
+                fitting_model=best,
+                message="the forward operator could not be evaluated where the "
+                "search was to begin",
+            )
         message = result.message
         if best is None:
             message += (
@@ -1858,6 +1987,7 @@ class NonlinearFeasiblePropertySet(Subset):
         *,
         noise: ConvexSet | SublevelSet,
         solver: LinearSolver | None = None,
+        dense_limit: int = 256,
     ) -> None:
         """
         Args:
@@ -1871,6 +2001,12 @@ class NonlinearFeasiblePropertySet(Subset):
             noise: the confidence set on the data space, likewise.
             solver: how the linearized sets invert the operators they
                 build; conjugate gradients by default.
+            dense_limit: the largest data dimension at which the operator
+                linearized on a cell is held as a matrix. Assembling it
+                costs one application of the derivative's adjoint per
+                datum, and a cell's dual applies the operator and its
+                adjoint some hundreds of times, so with a few hundred data
+                or fewer the matrix is the cheaper route.
 
         Raises:
             ValueError: if an operator or a set is on the wrong space, or
@@ -1911,6 +2047,7 @@ class NonlinearFeasiblePropertySet(Subset):
         self._noise = noise
         self._data = data
         self._solver = solver
+        self._dense_limit = int(dense_limit)
         self._prior_level = prior.level_function()
         self._noise_level = noise.level_function()
         self._cache: dict[Any, Any] = {}
@@ -1968,6 +2105,7 @@ class NonlinearFeasiblePropertySet(Subset):
             data,
             noise=self._noise,
             solver=self._solver,
+            dense_limit=self._dense_limit,
         )
 
     @property
@@ -2004,9 +2142,14 @@ class NonlinearFeasiblePropertySet(Subset):
     def fits(self, model: Any, /) -> bool:
         """Whether a model's residual lies in the noise set, by evaluating ``F``.
 
-        Decided by the noise set's own membership test at no tolerance.
+        Decided by the noise set's own membership test at no tolerance. A
+        model the forward operator cannot evaluate fits nothing.
         """
-        return bool(self._noise.contains(self.residual(model), rtol=0.0))
+        try:
+            residual = self.residual(model)
+        except EvaluationError:
+            return False
+        return bool(self._noise.contains(residual, rtol=0.0))
 
     def is_feasible(self, model: Any, /) -> bool:
         """Whether a model lies in the prior and fits the data, by evaluation.
@@ -2214,7 +2357,7 @@ class NonlinearFeasiblePropertySet(Subset):
 
     def _linearized(self, linearization: Linearization) -> FeasiblePropertySet:
         data_space = self.data_space
-        derivative = linearization.derivative
+        derivative = self._held(linearization)
         structure = FeasibleStructure(
             derivative,
             self._property_operator,
@@ -2232,11 +2375,12 @@ class NonlinearFeasiblePropertySet(Subset):
         """The extremal model, in a direction, of the problem linearized about a model.
 
         None when the linearized set is empty or exhibits no model, as it
-        may be about a model that does not fit.
+        may be about a model that does not fit, or when the forward
+        operator cannot be evaluated at the model.
         """
         try:
             return self.linearized(model).support_result(direction).extremal_model
-        except (ValueError, ConvergenceError):
+        except (ValueError, ConvergenceError, EvaluationError):
             return None
 
     def support_result(
@@ -2361,7 +2505,7 @@ class NonlinearFeasiblePropertySet(Subset):
         /,
         *,
         directions: Sequence[Any] = (),
-        half_widths: Sequence[float] = (),
+        half_widths: Sequence[float] | None = None,
         radius: float | None = None,
     ) -> Cell:
         """A cell about a model, its radius read from the prior where the prior has one.
@@ -2369,15 +2513,27 @@ class NonlinearFeasiblePropertySet(Subset):
         Args:
             center: the model the cell is about.
             directions: the vectors the slabs are taken along.
-            half_widths: the half-width of each slab.
+            half_widths: the half-width of each slab; the prior's reach
+                from the center along each direction if omitted, so that
+                the cell is the whole prior, cut nowhere yet.
             radius: a bound on the distance of a model of the cell from the
                 center, if one is known. A ball prior gives its own, the
                 farthest any of its models can be, and the smaller is kept.
 
         Returns:
             The cell.
+
+        Raises:
+            TypeError: if the half-widths are left to the prior and it has
+                no support function to read its reach from.
+            ValueError: if the prior is unbounded along a direction whose
+                half-width is left to it.
         """
         space = self.model_space
+        if half_widths is None:
+            half_widths = [
+                self._half_reach(direction, center) for direction in directions
+            ]
         bound = float("inf") if radius is None else float(radius)
         if isinstance(self._prior, Ball):
             offset = space.norm(space.subtract(center, self._prior.center))
@@ -2397,6 +2553,26 @@ class NonlinearFeasiblePropertySet(Subset):
                 f"this one is a {type(self._noise).__name__}."
             )
         return self._noise
+
+    def _held(self, linearization: Linearization) -> LinearOperator:
+        """A linearization's derivative, as a matrix where the data are few enough.
+
+        Assembled through the adjoint, one application per datum; the last
+        linearization's is kept, a cell's probes sharing it.
+        """
+        derivative = linearization.derivative
+        data_space = self.data_space
+        if not isinstance(data_space, CoordinateSpace) or not isinstance(
+            self.model_space, CoordinateSpace
+        ):
+            return derivative
+        if data_space.dim > self._dense_limit:
+            return derivative
+        kept = self._cache.get("held")
+        if kept is None or kept[0] is not linearization:
+            kept = (linearization, derivative.adjoint.assembled().adjoint)
+            self._cache["held"] = kept
+        return kept[1]
 
     def _active_slabs(self, cell: Cell) -> list[int]:
         """The slabs of a cell that cut the prior: those narrower than its reach along them."""
@@ -2431,7 +2607,7 @@ class NonlinearFeasiblePropertySet(Subset):
             self._property_operator if property_operator is None else property_operator
         )
         data_space = self.data_space
-        derivative = linearization.derivative
+        derivative = self._held(linearization)
         shifted = data_space.add(
             data_space.subtract(self._data, linearization.value),
             derivative(linearization.point),
@@ -2709,7 +2885,10 @@ class NonlinearFeasiblePropertySet(Subset):
                 cell.contains(model, rtol=0.0) and self._prior.contains(model, rtol=0.0)
             ):
                 continue
-            predicted = self._forward(model)
+            try:
+                predicted = self._forward(model)
+            except EvaluationError:
+                continue
             if _departs(self._forward, linearization, claimed, model, predicted):
                 refuted = True
             fits = self._noise.contains(

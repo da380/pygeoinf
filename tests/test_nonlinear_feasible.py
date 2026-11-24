@@ -1748,6 +1748,200 @@ class TestAFieldUnderLineIntegrals:
         assert tight.value - tight.inner < 0.5 * (whole.value - whole.inner)
 
 
+class TestASampledRemainderAcrossTheSlabs:
+    """An estimate that also moves across the slabs, checked against a proved bound."""
+
+    def setting(self, rng):
+        space, evaluation, integrate, forward, belief = ray_problem()
+        prior = belief.ambient_ball(level=0.95)
+        directions = covering_directions(space, evaluation, integrate, 4)
+        center = belief.sample(rng=rng)
+        cell = Cell(
+            space,
+            center,
+            directions=directions,
+            half_widths=[0.01] * 4,
+            radius=prior.radius,
+        )
+        proved = ComponentwiseRemainder(
+            forward.codomain, evaluation, exponential_curvature, then=integrate
+        )
+        return space, forward, belief, prior, cell, proved
+
+    def test_it_lies_under_the_proved_bound_and_sees_more_than_the_slabs(self, rng):
+        space, forward, belief, prior, cell, proved = self.setting(rng)
+        along = SampledRemainder(forward, samples=16, safety=1.0, rng=rng)
+        across = SampledRemainder(
+            forward,
+            samples=16,
+            safety=1.0,
+            rng=rng,
+            across=lambda: belief.sample(rng=rng),
+        )
+        assert not across.certified
+        bound = proved.remainder_set(cell)
+        seen_along, seen_across = along.remainder_set(cell), across.remainder_set(cell)
+        # Two routes: what evaluations find, under what the theorem allows.
+        assert np.all(seen_across.upper <= bound.upper * (1.0 + 1e-9))
+        assert np.all(seen_across.lower >= bound.lower - 1e-15)
+        # The cell is thin along its slabs and as wide as its radius across.
+        assert seen_across.radius > 2.0 * seen_along.radius
+
+    def test_as_a_ball_it_holds_every_remainder_it_saw(self, rng):
+        space, forward, belief, prior, cell, _ = self.setting(rng)
+        draws = [belief.sample(rng=rng) for _ in range(8)]
+        supply = iter(draws)
+        sampled = SampledRemainder(
+            forward,
+            samples=8,
+            safety=1.0,
+            rng=rng,
+            across=lambda: next(supply),
+            shape="ball",
+        )
+        estimate = sampled.remainder_set(cell)
+        assert isinstance(estimate, Ball) and estimate.radius > 0.0
+        box = SampledRemainder(forward, samples=8, safety=1.0, rng=rng).remainder_set(
+            cell
+        )
+        # Along the slabs alone the remainders are smaller than with a step across.
+        assert estimate.radius >= 0.5 * np.linalg.norm(box.upper)
+        with pytest.raises(ValueError, match="box"):
+            SampledRemainder(forward, shape="sphere")
+
+    def test_it_is_a_fixed_function_of_the_cell(self, rng):
+        space, forward, belief, prior, cell, _ = self.setting(rng)
+        sampled = SampledRemainder(
+            forward, samples=8, rng=rng, across=lambda: belief.sample(rng=rng)
+        )
+        first, second = sampled.remainder_set(cell), sampled.remainder_set(cell)
+        assert np.array_equal(first.upper, second.upper)
+        assert np.array_equal(first.lower, second.lower)
+
+    def test_the_whole_prior_can_be_sampled_with_no_slabs(self, rng):
+        space, forward, belief, prior, cell, proved = self.setting(rng)
+        sampled = SampledRemainder(
+            forward,
+            samples=8,
+            safety=1.0,
+            rng=rng,
+            across=lambda: belief.sample(rng=rng),
+            within=prior,
+        )
+        whole = Cell(space, prior.center, radius=prior.radius)
+        estimate = sampled.remainder_set(whole)
+        assert estimate.radius > 0.0
+        assert np.all(
+            estimate.upper <= proved.remainder_set(whole).upper * (1.0 + 1e-9)
+        )
+        unbounded = Cell(space, prior.center)
+        with pytest.raises(ValueError, match="finite radius"):
+            sampled.remainder_set(unbounded)
+
+    def test_models_the_operator_refuses_are_passed_over(self, rng):
+        model, _, weights, _ = two_parameter_problem(3)
+        inner = attenuation(model, list(weights))
+
+        def guarded(m):
+            if np.linalg.norm(m) > 0.5:
+                raise EvaluationError("outside the operator's domain")
+            return inner(m)
+
+        forward = Operator.from_callables(
+            model, inner.codomain, guarded, derivative=inner.derivative
+        )
+        cell = Cell(
+            model,
+            np.zeros(2),
+            directions=[np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+            half_widths=[0.45, 0.45],
+        )
+        # The corners are beyond the domain and the ends of the slabs within.
+        estimate = SampledRemainder(forward, samples=8, rng=rng).remainder_set(cell)
+        assert estimate.radius > 0.0
+
+
+class TestWhereTheOperatorCannotBeEvaluated:
+    def guarded_set(self):
+        model, _, weights, data = two_parameter_problem(3)
+        inner = attenuation(model, list(weights))
+
+        def guarded(m):
+            if m[0] < -0.2:
+                raise EvaluationError("outside the operator's domain")
+            return inner(m)
+
+        forward = Operator.from_callables(
+            model, inner.codomain, guarded, derivative=inner.derivative
+        )
+        property_operator = LinearOperator.from_matrix(
+            model, EuclideanSpace(1), COST[None, :], form="components"
+        )
+        return NonlinearFeasiblePropertySet(
+            forward,
+            property_operator,
+            Ball(model, radius=1.0),
+            data,
+            noise=Ball(inner.codomain, radius=0.05),
+        )
+
+    def test_a_model_that_cannot_be_evaluated_fits_nothing(self):
+        feasible = self.guarded_set()
+        assert not feasible.fits(np.array([-0.5, 0.0]))
+        assert not feasible.is_feasible(np.array([-0.5, 0.0]))
+        assert feasible.is_feasible(TRUE_MODEL)
+
+    def test_a_search_that_cannot_begin_says_so(self):
+        feasible = self.guarded_set()
+        result = feasible.support_result(np.array([1.0]), start=np.array([-0.5, 0.0]))
+        assert result.extremal_model is None and result.inner == float("-inf")
+        assert not result.converged
+        assert "could not be evaluated" in result.message
+
+    def test_a_search_kept_in_a_cell_falls_back_on_its_center(self):
+        feasible = self.guarded_set()
+        cell = square_cell(feasible, TRUE_MODEL, 0.3)
+        result = LocalSearch().support(
+            feasible, np.array([1.0]), np.array([-0.5, 0.0]), cell=cell
+        )
+        assert feasible.is_feasible(result.extremal_model)
+        assert cell.contains(result.extremal_model)
+
+
+class TestTheCellsLinearizedOperatorAsAMatrix:
+    def test_the_matrix_and_the_operator_give_the_same_bound(self, rng):
+        """Two routes: the derivative assembled row by row, and applied as it is."""
+        model, forward, feasible, radius = dense_metric_setting(rng)
+        paths_free = NonlinearFeasiblePropertySet(
+            forward,
+            feasible.property_operator,
+            feasible.prior,
+            feasible.data,
+            noise=feasible.noise,
+            dense_limit=0,
+        )
+        directions = [model.random(rng=rng) for _ in range(2)]
+        direction = np.array([1.0])
+        values = []
+        for candidate in (feasible, paths_free):
+            cell = candidate.cell(
+                candidate.fitting_model(), directions=directions, half_widths=[0.2, 0.1]
+            )
+            remainder = NormRemainder(forward.codomain, 0.5)
+            values.append(candidate.outer_set(cell, remainder).support(direction))
+        assert values[0] == pytest.approx(values[1], rel=1e-6)
+
+    def test_a_cell_s_slabs_default_to_the_prior_s_reach(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        cell = feasible.cell(
+            np.array([0.3, 0.4]),
+            directions=[np.array([1.0, 0.0]), np.array([0.0, 2.0])],
+        )
+        # The unit ball reaches 1 + 0.3 one way along the first, and
+        # 2 (1 + 0.4) along the second, from this center.
+        assert np.allclose(cell.half_widths, [1.3, 2.8])
+
+
 # --------------------------------------------------------------------- #
 #                            The estimator                               #
 # --------------------------------------------------------------------- #
