@@ -74,6 +74,7 @@ failing test rather than a surprise later.
 | 30 | `feasible_set` | the third kind of answer: what the data cannot rule out, under a prior measure hardened into a ball and into an ellipsoid |
 | 31 | `nonlinear_map` | when the forward map is not linear: the MAP estimator, and the Laplace approximation on it, full and low-rank |
 | 42 | `nonlinear_feasible_set` | a set answer when the forward map is not linear: the linearized set, a local search and a search over cells compared, on two parameters drawn whole and on a field whose feasible models come in several parts |
+| 43 | `nonlinear_ray_tomography` | a certified set on a function space: travel times through the exponential of a field, whose curvature no finite set of directions holds; the remainder bounded through the cell's reach at each node, and one cell whose slabs the data narrow |
 
 **Spaces whose structure varies**
 

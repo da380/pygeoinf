@@ -191,6 +191,10 @@ class Cell:
                     np.linalg.eigvalsh(np.linalg.inv(self._gram)).max()
                 ) * np.linalg.norm(self._half_widths)
                 self._radius = min(self._radius, float(reach))
+        self._orthonormal = bool(
+            self._directions
+            and np.abs(self._gram - np.eye(len(self._directions))).max() <= 1e-10
+        )
 
     @property
     def domain(self) -> HilbertSpace:
@@ -254,29 +258,75 @@ class Cell:
     def half_width(self, vector: Any, /) -> float:
         """A bound on ``|(v, m − center)|`` over the cell, for any vector ``v``.
 
-        The part of ``v`` in the span of the slab directions,
-        ``sum_j a_j u_j``, is bounded by ``sum_j |a_j| w_j``, and the rest
-        by its norm times the radius; the whole by the smaller of that sum
-        and ``|v|`` times the radius. Exact for a slab direction itself.
+        See :meth:`bounds_along`, which this is for one vector. Exact for a
+        slab direction itself.
 
         Args:
             vector: a vector of the model space.
         """
         space = self._domain
-        size = float(space.norm(vector))
-        whole = size * self._radius if size > 0.0 else 0.0
+        pairings = np.array([space.inner_product(u, vector) for u in self._directions])
+        size = np.array([float(space.norm(vector))])
+        return float(self.bounds_along(pairings[None, :], size)[0])
+
+    def bounds_along(self, pairings: np.ndarray, sizes: np.ndarray, /) -> np.ndarray:
+        """Bounds on ``|(v, m − center)|`` over the cell, for several vectors at once.
+
+        A vector enters through its inner products with the slab directions
+        and its norm, which is all the bound reads. The part of ``v`` in
+        the span of the slab directions, ``sum_j a_j u_j``, is bounded by
+        ``sum_j |a_j| w_j``, and the rest by its norm times the radius; the
+        whole by ``|v|`` times the radius; and the smaller is taken. Where
+        the directions are orthonormal the bound is sharpened to the exact
+        supremum over the slabs cut by the ball of the cell's radius,
+        ``min over d of sum_j w_j (|a_j| − d_j) + radius |(rest, d)|``, in
+        which a slab wider than the ball allows simply drops out.
+
+        Args:
+            pairings: one row per vector, its inner products ``(u_j, v)``
+                with the slab directions.
+            sizes: the vectors' norms.
+
+        Returns:
+            One bound per vector; infinite where the cell has no finite
+            radius and the vector is not in the span of the slab directions.
+        """
+        sizes = np.asarray(sizes, dtype=float)
+        radius = self._radius
+        with np.errstate(invalid="ignore"):
+            whole = np.where(sizes > 0.0, sizes * radius, 0.0)
         if not self._directions:
             return whole
-        pairings = np.array([space.inner_product(u, vector) for u in self._directions])
-        weights = np.linalg.solve(self._gram, pairings)
+        pairings = np.asarray(pairings, dtype=float).reshape(len(sizes), -1)
+        weights = np.linalg.solve(self._gram, pairings.T).T
         # What is left of |v|^2 outside the span, to the rounding of the
         # subtraction; below that the vector is in the span.
-        rest = max(size**2 - float(pairings @ weights), 0.0)
-        rest = 0.0 if rest <= 1e-12 * size**2 else rest**0.5
-        split = float(np.abs(weights) @ self._half_widths)
-        if rest > 0.0:
-            split += rest * self._radius
-        return min(split, whole)
+        rest = np.maximum(sizes**2 - np.einsum("ij,ij->i", pairings, weights), 0.0)
+        rest = np.where(rest <= 1e-12 * sizes**2, 0.0, np.sqrt(rest))
+        split = np.abs(weights) @ self._half_widths
+        with np.errstate(invalid="ignore"):
+            split = split + np.where(rest > 0.0, rest * radius, 0.0)
+        bound = np.minimum(split, whole)
+        if self._orthonormal and np.isfinite(radius):
+            # The supremum over the slabs cut by the ball, by its dual: any
+            # d between zero and |a| bounds, and the fixed point is exact.
+            along = np.abs(weights)
+            level = sizes / radius
+            for _ in range(60):
+                kept = np.minimum(level[:, None] * self._half_widths[None, :], along)
+                updated = np.sqrt(rest**2 + (kept**2).sum(axis=1)) / radius
+                settled = np.abs(updated - level).max() <= 1e-12 * max(
+                    level.max(), 1e-300
+                )
+                level = updated
+                if settled:
+                    break
+            kept = np.minimum(level[:, None] * self._half_widths[None, :], along)
+            cut = (along - kept) @ self._half_widths + radius * np.sqrt(
+                rest**2 + (kept**2).sum(axis=1)
+            )
+            bound = np.minimum(bound, cut)
+        return bound
 
     def row_operator(self) -> LinearOperator:
         """``m -> ((u_j, m))_j``, into a Euclidean space of the slabs' number."""
@@ -400,82 +450,160 @@ class NormRemainder(RemainderBound):
 
 
 class ComponentwiseRemainder(RemainderBound):
-    """The remainder of ``F(m) = sum_i g_i((b_i, m)) e_i``, bounded component by component.
+    """The remainder of a scalar function applied to linear functionals of the model.
 
-    A forward operator that applies a scalar function to each of a set of
-    linear functionals of the model, over the data space's basis ``e_i``:
-    each datum sees the model through one number ``t_i = (b_i, m)``, and
-    its remainder is ``g_i''(s) (b_i, m − m_K)^2 / 2`` at some ``s`` between
-    the two values of ``t_i``. With ``w_i`` the cell's half-width along
-    ``b_i`` and ``[lo_i, hi_i]`` a range of ``g_i''`` over
-    ``[t_i − w_i, t_i + w_i]``, the remainder's ``i``-th coefficient lies
-    between ``min(lo_i, 0) w_i^2 / 2`` and ``max(hi_i, 0) w_i^2 / 2``. A
-    second derivative of one sign gives a one-sided range, half the size of
-    the symmetric one a norm would give, and a datum that is linear in the
-    model gives none at all.
+    A forward operator ``F(m) = W g(B m)``: linear functionals
+    ``t_q = (b_q, m)`` of the model, a scalar function ``g_q`` applied to
+    each, and optionally a linear map ``W`` of the results into the data
+    space; without ``W`` the results are the data, over the data space's
+    basis. Point values squared are of this form, and so is a line integral
+    of a function of a field, once its quadrature is written out: the
+    ``b_q`` are evaluations at the nodes and ``W`` holds the weights.
+
+    The remainder of ``g_q`` is ``g_q''(s) (b_q, m − m_K)^2 / 2`` at some
+    ``s`` between the two values of ``t_q``. With ``w_q`` the cell's
+    half-width along ``b_q`` and ``[lo_q, hi_q]`` a range of ``g_q''`` over
+    ``[t_q − w_q, t_q + w_q]``, it lies between ``min(lo_q, 0) w_q^2 / 2``
+    and ``max(hi_q, 0) w_q^2 / 2``: one-sided for a second derivative of one
+    sign, and nothing at all for a linear ``g_q``. The remainder set is the
+    box of those ranges over the data space's basis, taken through ``W``
+    where there is one by the range of each row of its matrix, which
+    contains the image of the box and is that image when no two data share
+    a functional.
     """
 
     def __init__(
         self,
         data_space: CoordinateSpace,
-        rows: Sequence[Any],
+        rows: Sequence[Any] | LinearOperator,
         curvature: Callable[[np.ndarray, np.ndarray], tuple[Any, Any]],
         /,
         *,
+        then: LinearOperator | None = None,
         certified: bool = True,
     ) -> None:
         """
         Args:
             data_space: the forward operator's codomain, whose basis the
-                components are taken in.
-            rows: the model-space vectors ``b_i``, one per basis vector of
-                the data space.
+                remainder's components are taken in.
+            rows: the functionals ``b_q``: the model-space vectors
+                themselves, or the operator ``B`` into a Euclidean space
+                whose components they give.
             curvature: called with the arrays ``t − w`` and ``t + w`` and
                 returning two arrays, a lower and an upper bound on each
-                ``g_i''`` over its interval.
+                ``g_q''`` over its interval.
+            then: ``W``, from the Euclidean space of the functionals'
+                values into the data space; omitted when the values are
+                the data.
             certified: whether the ranges are proved.
 
         Raises:
-            ValueError: if the rows do not match the data space's dimension.
+            ValueError: if the rows do not match the space they feed, the
+                data space or the domain of ``then``, in number.
+            TypeError: if ``rows`` is an operator into a space that is not
+                Euclidean.
         """
         super().__init__(certified=certified)
         self._data_space = data_space
-        self._rows = tuple(rows)
         self._curvature = curvature
-        if len(self._rows) != data_space.dim:
+        self._then = then
+        if isinstance(rows, LinearOperator):
+            if not isinstance(rows.codomain, EuclideanSpace):
+                raise TypeError(
+                    "An operator giving the functionals must map into a "
+                    "Euclidean space, whose components are their values."
+                )
+            self._operator: LinearOperator | None = rows
+            self._rows: tuple[Any, ...] | None = None
+            count = rows.codomain.dim
+        else:
+            self._operator = None
+            self._rows = tuple(rows)
+            count = len(self._rows)
+        fed = data_space.dim if then is None else then.domain.dim
+        if count != fed:
             raise ValueError(
-                "There must be one row per basis vector of the data space."
+                f"There are {count} functionals for a space of dimension {fed}."
             )
+        self._count = count
+        self._sizes: np.ndarray | None = None
+        self._paired: tuple[Any, np.ndarray] | None = None
+        self._matrix: np.ndarray | None = None
+
+    def _materialized(self) -> tuple[Any, ...]:
+        if self._rows is None:
+            space = self._operator.codomain
+            self._rows = tuple(
+                self._operator.adjoint(space.basis_vector(q))
+                for q in range(self._count)
+            )
+        return self._rows
 
     def slab_directions(self) -> tuple[Any, ...]:
-        """The rows ``b_i``: the only directions the forward operator sees the model along."""
-        return self._rows
+        """The functionals ``b_q``: the only directions the forward operator sees the model along."""
+        return self._materialized()
 
     def remainder_set(self, cell: Cell, /) -> Zonotope:
         """The box of coefficient ranges over the data space's basis.
 
         Raises:
-            ValueError: if the cell is unbounded along a row, having neither
-                a finite radius nor that row within its slabs' span.
+            ValueError: if the cell is unbounded along a functional, having
+                neither a finite radius nor that functional within its
+                slabs' span.
         """
         space, data_space = cell.domain, self._data_space
-        at_center = np.array(
-            [space.inner_product(row, cell.center) for row in self._rows]
-        )
-        widths = np.array([cell.half_width(row) for row in self._rows])
+        if self._operator is not None:
+            at_center = np.asarray(self._operator(cell.center), dtype=float)
+        else:
+            at_center = np.array(
+                [space.inner_product(row, cell.center) for row in self._rows]
+            )
+        if self._sizes is None:
+            self._sizes = np.array([space.norm(row) for row in self._materialized()])
+        # Cells of one search share their directions, so the functionals'
+        # inner products with them are worked out once.
+        if self._paired is None or self._paired[0] is not cell.directions:
+            if self._operator is not None:
+                columns = [
+                    np.asarray(self._operator(direction), dtype=float)
+                    for direction in cell.directions
+                ]
+                paired = np.array(columns).T.reshape(self._count, len(cell.directions))
+            else:
+                paired = np.array(
+                    [
+                        [
+                            space.inner_product(direction, row)
+                            for direction in cell.directions
+                        ]
+                        for row in self._rows
+                    ]
+                ).reshape(self._count, len(cell.directions))
+            self._paired = (cell.directions, paired)
+        widths = cell.bounds_along(self._paired[1], self._sizes)
         if not np.all(np.isfinite(widths)):
             raise ValueError(
-                "The cell is unbounded along a row; give it a radius or a "
-                "slab along every row the forward operator curves in."
+                "The cell is unbounded along a functional; give it a radius "
+                "or a slab along every functional the forward operator "
+                "curves in."
             )
         low, high = self._curvature(at_center - widths, at_center + widths)
-        low = np.minimum(np.asarray(low, dtype=float), 0.0)
-        high = np.maximum(np.asarray(high, dtype=float), 0.0)
+        low = 0.5 * np.minimum(np.asarray(low, dtype=float), 0.0) * widths**2
+        high = 0.5 * np.maximum(np.asarray(high, dtype=float), 0.0) * widths**2
+        if self._then is not None:
+            if self._matrix is None:
+                self._matrix = np.asarray(self._then.matrix(form="components"))
+            positive = np.maximum(self._matrix, 0.0)
+            negative = np.minimum(self._matrix, 0.0)
+            low, high = (
+                positive @ low + negative @ high,
+                positive @ high + negative @ low,
+            )
         return Zonotope(
             data_space,
             [data_space.basis_vector(i) for i in range(data_space.dim)],
-            lower=0.5 * low * widths**2,
-            upper=0.5 * high * widths**2,
+            lower=low,
+            upper=high,
         )
 
 
@@ -866,6 +994,7 @@ class BranchAndPrune:
         directions: Sequence[Any] | None = None,
         rtol: float = 1e-3,
         max_cells: int = 200,
+        tighten: int = 0,
         search: "LocalSearch | None" = None,
     ) -> None:
         """
@@ -879,6 +1008,14 @@ class BranchAndPrune:
                 the search stops, relative to the constraint set's width
                 along the direction.
             max_cells: the budget of cells to bound.
+            tighten: how many sweeps of
+                :meth:`NonlinearFeasiblePropertySet.tightened_cell` to give
+                each cell before it is bounded: its slabs cut back to what
+                its feasible models can reach, at two support solves per
+                slab and sweep. None by default. It is what makes a
+                problem with many slab directions tractable, where the
+                data pin most of them and halving would take a cell for
+                each.
             search: the local search run in a cell for the inner value; the
                 default :class:`LocalSearch` if omitted.
 
@@ -897,6 +1034,7 @@ class BranchAndPrune:
         self._directions = tuple(directions)
         self._rtol = float(rtol)
         self._max_cells = int(max_cells)
+        self._tighten = int(tighten)
         self._search = search
 
     @property
@@ -930,9 +1068,9 @@ class BranchAndPrune:
         base = _extent(self._remainder.remainder_set(cell))
         keep = []
         for index in range(len(chosen)):
-            halved = np.array(widths, dtype=float)
-            halved[index] *= 0.5
-            trial = feasible.cell(center, directions=chosen, half_widths=halved)
+            thin = np.array(widths, dtype=float)
+            thin[index] *= 1e-3
+            trial = feasible.cell(center, directions=chosen, half_widths=thin)
             if _extent(self._remainder.remainder_set(trial)) < base * (1.0 - 1e-12):
                 keep.append(index)
         return feasible.cell(
@@ -1020,9 +1158,17 @@ class BranchAndPrune:
             if fits and along > attained:
                 best, attained = model, along
 
-        def bound(cell: Cell, warm: Any) -> dict[str, Any] | None:
+        def bound(cell: Cell, parent: dict[str, Any] | None) -> dict[str, Any] | None:
             """The outer value of a cell, or None for a cell shown empty."""
             nonlocal evaluations, unconverged
+            rows = feasible._active_slabs(cell)
+            # A parent's certificate starts its halves, where they have
+            # the same rows and so the same space of certificates.
+            warm = (
+                parent["certificate"]
+                if parent is not None and parent["rows"] == rows
+                else None
+            )
             linearization = forward.at(cell.center)
             claimed = self._remainder.remainder_set(cell)
             linear = feasible._cell_set(cell, linearization, _grown(ball, claimed))
@@ -1051,6 +1197,7 @@ class BranchAndPrune:
             unconverged += 0 if result.converged else 1
             return {
                 "cell": cell,
+                "rows": rows,
                 "value": float(result.value),
                 "certificate": result.certificate,
                 "extremal": result.extremal_model,
@@ -1075,13 +1222,19 @@ class BranchAndPrune:
         history: list[tuple[int, float, float]] = []
         pruned = float("-inf")
 
-        def admit(cell: Cell, warm: Any, cap: float) -> None:
+        def admit(cell: Cell, parent: dict[str, Any] | None, cap: float) -> None:
             """Bound a cell and file it as empty, pruned or live."""
             nonlocal pruned
-            entry = bound(cell, warm)
+            narrowed = cell
+            if self._tighten:
+                narrowed = feasible.tightened_cell(
+                    cell, self._remainder, sweeps=self._tighten, rtol=dual_tolerance
+                )
+            entry = None if narrowed is None else bound(narrowed, parent)
             if entry is None:
                 records.append([cell, float("-inf"), "empty"])
                 return
+            cell = narrowed
             # A half is linearized about its own center, so its bound is
             # not nested in its parent's; both hold, and the smaller is kept.
             entry["value"] = min(entry["value"], cap)
@@ -1141,7 +1294,7 @@ class BranchAndPrune:
                         directions=cell.directions,
                         half_widths=halved,
                     ),
-                    entry["certificate"],
+                    entry,
                     entry["value"],
                 )
             history.append(
@@ -1274,9 +1427,15 @@ class BranchAndPrune:
         heap: list[tuple[float, int, int, Cell]] = []
 
         def admit(cell: Cell) -> None:
-            if holds_none(cell):
+            narrowed = cell
+            if self._tighten:
+                narrowed = feasible.tightened_cell(
+                    cell, self._remainder, sweeps=self._tighten, rtol=dual_tolerance
+                )
+            if narrowed is None or holds_none(narrowed):
                 records.append([cell, float("-inf"), "empty"])
                 return
+            cell = narrowed
             records.append([cell, float("nan"), "live"])
             extent = _extent(self._remainder.remainder_set(cell))
             heapq.heappush(heap, (-extent, len(records), len(records) - 1, cell))
@@ -2239,6 +2398,18 @@ class NonlinearFeasiblePropertySet(Subset):
             )
         return self._noise
 
+    def _active_slabs(self, cell: Cell) -> list[int]:
+        """The slabs of a cell that cut the prior: those narrower than its reach along them."""
+        if not _computes_support(self._prior):
+            return list(range(len(cell.directions)))
+        return [
+            index
+            for index, (direction, half_width) in enumerate(
+                zip(cell.directions, cell.half_widths)
+            )
+            if half_width < self._half_reach(direction, cell.center)
+        ]
+
     def _cell_set(
         self,
         cell: Cell,
@@ -2246,13 +2417,19 @@ class NonlinearFeasiblePropertySet(Subset):
         noise: ConvexSet,
         *,
         pin: Any = None,
+        property_operator: LinearOperator | None = None,
     ) -> FeasiblePropertySet:
         """The linearized problem on a cell, with a given noise set.
 
         With ``pin``, a property value, the models are further held to have
         that property exactly: the set is then empty exactly when no model
-        of the linearized problem on the cell has it.
+        of the linearized problem on the cell has it. With
+        ``property_operator``, the set is that operator's image of the same
+        models, in place of the property's.
         """
+        image = (
+            self._property_operator if property_operator is None else property_operator
+        )
         data_space = self.data_space
         derivative = linearization.derivative
         shifted = data_space.add(
@@ -2260,18 +2437,32 @@ class NonlinearFeasiblePropertySet(Subset):
             derivative(linearization.point),
         )
         operators, parts, observed = [derivative], [noise], [shifted]
-        if cell.directions:
-            # The slabs enter as data: the rows (u_j, m) observed at the
-            # center's values to within the half-widths.
-            rows = cell.row_operator()
-            count = len(cell.directions)
+        # The slabs enter as data: the rows (u_j, m) observed at the
+        # center's values to within the half-widths. A slab the prior
+        # already implies is left out.
+        space = self.model_space
+        active = self._active_slabs(cell)
+        if active:
+            chosen = [cell.directions[index] for index in active]
+            frame = EuclideanSpace(len(active))
+
+            def value(model: Any) -> np.ndarray:
+                return np.array([space.inner_product(u, model) for u in chosen])
+
+            def adjoint(weights: np.ndarray) -> Any:
+                out = space.zero()
+                for weight, direction in zip(weights, chosen):
+                    out = space.axpy(float(weight), direction, out)
+                return out
+
+            rows = LinearOperator.from_callables(space, frame, value, adjoint=adjoint)
             operators.append(rows)
             parts.append(
                 Zonotope(
-                    rows.codomain,
-                    [rows.codomain.basis_vector(j) for j in range(count)],
-                    lower=-cell.half_widths,
-                    upper=cell.half_widths,
+                    frame,
+                    [frame.basis_vector(j) for j in range(len(active))],
+                    lower=-cell.half_widths[active],
+                    upper=cell.half_widths[active],
                 )
             )
             observed.append(rows(cell.center))
@@ -2283,7 +2474,7 @@ class NonlinearFeasiblePropertySet(Subset):
         if len(operators) == 1:
             structure = FeasibleStructure(
                 derivative,
-                self._property_operator,
+                image,
                 self._prior,
                 noise=noise,
                 solver=self._solver,
@@ -2292,12 +2483,99 @@ class NonlinearFeasiblePropertySet(Subset):
         forward = ColumnLinearOperator(operators)
         structure = FeasibleStructure(
             forward,
-            self._property_operator,
+            image,
             self._prior,
             noise=_product_set(forward.codomain, parts),
             solver=self._solver,
         )
         return FeasiblePropertySet.from_structure(structure, tuple(observed))
+
+    def tightened_cell(
+        self,
+        cell: Cell,
+        remainder: RemainderBound,
+        /,
+        *,
+        sweeps: int = 3,
+        rtol: float = 1e-6,
+    ) -> Cell | None:
+        """A cell's slabs narrowed to what its feasible models can reach.
+
+        Along each slab direction ``u_j`` the values ``(u_j, m)`` over the
+        feasible models of the cell lie within the support, either way, of
+        the cell's outer set seen through the slab rows; a slab wider than
+        that holds nothing feasible in the excess and is cut back, the
+        cell recentred on what is left. A narrower cell has a smaller
+        remainder set, hence a smaller outer set, so the cut can be
+        repeated. Nothing feasible is lost, given the remainder claim, and
+        no cell is added: where the data pin a direction this does at once
+        what halving the slab would take many cells to do.
+
+        Args:
+            cell: the cell.
+            remainder: the claim about the forward operator over a cell.
+            sweeps: how many times at most to go over the slabs; a sweep
+                that narrows no slab by a twentieth is the last.
+            rtol: the tolerance of the support solves, as a relative gap.
+
+        Returns:
+            The narrowed cell, or None when the cell's outer set is empty:
+            the cell holds no feasible model, given the claim.
+
+        Raises:
+            TypeError: if the noise set is not a ball.
+        """
+        ball = self._noise_ball()
+        count = len(cell.directions)
+        if count == 0:
+            return cell
+        frame = EuclideanSpace(count)
+        for _ in range(sweeps):
+            linearization = self._forward.at(cell.center)
+            linear = self._cell_set(
+                cell,
+                linearization,
+                _grown(ball, remainder.remainder_set(cell)),
+                property_operator=cell.row_operator(),
+            )
+            at_center = np.array(
+                [
+                    self.model_space.inner_product(u, cell.center)
+                    for u in cell.directions
+                ]
+            )
+            low = at_center - cell.half_widths
+            high = at_center + cell.half_widths
+            warm = None
+            try:
+                for index in range(count):
+                    for sign in (1.0, -1.0):
+                        result = linear.support_result(
+                            frame.scale(sign, frame.basis_vector(index)),
+                            via=Dual(tolerance=rtol, start=warm),
+                        )
+                        warm = result.certificate
+                        if sign > 0.0:
+                            high[index] = min(high[index], float(result.value))
+                        else:
+                            low[index] = max(low[index], -float(result.value))
+            except ValueError as error:
+                if "empty" not in str(error):
+                    raise
+                return None
+            if np.any(low > high + 1e-9 * cell.half_widths):
+                return None
+            high = np.maximum(high, low)
+            halves = np.maximum(0.5 * (high - low), 1e-9 * cell.half_widths)
+            narrowed = float(np.min(halves / cell.half_widths))
+            cell = self.cell(
+                cell.point(0.5 * (high + low) - at_center),
+                directions=cell.directions,
+                half_widths=halves,
+            )
+            if narrowed > 0.95:
+                break
+        return cell
 
     def outer_set(
         self, cell: Cell, remainder: RemainderBound, /

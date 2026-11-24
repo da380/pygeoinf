@@ -9,6 +9,8 @@ field and of its square on an interval.
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pytest
 
@@ -33,7 +35,7 @@ from pygeoinf.geometry.nonlinear import (
     NormRemainder,
     SampledRemainder,
 )
-from pygeoinf.symmetric_space import line
+from pygeoinf.symmetric_space import line, plane
 from pygeoinf.testing import check_derivative, check_second_derivative
 
 from .conftest import make_dense_metric_space
@@ -1369,6 +1371,381 @@ class TestMembershipByCells:
             np.array([truth + 0.3]), via=BranchAndPrune(estimated)
         )
         assert result.lower_bound == float("inf") and not result.certified
+
+
+# --------------------------------------------------------------------- #
+#             A function of a field under line integrals                 #
+# --------------------------------------------------------------------- #
+
+
+@functools.lru_cache
+def ray_problem(*, rays=10, nodes=8, std=0.05, seed=4):
+    """Travel times ``int exp(m) ds`` along straight rays across a square.
+
+    The quadrature written out: evaluation at the nodes, the exponential of
+    each value, and the weights. Returns the space, the three operators,
+    the composed map and the prior measure.
+    """
+    rng = np.random.default_rng(seed)
+    space = plane.Sobolev((12, 12), 3.0, 0.3, bounds=((0.0, 1.0), (0.0, 1.0)))
+    belief = space.sobolev_measure(3.0, 0.3, pointwise_std=std)
+    points, weights, owner = [], [], []
+    for ray in range(rays):
+        start = np.array([rng.uniform(0.1, 0.9), 0.05])
+        end = np.array([rng.uniform(0.1, 0.9), 0.95])
+        if ray % 2:
+            start, end = start[::-1].copy(), end[::-1].copy()
+        along, lengths = space.geodesic_quadrature(start, end, count=nodes)
+        points += list(along)
+        weights += list(lengths)
+        owner += [ray] * nodes
+    evaluation = space.point_evaluation_operator(points, route="dense")
+    values, times = evaluation.codomain, EuclideanSpace(rays)
+    matrix = np.zeros((rays, len(points)))
+    matrix[owner, np.arange(len(points))] = weights
+    integrate = LinearOperator.from_matrix(values, times, matrix, form="components")
+
+    def diagonal(entries):
+        return LinearOperator.from_matrix(
+            values, values, np.diag(entries), form="components"
+        )
+
+    def exponential(samples):
+        samples = np.asarray(samples)
+        if np.any(samples > 50.0):
+            raise EvaluationError("The exponential overflows at this model.")
+        return np.exp(samples)
+
+    pointwise = Operator.from_callables(
+        values,
+        values,
+        exponential,
+        derivative=lambda samples: diagonal(np.exp(np.asarray(samples))),
+        second_derivative=lambda samples, step: diagonal(
+            np.exp(np.asarray(samples)) * np.asarray(step)
+        ),
+    )
+    forward = integrate @ pointwise @ evaluation
+    return space, evaluation, integrate, forward, belief
+
+
+def exponential_curvature(low, high):
+    """The second derivative of the exponential over an interval: between its ends' values."""
+    return np.exp(low), np.exp(high)
+
+
+def covering_directions(space, evaluation, integrate, count):
+    """The model directions the rays sample most: leading eigenvectors of ``B* W B``."""
+    from scipy.linalg import eigh
+
+    sampled = evaluation.matrix(form="components")
+    lengths = integrate.matrix(form="components").sum(axis=0)
+    gram = LinearOperator.identity(space).matrix(form="galerkin")
+    values, vectors = eigh(sampled.T @ (lengths[:, None] * sampled), gram)
+    leading = np.argsort(-values)[:count]
+    return [space.from_components(vectors[:, index]) for index in leading]
+
+
+class TestTheHalfWidthOfASlabCellInABall:
+    """``sup |(v, m − center)|`` over slabs cut by a ball, for orthonormal slab directions."""
+
+    def setting(self, rng):
+        space = EuclideanSpace(5)
+        frame = np.linalg.qr(rng.normal(size=(5, 5)))[0]
+        directions = [frame[:, 0], frame[:, 1], frame[:, 2]]
+        cell = Cell(
+            space,
+            rng.normal(size=5),
+            directions=directions,
+            half_widths=[0.2, 0.9, 3.0],
+            radius=1.0,
+        )
+        return space, cell
+
+    def supremum(self, cell, vector):
+        """The same number by a constrained maximization over the model."""
+        from scipy.optimize import minimize
+
+        constraints = [
+            {"type": "ineq", "fun": lambda d: cell.radius**2 - d @ d},
+        ]
+        for direction, half_width in zip(cell.directions, cell.half_widths):
+            constraints.append(
+                {"type": "ineq", "fun": lambda d, u=direction, w=half_width: w - u @ d}
+            )
+            constraints.append(
+                {"type": "ineq", "fun": lambda d, u=direction, w=half_width: w + u @ d}
+            )
+        best = 0.0
+        for start in (0.1 * vector, -0.1 * vector, np.zeros(5)):
+            found = minimize(
+                lambda d: -(vector @ d),
+                start,
+                constraints=constraints,
+                method="SLSQP",
+                options={"ftol": 1e-14, "maxiter": 500},
+            )
+            best = max(best, -found.fun)
+        return best
+
+    def test_it_is_the_supremum(self, rng):
+        """Two routes to one number: the closed iteration, and an optimizer."""
+        space, cell = self.setting(rng)
+        for _ in range(6):
+            vector = rng.normal(size=5)
+            assert cell.half_width(vector) == pytest.approx(
+                self.supremum(cell, vector), rel=1e-6
+            )
+
+    def test_it_is_below_both_cruder_bounds(self, rng):
+        space, cell = self.setting(rng)
+        vector = rng.normal(size=5)
+        along = np.array([u @ vector for u in cell.directions])
+        rest = np.sqrt(vector @ vector - along @ along)
+        split = np.abs(along) @ cell.half_widths + rest * cell.radius
+        whole = np.linalg.norm(vector) * cell.radius
+        assert cell.half_width(vector) <= min(split, whole) * (1.0 + 1e-12)
+        # A slab wider than the ball is no constraint, and the bound knows it.
+        wide = Cell(
+            space,
+            cell.center,
+            directions=cell.directions,
+            half_widths=[5, 5, 5],
+            radius=1.0,
+        )
+        assert wide.half_width(vector) == pytest.approx(whole, rel=1e-10)
+
+    def test_several_vectors_at_once_agree_with_one_at_a_time(self, rng):
+        space, cell = self.setting(rng)
+        vectors = rng.normal(size=(7, 5))
+        pairings = np.array([[u @ v for u in cell.directions] for v in vectors])
+        together = cell.bounds_along(pairings, np.linalg.norm(vectors, axis=1))
+        apart = [cell.half_width(v) for v in vectors]
+        assert np.allclose(together, apart, rtol=1e-12)
+
+
+class TestTheRemainderOfAFunctionUnderLineIntegrals:
+    def setting(self, rng):
+        space, evaluation, integrate, forward, belief = ray_problem()
+        remainder = ComponentwiseRemainder(
+            forward.codomain, evaluation, exponential_curvature, then=integrate
+        )
+        directions = covering_directions(space, evaluation, integrate, 4)
+        prior = belief.ambient_ball(level=0.95)
+        return (
+            space,
+            evaluation,
+            integrate,
+            forward,
+            belief,
+            remainder,
+            directions,
+            prior,
+        )
+
+    def test_the_claimed_set_holds_the_remainder(self, rng):
+        space, _, _, forward, belief, remainder, directions, prior = self.setting(rng)
+        center = belief.sample(rng=rng)
+        cell = Cell(
+            space,
+            center,
+            directions=directions,
+            half_widths=[0.02] * 4,
+            radius=prior.radius,
+        )
+        claimed = remainder.remainder_set(cell)
+        linearization = forward.at(center)
+        inside = 0
+        for _ in range(200):
+            step = belief.sample(rng=rng)
+            step = space.scale(rng.uniform(0.0, prior.radius) / space.norm(step), step)
+            model = space.add(center, step)
+            if not cell.contains(model):
+                continue
+            inside += 1
+            departure = (
+                forward(model) - linearization.value - linearization.derivative(step)
+            )
+            assert claimed.contains(departure, rtol=1e-9)
+            # One-sided: the exponential's second derivative is positive.
+            assert np.all(departure >= -1e-14)
+        assert inside >= 5
+        assert np.all(claimed.lower == 0.0) and np.all(claimed.upper > 0.0)
+
+    def test_the_functionals_as_vectors_give_the_same_set(self, rng):
+        space, evaluation, integrate, forward, belief, remainder, directions, prior = (
+            self.setting(rng)
+        )
+        nodes = evaluation.codomain
+        rows = [evaluation.adjoint(nodes.basis_vector(q)) for q in range(nodes.dim)]
+        listed = ComponentwiseRemainder(
+            forward.codomain, rows, exponential_curvature, then=integrate
+        )
+        cell = Cell(
+            space,
+            belief.sample(rng=rng),
+            directions=directions,
+            half_widths=[0.02, 0.05, 0.01, 0.2],
+            radius=prior.radius,
+        )
+        first, second = remainder.remainder_set(cell), listed.remainder_set(cell)
+        assert np.allclose(first.upper, second.upper, rtol=1e-9)
+        assert np.allclose(first.lower, second.lower, atol=1e-15)
+
+    def test_narrower_slabs_give_a_smaller_set_down_to_a_floor(self, rng):
+        """What the slabs do not span is bounded through the radius, and stays."""
+        space, _, _, _, belief, remainder, directions, prior = self.setting(rng)
+        center = belief.sample(rng=rng)
+        sizes = []
+        for width in (
+            prior.radius,
+            0.1 * prior.radius,
+            1e-3 * prior.radius,
+            1e-6 * prior.radius,
+        ):
+            cell = Cell(
+                space,
+                center,
+                directions=directions,
+                half_widths=[width] * 4,
+                radius=prior.radius,
+            )
+            sizes.append(remainder.remainder_set(cell).radius)
+        assert sizes[0] > sizes[1] > sizes[2] >= sizes[3] > 0.0
+        assert sizes[2] == pytest.approx(sizes[3], rel=5e-2)
+
+    def test_refusals(self, rng):
+        space, evaluation, integrate, forward, _, _, _, _ = self.setting(rng)
+        with pytest.raises(ValueError, match="functionals"):
+            ComponentwiseRemainder(forward.codomain, evaluation, exponential_curvature)
+        weighted = LinearOperator.from_matrix(
+            space,
+            make_dense_metric_space(3),
+            np.ones((3, space.dim)),
+            form="components",
+        )
+        with pytest.raises(TypeError, match="Euclidean"):
+            ComponentwiseRemainder(forward.codomain, weighted, exponential_curvature)
+
+
+class TestTighteningACell:
+    def test_no_feasible_model_is_lost_and_the_cell_is_narrower(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, data = two_parameter_problem(3)
+        remainder = attenuation_remainder(forward, weights)
+        root = BranchAndPrune(remainder).root(feasible)
+        tightened = feasible.tightened_cell(root, remainder)
+        assert np.all(tightened.half_widths <= root.half_widths * (1.0 + 1e-12))
+        assert tightened.half_widths.max() < 0.5 * root.half_widths.max()
+        axis = np.linspace(-1.0, 1.0, 401)
+        grid = np.stack(np.meshgrid(axis, axis), -1).reshape(-1, 2)
+        fits = np.linalg.norm(np.exp(-(grid @ weights.T)) - data, axis=1) <= 0.05
+        fits &= np.linalg.norm(grid, axis=1) <= 1.0
+        assert fits.sum() > 50
+        assert all(tightened.contains(model, rtol=1e-6) for model in grid[fits])
+
+    def test_a_cell_with_nothing_feasible_in_it_comes_back_as_none(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        cell = square_cell(feasible, np.array([-0.5, 0.5]), 0.2)
+        assert (
+            feasible.tightened_cell(cell, attenuation_remainder(forward, weights))
+            is None
+        )
+
+    def test_for_a_linear_map_the_slab_is_the_feasible_set_s_extent(self, rng):
+        """Two routes: the tightened slab, and the linear set's support along the direction."""
+        model, data_space = make_dense_metric_space(5), make_dense_metric_space(3)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(3, 5)), form="components"
+        )
+        direction = model.random(rng=rng)
+        along = LinearOperator.from_callables(
+            model,
+            EuclideanSpace(1),
+            lambda m: np.array([model.inner_product(direction, m)]),
+            adjoint=lambda y: model.scale(float(y[0]), direction),
+        )
+        truth = model.random(rng=rng)
+        data = forward(truth)
+        prior = Ball(model, radius=1.5 * model.norm(truth))
+        noise = Ball(data_space, radius=0.1 * data_space.norm(data))
+        linear = FeasiblePropertySet.from_structure(
+            FeasibleStructure(forward, along, prior, noise=noise, solver=None), data
+        )
+        high, low = linear.support(np.array([1.0])), -linear.support(np.array([-1.0]))
+        nonlinear = NonlinearFeasiblePropertySet(
+            forward, along, prior, data, noise=noise
+        )
+        wide = nonlinear.cell(
+            model.zero(),
+            directions=[direction],
+            half_widths=[prior.radius * model.norm(direction)],
+        )
+        tightened = nonlinear.tightened_cell(wide, NormRemainder(data_space, 0.0))
+        middle = model.inner_product(direction, tightened.center)
+        assert middle + tightened.half_widths[0] == pytest.approx(high, rel=1e-4)
+        assert middle - tightened.half_widths[0] == pytest.approx(low, rel=1e-4)
+
+    def test_the_search_needs_fewer_cells_with_it(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        truth = known_support(3, 1.0, 0.05)
+        remainder = attenuation_remainder(forward, weights)
+        direction = np.array([1.0])
+        plain = feasible.support_result(
+            direction, via=BranchAndPrune(remainder, rtol=1e-2)
+        )
+        tight = feasible.support_result(
+            direction, via=BranchAndPrune(remainder, rtol=1e-2, tighten=2)
+        )
+        for result in (plain, tight):
+            assert result.converged and not result.refuted
+            assert result.inner <= truth + 1e-6 <= result.value + 2e-6
+        assert len(tight.cells) < len(plain.cells)
+
+
+class TestAFieldUnderLineIntegrals:
+    """Travel times through ``exp`` of a field: a certified bracket from one tightened cell."""
+
+    def test_one_tightened_cell_brackets_the_value_at_a_point(self, rng):
+        space, evaluation, integrate, forward, belief = ray_problem()
+        truth = belief.sample(rng=rng)
+        clean = forward(truth)
+        error = GaussianMeasure.from_standard_deviation(
+            forward.codomain,
+            0.1 * np.std(clean - integrate(np.ones(evaluation.codomain.dim))),
+        )
+        data = clean + error.sample(rng=rng)
+        prior = belief.ambient_ball(level=0.95)
+        property_operator = space.point_evaluation_operator([np.array([0.5, 0.5])])
+        feasible = NonlinearBackusGilbertParker(
+            ForwardProblem(forward, error=error), property_operator, prior
+        )(data)
+        remainder = ComponentwiseRemainder(
+            forward.codomain, evaluation, exponential_curvature, then=integrate
+        )
+        directions = covering_directions(space, evaluation, integrate, 4)
+        method = BranchAndPrune(remainder, directions=directions)
+        root = method.root(feasible)
+        assert len(root.directions) == 4
+        cell = feasible.tightened_cell(root, remainder, sweeps=2)
+        direction = np.array([1.0])
+        whole = feasible.cell_support_result(direction, root, remainder)
+        tight = feasible.cell_support_result(direction, cell, remainder)
+        alone = prior.support_function()(property_operator.adjoint(direction))
+        for result in (whole, tight):
+            assert result.certified and not result.refuted
+            assert feasible.is_feasible(result.extremal_model)
+            assert result.inner <= result.value <= alone
+        # The data pin the directions the rays sample, and the bound follows.
+        assert cell.half_widths.min() < 0.2 * root.half_widths.min()
+        assert (
+            remainder.remainder_set(cell).radius
+            < 0.5 * remainder.remainder_set(root).radius
+        )
+        assert tight.value < whole.value
+        assert tight.value - tight.inner < 0.5 * (whole.value - whole.inner)
 
 
 # --------------------------------------------------------------------- #
