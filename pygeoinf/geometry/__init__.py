@@ -10,6 +10,7 @@ from .convex import (
     HalfSpace,
     Hyperplane,
     Polytope,
+    Zonotope,
     enclosing_ellipsoid,
     sum_of_ellipsoids,
 )
@@ -31,7 +32,16 @@ from .feasible import (
     SweepResult,
     linear_certificate_operator,
 )
-from .nonlinear import LocalSearch, NonlinearFeasiblePropertySet
+from .nonlinear import (
+    Cell,
+    CellSupportResult,
+    ComponentwiseRemainder,
+    LocalSearch,
+    NonlinearFeasiblePropertySet,
+    NormRemainder,
+    RemainderBound,
+    SampledRemainder,
+)
 from .sets import (
     Complement,
     EmptySet,
@@ -66,6 +76,12 @@ __all__ = [
     "linear_certificate_operator",
     "Ball",
     "BallSurface",
+    "Cell",
+    "CellSupportResult",
+    "ComponentwiseRemainder",
+    "NormRemainder",
+    "RemainderBound",
+    "SampledRemainder",
     "Complement",
     "ConvexSet",
     "ConvexIntersection",
@@ -83,6 +99,7 @@ __all__ = [
     "Subset",
     "Union",
     "UniversalSet",
+    "Zonotope",
     "enclosing_ellipsoid",
     "sum_of_ellipsoids",
 ]

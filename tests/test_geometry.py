@@ -19,6 +19,7 @@ from pygeoinf.geometry import (
     Polytope,
     Union,
     UniversalSet,
+    Zonotope,
     enclosing_ellipsoid,
     sum_of_ellipsoids,
 )
@@ -1819,3 +1820,97 @@ class TestTheEllipsoidsOperators:
         bounded, _ = self.pair(space, rng)
         hessian = Ellipsoid(space, bounded).level_function().hessian(space.zero())
         assert Traits.POSITIVE_DEFINITE & hessian.traits
+
+
+class TestZonotope:
+    """A sum of segments along generators, on a dense metric."""
+
+    def box(self, space, rng):
+        """A box over the basis, one coefficient fixed, about a center."""
+        return Zonotope(
+            space,
+            [space.basis_vector(i) for i in range(space.dim)],
+            lower=[0.0, -1.0, 0.0, -0.5],
+            upper=[1.0, 2.0, 0.0, 0.5],
+            center=space.random(rng=rng),
+        )
+
+    def dependent(self, space, rng):
+        """Six generators in four dimensions."""
+        return Zonotope(
+            space,
+            [space.scale(0.2, space.random(rng=rng)) for _ in range(6)],
+            lower=-np.ones(6),
+            upper=np.ones(6),
+        )
+
+    def vertices(self, zonotope):
+        import itertools
+
+        bounds = list(zip(zonotope.lower, zonotope.upper))
+        return [zonotope.point(np.array(c)) for c in itertools.product(*bounds)]
+
+    def test_the_projection_is_the_metric_projection(self, rng):
+        space = make_dense_metric_space(4)
+        check_projection(self.box(space, rng), rng=rng)
+        # Random probes fall inside this one, where the distance is rounding.
+        check_projection(self.dependent(space, rng), rng=rng, atol=1e-12)
+
+    def test_the_support_is_the_largest_vertex(self, rng):
+        """Two routes: the closed form, and every vertex tried."""
+        space = make_dense_metric_space(4)
+        for zonotope in (self.box(space, rng), self.dependent(space, rng)):
+            support = zonotope.support_function()
+            for _ in range(5):
+                direction = space.random(rng=rng)
+                tried = max(
+                    space.inner_product(direction, vertex)
+                    for vertex in self.vertices(zonotope)
+                )
+                assert support(direction) == pytest.approx(tried, rel=1e-12)
+                maximizer = zonotope.support_maximizer(direction)
+                assert space.inner_product(direction, maximizer) == pytest.approx(
+                    tried, rel=1e-12
+                )
+                assert zonotope.contains(maximizer)
+
+    def test_membership(self, rng):
+        space = make_dense_metric_space(4)
+        zonotope = self.box(space, rng)
+        assert zonotope.contains(zonotope.midpoint)
+        assert zonotope.contains(zonotope.point([1.0, 2.0, 0.0, 0.5]))
+        # The third coefficient is fixed at zero, so the set is flat there.
+        assert not zonotope.contains(zonotope.point([0.5, 0.0, 1e-3, 0.0]))
+        assert not zonotope.contains(zonotope.point([1.01, 0.0, 0.0, 0.0]))
+
+    def test_the_bounding_ball_holds_every_vertex(self, rng):
+        space = make_dense_metric_space(4)
+        for zonotope in (self.box(space, rng), self.dependent(space, rng)):
+            ball = zonotope.bounding_ball()
+            assert all(ball.contains(vertex) for vertex in self.vertices(zonotope))
+
+    def test_the_radius_is_attained_for_orthogonal_generators(self):
+        space = EuclideanSpace(3)
+        zonotope = Zonotope(
+            space,
+            [space.basis_vector(i) for i in range(3)],
+            lower=[-1.0, 0.0, -2.0],
+            upper=[1.0, 4.0, 2.0],
+        )
+        assert zonotope.radius == pytest.approx(3.0)
+        assert np.allclose(zonotope.midpoint, [0.0, 2.0, 0.0])
+
+    def test_declared_capabilities(self, rng):
+        zonotope = self.box(make_dense_metric_space(4), rng)
+        assert zonotope.has_support_function and zonotope.has_maximizer
+        assert zonotope.has_projection and zonotope.has_membership
+
+    def test_refusals(self):
+        space = EuclideanSpace(2)
+        generators = [space.basis_vector(0), space.basis_vector(1)]
+        with pytest.raises(ValueError, match="at least one generator"):
+            Zonotope(space, [], lower=[], upper=[])
+        with pytest.raises(ValueError, match="one lower and one upper"):
+            Zonotope(space, generators, lower=[0.0], upper=[1.0, 1.0])
+        with pytest.raises(ValueError, match="exceeds"):
+            Zonotope(space, generators, lower=[0.0, 2.0], upper=[1.0, 1.0])

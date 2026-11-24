@@ -22,7 +22,14 @@ from pygeoinf import (
 from pygeoinf.algebra.operators import EvaluationError, LinearFunctional
 from pygeoinf.geometry.convex import Ball, HalfSpace, Polytope
 from pygeoinf.geometry.feasible import FeasiblePropertySet, FeasibleStructure
-from pygeoinf.geometry.nonlinear import LocalSearch, NonlinearFeasiblePropertySet
+from pygeoinf.geometry.nonlinear import (
+    Cell,
+    ComponentwiseRemainder,
+    LocalSearch,
+    NonlinearFeasiblePropertySet,
+    NormRemainder,
+    SampledRemainder,
+)
 from pygeoinf.symmetric_space import line
 from pygeoinf.testing import check_derivative, check_second_derivative
 
@@ -712,3 +719,442 @@ class TestASetInSeveralParts:
         # And the set linearized about a model of the first part is below both.
         linearized = feasible.linearized(first.extremal_model).support(direction)
         assert linearized < other.inner - 0.1
+
+
+# --------------------------------------------------------------------- #
+#                         The set on a cell                              #
+# --------------------------------------------------------------------- #
+
+
+def attenuation_remainder(forward, paths):
+    """The certified one-sided remainder of the attenuation map: ``g'' = exp(−t)``."""
+    return ComponentwiseRemainder(
+        forward.codomain, list(paths), lambda low, high: (np.exp(-high), np.exp(-low))
+    )
+
+
+def attenuation_norm_remainder(forward, weights, cell):
+    """A certified norm bound over a cell's ball: ``|(sup exp(−a_i·m) |a_i|^2)_i|``."""
+    norms = np.linalg.norm(weights, axis=1)
+    largest = np.exp(-(weights @ cell.center) + cell.radius * norms)
+    return NormRemainder(forward.codomain, float(np.linalg.norm(largest * norms**2)))
+
+
+def square_cell(feasible, center, side):
+    """A square of the plane about a model, as two slabs, with its circumscribed radius."""
+    half = 0.5 * side
+    return feasible.cell(
+        center,
+        directions=[np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        half_widths=[half, half],
+        radius=half * np.sqrt(2.0),
+    )
+
+
+class TestTheCell:
+    def setting(self, rng):
+        space = make_dense_metric_space(5)
+        directions = [space.random(rng=rng) for _ in range(2)]
+        cell = Cell(
+            space,
+            space.random(rng=rng),
+            directions=directions,
+            half_widths=[0.3, 0.1],
+            radius=2.0,
+        )
+        return space, cell
+
+    def models(self, space, cell, rng, count=400):
+        """Models of the cell: random offsets within the slabs, random steps across them."""
+        found = []
+        while len(found) < count:
+            inside = cell.point(rng.uniform(-1.0, 1.0, 2) * cell.half_widths)
+            across = space.random(rng=rng)
+            weights = np.linalg.solve(
+                np.array(
+                    [
+                        [space.inner_product(a, b) for b in cell.directions]
+                        for a in cell.directions
+                    ]
+                ),
+                np.array([space.inner_product(u, across) for u in cell.directions]),
+            )
+            for weight, direction in zip(weights, cell.directions):
+                across = space.axpy(-float(weight), direction, across)
+            model = space.axpy(rng.uniform(0.0, 1.0), across, inside)
+            if cell.contains(model):
+                found.append(model)
+        return found
+
+    def test_offsets_and_points_are_inverse(self, rng):
+        space, cell = self.setting(rng)
+        offsets = np.array([0.12, -0.07])
+        assert np.allclose(cell.offsets(cell.point(offsets)), offsets, atol=1e-13)
+        assert cell.contains(cell.point(offsets))
+        assert not cell.contains(cell.point([0.31, 0.0]))
+
+    def test_the_half_width_of_a_slab_direction_is_exact(self, rng):
+        space, cell = self.setting(rng)
+        for direction, half_width in zip(cell.directions, cell.half_widths):
+            assert cell.half_width(direction) == pytest.approx(half_width, rel=1e-12)
+            assert cell.half_width(space.scale(-3.0, direction)) == pytest.approx(
+                3.0 * half_width, rel=1e-12
+            )
+
+    def test_the_half_width_bounds_every_model_of_the_cell(self, rng):
+        space, cell = self.setting(rng)
+        models = self.models(space, cell, rng)
+        mixed = space.add(cell.directions[0], space.scale(2.0, cell.directions[1]))
+        for vector in (mixed, space.random(rng=rng), space.random(rng=rng)):
+            reach = max(
+                abs(space.inner_product(vector, space.subtract(model, cell.center)))
+                for model in models
+            )
+            assert reach <= cell.half_width(vector) * (1.0 + 1e-12)
+        # Inside the slabs' span the bound owes nothing to the radius.
+        assert cell.half_width(mixed) == pytest.approx(0.3 + 2.0 * 0.1, rel=1e-12)
+
+    def test_dependent_directions_are_refused(self, rng):
+        space = make_dense_metric_space(5)
+        direction = space.random(rng=rng)
+        with pytest.raises(ValueError, match="independent"):
+            Cell(
+                space,
+                space.zero(),
+                directions=[direction, space.scale(2.0, direction)],
+                half_widths=[1.0, 1.0],
+            )
+
+    def test_a_ball_prior_bounds_the_radius(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        cell = feasible.cell(np.array([0.3, 0.4]))
+        assert cell.radius == pytest.approx(1.5)
+        assert feasible.cell(np.array([0.3, 0.4]), radius=0.2).radius == 0.2
+
+
+class TestRemainderBounds:
+    def sampled_remainders(self, forward, cell, models):
+        linearization = forward.at(cell.center)
+        space, data_space = forward.domain, forward.codomain
+        out = []
+        for model in models:
+            step = linearization.derivative(space.subtract(model, cell.center))
+            out.append(
+                data_space.subtract(
+                    data_space.subtract(forward(model), linearization.value), step
+                )
+            )
+        return out
+
+    def dense_setting(self, rng):
+        model = make_dense_metric_space(4)
+        paths = [model.scale(0.5, model.random(rng=rng)) for _ in range(3)]
+        forward = attenuation(model, paths)
+        cell = Cell(
+            model,
+            model.scale(0.2, model.random(rng=rng)),
+            directions=paths,
+            half_widths=[0.3, 0.2, 0.4],
+        )
+        models = [
+            cell.point(rng.uniform(-1.0, 1.0, 3) * cell.half_widths) for _ in range(200)
+        ]
+        return model, paths, forward, cell, models
+
+    def test_the_componentwise_set_holds_the_remainder(self, rng):
+        _, paths, forward, cell, models = self.dense_setting(rng)
+        claimed = attenuation_remainder(forward, paths).remainder_set(cell)
+        assert all(
+            claimed.contains(remainder)
+            for remainder in self.sampled_remainders(forward, cell, models)
+        )
+        # One-sided: the attenuation's second derivative is positive.
+        assert np.all(claimed.lower == 0.0) and np.all(claimed.upper > 0.0)
+
+    def test_an_understated_curvature_does_not(self, rng):
+        """The control: a fifth of the true second derivative is caught by the same models."""
+        _, paths, forward, cell, models = self.dense_setting(rng)
+        understated = ComponentwiseRemainder(
+            forward.codomain,
+            paths,
+            lambda low, high: (0.2 * np.exp(-high), 0.2 * np.exp(-low)),
+        ).remainder_set(cell)
+        assert not all(
+            understated.contains(remainder)
+            for remainder in self.sampled_remainders(forward, cell, models)
+        )
+
+    def test_the_norm_bound_holds_the_remainder(self, rng):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        cell = square_cell(feasible, np.array([0.2, -0.1]), 0.5)
+        claimed = attenuation_norm_remainder(forward, weights, cell).remainder_set(cell)
+        models = [
+            cell.point(rng.uniform(-1.0, 1.0, 2) * cell.half_widths) for _ in range(200)
+        ]
+        assert all(
+            claimed.contains(remainder)
+            for remainder in self.sampled_remainders(forward, cell, models)
+        )
+
+    def test_the_square_s_remainder_is_exact_at_a_slab_s_end(self):
+        """For ``u^2`` the remainder is the squared step, so the box's corner is attained."""
+        space = line.Sobolev(64, 2.0, 0.1)
+        linear_points, squared_points = [0.2, 0.7], [0.4, 0.9]
+        forward = values_and_squares(space, linear_points, squared_points)
+        evaluation = space.point_evaluation_operator(
+            linear_points + squared_points, route="dense"
+        )
+        rows = [evaluation.adjoint(e) for e in np.eye(4)]
+        curvature = np.array([0.0, 0.0, 2.0, 2.0])
+        remainder = ComponentwiseRemainder(
+            forward.codomain, rows, lambda low, high: (curvature, curvature)
+        )
+        center = space.sobolev_measure(2.0, 0.2).sample(rng=np.random.default_rng(1))
+        cell = Cell(
+            space, center, directions=rows[2:], half_widths=[0.3, 0.1], radius=5.0
+        )
+        claimed = remainder.remainder_set(cell)
+        assert np.allclose(claimed.lower, 0.0)
+        assert np.allclose(claimed.upper, [0.0, 0.0, 0.09, 0.01], atol=1e-14)
+        corner = self.sampled_remainders(forward, cell, [cell.point([0.3, -0.1])])[0]
+        assert np.allclose(corner, [0.0, 0.0, 0.09, 0.01], atol=1e-10)
+
+    def test_a_sampled_remainder_is_an_estimate_and_says_so(self, rng):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        cell = square_cell(feasible, np.array([0.2, -0.1]), 0.5)
+        sampled = SampledRemainder(forward, samples=16, rng=rng)
+        assert not sampled.certified
+        assert attenuation_remainder(forward, weights).certified
+        estimate = sampled.remainder_set(cell)
+        corners = [
+            cell.point(np.array(signs) * cell.half_widths)
+            for signs in ((1, 1), (1, -1), (-1, 1), (-1, -1))
+        ]
+        assert all(
+            estimate.contains(remainder)
+            for remainder in self.sampled_remainders(forward, cell, corners)
+        )
+        with pytest.raises(ValueError, match="slabs"):
+            sampled.remainder_set(feasible.cell(np.array([0.2, -0.1])))
+
+
+class TestTheSandwichOnACell:
+    DIRECTION = np.array([1.0])
+
+    @pytest.mark.parametrize("count, radius, sigma", [(1, 1.0, 0.2), (3, 1.0, 0.05)])
+    def test_the_known_support_lies_between_the_two_ends(self, count, radius, sigma):
+        """Inner, truth, outer, in that order, and closer as the cell shrinks."""
+        feasible = two_parameter_set(count, radius, sigma)
+        _, forward, weights, _ = two_parameter_problem(count)
+        truth = known_support(count, radius, sigma)
+        center = feasible.support_result(self.DIRECTION).extremal_model
+        box = attenuation_remainder(forward, weights)
+        previous = float("inf")
+        for side in (0.5, 0.125, 0.03125):
+            cell = square_cell(feasible, center, side)
+            ball = attenuation_norm_remainder(forward, weights, cell)
+            by_box = feasible.cell_support_result(self.DIRECTION, cell, box)
+            by_ball = feasible.cell_support_result(self.DIRECTION, cell, ball)
+            for result in (by_box, by_ball):
+                assert result.converged and result.certified and not result.refuted
+                assert feasible.is_feasible(result.extremal_model)
+                assert result.inner <= truth + 1e-6
+                assert result.value >= truth - 1e-6
+            # The one-sided box is inside the ball of the norm bound.
+            assert by_box.value <= by_ball.value + 1e-6
+            assert by_box.value <= previous + 1e-9
+            previous = by_box.value
+        assert previous - truth <= 2e-3
+
+    def test_a_linear_map_needs_no_remainder(self, rng):
+        """Two routes: the cell's dual with slab rows, and the linear set itself."""
+        model, data_space = make_dense_metric_space(5), make_dense_metric_space(3)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(3, 5)), form="components"
+        )
+        property_operator = LinearOperator.from_matrix(
+            model, EuclideanSpace(2), rng.normal(size=(2, 5)), form="components"
+        )
+        truth = model.random(rng=rng)
+        data = forward(truth)
+        prior = Ball(model, radius=1.5 * model.norm(truth))
+        noise = Ball(data_space, radius=0.1 * data_space.norm(data))
+        linear = FeasiblePropertySet.from_structure(
+            FeasibleStructure(
+                forward, property_operator, prior, noise=noise, solver=None
+            ),
+            data,
+        )
+        nonlinear = NonlinearFeasiblePropertySet(
+            forward, property_operator, prior, data, noise=noise
+        )
+        nothing = NormRemainder(data_space, 0.0)
+        # Slabs wider than the prior cut nothing away.
+        slack = [model.random(rng=rng) for _ in range(2)]
+        wide = [4.0 * prior.radius * model.norm(u) for u in slack]
+        whole = nonlinear.cell(truth, directions=slack, half_widths=wide)
+        for angle in (0.3, 2.0, 4.4):
+            direction = np.array([np.cos(angle), np.sin(angle)])
+            exact = linear.support(direction)
+            for cell in (nonlinear.cell(truth), whole):
+                result = nonlinear.cell_support_result(direction, cell, nothing)
+                assert result.value == pytest.approx(exact, rel=1e-5)
+                assert result.inner == pytest.approx(exact, rel=1e-4)
+                assert not result.refuted
+
+    def test_slabs_cut_the_linear_set(self, rng):
+        """The control for the slab rows: a thin slab lowers the support to what it allows."""
+        model = EuclideanSpace(3)
+        forward = LinearOperator.from_matrix(
+            model, EuclideanSpace(1), np.array([[1.0, 0.0, 0.0]]), form="components"
+        )
+        property_operator = LinearOperator.from_matrix(
+            model, EuclideanSpace(1), np.array([[0.0, 1.0, 0.0]]), form="components"
+        )
+        nonlinear = NonlinearFeasiblePropertySet(
+            forward,
+            property_operator,
+            Ball(model, radius=1.0),
+            np.array([0.0]),
+            noise=Ball(EuclideanSpace(1), radius=0.1),
+        )
+        cell = nonlinear.cell(
+            model.zero(), directions=[np.array([0.0, 1.0, 0.0])], half_widths=[0.25]
+        )
+        result = nonlinear.cell_support_result(
+            np.array([1.0]), cell, NormRemainder(EuclideanSpace(1), 0.0)
+        )
+        assert result.value == pytest.approx(0.25, rel=1e-6)
+
+    def test_a_cell_away_from_every_fitting_model_is_shown_empty(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, data = two_parameter_problem(3)
+        cell = square_cell(feasible, np.array([-0.5, 0.5]), 0.2)
+        result = feasible.cell_support_result(
+            self.DIRECTION, cell, attenuation_remainder(forward, weights)
+        )
+        assert result.value == float("-inf") and result.inner == float("-inf")
+        assert result.certified
+        # The other route: no point of a fine grid on the cell fits.
+        axis = np.linspace(-0.1, 0.1, 201)
+        grid = cell.center + np.stack(np.meshgrid(axis, axis), -1).reshape(-1, 2)
+        misfits = np.linalg.norm(np.exp(-(grid @ weights.T)) - data, axis=1)
+        assert misfits.min() > 0.05
+
+    def test_an_understated_remainder_is_refuted_by_a_feasible_model(self):
+        """The control: with no remainder allowed, the "outer" value falls below an attained one."""
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        cell = square_cell(feasible, np.zeros(2), 1.0)
+        nothing = ComponentwiseRemainder(
+            forward.codomain,
+            list(weights),
+            lambda low, high: (np.zeros(3), np.zeros(3)),
+            certified=False,
+        )
+        result = feasible.cell_support_result(self.DIRECTION, cell, nothing)
+        assert feasible.is_feasible(result.extremal_model)
+        assert result.value < result.inner - 1e-2
+        assert result.refuted and not result.certified
+        honest = feasible.cell_support_result(
+            self.DIRECTION, cell, attenuation_remainder(forward, weights)
+        )
+        assert honest.value >= honest.inner and not honest.refuted
+
+    def test_the_inner_set_is_made_of_feasible_models(self):
+        feasible = two_parameter_set(1, 1.0, 0.2)
+        _, forward, weights, _ = two_parameter_problem(1)
+        center = feasible.support_result(self.DIRECTION).extremal_model
+        remainder = attenuation_remainder(forward, weights)
+        # Too large a cell leaves nothing of the noise ball.
+        assert (
+            feasible.inner_set(square_cell(feasible, np.zeros(2), 2.0), remainder)
+            is None
+        )
+        inner = feasible.inner_set(square_cell(feasible, center, 0.0625), remainder)
+        outer = feasible.outer_set(square_cell(feasible, center, 0.0625), remainder)
+        truth = known_support(1, 1.0, 0.2)
+        result = inner.support_result(self.DIRECTION)
+        assert feasible.is_feasible(result.extremal_model)
+        assert result.inner <= truth + 1e-9
+        assert outer.support(self.DIRECTION) >= truth - 1e-9
+
+    def test_a_noise_set_that_is_not_a_ball_is_refused_by_name(self):
+        from pygeoinf.geometry.convex import Ellipsoid
+
+        model, forward, weights, data = two_parameter_problem(3)
+        data_space = forward.codomain
+        noise = Ellipsoid(data_space, LinearOperator.identity(data_space) * 400.0)
+        feasible = NonlinearFeasiblePropertySet(
+            forward,
+            LinearOperator.identity(model),
+            Ball(model, radius=1.0),
+            data,
+            noise=noise,
+        )
+        with pytest.raises(TypeError, match="ball"):
+            feasible.outer_set(
+                feasible.cell(model.zero()), NormRemainder(data_space, 1.0)
+            )
+
+
+class TestACoverOfASetInSeveralParts:
+    """Values and squares: one slab cell per sign pattern at the squared points covers the set."""
+
+    def cover(self):
+        _, feasible, data, evaluation, _ = TestASetInSeveralParts().setting()
+        sigma = feasible.noise.radius
+        rows = [evaluation.adjoint(e) for e in np.eye(7)]
+        gram = np.array([evaluation(row) for row in rows])
+        curvature = np.array([0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 2.0])
+        remainder = ComponentwiseRemainder(
+            feasible.data_space, rows, lambda low, high: (curvature, curvature)
+        )
+        # |u(y)^2 − d| <= sigma puts |u(y)| between two roots, whatever its sign.
+        high = np.sqrt(data[3:] + sigma)
+        low = np.sqrt(np.maximum(data[3:] - sigma, 0.0))
+
+        def cell(signs):
+            target = np.concatenate([data[:3], np.array(signs) * 0.5 * (high + low)])
+            center = evaluation.adjoint(np.linalg.solve(gram, target))
+            return feasible.cell(
+                center, directions=rows[3:], half_widths=0.5 * (high - low)
+            )
+
+        return feasible, remainder, cell
+
+    def test_a_part_is_bracketed_and_an_impossible_pattern_is_shown_empty(self):
+        feasible, remainder, cell = self.cover()
+        direction = np.array([1.0])
+        results = {
+            signs: feasible.cell_support_result(direction, cell(signs), remainder)
+            for signs in ((-1, -1, -1, -1), (-1, 1, -1, -1), (1, 1, 1, 1))
+        }
+        for signs in ((-1, -1, -1, -1), (-1, 1, -1, -1)):
+            result = results[signs]
+            assert result.certified and not result.refuted and result.converged
+            assert feasible.is_feasible(result.extremal_model)
+            assert 0.0 <= result.value - result.inner <= 0.05
+        assert results[(-1, 1, -1, -1)].inner > results[(-1, -1, -1, -1)].value
+        assert results[(1, 1, 1, 1)].value == float("-inf")
+
+    @pytest.mark.slow
+    def test_the_sixteen_cells_bracket_the_whole_set(self):
+        """Every feasible model is in one of the cells, so the largest outer value bounds the set."""
+        import itertools
+
+        feasible, remainder, cell = self.cover()
+        direction = np.array([1.0])
+        results = [
+            feasible.cell_support_result(direction, cell(signs), remainder)
+            for signs in itertools.product((-1, 1), repeat=4)
+        ]
+        occupied = [result for result in results if result.value > float("-inf")]
+        assert len(occupied) == 4
+        assert all(result.inner > float("-inf") for result in occupied)
+        outer = max(result.value for result in occupied)
+        inner = max(result.inner for result in occupied)
+        assert inner == pytest.approx(0.2335, abs=1e-3)
+        assert 0.0 <= outer - inner <= 0.03

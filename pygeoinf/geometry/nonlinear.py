@@ -17,13 +17,28 @@ one closest to the prior's center, the one with a given property. Each
 answer is a point of the set and a bound on it from inside, and says
 nothing about what lies beyond it: another start may find a part of the set
 the first never reached.
+
+A statement from outside needs a bound on how far ``F`` departs from its
+linearization, and such a bound is only useful locally. On a :class:`Cell`,
+a piece of the model space about a model ``m_K``, write
+``R(m) == F(m) − F(m_K) − F'(m_K)(m − m_K)`` for the remainder. A
+:class:`RemainderBound` claims a convex set ``Z`` of the data space that
+holds ``R(m)`` for every model of the cell, and then the feasible models of
+the cell lie between two feasible sets of the *linearized* problem: the one
+whose noise set is grown by ``Z``, which contains them, and the one whose
+noise set is shrunk by ``Z``, which they contain. Both are convex sets with
+every probe of the linear theory. The claim is the caller's, certified or
+estimated, and every model evaluated in a cell tests it.
 """
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Callable, Sequence
 
 import numpy as np
+from numpy.random import Generator
 
 from ..algebra.operators import (
     AffineOperator,
@@ -32,8 +47,9 @@ from ..algebra.operators import (
     LinearOperator,
     Operator,
 )
+from ..algebra.direct_sum import ColumnLinearOperator
 from ..algebra.linearization import Linearization, QuadraticModel
-from ..algebra.spaces import HilbertSpace
+from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace, resolve_rng
 from ..numerics.optimization import (
     LBFGS,
     AugmentedLagrangian,
@@ -41,7 +57,7 @@ from ..numerics.optimization import (
 )
 from ..numerics.solvers import ConvergenceError, LinearSolver
 from ..parallel import parallel_map
-from .convex import Ball, ConvexSet, Ellipsoid
+from .convex import Ball, ConvexSet, Ellipsoid, Zonotope
 from .feasible import (
     FeasiblePropertySet,
     FeasibleStructure,
@@ -54,7 +70,16 @@ from .feasible import (
 )
 from .sets import SublevelSet, Subset
 
-__all__ = ["LocalSearch", "NonlinearFeasiblePropertySet"]
+__all__ = [
+    "Cell",
+    "CellSupportResult",
+    "ComponentwiseRemainder",
+    "LocalSearch",
+    "NonlinearFeasiblePropertySet",
+    "NormRemainder",
+    "RemainderBound",
+    "SampledRemainder",
+]
 
 
 def _scale_of(level: float) -> float:
@@ -85,6 +110,551 @@ def _rescaled(functional: Functional, scale: float, shift: float) -> Functional:
         if functional.has_hessian
         else None,
     )
+
+
+# --------------------------------------------------------------------- #
+#                      Cells and remainder bounds                        #
+# --------------------------------------------------------------------- #
+
+
+class Cell:
+    """A piece of the model space about a model: slabs along chosen directions.
+
+    ``{ m : |(u_j, m − center)| <= w_j for every j, |m − center| <= radius }``.
+    A cell is where a forward operator is compared with its linearization
+    about the center, so it is thin along the directions ``u_j`` in which
+    the operator curves and as wide as the constraint set allows in the
+    others, which is what ``radius`` records. A cell is meant to be
+    intersected with a constraint set, and has no boundary of its own
+    across its slabs beyond the radius.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        center: Any,
+        /,
+        *,
+        directions: Sequence[Any] = (),
+        half_widths: Sequence[float] = (),
+        radius: float = float("inf"),
+    ) -> None:
+        """
+        Args:
+            domain: the model space.
+            center: the model the cell is about.
+            directions: the vectors ``u_j`` the slabs are taken along. They
+                must be linearly independent.
+            half_widths: the half-width ``w_j`` of each slab, positive.
+            radius: a bound on the distance of any model of the cell from
+                the center; infinite if nothing is known.
+
+        Raises:
+            ValueError: if the half-widths do not match the directions in
+                number, one is not positive, or the directions are
+                dependent.
+        """
+        self._domain = domain
+        self._center = center
+        self._directions = tuple(directions)
+        self._half_widths = np.asarray(half_widths, dtype=float).reshape(-1)
+        self._radius = float(radius)
+        if self._half_widths.shape != (len(self._directions),):
+            raise ValueError("There must be one half-width per direction.")
+        if np.any(self._half_widths <= 0.0):
+            raise ValueError("Every half-width must be positive.")
+        if self._radius <= 0.0:
+            raise ValueError("The radius must be positive.")
+        self._gram = np.array(
+            [
+                [domain.inner_product(a, b) for b in self._directions]
+                for a in self._directions
+            ]
+        ).reshape(len(self._directions), len(self._directions))
+        if self._directions:
+            sizes = np.sqrt(np.diag(self._gram))
+            if np.linalg.eigvalsh(self._gram / np.outer(sizes, sizes)).min() < 1e-10:
+                raise ValueError("The slab directions must be linearly independent.")
+
+    @property
+    def domain(self) -> HilbertSpace:
+        """The model space."""
+        return self._domain
+
+    @property
+    def center(self) -> Any:
+        """The model the cell is about."""
+        return self._center
+
+    @property
+    def directions(self) -> tuple[Any, ...]:
+        """The vectors the slabs are taken along."""
+        return self._directions
+
+    @property
+    def half_widths(self) -> np.ndarray:
+        """The half-width of each slab."""
+        return self._half_widths
+
+    @property
+    def radius(self) -> float:
+        """A bound on the distance of any model of the cell from the center."""
+        return self._radius
+
+    def offsets(self, model: Any, /) -> np.ndarray:
+        """``(u_j, m − center)`` for each slab direction."""
+        space = self._domain
+        offset = space.subtract(model, self._center)
+        return np.array([space.inner_product(u, offset) for u in self._directions])
+
+    def point(self, offsets: Any, /) -> Any:
+        """The model nearest the center with the given :meth:`offsets`.
+
+        Args:
+            offsets: one value per slab direction.
+        """
+        space = self._domain
+        out = space.copy(self._center)
+        if self._directions:
+            weights = np.linalg.solve(self._gram, np.asarray(offsets, dtype=float))
+            for weight, direction in zip(weights, self._directions):
+                out = space.axpy(float(weight), direction, out)
+        return out
+
+    def contains(self, model: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Whether a model lies within every slab and within the radius.
+
+        Args:
+            model: a model.
+            rtol: how far outside still counts as inside, relative to each
+                half-width and to the radius.
+        """
+        space = self._domain
+        if np.any(np.abs(self.offsets(model)) > self._half_widths * (1.0 + rtol)):
+            return False
+        distance = space.norm(space.subtract(model, self._center))
+        return bool(distance <= self._radius * (1.0 + rtol))
+
+    def half_width(self, vector: Any, /) -> float:
+        """A bound on ``|(v, m − center)|`` over the cell, for any vector ``v``.
+
+        The part of ``v`` in the span of the slab directions,
+        ``sum_j a_j u_j``, is bounded by ``sum_j |a_j| w_j``, and the rest
+        by its norm times the radius; the whole by the smaller of that sum
+        and ``|v|`` times the radius. Exact for a slab direction itself.
+
+        Args:
+            vector: a vector of the model space.
+        """
+        space = self._domain
+        size = float(space.norm(vector))
+        whole = size * self._radius if size > 0.0 else 0.0
+        if not self._directions:
+            return whole
+        pairings = np.array([space.inner_product(u, vector) for u in self._directions])
+        weights = np.linalg.solve(self._gram, pairings)
+        # What is left of |v|^2 outside the span, to the rounding of the
+        # subtraction; below that the vector is in the span.
+        rest = max(size**2 - float(pairings @ weights), 0.0)
+        rest = 0.0 if rest <= 1e-12 * size**2 else rest**0.5
+        split = float(np.abs(weights) @ self._half_widths)
+        if rest > 0.0:
+            split += rest * self._radius
+        return min(split, whole)
+
+    def row_operator(self) -> LinearOperator:
+        """``m -> ((u_j, m))_j``, into a Euclidean space of the slabs' number."""
+        space, directions = self._domain, self._directions
+
+        def value(model: Any) -> np.ndarray:
+            return np.array([space.inner_product(u, model) for u in directions])
+
+        def adjoint(weights: np.ndarray) -> Any:
+            out = space.zero()
+            for weight, direction in zip(weights, directions):
+                out = space.axpy(float(weight), direction, out)
+            return out
+
+        return LinearOperator.from_callables(
+            space, EuclideanSpace(len(directions)), value, adjoint=adjoint
+        )
+
+    def __repr__(self) -> str:
+        return f"Cell(slabs={len(self._directions)}, radius={self._radius:.3g})"
+
+
+class RemainderBound(ABC):
+    """A claim about how far a forward operator departs from its linearization over a cell.
+
+    For a cell about ``m_K`` the remainder is
+    ``R(m) == F(m) − F(m_K) − F'(m_K)(m − m_K)``, and :meth:`remainder_set`
+    returns a convex set of the data space claimed to hold it for every
+    model of the cell. The claim concerns one forward operator, which the
+    bound was written for. ``certified`` says whether it is a theorem about
+    that operator or an estimate; an outer bound on a feasible set is as
+    good as the claim it was built on, and reports which kind that was.
+    """
+
+    def __init__(self, /, *, certified: bool) -> None:
+        """
+        Args:
+            certified: whether the claim is proved for the operator, as
+                opposed to estimated.
+        """
+        self._certified = bool(certified)
+
+    @property
+    def certified(self) -> bool:
+        """Whether the claim is proved, as opposed to estimated."""
+        return self._certified
+
+    @abstractmethod
+    def remainder_set(self, cell: Cell, /) -> ConvexSet:
+        """A convex set of the data space claimed to hold the remainder over the cell.
+
+        Args:
+            cell: the cell, whose center is the linearization point.
+
+        Returns:
+            The set: a ball, or a set with a projection and a
+            ``bounding_ball``.
+        """
+
+
+class NormRemainder(RemainderBound):
+    """The remainder bounded in norm: ``|F''(m)[v, v]| <= L |v|^2`` over the cell.
+
+    Then ``|R(m)| <= (L / 2) |m − m_K|^2``, and the remainder lies in the
+    ball of radius ``(L / 2) radius^2`` about the origin of the data space,
+    the cell's radius being the largest distance from its center. The
+    bound takes no account of the cell's slabs: it is the right one for a
+    cell that is small in every direction and of little use for one as
+    wide as a constraint set on a function space.
+    """
+
+    def __init__(
+        self, data_space: HilbertSpace, constant: float, /, *, certified: bool = True
+    ) -> None:
+        """
+        Args:
+            data_space: the forward operator's codomain.
+            constant: ``L``, a bound on the second derivative's norm as a
+                bilinear map, over every cell the bound is asked about.
+            certified: whether ``L`` is proved for the operator.
+
+        Raises:
+            ValueError: if the constant is negative.
+        """
+        super().__init__(certified=certified)
+        if constant < 0.0:
+            raise ValueError("The constant must not be negative.")
+        self._data_space = data_space
+        self._constant = float(constant)
+
+    def remainder_set(self, cell: Cell, /) -> Ball:
+        """The ball of radius ``(L / 2) radius^2`` about the origin.
+
+        Raises:
+            ValueError: if the cell has no finite radius.
+        """
+        if not np.isfinite(cell.radius):
+            raise ValueError(
+                "A norm bound needs a cell of finite radius; give the cell "
+                "one, or use a bound that reads the cell's slabs."
+            )
+        return Ball(self._data_space, radius=0.5 * self._constant * cell.radius**2)
+
+
+class ComponentwiseRemainder(RemainderBound):
+    """The remainder of ``F(m) = sum_i g_i((b_i, m)) e_i``, bounded component by component.
+
+    A forward operator that applies a scalar function to each of a set of
+    linear functionals of the model, over the data space's basis ``e_i``:
+    each datum sees the model through one number ``t_i = (b_i, m)``, and
+    its remainder is ``g_i''(s) (b_i, m − m_K)^2 / 2`` at some ``s`` between
+    the two values of ``t_i``. With ``w_i`` the cell's half-width along
+    ``b_i`` and ``[lo_i, hi_i]`` a range of ``g_i''`` over
+    ``[t_i − w_i, t_i + w_i]``, the remainder's ``i``-th coefficient lies
+    between ``min(lo_i, 0) w_i^2 / 2`` and ``max(hi_i, 0) w_i^2 / 2``. A
+    second derivative of one sign gives a one-sided range, half the size of
+    the symmetric one a norm would give, and a datum that is linear in the
+    model gives none at all.
+    """
+
+    def __init__(
+        self,
+        data_space: CoordinateSpace,
+        rows: Sequence[Any],
+        curvature: Callable[[np.ndarray, np.ndarray], tuple[Any, Any]],
+        /,
+        *,
+        certified: bool = True,
+    ) -> None:
+        """
+        Args:
+            data_space: the forward operator's codomain, whose basis the
+                components are taken in.
+            rows: the model-space vectors ``b_i``, one per basis vector of
+                the data space.
+            curvature: called with the arrays ``t − w`` and ``t + w`` and
+                returning two arrays, a lower and an upper bound on each
+                ``g_i''`` over its interval.
+            certified: whether the ranges are proved.
+
+        Raises:
+            ValueError: if the rows do not match the data space's dimension.
+        """
+        super().__init__(certified=certified)
+        self._data_space = data_space
+        self._rows = tuple(rows)
+        self._curvature = curvature
+        if len(self._rows) != data_space.dim:
+            raise ValueError(
+                "There must be one row per basis vector of the data space."
+            )
+
+    def remainder_set(self, cell: Cell, /) -> Zonotope:
+        """The box of coefficient ranges over the data space's basis.
+
+        Raises:
+            ValueError: if the cell is unbounded along a row, having neither
+                a finite radius nor that row within its slabs' span.
+        """
+        space, data_space = cell.domain, self._data_space
+        at_center = np.array(
+            [space.inner_product(row, cell.center) for row in self._rows]
+        )
+        widths = np.array([cell.half_width(row) for row in self._rows])
+        if not np.all(np.isfinite(widths)):
+            raise ValueError(
+                "The cell is unbounded along a row; give it a radius or a "
+                "slab along every row the forward operator curves in."
+            )
+        low, high = self._curvature(at_center - widths, at_center + widths)
+        low = np.minimum(np.asarray(low, dtype=float), 0.0)
+        high = np.maximum(np.asarray(high, dtype=float), 0.0)
+        return Zonotope(
+            data_space,
+            [data_space.basis_vector(i) for i in range(data_space.dim)],
+            lower=0.5 * low * widths**2,
+            upper=0.5 * high * widths**2,
+        )
+
+
+class SampledRemainder(RemainderBound):
+    """The remainder estimated from evaluations of the forward operator: not certified.
+
+    The remainder is computed at models of the cell, at the ends of each
+    slab, at the corners where they are few, and at random points between,
+    all displaced from the center within the span of the slab directions.
+    The estimate is the box, over the data space's basis, of the
+    coefficients seen, widened by a safety factor and taken to include the
+    origin. Nothing proves the box holds the remainder elsewhere in the
+    cell, and in particular nothing is learned of curvature across the
+    slabs, so a bound built on this is an estimate and says so.
+    """
+
+    def __init__(
+        self,
+        forward: Operator,
+        /,
+        *,
+        samples: int = 32,
+        safety: float = 2.0,
+        rng: Generator | None = None,
+    ) -> None:
+        """
+        Args:
+            forward: the forward operator, into a space with coordinates.
+            samples: how many random models to evaluate beyond the ends of
+                the slabs and their corners.
+            safety: the factor the observed ranges are widened by; at least
+                one.
+            rng: the generator for the random models.
+
+        Raises:
+            ValueError: if the safety factor is below one.
+        """
+        super().__init__(certified=False)
+        if safety < 1.0:
+            raise ValueError("The safety factor must be at least one.")
+        self._forward = forward
+        self._samples = int(samples)
+        self._safety = float(safety)
+        self._rng = resolve_rng(rng)
+
+    def remainder_set(self, cell: Cell, /) -> Zonotope:
+        """The widened box of the remainder's coefficients over the sampled models.
+
+        Raises:
+            ValueError: if the cell has no slabs to sample along.
+        """
+        count = len(cell.directions)
+        if count == 0:
+            raise ValueError(
+                "A sampled remainder needs a cell with slabs to sample along."
+            )
+        data_space = self._forward.codomain
+        linearization = self._forward.at(cell.center)
+        signs = [np.eye(count)[j] * sign for j in range(count) for sign in (-1.0, 1.0)]
+        if count <= 6:
+            signs += [
+                np.array([1.0 if (index >> j) & 1 else -1.0 for j in range(count)])
+                for index in range(2**count)
+            ]
+        signs += list(self._rng.uniform(-1.0, 1.0, size=(self._samples, count)))
+        coefficients = []
+        for sign in signs:
+            model = cell.point(sign * cell.half_widths)
+            coefficients.append(
+                data_space.to_components(
+                    _remainder(self._forward, linearization, model)
+                )
+            )
+        coefficients = np.array(coefficients)
+        return Zonotope(
+            data_space,
+            [data_space.basis_vector(i) for i in range(data_space.dim)],
+            lower=self._safety * np.minimum(coefficients.min(axis=0), 0.0),
+            upper=self._safety * np.maximum(coefficients.max(axis=0), 0.0),
+        )
+
+
+def _remainder(forward: Operator, linearization: Linearization, model: Any) -> Any:
+    """``F(m) − F(m_K) − F'(m_K)(m − m_K)`` at a model."""
+    space, data_space = forward.domain, forward.codomain
+    step = linearization.derivative(space.subtract(model, linearization.point))
+    return data_space.subtract(
+        data_space.subtract(forward(model), linearization.value), step
+    )
+
+
+def _product_set(space: HilbertSpace, parts: Sequence[ConvexSet]) -> ConvexSet:
+    """The product of convex sets, one per summand of a direct sum."""
+    supports = [part.support_function() for part in parts]
+    return ConvexSet.from_support_function(
+        space,
+        lambda y: float(sum(h(block) for h, block in zip(supports, y))),
+        maximizer=lambda y: tuple(
+            part.support_maximizer(block) for part, block in zip(parts, y)
+        ),
+        membership=lambda x, rtol: all(
+            part.contains(block, rtol=rtol) for part, block in zip(parts, x)
+        ),
+    )
+
+
+def _grown(noise: Ball, remainder: ConvexSet) -> ConvexSet:
+    """A noise ball plus a remainder set: every error plus every remainder."""
+    space = noise.domain
+    if isinstance(remainder, Ball):
+        return Ball(
+            space,
+            radius=noise.radius + remainder.radius,
+            center=space.add(noise.center, remainder.center),
+        )
+    if not remainder.has_projection:
+        raise TypeError(
+            "A remainder set must be a ball or carry a projection, which is "
+            "how membership of its sum with the noise ball is decided."
+        )
+    ball_support, set_support = noise.support_function(), remainder.support_function()
+
+    def membership(x: Any, rtol: float) -> bool:
+        offset = space.subtract(x, noise.center)
+        distance = space.norm(space.subtract(offset, remainder.project(offset)))
+        return bool(distance <= noise.radius * (1.0 + rtol))
+
+    return ConvexSet.from_support_function(
+        space,
+        lambda y: float(ball_support(y)) + float(set_support(y)),
+        maximizer=lambda y: space.add(
+            noise.support_maximizer(y), remainder.support_maximizer(y)
+        ),
+        membership=membership,
+    )
+
+
+def _shrunk(noise: Ball, remainder: ConvexSet, margin: float) -> Ball | None:
+    """A ball of errors that stay in the noise ball whatever remainder is added, or None.
+
+    The remainder set lies in a ball of radius ``rho`` about ``z``; an error
+    within ``radius − rho`` of ``center + z`` then stays within ``radius``
+    of the center when any remainder is taken from it. A further fraction
+    ``margin`` of the radius is given up, so that a model on the boundary
+    to a solver's tolerance is inside.
+    """
+    space = noise.domain
+    bound = remainder if isinstance(remainder, Ball) else remainder.bounding_ball()
+    radius = noise.radius * (1.0 - margin) - bound.radius
+    if radius <= 0.0:
+        return None
+    return Ball(space, radius=radius, center=space.add(noise.center, bound.center))
+
+
+def _slab_constraints(cell: Cell, margin: float) -> tuple[Functional, ...]:
+    """Each slab of a cell, shrunk by a margin, as a functional held at or below zero.
+
+    ``((u, m − center) / w)^2 − 1 + margin``: smooth, convex, and scaled so
+    that the margin is the same fraction of the level as the two sets' is.
+    """
+    space, center = cell.domain, cell.center
+
+    def build(direction: Any, half_width: float) -> Functional:
+        offset = float(space.inner_product(direction, center))
+        scale = 1.0 / half_width**2
+
+        def gap(model: Any) -> float:
+            return float(space.inner_product(direction, model)) - offset
+
+        return Functional.from_callables(
+            space,
+            lambda model: scale * gap(model) ** 2 - 1.0 + margin,
+            gradient=lambda model: space.scale(2.0 * scale * gap(model), direction),
+            hessian=lambda model: LinearOperator.self_adjoint(
+                space,
+                lambda v: space.scale(
+                    2.0 * scale * float(space.inner_product(direction, v)), direction
+                ),
+            ),
+        )
+
+    return tuple(
+        build(direction, float(half_width))
+        for direction, half_width in zip(cell.directions, cell.half_widths)
+    )
+
+
+@dataclass(frozen=True)
+class CellSupportResult(SupportResult):
+    """The support of a nonlinear feasible set's part in one cell, from both sides.
+
+    ``value`` bounds the property, along the direction, of every feasible
+    model of the cell, given the remainder claim, and is minus infinity for
+    a cell shown to hold none. ``inner`` is attained by ``extremal_model``,
+    a model of the cell checked to lie in the prior and fit the data, and
+    is minus infinity when the cell exhibited none.
+    """
+
+    certified: bool = True
+    """Whether the remainder claim ``value`` rests on was certified. An
+    estimated claim leaves ``value`` an estimate, however well the
+    optimization behind it converged."""
+    refuted: bool = False
+    """Whether a model evaluated in the cell had a remainder outside the
+    claimed set. The claim is then false and ``value`` bounds nothing."""
+
+    def __repr__(self) -> str:
+        return (
+            f"CellSupportResult(value={self.value:.6g}, inner={self.inner:.6g}, "
+            f"certified={self.certified}, refuted={self.refuted}, "
+            f"converged={self.converged})"
+        )
+
+
+# --------------------------------------------------------------------- #
+#                             Local search                               #
+# --------------------------------------------------------------------- #
 
 
 class LocalSearch:
@@ -196,6 +766,8 @@ class LocalSearch:
         direction: Any,
         start: Any,
         /,
+        *,
+        cell: Cell | None = None,
     ) -> SupportResult:
         """The farthest checked model in a direction that a search from ``start`` finds.
 
@@ -212,6 +784,11 @@ class LocalSearch:
             direction: the direction in the property space.
             start: the model to search from. It need not be feasible; when
                 it is, the answer is at least its own property value.
+            cell: a cell to keep the search in, each slab a further
+                constraint, shrunk by the margin as the two sets are. The
+                answer is then a model of the cell, and the linearized
+                first step is not taken, since it knows nothing of the
+                cell.
 
         Returns:
             The result: ``inner`` is the property value, along the
@@ -240,20 +817,29 @@ class LocalSearch:
         objective = LinearFunctional.from_representer(
             space, space.scale(-1.0 / reach, pulled)
         )
-        prior_constraint, noise_constraint = feasible._constraints(self._margin)
-        stepped = feasible._linearized_step(direction, start)
-        result = self._method(
-            inequalities=(prior_constraint, noise_constraint)
-        ).minimize(objective, start if stepped is None else stepped)
+        constraints = feasible._constraints(self._margin)
+        stepped = None
+        if cell is None:
+            stepped = feasible._linearized_step(direction, start)
+        else:
+            constraints += _slab_constraints(cell, self._margin)
+        result = self._method(inequalities=constraints).minimize(
+            objective, start if stepped is None else stepped
+        )
 
         def along(model: Any) -> float:
             return float(space.inner_product(pulled, model))
+
+        def checked(model: Any) -> bool:
+            if cell is not None and not cell.contains(model, rtol=0.0):
+                return False
+            return feasible.is_feasible(model)
 
         best, inner = None, float("-inf")
         for candidate in (start, stepped, result.minimizer):
             if candidate is None:
                 continue
-            if feasible.is_feasible(candidate) and along(candidate) > inner:
+            if checked(candidate) and along(candidate) > inner:
                 best, inner = candidate, along(candidate)
         at_result = best is result.minimizer
         message = result.message
@@ -273,7 +859,7 @@ class LocalSearch:
             extremal_model=best,
             multipliers=tuple(
                 float(multiplier) * reach
-                for multiplier in result.inequality_multipliers
+                for multiplier in result.inequality_multipliers[:2]
             ),
             message=message,
         )
@@ -880,6 +1466,265 @@ class NonlinearFeasiblePropertySet(Subset):
         """
         origin = self.fitting_model() if start is None else start
         return (via or LocalSearch()).inclusion(self, value, origin)
+
+    # ----------------------------------------------------------------- #
+    #                          The set on a cell                         #
+    # ----------------------------------------------------------------- #
+
+    def cell(
+        self,
+        center: Any,
+        /,
+        *,
+        directions: Sequence[Any] = (),
+        half_widths: Sequence[float] = (),
+        radius: float | None = None,
+    ) -> Cell:
+        """A cell about a model, its radius read from the prior where the prior has one.
+
+        Args:
+            center: the model the cell is about.
+            directions: the vectors the slabs are taken along.
+            half_widths: the half-width of each slab.
+            radius: a bound on the distance of a model of the cell from the
+                center, if one is known. A ball prior gives its own, the
+                farthest any of its models can be, and the smaller is kept.
+
+        Returns:
+            The cell.
+        """
+        space = self.model_space
+        bound = float("inf") if radius is None else float(radius)
+        if isinstance(self._prior, Ball):
+            offset = space.norm(space.subtract(center, self._prior.center))
+            bound = min(bound, self._prior.radius + offset)
+        return Cell(
+            space,
+            center,
+            directions=directions,
+            half_widths=half_widths,
+            radius=bound,
+        )
+
+    def _noise_ball(self) -> Ball:
+        if not isinstance(self._noise, Ball):
+            raise TypeError(
+                "The sets on a cell are built for a noise set that is a ball; "
+                f"this one is a {type(self._noise).__name__}."
+            )
+        return self._noise
+
+    def _cell_set(
+        self, cell: Cell, linearization: Linearization, noise: ConvexSet
+    ) -> FeasiblePropertySet:
+        """The linearized problem on a cell, with a given noise set."""
+        data_space = self.data_space
+        derivative = linearization.derivative
+        shifted = data_space.add(
+            data_space.subtract(self._data, linearization.value),
+            derivative(linearization.point),
+        )
+        if not cell.directions:
+            structure = FeasibleStructure(
+                derivative,
+                self._property_operator,
+                self._prior,
+                noise=noise,
+                solver=self._solver,
+            )
+            return FeasiblePropertySet.from_structure(structure, shifted)
+        # The slabs enter as data: the rows (u_j, m) observed at the
+        # center's values to within the half-widths.
+        rows = cell.row_operator()
+        forward = ColumnLinearOperator([derivative, rows])
+        count = len(cell.directions)
+        slabs = Zonotope(
+            rows.codomain,
+            [rows.codomain.basis_vector(j) for j in range(count)],
+            lower=-cell.half_widths,
+            upper=cell.half_widths,
+        )
+        structure = FeasibleStructure(
+            forward,
+            self._property_operator,
+            self._prior,
+            noise=_product_set(forward.codomain, (noise, slabs)),
+            solver=self._solver,
+        )
+        return FeasiblePropertySet.from_structure(
+            structure, (shifted, rows(cell.center))
+        )
+
+    def outer_set(
+        self, cell: Cell, remainder: RemainderBound, /
+    ) -> FeasiblePropertySet:
+        """A convex set holding the property of every feasible model of a cell.
+
+        The feasible property set of the problem linearized about the
+        cell's center, on the prior cut by the cell's slabs, with the noise
+        set grown by the remainder set: a feasible model of the cell has a
+        linearized residual that is an error plus a remainder. The set is
+        as good as the remainder claim; with a certified claim it contains
+        the property of every feasible model of the cell, and an empty one
+        shows the cell holds none.
+
+        Args:
+            cell: the cell.
+            remainder: the claim about the forward operator over the cell.
+
+        Returns:
+            The set, with every probe of a linear feasible property set.
+
+        Raises:
+            TypeError: if the noise set is not a ball.
+        """
+        noise = _grown(self._noise_ball(), remainder.remainder_set(cell))
+        return self._cell_set(cell, self._forward.at(cell.center), noise)
+
+    def inner_set(
+        self,
+        cell: Cell,
+        remainder: RemainderBound,
+        /,
+        *,
+        margin: float = 1e-5,
+    ) -> FeasiblePropertySet | None:
+        """A convex set of property values that feasible models of a cell attain.
+
+        The linearized problem on the cell with the noise set shrunk by the
+        remainder set: a model whose linearized residual stays in the noise
+        set whatever remainder is taken from it fits the data through the
+        real operator. With a true remainder claim every model of this set
+        is feasible, so the set lies inside the nonlinear one; with a false
+        one it need not, and a model taken from it is still to be checked.
+
+        Args:
+            cell: the cell.
+            remainder: the claim about the forward operator over the cell.
+            margin: a further fraction of the noise radius given up, so
+                that a model on the set's boundary to a solver's tolerance
+                is inside.
+
+        Returns:
+            The set, or None when the remainder set leaves nothing of the
+            noise set: the cell is too large for the claim to say anything
+            from inside.
+
+        Raises:
+            TypeError: if the noise set is not a ball.
+        """
+        noise = _shrunk(self._noise_ball(), remainder.remainder_set(cell), margin)
+        if noise is None:
+            return None
+        return self._cell_set(cell, self._forward.at(cell.center), noise)
+
+    def cell_support_result(
+        self,
+        direction: Any,
+        cell: Cell,
+        remainder: RemainderBound,
+        /,
+        *,
+        via: LocalSearch | None = None,
+    ) -> CellSupportResult:
+        """The support, in a direction, of the feasible set's part in one cell, from both sides.
+
+        The outer value is the support of :meth:`outer_set`. The inner value
+        is attained by a checked model of the cell: the answer of a local
+        search kept in the cell, begun from the outer set's extremal model,
+        or that model itself where it happens to fit. Every model evaluated
+        in the cell also tests the remainder claim: a remainder outside the
+        claimed set marks the result refuted.
+
+        Args:
+            direction: the direction in the property space.
+            cell: the cell.
+            remainder: the claim about the forward operator over the cell.
+            via: the local search; the default :class:`LocalSearch` if
+                omitted.
+
+        Returns:
+            The result; ``value`` is minus infinity when the outer set is
+            empty.
+
+        Raises:
+            TypeError: if the noise set is not a ball.
+        """
+        space, data_space = self.model_space, self.data_space
+        ball = self._noise_ball()
+        linearization = self._forward.at(cell.center)
+        claimed = remainder.remainder_set(cell)
+        pulled = self._property_operator.adjoint(direction)
+
+        try:
+            outer = self._cell_set(
+                cell, linearization, _grown(ball, claimed)
+            ).support_result(direction)
+        except ValueError as error:
+            if "empty" not in str(error):
+                raise
+            outer = None
+        if outer is None:
+            return CellSupportResult(
+                value=float("-inf"),
+                inner=float("-inf"),
+                converged=True,
+                algorithm="cell",
+                evaluations=0,
+                certified=remainder.certified,
+                message="no model of the cell fits the data, given the remainder claim",
+            )
+        start = outer.extremal_model
+        if start is None or not cell.contains(start):
+            start = cell.center
+        searched = (via or LocalSearch()).support(self, direction, start, cell=cell)
+        best, attained, refuted = None, float("-inf"), False
+        for result in (outer, searched):
+            model = result.extremal_model
+            if model is None:
+                continue
+            if not (
+                cell.contains(model, rtol=0.0) and self._prior.contains(model, rtol=0.0)
+            ):
+                continue
+            predicted = self._forward(model)
+            step = linearization.derivative(space.subtract(model, cell.center))
+            departure = data_space.subtract(
+                data_space.subtract(predicted, linearization.value), step
+            )
+            # Outside the claimed set by more than the rounding of the
+            # three terms the remainder is the difference of.
+            excess = data_space.norm(
+                data_space.subtract(departure, claimed.project(departure))
+            )
+            scale = max(
+                data_space.norm(predicted),
+                data_space.norm(linearization.value),
+                data_space.norm(step),
+            )
+            if excess > 1e-9 * scale:
+                refuted = True
+            fits = self._noise.contains(
+                data_space.subtract(self._data, predicted), rtol=0.0
+            )
+            along = float(space.inner_product(pulled, model))
+            if fits and along > attained:
+                best, attained = model, along
+        message = outer.message
+        if refuted:
+            message += "; a model of the cell has a remainder outside the claimed set"
+        return CellSupportResult(
+            value=float(outer.value),
+            inner=attained,
+            converged=bool(outer.converged),
+            algorithm="cell",
+            evaluations=int(outer.evaluations) + int(searched.evaluations),
+            certificate=outer.certificate,
+            extremal_model=best,
+            message=message,
+            certified=remainder.certified,
+            refuted=refuted,
+        )
 
     def __repr__(self) -> str:
         return (

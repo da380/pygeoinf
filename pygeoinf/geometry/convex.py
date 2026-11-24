@@ -47,6 +47,7 @@ __all__ = [
     "HalfSpace",
     "Hyperplane",
     "Ellipsoid",
+    "Zonotope",
     "sum_of_ellipsoids",
     "enclosing_ellipsoid",
 ]
@@ -2398,6 +2399,220 @@ class EllipsoidSurface(Subset):
 
     def __repr__(self) -> str:
         return f"EllipsoidSurface({self.domain!r})"
+
+
+class Zonotope(ConvexSet):
+    """``{ center + sum_i t_i g_i : lower_i <= t_i <= upper_i }``, a sum of segments.
+
+    The image of a box of coefficients under the generators ``g_i``: a box
+    itself when the generators are a basis, and in general a centrally
+    symmetric polytope about its :attr:`midpoint`. It is the natural set
+    for a quantity known component by component, each between two bounds,
+    and is defined through the generators alone, so it means the same thing
+    on any metric.
+
+    The support function and its maximizer are closed forms, one inner
+    product per generator. The projection is a least-squares problem in the
+    coefficients under their bounds, through the generators' Gram matrix,
+    and membership is a zero distance to the projection.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        generators: Sequence[Any],
+        /,
+        *,
+        lower: Any,
+        upper: Any,
+        center: Any = None,
+    ) -> None:
+        """
+        Args:
+            domain: the space.
+            generators: the vectors ``g_i``. They need not be independent.
+            lower: the least coefficient of each generator.
+            upper: the greatest coefficient of each generator.
+            center: the point the sum is taken about. Zero if omitted.
+
+        Raises:
+            ValueError: if there are no generators, the bounds do not match
+                them in number, or a lower bound exceeds its upper bound.
+        """
+        super().__init__(domain)
+        self._generators = tuple(generators)
+        self._lower = np.asarray(lower, dtype=float).reshape(-1)
+        self._upper = np.asarray(upper, dtype=float).reshape(-1)
+        count = len(self._generators)
+        if count == 0:
+            raise ValueError("A zonotope needs at least one generator.")
+        if self._lower.shape != (count,) or self._upper.shape != (count,):
+            raise ValueError(
+                "There must be one lower and one upper bound per generator."
+            )
+        if np.any(self._lower > self._upper):
+            raise ValueError("A lower bound exceeds its upper bound.")
+        self._center = domain.zero() if center is None else center
+        self._lock = threading.Lock()
+        self._factor: np.ndarray | None = None
+
+    @property
+    def generators(self) -> tuple[Any, ...]:
+        """The vectors ``g_i``."""
+        return self._generators
+
+    @property
+    def lower(self) -> np.ndarray:
+        """The least coefficient of each generator."""
+        return self._lower
+
+    @property
+    def upper(self) -> np.ndarray:
+        """The greatest coefficient of each generator."""
+        return self._upper
+
+    @property
+    def center(self) -> Any:
+        """The point the sum is taken about."""
+        return self._center
+
+    def point(self, coefficients: Any, /) -> Any:
+        """``center + sum_i t_i g_i`` for coefficients ``t``, inside the set or not."""
+        space = self._domain
+        out = space.copy(self._center)
+        for coefficient, generator in zip(np.asarray(coefficients), self._generators):
+            if coefficient != 0.0:
+                out = space.axpy(float(coefficient), generator, out)
+        return out
+
+    @property
+    def midpoint(self) -> Any:
+        """The point of central symmetry: every coefficient midway between its bounds."""
+        return self.point(0.5 * (self._lower + self._upper))
+
+    def _pairings(self, vector: Any) -> np.ndarray:
+        space = self._domain
+        return np.array(
+            [space.inner_product(generator, vector) for generator in self._generators]
+        )
+
+    def _gram_factor(self) -> np.ndarray:
+        """``A`` with ``A^T A`` the generators' Gram matrix, its null directions dropped."""
+        with self._lock:
+            if self._factor is None:
+                gram = np.array([self._pairings(g) for g in self._generators])
+                values, vectors = np.linalg.eigh(0.5 * (gram + gram.T))
+                keep = values > 1e-13 * max(values.max(), 0.0)
+                self._factor = np.sqrt(values[keep])[:, None] * vectors[:, keep].T
+            return self._factor
+
+    @property
+    def radius(self) -> float:
+        """A bound on the distance from the :attr:`midpoint` to any point of the set.
+
+        The half-widths ``h_i`` of the coefficients give the points
+        ``midpoint + sum_i s_i h_i g_i`` with ``|s_i| <= 1``, whose norm is
+        at most the root of the Gram matrix's largest eigenvalue times
+        ``|h|``, and at most ``sum_i h_i |g_i|``; the smaller of the two is
+        returned. It is attained when the generators are orthogonal.
+        """
+        half = 0.5 * (self._upper - self._lower)
+        factor = self._gram_factor()
+        if factor.size == 0:
+            return 0.0
+        spectral = float(np.linalg.norm(factor, 2) * np.linalg.norm(half))
+        lengths = np.array([self._domain.norm(g) for g in self._generators])
+        return min(spectral, float(half @ lengths))
+
+    def bounding_ball(self) -> "Ball":
+        """The ball about the :attr:`midpoint` of radius :attr:`radius`, which contains the set."""
+        return Ball(self._domain, radius=self.radius, center=self.midpoint)
+
+    def support_maximizer(self, direction: Any, /) -> Any:
+        """Each coefficient at the bound its generator's pairing with the direction favors."""
+        pairings = self._pairings(direction)
+        return self.point(np.where(pairings > 0.0, self._upper, self._lower))
+
+    def support_function(self) -> SupportFunction:
+        """``(center, y) + sum_i max(lower_i (g_i, y), upper_i (g_i, y))``."""
+        space, center = self._domain, self._center
+        lower, upper = self._lower, self._upper
+
+        def value(direction: Any) -> float:
+            pairings = self._pairings(direction)
+            return float(
+                space.inner_product(center, direction)
+                + np.maximum(lower * pairings, upper * pairings).sum()
+            )
+
+        return SupportFunction.of_oracle(space, value, maximizer=self.support_maximizer)
+
+    @property
+    def has_support_function(self) -> bool:
+        """Whether :meth:`support_function` is available."""
+        return True
+
+    @property
+    def has_maximizer(self) -> bool:
+        """Whether :meth:`support_maximizer` can exhibit a point."""
+        return True
+
+    def project(self, x: Any, /) -> Any:
+        """The nearest point: least squares in the coefficients, under their bounds.
+
+        Minimizes ``|x - center - sum_i t_i g_i|`` over the box of
+        coefficients, a bounded linear least-squares problem of the
+        generators' number through their Gram matrix, solved by an
+        active-set method to the arithmetic's accuracy.
+        """
+        from scipy.optimize import lsq_linear
+
+        factor = self._gram_factor()
+        if factor.size == 0:
+            return self.point(self._lower)
+        pairings = self._pairings(self._domain.subtract(x, self._center))
+        # With A^T A the Gram matrix and A^T c the pairings, the squared
+        # distance is |A t - c|^2 up to a constant.
+        target = np.linalg.lstsq(factor.T, pairings, rcond=None)[0]
+        # A coefficient whose bounds coincide is not an unknown.
+        coefficients = self._lower.copy()
+        free = self._upper > self._lower
+        if free.any():
+            solution = lsq_linear(
+                factor[:, free],
+                target - factor[:, ~free] @ self._lower[~free],
+                bounds=(self._lower[free], self._upper[free]),
+                method="bvls",
+                tol=1e-14,
+            )
+            coefficients[free] = np.clip(
+                solution.x, self._lower[free], self._upper[free]
+            )
+        return self.point(coefficients)
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """True when the point is within tolerance of its projection.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside, as a distance
+                relative to the largest of the set's :attr:`radius` and the
+                distances of the point and of the midpoint from the center.
+
+        Returns:
+            Whether the set contains the point.
+        """
+        space = self._domain
+        distance = space.norm(space.subtract(x, self.project(x)))
+        scale = max(
+            self.radius,
+            space.norm(space.subtract(x, self._center)),
+            space.norm(space.subtract(self.midpoint, self._center)),
+        )
+        return distance <= rtol * scale
+
+    def __repr__(self) -> str:
+        return f"Zonotope(generators={len(self._generators)})"
 
 
 class ConvexIntersection(ConvexSet):
