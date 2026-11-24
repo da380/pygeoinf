@@ -31,6 +31,7 @@ from .feasible import (
     SweepResult,
     linear_certificate_operator,
 )
+from .nonlinear import LocalSearch, NonlinearFeasiblePropertySet
 from .sets import (
     Complement,
     EmptySet,
@@ -54,6 +55,8 @@ __all__ = [
     "FeasibleStructure",
     "InclusionResult",
     "LinearCertificate",
+    "LocalSearch",
+    "NonlinearFeasiblePropertySet",
     "Primal",
     "SProcedure",
     "Search",
