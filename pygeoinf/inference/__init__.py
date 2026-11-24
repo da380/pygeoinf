@@ -32,6 +32,8 @@ from .backus import (
     BackusGilbertParker,
     LinearizedFeasiblePropertySet,
     FeasiblePropertySet,
+    NonlinearBackusGilbertParker,
+    NonlinearFeasiblePropertySet,
 )
 from .estimators import (
     ComposedPointEstimator,
@@ -77,6 +79,8 @@ __all__ = [
     "BackusGilbertParker",
     "LinearizedFeasiblePropertySet",
     "FeasiblePropertySet",
+    "NonlinearBackusGilbertParker",
+    "NonlinearFeasiblePropertySet",
     "GaussianPosterior",
     "LowRankGaussianPosterior",
     "LinearGaussianInversion",

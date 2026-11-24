@@ -73,6 +73,7 @@ failing test rather than a surprise later.
 | 29 | `mixture` | a prior that cannot make up its mind, and a bimodal posterior |
 | 30 | `feasible_set` | the third kind of answer: what the data cannot rule out, under a prior measure hardened into a ball and into an ellipsoid |
 | 31 | `nonlinear_map` | when the forward map is not linear: the MAP estimator, and the Laplace approximation on it, full and low-rank |
+| 42 | `nonlinear_feasible_set` | a set answer when the forward map is not linear: the linearized set, a local search and a search over cells compared, on two parameters drawn whole and on a field whose feasible models come in several parts |
 
 **Spaces whose structure varies**
 

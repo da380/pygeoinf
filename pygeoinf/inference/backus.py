@@ -11,7 +11,10 @@ space. :class:`BackusGilbertParker` returns it as a
 from the two sets how to answer each question put to it. A nonlinear
 forward problem is linearized about a model of the caller's choosing, and
 the set that comes back is exact for the linearized problem and a local
-statement about the real one.
+statement about the real one. :class:`NonlinearBackusGilbertParker` keeps
+the forward operator as it is and returns the set itself, which is no
+longer convex and is known through checked models from inside and, given a
+bound on the operator's curvature, through certified bounds from outside.
 
 :class:`BackusGilbert` is the point estimator of the literature: a fixed
 operator ``X`` applied to the data, chosen so that the resolution ``X A``
@@ -35,6 +38,7 @@ from ..geometry.feasible import (
     FeasibleStructure,
     linear_certificate_operator,
 )
+from ..geometry.nonlinear import NonlinearFeasiblePropertySet
 from ..geometry.sets import SublevelSet
 from ..numerics.solvers import LinearSolver
 from ..probability.base import ProbabilityMeasure
@@ -47,6 +51,8 @@ __all__ = [
     "BackusGilbertParker",
     "FeasiblePropertySet",
     "LinearizedFeasiblePropertySet",
+    "NonlinearBackusGilbertParker",
+    "NonlinearFeasiblePropertySet",
 ]
 
 
@@ -391,6 +397,154 @@ class BackusGilbertParker(SetEstimator):
         return (
             f"BackusGilbertParker(form={self.form!r}, prior={self.prior!r}, "
             f"noise={self.noise!r})"
+        )
+
+
+class NonlinearBackusGilbertParker(SetEstimator):
+    """The feasible property set of a nonlinear forward problem, without linearizing it.
+
+    In go the forward problem, a convex **constraint set** on the model, a
+    convex **confidence set** on the data and the property operator ``T``,
+    as for :class:`BackusGilbertParker`; out comes the set of property
+    values of every model that lies in the constraint set and fits the data
+    through the forward operator itself. That set is not convex and may be
+    in several parts, so it is not described by one optimization. What
+    :meth:`__call__` returns, a
+    :class:`~pygeoinf.geometry.nonlinear.NonlinearFeasiblePropertySet`,
+    answers in two ways:
+
+    - **from inside**, by local searches: a model checked to lie in the
+      constraint set and fit the data puts its property in the set. This
+      needs nothing but the operator's derivative, and says nothing of what
+      a search did not reach.
+    - **from both sides**, by a search over cells, given a bound on how far
+      the operator departs from its linearization over a cell: the
+      feasible models of each cell are held between two feasible sets of
+      the linearized problem, and the cells together bracket the whole.
+      The bracket is as good as the bound, which is the caller's claim
+      about the operator, certified or estimated, and is reported as such.
+
+    .. code-block:: python
+
+        feasible = NonlinearBackusGilbertParker(problem, T, prior)(data)
+        feasible.support_result(direction)          # a checked model, no outer bound
+        feasible.support_results(direction, starts) # one search per start
+        feasible.support_result(direction, via=BranchAndPrune(remainder))
+        feasible.inclusion_result(value)            # a proof of membership, or none
+
+    The confidence set is taken from the problem when not given, as
+    :class:`BackusGilbertParker` takes it; exact data are not accepted, and
+    the search over cells needs it to be a ball, which the ambient ball of
+    an error measure is.
+    """
+
+    def __init__(
+        self,
+        problem: ForwardProblem,
+        property_operator: LinearOperator,
+        prior: ConvexSet | SublevelSet,
+        /,
+        *,
+        noise: ConvexSet | SublevelSet | None = None,
+        level: float = 0.95,
+        solver: LinearSolver | None = None,
+    ) -> None:
+        """
+        Args:
+            problem: the forward problem, whose operator carries a
+                derivative.
+            property_operator: ``T``, the property operator, acting on the
+                model space.
+            prior: the constraint set on the model space, with a level
+                function that has a gradient; a ball or an ellipsoid.
+            noise: the confidence set on the data space, likewise. Taken
+                from the problem when omitted: its own set if it has one,
+                the ambient ball at ``level`` if its error is a measure.
+            level: the probability the confidence set carries when it is
+                hardened from a measure.
+            solver: how the linearized sets invert the operators they
+                build. Conjugate gradients by default.
+
+        Raises:
+            ValueError: if an operator or set is on the wrong space, or the
+                problem has no data error and no confidence set is given.
+            TypeError: if the forward operator carries no derivative, or a
+                set is not convex or has no level function with a gradient.
+        """
+        confidence = _confidence_set(problem, noise, level)
+        if confidence is None:
+            raise ValueError(
+                "A nonlinear feasible set needs a confidence set with an "
+                "interior: give the problem a data error, or pass noise=."
+            )
+        self._problem = problem
+        self._property_operator = property_operator
+        self._prior = prior
+        self._noise = confidence
+        self._level = level
+        self._solver = solver
+        # Built once on the data space's origin, so that a set or an operator
+        # on the wrong space is refused here and not at the first data.
+        self._template = NonlinearFeasiblePropertySet(
+            problem.forward_operator,
+            property_operator,
+            prior,
+            problem.data_space.zero(),
+            noise=confidence,
+            solver=solver,
+        )
+
+    @property
+    def forward_problem(self) -> ForwardProblem:
+        """The forward problem."""
+        return self._problem
+
+    @property
+    def property_operator(self) -> LinearOperator:
+        """The property operator ``T``."""
+        return self._property_operator
+
+    @property
+    def prior(self) -> ConvexSet | SublevelSet:
+        """The constraint set on the model space."""
+        return self._prior
+
+    @property
+    def noise(self) -> ConvexSet | SublevelSet:
+        """The confidence set on the data space, as resolved."""
+        return self._noise
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The problem's data space."""
+        return self._problem.data_space
+
+    @property
+    def property_space(self) -> HilbertSpace:
+        """The property space."""
+        return self._property_operator.codomain
+
+    def __call__(self, data: Any) -> NonlinearFeasiblePropertySet:
+        """The feasible property set for these data, as an object to probe."""
+        return self._template.with_data(data)
+
+    def push_forward(
+        self, operator: LinearOperator, /
+    ) -> "NonlinearBackusGilbertParker":
+        """The same inference about a further property of the model."""
+        return NonlinearBackusGilbertParker(
+            self._problem,
+            operator @ self._property_operator,
+            self._prior,
+            noise=self._noise,
+            level=self._level,
+            solver=self._solver,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"NonlinearBackusGilbertParker(prior={self._prior!r}, "
+            f"noise={self._noise!r})"
         )
 
 

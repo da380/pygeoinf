@@ -34,6 +34,7 @@ estimated, and every model evaluated in a cell tests it.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import heapq
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
@@ -59,6 +60,7 @@ from ..numerics.solvers import ConvergenceError, LinearSolver
 from ..parallel import parallel_map
 from .convex import Ball, ConvexSet, Ellipsoid, Zonotope
 from .feasible import (
+    Dual,
     FeasiblePropertySet,
     FeasibleStructure,
     InclusionResult,
@@ -71,7 +73,11 @@ from .feasible import (
 from .sets import SublevelSet, Subset
 
 __all__ = [
+    "BranchAndPrune",
+    "BranchInclusionResult",
+    "BranchSupportResult",
     "Cell",
+    "CellRecord",
     "CellSupportResult",
     "ComponentwiseRemainder",
     "LocalSearch",
@@ -147,7 +153,9 @@ class Cell:
                 must be linearly independent.
             half_widths: the half-width ``w_j`` of each slab, positive.
             radius: a bound on the distance of any model of the cell from
-                the center; infinite if nothing is known.
+                the center; infinite if nothing is known. Slabs along a
+                basis of the whole space give a bound of their own, and the
+                smaller is kept.
 
         Raises:
             ValueError: if the half-widths do not match the directions in
@@ -175,6 +183,14 @@ class Cell:
             sizes = np.sqrt(np.diag(self._gram))
             if np.linalg.eigvalsh(self._gram / np.outer(sizes, sizes)).min() < 1e-10:
                 raise ValueError("The slab directions must be linearly independent.")
+            if len(self._directions) == domain.dim:
+                # Slabs along a basis bound the cell on their own: the
+                # squared distance is the offsets' quadratic form in the
+                # inverse Gram matrix.
+                reach = np.sqrt(
+                    np.linalg.eigvalsh(np.linalg.inv(self._gram)).max()
+                ) * np.linalg.norm(self._half_widths)
+                self._radius = min(self._radius, float(reach))
 
     @property
     def domain(self) -> HilbertSpace:
@@ -308,6 +324,14 @@ class RemainderBound(ABC):
         """Whether the claim is proved, as opposed to estimated."""
         return self._certified
 
+    def slab_directions(self) -> tuple[Any, ...] | None:
+        """The model-space directions the forward operator curves along, where the bound knows them.
+
+        What a search over cells cuts its slabs along. None for a bound
+        that reads only a cell's radius, or has no such directions to name.
+        """
+        return None
+
     @abstractmethod
     def remainder_set(self, cell: Cell, /) -> ConvexSet:
         """A convex set of the data space claimed to hold the remainder over the cell.
@@ -333,23 +357,30 @@ class NormRemainder(RemainderBound):
     """
 
     def __init__(
-        self, data_space: HilbertSpace, constant: float, /, *, certified: bool = True
+        self,
+        data_space: HilbertSpace,
+        constant: float | Callable[[Cell], float],
+        /,
+        *,
+        certified: bool = True,
     ) -> None:
         """
         Args:
             data_space: the forward operator's codomain.
             constant: ``L``, a bound on the second derivative's norm as a
-                bilinear map, over every cell the bound is asked about.
+                bilinear map: a number that holds over every cell the bound
+                is asked about, or a callable of the cell returning one
+                that holds over that cell.
             certified: whether ``L`` is proved for the operator.
 
         Raises:
-            ValueError: if the constant is negative.
+            ValueError: if a constant given as a number is negative.
         """
         super().__init__(certified=certified)
-        if constant < 0.0:
+        if not callable(constant) and constant < 0.0:
             raise ValueError("The constant must not be negative.")
         self._data_space = data_space
-        self._constant = float(constant)
+        self._constant = constant
 
     def remainder_set(self, cell: Cell, /) -> Ball:
         """The ball of radius ``(L / 2) radius^2`` about the origin.
@@ -362,7 +393,10 @@ class NormRemainder(RemainderBound):
                 "A norm bound needs a cell of finite radius; give the cell "
                 "one, or use a bound that reads the cell's slabs."
             )
-        return Ball(self._data_space, radius=0.5 * self._constant * cell.radius**2)
+        constant = self._constant
+        if callable(constant):
+            constant = float(constant(cell))
+        return Ball(self._data_space, radius=0.5 * constant * cell.radius**2)
 
 
 class ComponentwiseRemainder(RemainderBound):
@@ -412,6 +446,10 @@ class ComponentwiseRemainder(RemainderBound):
             raise ValueError(
                 "There must be one row per basis vector of the data space."
             )
+
+    def slab_directions(self) -> tuple[Any, ...]:
+        """The rows ``b_i``: the only directions the forward operator sees the model along."""
+        return self._rows
 
     def remainder_set(self, cell: Cell, /) -> Zonotope:
         """The box of coefficient ranges over the data space's basis.
@@ -650,6 +688,649 @@ class CellSupportResult(SupportResult):
             f"certified={self.certified}, refuted={self.refuted}, "
             f"converged={self.converged})"
         )
+
+
+def _departs(
+    forward: Operator,
+    linearization: Linearization,
+    claimed: ConvexSet,
+    model: Any,
+    predicted: Any,
+) -> bool:
+    """Whether a model's remainder lies outside a claimed set.
+
+    Outside by more than the rounding of the three terms the remainder is
+    the difference of: ``F(m)``, ``F(m_K)`` and ``F'(m_K)(m − m_K)``.
+    """
+    space, data_space = forward.domain, forward.codomain
+    step = linearization.derivative(space.subtract(model, linearization.point))
+    departure = data_space.subtract(
+        data_space.subtract(predicted, linearization.value), step
+    )
+    excess = data_space.norm(data_space.subtract(departure, claimed.project(departure)))
+    scale = max(
+        data_space.norm(predicted),
+        data_space.norm(linearization.value),
+        data_space.norm(step),
+    )
+    return bool(excess > 1e-9 * scale)
+
+
+def _independent(space: HilbertSpace, vectors: Sequence[Any]) -> list[Any]:
+    """A largest independent subset of some vectors, the most significant first.
+
+    Greedy, by what is left of each vector's squared norm once the chosen
+    ones are projected out; a vector within ``1e-8`` of the span of those
+    already chosen, relative to its own norm, is left out.
+    """
+    vectors = list(vectors)
+    gram = np.array([[space.inner_product(a, b) for b in vectors] for a in vectors])
+    sizes = np.diag(gram).copy()
+    left = sizes.copy()
+    chosen: list[int] = []
+    factor = np.zeros((0, len(vectors)))
+    for _ in range(len(vectors)):
+        relative = np.where(sizes > 0.0, left / np.where(sizes > 0.0, sizes, 1.0), 0.0)
+        relative[chosen] = 0.0
+        candidates = np.where(relative > 1e-16)[0]
+        if candidates.size == 0:
+            break
+        pick = int(candidates[np.argmax(left[candidates])])
+        row = (gram[pick] - factor[:, pick] @ factor) / np.sqrt(left[pick])
+        factor = np.vstack([factor, row])
+        left = np.maximum(left - row**2, 0.0)
+        chosen.append(pick)
+    return [vectors[index] for index in chosen]
+
+
+def _extent(subset: ConvexSet) -> float:
+    """The size of a remainder set: its radius, as a ball or about its midpoint."""
+    return float(subset.radius)
+
+
+@dataclass(frozen=True)
+class CellRecord:
+    """One cell a search over cells examined, and what became of it."""
+
+    cell: Cell
+    value: float
+    """The outer value of the feasible set's part in the cell, given the
+    remainder claim; minus infinity for a cell shown to hold no model that
+    fits."""
+    status: str
+    """``"empty"``: shown to hold no feasible model. ``"pruned"``: its outer
+    value is no larger than a value already attained. ``"split"``: replaced
+    by its two halves. ``"live"``: still standing when the search stopped,
+    so part of the outer description."""
+
+
+@dataclass(frozen=True)
+class BranchSupportResult(CellSupportResult):
+    """The support of a nonlinear feasible set from both sides, by a search over cells.
+
+    ``value`` is the largest outer value over the cells that were neither
+    shown empty nor split, and bounds the support of the whole set, given
+    the remainder claim; ``inner`` is attained by ``extremal_model``, a
+    checked model. ``converged`` says the two met to the tolerance asked;
+    a search that stopped at its budget returns the bracket it had.
+    """
+
+    cells: tuple[CellRecord, ...] = ()
+    """Every cell examined, in the order it was bounded."""
+    history: tuple[tuple[int, float, float], ...] = ()
+    """``(cells examined, outer value, inner value)`` after each split."""
+    searches: int = 0
+    """How many local searches were run for the inner value."""
+
+    @property
+    def live(self) -> tuple[CellRecord, ...]:
+        """The cells still standing: together they hold every feasible model the search could not rule out."""
+        return tuple(record for record in self.cells if record.status == "live")
+
+    def __repr__(self) -> str:
+        return (
+            f"BranchSupportResult(value={self.value:.6g}, inner={self.inner:.6g}, "
+            f"cells={len(self.cells)}, certified={self.certified}, "
+            f"refuted={self.refuted}, converged={self.converged})"
+        )
+
+
+@dataclass(frozen=True)
+class BranchInclusionResult(InclusionResult):
+    """Whether a value is in a nonlinear feasible set, decided by a search over cells where it can be.
+
+    Three outcomes. A ``fitting_model`` with a ``level`` at or below the
+    prior's own proves the value **inside**: the model fits the data, lies
+    in the prior and has the property. A ``lower_bound`` of plus infinity
+    proves it **outside**, given the remainder claim: every cell of a cover
+    of the prior was shown to hold no model with the property that fits.
+    Otherwise the search stopped at its budget and nothing is decided, with
+    ``level`` infinite and ``lower_bound`` minus infinity.
+    """
+
+    certified: bool = True
+    """Whether the remainder claim an exclusion rests on was certified."""
+    cells: tuple[CellRecord, ...] = ()
+    """Every cell examined. ``"empty"`` here means shown to hold no fitting
+    model with the property; a record's ``value`` is not used."""
+    searches: int = 0
+    """How many local searches were run for a model with the property."""
+
+    def __repr__(self) -> str:
+        if self.fitting_model is not None:
+            verdict = "inside"
+        elif self.lower_bound == float("inf"):
+            verdict = "outside"
+        else:
+            verdict = "undecided"
+        return (
+            f"BranchInclusionResult({verdict}, cells={len(self.cells)}, "
+            f"certified={self.certified})"
+        )
+
+
+class BranchAndPrune:
+    """The support of a nonlinear feasible set from both sides, by splitting cells.
+
+    The constraint set is covered by cells, each the set cut by slabs along
+    the directions the forward operator curves in. A cell's outer value is
+    the support of the linearized problem on it with the noise set grown by
+    the cell's remainder set, so the largest over a cover bounds the whole
+    set; a checked model gives a value from inside. The search starts from
+    one cell as wide as the constraint set and repeatedly takes the cell
+    with the largest outer value, runs a local search kept in it unless it
+    already holds the best model found, and splits it in two along the slab
+    whose halving shrinks its remainder set most. A cell is dropped when the linearized problem on it has no
+    feasible model, or when its outer value is no larger than a value
+    already attained. It stops when the largest outer value is within the
+    tolerance of the best attained one, or at its budget of cells, and
+    returns the bracket either way.
+
+    The outer value is as good as the remainder claim, and the result says
+    whether that was certified. A checked model beyond the outer value, or
+    one whose remainder lies outside its cell's claimed set, marks the
+    result refuted.
+
+    The number of cells needed grows exponentially with the number of
+    directions that are both curved enough to need narrow slabs and left
+    wide by the data, so the method is for problems where those are few.
+    """
+
+    name = "branch"
+
+    def __init__(
+        self,
+        remainder: RemainderBound,
+        /,
+        *,
+        directions: Sequence[Any] | None = None,
+        rtol: float = 1e-3,
+        max_cells: int = 200,
+        search: "LocalSearch | None" = None,
+    ) -> None:
+        """
+        Args:
+            remainder: the claim about the forward operator over a cell.
+            directions: the model-space directions to cut slabs along; the
+                remainder bound's own, where it names them, if omitted. A
+                largest independent subset is used, and a direction whose
+                slab the remainder set does not depend on is left out.
+            rtol: the gap between the outer and the inner value at which
+                the search stops, relative to the constraint set's width
+                along the direction.
+            max_cells: the budget of cells to bound.
+            search: the local search run in a cell for the inner value; the
+                default :class:`LocalSearch` if omitted.
+
+        Raises:
+            ValueError: if no directions are given and the remainder bound
+                names none.
+        """
+        if directions is None:
+            directions = remainder.slab_directions()
+        if directions is None:
+            raise ValueError(
+                "The remainder bound names no directions to cut slabs along; "
+                "pass directions=."
+            )
+        self._remainder = remainder
+        self._directions = tuple(directions)
+        self._rtol = float(rtol)
+        self._max_cells = int(max_cells)
+        self._search = search
+
+    @property
+    def remainder(self) -> RemainderBound:
+        """The claim about the forward operator over a cell."""
+        return self._remainder
+
+    def root(self, feasible: "NonlinearFeasiblePropertySet", /) -> Cell:
+        """The first cell: the constraint set, with a slab as wide as its reach along each direction.
+
+        Args:
+            feasible: the set.
+
+        Returns:
+            The cell, about the constraint set's center, cut along the
+            directions the remainder set depends on.
+
+        Raises:
+            TypeError: if the constraint set has no support function to
+                read its reach from.
+            ValueError: if the constraint set is unbounded along a
+                direction.
+        """
+        space = feasible.model_space
+        center = feasible._default_start()
+        chosen = _independent(space, self._directions)
+        widths = [feasible._half_reach(direction, center) for direction in chosen]
+        cell = feasible.cell(center, directions=chosen, half_widths=widths)
+        # A slab the remainder set does not narrow with is not worth its
+        # row in every cell's problem.
+        base = _extent(self._remainder.remainder_set(cell))
+        keep = []
+        for index in range(len(chosen)):
+            halved = np.array(widths, dtype=float)
+            halved[index] *= 0.5
+            trial = feasible.cell(center, directions=chosen, half_widths=halved)
+            if _extent(self._remainder.remainder_set(trial)) < base * (1.0 - 1e-12):
+                keep.append(index)
+        return feasible.cell(
+            center,
+            directions=[chosen[index] for index in keep],
+            half_widths=[widths[index] for index in keep],
+        )
+
+    def _split_index(
+        self, feasible: "NonlinearFeasiblePropertySet", cell: Cell, root: Cell
+    ) -> int:
+        """The slab whose halving shrinks the remainder set most; the relatively widest on a tie."""
+        base = _extent(self._remainder.remainder_set(cell))
+        gains = []
+        for index in range(len(cell.directions)):
+            halved = cell.half_widths.copy()
+            halved[index] *= 0.5
+            trial = feasible.cell(
+                cell.center, directions=cell.directions, half_widths=halved
+            )
+            gains.append(base - _extent(self._remainder.remainder_set(trial)))
+        if max(gains) > 1e-12 * base:
+            return int(np.argmax(gains))
+        return int(np.argmax(cell.half_widths / root.half_widths))
+
+    def support(
+        self,
+        feasible: "NonlinearFeasiblePropertySet",
+        direction: Any,
+        start: Any,
+        /,
+    ) -> BranchSupportResult:
+        """The support in a direction, from both sides.
+
+        Args:
+            feasible: the set, whose noise set must be a ball.
+            direction: the direction in the property space.
+            start: a model to run the first local search from, or None for
+                the set's fitting model, where a search finds one.
+
+        Returns:
+            The bracket, the cells examined, and the bracket's history.
+
+        Raises:
+            TypeError: if the noise set is not a ball, or the constraint
+                set has no support function.
+            ValueError: if the property operator's adjoint annihilates the
+                direction, or the constraint set is unbounded along a slab
+                direction.
+        """
+        space, data_space = feasible.model_space, feasible.data_space
+        forward, prior, noise = (
+            feasible.forward_operator,
+            feasible.prior,
+            feasible.noise,
+        )
+        ball = feasible._noise_ball()
+        pulled = feasible.property_operator.adjoint(direction)
+        if space.norm(pulled) == 0.0:
+            raise ValueError("The direction is annihilated by the property operator.")
+        reach = feasible._reach(pulled)
+        search = self._search or LocalSearch()
+        # Any certificate bounds, so a cell's dual is solved only as far as
+        # the gap asked of the whole search makes worth while.
+        dual_tolerance = max(1e-10, 1e-2 * self._rtol)
+        best, attained, refuted = None, float("-inf"), False
+        evaluations, searches, unconverged = 0, 0, 0
+
+        def offer(model: Any, entry: dict[str, Any] | None) -> None:
+            """Check a model, test the claim on it where it lies in a cell, and keep it if it is the best."""
+            nonlocal best, attained, refuted, evaluations
+            if model is None or not prior.contains(model, rtol=0.0):
+                return
+            predicted = forward(model)
+            evaluations += 1
+            if entry is not None and entry["cell"].contains(model, rtol=0.0):
+                if _departs(
+                    forward, entry["linearization"], entry["claimed"], model, predicted
+                ):
+                    refuted = True
+            along = float(space.inner_product(pulled, model))
+            fits = noise.contains(
+                data_space.subtract(feasible.data, predicted), rtol=0.0
+            )
+            if fits and along > attained:
+                best, attained = model, along
+
+        def bound(cell: Cell, warm: Any) -> dict[str, Any] | None:
+            """The outer value of a cell, or None for a cell shown empty."""
+            nonlocal evaluations, unconverged
+            linearization = forward.at(cell.center)
+            claimed = self._remainder.remainder_set(cell)
+            linear = feasible._cell_set(cell, linearization, _grown(ball, claimed))
+            # A short run first: a cell with no feasible model, or none
+            # worth having, shows itself in a few steps, by a certificate
+            # of emptiness or a value below the one attained, and any
+            # certificate bounds. Only a cell still in play is run out.
+            try:
+                result = linear.support_result(
+                    direction,
+                    via=Dual(tolerance=dual_tolerance, max_iterations=40, start=warm),
+                )
+                evaluations += int(result.evaluations)
+                if not result.converged and result.value > attained:
+                    result = linear.support_result(
+                        direction,
+                        via=Dual(tolerance=dual_tolerance, start=result.certificate),
+                    )
+                    evaluations += int(result.evaluations)
+            except ValueError as error:
+                if "empty" not in str(error):
+                    raise
+                return None
+            # A dual that stopped at its budget still certifies its value,
+            # by weak duality; it is only a looser bound than it might be.
+            unconverged += 0 if result.converged else 1
+            return {
+                "cell": cell,
+                "value": float(result.value),
+                "certificate": result.certificate,
+                "extremal": result.extremal_model,
+                "linearization": linearization,
+                "claimed": claimed,
+            }
+
+        origin = start
+        if origin is None:
+            fitting = feasible.fitting_result().fitting_model
+            if fitting is not None and prior.contains(fitting, rtol=0.0):
+                origin = fitting
+        if origin is not None:
+            first = search.support(feasible, direction, origin)
+            evaluations += int(first.evaluations)
+            searches += 1
+            offer(first.extremal_model, None)
+
+        root = self.root(feasible)
+        records: list[list[Any]] = []
+        heap: list[tuple[float, int, int, dict[str, Any]]] = []
+        history: list[tuple[int, float, float]] = []
+        pruned = float("-inf")
+
+        def admit(cell: Cell, warm: Any, cap: float) -> None:
+            """Bound a cell and file it as empty, pruned or live."""
+            nonlocal pruned
+            entry = bound(cell, warm)
+            if entry is None:
+                records.append([cell, float("-inf"), "empty"])
+                return
+            # A half is linearized about its own center, so its bound is
+            # not nested in its parent's; both hold, and the smaller is kept.
+            entry["value"] = min(entry["value"], cap)
+            offer(entry["extremal"], entry)
+            if entry["value"] <= attained:
+                pruned = max(pruned, entry["value"])
+                records.append([cell, entry["value"], "pruned"])
+                return
+            records.append([cell, entry["value"], "live"])
+            heapq.heappush(
+                heap, (-entry["value"], len(records), len(records) - 1, entry)
+            )
+
+        admit(root, None, float("inf"))
+        converged = False
+        message = "the budget of cells was reached"
+        while True:
+            if not heap:
+                converged, message = True, "every cell was shown empty or pruned"
+                break
+            upper = max(-heap[0][0], pruned)
+            if upper - attained <= self._rtol * reach:
+                converged, message = True, "the outer and inner values met"
+                break
+            if len(records) + 2 > self._max_cells:
+                break
+            _, _, index, entry = heapq.heappop(heap)
+            cell = entry["cell"]
+            # The cell with the most to offer: look in it for a better
+            # model, unless the best one so far is already its own.
+            if best is None or not cell.contains(best):
+                origin = entry["extremal"]
+                if origin is None or not cell.contains(origin):
+                    origin = cell.center
+                found = search.support(feasible, direction, origin, cell=cell)
+                evaluations += int(found.evaluations)
+                searches += 1
+                offer(found.extremal_model, entry)
+            if entry["value"] <= attained:
+                pruned = max(pruned, entry["value"])
+                records[index][2] = "pruned"
+                continue
+            if not cell.directions:
+                heapq.heappush(heap, (-entry["value"], index, index, entry))
+                message = "the cell has no slabs to split"
+                break
+            split = self._split_index(feasible, cell, root)
+            records[index][2] = "split"
+            for sign in (-1.0, 1.0):
+                offsets = np.zeros(len(cell.directions))
+                offsets[split] = sign * 0.5 * cell.half_widths[split]
+                halved = cell.half_widths.copy()
+                halved[split] *= 0.5
+                admit(
+                    feasible.cell(
+                        cell.point(offsets),
+                        directions=cell.directions,
+                        half_widths=halved,
+                    ),
+                    entry["certificate"],
+                    entry["value"],
+                )
+            history.append(
+                (len(records), max([pruned] + [-item[0] for item in heap]), attained)
+            )
+
+        value = max([pruned] + [-item[0] for item in heap])
+        if attained > value + 1e-9 * reach:
+            # A checked model beyond the outer value: the claim is false.
+            refuted = True
+        if unconverged:
+            message += (
+                f"; {unconverged} cell bounds are from dual solves stopped at "
+                "their budget, which bound all the same"
+            )
+        if refuted:
+            message += "; a checked model contradicts the remainder claim"
+        return BranchSupportResult(
+            value=float(value),
+            inner=attained,
+            converged=bool(converged),
+            algorithm=self.name,
+            evaluations=evaluations,
+            certificate=heap[0][3]["certificate"] if heap else None,
+            extremal_model=best,
+            message=message,
+            certified=self._remainder.certified,
+            refuted=refuted,
+            cells=tuple(CellRecord(*record) for record in records),
+            history=tuple(history),
+            searches=searches,
+        )
+
+    def inclusion(
+        self,
+        feasible: "NonlinearFeasiblePropertySet",
+        value: Any,
+        start: Any,
+        /,
+    ) -> BranchInclusionResult:
+        """Whether a property value is in the set: a model that has it, or a cover that excludes it.
+
+        A local search looks for a fitting model with the property, first
+        from ``start`` and then in each cell taken up whose remainder set
+        is smaller than the noise set. A cell is dropped
+        when the linearized problem on it, with the noise set grown by the
+        remainder set and the property held at the value, has no feasible
+        model; a cell that cannot be dropped is split. The value is proved
+        inside by a model, and outside when no cell is left.
+
+        Args:
+            feasible: the set, whose noise set must be a ball.
+            value: the property value.
+            start: a model to run the first local search from, or None for
+                the set's fitting model, where a search finds one.
+
+        Returns:
+            The verdict, with the model or the cells behind it.
+
+        Raises:
+            TypeError: if the noise set is not a ball, the constraint set
+                has no support function, or the property space has no
+                coordinate map.
+        """
+        _require_property_coordinates(feasible.domain, "Membership")
+        forward, prior = feasible.forward_operator, feasible.prior
+        ball = feasible._noise_ball()
+        search = self._search or LocalSearch()
+        dual_tolerance = max(1e-10, 1e-2 * self._rtol)
+        evaluations, searches = 0, 0
+        records: list[list[Any]] = []
+
+        def finish(
+            model: Any, level: float, excluded: bool, message: str
+        ) -> BranchInclusionResult:
+            return BranchInclusionResult(
+                level=level,
+                lower_bound=float("inf") if excluded else float("-inf"),
+                converged=bool(model is not None or excluded),
+                algorithm=self.name,
+                evaluations=evaluations,
+                fitting_model=model,
+                message=message,
+                certified=self._remainder.certified,
+                cells=tuple(CellRecord(*record) for record in records),
+                searches=searches,
+            )
+
+        def look(origin: Any, cell: Cell | None) -> InclusionResult | None:
+            """A local search for a model with the property; the result if it proves membership."""
+            nonlocal evaluations, searches
+            found = search.inclusion(feasible, value, origin, cell=cell)
+            evaluations += int(found.evaluations)
+            searches += 1
+            if found.fitting_model is not None and found.level <= feasible.level:
+                return found
+            return None
+
+        def holds_none(cell: Cell) -> bool:
+            """Whether the linearized problem on a cell has no model with the property."""
+            nonlocal evaluations
+            claimed = self._remainder.remainder_set(cell)
+            linear = feasible._cell_set(
+                cell, forward.at(cell.center), _grown(ball, claimed), pin=value
+            )
+            for budget in (40, 300):
+                result = linear.feasibility_result(
+                    via=Dual(tolerance=dual_tolerance, max_iterations=budget)
+                )
+                evaluations += int(result.evaluations)
+                if result.level == float("inf"):
+                    return True
+                if result.converged:
+                    return False
+            return False
+
+        origin = start
+        if origin is None:
+            fitting = feasible.fitting_result().fitting_model
+            if fitting is not None and prior.contains(fitting, rtol=0.0):
+                origin = fitting
+        if origin is not None:
+            found = look(origin, None)
+            if found is not None:
+                return finish(
+                    found.fitting_model, found.level, False, "a model has the property"
+                )
+
+        root = self.root(feasible)
+        heap: list[tuple[float, int, int, Cell]] = []
+
+        def admit(cell: Cell) -> None:
+            if holds_none(cell):
+                records.append([cell, float("-inf"), "empty"])
+                return
+            records.append([cell, float("nan"), "live"])
+            extent = _extent(self._remainder.remainder_set(cell))
+            heapq.heappush(heap, (-extent, len(records), len(records) - 1, cell))
+
+        admit(root)
+        while heap and len(records) + 2 <= self._max_cells:
+            _, _, index, cell = heapq.heappop(heap)
+            # A search in the cell is worth its cost once the remainder is
+            # below the noise, where the linearized problem that could not
+            # be shown empty is close to the real one.
+            if _shrunk(ball, self._remainder.remainder_set(cell), 0.0) is not None:
+                found = look(cell.center, cell)
+                if found is not None:
+                    return finish(
+                        found.fitting_model,
+                        found.level,
+                        False,
+                        "a model has the property",
+                    )
+            if not cell.directions:
+                heapq.heappush(heap, (0.0, index, index, cell))
+                break
+            split = self._split_index(feasible, cell, root)
+            records[index][2] = "split"
+            for sign in (-1.0, 1.0):
+                offsets = np.zeros(len(cell.directions))
+                offsets[split] = sign * 0.5 * cell.half_widths[split]
+                halved = cell.half_widths.copy()
+                halved[split] *= 0.5
+                admit(
+                    feasible.cell(
+                        cell.point(offsets),
+                        directions=cell.directions,
+                        half_widths=halved,
+                    )
+                )
+        if not heap:
+            return finish(
+                None,
+                float("inf"),
+                True,
+                "no cell holds a fitting model with the property, given the "
+                "remainder claim",
+            )
+        return finish(
+            None,
+            float("inf"),
+            False,
+            "the budget of cells was reached with the value neither found nor "
+            "excluded",
+        )
+
+    def __repr__(self) -> str:
+        return f"BranchAndPrune(rtol={self._rtol}, max_cells={self._max_cells})"
 
 
 # --------------------------------------------------------------------- #
@@ -892,6 +1573,8 @@ class LocalSearch:
         value: Any,
         start: Any,
         /,
+        *,
+        cell: Cell | None = None,
     ) -> InclusionResult:
         """The model with a given property closest to the prior's center, from ``start``.
 
@@ -908,6 +1591,8 @@ class LocalSearch:
             value: the property value.
             start: the model to search from; its projection onto the models
                 with the property is where the search begins.
+            cell: a cell to keep the search in, each slab a further
+                constraint.
 
         Returns:
             The result: ``level`` is the prior's level function at
@@ -920,7 +1605,7 @@ class LocalSearch:
         """
         _require_property_coordinates(feasible.domain, "Membership")
         return self._least_level(
-            feasible, start, through=feasible._with_property(value)
+            feasible, start, through=feasible._with_property(value), cell=cell
         )
 
     def _least_level(
@@ -930,22 +1615,23 @@ class LocalSearch:
         /,
         *,
         through: AffineOperator | None,
+        cell: Cell | None = None,
     ) -> InclusionResult:
         prior_level = feasible._prior_level
         objective = _rescaled(prior_level, 1.0 / _scale_of(feasible.level), 0.0)
-        _, noise_constraint = feasible._constraints(self._margin)
+        constraints = feasible._constraints(self._margin)[1:]
+        if cell is not None:
+            constraints += _slab_constraints(cell, self._margin)
         if through is not None:
-            objective, noise_constraint = (
-                objective @ through,
-                noise_constraint @ through,
-            )
-        result = self._method(inequalities=(noise_constraint,)).minimize(
-            objective, start
-        )
+            objective = objective @ through
+            constraints = tuple(constraint @ through for constraint in constraints)
+        result = self._method(inequalities=constraints).minimize(objective, start)
         best, level = None, float("inf")
         for candidate in (start, result.minimizer):
             if through is not None:
                 candidate = through(candidate)
+            if cell is not None and not cell.contains(candidate, rtol=0.0):
+                continue
             if feasible.fits(candidate) and float(prior_level(candidate)) < level:
                 best, level = candidate, float(prior_level(candidate))
         message = result.message
@@ -1185,6 +1871,24 @@ class NonlinearFeasiblePropertySet(Subset):
                 return width
         return float(space.norm(pulled))
 
+    def _half_reach(self, vector: Any, center: Any) -> float:
+        """The largest ``|(v, m − center)|`` over the prior, from its support function."""
+        space = self.model_space
+        if not _computes_support(self._prior):
+            raise TypeError(
+                "The constraint set must have a support function to read its "
+                "reach along a slab direction from."
+            )
+        support = _support_of(self._prior)
+        offset = float(space.inner_product(vector, center))
+        reach = max(
+            float(support(vector)) - offset,
+            float(support(space.negative(vector))) + offset,
+        )
+        if not np.isfinite(reach) or reach <= 0.0:
+            raise ValueError("The constraint set is unbounded along a slab direction.")
+        return reach
+
     def _constraints(self, margin: float) -> tuple[Functional, Functional]:
         """The two sets, shrunk by a margin, as functionals held at or below zero."""
 
@@ -1382,24 +2086,35 @@ class NonlinearFeasiblePropertySet(Subset):
         /,
         *,
         start: Any = None,
-        via: LocalSearch | None = None,
+        via: "LocalSearch | BranchAndPrune | None" = None,
     ) -> SupportResult:
-        """The farthest checked model in a direction that one local search finds.
+        """The support in a direction: from inside by a local search, or from both sides.
+
+        By default one :class:`LocalSearch`, whose answer is a checked
+        model and no bound from outside. ``via=BranchAndPrune(remainder)``
+        searches over cells instead and returns a bracket on the support
+        of the whole set, as good as the remainder claim it is given.
 
         Args:
             direction: the direction in the property space.
             start: the model to search from; :meth:`fitting_model` if
                 omitted.
-            via: the search; the default :class:`LocalSearch` if omitted.
+            via: a :class:`LocalSearch` with its own tuning, or a
+                :class:`BranchAndPrune`; the default local search if
+                omitted.
 
         Returns:
-            The result, with ``inner`` attained by ``extremal_model`` and
-            ``value`` infinite; see :meth:`LocalSearch.support`.
+            The result, with ``inner`` attained by ``extremal_model``.
+            ``value`` is infinite from a local search, and the outer bound
+            from a search over cells; see :meth:`LocalSearch.support` and
+            :meth:`BranchAndPrune.support`.
 
         Raises:
-            ValueError: if no start is given and no fitting model is found
-                to start from.
+            ValueError: if a local search is given no start and no fitting
+                model is found to start from.
         """
+        if isinstance(via, BranchAndPrune):
+            return via.support(self, direction, start)
         origin = self.fitting_model() if start is None else start
         return (via or LocalSearch()).support(self, direction, origin)
 
@@ -1443,27 +2158,37 @@ class NonlinearFeasiblePropertySet(Subset):
         /,
         *,
         start: Any = None,
-        via: LocalSearch | None = None,
+        via: "LocalSearch | BranchAndPrune | None" = None,
     ) -> InclusionResult:
-        """The model with a given property closest to the prior's center, by a local search.
+        """Whether a property value is in the set: proved by a model, or excluded by a cover.
 
-        A ``level`` at or below :attr:`level` proves the value is in the
-        set, by the ``fitting_model`` that has it. Anything else proves
-        nothing.
+        By default one :class:`LocalSearch` for the model with the property
+        closest to the prior's center: a ``level`` at or below
+        :attr:`level` proves the value is in the set, by the
+        ``fitting_model`` that has it, and anything else proves nothing.
+        ``via=BranchAndPrune(remainder)`` can also prove the value outside,
+        by a cover of the prior none of whose cells holds a fitting model
+        with the property, given the remainder claim.
 
         Args:
             value: the property value.
             start: the model to search from; :meth:`fitting_model` if
                 omitted.
-            via: the search; the default :class:`LocalSearch` if omitted.
+            via: a :class:`LocalSearch` with its own tuning, or a
+                :class:`BranchAndPrune`; the default local search if
+                omitted.
 
         Returns:
-            The result; see :meth:`LocalSearch.inclusion`.
+            The result; see :meth:`LocalSearch.inclusion` and
+            :meth:`BranchAndPrune.inclusion`.
 
         Raises:
             TypeError: if the property space has no coordinate map.
-            ValueError: if no start is given and no fitting model is found.
+            ValueError: if a local search is given no start and no fitting
+                model is found.
         """
+        if isinstance(via, BranchAndPrune):
+            return via.inclusion(self, value, start)
         origin = self.fitting_model() if start is None else start
         return (via or LocalSearch()).inclusion(self, value, origin)
 
@@ -1515,16 +2240,47 @@ class NonlinearFeasiblePropertySet(Subset):
         return self._noise
 
     def _cell_set(
-        self, cell: Cell, linearization: Linearization, noise: ConvexSet
+        self,
+        cell: Cell,
+        linearization: Linearization,
+        noise: ConvexSet,
+        *,
+        pin: Any = None,
     ) -> FeasiblePropertySet:
-        """The linearized problem on a cell, with a given noise set."""
+        """The linearized problem on a cell, with a given noise set.
+
+        With ``pin``, a property value, the models are further held to have
+        that property exactly: the set is then empty exactly when no model
+        of the linearized problem on the cell has it.
+        """
         data_space = self.data_space
         derivative = linearization.derivative
         shifted = data_space.add(
             data_space.subtract(self._data, linearization.value),
             derivative(linearization.point),
         )
-        if not cell.directions:
+        operators, parts, observed = [derivative], [noise], [shifted]
+        if cell.directions:
+            # The slabs enter as data: the rows (u_j, m) observed at the
+            # center's values to within the half-widths.
+            rows = cell.row_operator()
+            count = len(cell.directions)
+            operators.append(rows)
+            parts.append(
+                Zonotope(
+                    rows.codomain,
+                    [rows.codomain.basis_vector(j) for j in range(count)],
+                    lower=-cell.half_widths,
+                    upper=cell.half_widths,
+                )
+            )
+            observed.append(rows(cell.center))
+        if pin is not None:
+            # The property enters as data too, observed without error.
+            operators.append(self._property_operator)
+            parts.append(Ball(self.domain, radius=0.0))
+            observed.append(pin)
+        if len(operators) == 1:
             structure = FeasibleStructure(
                 derivative,
                 self._property_operator,
@@ -1533,27 +2289,15 @@ class NonlinearFeasiblePropertySet(Subset):
                 solver=self._solver,
             )
             return FeasiblePropertySet.from_structure(structure, shifted)
-        # The slabs enter as data: the rows (u_j, m) observed at the
-        # center's values to within the half-widths.
-        rows = cell.row_operator()
-        forward = ColumnLinearOperator([derivative, rows])
-        count = len(cell.directions)
-        slabs = Zonotope(
-            rows.codomain,
-            [rows.codomain.basis_vector(j) for j in range(count)],
-            lower=-cell.half_widths,
-            upper=cell.half_widths,
-        )
+        forward = ColumnLinearOperator(operators)
         structure = FeasibleStructure(
             forward,
             self._property_operator,
             self._prior,
-            noise=_product_set(forward.codomain, (noise, slabs)),
+            noise=_product_set(forward.codomain, parts),
             solver=self._solver,
         )
-        return FeasiblePropertySet.from_structure(
-            structure, (shifted, rows(cell.center))
-        )
+        return FeasiblePropertySet.from_structure(structure, tuple(observed))
 
     def outer_set(
         self, cell: Cell, remainder: RemainderBound, /
@@ -1688,21 +2432,7 @@ class NonlinearFeasiblePropertySet(Subset):
             ):
                 continue
             predicted = self._forward(model)
-            step = linearization.derivative(space.subtract(model, cell.center))
-            departure = data_space.subtract(
-                data_space.subtract(predicted, linearization.value), step
-            )
-            # Outside the claimed set by more than the rounding of the
-            # three terms the remainder is the difference of.
-            excess = data_space.norm(
-                data_space.subtract(departure, claimed.project(departure))
-            )
-            scale = max(
-                data_space.norm(predicted),
-                data_space.norm(linearization.value),
-                data_space.norm(step),
-            )
-            if excess > 1e-9 * scale:
+            if _departs(self._forward, linearization, claimed, model, predicted):
                 refuted = True
             fits = self._noise.contains(
                 data_space.subtract(self._data, predicted), rtol=0.0

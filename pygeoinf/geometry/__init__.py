@@ -33,7 +33,11 @@ from .feasible import (
     linear_certificate_operator,
 )
 from .nonlinear import (
+    BranchAndPrune,
+    BranchInclusionResult,
+    BranchSupportResult,
     Cell,
+    CellRecord,
     CellSupportResult,
     ComponentwiseRemainder,
     LocalSearch,
@@ -76,7 +80,11 @@ __all__ = [
     "linear_certificate_operator",
     "Ball",
     "BallSurface",
+    "BranchAndPrune",
+    "BranchInclusionResult",
+    "BranchSupportResult",
     "Cell",
+    "CellRecord",
     "CellSupportResult",
     "ComponentwiseRemainder",
     "NormRemainder",

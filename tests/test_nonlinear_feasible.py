@@ -16,13 +16,16 @@ from pygeoinf import (
     BackusGilbertParker,
     EuclideanSpace,
     ForwardProblem,
+    GaussianMeasure,
     LinearOperator,
+    NonlinearBackusGilbertParker,
     Operator,
 )
 from pygeoinf.algebra.operators import EvaluationError, LinearFunctional
 from pygeoinf.geometry.convex import Ball, HalfSpace, Polytope
 from pygeoinf.geometry.feasible import FeasiblePropertySet, FeasibleStructure
 from pygeoinf.geometry.nonlinear import (
+    BranchAndPrune,
     Cell,
     ComponentwiseRemainder,
     LocalSearch,
@@ -1158,3 +1161,286 @@ class TestACoverOfASetInSeveralParts:
         inner = max(result.inner for result in occupied)
         assert inner == pytest.approx(0.2335, abs=1e-3)
         assert 0.0 <= outer - inner <= 0.03
+
+
+# --------------------------------------------------------------------- #
+#                        The search over cells                           #
+# --------------------------------------------------------------------- #
+
+
+class TestBranchAndPrune:
+    DIRECTION = np.array([1.0])
+
+    @pytest.mark.parametrize(
+        "count, radius, sigma", [(1, 1.0, 0.02), (1, 1.0, 0.2), (3, 0.5, 0.05)]
+    )
+    def test_the_bracket_holds_the_known_support_and_closes(self, count, radius, sigma):
+        feasible = two_parameter_set(count, radius, sigma)
+        _, forward, weights, _ = two_parameter_problem(count)
+        truth = known_support(count, radius, sigma)
+        method = BranchAndPrune(attenuation_remainder(forward, weights), rtol=1e-2)
+        result = feasible.support_result(self.DIRECTION, via=method)
+        assert result.algorithm == "branch"
+        assert result.converged and result.certified and not result.refuted
+        assert feasible.is_feasible(result.extremal_model)
+        assert result.inner <= truth + 1e-6 <= result.value + 2e-6
+        # The tolerance is relative to the prior's width along the direction.
+        width = 2.0 * radius * np.linalg.norm(COST)
+        assert result.value - result.inner <= 1e-2 * width
+        assert {record.status for record in result.cells} <= {
+            "empty",
+            "pruned",
+            "split",
+            "live",
+        }
+        assert all(
+            record.value == float("-inf")
+            for record in result.cells
+            if record.status == "empty"
+        )
+        outer = [upper for _, upper, _ in result.history]
+        inner = [lower for _, _, lower in result.history]
+        assert all(b <= a + 1e-12 for a, b in zip(outer, outer[1:]))
+        assert all(b >= a for a, b in zip(inner, inner[1:]))
+
+    def test_the_root_cell_is_cut_along_independent_rows(self):
+        """Three path vectors in the plane: two of them span it."""
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        root = BranchAndPrune(attenuation_remainder(forward, weights)).root(feasible)
+        assert len(root.directions) == 2
+        norms = sorted(np.linalg.norm(weights, axis=1))
+        # As wide as the unit ball's reach along each chosen row.
+        assert all(
+            any(width == pytest.approx(norm) for norm in norms)
+            for width in root.half_widths
+        )
+
+    def test_a_budget_that_runs_out_still_brackets(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        truth = known_support(3, 1.0, 0.05)
+        method = BranchAndPrune(
+            attenuation_remainder(forward, weights), rtol=1e-6, max_cells=5
+        )
+        result = feasible.support_result(self.DIRECTION, via=method)
+        assert not result.converged
+        assert "budget" in result.message
+        assert len(result.cells) <= 5
+        assert result.inner <= truth + 1e-6 <= result.value + 2e-6
+        assert result.live
+
+    def test_a_linear_map_is_answered_by_one_cell(self, rng):
+        """Two routes: the search over cells, and the linear set."""
+        model, data_space = make_dense_metric_space(5), make_dense_metric_space(3)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(3, 5)), form="components"
+        )
+        property_operator = LinearOperator.from_matrix(
+            model, EuclideanSpace(2), rng.normal(size=(2, 5)), form="components"
+        )
+        truth = model.random(rng=rng)
+        data = forward(truth)
+        prior = Ball(model, radius=1.5 * model.norm(truth))
+        noise = Ball(data_space, radius=0.1 * data_space.norm(data))
+        linear = FeasiblePropertySet.from_structure(
+            FeasibleStructure(
+                forward, property_operator, prior, noise=noise, solver=None
+            ),
+            data,
+        )
+        nonlinear = NonlinearFeasiblePropertySet(
+            forward, property_operator, prior, data, noise=noise
+        )
+        method = BranchAndPrune(
+            NormRemainder(data_space, 0.0),
+            directions=[model.random(rng=rng) for _ in range(2)],
+        )
+        # A remainder that depends on no slab leaves the root cell without any.
+        assert not method.root(nonlinear).directions
+        direction = np.array([0.6, -0.8])
+        result = nonlinear.support_result(direction, via=method)
+        assert len(result.cells) == 1 and result.converged and not result.refuted
+        assert result.value == pytest.approx(linear.support(direction), rel=1e-5)
+        assert result.inner == pytest.approx(result.value, rel=1e-3)
+
+    def test_a_false_claim_is_refuted_by_the_model_it_misses(self):
+        """The control: no remainder allowed, so the search is the linearized set, and wrong."""
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        nothing = ComponentwiseRemainder(
+            forward.codomain,
+            list(weights),
+            lambda low, high: (np.zeros(3), np.zeros(3)),
+            certified=False,
+        )
+        result = feasible.support_result(self.DIRECTION, via=BranchAndPrune(nothing))
+        assert result.value < result.inner - 1e-2
+        assert result.refuted and not result.certified
+        assert "contradicts" in result.message
+
+    def test_directions_are_needed_from_somewhere(self):
+        with pytest.raises(ValueError, match="directions"):
+            BranchAndPrune(NormRemainder(EuclideanSpace(3), 1.0))
+
+    def setting(self):
+        _, feasible, _, evaluation, squares = TestASetInSeveralParts().setting()
+        rows = [evaluation.adjoint(e) for e in np.eye(7)]
+        curvature = np.array([0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 2.0])
+        remainder = ComponentwiseRemainder(
+            feasible.data_space, rows, lambda low, high: (curvature, curvature)
+        )
+        return feasible, remainder, squares
+
+    def test_the_search_finds_a_part_the_first_local_search_missed(self):
+        """Values and squares: a few splits reach the part that holds the support."""
+        feasible, remainder, squares = self.setting()
+        first = feasible.support_result(self.DIRECTION)
+        method = BranchAndPrune(remainder, max_cells=13)
+        # The root cell keeps a slab for each squared datum and none for a linear one.
+        assert len(method.root(feasible).directions) == 4
+        result = feasible.support_result(self.DIRECTION, via=method)
+        assert not result.converged and not result.refuted
+        assert result.inner > first.inner + 0.1
+        assert result.value >= result.inner
+        assert tuple(np.sign(squares(result.extremal_model))) == (-1, 1, -1, -1)
+
+    @pytest.mark.slow
+    def test_the_search_brackets_a_set_in_several_parts(self):
+        feasible, remainder, _ = self.setting()
+        result = feasible.support_result(
+            self.DIRECTION, via=BranchAndPrune(remainder, max_cells=200)
+        )
+        assert result.converged and result.certified and not result.refuted
+        assert result.inner == pytest.approx(0.2335, abs=1e-3)
+        assert 0.0 <= result.value - result.inner <= 5e-3
+
+
+class TestMembershipByCells:
+    """A value proved inside by a model, or outside by a cover that excludes it."""
+
+    def setting(self):
+        feasible = two_parameter_set(1, 1.0, 0.2)
+        _, forward, weights, _ = two_parameter_problem(1)
+        method = BranchAndPrune(attenuation_remainder(forward, weights))
+        return feasible, method, known_support(1, 1.0, 0.2)
+
+    def test_a_value_inside_is_proved_by_a_model(self):
+        feasible, method, truth = self.setting()
+        value = np.array([truth - 0.05])
+        result = feasible.inclusion_result(value, via=method)
+        assert result.converged and result.algorithm == "branch"
+        assert result.level <= feasible.level
+        assert feasible.is_feasible(result.fitting_model)
+        assert COST @ result.fitting_model == pytest.approx(value[0], abs=1e-13)
+        assert result.lower_bound == float("-inf")
+
+    @pytest.mark.parametrize("beyond", [0.02, 0.3])
+    def test_a_value_beyond_the_exact_support_is_proved_outside(self, beyond):
+        """Two routes: the closed form says no model has it, and so does the cover."""
+        feasible, method, truth = self.setting()
+        result = feasible.inclusion_result(np.array([truth + beyond]), via=method)
+        assert result.converged and result.certified
+        assert result.fitting_model is None
+        assert result.lower_bound == float("inf")
+        statuses = {record.status for record in result.cells}
+        assert statuses <= {"empty", "split"}
+
+    def test_a_budget_that_runs_out_decides_nothing(self):
+        feasible, _, truth = self.setting()
+        _, forward, weights, _ = two_parameter_problem(1)
+        method = BranchAndPrune(attenuation_remainder(forward, weights), max_cells=3)
+        result = feasible.inclusion_result(np.array([truth + 1e-3]), via=method)
+        assert not result.converged
+        assert result.fitting_model is None
+        assert result.lower_bound == float("-inf") and result.level == float("inf")
+        assert "budget" in result.message
+
+    def test_an_exclusion_carries_its_claim_s_standing(self):
+        feasible, _, truth = self.setting()
+        _, forward, weights, _ = two_parameter_problem(1)
+        estimated = ComponentwiseRemainder(
+            forward.codomain,
+            list(weights),
+            lambda low, high: (np.exp(-high), np.exp(-low)),
+            certified=False,
+        )
+        result = feasible.inclusion_result(
+            np.array([truth + 0.3]), via=BranchAndPrune(estimated)
+        )
+        assert result.lower_bound == float("inf") and not result.certified
+
+
+# --------------------------------------------------------------------- #
+#                            The estimator                               #
+# --------------------------------------------------------------------- #
+
+
+class TestTheEstimator:
+    def pieces(self):
+        model, forward, _, data = two_parameter_problem(3)
+        property_operator = LinearOperator.from_matrix(
+            model, EuclideanSpace(1), COST[None, :], form="components"
+        )
+        return model, forward, data, property_operator
+
+    def test_it_returns_the_set_the_geometry_layer_builds(self):
+        model, forward, data, property_operator = self.pieces()
+        noise = Ball(forward.codomain, radius=0.05)
+        estimator = NonlinearBackusGilbertParker(
+            ForwardProblem(forward, error=noise),
+            property_operator,
+            Ball(model, radius=1.0),
+        )
+        feasible = estimator(data)
+        assert isinstance(feasible, NonlinearFeasiblePropertySet)
+        assert estimator.noise is noise and feasible.noise is noise
+        direct = two_parameter_set(3, 1.0, 0.05).support_result(np.array([1.0]))
+        assert feasible.support_result(np.array([1.0])).inner == pytest.approx(
+            direct.inner, abs=1e-12
+        )
+
+    def test_an_error_measure_is_hardened_to_its_ambient_ball(self):
+        model, forward, _, property_operator = self.pieces()
+        error = GaussianMeasure.from_standard_deviation(forward.codomain, 0.02)
+        estimator = NonlinearBackusGilbertParker(
+            ForwardProblem(forward, error=error),
+            property_operator,
+            Ball(model, radius=1.0),
+            level=0.9,
+        )
+        assert isinstance(estimator.noise, Ball)
+        assert estimator.noise.radius == pytest.approx(
+            error.ambient_ball(level=0.9).radius
+        )
+
+    def test_a_problem_without_error_is_refused_by_name(self):
+        model, forward, _, property_operator = self.pieces()
+        with pytest.raises(ValueError, match="noise="):
+            NonlinearBackusGilbertParker(
+                ForwardProblem(forward), property_operator, Ball(model, radius=1.0)
+            )
+
+    def test_a_set_on_the_wrong_space_is_refused_at_construction(self):
+        model, forward, _, property_operator = self.pieces()
+        with pytest.raises(ValueError, match="wrong space"):
+            NonlinearBackusGilbertParker(
+                ForwardProblem(forward, error=Ball(forward.codomain, radius=0.05)),
+                property_operator,
+                Ball(forward.codomain, radius=1.0),
+            )
+
+    def test_a_further_property_is_the_composed_one(self):
+        model, forward, data, property_operator = self.pieces()
+        estimator = NonlinearBackusGilbertParker(
+            ForwardProblem(forward, error=Ball(forward.codomain, radius=0.05)),
+            property_operator,
+            Ball(model, radius=1.0),
+        )
+        doubled = estimator.push_forward(
+            LinearOperator.identity(estimator.property_space) * 2.0
+        )
+        direction = np.array([1.0])
+        assert doubled(data).support_result(direction).inner == pytest.approx(
+            2.0 * estimator(data).support_result(direction).inner, rel=1e-6
+        )
