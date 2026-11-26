@@ -185,3 +185,57 @@ def save(fig: Any, path: pathlib.Path, /, *, title: str) -> None:
     fig.savefig(path, dpi=130)
     plt.close(fig)
     print(f"figure written to {path}")
+
+
+def parameter_panels(
+    axes: Any,
+    names: Sequence[str],
+    truth: Any,
+    intervals: Sequence[tuple[str, Any, Any, Any, str]],
+    /,
+) -> None:
+    """One panel for each parameter: intervals side by side, against the truth.
+
+    Args:
+        axes: a panel for each parameter.
+        names: the parameters' names.
+        truth: their true values.
+        intervals: each a label, the center of every parameter's interval,
+            its lower end, its upper end, and a color.
+    """
+    places = np.linspace(-0.4, 0.4, len(intervals)) if len(intervals) > 1 else [0.0]
+    for k, (ax, name) in enumerate(zip(axes, names)):
+        for place, (label, center, low, high, color) in zip(places, intervals):
+            ax.errorbar(
+                place,
+                center[k],
+                yerr=[[center[k] - low[k]], [high[k] - center[k]]],
+                fmt="o",
+                ms=4,
+                color=color,
+                capsize=4,
+                label=label,
+            )
+        ax.axhline(truth[k], color="black", ls="--", lw=1.0, label="truth")
+        ax.set_xticks([])
+        ax.set_xlim(-1.0, 1.0)
+        ax.set_title(name, fontsize=10)
+    axes[0].legend(fontsize=7, loc="best", frameon=False)
+
+
+def log_normal_interval(
+    label: str, mean: Any, std: Any, color: str, /
+) -> tuple[str, Any, Any, Any, str]:
+    """A parameter's interval from the mean and standard deviation of its logarithm.
+
+    The center is the exponential of the mean and the ends those of the
+    mean less and plus two standard deviations.
+    """
+    mean, std = np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+    return (
+        label,
+        np.exp(mean),
+        np.exp(mean - 2.0 * std),
+        np.exp(mean + 2.0 * std),
+        color,
+    )

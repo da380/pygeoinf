@@ -28,6 +28,14 @@ integrator's arithmetic:
 
 The tangent and the adjoint are adjoint to each other to the integrator's
 tolerance. The sensitivities and their transpose are adjoint to rounding.
+The rule's Jacobians along the state can instead be read from a table,
+made once for each state and interpolated in time, which is cheaper and a
+little less exact; see :class:`Solver`.
+
+The second derivative has the same pair one order up: a **second tangent**
+forwards, and a **second adjoint** that carries two multipliers backwards
+together. They give the curvature a Newton method or a Gaussian
+approximation needs, at the cost of a few integrations for each direction.
 """
 
 from __future__ import annotations
@@ -122,6 +130,7 @@ class Solver:
         rtol: float = 1e-9,
         atol: float = 1e-11,
         max_step: float | None = None,
+        table: int = 0,
     ) -> None:
         """
         Args:
@@ -138,6 +147,15 @@ class Solver:
                 at once meets its tolerance erratically; a cap near the
                 nodes' spacing keeps the solution a smooth function of
                 the forcing. None for no cap.
+            table: how many times between each pair of nodes the rule's
+                Jacobians along a state are tabulated at, for the
+                linearized equations to interpolate; zero to take them
+                from the rule at every time asked for. A table makes each
+                linearized integration about three times cheaper, and
+                leaves the tangent and the adjoint agreeing to about
+                ``1e-6`` where the rule itself gives ``1e-8``: the
+                interpolant is smooth to second order only, which an
+                integrator of high order pays for.
         """
         self.system = system
         self.initial_state = np.asarray(initial_state, dtype=float)
@@ -145,8 +163,17 @@ class Solver:
         self._options = {"method": method, "rtol": rtol, "atol": atol}
         if max_step is not None:
             self._options["max_step"] = float(max_step)
+        self._table = int(table)
+        self._along: tuple[Any, np.ndarray, Callable] | None = None
         # How many integrations of each kind were run.
-        self.solves = {"state": 0, "tangent": 0, "adjoint": 0, "sensitivity": 0}
+        self.solves = {
+            "state": 0,
+            "tangent": 0,
+            "adjoint": 0,
+            "sensitivity": 0,
+            "second tangent": 0,
+            "second adjoint": 0,
+        }
 
     def _integrate(self, kind: str, rate: Callable, start: np.ndarray, /) -> Any:
         self.solves[kind] += 1
@@ -190,6 +217,45 @@ class Solver:
             "state", lambda t, x: system.rate(x, p) + forcing(t), self.initial_state
         )
 
+    def jacobians_along(
+        self, state: Callable[[Any], np.ndarray], p: np.ndarray, /
+    ) -> Callable[[float], tuple[np.ndarray, np.ndarray]]:
+        """The rule's two Jacobians along a state, as functions of time.
+
+        Every linearized equation about one state needs ``f_x`` and ``f_p``
+        along it, at whatever times its integrator asks for. Without a
+        table they come from the rule each time. With one they are taken
+        once, at the table's times between each pair of the grid's nodes,
+        in one call of the rule, and interpolated from there by a cubic
+        spline; the table for the last state asked about is kept.
+
+        Args:
+            state: the state.
+            p: the parameters.
+
+        Returns:
+            A function of a time giving ``df/dx`` and ``df/dp`` there.
+        """
+        p = np.asarray(p, dtype=float)
+        if not self._table:
+            return lambda t: self.system.jacobians(state(t), p)
+        kept = self._along
+        if kept is not None and kept[0] is state and np.array_equal(kept[1], p):
+            return kept[2]
+        system, n = self.system, self.system.state_dim
+        nodes = self.grid.nodes
+        inside = np.arange(self._table)[:, None] / self._table
+        times = (nodes[:-1] + inside * np.diff(nodes)).T.ravel()
+        times = np.concatenate([times, nodes[-1:]])
+        table = CubicSpline(times, system.jacobians_at_many(state(times), p), axis=0)
+
+        def along(t: float) -> tuple[np.ndarray, np.ndarray]:
+            both = table(t)
+            return both[:, :n], both[:, n:]
+
+        self._along = (state, p.copy(), along)
+        return along
+
     def sample(self, function: Callable[[Any], np.ndarray], /) -> np.ndarray:
         """A function of time at the grid's nodes, shape ``(components, nodes)``."""
         return np.asarray(function(self.grid.nodes))
@@ -205,9 +271,10 @@ class Solver:
         """The first-order change of the state under a change of parameters and forcing."""
         system, forcing = self.system, self._forcing(dw)
         p, dp = np.asarray(p, dtype=float), np.asarray(dp, dtype=float)
+        along = self.jacobians_along(state, p)
 
         def rate(t: float, dx: np.ndarray) -> np.ndarray:
-            in_state, in_parameters = system.jacobians(state(t), p)
+            in_state, in_parameters = along(t)
             return in_state @ dx + in_parameters @ dp + forcing(t)
 
         return self._integrate("tangent", rate, np.zeros(system.state_dim))
@@ -223,9 +290,10 @@ class Solver:
         system = self.system
         n, m = system.state_dim, system.parameter_dim
         p = np.asarray(p, dtype=float)
+        along = self.jacobians_along(state, p)
 
         def rate(t: float, flat: np.ndarray) -> np.ndarray:
-            in_state, in_parameters = system.jacobians(state(t), p)
+            in_state, in_parameters = along(t)
             return (in_state @ flat.reshape(n, m) + in_parameters).ravel()
 
         solution = self._integrate("sensitivity", rate, np.zeros(n * m))
@@ -257,50 +325,199 @@ class Solver:
             integral of ``G^T lam`` against each node's interpolating
             function, or None.
         """
-        system, grid = self.system, self.grid
+        system = self.system
         n, m = system.state_dim, system.parameter_dim
         p, y = np.asarray(p, dtype=float), np.asarray(y, dtype=float)
 
+        along = self.jacobians_along(state, p)
+
         def rate(t: float, both: np.ndarray) -> np.ndarray:
-            in_state, in_parameters = system.jacobians(state(t), p)
+            in_state, in_parameters = along(t)
             multiplier = both[:n]
             return np.concatenate(
                 [-in_state.T @ multiplier, -in_parameters.T @ multiplier]
             )
 
-        # Backwards from the last node, stopping where there is a weight to
-        # take up, where the multiplier steps. A weight that is rounding
-        # beside the largest is no weight.
+        end, between = self._backward("adjoint", rate, n + m, y, slice(0, n), forcing)
+        if not forcing:
+            return end[n:], None
+        return end[n:], self._against_nodes(between)
+
+    def _backward(
+        self,
+        kind: str,
+        rate: Callable,
+        size: int,
+        y: np.ndarray,
+        watched: slice,
+        sample: bool,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """A backward integration from zero whose first components step up by a table's columns.
+
+        Args:
+            kind: which tally the integration is counted in.
+            rate: the right-hand side.
+            size: the number of unknowns.
+            y: the weights, shape ``(state_dim, nodes)``; the first
+                ``state_dim`` unknowns step up by a column at its node.
+            watched: the unknowns wanted along the way.
+            sample: whether they are wanted, at the times of the grid's
+                quadrature. Without it only the nodes with a weight are
+                stopped at.
+
+        Returns:
+            The unknowns at the first time, and the watched ones at the
+            quadrature's times, or None.
+        """
+        grid, n = self.grid, self.system.state_dim
+        # A weight that is rounding beside the largest is no weight.
         floor = NEGLIGIBLE * np.abs(y).max(initial=0.0)
         stops = [j for j in range(grid.nodes.size) if np.any(np.abs(y[:, j]) > floor)]
         stops = sorted(set(stops) | {0, grid.nodes.size - 1}, reverse=True)
-        both = np.zeros(n + m)
-        if forcing:
-            times, scale, cardinal = grid.quadrature
-            between = np.zeros((n, times.size))
-        self.solves["adjoint"] += 1
+        unknowns = np.zeros(size)
+        between = None
+        if sample:
+            times = grid.quadrature[0]
+            between = np.zeros((watched.stop - watched.start, times.size))
+        self.solves[kind] += 1
         step = None
         for upper, lower in zip(stops, stops[1:] + [None]):
-            both[:n] += y[:, upper]
+            unknowns[:n] += y[:, upper]
             if lower is None:
                 break
             span = (grid.nodes[upper], grid.nodes[lower])
             options = dict(self._options)
             if step is not None:
                 options["first_step"] = min(step, abs(span[1] - span[0]))
-            result = solve_ivp(rate, span, both, dense_output=forcing, **options)
+            result = solve_ivp(rate, span, unknowns, dense_output=sample, **options)
             if not result.success:
-                raise RuntimeError(f"The adjoint integration failed: {result.message}")
+                raise RuntimeError(f"The {kind} integration failed: {result.message}")
             if result.t.size > 1:
                 step = abs(result.t[-1] - result.t[-2])
-            if forcing:
+            if sample:
                 # Three of the rule's times lie between each pair of nodes.
                 inside = slice(3 * lower, 3 * upper)
-                between[:, inside] = result.sol(times[inside])[:n]
-            both = result.y[:, -1].copy()
+                between[:, inside] = result.sol(times[inside])[watched]
+            unknowns = result.y[:, -1].copy()
+        return unknowns, between
+
+    def _against_nodes(self, multiplier: np.ndarray, /) -> np.ndarray:
+        """The integral of ``G^T lam`` against each node's interpolating function."""
+        _, scale, cardinal = self.grid.quadrature
+        return (scale * (self.system.forcing_matrix.T @ multiplier)) @ cardinal
+
+    def second_tangent(
+        self,
+        state: Callable[[Any], np.ndarray],
+        first: Callable[[Any], np.ndarray],
+        p: np.ndarray,
+        dp: np.ndarray,
+        other_dp: np.ndarray,
+        other_dw: np.ndarray | None = None,
+        /,
+    ) -> Callable[[Any], np.ndarray]:
+        """The second-order change of the state under two changes of parameters and forcing.
+
+        The state's second derivative along ``(dp, dw)`` and ``(other_dp,
+        other_dw)``. With ``xi`` the tangent of the first and ``zeta`` that
+        of the second, it solves
+        ``eta' = f_x eta + D f_x[xi, dp] zeta + D f_p[xi, dp] other_dp``
+        from zero; the forcing enters the equation linearly and so has no
+        term of its own.
+
+        Args:
+            state: the state.
+            first: the tangent of the first change, from :meth:`tangent`.
+            p: the parameters.
+            dp: the first change's part in the parameters.
+            other_dp: the second change's part in the parameters.
+            other_dw: its part in the forcing, or None.
+
+        Returns:
+            The second-order change as a function of time.
+        """
+        system, forcing = self.system, self._forcing(other_dw)
+        n = system.state_dim
+        p, dp = np.asarray(p, dtype=float), np.asarray(dp, dtype=float)
+        other_dp = np.asarray(other_dp, dtype=float)
+
+        along = self.jacobians_along(state, p)
+
+        def rate(t: float, both: np.ndarray) -> np.ndarray:
+            in_state, in_parameters = along(t)
+            bent_state, bent_parameters = system.second_directional(
+                state(t), p, first(t), dp
+            )
+            zeta, eta = both[:n], both[n:]
+            return np.concatenate(
+                [
+                    in_state @ zeta + in_parameters @ other_dp + forcing(t),
+                    in_state @ eta + bent_state @ zeta + bent_parameters @ other_dp,
+                ]
+            )
+
+        solution = self._integrate("second tangent", rate, np.zeros(2 * n))
+        return lambda t: solution(t)[n:]
+
+    def second_adjoint(
+        self,
+        state: Callable[[Any], np.ndarray],
+        first: Callable[[Any], np.ndarray],
+        p: np.ndarray,
+        dp: np.ndarray,
+        y: np.ndarray,
+        /,
+        *,
+        forcing: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """What pairs with a second change as the second tangent pairs with a table of weights.
+
+        Two multipliers go backwards together. The first is the adjoint's
+        own, stepping up by ``y`` at the nodes; the second solves
+        ``mu' = -f_x^T mu - D f_x[xi, dp]^T lam`` and takes the place the
+        first has in :meth:`adjoint`, with ``D f_p[xi, dp]^T lam`` added to
+        what is integrated for the parameters.
+
+        Args:
+            state: the state.
+            first: the tangent of the first change, from :meth:`tangent`.
+            p: the parameters.
+            dp: the first change's part in the parameters.
+            y: the weights, shape ``(state_dim, nodes)``.
+            forcing: whether the forcing's part is wanted.
+
+        Returns:
+            The parameters' part and the forcing's part, or None, as
+            :meth:`adjoint` returns them.
+        """
+        system = self.system
+        n, m = system.state_dim, system.parameter_dim
+        p, dp = np.asarray(p, dtype=float), np.asarray(dp, dtype=float)
+        y = np.asarray(y, dtype=float)
+
+        along = self.jacobians_along(state, p)
+
+        def rate(t: float, all_three: np.ndarray) -> np.ndarray:
+            in_state, in_parameters = along(t)
+            bent_state, bent_parameters = system.second_directional(
+                state(t), p, first(t), dp
+            )
+            lam, mu = all_three[:n], all_three[n : 2 * n]
+            return np.concatenate(
+                [
+                    -in_state.T @ lam,
+                    -in_state.T @ mu - bent_state.T @ lam,
+                    -bent_parameters.T @ lam - in_parameters.T @ mu,
+                ]
+            )
+
+        end, between = self._backward(
+            "second adjoint", rate, 2 * n + m, y, slice(n, 2 * n), forcing
+        )
         if not forcing:
-            return both[n:], None
-        return both[n:], (scale * (system.forcing_matrix.T @ between)) @ cardinal
+            return end[2 * n :], None
+        return end[2 * n :], self._against_nodes(between)
 
 
 def solution_operator(
@@ -353,9 +570,23 @@ def solution_operator(
             return np.asarray(model, dtype=float), None
         return np.asarray(model[0], dtype=float), np.asarray(model[1], dtype=float)
 
-    def linearize(model: Any) -> Linearization:
+    held: dict[str, Any] = {}
+
+    def state_at(model: Any) -> tuple[np.ndarray, np.ndarray | None, Any]:
+        """The state at a model, kept from the last call where the model is the same."""
         p, w = split(model)
-        state = solver.solve(p, w)
+        same = (
+            held
+            and np.array_equal(held["p"], p)
+            and (w is None or np.array_equal(held["w"], w))
+        )
+        if not same:
+            held.update(p=p.copy(), w=None if w is None else w.copy())
+            held["state"] = solver.solve(p, w)
+        return p, w, held["state"]
+
+    def linearize(model: Any) -> Linearization:
+        p, w, state = state_at(model)
         value = solver.sample(state)
         if route == "sensitivity":
             jacobian = solver.sensitivities(state, p)
@@ -384,7 +615,33 @@ def solution_operator(
         return Linearization(model, value, derivative)
 
     def value(model: Any) -> np.ndarray:
-        p, w = split(model)
-        return solver.sample(solver.solve(p, w))
+        return solver.sample(state_at(model)[2])
 
-    return Operator.from_callables(domain, codomain, value, linearize=linearize)
+    def second_derivative(model: Any, change: Any) -> LinearOperator:
+        p, _, state = state_at(model)
+        dp, dw = split(change)
+        first = solver.tangent(state, p, dp, dw)
+
+        def apply(other: Any) -> np.ndarray:
+            other_dp, other_dw = split(other)
+            return solver.sample(
+                solver.second_tangent(state, first, p, dp, other_dp, other_dw)
+            )
+
+        def apply_adjoint(y: np.ndarray) -> Any:
+            in_parameters, in_forcing = solver.second_adjoint(
+                state, first, p, dp, np.asarray(y), forcing=forced
+            )
+            return (in_parameters, in_forcing) if forced else in_parameters
+
+        return LinearOperator.from_callables(
+            domain, codomain, apply, adjoint=apply_adjoint
+        )
+
+    return Operator.from_callables(
+        domain,
+        codomain,
+        value,
+        linearize=linearize,
+        second_derivative=second_derivative,
+    )

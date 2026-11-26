@@ -70,3 +70,16 @@ def energy(x: np.ndarray, p: np.ndarray, /) -> np.ndarray:
     potential = (m1 + m2) * GRAVITY * l1 * (1.0 - np.cos(a1))
     potential = potential + m2 * GRAVITY * l2 * (1.0 - np.cos(a2))
     return kinetic + potential
+
+
+def lower_bob(x: np.ndarray, p: np.ndarray, /) -> np.ndarray:
+    """Where the lower mass is: its horizontal and vertical distance from the pivot.
+
+    A function of both angles and both lengths, which is what a camera
+    that follows the lower mass reports.
+    """
+    a1, a2 = x[0], x[1]
+    l1, l2 = p[2], p[3]
+    return np.stack(
+        [l1 * np.sin(a1) + l2 * np.sin(a2), -l1 * np.cos(a1) - l2 * np.cos(a2)]
+    )

@@ -25,6 +25,7 @@ from pygeoinf.probability import (
 from pygeoinf.testing import (
     check_coordinates,
     check_derivative,
+    check_second_derivative,
     check_measure,
     check_operator,
     check_space,
@@ -799,3 +800,52 @@ class TestAnEmptyBlockOperatorIsRefusedByName:
     def test_no_blocks(self, build):
         with pytest.raises(ValueError, match="at least one"):
             build([])
+
+
+class TestTheSecondDerivativeOfABlockDiagonal:
+    """Each block curves in its own summand alone."""
+
+    def curved(self, space):
+        def diagonal(values):
+            return LinearOperator.from_matrix(
+                space, space, np.diag(values), form="components"
+            )
+
+        return Operator.from_callables(
+            space,
+            space,
+            np.exp,
+            derivative=lambda x: diagonal(np.exp(x)),
+            second_derivative=lambda x, dx: diagonal(np.exp(x) * dx),
+        )
+
+    def test_it_is_the_blocks_own_side_by_side(self, rng):
+        X, Y = EuclideanSpace(3), EuclideanSpace(2)
+        linear = LinearOperator.from_matrix(
+            Y, Y, rng.normal(size=(2, 2)), form="components"
+        )
+        operator = BlockDiagonalOperator([self.curved(X), linear])
+        assert operator.has_second_derivative
+        point = operator.domain.random(rng=rng)
+        check_derivative(operator, point, rng=rng)
+        check_second_derivative(operator, point, rng=rng)
+        # The linear block contributes nothing.
+        change, other = operator.domain.random(rng=rng), operator.domain.random(rng=rng)
+        bent = operator.second_derivative(point, change)(other)
+        assert np.allclose(bent[0], np.exp(point[0]) * change[0] * other[0])
+        assert np.allclose(bent[1], 0.0)
+
+    def test_a_block_without_one_leaves_the_whole_without(self):
+        X = EuclideanSpace(3)
+        flat = Operator.from_callables(X, X, np.abs)
+        assert not BlockDiagonalOperator([self.curved(X), flat]).has_second_derivative
+
+    def test_the_linear_one_s_is_zero(self, rng):
+        X = EuclideanSpace(3)
+        identity = LinearOperator.identity(X)
+        operator = BlockDiagonalOperator([identity, identity])
+        assert type(operator) is BlockDiagonalLinearOperator
+        assert operator.has_second_derivative
+        point = operator.domain.random(rng=rng)
+        bent = operator.second_derivative(point, point)(point)
+        assert operator.codomain.norm(bent) == 0.0

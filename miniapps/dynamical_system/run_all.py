@@ -9,7 +9,10 @@ from __future__ import annotations
 import pathlib
 import time
 
+import bayesian
+import forcing
 import ladder
+import point
 from src.common import parse
 from src.problem import FULL, QUICK, Scale, build
 
@@ -19,7 +22,12 @@ def run_all(scale: Scale, /, *, outdir: pathlib.Path) -> dict:
     started = time.perf_counter()
     problem = build(scale)
     results = {"problem": problem}
-    for part, module in (("a", ladder),):
+    for part, module in (
+        ("a", ladder),
+        ("b", point),
+        ("c", bayesian),
+        ("d", forcing),
+    ):
         results[part] = module.run(scale, outdir=outdir, problem=problem)
     print(f"\ntotal {time.perf_counter() - started:.1f} s; figures in {outdir}")
     return results

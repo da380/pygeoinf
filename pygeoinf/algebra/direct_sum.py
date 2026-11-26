@@ -933,12 +933,28 @@ class BlockDiagonalOperator(Operator):
         """True only when every block carries a derivative."""
         return all(operator.has_derivative for operator in self._operators)
 
+    @property
+    def has_second_derivative(self) -> bool:
+        """True only when every block carries a second derivative."""
+        return all(operator.has_second_derivative for operator in self._operators)
+
     def _value(self, x: tuple) -> tuple:
         return tuple(operator(xi) for operator, xi in zip(self._operators, x))
 
     def _derivative(self, x: tuple) -> LinearOperator:
         return BlockDiagonalLinearOperator(
             [operator.derivative(xi) for operator, xi in zip(self._operators, x)],
+            domain=self.domain,
+            codomain=self.codomain,
+        )
+
+    def _second_derivative(self, x: tuple, dx: tuple) -> LinearOperator:
+        # Each block curves in its own summand alone.
+        return BlockDiagonalLinearOperator(
+            [
+                operator.second_derivative(xi, dxi)
+                for operator, xi, dxi in zip(self._operators, x, dx)
+            ],
             domain=self.domain,
             codomain=self.codomain,
         )
@@ -967,6 +983,8 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
 
     _derivative = LinearOperator._derivative
     _linearize = LinearOperator._linearize
+    _second_derivative = LinearOperator._second_derivative
+    has_second_derivative = LinearOperator.has_second_derivative
 
     def __init__(
         self,

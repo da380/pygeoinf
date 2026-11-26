@@ -101,6 +101,28 @@ class DynamicalSystem:
         slopes = np.imag(self._rule(states, parameters)) / STEP
         return slopes[:, :n], slopes[:, n:]
 
+    def jacobians_at_many(self, x: np.ndarray, p: np.ndarray, /) -> np.ndarray:
+        """Both Jacobians at several states at once, in one call of the rule.
+
+        Args:
+            x: the states, shape ``(state_dim, count)``.
+            p: the parameters.
+
+        Returns:
+            Shape ``(count, state_dim, state_dim + parameter_dim)``: for
+            each state, ``df/dx`` and then ``df/dp``, side by side.
+        """
+        n, m = self.state_dim, self.parameter_dim
+        count = np.shape(x)[1]
+        states = np.repeat(np.asarray(x, dtype=complex)[:, :, None], n + m, axis=2)
+        parameters = np.empty((m, count, n + m), dtype=complex)
+        parameters[:] = np.asarray(p, dtype=float)[:, None, None]
+        states[np.arange(n), :, np.arange(n)] += 1j * STEP
+        parameters[np.arange(m), :, n + np.arange(m)] += 1j * STEP
+        self.calls += 1
+        slopes = np.imag(self._rule(states, parameters)) / STEP
+        return slopes.transpose(1, 0, 2)
+
     def second_directional(
         self, x: np.ndarray, p: np.ndarray, dx: np.ndarray, dp: np.ndarray, /
     ) -> tuple[np.ndarray, np.ndarray]:

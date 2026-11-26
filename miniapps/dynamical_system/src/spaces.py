@@ -26,14 +26,9 @@ spaces do; a table is continued there by its end values.
 
 from __future__ import annotations
 
-from typing import Sequence
-
 import numpy as np
 
 from pygeoinf import EuclideanSpace, LinearOperator, interval
-from pygeoinf.algebra.direct_sum import ColumnLinearOperator
-from pygeoinf.algebra.operators import LinearFunctional
-from pygeoinf.algebra.tensor_product import TensorProduct
 
 from .trajectory import TimeGrid
 
@@ -91,34 +86,3 @@ def to_table(space: interval.Sobolev, /) -> LinearOperator:
     return LinearOperator.from_matrix(
         space, EuclideanSpace(values.shape[0]), values, form="components"
     )
-
-
-def observation_operator(
-    trajectory: TensorProduct,
-    observed: Sequence[tuple[int, Sequence[float]]],
-    /,
-) -> LinearOperator:
-    """The values of chosen components of a trajectory at chosen times.
-
-    Args:
-        trajectory: the space of trajectories, the tensor product of the
-            state's components with the functions of time.
-        observed: for each record, the index of the component it is of and
-            the times it is read at. A component may be read by several
-            records, or by none.
-
-    Returns:
-        The operator from a trajectory to its records, a vector of the
-        direct sum of one Euclidean space for each.
-    """
-    components, space = trajectory.factors
-    readers = []
-    for index, times in observed:
-        select = LinearFunctional.from_derivative_components(
-            components, np.eye(components.dim)[index]
-        )
-        readers.append(
-            space.point_evaluation_operator(list(times))
-            @ trajectory.contraction(select, axis=0)
-        )
-    return ColumnLinearOperator(readers)

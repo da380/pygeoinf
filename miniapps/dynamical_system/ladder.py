@@ -14,6 +14,9 @@ checks each, and then the whole:
   transpose is exact;
 * the same with an unknown forcing, an argument with hundreds of
   components where the parameters have four;
+* the second derivative against differences of the first, and its adjoint
+  against it, which is what a Newton method and a Gaussian approximation
+  take their curvature from;
 * how fast the trajectory's sensitivity to the parameters grows with time,
   from the release the data come from and from a livelier one. It is this
   growth that decides how long a record an inversion can use.
@@ -28,9 +31,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from pygeoinf import GaussianMeasure
-from pygeoinf.testing import check_derivative, check_operator
+from pygeoinf.testing import (
+    check_derivative,
+    check_operator,
+    check_second_derivative,
+)
 
 from src.common import parse, part_rng, save
+from src.pendulum import lower_bob
 from src.problem import FULL, QUICK, Problem, Scale, build
 from src.spaces import from_table, to_table
 
@@ -100,8 +108,9 @@ def ladder(
         "table to function": check_operator(from_table(space), rng=rng),
         "function to table": check_operator(to_table(space), rng=rng),
         "lift": check_operator(problem.lift, rng=rng),
-        "observation": check_operator(problem.observe, rng=rng),
     }
+    if problem.observe is not None:
+        exact["observation"] = check_operator(problem.observe, rng=rng)
     print("operators that are exact, the worst defect of each:")
     for name, report in exact.items():
         print(f"  {name:20s} {report.worst:.1e}")
@@ -161,6 +170,31 @@ def ladder(
         f"derivative {adjoint.defects[ADJOINT]:.1e}, a gradient in {seconds:.2f} s"
     )
 
+    print("the second derivative, against differences of the first, and its adjoint:")
+    curvature = {}
+    for name, operator, where, measure in (
+        ("parameters alone", problem.forward_by_adjoint, truth, None),
+        ("with a forcing", problem.forced_forward, point, prior),
+    ):
+        bend = check_second_derivative(
+            operator, where, rng=rng, measure=measure, rtol=1e-2
+        )
+        change = (
+            operator.domain.random(rng=rng)
+            if measure is None
+            else measure.sample(rng=rng)
+        )
+        t0 = time.perf_counter()
+        bent = operator.second_derivative(where, change)
+        bent.adjoint(problem.data)
+        seconds = time.perf_counter() - t0
+        adjoint = check_operator(bent, rng=rng, measure=measure, trials=2, rtol=1e-4)
+        curvature[name] = (bend.worst, adjoint.defects[ADJOINT], seconds)
+        print(
+            f"  {name:17s} against differences {bend.worst:.1e}, adjoint "
+            f"{adjoint.defects[ADJOINT]:.1e}, one direction's curvature in {seconds:.2f} s"
+        )
+
     growth = sensitivity_growth(problem)
     print(
         "the angles' sensitivity to the parameters, its size at the end over its size at one second:"
@@ -174,15 +208,28 @@ def ladder(
     figure, axes = plt.subplots(1, 2, figsize=(11.0, 3.8), layout="constrained")
     state = problem.solver.solve(np.array(scale.true_parameters))
     fine = np.linspace(0.0, scale.duration, 800)
-    for index, color in zip(scale.observed, ("C0", "C1")):
-        name = problem.system.state_names[index]
-        axes[0].plot(fine, state(fine)[index], color=color, lw=1.2, label=name)
-    for record, (index, times) in enumerate(zip(scale.observed, problem.times)):
-        axes[0].plot(
-            times, problem.data[record], "o", ms=3.5, color=("C0", "C1")[record]
-        )
+    if scale.instrument == "bob":
+        # The position of the lower mass, its two coordinates against time.
+        position = lower_bob(state(fine), np.array(scale.true_parameters)[:, None])
+        for row, (name, color) in enumerate(zip(("across", "down"), ("C0", "C1"))):
+            axes[0].plot(fine, position[row], color=color, lw=1.2, label=name)
+            axes[0].plot(problem.times[0], problem.data[row], "o", ms=3.5, color=color)
+        axes[0].set_ylabel("position of the lower mass, m")
+    else:
+        # A reading of a window's mean is drawn at the window's middle.
+        shift = 0.5 * scale.window if scale.instrument == "averages" else 0.0
+        for record, (index, color) in enumerate(zip(scale.observed, ("C0", "C1"))):
+            name = problem.system.state_names[index]
+            axes[0].plot(fine, state(fine)[index], color=color, lw=1.2, label=name)
+            axes[0].plot(
+                problem.times[record] + shift,
+                problem.data[record],
+                "o",
+                ms=3.5,
+                color=color,
+            )
+        axes[0].set_ylabel("angle, rad" if max(scale.observed) < 2 else "state")
     axes[0].set_xlabel("time, s")
-    axes[0].set_ylabel("angle, rad")
     axes[0].set_title("The motion and its readings", fontsize=10)
     axes[0].legend(fontsize=8, frameon=False)
     for (label, sizes), color in zip(growth.items(), ("C0", "C3")):
@@ -210,6 +257,7 @@ def ladder(
         "routes": routes,
         "agreement": agreement,
         "forced": forced,
+        "curvature": curvature,
         "growth": {
             label: float(sizes[-1] / sizes[one]) for label, sizes in growth.items()
         },
