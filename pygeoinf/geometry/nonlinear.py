@@ -28,14 +28,17 @@ the cell lie between two feasible sets of the *linearized* problem: the one
 whose noise set is grown by ``Z``, which contains them, and the one whose
 noise set is shrunk by ``Z``, which they contain. Both are convex sets with
 every probe of the linear theory. The claim is the caller's, certified or
-estimated, and every model evaluated in a cell tests it.
+estimated, and every model evaluated in a cell tests it. An estimate that a
+model contradicts is enlarged to hold that model and the bound found again;
+a claim that cannot be enlarged is reported refuted.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import copy
 import heapq
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Sequence
 
 import numpy as np
@@ -383,6 +386,24 @@ class RemainderBound(ABC):
         """
         return None
 
+    def including(self, model: Any, /) -> "RemainderBound | None":
+        """This claim enlarged to hold a model's remainder, where it can be.
+
+        What repairs a claim a checked model has contradicted: the bound
+        returned claims, for every cell that holds the model, a set that
+        holds the model's remainder there. A proved bound has nothing to
+        learn from a model, and a model that contradicts one shows an
+        error in the proof; so does an estimate with no means of taking a
+        model in. Both return None, which is the default.
+
+        Args:
+            model: a model of the forward operator's domain.
+
+        Returns:
+            The enlarged claim, or None where this one cannot be enlarged.
+        """
+        return None
+
     @abstractmethod
     def remainder_set(self, cell: Cell, /) -> ConvexSet:
         """A convex set of the data space claimed to hold the remainder over the cell.
@@ -629,6 +650,12 @@ class SampledRemainder(RemainderBound):
     The same perturbations and the same points of the slabs are used for
     every cell, so the estimate is a fixed function of the cell, and two
     cells can be compared by it.
+
+    The models are drawn at random, and a model found by optimization is
+    not: it sits where the operator curves most in the direction that
+    serves it, and may have a remainder no draw came near. :meth:`including`
+    takes such a model in. Every cell that holds it is then sampled at it
+    as well, so the estimate stays a fixed function of the cell.
     """
 
     def __init__(
@@ -685,6 +712,28 @@ class SampledRemainder(RemainderBound):
             None if across is None else [across() for _ in range(self._samples)]
         )
         self._patterns: dict[int, np.ndarray] = {}
+        self._kept: tuple[tuple[Any, Any], ...] = ()
+
+    @property
+    def kept(self) -> tuple[Any, ...]:
+        """The models taken in by :meth:`including`, in the order they were given."""
+        return tuple(model for model, _ in self._kept)
+
+    def including(self, model: Any, /) -> "SampledRemainder":
+        """This estimate with one more model that every cell holding it is sampled at.
+
+        The points of the slabs and the perturbations across them are
+        shared with this estimate, which is left as it was.
+
+        Args:
+            model: a model the forward operator evaluates.
+
+        Returns:
+            The estimate with the model added to those it keeps.
+        """
+        other = copy.copy(self)
+        other._kept = self._kept + ((model, self._forward(model)),)
+        return other
 
     def _slab_points(self, count: int) -> np.ndarray:
         """Where along the slabs to sample, as multiples of the half-widths; fixed per slab count."""
@@ -704,6 +753,9 @@ class SampledRemainder(RemainderBound):
 
     def remainder_set(self, cell: Cell, /) -> ConvexSet:
         """The widened box, or ball, of the remainders at the sampled models.
+
+        The sampled models are those of the slabs' points and, of the
+        models taken in by :meth:`including`, the ones the cell holds.
 
         A model the forward operator refuses, by raising
         :class:`~pygeoinf.algebra.operators.EvaluationError`, is passed
@@ -754,6 +806,15 @@ class SampledRemainder(RemainderBound):
                 # Where the operator cannot evaluate there is no model to
                 # fit the data, and nothing for the remainder to bound.
                 continue
+            coefficients.append(data_space.to_components(departure))
+            sizes.append(float(data_space.norm(departure)))
+        for model, predicted in self._kept:
+            if not cell.contains(model):
+                continue
+            step = linearization.derivative(space.subtract(model, cell.center))
+            departure = data_space.subtract(
+                data_space.subtract(predicted, linearization.value), step
+            )
             coefficients.append(data_space.to_components(departure))
             sizes.append(float(data_space.norm(departure)))
         if not coefficients:
@@ -894,12 +955,20 @@ class CellSupportResult(SupportResult):
     refuted: bool = False
     """Whether a model evaluated in the cell had a remainder outside the
     claimed set. The claim is then false and ``value`` bounds nothing."""
+    repairs: int = 0
+    """How many times the remainder claim was enlarged to hold checked
+    models that contradicted it, and the bound solved again. A repaired
+    claim is contradicted by no model that was checked; it is an estimate
+    still."""
+    remainder: RemainderBound | None = None
+    """The remainder claim ``value`` rests on: the one given, or that one
+    with the models that contradicted it taken in."""
 
     def __repr__(self) -> str:
         return (
             f"CellSupportResult(value={self.value:.6g}, inner={self.inner:.6g}, "
             f"certified={self.certified}, refuted={self.refuted}, "
-            f"converged={self.converged})"
+            f"repairs={self.repairs}, converged={self.converged})"
         )
 
 
@@ -927,6 +996,21 @@ def _departs(
         data_space.norm(step),
     )
     return bool(excess > 1e-9 * scale)
+
+
+def _enlarged(
+    remainder: RemainderBound, models: Sequence[Any]
+) -> RemainderBound | None:
+    """A remainder claim with some models taken in, or None where it cannot take them."""
+    taken: list[Any] = []
+    for model in models:
+        if any(model is other for other in taken):
+            continue
+        remainder = remainder.including(model)
+        if remainder is None:
+            return None
+        taken.append(model)
+    return remainder
 
 
 def _independent(space: HilbertSpace, vectors: Sequence[Any]) -> list[Any]:
@@ -1004,7 +1088,8 @@ class BranchSupportResult(CellSupportResult):
         return (
             f"BranchSupportResult(value={self.value:.6g}, inner={self.inner:.6g}, "
             f"cells={len(self.cells)}, certified={self.certified}, "
-            f"refuted={self.refuted}, converged={self.converged})"
+            f"refuted={self.refuted}, repairs={self.repairs}, "
+            f"converged={self.converged})"
         )
 
 
@@ -1061,8 +1146,13 @@ class BranchAndPrune:
 
     The outer value is as good as the remainder claim, and the result says
     whether that was certified. A checked model beyond the outer value, or
-    one whose remainder lies outside its cell's claimed set, marks the
-    result refuted.
+    one whose remainder lies outside its cell's claimed set, contradicts
+    the claim. Where the bound can be enlarged, which an estimate from
+    samples can (:meth:`RemainderBound.including`), those models are taken
+    in and the search is run again from the best model found, every cell
+    bounded afresh on the larger claim, until no checked model contradicts
+    it; the result counts the repairs and carries the claim it ends on.
+    Otherwise, or when the repairs run out, the result is marked refuted.
 
     The number of cells needed grows exponentially with the number of
     directions that are both curved enough to need narrow slabs and left
@@ -1081,6 +1171,7 @@ class BranchAndPrune:
         max_cells: int = 200,
         tighten: int = 0,
         search: "LocalSearch | None" = None,
+        max_repairs: int = 4,
     ) -> None:
         """
         Args:
@@ -1103,6 +1194,9 @@ class BranchAndPrune:
                 each.
             search: the local search run in a cell for the inner value; the
                 default :class:`LocalSearch` if omitted.
+            max_repairs: how many times at most to enlarge a remainder
+                claim that checked models contradict and search again;
+                zero to report such a claim refuted as it stands.
 
         Raises:
             ValueError: if no directions are given and the remainder bound
@@ -1121,6 +1215,7 @@ class BranchAndPrune:
         self._max_cells = int(max_cells)
         self._tighten = int(tighten)
         self._search = search
+        self._max_repairs = int(max_repairs)
 
     @property
     def remainder(self) -> RemainderBound:
@@ -1197,7 +1292,10 @@ class BranchAndPrune:
                 the set's fitting model, where a search finds one.
 
         Returns:
-            The bracket, the cells examined, and the bracket's history.
+            The bracket, the cells examined, and the bracket's history:
+            those of the last search, where a contradicted claim was
+            repaired and the search run again, with the evaluations and
+            the local searches of them all.
 
         Raises:
             TypeError: if the noise set is not a ball, or the constraint
@@ -1206,6 +1304,43 @@ class BranchAndPrune:
                 direction, or the constraint set is unbounded along a slab
                 direction.
         """
+        method, repairs, evaluations, searches = self, 0, 0, 0
+        while True:
+            result, against = method._bracket(feasible, direction, start)
+            evaluations += int(result.evaluations)
+            searches += int(result.searches)
+            if not against or repairs >= self._max_repairs:
+                break
+            enlarged = _enlarged(method._remainder, against)
+            if enlarged is None:
+                break
+            method = copy.copy(method)
+            method._remainder = enlarged
+            repairs += 1
+            if result.extremal_model is not None:
+                start = result.extremal_model
+        message = result.message
+        if repairs:
+            message += (
+                f"; the remainder claim was enlarged {repairs} time(s) to hold "
+                "checked models that contradicted it"
+            )
+        return replace(
+            result,
+            evaluations=evaluations,
+            searches=searches,
+            message=message,
+            repairs=repairs,
+            remainder=method._remainder,
+        )
+
+    def _bracket(
+        self,
+        feasible: "NonlinearFeasiblePropertySet",
+        direction: Any,
+        start: Any,
+    ) -> tuple[BranchSupportResult, list[Any]]:
+        """One search over cells on the claim as it stands, and the checked models that contradict it."""
         space, data_space = feasible.model_space, feasible.data_space
         forward, prior, noise = (
             feasible.forward_operator,
@@ -1223,6 +1358,7 @@ class BranchAndPrune:
         dual_tolerance = max(1e-10, 1e-2 * self._rtol)
         best, attained, refuted = None, float("-inf"), False
         evaluations, searches, unconverged = 0, 0, 0
+        against: list[Any] = []
 
         def offer(model: Any, entry: dict[str, Any] | None) -> None:
             """Check a model, test the claim on it where it lies in a cell, and keep it if it is the best."""
@@ -1239,6 +1375,7 @@ class BranchAndPrune:
                     forward, entry["linearization"], entry["claimed"], model, predicted
                 ):
                     refuted = True
+                    against.append(model)
             along = float(space.inner_product(pulled, model))
             fits = noise.contains(
                 data_space.subtract(feasible.data, predicted), rtol=0.0
@@ -1393,6 +1530,7 @@ class BranchAndPrune:
         if attained > value + 1e-9 * reach:
             # A checked model beyond the outer value: the claim is false.
             refuted = True
+            against.append(best)
         if unconverged:
             message += (
                 f"; {unconverged} cell bounds are from dual solves stopped at "
@@ -1400,7 +1538,7 @@ class BranchAndPrune:
             )
         if refuted:
             message += "; a checked model contradicts the remainder claim"
-        return BranchSupportResult(
+        result = BranchSupportResult(
             value=float(value),
             inner=attained,
             converged=bool(converged),
@@ -1415,6 +1553,7 @@ class BranchAndPrune:
             history=tuple(history),
             searches=searches,
         )
+        return result, against
 
     def inclusion(
         self,
@@ -2824,6 +2963,7 @@ class NonlinearFeasiblePropertySet(Subset):
         /,
         *,
         via: LocalSearch | None = None,
+        max_repairs: int = 8,
     ) -> CellSupportResult:
         """The support, in a direction, of the feasible set's part in one cell, from both sides.
 
@@ -2832,7 +2972,17 @@ class NonlinearFeasiblePropertySet(Subset):
         search kept in the cell, begun from the outer set's extremal model,
         or that model itself where it happens to fit. Every model evaluated
         in the cell also tests the remainder claim: a remainder outside the
-        claimed set marks the result refuted.
+        claimed set contradicts it.
+
+        A contradicted claim is repaired where the bound can be enlarged,
+        which an estimate from samples can
+        (:meth:`RemainderBound.including`): the models that contradict it
+        are taken in, the outer value is found again on the larger claim,
+        and its extremal model is checked in turn, until no checked model
+        contradicts the claim. The local search is run once, since it reads
+        the forward operator and not the claim. The result counts the
+        repairs and carries the claim it ends on. Where the bound cannot be
+        enlarged, or the repairs run out, the result is marked refuted.
 
         Args:
             direction: the direction in the property space.
@@ -2840,6 +2990,8 @@ class NonlinearFeasiblePropertySet(Subset):
             remainder: the claim about the forward operator over the cell.
             via: the local search; the default :class:`LocalSearch` if
                 omitted.
+            max_repairs: how many times at most to enlarge a contradicted
+                claim; zero to report it refuted as it stands.
 
         Returns:
             The result; ``value`` is minus infinity when the outer set is
@@ -2851,46 +3003,67 @@ class NonlinearFeasiblePropertySet(Subset):
         space, data_space = self.model_space, self.data_space
         ball = self._noise_ball()
         linearization = self._forward.at(cell.center)
-        claimed = remainder.remainder_set(cell)
         pulled = self._property_operator.adjoint(direction)
+        checked: list[tuple[Any, Any]] = []
+        searched, repairs, evaluations = None, 0, 0
 
-        try:
-            outer = self._cell_set(
-                cell, linearization, _grown(ball, claimed)
-            ).support_result(direction)
-        except ValueError as error:
-            if "empty" not in str(error):
-                raise
-            outer = None
-        if outer is None:
-            return CellSupportResult(
-                value=float("-inf"),
-                inner=float("-inf"),
-                converged=True,
-                algorithm="cell",
-                evaluations=0,
-                certified=remainder.certified,
-                message="no model of the cell fits the data, given the remainder claim",
-            )
-        start = outer.extremal_model
-        if start is None or not cell.contains(start):
-            start = cell.center
-        searched = (via or LocalSearch()).support(self, direction, start, cell=cell)
-        best, attained, refuted = None, float("-inf"), False
-        for result in (outer, searched):
-            model = result.extremal_model
+        def check(model: Any) -> None:
+            """Evaluate a model of the cell and the prior, and keep it with its prediction."""
             if model is None:
-                continue
+                return
             if not (
                 cell.contains(model, rtol=0.0) and self._prior.contains(model, rtol=0.0)
             ):
-                continue
+                return
             try:
-                predicted = self._forward(model)
+                checked.append((model, self._forward(model)))
             except EvaluationError:
-                continue
-            if _departs(self._forward, linearization, claimed, model, predicted):
-                refuted = True
+                return
+
+        while True:
+            claimed = remainder.remainder_set(cell)
+            try:
+                outer = self._cell_set(
+                    cell, linearization, _grown(ball, claimed)
+                ).support_result(direction)
+            except ValueError as error:
+                if "empty" not in str(error):
+                    raise
+                return CellSupportResult(
+                    value=float("-inf"),
+                    inner=float("-inf"),
+                    converged=True,
+                    algorithm="cell",
+                    evaluations=0,
+                    certified=remainder.certified,
+                    message="no model of the cell fits the data, given the remainder claim",
+                    remainder=remainder,
+                )
+            evaluations += int(outer.evaluations)
+            check(outer.extremal_model)
+            if searched is None:
+                start = outer.extremal_model
+                if start is None or not cell.contains(start):
+                    start = cell.center
+                searched = (via or LocalSearch()).support(
+                    self, direction, start, cell=cell
+                )
+                evaluations += int(searched.evaluations)
+                check(searched.extremal_model)
+            against = [
+                model
+                for model, predicted in checked
+                if _departs(self._forward, linearization, claimed, model, predicted)
+            ]
+            if not against or repairs >= max_repairs:
+                break
+            enlarged = _enlarged(remainder, against)
+            if enlarged is None:
+                break
+            remainder, repairs = enlarged, repairs + 1
+
+        best, attained = None, float("-inf")
+        for model, predicted in checked:
             fits = self._noise.contains(
                 data_space.subtract(self._data, predicted), rtol=0.0
             )
@@ -2898,19 +3071,26 @@ class NonlinearFeasiblePropertySet(Subset):
             if fits and along > attained:
                 best, attained = model, along
         message = outer.message
-        if refuted:
+        if repairs:
+            message += (
+                f"; the remainder claim was enlarged {repairs} time(s) to hold "
+                "checked models that contradicted it"
+            )
+        if against:
             message += "; a model of the cell has a remainder outside the claimed set"
         return CellSupportResult(
             value=float(outer.value),
             inner=attained,
             converged=bool(outer.converged),
             algorithm="cell",
-            evaluations=int(outer.evaluations) + int(searched.evaluations),
+            evaluations=evaluations,
             certificate=outer.certificate,
             extremal_model=best,
             message=message,
             certified=remainder.certified,
-            refuted=refuted,
+            refuted=bool(against),
+            repairs=repairs,
+            remainder=remainder,
         )
 
     def __repr__(self) -> str:

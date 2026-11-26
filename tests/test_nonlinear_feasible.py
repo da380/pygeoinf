@@ -20,12 +20,12 @@ from pygeoinf import (
     ForwardProblem,
     GaussianMeasure,
     LinearOperator,
-    NonlinearBackusGilbertParker,
     Operator,
 )
 from pygeoinf.algebra.operators import EvaluationError, LinearFunctional
 from pygeoinf.geometry.convex import Ball, HalfSpace, Polytope
 from pygeoinf.geometry.feasible import FeasiblePropertySet, FeasibleStructure
+from pygeoinf.inference import NonlinearBackusGilbertParker
 from pygeoinf.geometry.nonlinear import (
     BranchAndPrune,
     Cell,
@@ -1859,6 +1859,166 @@ class TestASampledRemainderAcrossTheSlabs:
         # The corners are beyond the domain and the ends of the slabs within.
         estimate = SampledRemainder(forward, samples=8, rng=rng).remainder_set(cell)
         assert estimate.radius > 0.0
+
+
+class TestRepairingAContradictedClaim:
+    """A sampled claim a checked model contradicts takes the model in, and the bound is solved again."""
+
+    DIRECTION = np.array([1.0])
+
+    def remainder_at(self, forward, cell, model):
+        linearization = forward.at(cell.center)
+        space, data_space = forward.domain, forward.codomain
+        step = linearization.derivative(space.subtract(model, cell.center))
+        return data_space.subtract(
+            data_space.subtract(forward(model), linearization.value), step
+        )
+
+    def thin_estimate(self, forward, prior, *, safety=1.0):
+        """Sampled across no slabs and along one line only: what the operator does elsewhere is unseen."""
+        return SampledRemainder(
+            forward,
+            samples=4,
+            safety=safety,
+            rng=np.random.default_rng(0),
+            across=lambda: np.array([1.0, -1.0]),
+            within=prior,
+        )
+
+    def test_an_estimate_takes_a_model_in_for_the_cells_that_hold_it(self, rng):
+        model = make_dense_metric_space(4)
+        paths = [model.scale(0.5, model.random(rng=rng)) for _ in range(3)]
+        forward = attenuation(model, paths)
+        center = model.scale(0.2, model.random(rng=rng))
+        cell = Cell(
+            model, center, directions=paths[:2], half_widths=[0.05, 0.05], radius=3.0
+        )
+        # Within the slabs and far across them, where no sample went.
+        across = model.random(rng=rng)
+        step = model.subtract(
+            across,
+            model.subtract(cell.point(cell.offsets(model.add(center, across))), center),
+        )
+        outlier = model.add(center, model.scale(2.5 / model.norm(step), step))
+        assert cell.contains(outlier)
+        sampled = SampledRemainder(forward, samples=8, safety=1.0, rng=rng)
+        departure = self.remainder_at(forward, cell, outlier)
+        before = sampled.remainder_set(cell)
+        assert not before.contains(departure)
+        learned = sampled.including(outlier)
+        assert learned is not sampled and not learned.certified
+        assert len(learned.kept) == 1 and sampled.kept == ()
+        assert learned.remainder_set(cell).contains(departure)
+        # The estimate it was made from is as it was.
+        again = sampled.remainder_set(cell)
+        assert np.array_equal(again.upper, before.upper)
+        # A cell that does not hold the model is estimated as before.
+        elsewhere = Cell(
+            model, center, directions=paths[:2], half_widths=[0.05, 0.05], radius=1.0
+        )
+        assert not elsewhere.contains(outlier)
+        assert np.array_equal(
+            learned.remainder_set(elsewhere).upper,
+            sampled.remainder_set(elsewhere).upper,
+        )
+
+    def test_a_proved_bound_takes_nothing_in(self):
+        _, forward, weights, _ = two_parameter_problem(3)
+        assert attenuation_remainder(forward, weights).including(np.zeros(2)) is None
+        assert NormRemainder(forward.codomain, 1.0).including(np.zeros(2)) is None
+
+    def test_a_cell_s_contradicted_estimate_is_repaired(self):
+        """The control is the same solve with no repairs: an "outer" value below an attained one."""
+        feasible = two_parameter_set(3, 0.5, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        truth = known_support(3, 0.5, 0.05)
+        cell = feasible.cell(np.zeros(2))
+        thin = self.thin_estimate(forward, feasible.prior)
+        left = feasible.cell_support_result(self.DIRECTION, cell, thin, max_repairs=0)
+        assert left.refuted and left.repairs == 0 and left.remainder is thin
+        assert left.value < left.inner - 5e-4
+        result = feasible.cell_support_result(self.DIRECTION, cell, thin)
+        assert not result.refuted and not result.certified
+        assert result.repairs >= 1 and "enlarged" in result.message
+        assert feasible.is_feasible(result.extremal_model)
+        assert result.inner == pytest.approx(truth, abs=1e-5)
+        assert result.value >= truth - 1e-6
+        # The proved bound on the same cell lies above the repaired estimate.
+        proved = feasible.cell_support_result(
+            self.DIRECTION, cell, attenuation_remainder(forward, weights)
+        )
+        assert result.value <= proved.value
+        # The claim it ends on holds the remainder of every model it took in.
+        claim = result.remainder
+        assert claim is not thin and thin.kept == ()
+        claimed = claim.remainder_set(cell)
+        assert len(claim.kept) >= result.repairs
+        assert all(
+            claimed.contains(self.remainder_at(forward, cell, model))
+            for model in claim.kept
+        )
+
+    def test_repairs_that_run_out_leave_the_result_refuted(self):
+        feasible = two_parameter_set(3, 0.5, 0.05)
+        _, forward, _, _ = two_parameter_problem(3)
+        cell = feasible.cell(np.zeros(2))
+        thin = self.thin_estimate(forward, feasible.prior)
+        whole = feasible.cell_support_result(self.DIRECTION, cell, thin)
+        assert whole.repairs >= 2
+        result = feasible.cell_support_result(self.DIRECTION, cell, thin, max_repairs=1)
+        assert result.refuted and result.repairs == 1
+        assert "outside the claimed set" in result.message
+
+    def test_a_claim_that_cannot_be_enlarged_is_left_refuted(self):
+        feasible = two_parameter_set(3, 1.0, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        nothing = ComponentwiseRemainder(
+            forward.codomain,
+            list(weights),
+            lambda low, high: (np.zeros(3), np.zeros(3)),
+            certified=False,
+        )
+        cell = square_cell(feasible, np.zeros(2), 1.0)
+        on_a_cell = feasible.cell_support_result(self.DIRECTION, cell, nothing)
+        searched = feasible.support_result(self.DIRECTION, via=BranchAndPrune(nothing))
+        for result in (on_a_cell, searched):
+            assert result.refuted and result.repairs == 0
+            assert result.remainder is nothing
+
+    def test_the_search_over_cells_repairs_and_searches_again(self):
+        """Slabs along one path only, sampled along them: the other paths' curvature is unseen."""
+        feasible = two_parameter_set(3, 0.5, 0.05)
+        _, forward, weights, _ = two_parameter_problem(3)
+        truth = known_support(3, 0.5, 0.05)
+        thin = SampledRemainder(
+            forward, samples=4, safety=1.0, rng=np.random.default_rng(0)
+        )
+
+        def search(max_repairs):
+            method = BranchAndPrune(
+                thin, directions=[weights[0]], rtol=1e-2, max_repairs=max_repairs
+            )
+            return feasible.support_result(self.DIRECTION, via=method)
+
+        left = search(0)
+        assert left.refuted and left.repairs == 0 and "contradicts" in left.message
+        result = search(4)
+        assert not result.refuted and not result.certified and result.converged
+        assert result.repairs >= 1 and "enlarged" in result.message
+        assert feasible.is_feasible(result.extremal_model)
+        assert result.inner == pytest.approx(truth, abs=1e-5)
+        assert result.value >= truth - 1e-6
+        assert len(result.remainder.kept) >= result.repairs and thin.kept == ()
+        # The work of every search is counted, not the last one's alone.
+        assert result.evaluations > left.evaluations
+        assert result.searches > left.searches
+        # A proved bound is searched once, and is the other route to the support.
+        proved = feasible.support_result(
+            self.DIRECTION,
+            via=BranchAndPrune(attenuation_remainder(forward, weights), rtol=1e-2),
+        )
+        assert proved.repairs == 0 and proved.certified
+        assert proved.inner == pytest.approx(result.inner, abs=1e-5)
 
 
 class TestWhereTheOperatorCannotBeEvaluated:

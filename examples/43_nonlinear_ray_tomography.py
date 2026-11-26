@@ -26,6 +26,9 @@ range far smaller than the prior allows; cutting the slab back to that
 range shrinks the remainder, which shrinks the range again. One cell,
 tightened so, is the whole computation here.
 
+The space's order and length scale, and the number of slabs, are set at the
+top of the script, with what to expect of a rougher space.
+
 Needs matplotlib.
 """
 
@@ -40,21 +43,38 @@ from pygeoinf import (
     ForwardProblem,
     GaussianMeasure,
     LinearOperator,
-    NonlinearBackusGilbertParker,
     Operator,
     plotting,
 )
 from pygeoinf.geometry import BranchAndPrune, ComponentwiseRemainder
+from pygeoinf.inference import NonlinearBackusGilbertParker
 from pygeoinf.symmetric_space import plane
 
 rng = np.random.default_rng(1)
 
 # ---------------------------------------------------------------------------
+# What to change: the space, and how many slabs the cell is cut along.
+# ---------------------------------------------------------------------------
+
+# The order and the scale decide how hard a certified bound is. A rougher
+# space, or a shorter scale, lets a model of a given norm be larger at a
+# point, and the remainder over a cell grows with it. With the values below
+# the tightened cell's remainder set is about the size of the noise ball,
+# and the certified interval is 1.3 times as wide as the attained one. With
+# ORDER = 2.0 and SCALE = 0.2 the remainder set stays ten times the noise
+# ball whether 4, 16 or 48 slabs are taken, and the certified interval is
+# 1.6 times as wide as the attained one. A slab costs two support solves
+# in each sweep of the tightening, so more of them also take longer.
+ORDER = 3.0  # the Sobolev order of the model space, above one for point values
+SCALE = 0.25  # its length scale, in units of the square's side
+SLABS = 4  # the directions the cell is cut along
+
+# ---------------------------------------------------------------------------
 # The problem: a field on a square, rays across it, travel times.
 # ---------------------------------------------------------------------------
 
-X = plane.Sobolev((16, 16), 3.0, 0.25, bounds=((0.0, 1.0), (0.0, 1.0)))
-belief = X.sobolev_measure(3.0, 0.25, pointwise_std=0.05)
+X = plane.Sobolev((16, 16), ORDER, SCALE, bounds=((0.0, 1.0), (0.0, 1.0)))
+belief = X.sobolev_measure(ORDER, SCALE, pointwise_std=0.05)
 truth = belief.sample(rng=rng)
 
 
@@ -147,7 +167,7 @@ sampled = evaluation.matrix(form="components")
 coverage = sampled.T @ (np.array(lengths)[:, None] * sampled)
 metric = LinearOperator.identity(X).matrix(form="galerkin")
 values, vectors = eigh(coverage, metric)
-leading = np.argsort(-values)[:4]
+leading = np.argsort(-values)[:SLABS]
 directions = [X.from_components(vectors[:, index]) for index in leading]
 
 root = BranchAndPrune(claim, directions=directions).root(feasible)

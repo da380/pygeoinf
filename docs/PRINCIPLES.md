@@ -62,8 +62,11 @@ Euclidean space, a field on a sphere or a ball, or a finite element space.
 6. **An inverse problem is answered with a point, a measure or a set**,
    according to the uncertainty supplied: none, a prior measure, or prior
    and noise sets. Each answer comes from an estimator that maps data to a
-   statement about a property of the model. A set answer reports outer
-   bounds with a certified bracket.
+   statement about a property of the model. A set answer reports bounds
+   from both sides. For a linear problem the bracket is certified. For a
+   nonlinear problem the outer bound rests on a claim about how far the
+   operator departs from its linearization, and the answer says whether
+   that claim was proved or estimated.
 
    Point estimators are provided as tools, used within the methods that
    carry uncertainty. A point estimator reports its error budget

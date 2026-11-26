@@ -38,11 +38,11 @@ from pygeoinf import (
     ForwardProblem,
     GaussianMeasure,
     LinearOperator,
-    NonlinearBackusGilbertParker,
     Operator,
     plotting,
 )
 from pygeoinf.geometry import BranchAndPrune, ComponentwiseRemainder
+from pygeoinf.inference import NonlinearBackusGilbertParker
 from pygeoinf.symmetric_space import line
 
 # ---------------------------------------------------------------------------
