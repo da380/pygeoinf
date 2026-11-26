@@ -12,7 +12,8 @@ answers for the masses and lengths are compared.
   inferred together, and the answer for the parameters is the marginal of
   the joint posterior. It is found by the Laplace approximation, a Newton
   search over more than a thousand unknowns whose gradient is one adjoint
-  integration, and then by chains about that Gaussian.
+  integration, and then by chains about that Gaussian, of the move
+  ``--sampler`` names.
 
 The forcing itself is recovered where the readings constrain it, and its
 posterior is the prior where they do not.
@@ -26,21 +27,17 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pygeoinf import (
-    ForwardProblem,
-    GaussianMeasure,
-    LaplaceApproximation,
-    MonteCarloEstimator,
-)
-from pygeoinf.sampling import PCN, Chains
+from pygeoinf import ForwardProblem, GaussianMeasure, LaplaceApproximation
 
 from src.common import log_normal_interval, parameter_panels, parse, part_rng, save
 from src.observation import first_of
 from src.problem import FULL, QUICK, Problem, Scale, build
+from src.sampling import sample
 from src.spaces import to_table
 
 DRAWS = 20
-# The sampler's step about the joint Laplace Gaussian.
+# The step of the "pcn" sampler about the joint Laplace Gaussian, where
+# the scale gives none.
 STEP = 0.5
 
 
@@ -229,22 +226,18 @@ def forcing(
     # ---- the forcing unknown: chains about the Laplace Gaussian ---- #
     t0 = time.perf_counter()
     before = problem.forced_solver.solves["state"]
-    sampler = Chains(
-        PCN(step=STEP, acceptance=None),
-        steps=scale.steps,
-        burn_in=scale.burn_in,
-        chains=scale.chains,
-        rng=rng,
-    )
-    estimator = MonteCarloEstimator(
+    posterior, move = sample(
         joint,
         joint_prior,
-        sampler=sampler,
-        reference=laplace.reference(data),
+        data,
+        scale,
+        at_mode=laplace,
+        start=result.measure,
         record=first_of(forced.domain),
         record_names=[f"log {name}" for name in names],
+        pcn_step=STEP,
+        rng=rng,
     )
-    posterior = estimator(data)
     values = posterior.scalars()[1:].reshape(len(names), -1)
     diagnostics = posterior.diagnostics()
     sampled_found = summary("sampled", values.mean(axis=1), np.cov(values), truth)
@@ -252,7 +245,7 @@ def forcing(
     sampled_found["effective"] = diagnostics.effective_sample_size[1:]
     sampled_found["acceptance"] = float(posterior.acceptance_rate)
     print(
-        f"  sampling: {scale.chains} chains of {scale.steps} steps after "
+        f"  sampling ({move}): {scale.chains} chains of {scale.steps} steps after "
         f"{scale.burn_in}, acceptance {posterior.acceptance_rate:.2f}, R-hat up to "
         f"{sampled_found['rhat'].max():.3f}, effective size from "
         f"{sampled_found['effective'].min():.0f}, "

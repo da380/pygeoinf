@@ -38,6 +38,7 @@ MODULES = (
     "src.spaces",
     "src.parameters",
     "src.observation",
+    "src.sampling",
     "src.problem",
     "src.common",
 )
@@ -384,6 +385,55 @@ class TestTheForwardOperator:
         assert (
             gradient[0].shape == (4,) and gradient[1].shape == small.forcing_space.shape
         )
+
+
+class TestTheSamplers:
+    def test_a_scale_names_its_move(self, app):
+        sampling, quick = app["sampling"], app["problem"].QUICK
+        move, step = sampling.move_for(quick, 2.0)
+        assert type(move).__name__ == "PCN" and step == 2.0
+        named = dataclasses.replace(
+            quick, sampler="hmc", sampler_step=0.2, sampler_length=3
+        )
+        move, step = sampling.move_for(named, 2.0)
+        assert type(move).__name__ == "HMC" and move.length == 3 and step == 0.2
+        for name, local in (("mala", False), ("local", True)):
+            move, step = sampling.move_for(
+                dataclasses.replace(quick, sampler=name), 2.0
+            )
+            assert type(move).__name__ == "MALA" and move.is_local == local
+            assert step == sampling.STEPS[name]
+        with pytest.raises(ValueError, match="sampler"):
+            sampling.move_for(dataclasses.replace(quick, sampler="gibbs"), 2.0)
+
+    @pytest.mark.parametrize("name", ["pcn", "mala", "local"])
+    def test_each_move_samples_about_the_laplace_gaussian(self, app, small, name):
+        """A few steps of each: the chains start in the posterior and stay there."""
+        from pygeoinf import ForwardProblem, LaplaceApproximation, LinearOperator
+
+        scale = dataclasses.replace(
+            small.scale, sampler=name, chains=2, burn_in=2, steps=12
+        )
+        problem = ForwardProblem(small.forward, error=small.noise)
+        prior = small.parameter_prior
+        laplace = LaplaceApproximation.from_problem(problem, prior, gauss_newton=True)
+        result = laplace.solve(small.data)
+        posterior, line = app["sampling"].sample(
+            problem,
+            prior,
+            small.data,
+            scale,
+            at_mode=laplace,
+            start=result.measure,
+            record=LinearOperator.identity(prior.domain),
+            record_names=list(small.parameter_names),
+            pcn_step=2.0,
+            rng=np.random.default_rng(3),
+        )
+        assert line.startswith(name) and posterior.acceptance_rate >= 0.3
+        values = posterior.scalars()[1:].reshape(4, -1)
+        std = np.sqrt(np.diag(result.measure.covariance.matrix(form="components")))
+        assert np.all(np.abs(values.mean(axis=1) - result.model) <= 3.0 * std)
 
 
 def test_every_field_of_the_scale_is_an_option(app, tmp_path):

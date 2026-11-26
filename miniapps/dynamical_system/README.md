@@ -46,6 +46,18 @@ Three instruments are provided, chosen with `--instrument`:
 
 Figures and numbers go to `results/`, or `results/quick/`.
 
+The sampler of parts C and D is chosen the same way:
+
+| `--sampler` | a step moves | a step costs |
+|---|---|---|
+| `pcn` (the default) | about the Laplace Gaussian at the mode | one integration |
+| `mala` | the same, with a drift down the misfit's gradient | one integration and one adjoint |
+| `hmc` | along a Hamiltonian trajectory of `--sampler-length` steps about it | a gradient for each |
+| `local` | about the Laplace Gaussian at the present state, rebuilt at every proposal | an adjoint for each reading |
+
+`--sampler-step` sets the step and `--sampler-adapt` lets it adapt during
+burn-in; `--chains`, `--burn-in` and `--steps` size the run.
+
 ## Part A: the forward operator and its checks (`ladder.py`)
 
 At the full scale: six seconds of motion on a mesh of 481 nodes, thirty

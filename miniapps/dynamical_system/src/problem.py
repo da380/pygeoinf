@@ -75,6 +75,10 @@ class Scale:
         chains: how many chains a sampler runs.
         burn_in: the steps each chain discards.
         steps: the steps each chain keeps.
+        sampler: the move the chains make: "pcn", "mala" or "hmc" about the Laplace Gaussian at the mode, or "local", about the Laplace Gaussian at each state.
+        sampler_step: the move's step; none for the part's own.
+        sampler_length: the leapfrog steps of an "hmc" trajectory.
+        sampler_adapt: whether the step adapts during burn-in, towards the move's own target acceptance.
     """
 
     name: str
@@ -101,6 +105,10 @@ class Scale:
     chains: int
     burn_in: int
     steps: int
+    sampler: str
+    sampler_step: float | None
+    sampler_length: int
+    sampler_adapt: bool
 
 
 QUICK = Scale(
@@ -128,6 +136,10 @@ QUICK = Scale(
     chains=4,
     burn_in=50,
     steps=150,
+    sampler="pcn",
+    sampler_step=None,
+    sampler_length=5,
+    sampler_adapt=False,
 )
 FULL = Scale(
     name="full",
@@ -154,6 +166,10 @@ FULL = Scale(
     chains=4,
     burn_in=200,
     steps=600,
+    sampler="pcn",
+    sampler_step=None,
+    sampler_length=5,
+    sampler_adapt=False,
 )
 
 

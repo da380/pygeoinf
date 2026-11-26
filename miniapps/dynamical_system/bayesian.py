@@ -6,10 +6,11 @@ posterior, two ways.
 * **The Laplace approximation**: the Gaussian about the mode whose
   precision is the curvature there, with the exact Hessian and with the
   Gauss-Newton one. It costs a search and a handful of integrations.
-* **Sampling**: chains of preconditioned Crank-Nicolson steps about the
-  Laplace Gaussian, which need the misfit alone and no derivative. Their
-  target is the exact posterior, whatever the reference; a good reference
-  makes them fast. They start from draws of that Gaussian: the posterior
+* **Sampling**: chains about the Laplace Gaussian, by default of
+  preconditioned Crank-Nicolson steps, which need the misfit alone and no
+  derivative; ``--sampler`` chooses another move, and ``--sampler-step``
+  its step. Their target is the exact posterior, whatever the reference; a
+  good reference makes them fast. They start from draws of that Gaussian: the posterior
   is a hundred times narrower than the prior in three directions of four,
   and a chain started from a draw of the prior does not find it.
 
@@ -30,23 +31,19 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pygeoinf import (
-    ForwardProblem,
-    LaplaceApproximation,
-    LinearOperator,
-    MonteCarloEstimator,
-)
-from pygeoinf.sampling import PCN, Chains
+from pygeoinf import ForwardProblem, LaplaceApproximation, LinearOperator
 
 from src.common import log_normal_interval, parameter_panels, parse, part_rng, save
 from src.problem import FULL, QUICK, Problem, Scale, build
+from src.sampling import sample
 
 # The two directions the masses' logarithms are read along.
 TOGETHER = np.array([1.0, 1.0, 0.0, 0.0]) / np.sqrt(2.0)
 RATIO = np.array([-1.0, 1.0, 0.0, 0.0]) / np.sqrt(2.0)
 DRAWS = 30
-# The sampler's step: after it, exp(-STEP) of the old point is left. Long,
-# because the reference fits the posterior and a long step is accepted.
+# The step of the "pcn" sampler where the scale gives none: after it,
+# exp(-STEP) of the old point is left. Long, because the reference fits the
+# posterior and a long step is accepted.
 STEP = 2.0
 
 
@@ -171,24 +168,18 @@ def bayesian(
     # ---- sampling, about the Laplace Gaussian ---- #
     t0 = time.perf_counter()
     before = problem.solver.solves["state"]
-    reference = gauss["estimator"].reference(problem.data)
-    sampler = Chains(
-        PCN(step=STEP, acceptance=None),
-        steps=scale.steps,
-        burn_in=scale.burn_in,
-        chains=scale.chains,
-        rng=rng,
-    )
-    record = LinearOperator.identity(problem.parameter_map.space)
-    estimator = MonteCarloEstimator(
+    posterior, move = sample(
         forward_problem,
         prior,
-        sampler=sampler,
-        reference=reference,
-        record=record,
+        problem.data,
+        scale,
+        at_mode=gauss["estimator"],
+        start=gauss["measure"],
+        record=LinearOperator.identity(problem.parameter_map.space),
         record_names=[f"log {name}" for name in names],
+        pcn_step=STEP,
+        rng=rng,
     )
-    posterior = estimator(problem.data)
     seconds = time.perf_counter() - t0
     values = posterior.scalars()[1:]
     flat = values.reshape(len(names), -1)
@@ -196,7 +187,7 @@ def bayesian(
     std = np.sqrt(np.diag(covariance))
     diagnostics = posterior.diagnostics()
     print(
-        f"sampling: {scale.chains} chains of {scale.steps} steps after {scale.burn_in}, "
+        f"sampling ({move}): {scale.chains} chains of {scale.steps} steps after {scale.burn_in}, "
         f"acceptance {posterior.acceptance_rate:.2f}, "
         f"{problem.solver.solves['state'] - before} integrations, {seconds:.1f} s"
     )
